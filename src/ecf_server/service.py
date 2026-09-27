@@ -12,6 +12,7 @@ import os
 import secrets
 import signal
 import socket
+import sqlite3
 import sys
 import threading
 from contextlib import suppress
@@ -30,6 +31,13 @@ from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import Clock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
+from ecf_server.secretstore.select import (
+    choose_backend,
+    host_probe,
+    interpreter_changed,
+    interpreter_sha256,
+    record_interpreter,
+)
 
 TICK_SECONDS = 60
 WATCHDOG_SECONDS = 300
@@ -122,6 +130,17 @@ class Service:
         log.info("service.signal", signal=signal.Signals(signum).name)
         self.stop.set()
 
+    def _secret_store_report(self, conn: sqlite3.Connection) -> dict[str, object]:
+        try:
+            backend = choose_backend(host_probe())
+        except ServiceUnavailableError as exc:
+            return {"backend": None, "detail": exc.detail, "interpreter_changed": False}
+        current = interpreter_sha256()
+        changed = interpreter_changed(conn, current)
+        if not changed:
+            record_interpreter(conn, self.clock, current, by="service")
+        return {"backend": backend, "interpreter_changed": changed}
+
     # -- run -----------------------------------------------------------------------------------
     def run(self) -> int:
         _private_dir(self.paths.data_dir)
@@ -153,6 +172,7 @@ class Service:
         applied = db.migrate(conn)
         with db.write_tx(conn):
             conn.execute("DELETE FROM leases")  # one process in v1: all leases are stale at start
+        self.state.secret_store = self._secret_store_report(conn)
         conn.close()
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)

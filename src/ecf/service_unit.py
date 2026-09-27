@@ -25,7 +25,10 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, check=False, timeout=60)  # noqa: S603
+    try:
+        return subprocess.run(args, capture_output=True, text=True, check=False, timeout=60)  # noqa: S603
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", f"{args[0]}: not found")
 
 
 def ecf_server_path() -> Path:

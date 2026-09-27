@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 from typing import Annotated
@@ -9,8 +10,11 @@ from typing import Annotated
 import typer
 
 from ecf import __version__
+from ecf.client import LocalClient
+from ecf.doctor import Level, run_checks
 from ecf.errors import EcfError
 from ecf.ids import SLUG_PATTERN
+from ecf.log import configure_logging
 from ecf.paths import Paths, paths_for
 from ecf.service_unit import manager_for
 
@@ -50,6 +54,44 @@ def _paths() -> Paths:
 def version() -> None:
     """Print the ecf version."""
     typer.echo(__version__)
+
+
+@app.command()
+def status() -> None:
+    """Show the service's state."""
+    paths = _paths()
+    unit = manager_for(paths).status()
+    typer.echo(f"install:   {paths.install}")
+    typer.echo(
+        f"unit:      {'installed' if unit.installed else 'not installed'}, "
+        f"{'running' if unit.running else 'not running'}"
+    )
+    with LocalClient(paths) as c:
+        st = c.get("/v1/status")
+    br, ss = st.get("breaker", {}), st.get("secret_store", {})
+    typer.echo(f"service:   {st['version']} (pid {st['pid']}), started {st['started_at']}")
+    typer.echo(f"last tick: {st.get('last_tick_at') or 'none yet'}")
+    typer.echo(
+        f"breaker:   {'TRIPPED' if br.get('tripped') else 'ok'} "
+        f"({br.get('recent_crashes', 0)} recent crashes)"
+    )
+    typer.echo(
+        f"secrets:   {ss.get('backend') or 'none usable'}"
+        + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
+    )
+
+
+@app.command()
+def doctor() -> None:
+    """Check this install and say how to fix anything wrong."""
+    checks = run_checks(_paths())
+    width = max(len(c.name) for c in checks)
+    for c in checks:
+        typer.echo(f"{c.level.value:>4}  {c.name:<{width}}  {c.detail}")
+        if c.fix and c.level is not Level.OK:
+            typer.echo(f"{'':>4}  {'':<{width}}  fix: {c.fix}")
+    if any(c.level is Level.FAIL for c in checks):
+        raise typer.Exit(3)
 
 
 @service_app.command("install")
@@ -102,6 +144,7 @@ def service_status() -> None:
 
 
 def main() -> None:
+    configure_logging("cli", level=logging.WARNING)
     try:
         app()
     except EcfError as exc:

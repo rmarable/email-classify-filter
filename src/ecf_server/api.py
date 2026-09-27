@@ -38,6 +38,7 @@ class ServiceState:
     last_tick_at: str | None = None
     ticks: int = 0
     breaker: dict[str, Any] = field(default_factory=dict[str, Any])
+    secret_store: dict[str, Any] = field(default_factory=dict[str, Any])
     pid: int = field(default_factory=os.getpid)
 
 
@@ -74,6 +75,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "last_tick_at": state.last_tick_at,
                 "ticks": state.ticks,
                 "breaker": state.breaker,
+                "secret_store": state.secret_store,
             }
         )
 
