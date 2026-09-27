@@ -9,7 +9,7 @@ Status: first version, 2026-09-27. Source: the approved design plan, `docs/histo
   - "operator decision <date>": decided by the operator;
   - "reviewer recommendation confirmed by the operator <date>";
   - "reviewed by the operator 2026-09-26/27": a default from the plan with no individual marker (all plan defaults were reviewed on those dates);
-  - **"proposed in SPEC, pending operator review"** (short form **[proposed]**): something the plan did not define and this document proposes. Every [proposed] item is open for review; see §23.3 for the list.
+  - **"proposed in SPEC, accepted by the operator 2026-09-27"** (short form **[proposed]**, or P in tables): something the plan did not define, proposed here and accepted as a whole (OD-162). New proposals added later are marked "proposed in SPEC, pending operator review" until decided; §23.3 lists the accepted set.
 - **Citations.** A fact called "verified" gives its source site and date. "(rv)" means verified by a reviewer's cited source and not re-checked by Claude. Everything else reads "unverified, confirm in V1.x" (or in the milestone named).
 - **Numbers** that have no config key are listed as fixed in §14.3.
 - **Traceability.** `OD-nnn` numbers operator decisions and appears next to the decision it annotates, `G1-n` numbers the Group 1 documentation findings, and seven review IDs are cited by name; all are in §23.
@@ -289,7 +289,7 @@ Runs in the service with no model and no client session, while the computer is o
 
 ## 6. State model [v1]
 
-### 6.1 SQLite tables [proposed]
+### 6.1 SQLite tables [proposed; accepted 2026-09-27, OD-162]
 
 Normalized tables per entity (operator decision 2026-09-27, OD-150; Fable/Opus review). Column lists are [proposed]. Types [proposed]: keys and identifiers `TEXT NOT NULL`; counts, versions and fencing tokens `INTEGER NOT NULL DEFAULT 0`; booleans `INTEGER NOT NULL` (0/1); JSON columns `TEXT` validated by Pydantic on read and write; timestamps `TEXT` (UTC ISO-8601); `STRICT` tables; foreign keys from per-address tables to `addresses`; `senders`, `sent`, `threads` and `gate` rows are kept like their retention exemption (§6.5). All timestamps are UTC ISO-8601 text. Every table has `schema_version` where rows are migrated individually.
 
@@ -607,7 +607,7 @@ rules:
 ```
 
 - Operands: `field:` (schema field), `fact:` (computed fact), `trigger:` (`fraud`, `fraud_weak` (first-time sender + payment keyword without a second signal, or a lone Reply-To mismatch on a payment item), `regulator`, `unverified_payment`), `address:` (`sensitivity`).
-- Operators (a Pydantic discriminated union; the plan's set, operator decision 2026-09-27, OD-064): `eq`, `in`, `gte` (ordinals by level order, e.g. `{field: priority, gte: high}`), `and`, `or`, `not`. Adding `lte` is [proposed].
+- Operators (a Pydantic discriminated union; the plan's set, operator decision 2026-09-27, OD-064): `eq`, `in`, `gte` (ordinals by level order, e.g. `{field: priority, gte: high}`), `and`, `or`, `not`. `lte` is added (operator decision 2026-09-27, OD-161).
 - Actions: vocabulary names from §8.3; `continue` hands the item to the actor after running the listed actions.
 - `ecf rules test <file>` runs a change against the synthetic set locally and shows which outcomes change.
 
@@ -866,7 +866,7 @@ Bound once at start on a loopback port (port 0, recorded in settings), served by
 
 ### 11.7 Files and permissions
 
-Data directory (`~/Library/Application Support/ecf/<install>` or `~/.local/share/ecf/<install>` [proposed layout]) 0700; database and its `-wal`/`-shm`, socket, logs (rotated, size-capped: 10 MB × 5 [proposed]), export temp files and the CLI token file 0600. Full messages are never written to disk. The telemetry receiver listens on loopback only. Only the service writes the rotating log file; the CLI logs to stderr.
+Data directory (`~/Library/Application Support/ecf/<install>` or `~/.local/share/ecf/<install>` [proposed layout]) 0700; database and its `-wal`/`-shm`, socket, logs (rotated at 50 MB, keeping 10 files; operator decision 2026-09-27, OD-160), export temp files and the CLI token file 0600. Full messages are never written to disk. The telemetry receiver listens on loopback only. Only the service writes the rotating log file; the CLI logs to stderr.
 
 ### 11.8 Alerts without AWS
 
@@ -1037,7 +1037,7 @@ On the first check after a gap the digest opens with "Caught up: N messages sinc
 
 ### 14.1 Install-level settings
 
-Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by the operator 2026-09-26; RV = reviewed by the operator 2026-09-26/27; P = [proposed].
+Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by the operator 2026-09-26; RV = reviewed by the operator 2026-09-26/27; P = proposed in SPEC, accepted by the operator 2026-09-27 (OD-162).
 
 | Key | Default | Range / values | Origin |
 |---|---|---|---|
@@ -1132,7 +1132,7 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | Haiku classifier batch | 10-20 messages within one address |
 | Slack pacing | ≤ 1 post/s/channel |
 
-## 15. Contracts [proposed unless noted]
+## 15. Contracts [proposed; accepted 2026-09-27, OD-162]
 
 ### 15.1 Socket HTTP routes
 
@@ -1366,7 +1366,7 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 
 ### 21.3 Operator review
 
-All [proposed] items (§23.3). No other operator-review items are open.
+None open. The [proposed] items were accepted on 2026-09-27 (OD-156 to OD-162).
 
 ## 22. Diagrams
 
@@ -1725,9 +1725,11 @@ The other Review 4 and 5 items (R4-1 to R4-24, R5-1 to R5-27) were folded into t
 
 Items marked "(Fable/Opus review 2026-09-27)" or "(final Fable pass 2026-09-27)" in the plan trace to the acceptance decisions OD-150 and OD-151 (§23.4).
 
-### 23.3 Proposed in SPEC, pending operator review
+### 23.3 Proposed in SPEC, accepted by the operator
 
-Milestone tag names V1.1-V1.4 (§1.4); release criteria items 4, 5, 6 (§1.5); SQLite columns (§6.1); sleep-detection threshold (§5.5); `BytesHeaderParser` option (§5.1); DNS budget (§7.3); keyword-list location (§8.5); rules grammar (§8.6); template shape (§8.7); PAM rate limit (§9.6); dead-man's switch lead (§10.1); MCP tools and wrapper (§10.4); unit templates, stop timeouts, `ProcessType` (§11.1); job-queue values (§11.3); secret names, data-directory layout, log rotation (§11.6-11.7); config ranges marked P (§14); routes, log events, error codes, retries (§15).
+All accepted on 2026-09-27: four decided individually (OD-156 to OD-159), log rotation changed to 50 MB × 10 (OD-160), `lte` kept (OD-161), and the rest accepted as written (OD-162):
+
+Milestone tag names V1.1-V1.4 (§1.4); release criteria items 4, 5, 6 (§1.5); SQLite columns (§6.1); sleep-detection threshold (§5.5); `BytesHeaderParser` option (§5.1); DNS budget (§7.3); keyword-list location (§8.5); rules grammar (§8.6); template shape (§8.7); PAM rate limit (§9.6); dead-man's switch lead (§10.1); MCP tools and wrapper (§10.4); unit templates, stop timeouts, `ProcessType` (§11.1); job-queue values (§11.3); secret names, data-directory layout (§11.6-11.7); config ranges marked P (§14); routes, log events, error codes, retries (§15).
 
 ### 23.4 Operator decisions
 
@@ -1894,6 +1896,9 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-157 | 2026-09-27 | (SPEC review) | SPEC §6.2 | Fix on a held item records the correction and the item stays held until live |
 | OD-158 | 2026-09-27 | (SPEC review) | SPEC §7.2 | Initial shared-platform sender list, finalized in V1.1 |
 | OD-159 | 2026-09-27 | (SPEC review) | SPEC §1.5 | v1.0.0 safety gates: preset A and each shipped Claude pin |
+| OD-160 | 2026-09-27 | (SPEC review) | SPEC §11.7 | Log rotation at 50 MB, keeping 10 files |
+| OD-161 | 2026-09-27 | (SPEC review) | SPEC §8.6 | The rules grammar keeps the `lte` operator |
+| OD-162 | 2026-09-27 | (SPEC review) | SPEC §23.3 | All other [proposed] items accepted as written |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
