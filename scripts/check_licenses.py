@@ -31,6 +31,18 @@ EXCEPTIONS = {"certifi": "MPL-2.0"}
 # platform running the check (platform-specific dependencies): name -> (license, source checked).
 OVERRIDES: dict[str, tuple[str, str]] = {
     "colorama": ("BSD", "PyPI classifiers for 0.4.6, checked 2026-09-27 (Windows-only, via click)"),
+    # Linux-only, via keyring (Secret Service); PyPI metadata at the locked versions, 2026-09-27
+    "cffi": ("MIT-0", "PyPI License-Expression, 2.1.1"),
+    "cryptography": ("Apache-2.0 OR BSD-3-Clause", "PyPI License-Expression, 50.0.1"),
+    "jeepney": ("MIT", "PyPI License-Expression, 0.9.0"),
+    "pycparser": ("BSD-3-Clause", "PyPI License-Expression, 3.0"),
+    "secretstorage": ("BSD-3-Clause", "PyPI License-Expression, 3.5.0"),
+    # Windows-only, via keyring
+    "pywin32-ctypes": ("BSD-3-Clause", "PyPI License field, 0.2.3"),
+    # macOS-only (Keychain interaction control); PyPI License field at 12.2.2, 2026-09-27
+    "pyobjc-core": ("MIT", "PyPI License field, 12.2.2"),
+    "pyobjc-framework-cocoa": ("MIT", "PyPI License field, 12.2.2"),
+    "pyobjc-framework-security": ("MIT", "PyPI License field, 12.2.2"),
 }
 
 CLASSIFIER_MAP = {

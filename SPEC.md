@@ -867,7 +867,7 @@ Bound once at start on a loopback port (port 0, recorded in settings), served by
   - `uv tool upgrade` with an unchanged interpreter keeps access (tested).
 - **Linux** (chosen automatically and shown by `doctor`; operator decision 2026-09-26, OD-096): (1) Secret Service (GNOME Keyring, KWallet, KeePassXC) via `keyring` when a D-Bus session and unlocked keyring exist (after a reboot, unreadable until you log in; unverified, V1.6); (2) otherwise `systemd-creds --user` (TPM2 if present, else the host key; decrypted at service start via `LoadCredentialEncrypted=`; adding a secret runs `systemd-creds encrypt --user`, updates the unit and restarts the service; behavior unverified, V1.6); needs systemd 256+ (verified 2026-09-27, systemd NEWS); (3) otherwise refuse to start and explain. No passphrase-file fallback.
 - **Distributions** (package sites checked 2026-09-27): systemd 256+ on Ubuntu 26.04 LTS (259.5), Ubuntu 25.10 (257.9), Debian 13 (257.13), Fedora 43/44/45 (258/259/262), Rocky Linux 10 (257); not on Ubuntu 24.04 LTS (255.4), Debian 12 (252.39), Rocky 9 (252). Alma/RHEL 10 very likely 257 (unverified). v1 supports Linux desktops via Secret Service and headless Linux is best-effort (operator decision 2026-09-27, OD-097). A root system-unit fallback for older systems is decided in M4. README documents `loginctl enable-linger` and importing the session environment for notifications (operator decision 2026-09-27, OD-098).
-- **Secret names** [proposed]: service `email-classify-filter/<install>`, accounts `mailbox/<address_id>`, `slack/bot`, `slack/app`, `models-api-key`, `export-signing-seed`.
+- **Secret names** [proposed]: service `email-classify-filter/<install>`, accounts `mailbox/<address_id>`, `slack/bot`, `slack/app`, `models-api-key`, `export-signing-seed`. Under `systemd-creds`, credential names can't contain `/`, so `/` maps to `.` (e.g. `mailbox.billing.cred`; operator decision 2026-09-27, OD-172).
 
 ### 11.7 Files and permissions
 
@@ -1915,6 +1915,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-169 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | jobs.timeout_s and jobs.created_at |
 | OD-170 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rules grammar additions: action `if`, `continue_if`, label from field, catch-all rule, hide:never check; rules never emit sends or drafts |
 | OD-171 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rule 1b for the weak fraud signal |
+| OD-172 | 2026-09-27 | (V1.0 build) | SPEC §11.6 | systemd-creds credential names map `/` to `.` |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

@@ -7,7 +7,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [{ name = "Rodney Marable" }]
 dependencies = [
+    "keyring>=25",
     "pydantic>=2.8",
+    "pyobjc-framework-security>=10 ; sys_platform == 'darwin'",
     "ruamel-yaml>=0.18",
     "structlog>=24.4",
     "typer>=0.12",
