@@ -1,0 +1,81 @@
+# Starter rules (SPEC §8.6). First match wins. On `high` addresses the policy layer turns
+# rules 6-8 into label + leave (SPEC §8.3); that is not done here.
+version: 1
+rules:
+  - id: fraud_guard                      # 1
+    when:
+      or:
+        - {field: fraud_risk, in: [medium, high]}
+        - {field: category, eq: vendor_change_request}
+        - and: [{field: sender_type, eq: staff}, {fact: sender_origin, eq: external}]
+        - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
+        - {trigger: fraud}
+    then: [{label: suspicious}, flag, escalate]
+    actor: none
+    hide: never
+
+  - id: fraud_weak                       # 1b: first-time + payment, no second signal; or a lone
+    when: {trigger: fraud_weak}          # Reply-To mismatch on a payment item. Digest section.
+    then: [{label: suspicious}, flag]
+    actor: none
+    hide: never
+
+  - id: unverified_payment_sender        # 1a
+    when:
+      and: [{field: payment_related, eq: true}, {fact: auth_result, eq: none}]
+    then: [{label: unverified_sender}, flag]
+    actor: none
+    hide: never
+
+  - id: regulatory                       # 2
+    when:
+      or: [{field: category, eq: regulatory}, {trigger: regulator}]
+    then: [{label: regulatory}, flag, escalate]
+    actor: none
+    hide: never
+
+  - id: bug_report                       # 3
+    when: {field: category, eq: bug_report}
+    then:
+      - {label: bug_report}
+      - {flag: true, if: {field: priority, gte: high}}
+      - {escalate: true, if: {field: priority, eq: urgent}}
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: invoice                          # 4
+    when: {field: category, eq: invoice}
+    then:
+      - {label: invoice}
+      - {flag: true, if: {field: deadline_mentioned, eq: true}}
+      - leave
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: payment_confirmation_remittance  # 5
+    when: {field: category, in: [payment_confirmation, remittance]}
+    then: [{label: {field: category}}]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: spam_or_phishing                 # 6
+    when: {field: category, eq: spam_or_phishing}
+    then: [{label: spam_or_phishing}, junk]
+
+  - id: marketing                        # 7
+    when:
+      and: [{field: category, eq: marketing}, {field: requires_action, eq: false}]
+    then: [{label: marketing}, archive]
+
+  - id: automated_notification           # 8
+    when:
+      and:
+        - {field: category, eq: notification}
+        - {field: sender_type, eq: automated}
+        - {field: requires_action, eq: false}
+    then: [{label: notification}, mark_read, archive]
+
+  - id: requires_reply                   # 9
+    when: {field: requires_reply, eq: true}
+    then: [{label: {field: category}}, flag]
+    actor: continue
+
+  - id: otherwise                        # 10
+    actor: continue

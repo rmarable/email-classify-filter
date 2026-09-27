@@ -609,10 +609,12 @@ rules:
 - Operands: `field:` (schema field), `fact:` (computed fact), `trigger:` (`fraud`, `fraud_weak` (first-time sender + payment keyword without a second signal, or a lone Reply-To mismatch on a payment item), `regulator`, `unverified_payment`), `address:` (`sensitivity`).
 - Operators (a Pydantic discriminated union; the plan's set, operator decision 2026-09-27, OD-064): `eq`, `in`, `gte` (ordinals by level order, e.g. `{field: priority, gte: high}`), `and`, `or`, `not`. `lte` is added (operator decision 2026-09-27, OD-161).
 - Actions: vocabulary names from §8.3; `continue` hands the item to the actor after running the listed actions.
+- Additions (operator decision 2026-09-27, OD-170), needed by the starter rules: an action may carry `if: <condition>` (rules 3, 4); `actor` may be `none`, `continue` or `{continue_if: <condition>}` (rules 3-5); `label` may take its value from an enum field, `{label: {field: category}}` (rule 9); a rule without `when` always matches, and the last rule must be such a catch-all; a `hide: never` rule may not contain hide actions; **rules may only emit `label`, `flag`, `escalate`, `leave`, `mark_read`, `archive`, `move` and `junk`**, so sends and drafts come only from actor proposals, behind approval.
 - `ecf rules test <file>` runs a change against the synthetic set locally and shows which outcomes change.
 
 **Starter rules:**
 1. **Fraud guard:** `fraud_risk ∈ {medium, high}`, `category = vendor_change_request`, `sender_type = staff ∧ sender_origin = external`, `payment_related ∧ auth_result = fail`, or a fraud trigger (not the regulator trigger, not the weak first-time + payment case, which gets `label(suspicious)`, `flag` and a digest section) → `label(suspicious)`, `flag`, `escalate`. Stop: no actor, never hidden.
+1b. **Weak fraud signal** (operator decision 2026-09-27, OD-171): the `fraud_weak` trigger (a first-time sender with a payment keyword and no second signal, or a lone Reply-To mismatch on a payment item) → `label(suspicious)`, `flag`; no actor, never hidden; a digest section. Evaluated right after rule 1.
 1a. **Unverified payment sender** (all addresses; operator decision 2026-09-26, OD-065): `payment_related ∧ auth_result = none` → `label(unverified_sender)`, `flag`; no actor, never hidden; a digest section, not a thread each; the email alert fires on `high` addresses only. A per-sender step-up "human-verified" setting (`ecf sender set-verified`) suppresses this rule's flag and email for that sender, leaving fraud triggers on.
 2. **Regulatory** (category or regulator trigger) → label, flag, escalate.
 3. **Bug report** → label; flag if `priority ≥ high`; escalate if urgent; continue to the actor if `requires_reply`.
@@ -1911,6 +1913,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-167 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | addresses.removed_at: removal marks the row instead of deleting it |
 | OD-168 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | Grant states: issued, approved, consumed, voided |
 | OD-169 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | jobs.timeout_s and jobs.created_at |
+| OD-170 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rules grammar additions: action `if`, `continue_if`, label from field, catch-all rule, hide:never check; rules never emit sends or drafts |
+| OD-171 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rule 1b for the weak fraud signal |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

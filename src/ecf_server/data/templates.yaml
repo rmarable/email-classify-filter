@@ -1,0 +1,10 @@
+# Reply templates (SPEC §8.7). The shipped "received" template is disabled.
+version: 1
+templates:
+  - id: received
+    enabled: false
+    subject: "Re: {subject}"
+    body: |
+      Hello {sender_name},
+
+      Thank you, we received your message and will reply if anything else is needed.
