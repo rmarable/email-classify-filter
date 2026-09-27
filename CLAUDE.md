@@ -57,6 +57,10 @@ None until V1.0; then see `CONTRIBUTING.md` (written in V1.0). Add key commands 
 - Create or push a tag only after the operator confirms and approves both the tag and the push.
 - When a milestone's work looks complete (its scope built, CI green, its gating real-service test passed), prompt the operator that the `ms-…` tag is due, and say what's done and what isn't. Never apply a tag unprompted.
 
+## Commits
+
+- The co-author trailer never names the model. Use exactly: `Co-Authored-By: Claude <noreply@anthropic.com>`.
+
 ## Documentation style
 
 - Terse, precise, for a semi-technical reader; no filler.

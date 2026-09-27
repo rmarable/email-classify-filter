@@ -859,7 +859,10 @@ Bound once at start on a loopback port (port 0, recorded in settings), served by
 
 ### 11.6 Secret stores
 
-- **macOS:** Keychain via `keyring`. **The service is the only writer** (the CLI sends an app password over the socket), so one binary owns the ACL. The V1.0 gate tests service write, read after restart and after `uv tool upgrade`, and whether other Python scripts can read items silently; if they can, V1.0 adopts a private interpreter copy for ecf or items with `kSecAttrAccessControl` user presence. `doctor` and `ecf upgrade` re-check access after interpreter changes and say what to click.
+- **macOS:** Keychain via `keyring`. **The service is the only writer** (the CLI sends an app password over the socket). The V1.0 gate test (§21.1, 2026-09-27) found that the item's access rule trusts the **interpreter binary by its code hash** (uv's and Homebrew's Pythons are ad-hoc signed), so any process running the same Python binary, from any path, reads silently; neither mitigation is possible (a private copy has the same hash; user-presence items need an Apple entitlement, error -34018). Decision (operator decision 2026-09-27, OD-163; `docs/adr/0001-keychain-access.md`): accept this as a stated limit (§12.2) and make the service never hang:
+  - the service turns Keychain user interaction off for its own process (`SecKeychainSetUserInteractionAllowed(False)` via PyObjC, tested 2026-09-27: an untrusted read failed in 0.02 s with -25293 instead of waiting on a dialog), so a read it isn't trusted for fails at once and the service waits with "secret store needs you" (like a locked store);
+  - a Python change under ecf (a different patch release or rebuilt interpreter) changes the hash; `ecf upgrade` and `doctor` detect it (the recorded interpreter hash differs) and run a foreground re-grant with prompts on, using the same interpreter binary, where you enter your login password and choose Always Allow (whether Always Allow adds the new hash durably is unverified, confirm in V1.0; fallback: the service re-writes each secret after you re-enter it);
+  - `uv tool upgrade` with an unchanged interpreter keeps access (tested).
 - **Linux** (chosen automatically and shown by `doctor`; operator decision 2026-09-26, OD-096): (1) Secret Service (GNOME Keyring, KWallet, KeePassXC) via `keyring` when a D-Bus session and unlocked keyring exist (after a reboot, unreadable until you log in; unverified, V1.6); (2) otherwise `systemd-creds --user` (TPM2 if present, else the host key; decrypted at service start via `LoadCredentialEncrypted=`; adding a secret runs `systemd-creds encrypt --user`, updates the unit and restarts the service; behavior unverified, V1.6); needs systemd 256+ (verified 2026-09-27, systemd NEWS); (3) otherwise refuse to start and explain. No passphrase-file fallback.
 - **Distributions** (package sites checked 2026-09-27): systemd 256+ on Ubuntu 26.04 LTS (259.5), Ubuntu 25.10 (257.9), Debian 13 (257.13), Fedora 43/44/45 (258/259/262), Rocky Linux 10 (257); not on Ubuntu 24.04 LTS (255.4), Debian 12 (252.39), Rocky 9 (252). Alma/RHEL 10 very likely 257 (unverified). v1 supports Linux desktops via Secret Service and headless Linux is best-effort (operator decision 2026-09-27, OD-097). A root system-unit fallback for older systems is decided in M4. README documents `loginctl enable-linger` and importing the session environment for notifications (operator decision 2026-09-27, OD-098).
 - **Secret names** [proposed]: service `email-classify-filter/<install>`, accounts `mailbox/<address_id>`, `slack/bot`, `slack/app`, `models-api-key`, `export-signing-seed`.
@@ -940,6 +943,7 @@ This section owns the threat model, stated limits and privacy statement; README,
 
 ### 12.2 Stated limits
 
+- **Any process that runs ecf's Python interpreter binary can read ecf's secrets from the Keychain without a prompt** (V1.0 Keychain test, 2026-09-27; OD-163): for example your own scripts or a coding agent using the same uv-managed Python. Other programs must enter your login password.
 - In v1, **anyone who controls your OS account controls ecf**: secrets, state and service share one machine. That includes your own coding agent running as you (any Claude Code session with a shell); this is why the plugin lives only in `ecf claude`'s config and OBSERVE carries no email text.
 - Step-up confirms intent inside one OS account; it is not a boundary against malware running as you.
 - MCP profiles are hygiene, not a boundary.
@@ -1286,7 +1290,7 @@ Checked 2026-09-26 on PyPI and upstream; V1.0 secrets and HTTP rows 2026-09-27. 
 | `starlette` 1.7.0, `uvicorn` 0.54.0 (core), `httpx` 0.28.1 | BSD-3-Clause | service, client | keep notice |
 | `secretstorage` 3.5.0 | BSD-3-Clause | service (Linux) | keep notice |
 | `jeepney` 0.9.0 | MIT | service (Linux) | keep notice |
-| `pyrage`, PyObjC LocalAuthentication, `python-pam` | MIT | service | keep notices |
+| `pyrage`, PyObjC LocalAuthentication and Security frameworks, `python-pam` | MIT | service | keep notices |
 | transitive: `httpcore`, `idna`, `click`, `pycparser` (BSD-3-Clause); `h11` (MIT); `cryptography` (Apache-2.0 OR BSD-3-Clause); `cffi` (MIT-0) | as listed (PyPI metadata) | client/service | keep notices |
 | `typing_extensions` 4.16.0 (via `pydantic`; its dependency list not retrieved, confirm at V1.0) | PSF-2.0 | client/service | keep notice |
 | `certifi` | MPL-2.0 | shipped at runtime, unmodified (named exception) | none while unmodified |
@@ -1348,7 +1352,7 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 
 | Gate | Test | Needs | Result |
 |---|---|---|---|
-| before V1.0 | **Keychain:** service write, read after restart and after `uv tool upgrade`, whether other Python scripts read items silently | the Mac | pending |
+| before V1.0 | **Keychain:** service write, read after restart and after `uv tool upgrade`, whether other Python scripts read items silently | the Mac | **done 2026-09-27** (macOS 27.0, uv 0.12.15, uv-managed CPython 3.12.14, keyring 25.7.0; LaunchAgent stand-in). Write, restart and `uv tool upgrade`: silent reads. Other script on the same interpreter: **silent read**. A copy of that interpreter at another path: **silent read** (trust is by code hash; both Pythons ad-hoc signed). Homebrew 3.12 and the `security` command: prompted, login password required. Service after a switch to 3.12.13: **blocked on a dialog 139 s**, then denied. Prompts off: the untrusted read fails in 0.02 s (-25293). User-presence items: -34018 (missing entitlement), data-protection and classic keychains. Also observed: uv picks its managed Python over Homebrew's once one is installed. Outcome: OD-163. |
 | before V1.1 | **Mail and sender authentication:** DKIM/DMARC on real senders at the test mailbox; app-password scope; `imapclient` partial and literal handling; whether the provider saves sent mail | test mailbox and app password; read-only IMAP plus one SMTP send to itself | pending |
 | before V1.2 | **Slack Socket Mode:** manifest install, "Install to Workspace", app-level token; DMs with the Messages tab settings; `chat:write.customize` in threads; `pins:write`; what Slack shows for clicks while the computer sleeps | test workspace, configuration token | pending |
 | before V1.2 | **Local step-up, macOS:** LocalAuthentication from the LaunchAgent (feasibility, completion-handler threading) | the Mac | pending |
@@ -1357,6 +1361,7 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 
 ### 21.2 Measurements and confirmations during the build
 
+- **V1.0:** whether a foreground Always Allow adds a changed interpreter's hash durably (Keychain re-grant, §11.6); `SecKeychainSetUserInteractionAllowed` is a legacy Keychain API (unverified whether Apple has deprecated it; watch it).
 - **V1.1:** peak memory for 64 MB messages; `BytesHeaderParser` option; dkimpy on real senders; RFC 9989 tree walk on real senders; share of payment mail at `auth_result = none`; the shared-platform sender list; each provider's maximum message size.
 - **V1.2:** `osascript` notifications; `ProcessType=Interactive`; Slack sleep behavior.
 - **V1.3:** Gemma 4 12B digest; pulling a specific digest; the single-token experiment (`top_logprobs` range, before/after constraint); whether `prompt_eval_count` includes cached tokens; prompt-cache benefit of `OLLAMA_NUM_PARALLEL=1`; reload on option change; IOPM assertions from a LaunchAgent; 150-email backlog time on the Air; optional `-mlx` vs default speed and q8 size.
@@ -1899,6 +1904,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-160 | 2026-09-27 | (SPEC review) | SPEC §11.7 | Log rotation at 50 MB, keeping 10 files |
 | OD-161 | 2026-09-27 | (SPEC review) | SPEC §8.6 | The rules grammar keeps the `lte` operator |
 | OD-162 | 2026-09-27 | (SPEC review) | SPEC §23.3 | All other [proposed] items accepted as written |
+| OD-163 | 2026-09-27 | (Keychain test) | SPEC §11.6, §12.2 | Keychain secrets readable by any process running ecf's Python binary: accepted as a stated limit; the service reads with prompts off and never hangs; foreground re-grant after interpreter changes |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
