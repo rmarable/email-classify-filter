@@ -67,13 +67,13 @@ Each ends with something runnable (operator decision 2026-09-26, OD-008). Each v
 All must hold:
 1. Milestones V1.0-V1.6 tagged.
 2. Every v1 real-service test in §21.1 passed and its result recorded in this document, including the V1.6 Linux tests.
-3. Eval safety gates met on the synthetic set for preset A and for each shipped Claude pin (§16.5): fraud-guard recall 100%, injection set 0, unsafe payment/fraud proposals 0.
+3. Eval safety gates met on the synthetic set for preset A and for each shipped Claude pin (§16.5; operator decision 2026-09-27, OD-159): fraud-guard recall 100%, injection set 0, unsafe payment/fraud proposals 0.
 4. Documentation complete: README, operator guide, admin guide, SECURITY.md, CONTRIBUTING, CHANGELOG, ADRs, `THIRD_PARTY_NOTICES`.
 5. No open critical findings (security or data loss) in this document's open items or the issue tracker.
 6. CI green on macOS and Linux, license check passing, release artifacts reproducible and hash-verified.
 7. Operator sign-off.
 
-Items 3 (which presets), 4 (the document list), 5 (what "critical" means: a finding that could cause mail loss, an unauthorized send or action, or a missed fraud escalation) and 6 are [proposed]; the plan requires "release criteria defined in SPEC" with the elements named in items 2-5 and 7.
+Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list), 5 (what "critical" means: a finding that could cause mail loss, an unauthorized send or action, or a missed fraud escalation) and 6 are [proposed]; the plan requires "release criteria defined in SPEC" with the elements named in items 2-5 and 7.
 
 ### 1.6 Documents
 
@@ -360,7 +360,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 | `needs_clarification` | `needs_human` | after 2 rounds, or a second expired answer |
 | `clarified` | `proposed` | only within the two-round cap |
 | `needs_human` | `proposed`, `resolved_manual` | |
-| `executing` | `executed`, `failed`, `failed_unknown` | 3 attempts with backoff; a send is retried only when it provably failed before the server accepted it (connection or pre-DATA error), otherwise it goes to Sent reconciliation [proposed] |
+| `executing` | `executed`, `failed`, `failed_unknown` | 3 attempts with backoff; a send is retried only when it provably failed before the server accepted it (connection or pre-DATA error), otherwise it goes to Sent reconciliation (operator decision 2026-09-27, OD-156) |
 | `failed`, `failed_unknown`, `executing` (stuck) | `executing` | `ecf item requeue`; broker reconciles first |
 | `executed` | `undoing` | reversible actions |
 | `undoing` | `undone`, `undo_failed` | |
@@ -369,7 +369,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 | any open | `resolved_by_mailbox` | the email was already moved, archived or deleted in your mail client (checked each check; operator decision 2026-09-27, OD-039) |
 
 - **Held items** appear as one batched digest line and run only after go-live; you can still act by hand in your mail client (operator decision 2026-09-27, OD-038). `ecf stage set live` prints held counts by age, says that held items ≤ 7 days execute at once, and offers to resolve older ones (default 7 days) as `resolved_manual`, or "resolve all held".
-- **Fix and Correct:** ✅ Correct records `review = correct`; ✏️ Fix records `human_correction` and returns the item to `proposed` when the decision changes (from `awaiting_approval`, or via undo from `executed`); on a `held` item it records the correction and replaces the held proposal, and the item stays `held` until the address is live [proposed; the plan lists `held` without resolving the guard]; on `observed` items it only records the correction for the gate. Fix and sender confirmation never remove a trigger already fired.
+- **Fix and Correct:** ✅ Correct records `review = correct`; ✏️ Fix records `human_correction` and returns the item to `proposed` when the decision changes (from `awaiting_approval`, or via undo from `executed`); on a `held` item it records the correction and replaces the held proposal, and the item stays `held` until the address is live (operator decision 2026-09-27, OD-157); on `observed` items it only records the correction for the gate. Fix and sender confirmation never remove a trigger already fired.
 - **Expiry:** `expiry_count` drives "after a second expiry": a second expired approval is listed only in the daily summary; a second expired answer sends the item to `needs_human`; an expired answer counts as one of the two clarification rounds. On approval expiry the Slack card is edited in place with a fresh grant and "expired, decide again".
 - **Attributes:** `decision_source` (`rule`, `actor`, `human`), `proposed_by`, `suppressed_action`, `review`, `pinned_models`, `prechecked`, `stale`.
 - **Undo:** archive, move and junk move back to INBOX (UID re-resolved by Message-ID); label and flag remove the keyword or flag; mark_read removes `\Seen`; drafts are deleted. Available until retention removes the item.
@@ -467,7 +467,7 @@ fields:
 |---|---|
 | `sender_origin` | `internal` only if the normalized From domain is in `org_domains` **and** `auth_result = pass`; else `external` |
 | `auth_result` | ecf's own DMARC evaluation (§7.3): `pass` (aligned, valid DKIM), `fail` (DMARC fails with a published policy), otherwise `none`. Provider Authentication-Results are never used. Messages over `max_message_bytes` are always `none`. |
-| `sender_seen_before` | a human-confirmed category for this sender at this address, **or** at least 3 earlier DMARC-pass messages spread over 14 days or more (operator decision 2026-09-27, OD-043). For bank-detail triggers only a human-confirmed category counts (operator decision 2026-09-27, OD-044). Senders on the shipped shared-platform list (invoicing, e-signature, payment-notification services; initial list [proposed], finalized in V1.1: `docusign.net`, `echosign.com`, `bill.com`, `intuit.com`, `quickbooks.com`, `xero.com`, `freshbooks.com`, `stripe.com`, `paypal.com`, `squareup.com`) never count as seen. |
+| `sender_seen_before` | a human-confirmed category for this sender at this address, **or** at least 3 earlier DMARC-pass messages spread over 14 days or more (operator decision 2026-09-27, OD-043). For bank-detail triggers only a human-confirmed category counts (operator decision 2026-09-27, OD-044). Senders on the shipped shared-platform list (invoicing, e-signature, payment-notification services; initial list (operator decision 2026-09-27, OD-158), finalized in V1.1: `docusign.net`, `echosign.com`, `bill.com`, `intuit.com`, `quickbooks.com`, `xero.com`, `freshbooks.com`, `stripe.com`, `paypal.com`, `squareup.com`) never count as seen. |
 | `reply_to_mismatch` | Reply-To domain differs from the From domain, unless it matches the sender's recorded expected Reply-To (`ecf sender set-reply-to`) |
 | `recipient_mismatch` | the monitored address is not in To or Cc (replayed signed mail) |
 | `bulk_signal` | `List-Id` or `List-Unsubscribe`, `Auto-Submitted` not `no`, a no-reply sender, `Precedence: bulk|list|junk`, `X-Autoreply`, or an empty Return-Path. Counts toward hide corroboration only when `auth_result = pass` and the sender is not first-time (operator decision 2026-09-27, OD-045). |
@@ -1205,7 +1205,7 @@ One hierarchy with a generated table: stable `code` → HTTP status (RFC 9457 pr
 | Operation | Timeout | Retries |
 |---|---|---|
 | IMAP connect / command | 15 s / 60 s | 3, backoff 5 s, 30 s, 2 min; login failures: 3 then hourly |
-| SMTP send | 60 s | up to 3 attempts only for failures before the server accepted the message; any other outcome is reconciled via `\Sent` (§6.2) [proposed] |
+| SMTP send | 60 s | up to 3 attempts only for failures before the server accepted the message; any other outcome is reconciled via `\Sent` (§6.2) (operator decision 2026-09-27, OD-156) |
 | DNS | 1.5 s per query, 3 s lifetime | within the per-check budget; next check |
 | Slack Web API | 10 s | honor `Retry-After`; network errors hold the post |
 | Ollama request | 120 s | 1; then `System Error` path |
@@ -1727,11 +1727,11 @@ Items marked "(Fable/Opus review 2026-09-27)" or "(final Fable pass 2026-09-27)"
 
 ### 23.3 Proposed in SPEC, pending operator review
 
-Milestone tag names V1.1-V1.4 (§1.4); release criteria items 3, 5, 6 (§1.5); SQLite columns (§6.1); sleep-detection threshold (§5.5); `BytesHeaderParser` option (§5.1); shared-platform list contents (§7.2); DNS budget (§7.3); keyword-list location (§8.5); rules grammar (§8.6); template shape (§8.7); PAM rate limit (§9.6); dead-man's switch lead (§10.1); MCP tools and wrapper (§10.4); unit templates, stop timeouts, `ProcessType` (§11.1); job-queue values (§11.3); secret names, data-directory layout, log rotation (§11.6-11.7); config ranges marked P (§14); routes, log events, error codes, retries (§15).
+Milestone tag names V1.1-V1.4 (§1.4); release criteria items 4, 5, 6 (§1.5); SQLite columns (§6.1); sleep-detection threshold (§5.5); `BytesHeaderParser` option (§5.1); DNS budget (§7.3); keyword-list location (§8.5); rules grammar (§8.6); template shape (§8.7); PAM rate limit (§9.6); dead-man's switch lead (§10.1); MCP tools and wrapper (§10.4); unit templates, stop timeouts, `ProcessType` (§11.1); job-queue values (§11.3); secret names, data-directory layout, log rotation (§11.6-11.7); config ranges marked P (§14); routes, log events, error codes, retries (§15).
 
 ### 23.4 Operator decisions
 
-Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155) ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
+Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155), then decisions made reviewing this document (OD-156 onward; "Plan line" reads "(SPEC review)") ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
 
 | ID | Date | Plan line | Home document | Decision |
 |---|---|---|---|---|
@@ -1890,6 +1890,10 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-153 | 2026-09-26 | 17 | SPEC §1 | Scope: v1 = single-user local mode (section heading marker) |
 | OD-154 | 2026-09-26 | 188 | SPEC §5.4 | Scheduled pre-check (section heading marker) |
 | OD-155 | 2026-09-26 | 689 | SPEC §11 | Local mode in v1 (section heading marker) |
+| OD-156 | 2026-09-27 | (SPEC review) | SPEC §6.2, §15.4 | A send is retried only when it provably failed before the server accepted it; otherwise Sent reconciliation |
+| OD-157 | 2026-09-27 | (SPEC review) | SPEC §6.2 | Fix on a held item records the correction and the item stays held until live |
+| OD-158 | 2026-09-27 | (SPEC review) | SPEC §7.2 | Initial shared-platform sender list, finalized in V1.1 |
+| OD-159 | 2026-09-27 | (SPEC review) | SPEC §1.5 | v1.0.0 safety gates: preset A and each shipped Claude pin |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
