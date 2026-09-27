@@ -1,3 +1,6 @@
+> Superseded by `SPEC.md` on 2026-09-27; kept for history. Not maintained.
+> Moved here from the repository root; content below is unchanged.
+
 # Local Email Processing
 
 A privacy-preserving email classification and filing pipeline. Emails are

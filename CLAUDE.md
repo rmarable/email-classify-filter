@@ -8,54 +8,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. Do not make up facts; if something is unknown or unverified, say so.
 3. Always confirm before writing files, committing, or pushing.
 
-## Session state: `CLAUDE-STATE.md`
+## Project
 
-`CLAUDE-STATE.md` holds local working state: the current task, progress, and open questions. Read it at the start of each session, and update it as work progresses (rule 3 still applies). It is gitignored and must never be committed.
+ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS and Linux (no AWS). Roadmap: M1 AWS mode, M2 teams, M3 remote access, M4 always-on.
 
-## Project state
+Each deliverable, and each real-service test, starts only when the operator names it.
 
-This repo is mostly design, not yet an implementation. It contains three design docs and one throwaway sketch:
+## Where the design lives
 
-- `LOCAL-EMAIL-PROCESSING.md`: the primary design. Classification runs on-device (Ollama or MLX), so no third party sees email content.
-- `JEV-EMAIL-PROCESSING.md`: a variant where the classifier is TypeSafe AI's hosted Jev API. It is identical to the local design except for the classifier component and the privacy model. It also describes an optional Claude-based dispatcher (§10) that reads a prose `rules.md`, plus multi-mailbox support.
-- `POTENTIAL_CODE_SOURCES.md`: a survey of prior art. §6 holds the concrete library and pattern decisions that override parts of the design docs (see below).
-- `email_classifier_sketch.py`: a minimal Ollama schema, classify, and stub-action loop. Mailbox ingestion and real actions are not wired in.
+- `SPEC.md` is authoritative. It owns the threat model, stated limits, privacy statement and release criteria; README, SECURITY.md and this file summarize and point to it.
+- The approved design plan is committed as `docs/history/design-plan-2026-09-27.md` (`docs/CURRENT-DESIGN-PLAN.md` links to the latest plan). It holds the full design of each roadmap milestone until that milestone's `docs/roadmap/<milestone>.md` is written at its start.
+- `docs/history/` also holds the superseded early documents (`LOCAL-EMAIL-PROCESSING.md`, `JEV-EMAIL-PROCESSING.md`, `POTENTIAL_CODE_SOURCES.md`, `email_classifier_sketch.py`). They are history only; do not use them as a design source.
 
-There is no package layout, dependency manifest, test suite, or linter config yet. When you add any of these, update this file.
+## Design-plan link rule
 
-## Running the sketch
+- Design plans are dated, immutable snapshots: `docs/history/design-plan-YYYY-MM-DD.md` (same-day plans add `-2`, `-3`). Never edit a plan after it is committed.
+- `docs/CURRENT-DESIGN-PLAN.md` is a relative symlink to the latest plan. Whenever a new plan is committed, repoint the symlink in the same commit.
+- `SPEC.md` is authoritative over any plan.
 
-Requires a local Ollama daemon with the model pulled:
+## Architecture (v1; details in SPEC)
 
-```sh
-pip install ollama pydantic
-ollama pull mistral-small:7b   # MODEL_NAME in the sketch
-python email_classifier_sketch.py
-```
+- **One local service**, `ecf-server local` (launchd on macOS, systemd user unit on Linux), holds all state and does all security-relevant work: IMAP fetch, DKIM/DMARC, computed facts, fraud and regulator triggers, rules, policy, grants, state transitions, Slack (Socket Mode), step-up, execution, timers.
+- State in SQLite (WAL); secrets in the OS secret store; full messages are held in memory only, never written to disk.
+- **Clients** (`ecf` CLI; `ecf-mcp`, the stdio MCP server the Claude Code plugin runs) talk to the service over HTTP on a 0600 Unix socket. Clients hold no rules, policy, facts or state transitions.
+- One distribution, `email-classify-filter`, with two import packages: `ecf` (client) and `ecf_server` (service). `ecf` never imports `ecf_server` (import-linter).
+- Model output can raise risk but never, alone, hide mail or approve anything. MCP has no approval or admin tools.
+- Presets: A all-local (Gemma 4 12B via Ollama); B local classifier + Claude actor; C all-Claude. Claude runs only on demand, via `/ecf-review` typed in an `ecf claude` session.
 
-## Target architecture (read across the design docs)
+## Build milestones
 
-Pipeline: `MailboxSource` → classifier → rule engine → action dispatcher → `MailboxSource.apply_action`.
+V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 local models (preset A) · V1.4 Claude on demand (B, C) · V1.5 outbound and operations · V1.6 Linux verification (gates `v1.0.0`).
 
-- **`MailboxSource` ABC** (`list_messages`, `get_message`, `apply_action`) normalizes every backend into an `EmailMessage` dataclass. The planned implementations are `GmailApiSource` (labels; "filing" means add a label and remove `INBOX`) and `ImapSource` (real folders; COPY+delete or `MOVE`). `AppleMailSource` via AppleScript is a possible future option. Nothing downstream of ingestion should branch on backend.
-- **Schema**: the `EmailClassification` Pydantic model lives in its own `schema.py`, so schema changes stay a single-file diff. It is versioned and extensible. Candidate fields are `requires_human_review`, `sentiment`, and `requires_reply`. If you use Jev, keep its schema registration in the same module.
-- **Classifier** is pluggable (`classifier.backend: local | jev`), in the same way the mailbox backend is chosen by config.
-- **Rule engine**: a known-sender lookup short-circuits the classifier call.
-- **Action dispatcher**: config-driven rules with backend-neutral intent (for example, `file_low_priority` with target `Marketing`). Each `MailboxSource` translates a rule into a label or a folder operation.
+## Commands
 
-## Decisions from `POTENTIAL_CODE_SOURCES.md` §6 (take precedence over the older design-doc text)
+None until V1.0; then see `CONTRIBUTING.md` (written in V1.0). Add key commands here when they exist. `docs/` is excluded from pytest, ruff and pyright (recorded in `pyproject.toml` at V1.0).
 
-- Ollama path: use `instructor` with `EmailClassification` as `response_model`. It retries on validation failure, which replaces the sketch's raise-on-failure. Do not layer `outlines` on Ollama.
-- MLX path: use `outlines`, which provides real grammar-level constraint through a logits processor.
-- Known-sender rules: a TOML file, not an in-code `KNOWN_SENDERS` dict.
-- `MailboxSource`: adopt capability flags (`TRUE_LABELS` vs `FOLDERS`, `LABEL_IS_MOVE`) instead of describing the label-vs-folder difference in prose.
-- Action logging: a pending/applied/failed move-state pattern under the activity log. Record the behavior actually observed, not the behavior requested.
+## Hard constraints
 
-## Hard requirements
+- **Credentials** (IMAP app passwords, Slack tokens, API keys) never enter the repo, environment variables or secrets files. They live only in the OS secret store (macOS Keychain, Linux Secret Service or `systemd-creds`), written only by the local service.
+- **Privacy** (SPEC owns the full statement): email content goes only to the mail provider, this computer, Slack (subjects, senders, classifications, the actor's reason, answers; short excerpts only on request), and Anthropic during `/ecf-review` and `/ecf-eval` (presets B and C). Never add another destination. No payload logging.
+- **Models:** exclude PRC-affiliated and Meta/X-affiliated labs (operator preference), e.g. Qwen, DeepSeek, Llama, Grok.
+- **Real-service tests** need the operator's go-ahead each time; their code is throwaway and stays in the session scratchpad, never the repo; Slack resources they create are torn down afterwards; results go in SPEC (an ADR only when a result changes a decision).
 
-- **Activity log before any real or unattended run.** Write append-only JSONL with one entry per processed message, including dry runs. The field spec is in `LOCAL-EMAIL-PROCESSING.md` §5a and `JEV-EMAIL-PROCESSING.md` §10.5. Keep `dry_run: true` distinct from `action_executed: false` + `error`. Record `classification_source` (`model` vs `known_sender`).
-- **Idempotency key** is `(backend, msg_id)` for one account and `(backend, account, msg_id)` for multiple mailboxes. Processing must be resumable, with results written incrementally.
-- **Dry-run mode** classifies and logs without calling `apply_action`.
-- **Privacy:** in the local variant, email content goes only to the mail provider and localhost. Never add a cloud call that carries email content to the local path. Local models give no calibrated confidence the way Jev does. Any confidence gating there needs its own mechanism; don't treat a self-reported confidence as trustworthy.
-- **Model choice** excludes PRC-affiliated and Meta/X-affiliated labs (user preference). The candidates are Mistral Small 3, Mixtral 8x7B, Gemma 4 26B A4B, and Phi-4-mini.
-- Credentials (OAuth tokens, IMAP app passwords) stay outside the repo in the keychain, env vars, or a local secrets file.
+## Tags
+
+- **Milestone tags** (`ms-v1.0-foundations` … `ms-v1.5-outbound-ops`, `ms-v1.6-linux`, later `ms-m1-aws`, …) are annotated tags recording internal progress. They do **not** mean the software is ready for anyone else.
+- **Release tags** `vX.Y.Z` (optionally `-rcN`) are the only tags built and published from, and the only ones `ecf upgrade --to` accepts. `v1.0.0` requires every V1.x milestone plus the release criteria in SPEC.
+- Create or push a tag only after the operator confirms and approves both the tag and the push.
+
+## Documentation style
+
+- Terse, precise, for a semi-technical reader; no filler.
+- One owner per topic: SPEC (design, threat model, limits), SECURITY.md (vulnerability reporting, supported versions, a summary pointing to SPEC), CONTRIBUTING (how-to only).
+- A "verified" fact cites its site and date; anything else reads "unverified, confirm in V1.x". "(rv)" marks a fact verified by a reviewer's cited source and not re-checked by Claude.
+
+## Session state
+
+- `CLAUDE-STATE.md` holds local working state. It is gitignored, must never be committed, and is loaded automatically through `CLAUDE.local.md` (gitignored; the single line `@CLAUDE-STATE.md`).
+- If either file is missing (fresh clone, another worktree), create a short placeholder for each (rule 3 applies).
+- Update it as work progresses (rule 3 applies). At most 80 lines, in four sections: Current task, Next steps, Open questions, Recent progress (the last 10 entries).
+- Decisions don't live there. A decision made during the build becomes an ADR in `docs/adr/` (committed with the operator's OK); a small decision that doesn't justify an ADR (a default value, a name) goes in the relevant SPEC section, marked with its date and "operator decision", and the commit message names the change. Either way the state file keeps at most a one-line pointer.
+- **Archiving:** at each `ms-…` tag, or when the file passes 80 lines, progress entries older than the last 10 and resolved open questions (each with a one-line pointer to where its answer landed) move to `state-archive/YYYY-MM.md` (gitignored, never imported). Propose the rollover, show what moves, and do it only after the operator confirms.
+
+## Path-scoped rules
+
+`.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files. Now: `eval-synthetic.md` (`tests/eval/synthetic/**`). A `docs/roadmap/**` rule arrives with the first roadmap document; an `infra/**` rule with M1.

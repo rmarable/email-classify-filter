@@ -1,3 +1,5 @@
+# Superseded by SPEC.md on 2026-09-27; kept for history. Not maintained.
+# Moved here from the repository root; content below is unchanged (it still names mistral-small:7b).
 """
 Rough sketch: local email classifier using Mistral via Ollama.
 - Model runs locally (no cloud calls, no third-party sees email content)

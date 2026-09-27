@@ -1,3 +1,6 @@
+> Superseded by `SPEC.md` on 2026-09-27; kept for history. Not maintained.
+> Moved here from the repository root; content below is unchanged.
+
 # Jev-Based Email Processing
 
 An email classification and filing pipeline. Emails are classified by
