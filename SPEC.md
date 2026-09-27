@@ -835,7 +835,7 @@ UMask=0077
 WantedBy=default.target
 ```
 
-The unit uses the absolute `ecf-server` path from the `uv tool` install. `ProcessType=Interactive` is [proposed] and to be checked against the LocalAuthentication test in V1.2.
+The unit uses the absolute `ecf-server` path from the `uv tool` install. When `ECF_HOME` is set, it is written into the unit so the background service uses the same data folder; `ecf service status` exits 3 when the service isn't running (operator decision 2026-09-27, OD-174). `ProcessType=Interactive` is [proposed] and to be checked against the LocalAuthentication test in V1.2.
 
 ### 11.2 SQLite and threading (operator decision 2026-09-27, OD-104)
 
@@ -1918,6 +1918,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-171 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rule 1b for the weak fraud signal |
 | OD-172 | 2026-09-27 | (V1.0 build) | SPEC §11.6 | systemd-creds credential names map `/` to `.` |
 | OD-173 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | run/ folder for socket, token, lock, marker; ecf-server exit codes 0/3/70 |
+| OD-174 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | ECF_HOME written into the unit; `ecf service status` exits 3 when not running |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
