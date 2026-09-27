@@ -1,1 +1,37 @@
+################################################################################
+# Name:    .gitignore
+# Author:  Rodney Marable <rodney.marable@gmail.com>
+# Purpose: Files that shouldn't be committed to this repository
+################################################################################
+
+# Standard exclusions for Python projects
+*~
+*#
+.DS_Store
+.venv/
+*.class
+*.egg-info/
+.idea/
+*.pem
+*.pyc
+*.pyo
+*.retry
+.serverless
+*.swp
+*.swo
+*.swn
+TODO
+__pycache__/
+
+# Claude Code local working state (never committed)
+CLAUDE.local.md
 CLAUDE-STATE.md
+state-archive/
+
+# Evaluation data: private cases and on-demand build output
+eval/private/
+tests/eval/synthetic/.build/
+
+# Raw email files anywhere except the synthetic eval set
+*.eml
+!tests/eval/synthetic/**/*.eml
