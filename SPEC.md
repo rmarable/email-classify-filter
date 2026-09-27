@@ -791,6 +791,7 @@ For one person on one computer, macOS or Linux (operator decision 2026-09-26, OD
 - One process, `ecf-server local` (operator decision 2026-09-26, OD-094; section: OD-155), launchd LaunchAgent on macOS (`KeepAlive = {SuccessfulExit = false}`), systemd user unit on Linux (`Restart=on-failure`, `StartLimitIntervalSec=600`, `StartLimitBurst=5`).
 - **Threads:** main (signals; sets a shared stop event, then uvicorn's `should_exit`, then joins the others in order with timeouts); uvicorn `serve()` in a non-main thread (API app and telemetry app in the same event loop); the Slack Socket Mode thread; the timer thread (`threading.Event.wait(next_deadline - now)`); the lease-renewal thread; worker threads that wait on a condition variable (`cond.wait(timeout=next_due - now)`) rather than polling.
 - **Single-instance lock** in the data directory via `fcntl.flock`; a stale socket is unlinked only while holding it.
+- **Run folder and exit codes** (operator decision 2026-09-27, OD-173): the socket, CLI token, lock and running marker live in `<data dir>/run/` (0700). `ecf-server` exits 0 for a clean stop or a tripped breaker, 3 when already running or unavailable, and 70 when the watchdog fires.
 - **Stop:** SIGTERM sets the stop event; an in-flight step is finished or abandoned (`executing` reconciliation covers it). launchd `ExitTimeOut` (its default is system-defined, so set explicitly; verified 2026-09-27, launchd.plist(5)) and systemd `TimeoutStopSec` are both 60 s [proposed], above the longest write transaction plus the 20 s page fetch.
 - **Crash-loop breaker** (Fable/Opus review 2026-09-27): a crash counter persisted on disk; after 5 crashes in 10 minutes the service posts to Slack, sends a desktop notification and, when on, an email naming the reason, then exits 0 and **stays stopped until `ecf service start`** (which also runs `systemctl --user reset-failed` on Linux; ecf's own breaker is authoritative there). The counter resets after 30 minutes without a crash. After a normal crash restart it posts "restarted after a crash".
 - **Secret store locked:** waits and retries rather than exiting (operator decision 2026-09-27, OD-095); a desktop notification after 5 minutes, repeated hourly; `status` shows the wait.
@@ -1916,6 +1917,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-170 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rules grammar additions: action `if`, `continue_if`, label from field, catch-all rule, hide:never check; rules never emit sends or drafts |
 | OD-171 | 2026-09-27 | (V1.0 build) | SPEC §8.6 | Rule 1b for the weak fraud signal |
 | OD-172 | 2026-09-27 | (V1.0 build) | SPEC §11.6 | systemd-creds credential names map `/` to `.` |
+| OD-173 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | run/ folder for socket, token, lock, marker; ecf-server exit codes 0/3/70 |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
