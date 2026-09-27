@@ -1,15 +1,21 @@
 """The socket HTTP API (SPEC §11.4, §15.1): one Starlette app, sync endpoints.
 
-Every route except `/v1/health` needs the CLI bearer token from the 0600 token file. Errors are
-RFC 9457 problem+json. M1 wraps the same app with Mangum.
+Callers authenticate with a bearer token:
+- the CLI token (0600 file, rewritten at every service start): full CLI access;
+- a session profile token issued to `ecf claude` (WORK) and revoked when it exits.
+Routes declare which callers they accept. Decision and settings routes never accept a session
+token (SPEC §10.4). `/v1/health` needs no token. Errors are RFC 9457 problem+json.
 """
 
 from __future__ import annotations
 
 import hmac
 import os
+import secrets
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from starlette.applications import Starlette
@@ -21,13 +27,29 @@ from ecf import __version__
 from ecf.errors import (
     PROBLEM_CONTENT_TYPE,
     EcfError,
+    ForbiddenProfileError,
     InternalError,
     NotFoundError,
     UnauthorizedError,
 )
+from ecf.ids import new_random_id
+from ecf_server.clock import SystemClock, to_ts
 from ecf_server.log_bridge import log
 
 API_VERSION = 1
+
+
+class Caller(StrEnum):
+    CLI = "cli"
+    WORK = "work"  # an `ecf claude` session
+
+
+@dataclass
+class Session:
+    session_id: str
+    token: str
+    profile: Caller
+    created_at: str
 
 
 @dataclass
@@ -40,6 +62,17 @@ class ServiceState:
     breaker: dict[str, Any] = field(default_factory=dict[str, Any])
     secret_store: dict[str, Any] = field(default_factory=dict[str, Any])
     pid: int = field(default_factory=os.getpid)
+    sessions: dict[str, Session] = field(default_factory=dict[str, Session])
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def caller_for(self, token: str) -> tuple[Caller, Session | None]:
+        if token and hmac.compare_digest(token, self.token):
+            return Caller.CLI, None
+        with self.lock:
+            for s in self.sessions.values():
+                if hmac.compare_digest(token, s.token):
+                    return s.profile, s
+        raise UnauthorizedError("missing or wrong token")
 
 
 def _problem(err: EcfError, request: Request) -> JSONResponse:
@@ -50,20 +83,31 @@ def _problem(err: EcfError, request: Request) -> JSONResponse:
     )
 
 
-def create_app(state: ServiceState) -> Starlette:
-    def authed(handler: Callable[[Request], JSONResponse]) -> Callable[[Request], JSONResponse]:
-        def wrapper(request: Request) -> JSONResponse:
-            header = request.headers.get("authorization", "")
-            given = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
-            if not given or not hmac.compare_digest(given, state.token):
-                raise UnauthorizedError("missing or wrong CLI token")
-            return handler(request)
+Handler = Callable[[Request], JSONResponse]
 
-        return wrapper
+
+def create_app(state: ServiceState) -> Starlette:
+    def allow(*callers: Caller) -> Callable[[Handler], Handler]:
+        def deco(handler: Handler) -> Handler:
+            def wrapper(request: Request) -> JSONResponse:
+                header = request.headers.get("authorization", "")
+                given = (
+                    header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+                )
+                caller, _session = state.caller_for(given)
+                if caller not in callers:
+                    raise ForbiddenProfileError(f"not available to a {caller} caller")
+                request.state.caller = caller
+                return handler(request)
+
+            return wrapper
+
+        return deco
 
     def health(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
+    @allow(Caller.CLI, Caller.WORK)
     def status(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
@@ -79,6 +123,28 @@ def create_app(state: ServiceState) -> Starlette:
             }
         )
 
+    @allow(Caller.CLI)
+    def create_session(_request: Request) -> JSONResponse:
+        now = to_ts(SystemClock().now())
+        s = Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
+        with state.lock:
+            state.sessions[s.session_id] = s
+        log.info("session.created", session_id=s.session_id, profile=s.profile.value)
+        return JSONResponse(
+            {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value},
+            status_code=201,
+        )
+
+    @allow(Caller.CLI)
+    def delete_session(request: Request) -> JSONResponse:
+        session_id = str(request.path_params["session_id"])
+        with state.lock:
+            removed = state.sessions.pop(session_id, None)
+        if removed is None:
+            raise NotFoundError(f"no session {session_id[:8]}")
+        log.info("session.revoked", session_id=session_id)
+        return JSONResponse({"revoked": session_id})
+
     async def on_ecf_error(request: Request, exc: Exception) -> JSONResponse:
         return _problem(exc if isinstance(exc, EcfError) else InternalError(), request)
 
@@ -92,7 +158,9 @@ def create_app(state: ServiceState) -> Starlette:
     return Starlette(
         routes=[
             Route("/v1/health", health, methods=["GET"]),
-            Route("/v1/status", authed(status), methods=["GET"]),
+            Route("/v1/status", status, methods=["GET"]),
+            Route("/v1/sessions", create_session, methods=["POST"]),
+            Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
         ],
         exception_handlers={EcfError: on_ecf_error, 404: on_not_found, Exception: on_unexpected},
     )

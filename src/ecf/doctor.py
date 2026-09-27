@@ -232,6 +232,29 @@ def check_disk_encryption(run: Run = _run) -> Check:
     )
 
 
+def check_claude() -> Check:
+    from ecf.claude_wrapper import MIN_CLAUDE, claude_version  # noqa: PLC0415
+
+    claude = shutil.which("claude")
+    need = _v(MIN_CLAUDE)
+    if claude is None:
+        return Check(
+            "claude code",
+            Level.WARN,
+            "not installed (only presets B and C need it)",
+            f"install Claude Code {need}+ to use `ecf claude`",
+        )
+    found = claude_version(claude)
+    if found is None or found < MIN_CLAUDE:
+        return Check(
+            "claude code",
+            Level.WARN,
+            f"version {_v(found) if found else 'unknown'}",
+            f"update Claude Code to {need}+",
+        )
+    return Check("claude code", Level.OK, _v(found))
+
+
 def run_checks(
     paths: Paths,
     *,
@@ -244,6 +267,7 @@ def run_checks(
     checks += check_service(paths, now or datetime.now(UTC))
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))
+    checks.append(check_claude())
     if sys.platform.startswith("linux"):
         checks.append(Check("platform", Level.WARN, "Linux support is unverified until V1.6"))
     return checks

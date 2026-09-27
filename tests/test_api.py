@@ -44,3 +44,28 @@ def test_status_needs_the_token() -> None:
 def test_unknown_route_is_problem_json() -> None:
     r = get("/v1/nope", AUTH)
     assert r.status_code == 404 and body(r)["code"] == "not_found"
+
+
+def request(method: str, path: str, token: str | None = None) -> httpx.Response:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    async def call() -> httpx.Response:
+        transport = httpx.ASGITransport(app=APP)
+        async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
+            return await c.request(method, path, headers=headers)
+
+    return anyio.run(call)
+
+
+def test_session_tokens() -> None:
+    made = request("POST", "/v1/sessions", "secret-token")
+    assert made.status_code == 201
+    work, sid = body(made)["profile_token"], body(made)["session_id"]
+    assert body(made)["profile"] == "work"
+    assert request("GET", "/v1/status", work).status_code == 200  # WORK may read status
+    refused = request("POST", "/v1/sessions", work)  # but can't mint more tokens
+    assert refused.status_code == 403 and body(refused)["code"] == "forbidden_profile"
+    assert request("DELETE", f"/v1/sessions/{sid}", work).status_code == 403
+    assert request("DELETE", f"/v1/sessions/{sid}", "secret-token").status_code == 200
+    assert request("GET", "/v1/status", work).status_code == 401  # revoked
+    assert request("DELETE", f"/v1/sessions/{sid}", "secret-token").status_code == 404

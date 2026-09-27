@@ -94,6 +94,19 @@ def doctor() -> None:
         raise typer.Exit(3)
 
 
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def claude(ctx: typer.Context) -> None:
+    """Open Claude Code in ecf's own configuration (run /ecf-review there; tools arrive in V1.4).
+
+    Needs its own Claude login (it uses a separate configuration folder). Extra arguments are
+    passed to `claude`.
+    """
+    from ecf import claude_wrapper  # noqa: PLC0415
+
+    typer.echo("ecf claude: review tools arrive in V1.4; this opens the configured session only.")
+    raise typer.Exit(claude_wrapper.run(_paths(), list(ctx.args)))
+
+
 @service_app.command("install")
 def service_install() -> None:
     """Install the service unit (launchd or systemd) and start it."""

@@ -752,6 +752,7 @@ Notes:
 
 - `ecf claude` opens Claude Code with a dedicated config directory and working directory; the plugin is installed only there, never in your normal Claude Code config; a separate Claude login for that config is on the `init` checklist and checked by `doctor`.
 - **Main session:** allow-listed tools are `review_queue`, `Agent` and, for `/ecf-eval`, the `eval_*` tools (`Task` was renamed `Agent` in v2.1.63; `Task` still works, verified 2026-09-27, code.claude.com sub-agents docs); **the shell is denied** (operator decision 2026-09-27, OD-089); the main session model is Haiku (dispatch only); results are read only through `review_queue`, never from subagent prose.
+- **Permissions** (operator decision 2026-09-27, OD-175; verified against code.claude.com permissions and settings reference, 2026-09-27): the dedicated settings use `permissions.defaultMode: "dontAsk"`, so any tool not pre-approved is refused instead of asked about; `permissions.allow` lists the allowed tools; `Bash`, `WebFetch`, `WebSearch`, `Edit`, `Write` and `NotebookEdit` are also denied explicitly. V1.4 adds the review subagents' tools to the allow list.
 - **Subagents** hold `get_message` and `record_classification` / `propose_action`, each spawn carrying its own claim token; a V1.4 test checks subagents can't use Bash or WebFetch. Message bodies go only into subagent contexts.
 - `--strict-mcp-config` (also keeps claude.ai connectors out); whether it loads the plugin's server is a V1.4 test (fallback: pass `ecf-mcp` with `--mcp-config`). `.mcp.json` runs the absolute path of the installed `ecf-mcp --stdio` (no `uvx` at runtime; operator decision 2026-09-27, OD-129) with `"env": {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}"}` (`${VAR}` expansion documented, verified 2026-09-27, code.claude.com MCP docs).
 - No hooks: the dedicated config contains none (not `disableAllHooks`, which also disables the status line ecf needs, verified 2026-09-27, code.claude.com settings reference); `cleanupPeriodDays: 1`; transcripts purged on exit; `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=180000`; telemetry exported only to the local receiver (§13.4).
@@ -1919,6 +1920,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-172 | 2026-09-27 | (V1.0 build) | SPEC §11.6 | systemd-creds credential names map `/` to `.` |
 | OD-173 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | run/ folder for socket, token, lock, marker; ecf-server exit codes 0/3/70 |
 | OD-174 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | ECF_HOME written into the unit; `ecf service status` exits 3 when not running |
+| OD-175 | 2026-09-27 | (V1.0 build) | SPEC §10.3 | `ecf claude` settings: dontAsk mode, allow list, explicit denies |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
