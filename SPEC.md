@@ -961,7 +961,7 @@ Mailbox credentials only in the service; trust boundary in `ecf_server`; stages,
 - Subjects, senders, classifications, the actor's reason, answers and, on request (Show excerpt), short excerpts go to Slack; to Anthropic during `/ecf-review` and `/ecf-eval`. Slack keeps them under Slack's retention (free plan: hidden after 90 days, deleted after 1 year, verified, G1-26).
 - Claude Code transcripts on your computer contain email text; `ecf claude` sets a one-day cleanup period and purges its config's transcripts on exit.
 - Telemetry stays on the machine; identity fields Claude Code includes (user email, account and organization IDs) are dropped on arrival.
-- No payload logging (a structlog no-content processor). Unresolved records (metadata only) are kept until resolved or closed as `resolved_by_mailbox`, and flagged stale after 30 days.
+- No payload logging (a structlog no-content processor; operator decision 2026-09-27, OD-165): fields named `body`, `text`, `html`, `raw`, `content`, `subject`, `from`, `sender`, `to`, `cc`, `reply_to`, `recipients`, `excerpt`, `snippet`, `headers`, `attachment_name`, `filename`, `answer`, `reason`, `question`, `password`, `app_password`, `token`, `secret` and `passphrase` are redacted; any other string over 200 characters is cut; raw bytes are dropped. Log code records IDs and counts, not content. Unresolved records (metadata only) are kept until resolved or closed as `resolved_by_mailbox`, and flagged stale after 30 days.
 - Exports include excerpts of up to 4,000 characters, not bodies.
 - Email content goes nowhere else; adding a destination is a design change [proposed wording].
 
@@ -1259,7 +1259,7 @@ Temperature 0, one run plus a determinism check; Wilson 95% intervals. Primary: 
 
 ### 17.2 Conventions
 
-Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` settles the rest at V1.0); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally and `Annotated[str, StringConstraints(...)]` at the API boundary; one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
+Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` settles the rest at V1.0); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally and `Annotated[str, StringConstraints(...)]` at the API boundary (formats, operator decision 2026-09-27, OD-164: address and install names are lowercase slugs `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`, at most 40 characters; `stable_id` 64 hex; grant, job and nonce IDs 32 random hex; short IDs 8-64 hex); one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
 
 ### 17.3 Testing and development
 
@@ -1905,6 +1905,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-161 | 2026-09-27 | (SPEC review) | SPEC §8.6 | The rules grammar keeps the `lte` operator |
 | OD-162 | 2026-09-27 | (SPEC review) | SPEC §23.3 | All other [proposed] items accepted as written |
 | OD-163 | 2026-09-27 | (Keychain test) | SPEC §11.6, §12.2 | Keychain secrets readable by any process running ecf's Python binary: accepted as a stated limit; the service reads with prompts off and never hangs; foreground re-grant after interpreter changes |
+| OD-164 | 2026-09-27 | (V1.0 build) | SPEC §17.2 | ID formats: slugs ≤ 40 chars; 64-hex stable_id; 32-hex random IDs; 8-64 hex short IDs |
+| OD-165 | 2026-09-27 | (V1.0 build) | SPEC §12.4 | Log redaction: named content and secret fields redacted, other strings capped at 200 chars, bytes dropped |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
