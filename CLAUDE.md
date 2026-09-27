@@ -72,7 +72,7 @@ uv build                                  # wheel + sdist
 
 ## Commits
 
-- The co-author trailer never names the model. Use exactly: `Co-Authored-By: Claude <noreply@anthropic.com>`.
+- A commit message ends with exactly one trailer line: `Co-Authored-By: Claude <noreply@anthropic.com>`. Never name the model, and never add a `Claude-Session:` link or any other trailer.
 
 ## Documentation style
 

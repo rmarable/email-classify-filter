@@ -39,7 +39,7 @@ exclude = ["docs/", "tests/eval/synthetic/.build/"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 extend-exclude = ["docs"]
 
 [tool.ruff.lint]
@@ -48,9 +48,10 @@ ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004"]
+"scripts/**" = ["T201", "S603", "S607"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 exclude = ["docs"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
