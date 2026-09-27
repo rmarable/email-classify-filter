@@ -295,15 +295,15 @@ Normalized tables per entity (operator decision 2026-09-27, OD-150; Fable/Opus r
 
 | Table | Key | Columns (summary) |
 |---|---|---|
-| `addresses` | `address_id` | email, display_name, sensitivity, stage, paused, outbound, preset, classifier_id, actor_id, fallback_enabled, claude_queue_timeout_h, per-address overrides (JSON), created_at |
+| `addresses` | `address_id` | email, display_name, sensitivity, stage, paused, outbound, preset, classifier_id, actor_id, fallback_enabled, claude_queue_timeout_h, per-address overrides (JSON), created_at, removed_at (addresses are marked removed, not deleted, because items refer to them; operator decision 2026-09-27, OD-167) |
 | `cursors` | `address_id` | uidvalidity, last_uid, deferred_uids (JSON), version |
 | `leases` | `address_id` | holder, fencing_token, expires_at |
 | `probe` | `address_id` | special_use (JSON), permanent_keywords, saves_sent, max_message_bytes, host, probed_at |
 | `items` | `stable_id` | address_id, uid, uidvalidity, message_id, locator (JSON), status, stale, prechecked, decision_source, proposed_by, suppressed_action, review, human_correction (JSON), classification (JSON), facts (JSON), proposal (JSON), pinned_models (JSON), batch_id, content_hash, hash_version, duplicate_message_id, expiry_count, clarification_rounds, created_at, updated_at, schema_version |
 | `excerpts` | `stable_id` | classifier_text, actor_text (≤ 4,000 chars); deleted with the item |
-| `grants` | `grant_id` | stable_id, action_hash, content_hash, principal, status, stepup_nonce_id, expires_at, consumed_at |
+| `grants` | `grant_id` | stable_id, action_hash, content_hash, principal, status (`issued`, `approved`, `consumed`, `voided`; operator decision 2026-09-27, OD-168), stepup_nonce_id, expires_at, consumed_at |
 | `nonces` | `nonce_id` | purpose, bound_hash, person, created_at, expires_at, consumed_at |
-| `jobs` | `job_id` | queue (`actions`, `slack_out`, `fetch`, `model`), address_id, payload (JSON; action jobs carry only a grant ID), attempts, max_attempts, visible_at, claimed_by, claim_expires, state (`queued`, `claimed`, `done`, `dead`), last_error |
+| `jobs` | `job_id` | queue (`actions`, `slack_out`, `fetch`, `model`), address_id, payload (JSON; action jobs carry only a grant ID), attempts, max_attempts, timeout_s (claims expire after 6x it), created_at (FIFO tie-break) (operator decision 2026-09-27, OD-169), visible_at, claimed_by, claim_expires, state (`queued`, `claimed`, `done`, `dead`), last_error |
 | `sent` | `message_id_hash` | address_id, content_hash, kind (`reply`, `forward`, `alert`), sent_at |
 | `threads` | `thread_hash` | address_id, template_replies |
 | `senders` | (`address_id`, `sender_hash`) | dmarc_pass_count, first_pass_at, last_pass_at, confirmed_category, confirmed_at, expected_reply_to_domain, verified_rule1a, payment_history |
@@ -839,7 +839,7 @@ The unit uses the absolute `ecf-server` path from the `uv tool` install. `Proces
 - `sqlite3.connect(path, autocommit=True, timeout=5.0)` (Python 3.12+); the connection factory sets `PRAGMA synchronous=FULL` (NORMAL can lose the last commits on power loss, which could drop a `sent` or consumed-grant record after a send), `busy_timeout=5000` and `foreign_keys=ON` on every connection; `journal_mode=WAL` persists in the file.
 - A `write_tx` helper issues `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`. **No transaction is held across network or model calls.**
 - Connections: one per long-lived thread (`threading.local`), one per request for HTTP routes.
-- Minimum SQLite 3.35 (for `RETURNING`), checked by `doctor`.
+- Minimum SQLite 3.37 (`STRICT` tables need 3.37; `RETURNING` needs 3.35), checked at connect and by `doctor` (operator decision 2026-09-27, OD-166).
 
 ### 11.3 Job queue
 
@@ -1122,7 +1122,7 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | retention batch | 1,000 rows |
 | review post size | ≤ 20 items |
 | show-excerpt length | ~200 characters |
-| minimum SQLite | 3.35 |
+| minimum SQLite | 3.37 (OD-166) |
 | minimum Claude Code | v2.1.242 |
 | `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` | 180000 |
 | DKIM health alert | 0 of ≥ 20 signed messages pass in a day |
@@ -1907,6 +1907,10 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-163 | 2026-09-27 | (Keychain test) | SPEC §11.6, §12.2 | Keychain secrets readable by any process running ecf's Python binary: accepted as a stated limit; the service reads with prompts off and never hangs; foreground re-grant after interpreter changes |
 | OD-164 | 2026-09-27 | (V1.0 build) | SPEC §17.2 | ID formats: slugs ≤ 40 chars; 64-hex stable_id; 32-hex random IDs; 8-64 hex short IDs |
 | OD-165 | 2026-09-27 | (V1.0 build) | SPEC §12.4 | Log redaction: named content and secret fields redacted, other strings capped at 200 chars, bytes dropped |
+| OD-166 | 2026-09-27 | (V1.0 build) | SPEC §11.2, §14.3 | Minimum SQLite 3.37 (STRICT tables), correcting 3.35 |
+| OD-167 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | addresses.removed_at: removal marks the row instead of deleting it |
+| OD-168 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | Grant states: issued, approved, consumed, voided |
+| OD-169 | 2026-09-27 | (V1.0 build) | SPEC §6.1 | jobs.timeout_s and jobs.created_at |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
