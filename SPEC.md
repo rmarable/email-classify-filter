@@ -1269,6 +1269,7 @@ Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` 
 
 - **Tests** (operator decision 2026-09-27, OD-127): one fake per port with contract tests; DKIM/DMARC tested in-process (`dkimpy` signs, verifies with an injected resolver); one Dovecot container on Linux CI for the IMAP contract test (macOS CI runs unit, Keychain and launchd tests); Postfix + OpenDMARC as an optional CI job; a Purelymail smoke test; Hypothesis for the transition table; host-neutral tool-text lint; a 150-email load test; the stdout-only-JSON-RPC test; a Slack fake.
 - **Dev loop:** `ecf-server dev` runs one process on the same kind of Unix socket (`ECF_SOCKET=<path>`) with a Dovecot container, a Postfix + OpenDMARC (and OpenDKIM) front end, in-memory queues, a Slack fake that records posts, and an injectable `Clock` for the 10-minute, 4-day, 14-day and 30-day delays.
+- **Dev-loop details** (operator decision 2026-09-27, OD-176): `ECF_SOCKET` is honored by clients (CLI, MCP) only; the service always binds its own install's socket. `ecf-server dev` uses a throwaway `/tmp` data folder (kept with `--keep` or `--home`), memory-only secrets (never the Keychain), a recording fake chat, and a fake clock starting 2026-10-01 12:00 UTC, moved with `POST /v1/dev/clock?advance=<seconds>`; `/v1/dev/*` routes exist only in dev mode. The Dovecot and Postfix/OpenDMARC containers join the dev loop in V1.1, with the IMAP code (operator decision 2026-09-27, OD-177).
 - **Environments:** local dev (`ecf-server dev`); a **test install** (local mode on a test Slack workspace with a dedicated test mailbox, e.g. `ecf-test@`, receiving only synthetic mail); **prod** (your real install, tagged releases only).
 - **Flow:** branch or worktree → edit → local tests and `ecf replay` → pull request → CI on macOS and Linux (ruff, pyright, tests, import-linter, license check, build and hash the wheel) → install the CI build on the test install (`ecf upgrade --wheel`, refused on prod) → end to end → merge → tag → release. Hotfix: branch from the release tag, same flow shortened. Never install an untagged build on prod.
 - **Config is not code:** rules, templates, schema versions and policy change through `ecf` against the live install, after `ecf rules test`.
@@ -1921,6 +1922,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-173 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | run/ folder for socket, token, lock, marker; ecf-server exit codes 0/3/70 |
 | OD-174 | 2026-09-27 | (V1.0 build) | SPEC §11.1 | ECF_HOME written into the unit; `ecf service status` exits 3 when not running |
 | OD-175 | 2026-09-27 | (V1.0 build) | SPEC §10.3 | `ecf claude` settings: dontAsk mode, allow list, explicit denies |
+| OD-176 | 2026-09-27 | (V1.0 build) | SPEC §17.3 | ECF_SOCKET for clients only; dev mode: /tmp data, memory secrets, fake chat, fake clock from 2026-10-01 |
+| OD-177 | 2026-09-27 | (V1.0 build) | SPEC §17.3 | Mail containers join the dev loop in V1.1 |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

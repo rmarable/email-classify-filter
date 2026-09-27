@@ -29,6 +29,7 @@ def data_root() -> Path:
 class Paths:
     install: str
     root: Path
+    honor_ecf_socket: bool = True  # clients only; the service always uses its own socket
 
     @property
     def data_dir(self) -> Path:
@@ -36,10 +37,15 @@ class Paths:
 
     @property
     def run_dir(self) -> Path:
+        if self.honor_ecf_socket and (sock := os.environ.get("ECF_SOCKET")):
+            return Path(sock).expanduser().parent
         return self.data_dir / "run"
 
     @property
     def socket(self) -> Path:
+        """`ECF_SOCKET` points the CLI and MCP at a socket directly (SPEC §17.3)."""
+        if self.honor_ecf_socket and (sock := os.environ.get("ECF_SOCKET")):
+            return Path(sock).expanduser()
         return self.run_dir / "ecf.sock"
 
     @property
@@ -74,5 +80,5 @@ class Paths:
             )
 
 
-def paths_for(install: str = "default") -> Paths:
-    return Paths(install, data_root())
+def paths_for(install: str = "default", *, for_service: bool = False) -> Paths:
+    return Paths(install, data_root(), honor_ecf_socket=not for_service)

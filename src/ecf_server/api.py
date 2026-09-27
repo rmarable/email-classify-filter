@@ -29,11 +29,13 @@ from ecf.errors import (
     EcfError,
     ForbiddenProfileError,
     InternalError,
+    InvalidInputError,
     NotFoundError,
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server.clock import SystemClock, to_ts
+from ecf_server.chat import FakeChat
+from ecf_server.clock import FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 
 API_VERSION = 1
@@ -53,6 +55,15 @@ class Session:
 
 
 @dataclass
+class DevHooks:
+    """What `ecf-server dev` exposes over `/v1/dev/*` (dev mode only)."""
+
+    clock: FakeClock
+    chat: FakeChat
+    tick: Callable[[], None]
+
+
+@dataclass
 class ServiceState:
     install: str
     token: str
@@ -62,6 +73,8 @@ class ServiceState:
     breaker: dict[str, Any] = field(default_factory=dict[str, Any])
     secret_store: dict[str, Any] = field(default_factory=dict[str, Any])
     pid: int = field(default_factory=os.getpid)
+    mode: str = "local"
+    dev: DevHooks | None = None
     sessions: dict[str, Session] = field(default_factory=dict[str, Session])
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -113,6 +126,7 @@ def create_app(state: ServiceState) -> Starlette:
             {
                 "version": __version__,
                 "api_version": API_VERSION,
+                "mode": state.mode,
                 "install": state.install,
                 "pid": state.pid,
                 "started_at": state.started_at,
@@ -145,6 +159,29 @@ def create_app(state: ServiceState) -> Starlette:
         log.info("session.revoked", session_id=session_id)
         return JSONResponse({"revoked": session_id})
 
+    def _dev() -> DevHooks:
+        if state.dev is None:
+            raise NotFoundError("dev routes exist only in `ecf-server dev`")
+        return state.dev
+
+    @allow(Caller.CLI)
+    def dev_clock(request: Request) -> JSONResponse:
+        dev = _dev()
+        if request.method == "POST":
+            seconds = float(request.query_params.get("advance", "0"))
+            if not 0 <= seconds <= 400 * 86400:
+                raise InvalidInputError("advance must be between 0 and 400 days of seconds")
+            dev.clock.advance(seconds)
+            dev.tick()
+        return JSONResponse({"now": to_ts(dev.clock.now())})
+
+    @allow(Caller.CLI)
+    def dev_posts(request: Request) -> JSONResponse:
+        dev = _dev()
+        if request.method == "DELETE":
+            dev.chat.clear()
+        return JSONResponse({"posts": list(dev.chat.posts)})
+
     async def on_ecf_error(request: Request, exc: Exception) -> JSONResponse:
         return _problem(exc if isinstance(exc, EcfError) else InternalError(), request)
 
@@ -161,6 +198,8 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/status", status, methods=["GET"]),
             Route("/v1/sessions", create_session, methods=["POST"]),
             Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
+            Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
+            Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
         exception_handlers={EcfError: on_ecf_error, 404: on_not_found, Exception: on_unexpected},
     )

@@ -27,10 +27,13 @@ from ecf.errors import ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
 from ecf_server import breaker, db
-from ecf_server.api import ServiceState, create_app
-from ecf_server.clock import Clock, SystemClock, to_ts
+from ecf_server.api import DevHooks, ServiceState, create_app
+from ecf_server.chat import FakeChat
+from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
+from ecf_server.secretstore.memory import MemorySecretStore
 from ecf_server.secretstore.select import (
     choose_backend,
     host_probe,
@@ -67,9 +70,7 @@ def acquire_lock(paths: Paths) -> TextIO:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         f.close()
-        raise AlreadyRunningError(
-            f"ecf-server is already running for install {paths.install}"
-        ) from exc
+        raise AlreadyRunningError(f"already running for install {paths.install}") from exc
     return f
 
 
@@ -100,7 +101,12 @@ def write_token(paths: Paths) -> str:
 
 class Service:
     def __init__(
-        self, paths: Paths, clock: Clock | None = None, opts: Options | None = None
+        self,
+        paths: Paths,
+        clock: Clock | None = None,
+        opts: Options | None = None,
+        *,
+        dev: bool = False,
     ) -> None:
         self.paths = paths
         self.clock = clock or SystemClock()
@@ -108,6 +114,8 @@ class Service:
         self.stop = threading.Event()
         self.exit_code = EXIT_OK
         self._last_tick_mono = self.clock.monotonic()
+        self.dev = dev
+        self.secrets: SecretStore | None = MemorySecretStore() if dev else None
         self.state = ServiceState(
             install=paths.install, token="", started_at=to_ts(self.clock.now())
         )
@@ -166,13 +174,20 @@ class Service:
             breaker.mark_clean_exit(self.paths.running_marker)
             return EXIT_OK  # exit 0 so launchd/systemd don't restart it
         breaker.mark_running(self.paths.running_marker)
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and not self.dev:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
         with db.write_tx(conn):
             conn.execute("DELETE FROM leases")  # one process in v1: all leases are stale at start
-        self.state.secret_store = self._secret_store_report(conn)
+        if self.dev:
+            self.state.mode = "dev"
+            self.state.secret_store = {"backend": "memory", "interpreter_changed": False}
+            if not isinstance(self.clock, FakeClock):
+                raise TypeError("dev mode needs a FakeClock")
+            self.state.dev = DevHooks(self.clock, FakeChat(), self.tick)
+        else:
+            self.state.secret_store = self._secret_store_report(conn)
         conn.close()
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)
