@@ -35,3 +35,9 @@ tests/eval/synthetic/.build/
 # Raw email files anywhere except the synthetic eval set
 *.eml
 !tests/eval/synthetic/**/*.eml
+
+# Build and tool caches
+/dist/
+/build/
+.pytest_cache/
+.ruff_cache/

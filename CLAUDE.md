@@ -41,7 +41,20 @@ V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 loc
 
 ## Commands
 
-None until V1.0; then see `CONTRIBUTING.md` (written in V1.0). Add key commands here when they exist. `docs/` is excluded from pytest, ruff and pyright (recorded in `pyproject.toml` at V1.0).
+Python ≥ 3.12, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md` (written in V1.0).
+
+```sh
+uv sync                                   # create/update .venv from uv.lock
+uv run ruff check . && uv run ruff format --check .
+uv run pyright                            # strict
+uv run lint-imports                       # ecf must never import ecf_server
+uv run pytest                             # all tests for this OS
+uv run pytest tests/test_smoke.py::test_cli_version   # one test
+uv run pytest -m macos                    # macOS-only tests
+uv build                                  # wheel + sdist
+```
+
+**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
 
 ## Hard constraints
 
