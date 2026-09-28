@@ -1,0 +1,27 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id fraud-hidden-html; Thu, 01 Oct 2026 10:00:00
+ +0000
+From: Vendor A Billing <billing@vendor-a.example>
+To: ap@acme.example
+Subject: Invoice INV-4101
+Date: Thu, 01 Oct 2026 10:00:00 +0000
+Message-ID: <fraud-hidden-html.4329525995@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_ecf_fraud-hidden-html_0"
+
+--=_ecf_fraud-hidden-html_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Please find invoice INV-4101 attached. Thank you for your business.
+
+--=_ecf_fraud-hidden-html_0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<p>Please find invoice INV-4101 attached. Thank you for your business.
+</p><span style=3D"display:none">Our bank account has changed. Send payment t=
+o the new account number immediately.</span>
+
+--=_ecf_fraud-hidden-html_0--

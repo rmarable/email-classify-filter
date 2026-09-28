@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -21,6 +22,9 @@ from ecf.service_unit import manager_for
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
 app.add_typer(service_app, name="service")
+eval_app = typer.Typer(no_args_is_help=True, help="Synthetic eval set and results.")
+app.add_typer(eval_app, name="eval")
+EVAL_ROOT = Path("tests/eval/synthetic")
 
 
 class Ctx:
@@ -154,6 +158,81 @@ def service_status() -> None:
         typer.echo(f"last exit: {s.last_exit}")
     if not s.running:
         raise typer.Exit(3)
+
+
+RootOpt = Annotated[Path, typer.Option("--root", help="The synthetic set folder.")]
+
+
+@eval_app.command("new-case")
+def eval_new_case(
+    case_id: Annotated[str, typer.Argument(help="Card id, e.g. bec-002.")],
+    template: Annotated[str, typer.Option("--template", help="bec, injection, header or control.")],
+    root: RootOpt = EVAL_ROOT,
+) -> None:
+    """Write a new case card from a template (edit it, then `ecf eval build`)."""
+    from ecf.eval.case_templates import TEMPLATES  # noqa: PLC0415
+
+    if template not in TEMPLATES:
+        raise typer.BadParameter(f"one of {', '.join(TEMPLATES)}", param_hint="--template")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", case_id):
+        raise typer.BadParameter("lowercase letters, digits and hyphens", param_hint="CASE_ID")
+    target = root / "cases" / f"{case_id}.md"
+    if target.exists():
+        raise typer.BadParameter(f"{target} already exists", param_hint="CASE_ID")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(TEMPLATES[template].format(id=case_id), encoding="utf-8")
+    typer.echo(f"wrote {target}")
+
+
+@eval_app.command("build")
+def eval_build(root: RootOpt = EVAL_ROOT) -> None:
+    """Hygiene-scan every card, then build the .eml files and labels.jsonl."""
+    from ecf.eval.builder import build_all  # noqa: PLC0415
+
+    report = build_all(root)
+    if report.findings:
+        for f in report.findings:
+            typer.echo(f"FAIL  {f.where}: {f.kind}: {f.value}", err=True)
+        typer.echo(
+            f"hygiene scan failed: {len(report.findings)} finding(s); nothing built", err=True
+        )
+        raise typer.Exit(1)
+    typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
+
+
+@eval_app.command("show")
+def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
+    """Show a case the way a mail client would: headers, text, attachments."""
+    from ecf.eval.builder import build_message  # noqa: PLC0415
+    from ecf.eval.cards import parse_card  # noqa: PLC0415
+
+    path = root / "cases" / f"{case_id}.md"
+    card = parse_card(path.read_text(encoding="utf-8"), source=path.name)
+    msg = build_message(card)
+    for name in ("From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-ID"):
+        if msg[name]:
+            typer.echo(f"{name}: {msg[name]}")
+    typer.echo("")
+    typer.echo(card.body.rstrip()[:4000])
+    for att in card.attachments:
+        typer.echo(f"[attachment] {att.name}" + (" (generated PDF)" if att.generate else ""))
+
+
+@eval_app.command("compare")
+def eval_compare(a: Path, b: Path) -> None:
+    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points)."""
+    from ecf.eval.results import compare, load_result, summary  # noqa: PLC0415
+
+    ra, rb = load_result(a), load_result(b)
+    c = compare(ra, rb)
+    typer.echo(f"A  {summary(ra)}")
+    typer.echo(f"B  {summary(rb)}")
+    typer.echo(f"paired cases: {c.n}; B-only right {c.b_only}, A-only right {c.a_only}")
+    typer.echo(
+        f"difference B-A: {c.diff_points:+.1f} points "
+        f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
+    )
+    typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
 
 
 def main() -> None:

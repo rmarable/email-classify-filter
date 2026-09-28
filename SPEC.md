@@ -1226,6 +1226,7 @@ One hierarchy with a generated table: stable `code` → HTTP status (RFC 9457 pr
 ### 16.1 Sets
 
 - **Synthetic set** (primary, committed): 150-200 `.eml` files plus labels; RFC 2606 domains and a fictitious org only; at least 10 per category; every sender type, fraud level and computed-fact combination; ≥ 10 fraud-guard items; a backlog-after-gap case (DKIM keys rotated before fetch). Adversarial cases: injection (incl. cross-item), lookalikes, fake regulators, attachment-name injection, forged Authentication-Results, reused Message-IDs, fraud text only in HTML, hidden text or past truncation, forged `X-ECF-Install` and `sent` replies. Realistic mess: HTML, threads, signatures, forwards, auto-replies, newsletters. Files ≤ 1 MB committed; larger ones (e.g. fake PDF invoices sized to 1, 10, 15, 17, 60 and 66 MB `.eml`) built on demand into `tests/eval/synthetic/.build/`. Generation, case cards, hygiene and labels: `GENERATE-FAKE-TESTING-EMAILS.md` (written in V1.0) and `.claude/rules/eval-synthetic.md`. The adversarial subset stays in `eval/private/` if the repo is public.
+- **Tooling layout** (operator decisions 2026-09-27, OD-178, OD-179): `reportlab` and `Pillow` are an optional `[eval]` extra (development installs include it; the license check covers extras). Cards live in `tests/eval/synthetic/cases/*.md` (YAML header plus body, optional `## html` section); `ecf eval build` writes files of 1 MB or less to `eml/` (committed) and larger ones to `.build/` (gitignored), plus `labels.jsonl` (id, file, sha256, bytes, author, expected). The hygiene scan treats a hostname as real when it ends in a common top-level domain (`.com`, `.net`, `.org`, `.io` and similar), so file names like `invoice.pdf` pass. A CI test rebuilds the committed cards and fails on any drift.
 - **Real-mail set:** shadow-mode reviews (Correct/Fix), stored as `stable_id` + labels.
 - **Outbound set:** suppressed proposals reviewed for the `high` enablement gate.
 - Deferred: the Gmail import and `shadow_compare`.
@@ -1924,6 +1925,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-175 | 2026-09-27 | (V1.0 build) | SPEC §10.3 | `ecf claude` settings: dontAsk mode, allow list, explicit denies |
 | OD-176 | 2026-09-27 | (V1.0 build) | SPEC §17.3 | ECF_SOCKET for clients only; dev mode: /tmp data, memory secrets, fake chat, fake clock from 2026-10-01 |
 | OD-177 | 2026-09-27 | (V1.0 build) | SPEC §17.3 | Mail containers join the dev loop in V1.1 |
+| OD-178 | 2026-09-27 | (V1.0 build) | SPEC §16.1 | reportlab and Pillow as an optional [eval] extra; license check covers extras |
+| OD-179 | 2026-09-27 | (V1.0 build) | SPEC §16.1 | Synthetic-set layout, labels.jsonl fields, hygiene domain heuristic |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

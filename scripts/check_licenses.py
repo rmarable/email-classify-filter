@@ -1,8 +1,9 @@
-"""Check every runtime dependency's license against the allow-list (SPEC §17.5).
+"""Check every runtime dependency's license, extras included, against the allow-list (SPEC §17.5).
 
-Runtime closure comes from `uv export --no-dev`; licenses come from installed package metadata
-(License-Expression, then a short License field, then trove classifiers). Unknown or disallowed
-licenses fail the check; add a reviewed entry to OVERRIDES only after checking the upstream license.
+The dependency list comes from `uv export --no-dev --all-extras`. Licenses come from installed
+package metadata: License-Expression, then a short License field, then trove classifiers.
+Unknown or disallowed licenses fail the check. Add a reviewed entry to OVERRIDES only after
+checking the upstream license.
 """
 
 from __future__ import annotations
@@ -77,6 +78,7 @@ def runtime_names() -> list[str]:
             "uv",
             "export",
             "--no-dev",
+            "--all-extras",
             "--no-hashes",
             "--no-emit-project",
             "--format",

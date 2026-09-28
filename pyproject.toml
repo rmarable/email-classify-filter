@@ -18,6 +18,12 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.optional-dependencies]
+eval = [
+    "reportlab>=4.2",
+    "pillow>=10.4",
+]
+
 [project.scripts]
 ecf = "ecf.cli:main"
 ecf-mcp = "ecf.mcp_stdio:main"
@@ -25,6 +31,7 @@ ecf-server = "ecf_server.__main__:main"
 
 [dependency-groups]
 dev = [
+    "email-classify-filter[eval]",
     "pytest>=8",
     "ruff>=0.6",
     "pyright>=1.1.380",
