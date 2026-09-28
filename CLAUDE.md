@@ -41,7 +41,7 @@ V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 loc
 
 ## Commands
 
-Python ≥ 3.12, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md` (written in V1.0).
+Python ≥ 3.12, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md`.
 
 ```sh
 uv sync                                   # create/update .venv from uv.lock
@@ -51,6 +51,9 @@ uv run lint-imports                       # ecf must never import ecf_server
 uv run pytest                             # all tests for this OS
 uv run pytest tests/test_smoke.py::test_cli_version   # one test
 uv run pytest -m macos                    # macOS-only tests
+uv run python scripts/check_licenses.py   # dependency license allow-list (--markdown: table)
+uv run ecf-server dev                     # throwaway dev service; prints ECF_SOCKET=...
+uv run ecf eval build                     # synthetic set: hygiene scan, then .eml + labels
 uv build                                  # wheel + sdist
 ```
 
@@ -73,6 +76,13 @@ uv build                                  # wheel + sdist
 ## Commits
 
 - A commit message ends with exactly one trailer line: `Co-Authored-By: Claude <noreply@anthropic.com>`. Never name the model, and never add a `Claude-Session:` link or any other trailer.
+
+## Changelog
+
+- Every commit that changes behavior, adds or changes a command, or records a decision adds one line to `CHANGELOG.md` under the heading for the next tag, e.g. `## ms-v1.1-mail-checks (not yet tagged)`. Refactors and test-only changes don't.
+- Lines are plain language (what changed for someone using ecf), one per change, citing the ADR or `OD-nnn` where there is one. No commit hashes (history rewrites change them).
+- Newest first. Sections (e.g. "Changed", "Security") only where they help.
+- When a tag is created, its heading becomes the tag name and date (`## ms-v1.0-foundations (2026-10-02)`); the entry is reviewed with the tag request.
 
 ## Documentation style
 

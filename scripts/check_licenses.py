@@ -8,7 +8,6 @@ checking the upstream license.
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from importlib import metadata
@@ -72,28 +71,45 @@ TEXT_MAP = {
 }
 
 
-def runtime_names() -> list[str]:
-    out = subprocess.run(
-        [
-            "uv",
-            "export",
-            "--no-dev",
-            "--all-extras",
-            "--no-hashes",
-            "--no-emit-project",
-            "--format",
-            "requirements-txt",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    names: list[str] = []
+def runtime_packages(*, extras: bool = True) -> list[tuple[str, str, str]]:
+    """(name, version, environment marker or "") for every runtime dependency."""
+    cmd = [
+        "uv",
+        "export",
+        "--no-dev",
+        "--no-hashes",
+        "--no-emit-project",
+        "--format",
+        "requirements-txt",
+    ]
+    if extras:
+        cmd.append("--all-extras")
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    pkgs: list[tuple[str, str, str]] = []
     for raw in out.splitlines():
         line = raw.strip()
-        if line and not line.startswith(("#", "-")):
-            names.append(re.split(r"[=<>;\[ ]", line, maxsplit=1)[0])
-    return sorted(set(names), key=str.lower)
+        if not line or line.startswith(("#", "-")):
+            continue
+        spec, _, marker = line.partition(";")
+        name, _, version = spec.strip().partition("==")
+        pkgs.append((name, version, marker.strip()))
+    return sorted(pkgs, key=lambda p: p[0].lower())
+
+
+def markdown_table() -> str:
+    rows = ["| Package | Version | License | Installed on |", "|---|---|---|---|"]
+    core = {n for n, _, _ in runtime_packages(extras=False)}
+    for name, version, marker in runtime_packages():
+        where = "all platforms" if name in core else "`[eval]` extra only"
+        for plat, label in (("darwin", "macOS"), ("linux", "Linux"), ("win32", "Windows")):
+            if f"sys_platform == '{plat}'" in marker:
+                where = label
+        rows.append(f"| `{name}` | {version} | {license_of(name)} | {where} |")
+    return "\n".join(rows)
+
+
+def runtime_names() -> list[str]:
+    return [name for name, _, _ in runtime_packages()]
 
 
 def license_of(name: str) -> str:
@@ -125,6 +141,9 @@ def allowed(name: str, lic: str) -> bool:
 
 
 def main() -> int:
+    if "--markdown" in sys.argv[1:]:
+        print(markdown_table())
+        return 0
     bad = 0
     for name in runtime_names():
         lic = license_of(name)

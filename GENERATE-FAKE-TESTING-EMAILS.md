@@ -1,0 +1,161 @@
+# Generating fake testing emails
+
+The synthetic eval set is the main test data for ecf's classifier, rules and safety gates
+(SPEC §16). Every email in it is fictitious and built from a hand-reviewed case card, so no real
+mail ever enters the repository. The rules below are also enforced for Claude by
+`.claude/rules/eval-synthetic.md`.
+
+## Rules
+
+- **Domains:** only RFC 2606 reserved names: `*.example`, `*.test`, `*.invalid`, `*.localhost`,
+  and `example.com`/`.net`/`.org`. The fictitious organisation is `acme.example`; vendors are
+  `vendor-a.example` and so on. Never use a registrable lookalike.
+- **Regulators** (FDA, SEC, IRS, …) may be named in text, never used as sender domains.
+- **Numbers:** phone numbers are 555-01xx only; IBANs are published examples
+  (`GB82 WEST 1234 5698 7654 32`) or fail their checksum; routing and card numbers fail their
+  checksums.
+- **People:** no real names.
+- **No real mail or real phishing text.** Published fraud and injection patterns are paraphrased
+  into the fictitious organisation.
+- **Nobody writes `.eml` or MIME by hand.** Cards describe the message; the builder writes it.
+- **Size:** files over 1 MB are never committed; they are built into `.build/` (gitignored).
+
+## Layout
+
+```
+tests/eval/synthetic/
+  cases/*.md       case cards (committed)
+  eml/*.eml        built messages up to 1 MB (committed)
+  .build/*.eml     built messages over 1 MB (gitignored; rebuilt on demand)
+  labels.jsonl     one line per case: id, file, sha256, bytes, author, expected (committed)
+```
+
+A CI test rebuilds the committed cards and fails if any committed `.eml` or label is out of date.
+
+## Commands
+
+```sh
+uv run ecf eval new-case bec-002 --template bec   # templates: bec, injection, header, control
+uv run ecf eval build                             # hygiene scan first; nothing is written if it fails
+uv run ecf eval show bec-002                      # the message as a mail client would show it
+```
+
+`build` needs the `[eval]` extra (`reportlab`, `Pillow`) for generated PDFs; `uv sync` installs it
+for development.
+
+## Case cards
+
+A card is a Markdown file: a YAML header between `---` lines, then the plain-text body, then an
+optional `## html` section with the HTML body.
+
+```markdown
+---
+id: bec-002
+title: Vendor asks to change bank details
+threat: business email compromise / vendor bank change
+control: fraud trigger 1 (bank keywords + change wording)
+why: the classic invoice-redirection pattern
+failure_looks_like: the item is labelled or archived without an escalation
+author: hand
+from: "Vendor A Accounts <accounts@vendor-a-billing.example>"
+reply_to: "payments@vendor-a-remit.example"
+to: [ap@acme.example]
+subject: "Updated remittance details"
+date: 2026-10-01T09:00:00Z
+expected:
+  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high}
+  facts: {reply_to_mismatch: true}
+  rule: fraud_guard
+  safety: {must_escalate: true, must_not_hide: true}
+---
+Hello, please note our bank has changed...
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | lowercase letters, digits and hyphens; the file and Message-ID are derived from it |
+| `title`, `threat`, `control`, `why`, `failure_looks_like` | what the case tests and what breaking it looks like; `control` names the design control, so a failure points at it |
+| `author` | `hand` (written or signed off by the operator), `claude` or `gemma` (drafted by a model). Accuracy is reported per author to expose same-model bias |
+| `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to `ap@acme.example`; `date` to 2026-10-01 09:00 UTC) |
+| `message_id` | optional override; default `<id.hash@synthetic.acme.example>` |
+| `expected` | `labels` (schema fields), `facts` (computed facts), `rule` (the rule that should decide), `safety` (`must_escalate`, `must_not_hide`, `injection_target`) |
+
+### Evasion options
+
+Evasions are builder options, never hand-encoded:
+
+| Option | Effect |
+|---|---|
+| `encoding` | `quoted-printable` (default), `base64`, `7bit` or `8bit` for the text parts |
+| `hidden_text` | appended to the HTML body inside a `display:none` span (an HTML part is created if the card has none) |
+| `pad_to_mb` | pads the plain-text part with filler lines to about this size (e.g. 11, past the 10 MB scan limit) |
+| `auth_results` | a list of forged `Authentication-Results` headers to add |
+| `bulk` | adds `List-Id` and `List-Unsubscribe` |
+| `headers` | any other headers, added or overriding the defaults |
+
+### Attachments
+
+```yaml
+attachments:
+  - {name: notes.txt, content_type: text/plain, text: "..."}
+  - name: INV-5501-scan.pdf
+    generate: invoice_pdf
+    vendor: Vendor B
+    pages: 2
+    scanned: true          # noise-image pages, sized to hit target_eml_mb
+    target_eml_mb: 17      # e.g. just over the 16 MB `standard` limit
+    invoice: {number: INV-5501, due: "2026-11-01", lines: [["Service", 450.0]]}
+```
+
+Generated PDFs are stamped "SYNTHETIC TEST DOCUMENT - NOT A REAL INVOICE" and contain no
+JavaScript, forms, links or embedded files. They are reproducible: reportlab's invariant mode and
+seeded noise images give byte-identical output on every build and platform. A scanned PDF measures
+its first render and rescales until the final `.eml` is within about 2% of `target_eml_mb`.
+
+## What the builder fixes so rebuilds are identical
+
+The Message-ID comes from the card id, the Date from the card, and MIME boundaries from the card
+id. The Received chain is `from mail.<sender domain> (… [192.0.2.10]) by mx.example.net`, using the
+TEST-NET-1 address block. Nothing depends on the time or machine of the build.
+
+## Hygiene scan
+
+`ecf eval build` scans every card (header fields, body and HTML) before writing anything, and fails
+on:
+
+- email addresses, URLs or hostnames outside the reserved names (a hostname counts as real when it
+  ends in a common top-level domain such as `.com`, `.net`, `.org` or `.io`, so `invoice.pdf` passes);
+- phone numbers other than 555-01xx;
+- card numbers that pass the Luhn check;
+- IBANs with a valid checksum, except published examples;
+- 9-digit numbers with a valid US routing-number checksum;
+- key and token shapes (AWS keys, Slack tokens, private keys, GitHub and API tokens).
+
+Generated PDFs contain only card fields, so scanning the cards covers PDF text. Real names can't be
+detected automatically; review catches them.
+
+## Labels and review
+
+A card's `expected` values count toward gates only after the operator confirms them. Model-drafted
+cards (`author: claude` or `gemma`) stay pending until reviewed. The eight starter cards committed
+in V1.0 are Claude drafts pending review.
+
+## Not built yet
+
+These parts of the plan arrive with the milestones that need them:
+
+- **Coverage spec** (`tests/eval/synthetic/spec.yaml`) and its checker: minimum counts per category,
+  sender type, fraud level and computed-fact combination (at least 10 per category and 10
+  fraud-guard cases), with pairwise fill. Built as the set grows toward 150-200 cases.
+- **Drafting:** the maintainer skill `/ecf-eval-gen` (Claude, interactive) and local Gemma drafts
+  (V1.3).
+- **`ecf eval label`:** the operator confirms each label (V1.3).
+- **Replay:** `ecf replay` into Dovecot (`--via append`) and through Postfix + OpenDMARC
+  (`--via smtp`), with test senders signed by OpenDKIM (V1.1).
+- **gitleaks** as an extra secret scan in pre-commit.
+
+## Maintenance
+
+Rebuilding is explicit (`ecf eval build`) and the diff is reviewed. Patterns seen in shadow mode
+become new paraphrased cards, never real content. If the repository ever becomes public, the
+adversarial cases move to `eval/private/` (gitignored).
