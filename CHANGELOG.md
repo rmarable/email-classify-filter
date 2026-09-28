@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Test containers (Dovecot, later Postfix) run on Colima on macOS and Docker Engine on Linux (OD-186).
+- SPEC provider table: Purelymail accepts a subdomain as a mail domain; user names can't contain symbols when symbolic subaddressing is on.
 - SPEC roadmap: Atomic Mail added as a Later item, to revisit when it ships IMAP/SMTP.
 
 ## ms-v1.0.1-fixes (2026-09-27)

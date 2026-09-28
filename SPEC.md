@@ -1274,7 +1274,7 @@ Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` 
 
 ### 17.3 Testing and development
 
-- **Tests** (operator decision 2026-09-27, OD-127): one fake per port with contract tests; DKIM/DMARC tested in-process (`dkimpy` signs, verifies with an injected resolver); one Dovecot container on Linux CI for the IMAP contract test (the macOS suite, including the Keychain and launchd tests, runs locally before each merge, OD-180); Postfix + OpenDMARC as an optional CI job; a Purelymail smoke test; Hypothesis for the transition table; host-neutral tool-text lint; a 150-email load test; the stdout-only-JSON-RPC test; a Slack fake.
+- **Tests** (operator decision 2026-09-27, OD-127): one fake per port with contract tests; DKIM/DMARC tested in-process (`dkimpy` signs, verifies with an injected resolver); one Dovecot container on Linux CI for the IMAP contract test (the macOS suite, including the Keychain and launchd tests, runs locally before each merge, OD-180); Postfix + OpenDMARC as an optional CI job; a Purelymail smoke test; containers run through `testcontainers` on Colima on macOS and on native Docker Engine on Linux, including CI (operator decision 2026-09-28, OD-186); Hypothesis for the transition table; host-neutral tool-text lint; a 150-email load test; the stdout-only-JSON-RPC test; a Slack fake.
 - **Dev loop:** `ecf-server dev` runs one process on the same kind of Unix socket (`ECF_SOCKET=<path>`) with a Dovecot container, a Postfix + OpenDMARC (and OpenDKIM) front end, in-memory queues, a Slack fake that records posts, and an injectable `Clock` for the 10-minute, 4-day, 14-day and 30-day delays.
 - **Dev-loop details** (operator decision 2026-09-27, OD-176): `ECF_SOCKET` is honored by clients (CLI, MCP) only; the service always binds its own install's socket. `ecf-server dev` uses a throwaway `/tmp` data folder (kept with `--keep` or `--home`), memory-only secrets (never the Keychain), a recording fake chat, and a fake clock starting 2026-10-01 12:00 UTC, moved with `POST /v1/dev/clock?advance=<seconds>`; `/v1/dev/*` routes exist only in dev mode. The Dovecot and Postfix/OpenDMARC containers join the dev loop in V1.1, with the IMAP code (operator decision 2026-09-27, OD-177).
 - **Environments:** local dev (`ecf-server dev`); a **test install** (local mode on a test Slack workspace with a dedicated test mailbox, e.g. `ecf-test@`, receiving only synthetic mail); **prod** (your real install, tagged releases only).
@@ -1331,6 +1331,8 @@ Every cell is "unverified, confirm in V1.1" unless marked. Sources: each provide
 | Proton (Bridge) | not documented | labels appear as folders | none (`\*` absent; evidence) | unverified | unverified | unverified |
 
 Runtime detection (`PERMANENTFLAGS`, `LIST (SPECIAL-USE)`) is the rule. Provider Authentication-Results are not used in v1 regardless.
+
+Purelymail setup (operator test 2026-09-28): a subdomain works as a mail domain. The V1.1 test mailbox is `ecftest@mail.rodneymarable.com`; its MX, SPF, ownership, three DKIM and DMARC records sit at the subdomain host and resolve in public DNS (checked with `dig`, 2026-09-28), and the root domain's MX is untouched. With symbolic subaddressing on, user names can't contain symbols (`-` is the subaddress separator: `a-b@` delivers to `a@`). Its documentation doesn't mention subdomains (purelymail.com/docs/domainDocs, read 2026-09-28).
 
 ## 19. External contracts
 
@@ -1751,7 +1753,7 @@ Milestone tag names V1.1-V1.4 (§1.4); release criteria items 4, 5, 6 (§1.5); S
 
 ### 23.4 Operator decisions
 
-Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155), then decisions made reviewing this document and during the build (OD-156 onward; "Plan line" names where: "(SPEC review)", "(Keychain test)", "(V1.0 build)" or "(V1.0 review)") ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
+Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155), then decisions made reviewing this document and during the build (OD-156 onward; "Plan line" names where: "(SPEC review)", "(Keychain test)", "(V1.0 build)", "(V1.0 review)" or "(V1.1 prep)") ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
 
 | ID | Date | Plan line | Home document | Decision |
 |---|---|---|---|---|
@@ -1940,6 +1942,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-183 | 2026-09-27 | (V1.0 review) | SPEC §11.3 | Job queue: strict per-address FIFO (backoff holds later jobs); expired claims count and dead-letter |
 | OD-184 | 2026-09-27 | (V1.0 review) | SPEC §10.3 | ecf claude: argument and environment allow-lists, purge keep-list, telemetry off until V1.4 |
 | OD-185 | 2026-09-27 | (V1.0 review) | SPEC §16.1 | Hygiene scan: file-extension domain rule, defanged and non-ASCII names, more number and token shapes |
+| OD-186 | 2026-09-28 | (V1.1 prep) | SPEC §17.3 | Test containers: Colima on macOS, Docker Engine on Linux |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
