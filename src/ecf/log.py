@@ -92,7 +92,10 @@ def configure_logging(
             log_file, maxBytes=LOG_ROTATE_BYTES, backupCount=LOG_ROTATE_COUNT, encoding="utf-8"
         )
         renderer = structlog.processors.JSONRenderer()
-        exc = structlog.processors.dict_tracebacks
+        # never show_locals: frame locals can hold tokens, passwords and message text
+        exc = structlog.processors.ExceptionRenderer(
+            structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+        )
     else:
         handler = logging.StreamHandler(sys.stderr)
         renderer = structlog.dev.ConsoleRenderer(colors=False)

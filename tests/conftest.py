@@ -46,15 +46,45 @@ def home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     shutil.rmtree(d, ignore_errors=True)
 
 
-def start_service(home: Path, install: str = "t") -> subprocess.Popen[bytes]:
-    env = {**os.environ, "ECF_HOME": str(home)}
-    args = ["local", "--install", install, "--tick-seconds", "0.2"]
-    return subprocess.Popen(
+_STARTED: list[subprocess.Popen[bytes]] = []
+
+
+def spawn(args: list[str], env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
+    """Start an ecf_server process that the session-end check will make sure is gone."""
+    proc = subprocess.Popen(
         [sys.executable, "-m", "ecf_server", *args],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    _STARTED.append(proc)
+    return proc
+
+
+def stop(proc: subprocess.Popen[bytes], timeout: float = 30) -> int:
+    """SIGTERM, wait, then SIGKILL if needed. Returns the exit code."""
+    if proc.poll() is None:
+        proc.send_signal(signal.SIGTERM)
+    try:
+        return proc.wait(timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return proc.wait(10)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_leaked_services() -> Iterator[None]:
+    yield
+    alive = [p for p in _STARTED if p.poll() is None]
+    for p in alive:
+        p.kill()
+        p.wait(10)
+    assert not alive, f"{len(alive)} ecf_server process(es) outlived their test"
+
+
+def start_service(home: Path, install: str = "t") -> subprocess.Popen[bytes]:
+    env = {**os.environ, "ECF_HOME": str(home)}
+    return spawn(["local", "--install", install, "--tick-seconds", "0.2"], env)
 
 
 def uds_client(p: Paths) -> httpx.Client:
@@ -87,5 +117,4 @@ def running(home: Path) -> Iterator[Paths]:
         time.sleep(0.5)  # let the timer tick
         yield p
     finally:
-        proc.send_signal(signal.SIGTERM)
-        proc.wait(20)
+        stop(proc)

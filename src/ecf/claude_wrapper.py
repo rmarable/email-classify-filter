@@ -19,14 +19,48 @@ from pathlib import Path
 from typing import Any
 
 from ecf.client import LocalClient
-from ecf.errors import ServiceUnavailableError
+from ecf.errors import EcfError, InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
 
 MIN_CLAUDE = (2, 1, 242)
 ALLOWED_TOOLS = ["mcp__ecf__review_queue", "Agent"]
 DENIED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Edit", "Write", "NotebookEdit"]
-# Forced off in the process environment so a value in the user's shell can't turn them on.
+# Only these variables are passed from the user's environment (plus LC_*); everything else,
+# e.g. ANTHROPIC_* (API keys, base URLs), provider switches and OTEL exporters, is dropped.
+ENV_ALLOW = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "TERM_PROGRAM",
+        "COLORTERM",
+        "LANG",
+        "TMPDIR",
+        "TZ",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "NODE_EXTRA_CA_CERTS",
+    }
+)
+# Arguments that may be passed through to `claude`; anything that could loosen the session
+# (permissions, settings, MCP config, extra directories) is refused.
+PASSTHROUGH_WITH_VALUE = frozenset({"--model"})
+PASSTHROUGH_FLAGS = frozenset({"--verbose"})
+# What the purge keeps in the config folder: ecf's own files, the login, and (V1.4) the plugin.
+# Whether `.claude.json` can hold prompt text is unverified; checked in V1.4.
+KEEP = frozenset({"settings.json", "ecf-mcp.json", ".credentials.json", ".claude.json", "plugins"})
+# Forced in the process environment so a value in the user's shell can't change them.
 PRIVACY_ENV = {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",  # on in V1.4, exported only to the local receiver
     "OTEL_LOG_USER_PROMPTS": "0",
     "OTEL_LOG_ASSISTANT_RESPONSES": "0",
     "OTEL_LOG_TOOL_DETAILS": "0",
@@ -116,8 +150,25 @@ def ecf_mcp_path() -> Path:
     return p.absolute()
 
 
+def check_args(args: list[str]) -> list[str]:
+    i = 0
+    while i < len(args):
+        a = args[i]
+        name = a.split("=", 1)[0]
+        if name in PASSTHROUGH_FLAGS or (name in PASSTHROUGH_WITH_VALUE and "=" in a):
+            i += 1
+        elif name in PASSTHROUGH_WITH_VALUE and i + 1 < len(args):
+            i += 2
+        else:
+            allowed = ", ".join(sorted(PASSTHROUGH_FLAGS | PASSTHROUGH_WITH_VALUE))
+            raise InvalidInputError(
+                f"`ecf claude` doesn't pass {a!r} to claude (allowed: {allowed})"
+            )
+    return args
+
+
 def session_env(lay: Layout, token: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_LOG_")}
+    env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith("LC_")}
     env.update(PRIVACY_ENV)
     env["CLAUDE_CONFIG_DIR"] = str(lay.config_dir)
     env["ECF_PROFILE_TOKEN"] = token
@@ -125,18 +176,27 @@ def session_env(lay: Layout, token: str) -> dict[str, str]:
 
 
 def purge_transcripts(lay: Layout) -> int:
-    """Delete this configuration's session transcripts (they contain email text in V1.4+)."""
-    projects = lay.config_dir / "projects"
-    if not projects.exists():
+    """Delete everything in the config folder except KEEP: transcripts, prompt history, debug
+    logs and file history can all hold email text (V1.4+). Returns how many entries went."""
+    if not lay.config_dir.exists():
         return 0
-    removed = sum(1 for _ in projects.rglob("*.jsonl"))
-    shutil.rmtree(projects)
+    removed = 0
+    for entry in lay.config_dir.iterdir():
+        if entry.name in KEEP:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        removed += 1
     return removed
 
 
 def run(paths: Paths, extra_args: list[str]) -> int:
+    check_args(extra_args)
     claude = find_claude()
     lay = layout(paths)
+    purge_transcripts(lay)  # a crashed earlier session may have left some behind
     write_config(lay, ecf_mcp_path())
     with LocalClient(paths) as c:
         session: dict[str, Any] = c.request("POST", "/v1/sessions")
@@ -145,6 +205,9 @@ def run(paths: Paths, extra_args: list[str]) -> int:
     try:
         return subprocess.run(args, cwd=lay.work_dir, env=env, check=False).returncode  # noqa: S603
     finally:
-        with LocalClient(paths) as c:
-            c.request("DELETE", f"/v1/sessions/{session['session_id']}")
-        purge_transcripts(lay)
+        purge_transcripts(lay)  # first: it must not depend on the service being reachable
+        try:
+            with LocalClient(paths) as c:
+                c.request("DELETE", f"/v1/sessions/{session['session_id']}")
+        except EcfError:
+            pass  # service restarted or stopped: its in-memory session tokens are gone anyway

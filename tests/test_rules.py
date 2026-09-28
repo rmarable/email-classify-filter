@@ -161,3 +161,20 @@ def test_last_rule_must_catch_all_and_ids_unique() -> None:
         compile_rules("version: 1\nrules:\n  - {id: a, when: {trigger: fraud}}\n", SCHEMA)
     with pytest.raises(InvalidInputError, match="duplicate"):
         compile_rules("version: 1\nrules:\n  - {id: a}\n  - {id: a}\n", SCHEMA)
+
+
+def test_strict_values() -> None:
+    for rule in (
+        "{id: a, when: {field: requires_reply, eq: 1}}",
+        "{id: a, when: {field: category, in: [invoice, 2]}}",
+    ):
+        with pytest.raises(InvalidInputError):
+            compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
+
+
+def test_label_from_missing_field_is_a_clear_error() -> None:
+    rules = compile_rules(
+        "version: 1\nrules:\n  - {id: a, then: [{label: {field: category}}]}\n", SCHEMA
+    )
+    with pytest.raises(InvalidInputError, match="lacks"):
+        rules.evaluate(RuleInput({}, FACTS))

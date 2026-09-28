@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 from ecf_server.clock import from_ts, to_ts
 
@@ -26,11 +27,25 @@ class BreakerState:
 
 
 def load(path: Path) -> BreakerState:
+    """Read the state; anything malformed counts as empty (the breaker must never crash)."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return BreakerState([str(c) for c in raw.get("crashes", [])], bool(raw.get("tripped")))
-    except (FileNotFoundError, ValueError):
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return BreakerState()
+    if not isinstance(raw, dict):
+        return BreakerState()
+    data = cast(dict[str, Any], raw)
+    crashes: Any = data.get("crashes", [])
+    if not isinstance(crashes, list):
+        return BreakerState()
+    valid: list[str] = []
+    for c in cast(list[Any], crashes):
+        try:
+            from_ts(str(c))
+        except ValueError:
+            continue
+        valid.append(str(c))
+    return BreakerState(valid, data.get("tripped") is True)
 
 
 def save(path: Path, st: BreakerState) -> None:
@@ -48,6 +63,7 @@ def on_start(state_path: Path, marker: Path, now: datetime) -> BreakerState:
     if marker.exists():
         st.crashes.append(to_ts(now))
     recent = [c for c in st.crashes if now - from_ts(c) <= WINDOW]
+    st.crashes = recent  # only the window matters; keeps the file small
     if len(recent) >= THRESHOLD:
         st.tripped = True
     save(state_path, st)

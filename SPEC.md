@@ -48,7 +48,7 @@ Each ends with something runnable (operator decision 2026-09-26, OD-008). Each v
 
 | Milestone | Content | Gate test first |
 |---|---|---|
-| **V1.0 Foundations** | Repo layout (single project), packaging, CI on macOS and Linux (license check, release build), CLI skeleton, local service skeleton (launchd/systemd), SQLite state and job queue, secret adapters (Keychain, Secret Service, `systemd-creds`), `ecf claude` wrapper skeleton, config and schema compiler, state machine, `ecf-server dev`, the fake-email/PDF generator and eval harness basics; `CONTRIBUTING.md`, `GENERATE-FAKE-TESTING-EMAILS.md`, the no-code ADRs. Linux secret adapters built and tested with fakes, unverified until V1.6 (operator decision 2026-09-27, OD-009). | Keychain gate (§21.1) |
+| **V1.0 Foundations** | Repo layout (single project), packaging, CI on Linux plus a local macOS test gate before each merge (license check, release build; OD-180), CLI skeleton, local service skeleton (launchd/systemd), SQLite state and job queue, secret adapters (Keychain, Secret Service, `systemd-creds`), `ecf claude` wrapper skeleton, config and schema compiler, state machine, `ecf-server dev`, the fake-email/PDF generator and eval harness basics; `CONTRIBUTING.md`, `GENERATE-FAKE-TESTING-EMAILS.md`, the no-code ADRs. Linux secret adapters built and tested with fakes, unverified until V1.6 (operator decision 2026-09-27, OD-009). | Keychain gate (§21.1) |
 | **V1.1 Mail and checks** | IMAP broker and per-address probe, fetch with size limits, DKIM/DMARC, fraud and regulator triggers, model-free rules, scheduled pre-check, audit log, `ecf check` (model-free until V1.3), UIDVALIDITY recovery, `resolved_by_mailbox`. Escalations post only from V1.2, so V1.1 runs as if in shadow. | mail and sender authentication |
 | **V1.2 Slack and approvals** | Socket Mode, channels, threads, "Needs you", buttons and forms, OS step-up on every send, 10-minute delay on `high` sends, alerts, desktop notifications, optional email alerts; `ecf init` (model step added in V1.3, export step in V1.5), `ecf config apply`, `ecf alerts set`, daily retention job, `ecf backfill`. Linux PAM/polkit built, unverified until V1.6. | Slack Socket Mode; local step-up (Touch ID) |
 | **V1.3 Local models (preset A)** | Ollama/Gemma classifier and actor, `ecf watch`, catch-up, shadow → assist → live with the go-live gate, eval runs on the Air, the single-token confidence experiment (operator decision 2026-09-26, OD-010), Gemma token and speed metrics, `ecf stats`. | none |
@@ -70,7 +70,7 @@ All must hold:
 3. Eval safety gates met on the synthetic set for preset A and for each shipped Claude pin (§16.5; operator decision 2026-09-27, OD-159): fraud-guard recall 100%, injection set 0, unsafe payment/fraud proposals 0.
 4. Documentation complete: README, operator guide, admin guide, SECURITY.md, CONTRIBUTING, CHANGELOG, ADRs, `THIRD_PARTY_NOTICES`.
 5. No open critical findings (security or data loss) in this document's open items or the issue tracker.
-6. CI green on macOS and Linux, license check passing, release artifacts reproducible and hash-verified.
+6. CI green on Linux and the full test suite passing on macOS (the merge gate, OD-180), license check passing, release artifacts reproducible and hash-verified.
 7. Operator sign-off.
 
 Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list), 5 (what "critical" means: a finding that could cause mail loss, an unauthorized send or action, or a missed fraud escalation) and 6 are [proposed]; the plan requires "release criteria defined in SPEC" with the elements named in items 2-5 and 7.
@@ -88,7 +88,7 @@ Order of work and document rules: operator decisions 2026-09-26/27, OD-137 to OD
 | `docs/adr/*` (about 18) | each when its decision is implemented; no-code ADRs (v1 scope, tag rules, license) at V1.0 | decision records with alternatives |
 | `README.md`, `docs/operator-guide.md`, `docs/admin-guide.md`, `SECURITY.md` | V1.5 (Linux sections V1.6) | user-facing summary; vulnerability reporting and supported versions |
 | `docs/roadmap/M1-aws.md`, `M2-teams.md`, `M3-remote-access.md`, `M4-always-on.md`, `later.md` | at the start of each milestone, copied from the plan | milestone design |
-| `LICENSE` | done (`68ed4db`) | Apache-2.0 with the Commons Clause and a licensor clarification; source-available, not OSI open source |
+| `LICENSE` | done (committed 2026-09-27) | Apache-2.0 with the Commons Clause and a licensor clarification; source-available, not OSI open source |
 
 Planned ADR topics: v1 scope; trust boundary; presets and Ollama/Gemma; pinned model IDs and weekly watch; no `/loop`; ecf's own DKIM/DMARC; IMAP only with broker-held credentials; one local service, SQLite and Unix-socket HTTP; Slack Socket Mode; approvals (Slack/CLI, OS step-up, delay); go-live gate bound to pinned models; outbound defaults and drafts; secret backends; packaging and lockstep version; tag rules; license; MCP SDK v2; profile tokens and no RESPOND in v1. Real-service test results go in this document; an ADR only when a result changes a decision.
 
@@ -321,7 +321,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 
 ### 6.2 Statuses and transitions
 
-`Status` is a `StrEnum`. The transition table is data (`Mapping[Status, frozenset[Status]]`) plus a guard table keyed by (from, to) (operator decision 2026-09-27, OD-037). The only writer is `transition()` in `ecf_server`. It is tested with a Hypothesis `RuleBasedStateMachine` driving `transition()` against SQLite. The state diagram (§22.1) is hand-drawn until V1.0 and generated from the table afterwards.
+`Status` is a `StrEnum`. The transition table is data (`Mapping[Status, frozenset[Status]]`) plus a guard table keyed by (from, to) (operator decision 2026-09-27, OD-037). The only writer is `transition()` in `ecf_server`. The rules are tested with a Hypothesis `RuleBasedStateMachine` driving `check_transition()` through random walks, and example tests drive `transition()` against SQLite. SQLite itself enforces the single writer (operator decision 2026-09-27, OD-181): an authorizer installed on every connection refuses any write to `items.status` outside `transition()` and any insert into `items` outside `create_item()`, whatever the SQL form; connections disable the statement cache so the check always runs. The state diagram (§22.1) is hand-drawn until V1.0 and generated from the table afterwards.
 
 - **Terminal:** `observed`, `executed` (can still be undone), `undone`, `rejected`, `cancelled`, `resolved_manual`, `resolved_by_mailbox`.
 - **Open:** `new`, `classified`, `awaiting_claude`, `proposed`, `held`, `awaiting_approval`, `awaiting_stepup`, `approved`, `delayed`, `executing`, `failed`, `failed_unknown`, `expired`, `needs_clarification`, `clarified`, `needs_human`, `undoing`, `undo_failed`. [M3] `answer_proposed`.
@@ -335,14 +335,14 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 | `awaiting_claude` | `classified` | C, Claude or fallback (Gemma) classification |
 | `awaiting_claude` | `proposed` | B, Claude or fallback actor |
 | `classified` | `proposed` | rules/actor done |
-| `proposed` | `executing` | automatic, grant issued |
-| `proposed` | `awaiting_approval` | policy needs a person |
+| `proposed` | `executing` | automatic, grant issued; only when live, or in assist for label, flag, escalate and leave (OD-182) |
+| `proposed` | `awaiting_approval` | policy needs a person; only when live (OD-182) |
 | `proposed` | `needs_clarification` | actor asked |
 | `proposed` | `observed` | shadow stage (terminal) |
 | `proposed` | `held` | assist stage, action not yet allowed |
 | `held` | `proposed` | only when the address is live |
 | `held` | `resolved_manual` | |
-| `awaiting_approval` | `approved` | reversible approval |
+| `awaiting_approval` | `approved` | reversible approval only; everything else goes through `awaiting_stepup` |
 | `awaiting_approval` | `awaiting_stepup` | step-up required |
 | `awaiting_approval` | `rejected`, `expired` | |
 | `awaiting_approval` | `proposed` | Fix changes the decision |
@@ -357,7 +357,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 | `expired` | `resolved_manual` | |
 | `needs_clarification` | `clarified` | non-risky answer |
 | `needs_clarification` | `awaiting_stepup` | answer on a payment/fraud item |
-| `needs_clarification` | `needs_human` | after 2 rounds, or a second expired answer |
+| `needs_clarification` | `needs_human` | when a third round begins: a third question, or an answer expiring in the second round (OD-182) |
 | `clarified` | `proposed` | only within the two-round cap |
 | `needs_human` | `proposed`, `resolved_manual` | |
 | `executing` | `executed`, `failed`, `failed_unknown` | 3 attempts with backoff; a send is retried only when it provably failed before the server accepted it (connection or pre-DATA error), otherwise it goes to Sent reconciliation (operator decision 2026-09-27, OD-156) |
@@ -365,9 +365,10 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 | `executed` | `undoing` | reversible actions |
 | `undoing` | `undone`, `undo_failed` | |
 | `undone` | `proposed` | Fix only |
-| any open | `resolved_manual` | `ecf item resolve --reason` or Slack Dismiss (non-payment, non-fraud) |
+| any open | `resolved_manual` | `ecf item resolve --reason` (step-up on payment or fraud items) or Slack Dismiss (non-payment, non-fraud) |
 | any open | `resolved_by_mailbox` | the email was already moved, archived or deleted in your mail client (checked each check; operator decision 2026-09-27, OD-039) |
 
+- **Guards for stage and clarification** (operator decision 2026-09-27, OD-182): `observed` only in shadow, `held` only in assist, `awaiting_approval` only when live, and `executing` from `proposed` only when live or, in assist, for the always-allowed actions. A clarification round is counted each time a question is asked or an answer expires (an expired answer is one of the two rounds); an answer (`→ clarified`, or `→ awaiting_stepup` on payment or fraud items) is accepted only within 2 rounds, and `needs_human` is reached exactly when a third round begins.
 - **Held items** appear as one batched digest line and run only after go-live; you can still act by hand in your mail client (operator decision 2026-09-27, OD-038). `ecf stage set live` prints held counts by age, says that held items ≤ 7 days execute at once, and offers to resolve older ones (default 7 days) as `resolved_manual`, or "resolve all held".
 - **Fix and Correct:** ✅ Correct records `review = correct`; ✏️ Fix records `human_correction` and returns the item to `proposed` when the decision changes (from `awaiting_approval`, or via undo from `executed`); on a `held` item it records the correction and replaces the held proposal, and the item stays `held` until the address is live (operator decision 2026-09-27, OD-157); on `observed` items it only records the correction for the gate. Fix and sender confirmation never remove a trigger already fired.
 - **Expiry:** `expiry_count` drives "after a second expiry": a second expired approval is listed only in the daily summary; a second expired answer sends the item to `needs_human`; an expired answer counts as one of the two clarification rounds. On approval expiry the Slack card is edited in place with a fresh grant and "expired, decide again".
@@ -753,6 +754,7 @@ Notes:
 - `ecf claude` opens Claude Code with a dedicated config directory and working directory; the plugin is installed only there, never in your normal Claude Code config; a separate Claude login for that config is on the `init` checklist and checked by `doctor`.
 - **Main session:** allow-listed tools are `review_queue`, `Agent` and, for `/ecf-eval`, the `eval_*` tools (`Task` was renamed `Agent` in v2.1.63; `Task` still works, verified 2026-09-27, code.claude.com sub-agents docs); **the shell is denied** (operator decision 2026-09-27, OD-089); the main session model is Haiku (dispatch only); results are read only through `review_queue`, never from subagent prose.
 - **Permissions** (operator decision 2026-09-27, OD-175; verified against code.claude.com permissions and settings reference, 2026-09-27): the dedicated settings use `permissions.defaultMode: "dontAsk"`, so any tool not pre-approved is refused instead of asked about; `permissions.allow` lists the allowed tools; `Bash`, `WebFetch`, `WebSearch`, `Edit`, `Write` and `NotebookEdit` are also denied explicitly. V1.4 adds the review subagents' tools to the allow list.
+- **Hardening and V1.0 scope** (operator decision 2026-09-27, OD-184): only `--model` and `--verbose` are passed through to `claude`; anything that could loosen the session (`--dangerously-skip-permissions`, `--permission-mode`, `--settings`, `--mcp-config`, `--add-dir`, …) is refused. The session gets an allow-listed environment (`PATH`, `HOME`, user, terminal and locale variables, `TMPDIR`, `TZ`, network proxy and certificate settings); `ANTHROPIC_*`, provider switches and `OTEL_*` exporters are dropped, and telemetry is off until V1.4 adds the local receiver. Transcripts are purged when a session starts and again first thing when it ends (before the token is revoked, so a failed revoke can't skip it); the purge deletes everything in the config folder except `settings.json`, `ecf-mcp.json`, `.credentials.json`, `.claude.json` and `plugins/` (whether `.claude.json` can hold prompt text is unverified, confirm in V1.4). In V1.0 the allow list is `review_queue` and `Agent`; the `eval_*` tools, the Haiku main-session model and the telemetry receiver arrive in V1.4, and `doctor`'s Claude Code version check is a warning until an address uses preset B or C.
 - **Subagents** hold `get_message` and `record_classification` / `propose_action`, each spawn carrying its own claim token; a V1.4 test checks subagents can't use Bash or WebFetch. Message bodies go only into subagent contexts.
 - `--strict-mcp-config` (also keeps claude.ai connectors out); whether it loads the plugin's server is a V1.4 test (fallback: pass `ecf-mcp` with `--mcp-config`). `.mcp.json` runs the absolute path of the installed `ecf-mcp --stdio` (no `uvx` at runtime; operator decision 2026-09-27, OD-129) with `"env": {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}"}` (`${VAR}` expansion documented, verified 2026-09-27, code.claude.com MCP docs).
 - No hooks: the dedicated config contains none (not `disableAllHooks`, which also disables the status line ecf needs, verified 2026-09-27, code.claude.com settings reference); `cleanupPeriodDays: 1`; transcripts purged on exit; `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=180000`; telemetry exported only to the local receiver (§13.4).
@@ -849,7 +851,7 @@ The unit uses the absolute `ecf-server` path from the `uv tool` install. When `E
 
 Same ordering, retry and dead-letter semantics as the M1 SQS FIFO queues. Queues: `actions` (grant IDs only) and `slack_out` (paced posts), from the plan; `fetch` and `model` [proposed].
 
-- **Claim:** `UPDATE jobs SET state='claimed', claimed_by=?, claim_expires=? WHERE job_id = (SELECT job_id FROM jobs WHERE queue=? AND state='queued' AND visible_at <= ? AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE j2.address_id = jobs.address_id AND j2.queue = jobs.queue AND j2.state='claimed') ORDER BY visible_at, job_id LIMIT 1) RETURNING …`, stepped with `fetchone()` (per-address FIFO).
+- **Claim** (operator decision 2026-09-27, OD-183): per (queue, address) only the oldest unfinished job (queued or claimed, ordered by `created_at` then `rowid`) is eligible, so a job waiting in backoff holds back later jobs for that address, as an SQS FIFO message group does; the pick and the `UPDATE … RETURNING` claim run in one `BEGIN IMMEDIATE` transaction. An expired claim counts as an attempt; at `max_attempts` it is dead-lettered instead of re-queued.
 - **Values [proposed, mirroring M1]:** `max_attempts` 5; claim timeout 6× the job's own timeout; on failure `visible_at` = now + backoff (30 s, 2 min, 10 min, 30 min); after `max_attempts` → `dead`, surfaced by `System Error` and `ecf inbox`. The action handler marks an action `failed` after 3 attempts, before the 5-attempt dead-letter limit. Redrive only via `ecf item requeue`.
 - **Slack posts on network errors are held, never dead-lettered.** Slack-health alerts use the same "network up" guard and 15-minute threshold as mail; `invalid_auth`/`account_inactive` alert at once.
 
@@ -865,7 +867,7 @@ Bound once at start on a loopback port (port 0, recorded in settings), served by
 
 - **macOS:** Keychain via `keyring`. **The service is the only writer** (the CLI sends an app password over the socket). The V1.0 gate test (§21.1, 2026-09-27) found that the item's access rule trusts the **interpreter binary by its code hash** (uv's and Homebrew's Pythons are ad-hoc signed), so any process running the same Python binary, from any path, reads silently; neither mitigation is possible (a private copy has the same hash; user-presence items need an Apple entitlement, error -34018). Decision (operator decision 2026-09-27, OD-163; `docs/adr/0001-keychain-access.md`): accept this as a stated limit (§12.2) and make the service never hang:
   - the service turns Keychain user interaction off for its own process (`SecKeychainSetUserInteractionAllowed(False)` via PyObjC, tested 2026-09-27: an untrusted read failed in 0.02 s with -25293 instead of waiting on a dialog), so a read it isn't trusted for fails at once and the service waits with "secret store needs you" (like a locked store);
-  - a Python change under ecf (a different patch release or rebuilt interpreter) changes the hash; `ecf upgrade` and `doctor` detect it (the recorded interpreter hash differs) and run a foreground re-grant with prompts on, using the same interpreter binary, where you enter your login password and choose Always Allow (whether Always Allow adds the new hash durably is unverified, confirm in V1.0; fallback: the service re-writes each secret after you re-enter it);
+  - a Python change under ecf (a different patch release or rebuilt interpreter) changes the hash; `ecf doctor` and `ecf status` detect it (the recorded interpreter hash differs; V1.0). The foreground re-grant arrives with `ecf upgrade` in V1.5: it runs with prompts on, using the same interpreter binary, where you enter your login password and choose Always Allow (whether Always Allow adds the new hash durably is unverified, confirm in V1.0; fallback: the service re-writes each secret after you re-enter it);
   - `uv tool upgrade` with an unchanged interpreter keeps access (tested).
 - **Linux** (chosen automatically and shown by `doctor`; operator decision 2026-09-26, OD-096): (1) Secret Service (GNOME Keyring, KWallet, KeePassXC) via `keyring` when a D-Bus session and unlocked keyring exist (after a reboot, unreadable until you log in; unverified, V1.6); (2) otherwise `systemd-creds --user` (TPM2 if present, else the host key; decrypted at service start via `LoadCredentialEncrypted=`; adding a secret runs `systemd-creds encrypt --user`, updates the unit and restarts the service; behavior unverified, V1.6); needs systemd 256+ (verified 2026-09-27, systemd NEWS); (3) otherwise refuse to start and explain. No passphrase-file fallback.
 - **Distributions** (package sites checked 2026-09-27): systemd 256+ on Ubuntu 26.04 LTS (259.5), Ubuntu 25.10 (257.9), Debian 13 (257.13), Fedora 43/44/45 (258/259/262), Rocky Linux 10 (257); not on Ubuntu 24.04 LTS (255.4), Debian 12 (252.39), Rocky 9 (252). Alma/RHEL 10 very likely 257 (unverified). v1 supports Linux desktops via Secret Service and headless Linux is best-effort (operator decision 2026-09-27, OD-097). A root system-unit fallback for older systems is decided in M4. README documents `loginctl enable-linger` and importing the session environment for notifications (operator decision 2026-09-27, OD-098).
@@ -971,7 +973,7 @@ Mailbox credentials only in the service; trust boundary in `ecf_server`; stages,
 
 ### 12.5 Repo hygiene
 
-`.gitignore` covers `eval/private/`, the eval build cache `tests/eval/synthetic/.build/`, and stray `*.eml` outside `tests/eval/synthetic/` (committed `4c4b331`).
+`.gitignore` covers `eval/private/`, the eval build cache `tests/eval/synthetic/.build/`, and stray `*.eml` outside `tests/eval/synthetic/` (committed 2026-09-27).
 
 ### 12.6 README security recommendations
 
@@ -1128,6 +1130,8 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | show-excerpt length | ~200 characters |
 | minimum SQLite | 3.37 (OD-166) |
 | minimum Claude Code | v2.1.242 |
+| doctor: timer tick stale | 180 s without a tick fails the `timer` check |
+| `ecf doctor` exit code | 3 when any check fails, else 0 |
 | `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS` | 180000 |
 | DKIM health alert | 0 of ≥ 20 signed messages pass in a day |
 | held-item resolve offer | older than 7 days |
@@ -1226,7 +1230,7 @@ One hierarchy with a generated table: stable `code` → HTTP status (RFC 9457 pr
 ### 16.1 Sets
 
 - **Synthetic set** (primary, committed): 150-200 `.eml` files plus labels; RFC 2606 domains and a fictitious org only; at least 10 per category; every sender type, fraud level and computed-fact combination; ≥ 10 fraud-guard items; a backlog-after-gap case (DKIM keys rotated before fetch). Adversarial cases: injection (incl. cross-item), lookalikes, fake regulators, attachment-name injection, forged Authentication-Results, reused Message-IDs, fraud text only in HTML, hidden text or past truncation, forged `X-ECF-Install` and `sent` replies. Realistic mess: HTML, threads, signatures, forwards, auto-replies, newsletters. Files ≤ 1 MB committed; larger ones (e.g. fake PDF invoices sized to 1, 10, 15, 17, 60 and 66 MB `.eml`) built on demand into `tests/eval/synthetic/.build/`. Generation, case cards, hygiene and labels: `GENERATE-FAKE-TESTING-EMAILS.md` and `.claude/rules/eval-synthetic.md`. The adversarial subset stays in `eval/private/` if the repo is public.
-- **Tooling layout** (operator decisions 2026-09-27, OD-178, OD-179): `reportlab` and `Pillow` are an optional `[eval]` extra (development installs include it; the license check covers extras). Cards live in `tests/eval/synthetic/cases/*.md` (YAML header plus body, optional `## html` section); `ecf eval build` writes files of 1 MB or less to `eml/` (committed) and larger ones to `.build/` (gitignored), plus `labels.jsonl` (id, file, sha256, bytes, author, expected). The hygiene scan treats a hostname as real when it ends in a common top-level domain (`.com`, `.net`, `.org`, `.io` and similar), so file names like `invoice.pdf` pass. A CI test rebuilds the committed cards and fails on any drift.
+- **Tooling layout** (operator decisions 2026-09-27, OD-178, OD-179): `reportlab` and `Pillow` are an optional `[eval]` extra (development installs include it; the license check covers extras). Cards live in `tests/eval/synthetic/cases/*.md` (YAML header plus body, optional `## html` section); `ecf eval build` writes files of 1 MB or less to `eml/` (committed) and larger ones to `.build/` (gitignored), plus `labels.jsonl` (id, file, sha256, bytes, author, expected). The hygiene scan's domain rule was tightened after the V1.0 review (operator decision 2026-09-27, OD-185): a dotted name counts as a real domain unless it ends in a reserved name or a known file extension (`.pdf`, `.docx`, `.csv`, …), so `invoice.pdf` passes and `ubs.ch` does not; defanged forms (`[.]`, `(dot)`) and non-ASCII hostnames are flagged, as are phones without an area code, plain and international numbers, SSN-shaped numbers, lowercase IBANs and more token formats. Authentication-Results property names (`header.from`, `smtp.mailfrom`, …) are not domains. Known false positive: a missing space after a full stop (`report.Summary`). A CI test rebuilds the committed cards and fails on any drift.
 - **Real-mail set:** shadow-mode reviews (Correct/Fix), stored as `stable_id` + labels.
 - **Outbound set:** suppressed proposals reviewed for the `high` enablement gate.
 - Deferred: the Gmail import and `shadow_compare`.
@@ -1264,15 +1268,15 @@ Temperature 0, one run plus a determinism check; Wilson 95% intervals. Primary: 
 
 ### 17.2 Conventions
 
-Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` settles the rest at V1.0); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally and `Annotated[str, StringConstraints(...)]` at the API boundary (formats, operator decision 2026-09-27, OD-164: address and install names are lowercase slugs `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`, at most 40 characters; `stable_id` 64 hex; grant, job and nonce IDs 32 random hex; short IDs 8-64 hex); one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
+Python ≥ 3.12; Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` for the rest is not run yet; added in V1.1 with the first untyped runtime library, `imapclient`); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally and `Annotated[str, StringConstraints(...)]` at the API boundary (formats, operator decision 2026-09-27, OD-164: address and install names are lowercase slugs `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`, at most 40 characters; `stable_id` 64 hex; grant, job and nonce IDs 32 random hex; short IDs 8-64 hex); one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
 
 ### 17.3 Testing and development
 
-- **Tests** (operator decision 2026-09-27, OD-127): one fake per port with contract tests; DKIM/DMARC tested in-process (`dkimpy` signs, verifies with an injected resolver); one Dovecot container on Linux CI for the IMAP contract test (macOS CI runs unit, Keychain and launchd tests); Postfix + OpenDMARC as an optional CI job; a Purelymail smoke test; Hypothesis for the transition table; host-neutral tool-text lint; a 150-email load test; the stdout-only-JSON-RPC test; a Slack fake.
+- **Tests** (operator decision 2026-09-27, OD-127): one fake per port with contract tests; DKIM/DMARC tested in-process (`dkimpy` signs, verifies with an injected resolver); one Dovecot container on Linux CI for the IMAP contract test (the macOS suite, including the Keychain and launchd tests, runs locally before each merge, OD-180); Postfix + OpenDMARC as an optional CI job; a Purelymail smoke test; Hypothesis for the transition table; host-neutral tool-text lint; a 150-email load test; the stdout-only-JSON-RPC test; a Slack fake.
 - **Dev loop:** `ecf-server dev` runs one process on the same kind of Unix socket (`ECF_SOCKET=<path>`) with a Dovecot container, a Postfix + OpenDMARC (and OpenDKIM) front end, in-memory queues, a Slack fake that records posts, and an injectable `Clock` for the 10-minute, 4-day, 14-day and 30-day delays.
 - **Dev-loop details** (operator decision 2026-09-27, OD-176): `ECF_SOCKET` is honored by clients (CLI, MCP) only; the service always binds its own install's socket. `ecf-server dev` uses a throwaway `/tmp` data folder (kept with `--keep` or `--home`), memory-only secrets (never the Keychain), a recording fake chat, and a fake clock starting 2026-10-01 12:00 UTC, moved with `POST /v1/dev/clock?advance=<seconds>`; `/v1/dev/*` routes exist only in dev mode. The Dovecot and Postfix/OpenDMARC containers join the dev loop in V1.1, with the IMAP code (operator decision 2026-09-27, OD-177).
 - **Environments:** local dev (`ecf-server dev`); a **test install** (local mode on a test Slack workspace with a dedicated test mailbox, e.g. `ecf-test@`, receiving only synthetic mail); **prod** (your real install, tagged releases only).
-- **Flow:** branch or worktree → edit → local tests and `ecf replay` → pull request → CI on macOS and Linux (ruff, pyright, tests, import-linter, license check, build and hash the wheel) → install the CI build on the test install (`ecf upgrade --wheel`, refused on prod) → end to end → merge → tag → release. Hotfix: branch from the release tag, same flow shortened. Never install an untagged build on prod.
+- **Flow:** branch or worktree → edit → local tests and `ecf replay` → pull request → CI on Linux (ruff, pyright, tests, import-linter, license check, build and hash the wheel) and the macOS suite run locally (operator decision 2026-09-27, OD-180: GitHub CI runs Linux only, to stay within free minutes; the full suite runs on a Mac before every merge to `main`, with the result in the merge commit message) → install the CI build on the test install (`ecf upgrade --wheel`, refused on prod) → end to end → merge → tag → release. Hotfix: branch from the release tag, same flow shortened. Never install an untagged build on prod.
 - **Config is not code:** rules, templates, schema versions and policy change through `ecf` against the live install, after `ecf rules test`.
 - **Plugin development:** `claude --plugin-dir <checkout>` (documented, G1-1); real addresses use the pinned release.
 - Claude Code edits on a branch or worktree; writes, commits and pushes are confirmed with the operator first.
@@ -1298,7 +1302,7 @@ Checked 2026-09-26 on PyPI and upstream; V1.0 secrets and HTTP rows 2026-09-27. 
 | `jeepney` 0.9.0 | MIT | service (Linux) | keep notice |
 | `pyrage`, PyObjC LocalAuthentication and Security frameworks, `python-pam` | MIT | service | keep notices |
 | transitive: `httpcore`, `idna`, `click`, `pycparser` (BSD-3-Clause); `h11` (MIT); `cryptography` (Apache-2.0 OR BSD-3-Clause); `cffi` (MIT-0) | as listed (PyPI metadata) | client/service | keep notices |
-| `typing_extensions` 4.16.0 (via `pydantic`; its dependency list not retrieved, confirm at V1.0) | PSF-2.0 | client/service | keep notice |
+| `typing_extensions` 4.16.0 (via `pydantic`; confirmed in the generated table in CONTRIBUTING) | PSF-2.0 | client/service | keep notice |
 | `certifi` | MPL-2.0 | shipped at runtime, unmodified (named exception) | none while unmodified |
 | `httpx2`, `httpcore2`, `truststore` (via `mcp` 2.2.0) | to check at V1.0 from `uv.lock` | client/service | checked before adding |
 | `testcontainers` | Apache-2.0 | tests | keep license/NOTICE |
@@ -1367,7 +1371,8 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 
 ### 21.2 Measurements and confirmations during the build
 
-- **V1.0:** whether a foreground Always Allow adds a changed interpreter's hash durably (Keychain re-grant, §11.6); `SecKeychainSetUserInteractionAllowed` is a legacy Keychain API (unverified whether Apple has deprecated it; watch it).
+- **V1.5:** whether a foreground Always Allow adds a changed interpreter's hash durably (Keychain re-grant, §11.6; moved from V1.0, where only detection was built).
+- **Ongoing:** `SecKeychainSetUserInteractionAllowed` is a legacy Keychain API (unverified whether Apple has deprecated it; watch it).
 - **V1.1:** peak memory for 64 MB messages; `BytesHeaderParser` option; dkimpy on real senders; RFC 9989 tree walk on real senders; share of payment mail at `auth_result = none`; the shared-platform sender list; each provider's maximum message size.
 - **V1.2:** `osascript` notifications; `ProcessType=Interactive`; Slack sleep behavior.
 - **V1.3:** Gemma 4 12B digest; pulling a specific digest; the single-token experiment (`top_logprobs` range, before/after constraint); whether `prompt_eval_count` includes cached tokens; prompt-cache benefit of `OLLAMA_NUM_PARALLEL=1`; reload on option change; IOPM assertions from a LaunchAgent; 150-email backlog time on the Air; optional `-mlx` vs default speed and q8 size.
@@ -1744,7 +1749,7 @@ Milestone tag names V1.1-V1.4 (§1.4); release criteria items 4, 5, 6 (§1.5); S
 
 ### 23.4 Operator decisions
 
-Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155), then decisions made reviewing this document (OD-156 onward; "Plan line" reads "(SPEC review)") ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
+Generated from every dated operator-decision marker in the plan outside its Review history and Appendix (OD-001 to OD-149), plus the two review-pass acceptances and the start decision from the Review history and three section-heading markers (OD-150 to OD-155), then decisions made reviewing this document and during the build (OD-156 onward; "Plan line" names where: "(SPEC review)", "(Keychain test)", "(V1.0 build)" or "(V1.0 review)") ("operator decision(s)", "operator confirmed", "confirmed by the operator", "reviewer recommendation confirmed by the operator"; undated markers take 2026-09-26; mentions of the marker forms in the plan's own writing rules are excluded). "Plan line" is the line in `docs/history/design-plan-2026-09-27.md`. "Home document" is this document's section, or the planned roadmap path with the plan section that holds the design until that document is written.
 
 | ID | Date | Plan line | Home document | Decision |
 |---|---|---|---|---|
@@ -1927,6 +1932,12 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-177 | 2026-09-27 | (V1.0 build) | SPEC §17.3 | Mail containers join the dev loop in V1.1 |
 | OD-178 | 2026-09-27 | (V1.0 build) | SPEC §16.1 | reportlab and Pillow as an optional [eval] extra; license check covers extras |
 | OD-179 | 2026-09-27 | (V1.0 build) | SPEC §16.1 | Synthetic-set layout, labels.jsonl fields, hygiene domain heuristic |
+| OD-180 | 2026-09-27 | (V1.0 review) | SPEC §1.3, §1.5, §17.3 | GitHub CI on Linux only; the full suite runs on a Mac before each merge (merge gate) |
+| OD-181 | 2026-09-27 | (V1.0 review) | SPEC §6.2 | SQLite authorizer enforces the single writer of items.status and items inserts |
+| OD-182 | 2026-09-27 | (V1.0 review) | SPEC §6.2 | Stage guards on proposed; clarification rounds counted per question or expired answer; needs_human when a third round begins |
+| OD-183 | 2026-09-27 | (V1.0 review) | SPEC §11.3 | Job queue: strict per-address FIFO (backoff holds later jobs); expired claims count and dead-letter |
+| OD-184 | 2026-09-27 | (V1.0 review) | SPEC §10.3 | ecf claude: argument and environment allow-lists, purge keep-list, telemetry off until V1.4 |
+| OD-185 | 2026-09-27 | (V1.0 review) | SPEC §16.1 | Hygiene scan: file-extension domain rule, defanged and non-ASCII names, more number and token shapes |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

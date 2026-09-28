@@ -63,3 +63,33 @@ def test_reset_clears(tmp_path: Path) -> None:
     breaker.save(state, breaker.BreakerState(["x"], tripped=True))
     breaker.reset(state)
     assert breaker.load(state) == breaker.BreakerState()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[]",
+        '"x"',
+        "1",
+        "null",
+        '{"crashes": "notalist"}',
+        '{"crashes": [1, "bad"]}',
+        "not json",
+        "",
+    ],
+)
+def test_breaker_survives_malformed_state(tmp_path: Path, content: str) -> None:
+    state = tmp_path / "crash.json"
+    state.write_text(content)
+    st = breaker.on_start(state, tmp_path / "running", FakeClock().now())
+    assert st.crashes == [] and not st.tripped
+
+
+def test_breaker_keeps_only_the_window(tmp_path: Path) -> None:
+    clock = FakeClock()
+    state, marker = tmp_path / "crash.json", tmp_path / "running"
+    for _ in range(50):  # a crash every 20 minutes never trips, and never piles up
+        breaker.mark_running(marker)
+        clock.advance(20 * 60)
+        st = breaker.on_start(state, marker, clock.now())
+        assert len(st.crashes) <= 1 and not st.tripped

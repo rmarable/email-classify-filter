@@ -123,13 +123,21 @@ TEST-NET-1 address block. Nothing depends on the time or machine of the build.
 `ecf eval build` scans every card (header fields, body and HTML) before writing anything, and fails
 on:
 
-- email addresses, URLs or hostnames outside the reserved names (a hostname counts as real when it
-  ends in a common top-level domain such as `.com`, `.net`, `.org` or `.io`, so `invoice.pdf` passes);
-- phone numbers other than 555-01xx;
-- card numbers that pass the Luhn check;
-- IBANs with a valid checksum, except published examples;
+- email addresses, URLs and dotted names outside the reserved names. A dotted name counts as a real
+  domain unless it ends in a reserved name or a known file extension, so `invoice.pdf` passes and
+  `ubs.ch` doesn't. Defanged forms (`paypal[.]com`, `paypal (dot) com`) and non-ASCII hostnames
+  (homoglyphs, IDN TLDs) count too. Authentication-Results property names (`header.from`,
+  `smtp.mailfrom`, …) are not domains;
+- phone numbers other than 555-01xx, with or without an area code, plain 10-digit or international;
+- SSN-shaped numbers;
+- card numbers that pass the Luhn check, with spaces, dashes, en dashes or dots between groups;
+- IBANs with a valid checksum in any case, even glued to other text, except published examples;
 - 9-digit numbers with a valid US routing-number checksum;
-- key and token shapes (AWS keys, Slack tokens, private keys, GitHub and API tokens).
+- key and token shapes (AWS keys, Slack tokens, private keys, GitHub tokens, Stripe keys, JWTs,
+  Google API keys, GitLab tokens).
+
+Known false positive: a missing space after a full stop (`report.Summary`) reads as a domain; write
+the space.
 
 Generated PDFs contain only card fields, so scanning the cards covers PDF text. Real names can't be
 detected automatically; review catches them.

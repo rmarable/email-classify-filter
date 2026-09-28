@@ -7,6 +7,7 @@ one per request for HTTP routes.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sqlite3
 import threading
@@ -15,11 +16,38 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 from ecf.errors import ServiceUnavailableError
 
 MIN_SQLITE = (3, 37, 0)  # STRICT tables (3.37); RETURNING needs 3.35
 BUSY_TIMEOUT_MS = 5000
+
+
+# The single-writer rule for items (SPEC §6.2), enforced by SQLite's authorizer at statement
+# compile time: only `items.create_item` may insert into `items`, and only `items.transition` may
+# write `items.status`. This catches every SQL form (UPDATE OR IGNORE, REPLACE, upserts, ...).
+_ITEMS_WRITER: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "ecf_items_writer", default=None
+)
+
+
+@contextmanager
+def items_writer(kind: Literal["create", "transition"]) -> Generator[None]:
+    token = _ITEMS_WRITER.set(kind)
+    try:
+        yield
+    finally:
+        _ITEMS_WRITER.reset(token)
+
+
+def _authorizer(action: int, arg1: str | None, arg2: str | None, *_: str | None) -> int:
+    scope = _ITEMS_WRITER.get()
+    if action == sqlite3.SQLITE_UPDATE and arg1 == "items" and arg2 == "status":
+        return sqlite3.SQLITE_OK if scope == "transition" else sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_INSERT and arg1 == "items":
+        return sqlite3.SQLITE_OK if scope == "create" else sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
 
 
 def sqlite_version_ok() -> bool:
@@ -35,10 +63,14 @@ def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     old_umask = os.umask(0o077)
     try:
-        conn = sqlite3.connect(path, autocommit=True, timeout=BUSY_TIMEOUT_MS / 1000)
+        # cached_statements=0: every statement is compiled, so the authorizer always runs
+        conn = sqlite3.connect(
+            path, autocommit=True, timeout=BUSY_TIMEOUT_MS / 1000, cached_statements=0
+        )
     finally:
         os.umask(old_umask)
     conn.row_factory = sqlite3.Row
+    conn.set_authorizer(_authorizer)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=FULL")
     conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
@@ -56,10 +88,13 @@ def write_tx(conn: sqlite3.Connection) -> Generator[sqlite3.Connection]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
+        conn.execute("COMMIT")
     except BaseException:
-        conn.execute("ROLLBACK")
+        # SQLite may already have rolled back (e.g. SQLITE_FULL); a failed COMMIT leaves the
+        # transaction open. Either way, never leave the connection inside a transaction.
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")
 
 
 class ThreadConnections:
@@ -98,6 +133,10 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
         if version in done:
             continue
         with write_tx(conn):
+            # another migrator may have applied it since we looked
+            again = "SELECT 1 FROM schema_migrations WHERE version = ?"
+            if conn.execute(again, (version,)).fetchone():
+                continue
             for statement in _split(sql):
                 conn.execute(statement)
             conn.execute(

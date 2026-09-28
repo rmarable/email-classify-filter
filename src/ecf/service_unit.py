@@ -86,6 +86,7 @@ def render_launchd_plist(install: str, server: Path, paths: Paths) -> bytes:
         "KeepAlive": {"SuccessfulExit": False},
         "ExitTimeOut": STOP_TIMEOUT_S,
         "ProcessType": "Interactive",
+        "Umask": 0o077,
         "StandardOutPath": "/dev/null",
         "StandardErrorPath": str(paths.data_dir / "logs" / "launchd-stderr.log"),
     }
@@ -211,13 +212,14 @@ def render_systemd_unit(
         "StartLimitBurst=5",
         "",
         "[Service]",
-        f"ExecStart={server} local --install {install}",
+        f'ExecStart="{server}" local --install {install}',
         "Restart=on-failure",
         f"TimeoutStopSec={STOP_TIMEOUT_S}",
         "UMask=0077",
     ]
-    lines += [f"Environment={k}={v}" for k, v in _env().items()]
+    lines += [f'Environment="{k}={v}"' for k, v in _env().items()]
     for cred in credential_files or []:
+        # not quoted: quoting support for this setting is unverified until the V1.6 Linux test
         lines.append(f"LoadCredentialEncrypted={cred.name.removesuffix('.cred')}:{cred}")
     lines += ["", "[Install]", "WantedBy=default.target", ""]
     return "\n".join(lines)

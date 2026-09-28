@@ -3,6 +3,38 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.0.1-fixes (2026-09-27)
+
+Fixes from the adversarial review of V1.0. Nothing here processes mail yet.
+
+### Fixed
+
+- Security: tracebacks in the service log no longer include local variables (a crash could write
+  the CLI token into the log); a non-ASCII token now gets 401, not a 500; tokens are hidden from
+  `repr`; the service runs with umask 077 (rotated logs stay 0600) and the launchd plist sets
+  `Umask`.
+- Job queue: a job whose claim keeps expiring now dead-letters; per-address order holds while a
+  job waits in backoff (OD-183).
+- State machine: stage guards on `proposed` (nothing executes in shadow); a third clarification
+  round goes to a person instead of getting stuck; approval without step-up only for reversible
+  actions (OD-182).
+- SQLite refuses status writes outside `transition()` and item inserts outside `create_item()`
+  (OD-181); a failed COMMIT no longer wedges a connection; migrations re-check inside the
+  transaction.
+- Crash breaker survives a malformed state file and keeps only the 10-minute window.
+- `ecf claude`: transcripts are purged before revoking the token and at start; the purge keeps
+  only login and config; loosening flags are refused and the environment is allow-listed (OD-184).
+- Rules and schema: strict value types, clear errors for a missing label field or unknown level,
+  `version: true` and non-name enum values refused; `ecf-server --install` is validated; systemd
+  unit paths are quoted.
+- Hygiene scan catches domains outside a fixed TLD list, defanged and non-ASCII names, more phone,
+  number and token shapes (OD-185).
+- Tests: no leaked service processes (the run fails if one survives); assertions that couldn't
+  fail now can; doctor branches, license-gate logic and orphaned `.eml` files are tested; license
+  overrides are pinned to the reviewed version.
+- Docs: SPEC matches the build (Linux CI plus the macOS merge gate, OD-180; Keychain re-grant in
+  V1.5; stale hashes and wording).
+
 ## ms-v1.0-foundations (2026-09-27)
 
 Foundations for v1 single-user local mode. Nothing here processes mail yet.

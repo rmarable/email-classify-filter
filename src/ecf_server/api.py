@@ -35,7 +35,7 @@ from ecf.errors import (
 )
 from ecf.ids import new_random_id
 from ecf_server.chat import FakeChat
-from ecf_server.clock import FakeClock, SystemClock, to_ts
+from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 
 API_VERSION = 1
@@ -49,7 +49,7 @@ class Caller(StrEnum):
 @dataclass
 class Session:
     session_id: str
-    token: str
+    token: str = field(repr=False)
     profile: Caller
     created_at: str
 
@@ -66,7 +66,7 @@ class DevHooks:
 @dataclass
 class ServiceState:
     install: str
-    token: str
+    token: str = field(repr=False)
     started_at: str
     last_tick_at: str | None = None
     ticks: int = 0
@@ -77,13 +77,16 @@ class ServiceState:
     dev: DevHooks | None = None
     sessions: dict[str, Session] = field(default_factory=dict[str, Session])
     lock: threading.Lock = field(default_factory=threading.Lock)
+    clock: Clock = field(default_factory=SystemClock, repr=False)
 
     def caller_for(self, token: str) -> tuple[Caller, Session | None]:
-        if token and hmac.compare_digest(token, self.token):
+        # compare bytes: compare_digest raises on non-ASCII str (headers decode as latin-1)
+        given = token.encode("utf-8", "surrogateescape")
+        if token and hmac.compare_digest(given, self.token.encode()):
             return Caller.CLI, None
         with self.lock:
             for s in self.sessions.values():
-                if hmac.compare_digest(token, s.token):
+                if hmac.compare_digest(given, s.token.encode()):
                     return s.profile, s
         raise UnauthorizedError("missing or wrong token")
 
@@ -139,7 +142,7 @@ def create_app(state: ServiceState) -> Starlette:
 
     @allow(Caller.CLI)
     def create_session(_request: Request) -> JSONResponse:
-        now = to_ts(SystemClock().now())
+        now = to_ts(state.clock.now())
         s = Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
         with state.lock:
             state.sessions[s.session_id] = s
@@ -168,7 +171,10 @@ def create_app(state: ServiceState) -> Starlette:
     def dev_clock(request: Request) -> JSONResponse:
         dev = _dev()
         if request.method == "POST":
-            seconds = float(request.query_params.get("advance", "0"))
+            try:
+                seconds = float(request.query_params.get("advance", "0"))
+            except ValueError as exc:
+                raise InvalidInputError("advance must be a number of seconds") from exc
             if not 0 <= seconds <= 400 * 86400:
                 raise InvalidInputError("advance must be between 0 and 400 days of seconds")
             dev.clock.advance(seconds)

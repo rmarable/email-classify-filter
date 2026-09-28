@@ -19,11 +19,15 @@ def install() -> Iterator[str]:
     from ecf_server.secretstore.macos_interaction import set_interaction_allowed  # noqa: PLC0415
 
     name = f"ecf-test-{secrets.token_hex(4)}"
-    yield name
-    store = macos_keychain(name, interactive=False)
-    for item in ("slack/bot", "mailbox/billing"):
-        store.delete(item)
-    set_interaction_allowed(True)
+    try:
+        yield name
+    finally:
+        try:
+            store = macos_keychain(name, interactive=False)
+            for item in ("slack/bot", "mailbox/billing"):
+                store.delete(item)
+        finally:
+            set_interaction_allowed(True)  # always restore prompts for this process
 
 
 def test_keychain_round_trip_without_prompts(install: str) -> None:

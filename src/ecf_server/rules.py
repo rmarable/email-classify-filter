@@ -18,6 +18,8 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    StrictBool,
+    StrictStr,
     Tag,
     ValidationError,
     model_validator,
@@ -60,10 +62,10 @@ class Compare(BaseModel):
     fact: str | None = None
     trigger: str | None = None
     address: str | None = None
-    eq: str | bool | None = None
-    in_: list[str] | None = Field(default=None, alias="in")
-    gte: str | None = None
-    lte: str | None = None
+    eq: StrictStr | StrictBool | None = None
+    in_: list[StrictStr] | None = Field(default=None, alias="in")
+    gte: StrictStr | None = None
+    lte: StrictStr | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> Compare:
@@ -231,6 +233,8 @@ class CompiledRules:
 
 def _target(t: str | LabelFrom | None, inp: RuleInput) -> str | None:
     if isinstance(t, LabelFrom):
+        if t.field not in inp.classification:
+            raise InvalidInputError(f"label from field {t.field!r}, which the classification lacks")
         return str(inp.classification[t.field])
     return t
 

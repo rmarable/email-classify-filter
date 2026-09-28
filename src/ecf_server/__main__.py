@@ -30,6 +30,12 @@ def main(argv: list[str] | None = None) -> None:
             p.add_argument("--tick-seconds", type=float, default=None, help=argparse.SUPPRESS)
             p.add_argument("--watchdog-seconds", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    import re  # noqa: PLC0415
+
+    from ecf.ids import SLUG_PATTERN  # noqa: PLC0415
+
+    if not re.fullmatch(SLUG_PATTERN, args.install):
+        parser.error("--install: lowercase letters, digits and hyphens, at most 40")
     paths = paths_for(args.install, for_service=True)
     try:
         if args.command == "dev":

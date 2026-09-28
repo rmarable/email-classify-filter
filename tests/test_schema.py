@@ -87,3 +87,21 @@ def test_yaml_rules() -> None:
     assert load_yaml("a: no\nb: 010\n") == {"a": "no", "b": 10}
     with pytest.raises(InvalidInputError, match="invalid YAML"):
         load_yaml("a: 1\na: 2\n")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "version: true\nfields: {a: {type: boolean, description: x}}\n",
+        "version: 1\nfields: {a: {type: enum, description: x, values: {1: one}}}\n",
+        "version: 1\nfields: {a: {type: enum, description: x, values: {Bad Value: one}}}\n",
+    ],
+)
+def test_more_bad_schemas_rejected(text: str) -> None:
+    with pytest.raises(InvalidInputError):
+        compile_schema(text)
+
+
+def test_rank_of_unknown_level_is_a_clear_error() -> None:
+    with pytest.raises(InvalidInputError, match="not a level"):
+        load_schema_v1().fields["priority"].rank("critical")

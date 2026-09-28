@@ -1,5 +1,8 @@
+import base64
 import json
+import re
 import shutil
+import zlib
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
@@ -30,6 +33,20 @@ Body line
 
 def card(extra: str = "") -> str:
     return CARD.format(extra=extra)
+
+
+def _streams(pdf: bytes) -> list[bytes]:
+    """The decoded content streams of a PDF (reportlab: ASCII85 then Flate)."""
+    out: list[bytes] = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        raw = match.group(1).strip()
+        if raw.endswith(b"~>"):
+            raw = base64.a85decode(raw, adobe=True)
+        try:
+            out.append(zlib.decompress(raw))
+        except zlib.error:
+            out.append(raw)
+    return out
 
 
 def parsed(data: bytes) -> EmailMessage:
@@ -87,27 +104,46 @@ def test_generated_pdf_is_plain() -> None:
     assert isinstance(data, bytes) and data.startswith(b"%PDF")
     for marker in (b"/JavaScript", b"/JS ", b"/AcroForm", b"/URI", b"/EmbeddedFile", b"/Launch"):
         assert marker not in data
-    assert b"SYNTHETIC TEST DOCUMENT" in data or b"/Filter" in data
+    text = b"".join(_streams(data))
+    assert b"SYNTHETIC TEST DOCUMENT" in text
 
 
 # ---- hygiene
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "kind"),
     [
-        "write to someone@gmail.com",
-        "see https://www.realbank.com/login",
-        "visit paypal.com",
-        "call 212-555-0199 or 415-867-5309",
-        "card 4111 1111 1111 1111",
-        "IBAN DE44500105175407324931",
-        "routing 021000021",
-        "key AKIAABCDEFGHIJKLMNOP",
+        ("write to someone@gmail.com", "email address"),
+        ("see https://www.realbank.com/login", "URL"),
+        ("visit paypal.com", "domain"),
+        ("visit ubs.ch or rabobank.nl", "domain"),
+        ("paypal[.]com", "domain"),
+        ("paypal (dot) com", "domain"),
+        ("p\u0430ypal.com", "non-ASCII domain (homoglyph or IDN)"),
+        ("bank.\u4e2d\u56fd", "non-ASCII domain (homoglyph or IDN)"),
+        ("call 212-555-0199 or 415-867-5309", "phone number"),
+        ("call 867-5309", "phone number"),
+        ("call 4158675309", "phone number"),
+        ("call +44 20 7946 0958", "phone number"),
+        ("ssn 123-45-6789", "SSN-like number"),
+        ("card 4111 1111 1111 1111", "card number (Luhn-valid)"),
+        ("card 4111.1111.1111.1111", "card number (Luhn-valid)"),
+        ("card 4111\u20131111\u20131111\u20131111", "card number (Luhn-valid)"),
+        ("IBAN DE44500105175407324931", "IBAN (valid checksum)"),
+        ("iban de44 5001 0517 5407 3249 31", "IBAN (valid checksum)"),
+        ("refDE44500105175407324931", "IBAN (valid checksum)"),
+        ("routing 021000021", "routing number (valid checksum)"),
+        ("key AKIAABCDEFGHIJKLMNOP", "secret-like token"),
+        ("sk_live_abcdefghij12", "secret-like token"),
+        ("github_pat_" + "a" * 22, "secret-like token"),
+        ("AIza" + "a" * 35, "secret-like token"),
+        ("glpat-" + "a" * 20, "secret-like token"),
     ],
 )
-def test_hygiene_flags(text: str) -> None:
-    assert scan_text(text, "t"), text
+def test_hygiene_flags(text: str, kind: str) -> None:
+    kinds = {f.kind for f in scan_text(text, "t")}
+    assert kind in kinds, (text, kinds)
 
 
 @pytest.mark.parametrize(
@@ -122,6 +158,12 @@ def test_hygiene_flags(text: str) -> None:
         "routing 123456789",
         "card 4111 1111 1111 1112",
         "example.com is reserved",
+        "e.g. and i.e. and U.S.",
+        "INV-2044 due 2026-10-15",
+        "version 1.2.3",
+        "toner 89.50",
+        "mx.example.net; dkim=pass header.d=vendor-a.example; "
+        "dmarc=pass header.from=vendor-a.example",
     ],
 )
 def test_hygiene_allows(text: str) -> None:
@@ -151,6 +193,9 @@ def test_committed_set_is_current(tmp_path: Path) -> None:
         for x in (json.loads(y) for y in (tmp_path / "labels.jsonl").read_text().splitlines())
     }
     assert {x["id"] for x in labels} == set(fresh)
+    committed = {p.stem for p in (ROOT / "eml").glob("*.eml")}
+    small = {x["id"] for x in labels if x["bytes"] <= COMMIT_LIMIT}
+    assert committed == small, f"orphaned or missing .eml files: {committed ^ small}"
     for entry in labels:
         assert entry["sha256"] == fresh[entry["id"]]["sha256"], entry["id"]
         if entry["bytes"] <= COMMIT_LIMIT:

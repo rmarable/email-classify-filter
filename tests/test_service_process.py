@@ -1,7 +1,6 @@
 """Runs the real `ecf-server local` process in a short /tmp folder (socket path limits)."""
 
 import os
-import signal
 import stat
 import subprocess
 import sys
@@ -10,7 +9,7 @@ from pathlib import Path
 
 from ecf.paths import Paths
 
-from .conftest import start_service, uds_client, wait_answering
+from .conftest import spawn, start_service, stop, uds_client, wait_answering
 
 
 def test_start_serve_stop(home: Path) -> None:
@@ -36,20 +35,26 @@ def test_start_serve_stop(home: Path) -> None:
             assert "backend" in ss and "interpreter_changed" in ss
             if sys.platform == "darwin":
                 assert ss["backend"] == "keychain"
+            elif ss["backend"] is None:  # e.g. CI: no desktop session, systemd < 256
+                assert "systemd" in ss["detail"] and "Secret Service" in ss["detail"]
         second = start_service(home)
-        assert second.wait(15) == 3
+        try:
+            assert second.wait(15) == 3
+        finally:
+            stop(second)
     finally:
-        proc.send_signal(signal.SIGTERM)
-        assert proc.wait(20) == 0
+        assert stop(proc) == 0
     assert not p.socket.exists() and not p.running_marker.exists()
 
 
 def test_kill_is_recorded_as_a_crash(home: Path) -> None:
     p = Paths("t", home)
     proc = start_service(home)
-    wait_answering(p, proc)
-    proc.kill()
-    proc.wait(10)
+    try:
+        wait_answering(p, proc)
+    finally:
+        proc.kill()
+        proc.wait(10)
     assert p.running_marker.exists()  # left behind by the crash
     proc = start_service(home)
     try:
@@ -58,19 +63,23 @@ def test_kill_is_recorded_as_a_crash(home: Path) -> None:
             s = c.get("/v1/status", headers={"Authorization": f"Bearer {p.token.read_text()}"})
             assert s.json()["breaker"] == {"recent_crashes": 1, "tripped": False}
     finally:
-        proc.send_signal(signal.SIGTERM)
-        proc.wait(20)
+        stop(proc)
 
 
 def test_breaker_trips_and_reset_clears_it(home: Path) -> None:
     p = Paths("t", home)
     for _ in range(5):
         proc = start_service(home)
-        wait_answering(p, proc)
-        proc.kill()
-        proc.wait(10)
+        try:
+            wait_answering(p, proc)
+        finally:
+            proc.kill()
+            proc.wait(10)
     proc = start_service(home)
-    assert proc.wait(15) == 0  # tripped: exits 0 so launchd/systemd don't restart it
+    try:
+        assert proc.wait(15) == 0  # tripped: exits 0 so launchd/systemd don't restart it
+    finally:
+        stop(proc)
     assert proc.stderr is not None and b"repeated crashes" in proc.stderr.read()
     env = {**os.environ, "ECF_HOME": str(home)}
     subprocess.run(
@@ -80,8 +89,7 @@ def test_breaker_trips_and_reset_clears_it(home: Path) -> None:
     try:
         wait_answering(p, proc)
     finally:
-        proc.send_signal(signal.SIGTERM)
-        assert proc.wait(20) == 0
+        assert stop(proc) == 0
 
 
 def test_migrate_command(home: Path) -> None:
@@ -102,3 +110,28 @@ def test_migrate_command(home: Path) -> None:
         text=True,
     )
     assert "none" in out.stdout
+
+
+def test_rejects_bad_install_names(home: Path) -> None:
+    for bad in ("../x", "Bad", "a b"):
+        proc = spawn(["local", "--install", bad], {**os.environ, "ECF_HOME": str(home)})
+        try:
+            assert proc.wait(15) == 2
+        finally:
+            stop(proc)
+    assert not any(home.iterdir())
+
+
+def test_service_files_are_private(home: Path) -> None:
+    p = Paths("t", home)
+    old = os.umask(0o022)  # a permissive umask, as launchd gives
+    try:
+        proc = start_service(home)
+    finally:
+        os.umask(old)
+    try:
+        wait_answering(p, proc)
+        for f in (p.log, p.crash_state, p.running_marker):
+            assert stat.S_IMODE(f.stat().st_mode) == 0o600, f
+    finally:
+        stop(proc)
