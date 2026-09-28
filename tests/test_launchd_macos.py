@@ -4,6 +4,7 @@ install in a short /tmp folder and removes the agent, its plist and the folder a
 import os
 import secrets
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -29,7 +30,15 @@ def manager(monkeypatch: pytest.MonkeyPatch) -> Iterator[LaunchdManager]:
     try:
         yield m
     finally:
-        m.uninstall()
+        try:
+            m.uninstall()
+        finally:  # if uninstall failed, make sure no KeepAlive agent survives the test
+            subprocess.run(
+                ["launchctl", "bootout", f"gui/{os.getuid()}/{m.label}"],
+                capture_output=True,
+                check=False,
+            )
+            m.unit_path.unlink(missing_ok=True)
         if created_agents_dir and agents.exists() and not any(agents.iterdir()):
             agents.rmdir()
         shutil.rmtree(home, ignore_errors=True)

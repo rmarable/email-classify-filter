@@ -69,3 +69,17 @@ def test_session_tokens() -> None:
     assert request("DELETE", f"/v1/sessions/{sid}", "secret-token").status_code == 200
     assert request("GET", "/v1/status", work).status_code == 401  # revoked
     assert request("DELETE", f"/v1/sessions/{sid}", "secret-token").status_code == 404
+
+
+def test_non_ascii_token_is_401_not_500() -> None:
+    async def call() -> httpx.Response:
+        transport = httpx.ASGITransport(app=APP)
+        async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
+            return await c.get("/v1/status", headers=[(b"Authorization", b"Bearer caf\xe9")])
+
+    r = anyio.run(call)
+    assert r.status_code == 401 and body(r)["code"] == "unauthorized"
+
+
+def test_tokens_are_not_in_repr() -> None:
+    assert "secret-token" not in repr(STATE)

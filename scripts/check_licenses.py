@@ -29,20 +29,20 @@ ALLOWED = {
 EXCEPTIONS = {"certifi": "MPL-2.0"}
 # Reviewed entries for packages whose metadata can't be parsed, or that aren't installed on the
 # platform running the check (platform-specific dependencies): name -> (license, source checked).
-OVERRIDES: dict[str, tuple[str, str]] = {
-    "colorama": ("BSD", "PyPI classifiers for 0.4.6, checked 2026-09-27 (Windows-only, via click)"),
+OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, license, source)
+    "colorama": ("0.4.6", "BSD", "PyPI classifiers, 2026-09-27 (Windows-only, via click)"),
     # Linux-only, via keyring (Secret Service); PyPI metadata at the locked versions, 2026-09-27
-    "cffi": ("MIT-0", "PyPI License-Expression, 2.1.1"),
-    "cryptography": ("Apache-2.0 OR BSD-3-Clause", "PyPI License-Expression, 50.0.1"),
-    "jeepney": ("MIT", "PyPI License-Expression, 0.9.0"),
-    "pycparser": ("BSD-3-Clause", "PyPI License-Expression, 3.0"),
-    "secretstorage": ("BSD-3-Clause", "PyPI License-Expression, 3.5.0"),
+    "cffi": ("2.1.1", "MIT-0", "PyPI License-Expression"),
+    "cryptography": ("50.0.1", "Apache-2.0 OR BSD-3-Clause", "PyPI License-Expression"),
+    "jeepney": ("0.9.0", "MIT", "PyPI License-Expression"),
+    "pycparser": ("3.0", "BSD-3-Clause", "PyPI License-Expression"),
+    "secretstorage": ("3.5.0", "BSD-3-Clause", "PyPI License-Expression"),
     # Windows-only, via keyring
-    "pywin32-ctypes": ("BSD-3-Clause", "PyPI License field, 0.2.3"),
+    "pywin32-ctypes": ("0.2.3", "BSD-3-Clause", "PyPI License field"),
     # macOS-only (Keychain interaction control); PyPI License field at 12.2.2, 2026-09-27
-    "pyobjc-core": ("MIT", "PyPI License field, 12.2.2"),
-    "pyobjc-framework-cocoa": ("MIT", "PyPI License field, 12.2.2"),
-    "pyobjc-framework-security": ("MIT", "PyPI License field, 12.2.2"),
+    "pyobjc-core": ("12.2.2", "MIT", "PyPI License field"),
+    "pyobjc-framework-cocoa": ("12.2.2", "MIT", "PyPI License field"),
+    "pyobjc-framework-security": ("12.2.2", "MIT", "PyPI License field"),
 }
 
 CLASSIFIER_MAP = {
@@ -104,21 +104,22 @@ def markdown_table() -> str:
         for plat, label in (("darwin", "macOS"), ("linux", "Linux"), ("win32", "Windows")):
             if f"sys_platform == '{plat}'" in marker:
                 where = label
-        rows.append(f"| `{name}` | {version} | {license_of(name)} | {where} |")
+        rows.append(f"| `{name}` | {version} | {license_of(name, version)} | {where} |")
     return "\n".join(rows)
 
 
-def runtime_names() -> list[str]:
-    return [name for name, _, _ in runtime_packages()]
-
-
-def license_of(name: str) -> str:
-    if name.lower() in OVERRIDES:
-        return OVERRIDES[name.lower()][0]
+def license_of(name: str, version: str) -> str:
+    """Installed metadata first; the reviewed override only for a package that isn't installed
+    here (platform-specific), and only at the version that was reviewed."""
+    override = OVERRIDES.get(name.lower())
     try:
         md = metadata.metadata(name)
     except metadata.PackageNotFoundError:
-        return "UNKNOWN (not installed here; add a reviewed entry to OVERRIDES)"
+        if override is None:
+            return "UNKNOWN (not installed here; add a reviewed entry to OVERRIDES)"
+        if override[0] != version:
+            return f"UNKNOWN (reviewed at {override[0]}, locked at {version}: re-review)"
+        return override[1]
     if expr := md.get("License-Expression"):
         return expr.strip()
     text = (md.get("License") or "").strip()
@@ -145,8 +146,8 @@ def main() -> int:
         print(markdown_table())
         return 0
     bad = 0
-    for name in runtime_names():
-        lic = license_of(name)
+    for name, version, _marker in runtime_packages():
+        lic = license_of(name, version)
         ok = allowed(name, lic)
         bad += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {name:28} {lic}")

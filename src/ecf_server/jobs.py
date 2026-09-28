@@ -1,5 +1,7 @@
 """The SQLite job queue (SPEC §11.3): same ordering, retry and dead-letter semantics as the M1 SQS
-FIFO queues. One job in flight per (queue, address); claims expire after 6x the job's timeout."""
+FIFO queues. Per (queue, address) only the oldest unfinished job is eligible, so a job waiting in
+backoff holds back later jobs for that address (like an SQS FIFO message group). Claims expire
+after 6x the job's timeout; an expired claim counts as an attempt and dead-letters at the limit."""
 
 from __future__ import annotations
 
@@ -72,9 +74,12 @@ def enqueue(
 _NEXT = """
 SELECT j.job_id, j.timeout_s FROM jobs j
 WHERE j.queue = :queue AND j.state = 'queued' AND j.visible_at <= :now
-  AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.queue = j.queue AND k.address_id = j.address_id
-                  AND k.state = 'claimed')
-ORDER BY j.visible_at, j.created_at, j.job_id
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs k
+    WHERE k.queue = j.queue AND k.address_id = j.address_id AND k.state IN ('queued', 'claimed')
+      AND (k.created_at < j.created_at OR (k.created_at = j.created_at AND k.rowid < j.rowid))
+  )
+ORDER BY j.visible_at, j.created_at, j.rowid
 LIMIT 1
 """
 _CLAIM = """
@@ -93,8 +98,9 @@ def claim(conn: sqlite3.Connection, clock: Clock, queue: Queue, worker: str) -> 
     now = to_ts(now_dt)
     with write_tx(conn):
         conn.execute(
-            "UPDATE jobs SET state = 'queued', claimed_by = NULL, claim_expires = NULL, "
-            "last_error = 'claim expired' "
+            "UPDATE jobs SET claimed_by = NULL, claim_expires = NULL, "
+            "last_error = 'claim expired', "
+            "state = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END "
             "WHERE queue = ? AND state = 'claimed' AND claim_expires < ?",
             (queue.value, now),
         )

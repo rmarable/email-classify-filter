@@ -40,6 +40,7 @@ class TransitionContext:
     payment_or_fraud: bool = False
     send_on_high: bool = False
     reversible: bool = False
+    assist_safe: bool = False  # label, flag, escalate or leave: allowed to run in assist stage
     fix: bool = False
     requeue: bool = False
     stepup_verified: bool = False
@@ -93,9 +94,20 @@ for _s in OPEN:
 
 TRANSITIONS: Mapping[Status, frozenset[Status]] = {s: _TABLE.get(s, frozenset()) for s in Status}
 
+
+def _rounds_open(c: TransitionContext) -> bool:
+    """A clarification round may still be answered (rounds count questions asked and expired
+    answers; SPEC §6.2: at most 2 rounds)."""
+    return c.clarification_rounds <= MAX_CLARIFICATION_ROUNDS
+
+
 GUARDS: Mapping[tuple[Status, Status], Guard] = {
+    (S.PROPOSED, S.EXECUTING): lambda c: _live(c) or (c.stage is Stage.ASSIST and c.assist_safe),
+    (S.PROPOSED, S.AWAITING_APPROVAL): _live,
+    (S.PROPOSED, S.OBSERVED): lambda c: c.stage is Stage.SHADOW,
+    (S.PROPOSED, S.HELD): lambda c: c.stage is Stage.ASSIST,
     (S.HELD, S.PROPOSED): _live,
-    (S.AWAITING_APPROVAL, S.APPROVED): lambda c: c.reversible or c.stepup_verified,
+    (S.AWAITING_APPROVAL, S.APPROVED): lambda c: c.reversible,
     (S.AWAITING_APPROVAL, S.PROPOSED): lambda c: c.fix,
     (S.AWAITING_STEPUP, S.APPROVED): lambda c: _approval(c) and c.stepup_verified,
     (S.AWAITING_STEPUP, S.CLARIFIED): lambda c: _answer(c) and c.stepup_verified,
@@ -103,12 +115,11 @@ GUARDS: Mapping[tuple[Status, Status], Guard] = {
     (S.APPROVED, S.DELAYED): lambda c: c.send_on_high,
     (S.EXPIRED, S.AWAITING_APPROVAL): _approval,
     (S.EXPIRED, S.NEEDS_CLARIFICATION): _answer,
-    (S.NEEDS_CLARIFICATION, S.CLARIFIED): lambda c: not c.payment_or_fraud,
-    (S.NEEDS_CLARIFICATION, S.AWAITING_STEPUP): lambda c: c.payment_or_fraud,
-    (S.NEEDS_CLARIFICATION, S.NEEDS_HUMAN): (
-        lambda c: c.clarification_rounds >= MAX_CLARIFICATION_ROUNDS or c.expiry_count >= 2
-    ),
-    (S.CLARIFIED, S.PROPOSED): lambda c: c.clarification_rounds <= MAX_CLARIFICATION_ROUNDS,
+    (S.NEEDS_CLARIFICATION, S.CLARIFIED): lambda c: not c.payment_or_fraud and _rounds_open(c),
+    (S.NEEDS_CLARIFICATION, S.AWAITING_STEPUP): lambda c: c.payment_or_fraud and _rounds_open(c),
+    # a third round (a third question, or an answer expiring in the second round) goes to a person
+    (S.NEEDS_CLARIFICATION, S.NEEDS_HUMAN): lambda c: not _rounds_open(c),
+    (S.CLARIFIED, S.PROPOSED): _rounds_open,
     (S.EXECUTING, S.EXECUTING): lambda c: c.requeue,
     (S.FAILED, S.EXECUTING): lambda c: c.requeue,
     (S.FAILED_UNKNOWN, S.EXECUTING): lambda c: c.requeue,

@@ -55,3 +55,25 @@ def test_write_tx_rolls_back(conn: sqlite3.Connection) -> None:
 def test_version_floor() -> None:
     assert db.MIN_SQLITE >= (3, 37, 0)
     assert db.sqlite_version_ok()
+
+
+class _FailingCommit(sqlite3.Connection):
+    fail = True
+
+    def execute(self, sql: str, *args: object) -> sqlite3.Cursor:  # type: ignore[override]
+        if sql == "COMMIT" and _FailingCommit.fail:
+            raise sqlite3.OperationalError("disk I/O error (simulated)")
+        return super().execute(sql, *args)  # pyright: ignore[reportArgumentType]
+
+
+def test_failed_commit_does_not_wedge_the_connection(tmp_path: Path) -> None:
+    c = sqlite3.connect(tmp_path / "x.db", autocommit=True, factory=_FailingCommit)
+    c.execute("CREATE TABLE t (x INTEGER)")
+    with pytest.raises(sqlite3.OperationalError), db.write_tx(c):
+        c.execute("INSERT INTO t VALUES (1)")
+    assert not c.in_transaction
+    _FailingCommit.fail = False
+    with db.write_tx(c):
+        c.execute("INSERT INTO t VALUES (2)")
+    assert [r[0] for r in c.execute("SELECT x FROM t")] == [2]
+    c.close()

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ecf import claude_wrapper as cw
-from ecf.errors import ServiceUnavailableError
+from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
 
 from .conftest import uds_client
@@ -94,3 +94,72 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
         r = c.get("/v1/status", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 401
     assert not (lay.config_dir / "projects").exists()  # transcripts purged
+
+
+@pytest.mark.parametrize("args", [[], ["--model", "x"], ["--model=x", "--verbose"]])
+def test_allowed_args(args: list[str]) -> None:
+    assert cw.check_args(args) == args
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--dangerously-skip-permissions"],
+        ["--settings", "x.json"],
+        ["--mcp-config", "x"],
+        ["--add-dir", "/"],
+        ["--permission-mode", "bypassPermissions"],
+        ["--model"],
+        ["-p", "hi"],
+    ],
+)
+def test_refused_args(args: list[str]) -> None:
+    with pytest.raises(InvalidInputError):
+        cw.check_args(args)
+
+
+def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-dummy")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://proxy.example")
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example")
+    monkeypatch.setenv("HTTPS_PROXY", "http://corp-proxy.example:8080")
+    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok")
+    for gone in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ):
+        assert gone not in env
+    assert env["HTTPS_PROXY"] == "http://corp-proxy.example:8080" and "PATH" in env
+    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "0"
+
+
+def test_purge_keeps_only_login_and_config(tmp_path: Path) -> None:
+    lay = cw.layout(Paths("t", tmp_path))
+    cw.write_config(lay, Path("/abs/ecf-mcp"))
+    for name in (".credentials.json", ".claude.json", "history.jsonl"):
+        (lay.config_dir / name).write_text("{}")
+    for d in ("projects/p", "debug", "file-history", "plugins/ecf"):
+        (lay.config_dir / d).mkdir(parents=True)
+    assert cw.purge_transcripts(lay) == 4  # history.jsonl, projects, debug, file-history
+    assert sorted(p.name for p in lay.config_dir.iterdir()) == sorted(cw.KEEP)
+
+
+def test_purge_happens_even_if_revoke_fails(
+    running: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_claude(tmp_path / "bin", tmp_path / "record.txt")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    real = cw.LocalClient
+
+    class RevokeFails(real):  # type: ignore[misc, valid-type]
+        def request(self, method: str, path: str, json: object = None, *, auth: bool = True):  # type: ignore[no-untyped-def]
+            if method == "DELETE":
+                raise ServiceUnavailableError("service restarted")
+            return super().request(method, path, json, auth=auth)
+
+    monkeypatch.setattr(cw, "LocalClient", RevokeFails)
+    assert cw.run(running, []) == 0
+    assert not (cw.layout(running).config_dir / "projects").exists()

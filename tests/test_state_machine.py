@@ -120,8 +120,14 @@ def test_non_edge_is_a_conflict() -> None:
         (
             S.NEEDS_CLARIFICATION,
             S.NEEDS_HUMAN,
-            TransitionContext(clarification_rounds=1),
-            TransitionContext(expiry_count=2),
+            TransitionContext(clarification_rounds=2),
+            TransitionContext(clarification_rounds=3),
+        ),
+        (
+            S.NEEDS_CLARIFICATION,
+            S.CLARIFIED,
+            TransitionContext(clarification_rounds=3),
+            TransitionContext(clarification_rounds=2),
         ),
         (
             S.CLARIFIED,
@@ -154,6 +160,7 @@ contexts = st.builds(
     payment_or_fraud=st.booleans(),
     send_on_high=st.booleans(),
     reversible=st.booleans(),
+    assist_safe=st.booleans(),
     fix=st.booleans(),
     requeue=st.booleans(),
     stepup_verified=st.booleans(),
@@ -187,7 +194,13 @@ class ItemWalk(RuleBasedStateMachine):
         if (frm, to) == (S.APPROVED, S.EXECUTING):
             assert not ctx.send_on_high
         if frm is S.AWAITING_APPROVAL and to is S.APPROVED:
-            assert ctx.reversible or ctx.stepup_verified
+            assert ctx.reversible
+        if (frm, to) == (S.PROPOSED, S.EXECUTING):
+            assert ctx.stage is Stage.LIVE or (ctx.stage is Stage.ASSIST and ctx.assist_safe)
+        if (frm, to) == (S.PROPOSED, S.AWAITING_APPROVAL):
+            assert ctx.stage is Stage.LIVE
+        if to is S.CLARIFIED or (frm, to) == (S.NEEDS_CLARIFICATION, S.AWAITING_STEPUP):
+            assert frm is not S.NEEDS_CLARIFICATION or ctx.clarification_rounds <= 2
         if frm is S.AWAITING_STEPUP and to in (S.APPROVED, S.CLARIFIED):
             assert ctx.stepup_verified
         if (frm, to) == (S.CLARIFIED, S.PROPOSED):

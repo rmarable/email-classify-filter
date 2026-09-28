@@ -45,8 +45,8 @@ uv build                                        # wheel + sdist
 
 - **Trust boundary:** facts, triggers, rules, policy and state transitions live only in
   `ecf_server`. import-linter enforces that `ecf` never imports `ecf_server`.
-- **One status writer:** only `ecf_server.items.transition()` writes `items.status`; a test scans
-  the source to keep it that way.
+- **One status writer:** only `ecf_server.items.transition()` writes `items.status`, and only
+  `create_item()` inserts items. SQLite's authorizer refuses anything else at runtime (OD-181).
 - **No email content in logs.** Log IDs and counts. The no-content processor (`ecf/log.py`)
   redacts known content fields and cuts long strings, but don't rely on it.
 - **All YAML** goes through `ecf.yamlio` (safe loader, YAML 1.2, duplicate keys rejected).
@@ -55,7 +55,9 @@ uv build                                        # wheel + sdist
 - **Errors** are `ecf.errors` classes; each code maps to an HTTP status, CLI exit code and Slack text.
 - **Tests:** one fake per port. Tests that need macOS are marked `macos`; tests that touch the real
   Keychain or launchd use `ecf-test-*` names and remove what they create. Service-process tests
-  use a short `/tmp` folder because socket paths are limited to 104 bytes on macOS.
+  use a short `/tmp` folder because socket paths are limited to 104 bytes on macOS, and start
+  services only through `spawn`/`start_service` and stop them with `stop` (`tests/conftest.py`);
+  the run fails if any service outlives its test.
 
 ## Workflow
 

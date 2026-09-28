@@ -117,7 +117,7 @@ class Service:
         self.dev = dev
         self.secrets: SecretStore | None = MemorySecretStore() if dev else None
         self.state = ServiceState(
-            install=paths.install, token="", started_at=to_ts(self.clock.now())
+            install=paths.install, token="", started_at=to_ts(self.clock.now()), clock=self.clock
         )
 
     # -- threads -------------------------------------------------------------------------------
@@ -151,6 +151,7 @@ class Service:
 
     # -- run -----------------------------------------------------------------------------------
     def run(self) -> int:
+        os.umask(0o077)  # everything the service creates is private (logs, state, rotated files)
         _private_dir(self.paths.data_dir)
         configure_logging("service", log_file=self.paths.log)
         try:
@@ -204,6 +205,7 @@ class Service:
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
+        self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()

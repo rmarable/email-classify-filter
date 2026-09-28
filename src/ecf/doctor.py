@@ -114,6 +114,11 @@ def check_service(paths: Paths, now: datetime) -> list[Check]:
             st: dict[str, Any] = c.get("/v1/status")
     except EcfError as exc:
         return [Check("service", Level.FAIL, exc.detail, "ecf service start")]
+    return judge_status(st, now)
+
+
+def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
+    """Turn a /v1/status reply into checks (pure, so every branch is testable)."""
     out = [Check("service", Level.OK, f"answering (pid {st['pid']})")]
     same = st["version"] == __version__
     out.append(

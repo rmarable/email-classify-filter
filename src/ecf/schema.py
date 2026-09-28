@@ -19,6 +19,7 @@ from ecf.errors import InvalidInputError
 from ecf.yamlio import load_yaml
 
 FIELD_NAME = r"^[a-z][a-z0-9_]{0,39}$"
+VALUE_NAME = r"^[a-z][a-z0-9_]{0,39}$"
 
 
 class FieldKind(StrEnum):
@@ -38,6 +39,8 @@ class FieldSpec:
     def rank(self, value: str) -> int:
         if self.kind is not FieldKind.ORDINAL:
             raise InvalidInputError(f"{self.name} is not ordinal")
+        if value not in self.values:
+            raise InvalidInputError(f"{value!r} is not a level of {self.name}")
         return self.values.index(value)
 
 
@@ -71,6 +74,9 @@ def _field(name: str, raw: Any) -> FieldSpec:
         if not isinstance(values, dict) or not values:
             raise InvalidInputError(f"field {name}: enum needs a values mapping")
         vals = cast(dict[str, Any], values)
+        for key in cast(dict[Any, Any], values):  # YAML may give non-string keys
+            if not isinstance(key, str) or not re.fullmatch(VALUE_NAME, key):
+                raise InvalidInputError(f"field {name}: value {key!r} must be a lowercase name")
         return FieldSpec(
             name, kind, desc, tuple(vals), tuple(str(v).strip() for v in vals.values())
         )
@@ -88,7 +94,7 @@ def compile_schema(text: str, *, source: str = "schema") -> CompiledSchema:
         raise InvalidInputError(f"{source}: must be a mapping")
     d = cast(dict[str, Any], doc)
     version = d.get("version")
-    if not isinstance(version, int) or version < 1:
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise InvalidInputError(f"{source}: version must be a positive integer")
     raw_fields = d.get("fields")
     if not isinstance(raw_fields, dict) or not raw_fields:

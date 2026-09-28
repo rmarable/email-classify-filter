@@ -41,6 +41,7 @@ def test_plist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert d["ProgramArguments"] == [str(SERVER), "local", "--install", "default"]
     assert d["KeepAlive"] == {"SuccessfulExit": False} and d["RunAtLoad"] is True
     assert d["ExitTimeOut"] == 60 and d["ProcessType"] == "Interactive"
+    assert d["Umask"] == 0o077
     assert "EnvironmentVariables" not in d
     monkeypatch.setenv("ECF_HOME", "/tmp/x")
     d = plistlib.loads(render_launchd_plist("default", SERVER, p))
@@ -56,7 +57,7 @@ def test_systemd_unit(monkeypatch: pytest.MonkeyPatch) -> None:
         "StartLimitBurst=5",
         "TimeoutStopSec=60",
         "UMask=0077",
-        f"ExecStart={SERVER} local --install default",
+        f'ExecStart="{SERVER}" local --install default',
         "LoadCredentialEncrypted=mailbox.billing:/d/creds/mailbox.billing.cred",
         "WantedBy=default.target",
     ):

@@ -88,9 +88,9 @@ def test_no_double_claims_under_concurrency(
                         errors.append(f"two in flight for {job.address_id}")
                     in_flight[job.address_id] = job.job_id
                     claimed.append(job.job_id)
+                jobs.complete(c, job.job_id, name)
                 with lock:
                     del in_flight[job.address_id]
-                jobs.complete(c, job.job_id, name)
         finally:
             c.close()
 
@@ -101,3 +101,36 @@ def test_no_double_claims_under_concurrency(
         t.join(timeout=60)
     assert not errors
     assert len(claimed) == 40 and len(set(claimed)) == 40
+
+
+def test_poison_job_dead_letters_when_claims_keep_expiring(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    jid = jobs.enqueue(conn, clock, Queue.ACTIONS, A, {}, timeout_s=10, max_attempts=2)
+    for _ in range(4):
+        jobs.claim(conn, clock, Queue.ACTIONS, "hangs")
+        clock.advance(10 * jobs.CLAIM_FACTOR + 1)
+    jobs.claim(conn, clock, Queue.ACTIONS, "sweeper")  # the sweep runs on every claim
+    row = conn.execute("SELECT state, attempts FROM jobs WHERE job_id = ?", (jid,)).fetchone()
+    assert (row["state"], row["attempts"]) == ("dead", 2)
+
+
+def test_backoff_holds_back_later_jobs_for_the_same_address(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    a1 = jobs.enqueue(conn, clock, Queue.ACTIONS, A, {"n": 1}, timeout_s=10)
+    a2 = jobs.enqueue(conn, clock, Queue.ACTIONS, A, {"n": 2}, timeout_s=10)  # same timestamp
+    b1 = jobs.enqueue(conn, clock, Queue.ACTIONS, B, {"n": 3}, timeout_s=10)
+    first = jobs.claim(conn, clock, Queue.ACTIONS, "w")
+    assert first is not None and first.job_id == a1
+    jobs.fail(conn, clock, a1, "w", "boom")  # a1 now waits 30 s
+    nxt = jobs.claim(conn, clock, Queue.ACTIONS, "w")
+    assert nxt is not None and nxt.job_id == b1  # other addresses keep going
+    assert jobs.claim(conn, clock, Queue.ACTIONS, "w") is None  # a2 waits behind a1
+    jobs.complete(conn, b1, "w")
+    clock.advance(jobs.BACKOFF_S[0])
+    again = jobs.claim(conn, clock, Queue.ACTIONS, "w")
+    assert again is not None and again.job_id == a1
+    jobs.complete(conn, a1, "w")
+    last = jobs.claim(conn, clock, Queue.ACTIONS, "w")
+    assert last is not None and last.job_id == a2

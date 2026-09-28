@@ -1,11 +1,13 @@
 import stat
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+import ecf
 from ecf.cli import app
 from ecf.client import NOT_RUNNING, LocalClient
 from ecf.doctor import (
@@ -14,6 +16,7 @@ from ecf.doctor import (
     check_database,
     check_disk_encryption,
     check_unit,
+    judge_status,
     run_checks,
 )
 from ecf.errors import ServiceUnavailableError, UnauthorizedError
@@ -162,3 +165,48 @@ def test_cli_status_and_doctor(running: Paths) -> None:
 def test_cli_rejects_bad_install_name() -> None:
     r = CliRunner().invoke(app, ["--install", "Bad Name", "version"])
     assert r.exit_code == 2
+
+
+# ---- judge_status branches
+
+NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+GOOD_STATUS: dict[str, object] = {
+    "pid": 1,
+    "version": ecf.__version__,
+    "last_tick_at": "2026-10-01T11:59:30.000000Z",
+    "breaker": {"recent_crashes": 0, "tripped": False},
+    "secret_store": {"backend": "keychain", "interpreter_changed": False},
+}
+
+
+def levels(st: dict[str, object]) -> dict[str, Level]:
+    return {c.name: c.level for c in judge_status(st, NOW)}
+
+
+def test_judge_status_all_good() -> None:
+    assert set(levels(GOOD_STATUS).values()) == {Level.OK}
+
+
+@pytest.mark.parametrize(
+    ("change", "name", "level"),
+    [
+        ({"version": "9.9.9"}, "versions", Level.FAIL),
+        ({"last_tick_at": None}, "timer", Level.WARN),
+        ({"last_tick_at": "2026-10-01T11:50:00.000000Z"}, "timer", Level.FAIL),
+        ({"breaker": {"recent_crashes": 5, "tripped": True}}, "crash breaker", Level.FAIL),
+        ({"secret_store": {"backend": None, "detail": "none"}}, "secret store", Level.FAIL),
+        (
+            {"secret_store": {"backend": "keychain", "interpreter_changed": True}},
+            "secret store",
+            Level.WARN,
+        ),
+    ],
+)
+def test_judge_status_branches(change: dict[str, object], name: str, level: Level) -> None:
+    assert levels({**GOOD_STATUS, **change})[name] is level
+
+
+def test_doctor_exit_code_matches_failures(running: Paths) -> None:
+    d = CliRunner().invoke(app, ["--install", "t", "doctor"])
+    failed = any(line.lstrip().startswith("FAIL") for line in d.output.splitlines())
+    assert d.exit_code == (3 if failed else 0), d.output

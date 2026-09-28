@@ -51,3 +51,21 @@ def test_cli_logging_goes_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
     assert "hello" in err
     assert "Dear customer" not in err
     assert log.REDACTED in err
+
+
+def test_tracebacks_carry_no_locals(tmp_path: Path) -> None:
+    path = tmp_path / "logs" / "ecf.log"
+    log.configure_logging("service", log_file=path)
+
+    def fails(password: str) -> None:
+        secret_local = f"token-{password}"
+        raise RuntimeError("boom " + str(len(secret_local)))
+
+    try:
+        fails("hunter2-very-secret")
+    except RuntimeError:
+        log.get_logger("t").exception("failed")
+    logging.getLogger().handlers[0].flush()
+    text = path.read_text(encoding="utf-8")
+    assert "RuntimeError" in text and "boom" in text
+    assert "hunter2-very-secret" not in text and '"locals"' not in text

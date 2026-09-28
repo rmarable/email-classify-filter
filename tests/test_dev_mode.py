@@ -1,8 +1,5 @@
-import os
 import re
-import signal
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -10,14 +7,14 @@ import pytest
 from ecf.paths import Paths, paths_for
 from ecf_server.chat import FakeChat
 
-from .conftest import uds_client, wait_answering
+from .conftest import spawn, stop, uds_client, wait_answering
 
 
 def start_dev(home: Path | None) -> subprocess.Popen[bytes]:
-    args = [sys.executable, "-m", "ecf_server", "dev", "--tick-seconds", "0.2"]
+    args = ["dev", "--tick-seconds", "0.2"]
     if home is not None:
         args += ["--home", str(home)]
-    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return spawn(args)
 
 
 def auth(p: Paths) -> dict[str, str]:
@@ -45,8 +42,7 @@ def test_dev_service(home: Path) -> None:
             refused = c.get("/v1/dev/clock", headers={"Authorization": f"Bearer {work}"})
             assert refused.status_code == 403
     finally:
-        proc.send_signal(signal.SIGTERM)
-        assert proc.wait(20) == 0
+        assert stop(proc) == 0
 
 
 def test_dev_routes_absent_in_normal_service(running: Paths) -> None:
@@ -58,15 +54,16 @@ def test_dev_routes_absent_in_normal_service(running: Paths) -> None:
 
 def test_dev_temp_folder_is_removed() -> None:
     proc = start_dev(None)
-    assert proc.stderr is not None
-    line = proc.stderr.readline().decode()
-    m = re.search(r"data in (\S+)", line)
-    assert m, line
-    data_dir = Path(m.group(1))
-    p = Paths("dev", data_dir.parent)
-    wait_answering(p, proc)
-    proc.send_signal(signal.SIGTERM)
-    assert proc.wait(20) == 0
+    try:
+        assert proc.stderr is not None
+        line = proc.stderr.readline().decode()  # the first line is printed before anything else
+        m = re.search(r"data in (\S+)", line)
+        assert m, line
+        data_dir = Path(m.group(1))
+        wait_answering(Paths("dev", data_dir.parent), proc)
+    finally:
+        code = stop(proc)
+    assert code == 0
     assert not data_dir.parent.exists()
 
 
@@ -88,5 +85,13 @@ def test_fake_chat_records() -> None:
     assert chat.posts == []
 
 
-def test_env_not_leaking() -> None:
-    assert "ECF_SOCKET" not in os.environ
+def test_dev_clock_rejects_non_numbers(home: Path) -> None:
+    p = Paths("dev", home)
+    proc = start_dev(home)
+    try:
+        wait_answering(p, proc)
+        with uds_client(p) as c:
+            r = c.post("/v1/dev/clock", params={"advance": "soon"}, headers=auth(p))
+            assert r.status_code == 400 and r.json()["code"] == "invalid_input"
+    finally:
+        stop(proc)

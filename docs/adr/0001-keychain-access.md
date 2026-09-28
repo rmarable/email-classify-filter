@@ -20,7 +20,7 @@ The gate test (macOS 27.0, uv 0.12.15, uv-managed CPython 3.12.14, keyring 25.7.
 
 1. Accept, as a stated limit, that any process running ecf's Python interpreter binary can read ecf's Keychain secrets without a prompt.
 2. The service turns Keychain user interaction off for its own process, so a read it isn't trusted for fails immediately; it then waits with "secret store needs you" and never blocks on a dialog.
-3. `ecf upgrade` and `ecf doctor` record the interpreter's hash and, when it changes, run a foreground re-grant (prompts on, same interpreter binary; the operator enters the login password and chooses Always Allow). Fallback if Always Allow doesn't persist: the service re-writes each secret after the operator re-enters it.
+3. The service records the interpreter's hash; `ecf doctor` and `ecf status` report when it has changed (built in V1.0). The foreground re-grant (prompts on, same interpreter binary; the operator enters the login password and chooses Always Allow) arrives with `ecf upgrade` in V1.5. Fallback if Always Allow doesn't persist: the service re-writes each secret after the operator re-enters it.
 
 ## Alternatives considered
 
