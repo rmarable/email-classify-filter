@@ -1,0 +1,23 @@
+Received: from mail.vendor-a-billing.example (mail.vendor-a-billing.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id starter-bec; Thu, 01 Oct 2026
+ 09:00:00 +0000
+From: Vendor A Accounts <accounts@vendor-a-billing.example>
+To: ap@acme.example
+Reply-To: payments@vendor-a-remit.example
+Subject: Updated remittance details for October
+Date: Thu, 01 Oct 2026 09:00:00 +0000
+Message-ID: <starter-bec.f016f4c0db@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Please note our bank has changed. Update the account number for all future pa=
+yments to
+the new account below before paying invoice INV-2044.
+
+Account: published example IBAN GB82 WEST 1234 5698 7654 32
+
+Thanks,
+Accounts, Vendor A (555-0142)

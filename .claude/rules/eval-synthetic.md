@@ -5,7 +5,7 @@ paths:
 
 # Synthetic eval set: hygiene rules
 
-Full spec: `GENERATE-FAKE-TESTING-EMAILS.md` (written in V1.0).
+Full spec: `GENERATE-FAKE-TESTING-EMAILS.md`. Build with `uv run ecf eval build` (it runs the hygiene scan first).
 
 - Domains: only RFC 2606 / reserved TLDs (`acme.example`, `vendor-a.example`, `*.test`); never a registrable lookalike.
 - Regulators are named in text only, never as real sender domains.

@@ -1,0 +1,53 @@
+# Classification schema v1 (SPEC §7.1). Must match SPEC exactly; tests/test_schema.py checks.
+version: 1
+fields:
+  category:
+    type: enum
+    description: What this email is primarily about.
+    values:
+      invoice:               A bill or invoice requesting payment from us.
+      payment_confirmation:  Confirmation that a payment was sent or received.
+      remittance:            Remittance advice or payment details from a customer.
+      vendor_change_request: A request to change a vendor's bank, payment, or contact details.
+      billing_inquiry:       A question or dispute about a charge, invoice, or account balance.
+      customer_request:      A customer asking for help, service, or information.
+      sales_inquiry:         A prospective customer asking about buying or pricing.
+      partnership:           Partnership proposals, vendor pitches, collaboration.
+      bug_report:            A report of a bug, defect, outage, or incident in our product or service.
+      regulatory:            Anything involving a regulator or regulation (e.g. FDA, SEC, FTC, IRS, state agencies, compliance notices, audits, filings).
+      marketing:             Newsletters, promotions, cold outreach, advertising.
+      notification:          Automated system messages (receipts, alerts, shipping, account activity).
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive.
+      other:                 None of the above.
+  priority:
+    type: ordinal
+    levels: [low, medium, high, urgent]
+    description: How soon a human should look at this.
+  requires_action:
+    type: boolean
+    description: Someone on our side must do something.
+  requires_reply:
+    type: boolean
+    description: The sender expects a written reply from us.
+  payment_related:
+    type: boolean
+    description: Money moving, amounts owed, or payment instructions.
+  deadline_mentioned:
+    type: boolean
+    description: A specific due date or time limit is stated or implied.
+  sender_type:
+    type: enum
+    description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
+    values:
+      vendor:     A supplier or service provider.
+      customer:   Someone we sell to or serve.
+      regulator:  A government agency or regulatory body.
+      staff:      A colleague acting in an internal role.
+      automated:  A system or no-reply sender.
+      unknown:    Cannot tell.
+  fraud_risk:
+    type: ordinal
+    levels: [none, low, medium, high]
+    description: >
+      Likelihood of fraud or impersonation (changed bank details, unusual urgency,
+      pressure to bypass process, sender not matching the claimed organization).
