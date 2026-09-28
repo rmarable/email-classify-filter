@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.1-mail-checks (not yet tagged)
+
+- SPEC roadmap: Atomic Mail added as a Later item, to revisit when it ships IMAP/SMTP.
+
 ## ms-v1.0.1-fixes (2026-09-27)
 
 Fixes from the adversarial review of V1.0. Nothing here processes mail yet.

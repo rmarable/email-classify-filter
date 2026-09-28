@@ -40,7 +40,9 @@ Executed in order (operator decision 2026-09-26, OD-004). M1-M3 are fully design
 | M2 Teams (needs M1) | roles per address, multi-approver rules, people management, offboarding | plan §7, §8, §17 M2 (OD-080, OD-081) |
 | M3 Remote access (needs M1) | remote MCP for claude.ai; then Microsoft 365 via Graph, Teams, Copilot | plan §2, §8, §9, §17 M3 (OD-005, OD-078 to OD-082, OD-130) |
 | M4 Always-on (needs M1) | always-on watcher host, mail-delay alert, GPU server, Bedrock | plan §17 M4 (OD-131 to OD-133) |
-| Later | commercialization, model-written replies, other models, Jev, Ollaya, Gmail API, VS Code Copilot, ARC, WAF | plan §17 Later (OD-006, OD-134 to OD-136) |
+| Later | commercialization, model-written replies, other models, Jev, Ollaya, Gmail API, VS Code Copilot, ARC, WAF, Atomic Mail | plan §17 Later (OD-006, OD-134 to OD-136) |
+
+**Atomic Mail** (Later; operator request 2026-09-28): not usable in v1. Its support page says "Atomic Mail does not support IMAP, SMTP, or POP3 protocols for connecting to third-party email clients. We plan to launch this feature later in 2026" (atomicmail.io/support, fetched 2026-09-28). Revisit when it ships IMAP/SMTP, and check: (1) app passwords or an equivalent, since v1 has no OAuth; (2) whether access is direct or through a local decrypting bridge, as with Proton; (3) that ecf receives the original raw message byte for byte, since a bridge that rebuilds messages would break DKIM and leave every sender at `auth_result = none`.
 
 ### 1.3 Build milestones
 
