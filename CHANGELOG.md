@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.0-foundations (not yet tagged)
+## ms-v1.0-foundations (2026-09-27)
 
 Foundations for v1 single-user local mode. Nothing here processes mail yet.
 
