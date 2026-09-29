@@ -48,6 +48,7 @@ from ecf_server.secretstore.select import (
     open_store,
     record_interpreter,
 )
+from ecf_server.stepper import FakeStepper, host_stepper
 
 TICK_SECONDS = 60
 WORKER = "checks"
@@ -313,6 +314,8 @@ class Service:
         conn.close()
         self.state.db_path = self.paths.db
         self.state.notifier = self._notifier()
+        # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
+        self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
         self.state.token = write_token(self.paths)

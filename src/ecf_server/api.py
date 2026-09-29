@@ -39,12 +39,13 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, audit, checks, db, health
+from ecf_server import addresses, audit, checks, db, health, stepup
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
+from ecf_server.stepper import Stepper
 
 API_VERSION = 1
 
@@ -90,6 +91,7 @@ class ServiceState:
     secrets: SecretStore | None = field(default=None, repr=False)
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
+    stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -233,6 +235,7 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
             *_address_routes(state, allow),
             *_check_routes(state, allow),
+            *_stepup_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -305,6 +308,49 @@ def _check_lines(
             if not r.more:
                 break
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+
+
+def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.6, §15.1: CLI only, never an MCP profile token (V1.2 step 2)."""
+
+    @allow(Caller.CLI)
+    def issue(request: Request) -> JSONResponse:
+        body = _body(request)
+        name, target = body.get("purpose"), body.get("target", {})
+        if not isinstance(name, str) or not isinstance(target, dict):
+            raise InvalidInputError("purpose (text) and target (object) are required")
+        conn = state.connect()
+        try:
+            i = stepup.issue(conn, state.clock, state.stepper, name, cast(dict[str, Any], target))
+        finally:
+            conn.close()
+        return JSONResponse(
+            {
+                "nonce_id": i.nonce_id,
+                "code": i.code,
+                "prompt_text": i.prompt,
+                "expires_at": i.expires_at,
+                "needs_password": i.needs_password,
+            }
+        )
+
+    @allow(Caller.CLI)
+    def verify(request: Request) -> JSONResponse:
+        nonce = request.path_params["nonce"]
+        password = _body(request).get("password")
+        if password is not None and not isinstance(password, str):
+            raise InvalidInputError("password must be text")
+        conn = state.connect()
+        try:  # the OS dialog is up for up to a minute; no transaction is held meanwhile
+            outcome = stepup.verify(conn, state.clock, state.stepper, nonce, password=password)
+        finally:
+            conn.close()
+        return JSONResponse({"verified": outcome == "verified", "outcome": outcome})
+
+    return [
+        Route("/v1/stepup/nonces", issue, methods=["POST"]),
+        Route("/v1/stepup/{nonce}/verify", verify, methods=["POST"]),
+    ]
 
 
 def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:

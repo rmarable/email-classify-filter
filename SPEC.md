@@ -709,6 +709,8 @@ Item cards have ✅ **Correct** and ✏️ **Fix**; review posts have **All othe
    - **Linux:** the CLI passes the password you type over the 0600 socket and the service runs PAM (`python-pam`, which checks only the running user's password), or polkit `CheckAuthorization` on desktops with an agent and ecf's polkit policy installed (a one-time `sudo` at `ecf service install`), with a bus-name or pidfd subject (pidfd needs a newer polkit, unverified); `auth_self` only, never `auth_self_keep`. Attempts are rate-limited (5 per 10 minutes [proposed]) so a same-user process can't lock the account through `pam_faillock` (unverified, V1.6).
 3. The prompt text names the action, recipient and address. The result is bound to the nonce and consumed once. If the service can't perform the check, the action is refused.
 
+**As built in V1.2** (step 2, 2026-09-29; code: `ecf_server/stepup.py`, `stepper.py`; security review of the V1.2 plan): a nonce is issued for a *purpose* and a *target* (a grant, a setting and its new value, ...); the service loads the target and computes both the bound hash and the dialog text itself, so a client can't make the dialog say one thing and the action do another. The nonce carries a 4-character code that the CLI prints and the dialog repeats. Before the dialog the service recomputes the hash and refuses if the target changed since the nonce was issued. One authentication runs at a time across the service, with a 60 s timeout that withdraws the dialog. A verified nonce must be used within 2 minutes; a nonce the CLI asks for expires after 10 minutes. At most 5 verifications per 10 minutes, service-wide. Step-up routes accept only the CLI token, never an MCP profile token. `ecf stepup test` runs the whole path and changes nothing. `ecf-server dev` uses a fake that approves, so it never shows a real dialog. Audit events: `stepup.requested`, `stepup.verified`, `stepup.refused` (with the reason), `stepup.consumed`; never a password.
+
 **Stated limit:** in v1, step-up confirms your intent inside one OS account; it is not a security boundary against malware already running as you (§12.2).
 
 ### 9.7 Security-relevant configuration
@@ -1176,7 +1178,7 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/items/{id}/resolve` · `/requeue` | CLI | `{reason}` / `{nonce_id?}` → new status |
 | POST | `/v1/items/resolve` | CLI | `{older_than_days?, ids?, reason, nonce_id?}` → count resolved |
 | POST | `/v1/approvals/pending` | CLI | `{confirm_ids?, nonce_id?}` → list to confirm, then results |
-| POST | `/v1/stepup/nonces` | CLI | `{purpose, bound_hash}` → `{nonce_id, prompt_text, expires_at}` |
+| POST | `/v1/stepup/nonces` | CLI | `{purpose, target}` → `{nonce_id, code, prompt_text, expires_at, needs_password}` (the service computes the bound hash and the text from the target; V1.2 step 2) |
 | POST | `/v1/stepup/{nonce}/verify` | CLI | `{password?}` (Linux PAM only) → `{verified}` |
 | POST | `/v1/checks` | CLI | `{address_id?, until_empty?}` → progress stream (JSON lines), final summary |
 | POST | `/v1/backfill` | CLI | `{address_id, since}` → job id |

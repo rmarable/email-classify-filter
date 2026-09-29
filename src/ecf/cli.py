@@ -24,6 +24,7 @@ from ecf.paths import Paths, paths_for
 from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 from ecf.status import CHECK_FAILED
+from ecf.stepup import step_up
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -32,6 +33,10 @@ eval_app = typer.Typer(no_args_is_help=True, help="Synthetic eval set and result
 app.add_typer(eval_app, name="eval")
 address_app = typer.Typer(no_args_is_help=True, help="Monitored mailboxes.")
 app.add_typer(address_app, name="address")
+stepup_app = typer.Typer(
+    no_args_is_help=True, help="Confirm actions with Touch ID or your password."
+)
+app.add_typer(stepup_app, name="stepup")
 EVAL_ROOT = Path("tests/eval/synthetic")
 
 
@@ -418,6 +423,14 @@ def address_set(
         a = c.request("POST", f"/v1/addresses/{address}", {"app_password": pw})
     typer.echo(f"stored a new app password for {a['email']} (login checked)")
     _echo_probe(a)
+
+
+@stepup_app.command("test")
+def stepup_test() -> None:
+    """Check that step-up works on this computer. Changes nothing. (step-up)"""
+    with LocalClient(_paths()) as c:
+        step_up(c, "test", {"label": "ecf stepup test"}, echo=typer.echo)
+    typer.echo("step-up works: the service checked it's you")
 
 
 @address_app.command("retry")
