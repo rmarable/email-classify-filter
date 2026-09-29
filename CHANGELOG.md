@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Fixed: `ecf check` run while a scheduled check of the same address was in progress could take over that check's lease, stopping it (nothing was written twice). A second check of the same address now reports "busy" (found in the shadow run).
 - An address's message size limit is now capped at the mail provider's own limit when the probe finds a smaller one (for Purelymail, 48.8 MB instead of 64 MB on `high` addresses); sizes are printed in MB (OD-196).
 - Security and memory: ecf no longer lets the IMAP library build debug text from every command and fetched message. That text held the app password and each message in full; it was never written to the log at ecf's log level, but it cost about 3 times each message's size in memory, which the service never gave back (OD-195).
 - Messages over 16 MB are now read and checked in a separate short-lived process, so the memory they need (about 750 MB at peak for a 64 MB message) is returned as soon as the check finishes (OD-195).

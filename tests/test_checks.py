@@ -112,6 +112,27 @@ def test_busy_lease_is_skipped(env: tuple[sqlite3.Connection, Path], clock: Fake
     assert conn.execute("SELECT event FROM audit").fetchone()["event"] == "check.lease_skipped"
 
 
+def test_a_second_check_in_this_service_is_busy(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock
+) -> None:
+    """Found in the V1.1 shadow run (2026-09-29): a scheduled check and `ecf check` ran together
+    in one service, and the second took over the first's lease."""
+    conn, _ = env
+    box = Box()
+    with leases.local_lock("ap"):  # a check of this address is running in this process
+        assert run(env, clock, box).status == "busy" and box.logins == 0
+    first = leases.acquire(conn, clock, "ap", checks.holder())  # its lease, if it got that far
+    assert first is not None
+    assert run(env, clock, box).status == "busy" and box.logins == 0
+    assert leases.held(conn, clock, first)  # untouched
+    leases.release(conn, first)
+    assert run(env, clock, box).status == "first_run"
+
+
+def test_every_check_has_its_own_holder_name() -> None:
+    assert checks.holder() != checks.holder()
+
+
 def test_no_password_and_rejected_login(
     env: tuple[sqlite3.Connection, Path], clock: FakeClock
 ) -> None:

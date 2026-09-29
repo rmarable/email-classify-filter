@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -70,7 +71,9 @@ class CheckReport:
 
 
 def holder() -> str:
-    return f"service-{os.getpid()}"
+    """Unique per check: a holder may renew or re-take its own lease, so two checks must never
+    share a name."""
+    return f"service-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
 def run_check(
@@ -91,10 +94,35 @@ def run_check(
     if row is None:
         raise NotFoundError(f"no address {address_id!r}")
     report = CheckReport(address_id, "ok", to_ts(clock.now()))
+    # In-process exclusion first (SPEC §5.1): the lease alone can't tell two checks in this
+    # service apart, so a scheduled check and `ecf check` could otherwise both run (found in the
+    # V1.1 shadow run, 2026-09-29).
+    lock = leases.local_lock(address_id)
+    if not lock.acquire(blocking=False):
+        report.status = "busy"
+        return _finish(conn, clock, report)
+    try:
+        _locked_check(conn, clock, report, row, install, secrets, factory, connect)
+    finally:
+        lock.release()
+    return _finish(conn, clock, report)
+
+
+def _locked_check(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    report: CheckReport,
+    row: sqlite3.Row,
+    install: str,
+    secrets: SecretStore,
+    factory: MailFactory,
+    connect: Callable[[], sqlite3.Connection],
+) -> None:
+    address_id = report.address_id
     lease = leases.acquire(conn, clock, address_id, holder())
     if lease is None:
         report.status = "busy"
-        return _finish(conn, clock, report)
+        return
     name = secret_name(address_id)
 
     def password() -> str:
@@ -151,7 +179,6 @@ def run_check(
         if src is not None:
             src.close()
         leases.release(conn, lease)
-    return _finish(conn, clock, report)
 
 
 def _isolator(conn: sqlite3.Connection) -> Isolator | None:
