@@ -6,7 +6,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -184,11 +184,13 @@ def _limit(conn: sqlite3.Connection, max_bytes: int) -> None:
     )
 
 
-def _provider_limit(conn: sqlite3.Connection, max_bytes: int | None) -> None:
+def _provider_limit(
+    conn: sqlite3.Connection, max_bytes: int | None, source: str = "provider table (tested)"
+) -> None:
     conn.execute(
-        "INSERT INTO probe (address_id, max_message_bytes, host, probed_at)"
-        " VALUES (?, ?, 'imap.example', 'now')",
-        (ADDR, max_bytes),
+        "INSERT INTO probe (address_id, max_message_bytes, host, probed_at, max_size_source)"
+        " VALUES (?, ?, 'imap.example', 'now', ?)",
+        (ADDR, max_bytes, source),
     )
 
 
@@ -209,6 +211,40 @@ def test_size_limit_is_capped_at_the_provider(
         _limit(setup, override)
     _provider_limit(setup, provider)
     assert address_config(setup, ADDR).max_message_bytes == expected
+
+
+def test_appendlimit_is_not_a_receiving_limit(setup: sqlite3.Connection) -> None:
+    """OD-200: APPENDLIMIT bounds uploads; Gmail's is 34 MB but it receives about 50 MB."""
+    _provider_limit(setup, 35_651_584, source="APPENDLIMIT")
+    assert address_config(setup, ADDR).max_message_bytes == 64 * fetch.MB
+
+
+def test_a_network_error_mid_fetch_is_not_a_crash(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.1 review: two connection drops quarantined an ordinary message, unread."""
+    from ecf.errors import MailUnavailableError  # noqa: PLC0415
+
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0))
+    real = src.fetch
+    drops = {"left": fetch.QUARANTINE_AFTER + 1}
+
+    def flaky(uid: int) -> bytes | None:
+        if drops["left"]:
+            drops["left"] -= 1
+            raise MailUnavailableError("IMAP command failed on imap.example: timeout")
+        return real(uid)
+
+    src.fetch = flaky  # type: ignore[method-assign]
+    for _ in range(fetch.QUARANTINE_AFTER + 1):
+        with pytest.raises(MailUnavailableError):
+            run(setup, clock, src)
+        setup.execute("DELETE FROM leases")
+    assert setup.execute("SELECT count(*) FROM processing").fetchone()[0] == 0
+    r = run(setup, clock, src)
+    assert len(r.created) == 1 and r.quarantined == []
 
 
 def test_oversized_mail_is_read_partially_after_the_page(
@@ -268,14 +304,14 @@ def test_large_mail_within_the_limit_is_read_whole(
     assert row["hash_version"] == 1 and "oversized" not in json.loads(row["facts"])
 
 
-def test_large_mail_goes_to_the_isolator(
+def test_every_message_goes_to_the_isolator(
     setup: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(fetch, "LARGE_BYTES", 600)
     src = FakeMailSource()
     started(setup, clock, src)
-    src.deliver(message(0))  # small: parsed here
-    src.deliver(message(1, multipart=True))  # large: parsed by the isolator
+    src.deliver(message(0))  # small
+    src.deliver(message(1, multipart=True))  # large: after the page, still isolated (OD-204)
     sizes: list[int] = []
 
     def isolator(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
@@ -284,8 +320,8 @@ def test_large_mail_goes_to_the_isolator(
 
     analyzer = Fn(lambda _p, _r: {})
     r = run(setup, clock, src, analyzer=analyzer, isolator=isolator)
-    assert len(r.created) == 2 and r.large_done == [2] and len(sizes) == 1 and sizes[0] > 600
-    assert analyzer.auths[0] is None and analyzer.auths[1] == AuthOutcome("none", "isolated")
+    assert len(r.created) == 2 and r.large_done == [2] and len(sizes) == 2 and sizes[1] > 600
+    assert analyzer.auths == [AuthOutcome("none", "isolated")] * 2
 
 
 def test_an_isolator_failure_counts_as_a_crash(
@@ -462,6 +498,8 @@ def test_close_gone_resolves_items_whose_message_left(
     assert statuses == ["resolved_by_mailbox", "new"]
     assert fetch.close_gone(setup, clock, src, lease, 1) == 0  # closed items stay closed
     assert fetch.close_gone(setup, clock, src, lease, 99) == 0  # another UIDVALIDITY: skipped
+    # ... unless the caller knows recovery after a reset is done (V1.1 review)
+    assert fetch.close_gone(setup, clock, src, lease, 99, close_stale=True) == 1
 
 
 @pytest.mark.imap
@@ -498,3 +536,49 @@ def test_oversized_path_against_dovecot(
     finally:
         src.close()
         admin.logout()
+
+
+def test_a_resend_with_other_identity_headers_is_a_new_item(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Same body and Message-ID, a forged sender: analyzed as a new item with trigger 5's flag,
+    not filed as a repeat delivery (V1.1 review, 2026-09-29)."""
+    src = FakeMailSource()
+    started(setup, clock, src)
+    first = message(0)
+    src.deliver(first)
+    src.deliver(first)  # a true repeat
+    spoofed = first.replace(
+        b"From: Sender 0 <s0@vendor-a.example>", b"From: CEO <ceo@acme.example>"
+    )
+    assert spoofed != first
+    src.deliver(spoofed)
+    r = run(setup, clock, src)
+    assert len(r.created) == 2 and r.duplicates == 1
+    rows = setup.execute("SELECT duplicate_message_id FROM items ORDER BY uid").fetchall()
+    assert [x["duplicate_message_id"] for x in rows] == [0, 1]
+
+
+def test_reset_recovery_finds_a_backlog_read_late(
+    setup: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mail that waited days before a check read part of it, then a reset: the rest and a
+    deferred message must still be read (V1.1 review, 2026-09-29)."""
+    monkeypatch.setattr(fetch, "LARGE_BYTES", 600)
+    src = FakeMailSource()
+    started(setup, clock, src)
+    old = clock.now() - timedelta(days=3)
+    src.deliver(message(99, multipart=True), internaldate=old)  # large: deferred below
+    for i in range(35):
+        src.deliver(message(i), internaldate=old + timedelta(minutes=i + 1))
+    with fetch.LARGE_LOCK:  # another address holds the large-message slot
+        r = run(setup, clock, src)
+    assert len(r.created) == 29 and r.remaining == 6 and r.deferred == [1]  # page of 30
+    cur = load_cursor(setup, ADDR)
+    assert cur is not None and cur.deferred_since is not None
+    src.reset(uidvalidity=9)
+    for _ in range(5):
+        r = run(setup, clock, src)
+        if r.remaining == 0 and not r.deferred:
+            break
+    assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 36

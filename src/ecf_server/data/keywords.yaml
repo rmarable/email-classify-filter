@@ -7,18 +7,18 @@
 version: 1
 
 # Bank details. Alone they never trigger (OD-060): they need a first-time sender (human-confirmed
-# only, OD-044), change wording, or a Reply-To mismatch.
+# only, OD-044), change wording, or a Reply-To mismatch. Bare `bank`, `banking` and `wire` were
+# removed: "bank holiday" and "wire" in newsletters escalated as fraud (operator decision
+# 2026-09-29, OD-202).
 bank:
   acronyms: [IBAN, SWIFT, BIC, ACH, ABA]
   phrases:
-    - bank
-    - banking
     - bank account
     - bank details
+    - banking details
     - account number
     - routing number
     - sort code
-    - wire
     - wire transfer
     - wiring instructions
     - remittance details

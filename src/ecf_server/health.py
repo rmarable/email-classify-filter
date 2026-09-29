@@ -109,6 +109,7 @@ def login_backoff(conn: sqlite3.Connection, address_id: str) -> bool:
 def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT kind, address_id, detail, opened_at FROM alerts WHERE resolved_at IS NULL"
+        " AND address_id NOT IN (SELECT address_id FROM addresses WHERE removed_at IS NOT NULL)"
         " ORDER BY opened_at"
     ).fetchall()
     return [dict(r) | {"title": TITLES.get(r["kind"], r["kind"])} for r in rows]

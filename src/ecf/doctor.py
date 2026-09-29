@@ -23,6 +23,7 @@ from ecf.client import LocalClient
 from ecf.errors import EcfError
 from ecf.paths import Paths
 from ecf.service_unit import ServiceManager, manager_for
+from ecf.status import CHECK_FAILED
 
 MIN_PYTHON = (3, 12)
 MIN_SQLITE = (3, 37, 0)
@@ -178,7 +179,7 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
 def judge_addresses(st: dict[str, Any]) -> list[Check]:
     """Each address's last check, and open alerts (SPEC §13.2; OD-190)."""
     out: list[Check] = []
-    failing = {"error", "login_rejected", "lease_lost"}
+    failing = CHECK_FAILED
     for a in st.get("addresses", []):
         name = f"address {a['address_id']}"
         if a["last_status"] is None:

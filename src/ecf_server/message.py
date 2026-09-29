@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 import quopri
 import re
 from dataclasses import dataclass
@@ -79,6 +80,8 @@ class TextPart:
     full: str
     visible: str
     truncated: bool  # longer than the scan limit: only the start was scanned
+    attachment: bool = False  # a text/* attachment or a body in another text type: scanned by
+    # the triggers (mail clients show them inline) but never used for excerpts (V1.1 review)
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,7 @@ class ParsedMessage:
     hash_version: int = HASH_VERSION
     size: int = 0
     from_ambiguous: bool = False  # the From header doesn't name exactly one clear address
+    headers_ambiguous: bool = False  # a bare CR in the header block: parsers split it differently
 
     @property
     def any_truncated(self) -> bool:
@@ -112,8 +116,9 @@ class ParsedMessage:
 
     def excerpt(self, limit: int) -> str:
         """Plain text preferred, else visible HTML text; cut at a word boundary."""
-        plain = [t.visible for t in self.texts if t.content_type == "text/plain" and t.visible]
-        html = [t.visible for t in self.texts if t.content_type == "text/html" and t.visible]
+        body = [t for t in self.texts if not t.attachment and t.visible]
+        plain = [t.visible for t in body if t.content_type == "text/plain"]
+        html = [t.visible for t in body if t.content_type == "text/html"]
         text = (plain or html or [""])[0]
         if len(text) <= limit:
             return text
@@ -142,6 +147,14 @@ def stable_id(
     else:
         key = f"{address_id}|{uidvalidity}|{uid}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def identity_digest(p: ParsedMessage) -> str:
+    """The headers a reader judges a message by (sender, display name, Reply-To, Subject). Not
+    part of `content_hash` (§6.3), so a re-send that keeps the body and Message-ID but changes
+    these is told apart from a repeat delivery (V1.1 review, 2026-09-29)."""
+    fields = [p.from_addr, p.from_name, list(p.reply_to), p.subject, p.from_count]
+    return hashlib.sha256(json.dumps(fields).encode("utf-8")).hexdigest()[:32]
 
 
 def normalize_text(text: str) -> str:
@@ -183,7 +196,27 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
             attachments.append(
                 Attachment(name[:NAME_CHARS], ctype, len(data), disposition != "attachment")
             )
-    return _parsed(msg, texts, attachments, h.hexdigest(), defects, len(raw), HASH_VERSION)
+            if ctype.startswith("text/"):  # also scanned, as the reader sees it (§8.5)
+                texts.append(_attached_text(ctype, _decode_text(part), max_scan_bytes))
+    return _parsed(
+        msg, texts, attachments, h.hexdigest(), defects, len(raw), HASH_VERSION, _bare_cr(raw)
+    )
+
+
+def _attached_text(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
+    t = _text_part(ctype, normalize_text(decoded), max_scan_bytes)
+    return TextPart(t.content_type, t.full, t.visible, t.truncated, attachment=True)
+
+
+_BARE_CR = re.compile(rb"\r(?!\n)")
+
+
+def _bare_cr(raw: bytes) -> bool:
+    """A CR not followed by LF in the header block. dkimpy splits header lines only at CRLF or
+    LF, Python's email parser also at a lone CR, so the two can see different headers: a signed
+    message could show an unsigned Subject or Reply-To (V1.1 review, 2026-09-29)."""
+    end = min((i for i in (raw.find(b"\r\n\r\n"), raw.find(b"\n\n")) if i >= 0), default=len(raw))
+    return _BARE_CR.search(raw, 0, end) is not None
 
 
 def _parsed(
@@ -194,6 +227,7 @@ def _parsed(
     defects: int,
     size: int,
     hash_version: int,
+    headers_ambiguous: bool = False,
 ) -> ParsedMessage:
     from_values = _all(msg, "from")
     froms = [(n, a) for n, a in getaddresses(list(from_values)) if a]
@@ -218,6 +252,7 @@ def _parsed(
         hash_version=hash_version,
         size=size,
         from_ambiguous=bool(from_values) and ambiguous,
+        headers_ambiguous=headers_ambiguous,
     )
 
 
@@ -259,21 +294,37 @@ def parse_partial(
     attachments: list[Attachment] = []
     for p in parts:
         h.update(f"{p.section}|{p.content_type}|{p.size}\n".encode())
-        if p.content_type in ("text/plain", "text/html") and p.disposition != "attachment":
+        body = p.content_type in ("text/plain", "text/html") and p.disposition != "attachment"
+        if body or p.section in texts:  # other text parts, when fetched, are scanned too
             fetched = texts.get(p.section, b"")
             decoded = normalize_text(_charset(_transfer_decode(fetched, p.encoding), p.charset))
             text = _text_part(p.content_type, decoded, max_scan_bytes)
             cut = p.size > len(fetched)
             out_texts.append(
-                TextPart(text.content_type, text.full, text.visible, text.truncated or cut)
+                TextPart(
+                    text.content_type,
+                    text.full,
+                    text.visible,
+                    text.truncated or cut,
+                    attachment=not body,
+                )
             )
-        else:
+        if not body:
             approx = p.size * 3 // 4 if p.encoding == "base64" else p.size
             name = (p.filename or "")[:NAME_CHARS]
             attachments.append(
                 Attachment(name, p.content_type, approx, p.disposition != "attachment")
             )
-    return _parsed(msg, out_texts, attachments, h.hexdigest(), 0, size, PARTIAL_HASH_VERSION)
+    return _parsed(
+        msg,
+        out_texts,
+        attachments,
+        h.hexdigest(),
+        0,
+        size,
+        PARTIAL_HASH_VERSION,
+        _bare_cr(header_block),
+    )
 
 
 def _transfer_decode(data: bytes, encoding: str) -> bytes:

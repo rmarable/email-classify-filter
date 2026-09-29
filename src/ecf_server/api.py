@@ -15,7 +15,7 @@ import os
 import secrets
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -264,6 +264,49 @@ def _alerts(state: ServiceState) -> list[dict[str, Any]]:
         conn.close()
 
 
+def _check_lines(
+    state: ServiceState,
+    ids: list[str],
+    until_empty: bool,
+    secrets: SecretStore,
+    factory: addresses.MailFactory,
+) -> Iterator[str]:
+    """The `POST /v1/checks` stream. A connection per check: Starlette may run each step of this
+    generator on a different thread, and a SQLite connection belongs to one (V1.1 review)."""
+
+    def one(address_id: str) -> checks.CheckReport:
+        conn = state.connect()
+        try:
+            r = checks.run_check(
+                conn,
+                state.clock,
+                address_id=address_id,
+                install=state.install,
+                secrets=secrets,
+                factory=factory,
+                connect=state.connect,
+            )
+            health.after_check(conn, state.clock, state.notifier, r)
+            return r
+        finally:
+            conn.close()
+
+    for address_id in ids:
+        for _ in range(MAX_ROUNDS if until_empty else 1):
+            try:
+                r = one(address_id)
+            except Exception as exc:  # the response has started: report it, don't cut off
+                log.error("api.check_failed", error_type=type(exc).__name__)
+                failed = {"address_id": address_id, "status": "internal_error"}
+                yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
+                yield "\n"
+                break
+            yield json.dumps(r.to_json()) + "\n"
+            if not r.more:
+                break
+    yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+
+
 def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def run_checks(request: Request) -> StreamingResponse:
@@ -284,29 +327,8 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 raise NotFoundError(f"no address {wanted!r}")
             ids = [wanted]
 
-        def lines() -> Any:
-            conn = state.connect()
-            try:
-                for address_id in ids:
-                    for _ in range(MAX_ROUNDS if until_empty else 1):
-                        r = checks.run_check(
-                            conn,
-                            state.clock,
-                            address_id=address_id,
-                            install=state.install,
-                            secrets=secrets,
-                            factory=factory,
-                            connect=state.connect,
-                        )
-                        health.after_check(conn, state.clock, state.notifier, r)
-                        yield json.dumps(r.to_json()) + "\n"
-                        if not r.more:
-                            break
-                yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
-            finally:
-                conn.close()
-
-        return StreamingResponse(lines(), media_type="application/x-ndjson")
+        lines = _check_lines(state, ids, until_empty, secrets, factory)
+        return StreamingResponse(lines, media_type="application/x-ndjson")
 
     @allow(Caller.CLI)
     def logs(request: Request) -> JSONResponse:

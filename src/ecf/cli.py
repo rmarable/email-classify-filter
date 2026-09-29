@@ -23,6 +23,7 @@ from ecf.log import configure_logging
 from ecf.paths import Paths, paths_for
 from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
+from ecf.status import CHECK_FAILED
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -100,7 +101,7 @@ def status() -> None:
         if a["paused"]:
             line += ", PAUSED"
         typer.echo(line)
-        if a["last_error"] and a["last_status"] in ("error", "login_rejected", "lease_lost"):
+        if a["last_error"] and a["last_status"] in CHECK_FAILED:
             typer.echo(f"{'':<16} last error: {a['last_error']}")
     for alert in st.get("alerts", []):
         typer.echo(f"ALERT      {alert['title']}: {alert['detail']}")
@@ -136,7 +137,7 @@ def check(
         for r in c.stream("POST", "/v1/checks", body):
             if r.get("done"):
                 break
-            failed |= r["status"] in ("error", "login_rejected", "lease_lost")
+            failed |= r["status"] in CHECK_FAILED
             typer.echo(_check_line(r))
     if failed:
         raise typer.Exit(3)
@@ -362,6 +363,14 @@ def _mb(size: int) -> str:
     return f"{size / 1_048_576:.1f} MB"
 
 
+def _size_note(size: int | None, source: str | None) -> str:
+    if not size:
+        return "unknown"
+    if (source or "").startswith("provider table"):
+        return f"{_mb(size)} (ecf caps its own limit to it)"
+    return f"{_mb(size)} for uploads ({source}; not used as a receiving limit)"
+
+
 def _echo_probe(a: dict[str, Any]) -> None:
     p = a.get("probe")
     if not p:
@@ -370,7 +379,7 @@ def _echo_probe(a: dict[str, Any]) -> None:
     typer.echo(
         f"probe: folders {', '.join(sorted(p['roles'].values())) or 'none marked'}; "
         f"keywords {'yes' if p['custom_keywords'] else 'no'}; "
-        f"size limit {f'{_mb(size)} (ecf caps its own limit to it)' if size else 'unknown'}"
+        f"size limit {_size_note(size, p.get('max_size_source'))}"
     )
     for w in p["warnings"]:
         typer.echo(f"  note: {w}")

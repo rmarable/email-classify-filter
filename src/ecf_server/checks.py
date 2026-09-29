@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import MailUnavailableError, NotFoundError, ServiceUnavailableError
+from ecf.status import CHECK_FAILED
 from ecf_server import leases, precheck
 from ecf_server.addresses import MailFactory, secret_name
 from ecf_server.analysis import MessageAnalyzer
@@ -34,6 +35,7 @@ from ecf_server.fetch import (
     load_cursor,
 )
 from ecf_server.isolate import Isolator, subprocess_isolator
+from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import MailLoginRejectedError
 from ecf_server.secretstore import SecretStore
@@ -103,9 +105,26 @@ def run_check(
         return _finish(conn, clock, report)
     try:
         _locked_check(conn, clock, report, row, install, secrets, factory, connect)
+    except Exception as exc:  # a bug, a child crash, SQLite: still recorded, scheduled, visible
+        log.error("check.crashed", address_id=address_id, error_type=type(exc).__name__)
+        report.status, report.error = "internal_error", f"internal error ({type(exc).__name__})"
     finally:
         lock.release()
     return _finish(conn, clock, report)
+
+
+def record_failure(
+    conn: sqlite3.Connection, clock: Clock, address_id: str, status: str, error: str
+) -> CheckReport:
+    """A check that couldn't start (e.g. the secret store is unavailable), recorded like one
+    that ran, so `ecf status` and the schedule see it (V1.1 review, 2026-09-29)."""
+    report = CheckReport(address_id, status, to_ts(clock.now()))
+    report.error = error
+    return _finish(conn, clock, report)
+
+
+class SecretUnavailableError(ServiceUnavailableError):
+    """The app password couldn't be read: not a mail provider problem (V1.1 review)."""
 
 
 def _locked_check(
@@ -128,7 +147,7 @@ def _locked_check(
     def password() -> str:
         pw = secrets.get(name)
         if not pw:
-            raise ServiceUnavailableError(f"no app password stored for {address_id}")
+            raise SecretUnavailableError(f"no app password stored for {address_id}")
         return pw
 
     src: MailSource | None = None
@@ -147,11 +166,13 @@ def _locked_check(
                 lost=renewer.lost,
                 analyzer=analyzer,
                 deadline=clock.monotonic() + MAX_PER_CHECK_S,
-                isolator=_isolator(conn),
+                isolator=_isolator(conn, dns),
             )
             cur = load_cursor(conn, address_id)
             if cur is not None and cur.uidvalidity is not None:
-                report.resolved_by_mailbox = close_gone(conn, clock, src, lease, cur.uidvalidity)
+                report.resolved_by_mailbox = close_gone(
+                    conn, clock, src, lease, cur.uidvalidity, close_stale=cur.recovering_until == 0
+                )
             outcomes = precheck.run(
                 conn,
                 clock,
@@ -173,6 +194,8 @@ def _locked_check(
         report.status, report.error = "login_rejected", exc.detail
     except LeaseLostError as exc:
         report.status, report.error = "lease_lost", exc.detail
+    except SecretUnavailableError as exc:
+        report.status, report.error = "secret_unavailable", exc.detail
     except (MailUnavailableError, ServiceUnavailableError) as exc:
         report.status, report.error = "error", exc.detail
     finally:
@@ -181,16 +204,18 @@ def _locked_check(
         leases.release(conn, lease)
 
 
-def _isolator(conn: sqlite3.Connection) -> Isolator | None:
-    """Large messages go to a child process that opens the same database file (OD-195)."""
+def _isolator(conn: sqlite3.Connection, dns: DnsCache) -> Isolator | None:
+    """Messages go to a child process that opens the same database file (OD-195, OD-204)."""
     row = conn.execute("PRAGMA database_list").fetchone()
     path = row["file"] if row else ""
-    return subprocess_isolator(Path(path), dns_cap_s=DNS_CAP_S) if path else None
+    if not path:
+        return None
+    return subprocess_isolator(Path(path), dns_cap_s=DNS_CAP_S, dns_budget=dns.remaining)
 
 
 def _finish(conn: sqlite3.Connection, clock: Clock, r: CheckReport) -> CheckReport:
     r.finished_at = to_ts(clock.now())
-    failed = r.status in ("error", "login_rejected", "lease_lost")
+    failed = r.status in CHECK_FAILED
     with write_tx(conn):
         if r.status != "busy":
             conn.execute(
@@ -239,7 +264,7 @@ def _page_status(page: PageResult) -> str:
 
 
 def _event(status: str) -> str:
-    if status in ("error", "login_rejected", "lease_lost"):
+    if status in CHECK_FAILED:
         return "check.failed"
     return "check.lease_skipped" if status == "busy" else "check.completed"
 

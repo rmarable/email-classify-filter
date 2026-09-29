@@ -53,7 +53,9 @@ def test_acronyms_are_case_sensitive_whole_words() -> None:
     assert hits("Letter from the SEC today")["regulator"] == ["SEC"]
     assert hits("see section 2, sec. 4, second copy")["regulator"] == []
     assert hits("wireless router")["bank"] == []
-    assert "wire" in hits("please wire the funds")["bank"]
+    assert "wire transfer" in hits("please send a wire transfer")["bank"]
+    # bare "bank", "banking" and "wire" are no longer bank-detail words (OD-202)
+    assert hits("Bank holiday hours; online banking; please wire the funds")["bank"] == []
 
 
 def test_phrases_are_case_insensitive_and_span_whitespace() -> None:
@@ -98,6 +100,12 @@ def test_hidden_html_and_other_places_are_scanned() -> None:
         ("acme.evil.test", "acme.example", True),
         ("ace.example", "acme.example", False),  # short names: no typo matching
         ("globex.example", "acme.example", False),
+        # a vendor's own parent, subdomains and siblings (V1.1 review)
+        ("vendor-a.example", "em.vendor-a.example", False),
+        ("support.vendor-a.example", "em.vendor-a.example", False),
+        ("intuit.com", "notification.intuit.com", False),
+        ("xn--cme-5cd.example", "acme.example", True),  # the Cyrillic a in punycode
+        ("vendors-a.co.uk", "vendor-a.co.uk", True),  # a typo under a two-label suffix
     ],
 )
 def test_lookalike(domain: str, known: str, want: bool) -> None:
@@ -142,10 +150,10 @@ def fire(
 
 
 def test_bank_details_need_an_unconfirmed_sender_change_wording_or_reply_to() -> None:
-    assert fire("Our bank is Example Bank.").fraud == []  # confirmed sender, bank words alone
-    assert fire("Our bank is Example Bank.", sender_confirmed=False).fraud
+    assert fire("Our bank account is below.").fraud == []  # confirmed sender, bank words alone
+    assert fire("Our bank account is below.", sender_confirmed=False).fraud
     assert fire("Please note our updated bank details.").fraud
-    assert fire("Our bank is Example Bank.", reply_to_mismatch=True).fraud
+    assert fire("Our bank account is below.", reply_to_mismatch=True).fraud
 
 
 def test_first_time_payment_needs_a_second_signal() -> None:
@@ -162,6 +170,14 @@ def test_first_time_payment_needs_a_second_signal() -> None:
         recipient_mismatch=True,
     )
     assert strong.fraud and "not addressed to this mailbox" in strong.fraud[0]
+    alias = fire(
+        "Invoice 42 attached.",
+        sender_seen_before=False,
+        sender_confirmed=False,
+        recipient_mismatch=True,
+        auth_result="none",
+    )
+    assert alias.fraud == [] and alias.fraud_weak  # only replayed signed mail counts (OD-201)
 
 
 def test_reply_to_mismatch_on_payment_is_a_second_signal_only() -> None:
@@ -191,6 +207,9 @@ def test_other_fraud_triggers() -> None:
         ('"ceo@acme.example" <mallory@mail.test>', "acme.example"),
         ("Vendor A billing.vendor-a.example <billing@vendor-a.example>", None),
         ("Vendor A <billing@vendor-a.example>", None),
+        ("Vendor-a.example <billing@em.vendor-a.example>", None),  # the parent (V1.1 review)
+        ("Node.js Weekly <news@nodeweekly.example>", None),  # not a top-level domain
+        ("PayPal.com Service <help@evil.test>", "paypal.com"),
     ],
 )
 def test_display_name_trigger(sender: str, want: str | None) -> None:
@@ -257,3 +276,19 @@ def test_quoted_and_commented_at_signs_are_fine() -> None:
         "billing@vendor-a.example (Billing @ Vendor A)",
     ):
         assert not parse(mail("hi", sender=header)).from_ambiguous, header
+
+
+def test_saas_tenant_of_an_org_domain_is_not_a_lookalike() -> None:
+    """OD-203: acme's own help desk on a shared service isn't impersonating acme, though the
+    domain on its own looks like acme's."""
+    assert tr.lookalike("acme.zendesk.com", "acme.example")
+    assert tr.saas_tenant("acme.zendesk.com", "acme.example")
+    assert not tr.saas_tenant("acme.evil.test", "acme.example")
+    assert fire("hi", from_domain="acme.zendesk.com").lookalikes == []
+    assert fire("hi", from_domain="acme.evil.test").lookalikes
+
+
+def test_bare_cr_in_headers_is_a_fraud_trigger() -> None:
+    raw = mail("hi").replace(b"Subject:", b"X-Note: a\rReply-To: x@evil.test\r\nSubject:", 1)
+    assert parse(raw).headers_ambiguous
+    assert "bare CR in the headers: parsers may disagree on them" in fire("", raw=raw).fraud

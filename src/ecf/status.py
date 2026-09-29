@@ -47,3 +47,10 @@ TERMINAL: frozenset[Status] = frozenset(
     }
 )
 OPEN: frozenset[Status] = frozenset(Status) - TERMINAL
+
+# Check outcomes that are failures (shown with their error by `ecf status`, `ecf check`,
+# `ecf doctor`; audited as check.failed). `secret_unavailable` and `internal_error` were added
+# after the V1.1 review (2026-09-29).
+CHECK_FAILED = frozenset(
+    {"error", "login_rejected", "lease_lost", "secret_unavailable", "internal_error"}
+)

@@ -35,6 +35,7 @@ REQUIRED = ("from", "subject", "date", "to", "reply-to")  # when present (OD-047
 MIME = ("content-type", "mime-version", "content-transfer-encoding")  # OD-048, narrowed by OD-187
 BROKEN = ("bad_signature", "bad_body_hash")
 MAX_LABELS = 8
+MAX_SIGNATURES = 8  # checked per message (V1.1 review, 2026-09-29)
 
 
 @dataclass(frozen=True)
@@ -84,24 +85,43 @@ class AuthOutcome:
         }
 
 
+def _unverifiable(parsed: ParsedMessage) -> AuthOutcome | None:
+    """An outcome decided by the message's shape alone, before any signature is checked."""
+    reasons: list[tuple[bool, Result, str]] = [
+        (parsed.hash_version == PARTIAL_HASH_VERSION, "none", "oversized: not verified"),
+        (parsed.from_count > 1, "fail", "more than one From header"),
+        (not parsed.from_addr or "@" not in parsed.from_addr, "none", "no usable From address"),
+        (
+            parsed.from_ambiguous,
+            "none",
+            "ambiguous From header: parsers may disagree on the sender",
+        ),
+        (parsed.headers_ambiguous, "none", "bare CR in the headers: parsers may disagree on them"),
+    ]
+    return next((AuthOutcome(r, why) for hit, r, why in reasons if hit), None)
+
+
 def evaluate(raw: bytes, parsed: ParsedMessage, dns: DnsCache) -> AuthOutcome:
-    if parsed.hash_version == PARTIAL_HASH_VERSION:
-        return AuthOutcome("none", "oversized: not verified")
-    if parsed.from_count > 1:
-        return AuthOutcome("fail", "more than one From header")
-    if not parsed.from_addr or "@" not in parsed.from_addr:
-        return AuthOutcome("none", "no usable From address")
-    if parsed.from_ambiguous:
-        return AuthOutcome("none", "ambiguous From header: parsers may disagree on the sender")
-    author = parsed.from_addr.rsplit("@", 1)[1].rstrip(".").lower()
-    sigs = _dkim.signatures(raw)
+    early = _unverifiable(parsed)
+    if early is not None:
+        return early
+    author = _ascii_domain((parsed.from_addr or "").rsplit("@", 1)[1])
+    if author is None:
+        return AuthOutcome("none", "From domain isn't a valid domain name")
+    try:
+        sigs = _first_signatures(_dkim.signatures(raw), author)
+        names = _dkim.header_names(raw)
+    except _dkim.HeadersUnreadable:
+        return AuthOutcome("none", "malformed header block: DKIM can't read it")
     dns.prefetch(
         [("_dmarc." + author, "TXT"), ("_dmarc." + _parent(author), "TXT")]
         + [(f"{g.tags['s']}._domainkey.{g.tags['d']}", "TXT") for g in sigs if _usable(g)]
     )
-    policy = discover_policy(dns, author)
+    try:
+        policy = discover_policy(dns, author)
+    except PolicyUnknownError:
+        return AuthOutcome("none", "DNS error looking up the DMARC policy", author)
     adkim = policy.adkim if policy else "r"
-    names = _dkim.header_names(raw)
     results = [_check(raw, g, author, adkim, names, dns) for g in sigs]
     out = AuthOutcome("none", "", author, asdict(policy) if policy else None, results)
     passing = [r for r in results if r.passes]
@@ -121,8 +141,36 @@ def evaluate(raw: bytes, parsed: ParsedMessage, dns: DnsCache) -> AuthOutcome:
 # ---- DMARC ----------------------------------------------------------------------------------
 
 
+class PolicyUnknownError(Exception):
+    """A DNS error on the way to the policy: SPEC §7.3 fails closed (`none`, never `pass`). RFC
+    9989 §4.10.1 leaves DNS errors to the receiver; falling through to a parent's record could
+    swap an author's strict alignment for a relaxed one (V1.1 review, 2026-09-29)."""
+
+
+def _ascii_domain(domain: str) -> str | None:
+    """The From domain as DKIM `d=` values are written: lowercase, A-labels for IDNs."""
+    d = domain.rstrip(".").lower()
+    try:
+        return d.encode("idna").decode("ascii") if not d.isascii() else d
+    except UnicodeError:
+        return None
+
+
+def _first_signatures(sigs: list[_dkim.Signature], author: str) -> list[_dkim.Signature]:
+    """At most MAX_SIGNATURES, those that could align with the author first: each one re-reads
+    the whole message, so a message with thousands would hold the check for hours (RFC 6376
+    §6.1 lets a verifier limit how many it checks)."""
+
+    def related(s: _dkim.Signature) -> bool:
+        d = s.tags.get("d", "").rstrip(".").lower()
+        return bool(d) and (d == author or author.endswith("." + d) or d.endswith("." + author))
+
+    return sorted(sigs, key=lambda s: not related(s))[:MAX_SIGNATURES]
+
+
 def discover_policy(dns: DnsCache, author: str) -> Policy | None:
-    """RFC 9989 §4.10.1: the record at the Author Domain, else at its Organizational Domain."""
+    """RFC 9989 §4.10.1: the record at the Author Domain, else at its Organizational Domain.
+    Raises PolicyUnknownError on a DNS error before a record is found."""
     own = _record(dns, author)
     if own is not None:
         return _policy(author, own, "author", dns, author)
@@ -191,8 +239,11 @@ def _org_from(start: str, walked: list[tuple[str, dict[str, str]]]) -> str:
 
 
 def _record(dns: DnsCache, domain: str) -> dict[str, str] | None:
-    """The single valid DMARC record at `_dmarc.<domain>`, or None (none, several, or error)."""
+    """The single valid DMARC record at `_dmarc.<domain>`, or None (none or several); a DNS
+    error raises PolicyUnknownError."""
     a = dns.get(f"_dmarc.{domain}", "TXT")
+    if a.status == "error":
+        raise PolicyUnknownError(domain)
     records = [r for r in a.records if r.replace(" ", "").lower().startswith("v=dmarc1")]
     if a.status != "ok" or len(records) != 1:
         return None
@@ -260,7 +311,10 @@ def _relaxed(dns: DnsCache, d: str, author: str) -> bool:
         return True
     if d.rsplit(".", maxsplit=1)[-1] != author.rsplit(".", maxsplit=1)[-1]:
         return False
-    return org_domain(dns, d) == org_domain(dns, author)
+    try:
+        return org_domain(dns, d) == org_domain(dns, author)
+    except PolicyUnknownError:
+        return False  # can't tell, so not aligned: `none`, never `pass`
 
 
 def _why_none(results: list[SigResult], policy: Policy | None, dns: DnsCache) -> str:
