@@ -13,6 +13,7 @@ import os
 import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ecf.errors import MailUnavailableError, NotFoundError, ServiceUnavailableError
@@ -31,6 +32,7 @@ from ecf_server.fetch import (
     fetch_page,
     load_cursor,
 )
+from ecf_server.isolate import Isolator, subprocess_isolator
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import MailLoginRejectedError
 from ecf_server.secretstore import SecretStore
@@ -117,6 +119,7 @@ def run_check(
                 lost=renewer.lost,
                 analyzer=analyzer,
                 deadline=clock.monotonic() + MAX_PER_CHECK_S,
+                isolator=_isolator(conn),
             )
             cur = load_cursor(conn, address_id)
             if cur is not None and cur.uidvalidity is not None:
@@ -149,6 +152,13 @@ def run_check(
             src.close()
         leases.release(conn, lease)
     return _finish(conn, clock, report)
+
+
+def _isolator(conn: sqlite3.Connection) -> Isolator | None:
+    """Large messages go to a child process that opens the same database file (OD-195)."""
+    row = conn.execute("PRAGMA database_list").fetchone()
+    path = row["file"] if row else ""
+    return subprocess_isolator(Path(path), dns_cap_s=DNS_CAP_S) if path else None
 
 
 def _finish(conn: sqlite3.Connection, clock: Clock, r: CheckReport) -> CheckReport:

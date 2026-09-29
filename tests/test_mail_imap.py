@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
 import uuid
 from collections.abc import Iterator
@@ -98,5 +99,26 @@ def test_writes_do_not_mark_read(server: dovecot.Dovecot) -> None:
         h.imap.add_keyword(u, "$ecf_test_regulatory")
         h.imap.fetch(u)  # read after switching to the read-write selection
         assert "\\Seen" not in h.imap.flags([u])[u]
+    finally:
+        h.close()
+
+
+def test_imaplib_debug_output_is_off(
+    server: dovecot.Dovecot, caplog: pytest.LogCaptureFixture
+) -> None:
+    """imapclient turns imaplib's debug output on; at DEBUG it would log the LOGIN line with the
+    app password and every fetched message, and it costs memory even when nothing logs (OD-195)."""
+    h = DovecotHarness(server)
+    marker = "contract-17@synthetic"  # in the fetched message's Message-ID
+    try:
+        h.deliver(message(17), datetime.now().astimezone())
+        with caplog.at_level(logging.DEBUG):
+            (u,) = h.imap.uids_after(0)
+            raw = h.imap.fetch(u)
+        assert raw is not None and marker.encode() in raw
+        logged = caplog.text
+        assert dovecot.PASSWORD not in logged and marker not in logged
+        assert h.imap._conn is not None  # pyright: ignore[reportPrivateUsage]
+        assert h.imap._conn._c._imap.debug == 0  # pyright: ignore[reportPrivateUsage]
     finally:
         h.close()

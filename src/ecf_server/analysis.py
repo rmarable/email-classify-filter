@@ -40,8 +40,12 @@ class MessageAnalyzer:
             conn, clock, facts.AddressInfo(address_id, row["email"], row["sensitivity"]), dns
         )
 
-    def analyze(self, parsed: ParsedMessage, raw: bytes) -> dict[str, Any]:
-        auth = senderauth.evaluate(raw, parsed, self._dns)
+    def analyze(
+        self, parsed: ParsedMessage, raw: bytes, auth: senderauth.AuthOutcome | None = None
+    ) -> dict[str, Any]:
+        """`auth` is given when a child process already checked the message (isolate.py)."""
+        if auth is None:
+            auth = senderauth.evaluate(raw, parsed, self._dns)
         keywords = triggers.scan(triggers.texts_of(parsed))
         computed = facts.compute(
             self._conn,

@@ -5,6 +5,13 @@ is converted to typed values before it leaves this module.
 Library facts relied on (imapclient 4.1.0; checked against its source and the V1.1 real-service
 test, 2026-09-28): full fetches come back under `b"BODY[]"`, partial ones under
 `b"BODY[<section>]<0>"`; with `normalise_times = False` INTERNALDATE is timezone-aware.
+
+imapclient sets the wrapped imaplib connection's `debug` to 5 and routes it to the
+`imapclient.imaplib` logger (imapclient.py, `__init__`). At that level imaplib formats every command
+and response with `%r` whether or not the logger is enabled: the LOGIN line with the app password,
+and each fetched message in full. That cost about 3 times the message size per fetch, which the
+process never gave back (measured 2026-09-29 on macOS 27: six 46 MB fetches grew the footprint by
+about 144 MB each), and at DEBUG it would log secrets and content. `Conn` sets it to 0 (OD-195).
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ class Conn:
         timeout = _lib.SocketTimeout(connect=connect_s, read=read_s)
         self._c: Any = _lib.IMAPClient(host, port=port, ssl=True, ssl_context=ctx, timeout=timeout)
         self._c.normalise_times = False
+        self._c._imap.debug = 0  # see the module docstring
 
     def login(self, user: str, password: str) -> None:
         self._c.login(user, password)

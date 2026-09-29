@@ -21,8 +21,10 @@ from ecf_server.fetch import (
     fetch_page,
     load_cursor,
 )
+from ecf_server.isolate import IsolationError
 from ecf_server.mail.fake import FakeMailSource
-from ecf_server.message import ParsedMessage
+from ecf_server.message import ParsedMessage, parse
+from ecf_server.senderauth import AuthOutcome
 from tests.mail_contract import message
 
 ADDR = "ap"
@@ -53,8 +55,12 @@ class Fn:
 
     def __init__(self, fn: Callable[[ParsedMessage, bytes], dict[str, Any]]) -> None:
         self.fn = fn
+        self.auths: list[AuthOutcome | None] = []
 
-    def analyze(self, parsed: ParsedMessage, raw: bytes) -> dict[str, Any]:
+    def analyze(
+        self, parsed: ParsedMessage, raw: bytes, auth: AuthOutcome | None = None
+    ) -> dict[str, Any]:
+        self.auths.append(auth)
         return self.fn(parsed, raw)
 
     def record(
@@ -233,6 +239,44 @@ def test_large_mail_within_the_limit_is_read_whole(
     assert r.large_done == [1]
     row = setup.execute("SELECT facts, hash_version FROM items").fetchone()
     assert row["hash_version"] == 1 and "oversized" not in json.loads(row["facts"])
+
+
+def test_large_mail_goes_to_the_isolator(
+    setup: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fetch, "LARGE_BYTES", 600)
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0))  # small: parsed here
+    src.deliver(message(1, multipart=True))  # large: parsed by the isolator
+    sizes: list[int] = []
+
+    def isolator(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
+        sizes.append(len(raw))
+        return parse(raw, max_scan_bytes=max_scan_bytes), AuthOutcome("none", "isolated")
+
+    analyzer = Fn(lambda _p, _r: {})
+    r = run(setup, clock, src, analyzer=analyzer, isolator=isolator)
+    assert len(r.created) == 2 and r.large_done == [2] and len(sizes) == 1 and sizes[0] > 600
+    assert analyzer.auths[0] is None and analyzer.auths[1] == AuthOutcome("none", "isolated")
+
+
+def test_an_isolator_failure_counts_as_a_crash(
+    setup: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fetch, "LARGE_BYTES", 600)
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0, multipart=True))
+
+    def broken(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
+        raise IsolationError("child exited 3: MemoryError")
+
+    for _ in range(fetch.QUARANTINE_AFTER):
+        with pytest.raises(IsolationError):
+            run(setup, clock, src, isolator=broken)
+    r = run(setup, clock, src, isolator=broken)
+    assert r.quarantined == [1]
 
 
 def test_deferred_mail_that_disappears_is_dropped(

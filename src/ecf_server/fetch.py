@@ -32,6 +32,7 @@ from ecf.status import OPEN, Status
 from ecf_server import items, leases
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
+from ecf_server.isolate import Isolator
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.message import (
@@ -42,6 +43,7 @@ from ecf_server.message import (
     parse_partial,
     stable_id,
 )
+from ecf_server.senderauth import AuthOutcome
 from ecf_server.state_machine import TransitionContext
 
 PAGE_MESSAGES = 30
@@ -53,7 +55,7 @@ DEFAULT_RATE = 2 * 1024 * 1024  # bytes/s assumed until a page has measured thro
 HEADER_LIMIT = 256 * 1024  # header block fetched for an oversized message
 LARGE_LOCK = threading.Lock()  # large messages are processed one at a time service-wide
 MB = 1024 * 1024
-DEFAULT_MAX = {"high": 64 * MB, "standard": 16 * MB}  # OD-024
+DEFAULT_MAX = {"high": 64 * MB, "standard": 16 * MB}  # OD-024 (64 MB kept, OD-195)
 DEFAULT_SCAN = 10 * MB  # OD-027
 
 
@@ -61,7 +63,9 @@ class Analyzer(Protocol):
     """Analysis plugged into fetching (steps 7 to 9): `analyze` reads and returns facts;
     `record` runs inside the item's transaction (sender history)."""
 
-    def analyze(self, parsed: ParsedMessage, raw: bytes, /) -> dict[str, Any]: ...
+    def analyze(
+        self, parsed: ParsedMessage, raw: bytes, auth: AuthOutcome | None = None, /
+    ) -> dict[str, Any]: ...
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, facts: dict[str, Any], /
     ) -> None: ...
@@ -167,7 +171,7 @@ def save_cursor(conn: sqlite3.Connection, clock: Clock, lease: leases.Lease, cur
     )
 
 
-def fetch_page(
+def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collaborators
     conn: sqlite3.Connection,
     clock: Clock,
     src: MailSource,
@@ -177,6 +181,7 @@ def fetch_page(
     lost: threading.Event | None = None,
     analyzer: Analyzer | None = None,
     deadline: float | None = None,
+    isolator: Isolator | None = None,
 ) -> PageResult:
     """One page of new mail, then deferred large mail while `deadline` (monotonic; default the
     check budget from now) leaves time for it."""
@@ -196,7 +201,7 @@ def fetch_page(
     new = src.uids_after(cur.last_uid)
     page = new[:PAGE_MESSAGES]
     metas = src.meta(page)
-    pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer)
+    pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer, isolator)
     pg.recovering_until = cur.recovering_until
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
@@ -267,6 +272,7 @@ class _Page:
     uidvalidity: int
     result: PageResult
     analyzer: Analyzer | None
+    isolator: Isolator | None = None  # large messages parsed and verified in a child (OD-195)
     fetched_bytes: int = 0
     fetch_s: float = 0.0
     recovering_until: int = 0
@@ -278,7 +284,9 @@ class _Page:
         return self.fetched_bytes / self.fetch_s
 
 
-def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
+def _process(
+    pg: _Page, uid: int, internaldate: datetime | None = None, *, isolated: bool = False
+) -> None:
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
     attempts = _mark(conn, clock, cfg.address_id, uv, uid)
     if attempts > QUARANTINE_AFTER:
@@ -292,17 +300,22 @@ def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
         return
     pg.fetched_bytes += len(raw)
     pg.fetch_s += clock.monotonic() - t0
-    _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
+    if isolated and pg.isolator is not None:
+        parsed, auth = pg.isolator(raw, cfg.max_scan_bytes)
+        _store(pg, uid, parsed, raw, {}, internaldate, auth)
+    else:
+        _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
 
 
 def _process_large(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
-    """A message over 16 MB but within the limit: read whole, peak memory logged (§5.1)."""
+    """A message over 16 MB but within the limit: read whole, then parsed and verified in a child
+    process when the service gives an isolator (OD-195); this process's peak memory is logged."""
     tracing = not tracemalloc.is_tracing()
     if tracing:
         tracemalloc.start()
     tracemalloc.reset_peak()
     try:
-        _process(pg, uid, internaldate)
+        _process(pg, uid, internaldate, isolated=True)
     finally:
         peak = tracemalloc.get_traced_memory()[1]
         if tracing:
@@ -338,6 +351,7 @@ def _store(
     raw: bytes,
     extra: dict[str, Any],
     internaldate: datetime | None = None,
+    auth: AuthOutcome | None = None,
 ) -> None:
     """Create the item for a read message, re-point a known one after a mailbox reset, or record
     a repeat delivery (§6.3, §6.4)."""
@@ -362,7 +376,7 @@ def _store(
             _unmark_in(conn, cfg.address_id, uv, uid)
         pg.result.duplicates += 1
         return
-    facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw) if pg.analyzer else {})
+    facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw, auth) if pg.analyzer else {})
     reused = (
         parsed.message_id is not None
         and conn.execute(
