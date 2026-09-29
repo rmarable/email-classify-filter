@@ -6,11 +6,15 @@ from __future__ import annotations
 import pytest
 
 from ecf_server.chat import Button, Card, ChatSurface, FakeChat, Identity, RouteRef
+from ecf_server.slack_chat import SlackChat
 
 
-@pytest.fixture(params=["fake"])
+@pytest.fixture(params=["fake", "slack"])
 def chat(request: pytest.FixtureRequest) -> ChatSurface:
-    assert request.param == "fake"
+    if request.param == "slack":
+        from tests.test_slack_out import FakeWeb  # noqa: PLC0415
+
+        return SlackChat(FakeWeb())
     return FakeChat()
 
 
