@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Real-service test (Touch ID from the background service) passed: the service can ask for Touch ID or your password from its LaunchAgent, a prompt never succeeds on its own, and Cancel is reported as declined; results in SPEC §21.1.
 - V1.2 plan decisions (OD-206 to OD-218): email alerts move to V1.5 and approval expiry to V1.2; sends' step-up and 10-minute delay are built now and used in V1.5; `assist` becomes available with step-up; fraud and regulator escalations are never held back by the hourly cap; hiding a fraud or regulator item needs step-up and Undo never removes those labels; "Show excerpt" is visible only to you; channel membership changes are announced; `ecf backfill` records only unless `--act`; the audit log and fraud or regulator items are never pruned; `address remove` resolves open items first.
 
 ## ms-v1.1.1-fixes (2026-09-29)
