@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.2-slack-approvals (not yet tagged)
+
+- V1.2 plan decisions (OD-206 to OD-218): email alerts move to V1.5 and approval expiry to V1.2; sends' step-up and 10-minute delay are built now and used in V1.5; `assist` becomes available with step-up; fraud and regulator escalations are never held back by the hourly cap; hiding a fraud or regulator item needs step-up and Undo never removes those labels; "Show excerpt" is visible only to you; channel membership changes are announced; `ecf backfill` records only unless `--act`; the audit log and fraud or regulator items are never pruned; `address remove` resolves open items first.
+
 ## ms-v1.1.1-fixes (2026-09-29)
 
 Fixes from an adversarial review of V1.1 (four reviewers; SPEC §5.1, §6.3, §6.4, §7.3, §8.5).
