@@ -79,3 +79,33 @@ def test_failed_commit_does_not_wedge_the_connection(tmp_path: Path) -> None:
         c.execute("INSERT INTO t VALUES (2)")
     assert [r[0] for r in c.execute("SELECT x FROM t")] == [2]
     c.close()
+
+
+def test_0012_rebuilds_jobs_keeping_rows_and_indexes(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every = db._migration_files()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < 12])
+    c = db.connect(db_path)
+    db.migrate(c)
+    c.execute(
+        "INSERT INTO jobs (job_id, queue, address_id, payload, timeout_s, visible_at, created_at)"
+        " VALUES ('j1', 'slack_out', 'C1', '{\"k\": 1}', 30, 't', 't')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # the old CHECK has no slack_in
+        c.execute(
+            "INSERT INTO jobs (job_id, queue, address_id, timeout_s, visible_at, created_at)"
+            " VALUES ('j0', 'slack_in', 'U1', 60, 't', 't')"
+        )
+    monkeypatch.setattr(db, "_migration_files", lambda: every)
+    assert db.migrate(c) == ["0012_slack_in_queue.sql"]
+    row = c.execute("SELECT queue, payload FROM jobs WHERE job_id = 'j1'").fetchone()
+    assert (row["queue"], row["payload"]) == ("slack_out", '{"k": 1}')
+    c.execute(
+        "INSERT INTO jobs (job_id, queue, address_id, timeout_s, visible_at, created_at)"
+        " VALUES ('j2', 'slack_in', 'U1', 60, 't', 't')"
+    )
+    indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'"
+                                       " AND tbl_name = 'jobs' AND sql IS NOT NULL")}  # fmt: skip
+    assert indexes == {"jobs_ready", "jobs_claimed"}
+    c.close()

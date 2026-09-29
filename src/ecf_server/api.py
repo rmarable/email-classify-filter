@@ -92,6 +92,7 @@ class ServiceState:
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
     stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
+    slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -166,6 +167,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "secret_store": state.secret_store,
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
+                "slack": dict(state.slack),
             }
         )
 

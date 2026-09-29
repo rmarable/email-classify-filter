@@ -39,6 +39,7 @@ def test_status_needs_the_token() -> None:
     r = get("/v1/status", AUTH)
     assert r.status_code == 200
     assert body(r)["install"] == "t" and body(r)["api_version"] == 1
+    assert body(r)["slack"] == {"installed": False}
 
 
 def test_unknown_route_is_problem_json() -> None:

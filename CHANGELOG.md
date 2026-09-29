@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- `ecf status` shows whether Slack is installed and connected, and when it last connected. Slack posts and clicks go through durable queues, so a post or a click survives a restart; clicks from anyone but you are refused and logged.
 - New command `ecf stepup test`: checks that Touch ID or your password works for ecf on this computer, changing nothing. Every step-up names exactly what it approves, shows a short code that the Mac's dialog repeats, must be used within 2 minutes, and runs one at a time; the service computes what the dialog says, never the command that asked.
 - Security: the log scrubber now works inside nested values, redacts any field named like a token, secret or password and Slack's payload fields, and removes anything shaped like a Slack token from every log line, including messages from libraries and error tracebacks; the Slack and websocket libraries can no longer write their debug output (which includes payloads) to the log.
 - New dependencies for Slack and step-up: `slack-sdk`, and on macOS `pyobjc-framework-localauthentication`, on Linux `python-pam` and `jeepney`; all pass the license check (`python-pam` from its wheel's license file, since PyPI lists none).

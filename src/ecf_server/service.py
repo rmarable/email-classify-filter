@@ -48,6 +48,7 @@ from ecf_server.secretstore.select import (
     open_store,
     record_interpreter,
 )
+from ecf_server.slack_runtime import SlackRuntime
 from ecf_server.stepper import FakeStepper, host_stepper
 
 TICK_SECONDS = 60
@@ -294,6 +295,47 @@ class Service:
                 except ServiceUnavailableError as exc:
                     self.state.secret_store["detail"] = exc.detail
 
+    def _open_state(self) -> list[str]:
+        """Migrate the database and fill the shared service state; returns migrations applied."""
+        conn = db.connect(self.paths.db)
+        applied = db.migrate(conn)
+        _clear_stale(conn)
+        self._prepare_state(conn)
+        conn.close()
+        self.state.db_path = self.paths.db
+        self.state.notifier = self._notifier()
+        # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
+        self.state.stepper = FakeStepper() if self.dev else host_stepper()
+        self.state.secrets = self.secrets
+        self.state.mail_factory = imap_factory
+        return applied
+
+    def _api_server(self) -> uvicorn.Server:
+        return uvicorn.Server(
+            uvicorn.Config(
+                create_app(self.state),
+                uds=str(self.paths.socket),
+                log_config=None,
+                lifespan="off",
+                access_log=False,
+            )
+        )
+
+    def _slack_runtime(self) -> tuple[SlackRuntime, threading.Thread]:
+        slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store)
+        self.state.slack = slack.status  # the same dict: status shows it live
+        thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
+        return slack, thread
+
+    def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
+              slack: threading.Thread) -> None:  # fmt: skip
+        web.join(STOP_TIMEOUT)
+        timer.join(STOP_TIMEOUT)
+        self.work.set()  # wake the checks worker so it sees the stop
+        worker.join(STOP_TIMEOUT)
+        if slack.is_alive():  # never started in dev mode
+            slack.join(STOP_TIMEOUT)
+
     def _run_locked(self) -> int:
         st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
         self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
@@ -307,39 +349,24 @@ class Service:
         breaker.mark_running(self.paths.running_marker)
         if sys.platform == "darwin" and not self.dev:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
-        conn = db.connect(self.paths.db)
-        applied = db.migrate(conn)
-        _clear_stale(conn)
-        self._prepare_state(conn)
-        conn.close()
-        self.state.db_path = self.paths.db
-        self.state.notifier = self._notifier()
-        # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
-        self.state.stepper = FakeStepper() if self.dev else host_stepper()
-        self.state.secrets = self.secrets
-        self.state.mail_factory = imap_factory
+        applied = self._open_state()
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_app(self.state),
-                uds=str(self.paths.socket),
-                log_config=None,
-                lifespan="off",
-                access_log=False,
-            )
-        )
+        server = self._api_server()
         web = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
         worker = threading.Thread(target=self._checks, name="checks", daemon=True)
+        slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
         timer.start()
         worker.start()
+        if not self.dev:  # dev mode has no Slack; its chat is the recording fake
+            slack_thread.start()
         self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
         while not self.stop.wait(1.0):
@@ -348,10 +375,8 @@ class Service:
                 self.exit_code = EXIT_CRASH
                 self.stop.set()
         server.should_exit = True
-        web.join(STOP_TIMEOUT)
-        timer.join(STOP_TIMEOUT)
-        self.work.set()
-        worker.join(STOP_TIMEOUT)
+        self._join(web, timer, worker, slack_thread)
+        slack.close()
         self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):
