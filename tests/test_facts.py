@@ -259,3 +259,30 @@ def test_fetch_with_the_analyzer_builds_sender_history(
 )
 def test_shared_platform_list(domain: str, shared: bool) -> None:
     assert facts.in_domains(domain, facts.SHARED_PLATFORMS) is shared
+
+
+def test_dns_ttl_zero_is_not_cached_and_prefetch_keeps_to_the_budget(
+    conn: sqlite3.Connection,
+) -> None:
+    from ecf_server.clock import FakeClock  # noqa: PLC0415
+    from ecf_server.dnscache import MAX_PREFETCH, Answer, DnsCache  # noqa: PLC0415
+
+    asked: list[str] = []
+
+    def lookup(name: str, rtype: str) -> Answer:
+        asked.append(name)
+        return Answer("ok", ("v=DMARC1; p=none",), ttl=0)
+
+    clock = FakeClock()
+    DnsCache(conn, clock, lookup=lookup).get("_dmarc.a.example")
+    DnsCache(conn, clock, lookup=lookup).get("_dmarc.a.example")
+    assert asked == ["_dmarc.a.example"] * 2  # TTL 0: asked again (RFC 1035 §3.2.1)
+    asked.clear()
+    cache = DnsCache(conn, clock, lookup=lookup)
+    cache.prefetch([(f"n{i}.example", "TXT") for i in range(200)])
+    assert len(asked) == MAX_PREFETCH
+    asked.clear()
+    spent = DnsCache(conn, clock, budget_s=0, lookup=lookup)
+    clock.advance(1)
+    spent.prefetch([("late.example", "TXT")])
+    assert asked == []

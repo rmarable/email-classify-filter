@@ -150,14 +150,17 @@ def test_attachments_are_metadata_only() -> None:
     assert not att.inline
 
 
-def test_text_attachment_is_not_scanned_as_body() -> None:
+def test_text_attachments_are_scanned_but_not_excerpted() -> None:
+    """Mail clients show text attachments inline, so triggers read them (V1.1 review); they are
+    still attachments, and never the excerpt."""
     m = EmailMessage()
     m["From"] = "x@y.example"
     m.set_content("body")
-    m.add_attachment("secret notes", filename="notes.txt")
+    m.add_attachment("update our bank account details", filename="notes.txt")
     p = parse(m.as_bytes())
-    assert "secret notes" not in p.full_text()
+    assert "update our bank account details" in p.full_text()
     assert [a.name for a in p.attachments] == ["notes.txt"]
+    assert p.excerpt(100) == "body"
 
 
 def test_charset_name_with_a_null_falls_back() -> None:
@@ -323,3 +326,21 @@ def test_fallback_to_compat32_when_the_modern_parser_fails(
     assert p.to == ("ap@acme.example",) and "Invoice attached." in p.full_text()
     assert p.defects >= 1  # the fallback counts as a defect
     assert p.content_hash == real(raw, email_policy.default, 1 << 20).content_hash
+
+
+def test_html_end_tags_are_linear() -> None:
+    """`<b>`*n then unmatched end tags scanned the whole stack each time (V1.1 review)."""
+    import time  # noqa: PLC0415
+
+    n = 50_000
+    started = time.monotonic()
+    html_to_text("<b>" * n + "</zz>" * n)
+    assert time.monotonic() - started < 2  # quadratic took about 30 s here
+
+
+def test_table_cells_are_separated() -> None:
+    _full, visible = html_to_text(
+        "<table><tr><td>IBAN</td><td>DE89 3704</td></tr>"
+        "<tr><td>Account number</td><td>12345678</td></tr></table>"
+    )
+    assert "IBAN DE89 3704" in visible and "Account number 12345678" in visible

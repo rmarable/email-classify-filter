@@ -120,6 +120,17 @@ def claim(conn: sqlite3.Connection, clock: Clock, queue: Queue, worker: str) -> 
     )
 
 
+def release_claims(conn: sqlite3.Connection) -> int:
+    """At service start: jobs a previous process had claimed go back to the queue, runnable now
+    (one process in v1, like the leases). Otherwise an address waited for the claim to time out,
+    42 minutes for a check (V1.1 review, 2026-09-29). The attempt already counted stays."""
+    with write_tx(conn):
+        return conn.execute(
+            "UPDATE jobs SET state = 'queued', claimed_by = NULL, claim_expires = NULL"
+            " WHERE state = 'claimed'"
+        ).rowcount
+
+
 def complete(conn: sqlite3.Connection, job_id: JobId, worker: str) -> None:
     with write_tx(conn):
         _owned(conn, job_id, worker)

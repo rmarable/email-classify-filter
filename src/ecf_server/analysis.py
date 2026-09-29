@@ -14,7 +14,8 @@ from ecf_server import facts, senderauth, triggers
 from ecf_server.addresses import get_org_domains
 from ecf_server.clock import Clock, to_ts
 from ecf_server.dnscache import DnsCache
-from ecf_server.message import ParsedMessage
+from ecf_server.fetch import message_id_reused
+from ecf_server.message import ParsedMessage, identity_digest
 
 
 class MessageAnalyzer:
@@ -67,14 +68,15 @@ class MessageAnalyzer:
         return found | fired.facts()
 
     def _reused(self, parsed: ParsedMessage) -> bool:
-        """The Message-ID already belongs to an item with different content (trigger 5)."""
-        if parsed.message_id is None:
-            return False
-        row = self._conn.execute(
-            "SELECT 1 FROM items WHERE address_id = ? AND message_id = ? AND content_hash != ?",
-            (self._address.address_id, parsed.message_id, parsed.content_hash),
-        ).fetchone()
-        return row is not None
+        """The Message-ID already belongs to an item with different content or identity
+        headers (trigger 5)."""
+        return message_id_reused(
+            self._conn,
+            self._address.address_id,
+            parsed.message_id,
+            parsed.content_hash,
+            identity_digest(parsed),
+        )
 
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, found: dict[str, Any]

@@ -138,7 +138,8 @@ def test_no_password_and_rejected_login(
 ) -> None:
     conn, _ = env
     r = run(env, clock, Box(), secrets(None))
-    assert r.status == "error" and "no app password stored" in (r.error or "")
+    # its own status, so it doesn't pass for a mail outage (V1.1 review)
+    assert r.status == "secret_unavailable" and "no app password stored" in (r.error or "")
     box = Box()
     box.reject = True
     r = run(env, clock, box)

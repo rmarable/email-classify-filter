@@ -211,3 +211,30 @@ def test_doctor_dns_check() -> None:
 def test_doctor_org_domains_without_a_service(tmp_path: Path) -> None:
     c = doctor.check_org_domains(Paths(install="t", root=tmp_path))
     assert c.level is Level.WARN
+
+
+def test_other_failures_never_raise_mail_provider_unreachable(
+    ap: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A missing app password or a bug isn't a mail outage (V1.1 review, 2026-09-29)."""
+    n = FakeNotifier()
+    for status in ("secret_unavailable", "internal_error") * 3:
+        after(ap, clock, n, status)
+        clock.advance(10 * 60)
+    assert n.sent == [] and health.open_alerts(ap) == []
+
+
+def test_a_removed_address_takes_its_alerts_with_it(
+    ap: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.1 review: alerts of a removed address stayed open forever."""
+    from ecf_server.secretstore.memory import MemorySecretStore  # noqa: PLC0415
+
+    n = FakeNotifier()
+    for _ in range(3):
+        after(ap, clock, n, "login_rejected")
+    assert health.open_alerts(ap)
+    addresses.remove_address(ap, clock, MemorySecretStore(), "ap", actor="os_user")
+    assert health.open_alerts(ap) == []
+    assert ap.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
+    assert len(n.sent) == 1  # opened once; no "Resolved" for a removed address

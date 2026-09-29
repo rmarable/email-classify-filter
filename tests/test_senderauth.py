@@ -4,6 +4,7 @@ answers come from a table, so no test touches the network."""
 from __future__ import annotations
 
 import base64
+import email.policy
 import importlib
 import sqlite3
 import subprocess
@@ -383,3 +384,83 @@ def test_ambiguous_from_is_none_even_when_signed(
     )
     out = check(conn, clock, dns, raw)
     assert out.result == "none" and "ambiguous" in out.reason
+
+
+# ---- V1.1 review (2026-09-29) ---------------------------------------------------------------
+
+
+def test_bare_cr_in_the_headers_is_never_a_pass(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns
+) -> None:
+    """dkimpy splits header lines at CRLF/LF, Python's parser also at a lone CR: a replayed
+    signed message could carry a Subject and Reply-To the signature never covered."""
+    key = ed25519_key("vendor-a.example")
+    publish(dns, key)
+    dns.txt("_dmarc.vendor-a.example", "v=DMARC1; p=reject")
+    signed = sign(mail(), key)
+    assert check(conn, clock, dns, signed).result == "pass"
+    attacked = b"X-Note: hi\rSubject: URGENT wire\rReply-To: ceo@evil.test\r\n" + signed
+    parsed = parse(attacked)
+    assert parsed.headers_ambiguous and parsed.reply_to == ("ceo@evil.test",)
+    out = sa.evaluate(attacked, parsed, DnsCache(conn, clock, lookup=dns))
+    assert out.result == "none" and "bare CR" in out.reason
+
+
+@pytest.mark.parametrize(
+    "bad_line", [b"This is not a header", b"X-\xc3\x9cber: 1", b": x", b"Subject : s"]
+)
+def test_malformed_headers_are_none_not_a_crash(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns, bad_line: bytes
+) -> None:
+    raw = mail().replace(b"To:", bad_line + b"\r\nTo:", 1)
+    out = sa.evaluate(raw, parse(raw), DnsCache(conn, clock, lookup=dns))
+    assert out.result == "none" and "malformed header block" in out.reason
+
+
+def test_only_the_first_signatures_are_checked(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns
+) -> None:
+    """Each signature re-reads the whole message; related ones come first (RFC 6376 §6.1)."""
+    other = ed25519_key("sender.test")
+    publish(dns, other)
+    raw = mail()
+    for _ in range(sa.MAX_SIGNATURES + 5):
+        raw = sign(raw, other)
+    key = ed25519_key("vendor-a.example")
+    publish(dns, key)
+    dns.txt("_dmarc.vendor-a.example", "v=DMARC1; p=reject")
+    raw = sign(raw, key)  # the aligned signature is on top, but sorted first regardless
+    out = check(conn, clock, dns, raw)
+    assert len(out.signatures) == sa.MAX_SIGNATURES and out.result == "pass"
+
+
+def test_a_dns_error_on_the_policy_is_none(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns
+) -> None:
+    """Falling through to the parent's record would swap the author's strict alignment for a
+    relaxed one: SPEC §7.3, a DNS failure is `none`, never `pass`."""
+    key = ed25519_key("vendor-a.example")
+    publish(dns, key)
+    dns.table[("_dmarc.pay.vendor-a.example", "TXT")] = Answer("error")
+    dns.txt("_dmarc.vendor-a.example", "v=DMARC1; p=reject")
+    raw = sign(mail("billing@pay.vendor-a.example"), key)
+    out = check(conn, clock, dns, raw)
+    assert out.result == "none" and out.reason == "DNS error looking up the DMARC policy"
+
+
+def test_an_idn_from_domain_is_compared_in_a_label_form(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns
+) -> None:
+    ascii_domain = "bücher.example".encode("idna").decode()
+    key = ed25519_key(ascii_domain)
+    publish(dns, key)
+    dns.txt(f"_dmarc.{ascii_domain}", "v=DMARC1; p=reject")
+    m = EmailMessage()
+    m["From"] = "Shop <info@bücher.example>"
+    m["To"] = "ap@acme.example"
+    m["Subject"] = "Order"
+    m["Date"] = "Mon, 28 Sep 2026 12:00:00 +0000"
+    m.set_content("Thanks.\n")
+    raw = sign(m.as_bytes(policy=email.policy.SMTPUTF8), key)
+    out = check(conn, clock, dns, raw)
+    assert out.from_domain == ascii_domain and out.result == "pass"

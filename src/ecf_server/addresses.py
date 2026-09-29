@@ -251,6 +251,11 @@ def remove_address(
         conn.execute(
             "UPDATE addresses SET removed_at = ? WHERE address_id = ?", (now, a["address_id"])
         )
+        # its alerts end with it, without a "Resolved" notification (V1.1 review, 2026-09-29)
+        conn.execute(
+            "UPDATE alerts SET resolved_at = ? WHERE address_id = ? AND resolved_at IS NULL",
+            (now, a["address_id"]),
+        )
         _audit(conn, now, a["address_id"], "address.removed", actor, {})
     secrets.delete(secret_name(a["address_id"]))
     return {

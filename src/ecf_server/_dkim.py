@@ -39,9 +39,20 @@ class Signature:
     tags: dict[str, str]  # lowercase tag -> value; values decoded as ASCII with replacement
 
 
+class HeadersUnreadable(Exception):
+    """dkimpy can't split the header block (a line without a colon, a non-ASCII name, ...)."""
+
+
+def _parsed(raw: bytes) -> Any:
+    try:
+        return _dkim.DKIM(raw)
+    except _dkim.DKIMException as exc:  # MessageFormatError; its text quotes header bytes
+        raise HeadersUnreadable(type(exc).__name__) from None
+
+
 def signatures(raw: bytes) -> list[Signature]:
     """Every DKIM-Signature header, top first; unparsable ones get empty tags."""
-    d: Any = _dkim.DKIM(raw)
+    d: Any = _parsed(raw)
     out: list[Signature] = []
     headers: list[tuple[bytes, bytes]] = list(d.headers)
     for name, value in headers:
@@ -65,7 +76,7 @@ def signatures(raw: bytes) -> list[Signature]:
 
 def header_names(raw: bytes) -> list[str]:
     """Lowercase names of the message's header fields, in order, as dkimpy sees them."""
-    d: Any = _dkim.DKIM(raw)
+    d: Any = _parsed(raw)
     return [name.decode("ascii", "replace").lower() for name, _v in d.headers]
 
 

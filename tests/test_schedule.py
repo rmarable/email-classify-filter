@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from ecf.paths import Paths
-from ecf_server import jobs, schedule
+from ecf_server import schedule
 from ecf_server.checks import CheckReport
-from ecf_server.clock import FakeClock, from_ts
+from ecf_server.clock import FakeClock, from_ts, to_ts
 from ecf_server.schedule import Power, Scheduler
 from ecf_server.service import Service
 from tests.test_checks import Box, secrets
@@ -187,9 +187,12 @@ def test_service_tick_and_worker_run_a_check(
     )
 
 
-def test_a_crashing_check_fails_its_job(
+def test_a_crashing_check_is_recorded_and_rescheduled(
     conn_ap: sqlite3.Connection, db_path: Path, tmp_path: Path, clock: FakeClock
 ) -> None:
+    """A bug no longer skips the bookkeeping: the check is recorded as `internal_error` (type
+    only), shown by `ecf status`, and the next one is scheduled (V1.1 review, 2026-09-29)."""
+
     def broken(_h: str, _u: str, _p: object) -> object:
         raise RuntimeError("bug")
 
@@ -199,6 +202,10 @@ def test_a_crashing_check_fails_its_job(
     svc.state.mail_factory = broken  # pyright: ignore[reportAttributeAccessIssue]
     svc.tick()
     assert svc._one_check(conn_ap)  # pyright: ignore[reportPrivateUsage]
-    row = conn_ap.execute("SELECT state, attempts, last_error FROM jobs").fetchone()
-    assert row["state"] == "queued" and row["attempts"] == 1 and row["last_error"] == "RuntimeError"
-    assert jobs.claim(conn_ap, clock, jobs.Queue.FETCH, "x") is None  # backing off
+    assert conn_ap.execute("SELECT state FROM jobs").fetchone()["state"] == "done"
+    state = conn_ap.execute(
+        "SELECT last_status, last_error, next_due_at FROM check_state"
+    ).fetchone()
+    assert state["last_status"] == "internal_error"
+    assert state["last_error"] == "internal error (RuntimeError)"
+    assert state["next_due_at"] > to_ts(clock.now())

@@ -30,6 +30,7 @@ LIFETIME_S = 3.0
 BUDGET_S = 30.0  # per check [proposed in SPEC §7.3]
 NEGATIVE_TTL_S = 300
 WORKERS = 8
+MAX_PREFETCH = 32  # names per prefetch; a message can't make a check query hundreds at once
 
 Status = Literal["ok", "nxdomain", "nodata", "error"]
 
@@ -85,6 +86,10 @@ class DnsCache:
     def over_budget(self) -> bool:
         return self._clock.monotonic() > self._deadline
 
+    def remaining(self) -> float:
+        """Seconds of the check's DNS budget left (passed to the isolation child)."""
+        return max(0.0, self._deadline - self._clock.monotonic())
+
     def get(self, name: str, rtype: str = "TXT") -> Answer:
         key = (name.lower().rstrip("."), rtype.upper())
         if key in self._memo:
@@ -108,13 +113,21 @@ class DnsCache:
                 self._memo[key] = cached
             else:
                 todo.append(key)
+        todo = todo[:MAX_PREFETCH]  # the rest are looked up one by one, within the budget
         if not todo or self.over_budget():
             return
-        self.queries += len(todo)
         with ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="dns") as pool:
-            answers = list(pool.map(self._network, todo))
+            answers = list(pool.map(self._network_in_budget, todo))
         for k, a in zip(todo, answers, strict=True):
-            self._keep(k, a)
+            if a is not None:
+                self._keep(k, a)
+
+    def _network_in_budget(self, key: tuple[str, str]) -> Answer | None:
+        """Each name checks the budget itself, so a long list stops when the budget ends."""
+        if self.over_budget():
+            return None
+        self.queries += 1  # a race here only miscounts the log line
+        return self._network(key)
 
     def _query(self, key: tuple[str, str]) -> Answer:
         self.queries += 1
@@ -125,8 +138,8 @@ class DnsCache:
 
     def _keep(self, key: tuple[str, str], a: Answer) -> Answer:
         self._memo[key] = a
-        if a.status == "error":
-            return a  # not cached: the next check tries again
+        if a.status == "error" or (a.status == "ok" and a.ttl == 0):
+            return a  # not cached: errors are retried next check; TTL 0 means don't cache
         ttl = max(1, min(a.ttl or NEGATIVE_TTL_S, self._cap))
         expires = to_ts(self._clock.now() + timedelta(seconds=ttl))
         with write_tx(self._conn):

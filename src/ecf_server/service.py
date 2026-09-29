@@ -111,6 +111,13 @@ def write_token(paths: Paths) -> str:
     return token
 
 
+def _clear_stale(conn: sqlite3.Connection) -> None:
+    """One process in v1: at start every lease and claimed job belongs to a dead process."""
+    with db.write_tx(conn):
+        conn.execute("DELETE FROM leases")
+    jobs.release_claims(conn)
+
+
 class Service:
     def __init__(
         self,
@@ -199,12 +206,25 @@ class Service:
         if job is None:
             return False
         try:
+            try:
+                store = self.state.store()
+            except Exception as exc:  # no usable secret store: record it, don't retry blindly
+                report = checks.record_failure(
+                    conn,
+                    self.clock,
+                    job.address_id,
+                    "secret_unavailable",
+                    f"secret store unavailable ({type(exc).__name__})",
+                )
+                schedule.after_check(conn, self.clock, report, self.scheduler.power())
+                jobs.complete(conn, job.job_id, WORKER)
+                return True
             report = checks.run_check(
                 conn,
                 self.clock,
                 address_id=job.address_id,
                 install=self.paths.install,
-                secrets=self.state.store(),
+                secrets=store,
                 factory=self.state.mail_factory or imap_factory,
                 connect=self.state.connect,
             )
@@ -288,8 +308,7 @@ class Service:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
-        with db.write_tx(conn):
-            conn.execute("DELETE FROM leases")  # one process in v1: all leases are stale at start
+        _clear_stale(conn)
         self._prepare_state(conn)
         conn.close()
         self.state.db_path = self.paths.db

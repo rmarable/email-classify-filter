@@ -20,6 +20,9 @@ BLOCK = frozenset(
     {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote",
      "section", "article", "header", "footer", "ul", "ol", "hr"}
 )  # fmt: skip
+# Cells and similar: a space, so "IBAN</td><td>DE89..." doesn't glue a keyword to the next cell's
+# text and defeat whole-word matching (V1.1 review, 2026-09-29).
+CELL = frozenset({"td", "th", "dt", "dd", "caption", "label", "option", "figcaption"})
 _HIDDEN_STYLE = re.compile(
     r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])"
     r"|opacity\s*:\s*0(?![.\d]*[1-9])|max-height\s*:\s*0(?![.\d]*[1-9])",
@@ -44,17 +47,21 @@ class _Walker(HTMLParser):
         self._stack: list[tuple[str, bool, bool]] = []  # (tag, hidden, no_text)
         self._hidden = 0
         self._no_text = 0
+        self._open: dict[str, int] = {}  # open elements per tag: end tags matching none are O(1)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if tag in BLOCK:
             self._newline()
+        elif tag in CELL:
+            self._space()
         if tag in VOID:
             return
         a = {k.lower(): (v or "") for k, v in attrs}
         hidden = "hidden" in a or bool(_HIDDEN_STYLE.search(a.get("style", "")))
         no_text = tag in NEVER_TEXT
         self._stack.append((tag, hidden, no_text))
+        self._open[tag] = self._open.get(tag, 0) + 1
         self._hidden += hidden
         self._no_text += no_text
 
@@ -62,12 +69,18 @@ class _Walker(HTMLParser):
         tag = tag.lower()
         if tag in BLOCK:
             self._newline()
-        # close up to the matching tag, tolerating unclosed inner tags
+        elif tag in CELL:
+            self._space()
+        if not self._open.get(tag):  # nothing to close: without this check, `<b>`*n `</x>`*n
+            return  # scanned the whole stack n times (quadratic; V1.1 review, 2026-09-29)
+        # close up to the matching tag, tolerating unclosed inner tags; each element is popped
+        # once, so the scans add up to the number of start tags
         for i in range(len(self._stack) - 1, -1, -1):
             if self._stack[i][0] == tag:
-                for _t, hidden, no_text in self._stack[i:]:
+                for t, hidden, no_text in self._stack[i:]:
                     self._hidden -= hidden
                     self._no_text -= no_text
+                    self._open[t] -= 1
                 del self._stack[i:]
                 return
 
@@ -77,6 +90,11 @@ class _Walker(HTMLParser):
         self.full.append(data)
         if not self._hidden:
             self.visible.append(data)
+
+    def _space(self) -> None:
+        self.full.append(" ")
+        if not self._hidden:
+            self.visible.append(" ")
 
     def _newline(self) -> None:
         self.full.append("\n")

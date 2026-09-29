@@ -134,3 +134,15 @@ def test_backoff_holds_back_later_jobs_for_the_same_address(
     jobs.complete(conn, a1, "w")
     last = jobs.claim(conn, clock, Queue.ACTIONS, "w")
     assert last is not None and last.job_id == a2
+
+
+def test_claims_from_a_dead_process_are_released(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.1 review: after a crash, a claimed check waited 42 minutes for its claim to expire."""
+    jid = jobs.enqueue(conn, clock, Queue.FETCH, AddressId("ap"), {}, timeout_s=420)
+    assert jobs.claim(conn, clock, Queue.FETCH, "old-process") is not None
+    assert jobs.claim(conn, clock, Queue.FETCH, "new-process") is None  # still claimed
+    assert jobs.release_claims(conn) == 1
+    job = jobs.claim(conn, clock, Queue.FETCH, "new-process")
+    assert job is not None and job.job_id == jid

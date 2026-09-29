@@ -30,6 +30,15 @@ from ecf_server.skeleton import fold, fold_ci, normalize
 
 GROUPS = ("bank", "change", "payment", "regulator")
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
+# Shared services that give each customer a subdomain; initial list, unverified which domains
+# each sends from (OD-203).
+SAAS_TENANT_PARENTS = ("zendesk.com", "freshdesk.com", "atlassian.net", "service-now.com")
+# Top-level domains a bare domain in a display name must end in to count for trigger 7; an
+# address always counts. Common ones only, so "Node.js" or "Vue.js" don't (V1.1 review).
+DISPLAY_TLDS = frozenset(
+    {"com", "net", "org", "co", "io", "us", "uk", "de", "fr", "ca", "au", "nl", "es", "it",
+     "info", "biz", "gov", "edu", "app", "dev", "ai", "me", "online", "site", "xyz"}
+)  # fmt: skip
 _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])")
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
 
@@ -124,7 +133,7 @@ def evaluate(
             f"{d} looks like {k}"
             for d in candidates
             for k in [*org_domains, *known_vendors]
-            if lookalike(d, k)
+            if lookalike(d, k) and not (k in org_domains and saas_tenant(d, k))
         }
     )
 
@@ -154,7 +163,8 @@ def _money_triggers(
     signals = (
         ("bank or change wording", bank or change),
         ("DMARC fail", auth == "fail"),
-        ("not addressed to this mailbox", found["recipient_mismatch"]),
+        # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
+        ("not addressed to this mailbox", found["recipient_mismatch"] and auth == "pass"),
         ("lookalike domain", lookalikes),
         ("Reply-To mismatch", rtm),
     )
@@ -199,6 +209,7 @@ def _other_triggers(
             parsed.from_ambiguous and parsed.from_count == 1,
             "ambiguous From header: parsers may disagree on the sender",
         ),  # 8
+        (parsed.headers_ambiguous, "bare CR in the headers: parsers may disagree on them"),  # 8
         (bool(parsed.headers.get("x-ecf-install")), "carries an X-ECF-Install header"),  # 9
     )
     return [reason for hit, reason in checks if hit]
@@ -208,24 +219,60 @@ def _other_triggers(
 
 
 def lookalike(domain: str, known: str) -> bool:
-    """True when `domain` imitates `known` without being it or one of its subdomains: the same
-    skeleton (homoglyphs, `rn` for `m`), the same name under another top-level domain, a
-    one-edit typo of a long enough name, or the known domain used as a subdomain elsewhere."""
-    d, k = domain.lower().rstrip("."), known.lower().rstrip(".")
-    if d == k or d.endswith("." + k):
+    """True when `domain` imitates `known` without being it, a subdomain, a parent or a sibling
+    under the same parent (a vendor's `em.` and `billing.` senders): the same skeleton
+    (homoglyphs, `rn` for `m`, punycode decoded first), the same name under another top-level
+    domain, a one-edit typo of a long enough name, or the known domain used as a subdomain
+    elsewhere (V1.1 review, 2026-09-29)."""
+    d, k = _unicode(domain), _unicode(known)
+    if d == k or d.endswith("." + k) or k.endswith("." + d):
         return False
     if fold_ci(d) == fold_ci(k):
         return True
     d_labels, k_labels = d.split("."), k.split(".")
     if len(d_labels) < 2 or len(k_labels) < 2:
         return False
-    d_name, k_name = fold_ci(d_labels[-2]), fold_ci(k_labels[-2])
-    if d_name == k_name:  # acme.co vs acme.com; a different registered domain
+    # the labels just left of the part both share: `vendor` in acme vs vendor under .com,
+    # `em` and `pay` for siblings under vendor.com (siblings only count as a one-edit typo)
+    common = _common_suffix(d_labels, k_labels)
+    left = max(common, 1) + 1  # never the top-level label itself
+    d_name, k_name = fold_ci(d_labels[-left]), fold_ci(k_labels[-left])
+    if common == 0 and d_name == k_name:  # acme.co vs acme.com; another registered domain
         return True
-    if len(k_name) >= TYPO_MIN and _edits(d_name, k_name) <= 1:
+    if len(k_name) >= TYPO_MIN and 0 < _edits(d_name, k_name) <= 1:
         return True
     sub = d_labels[:-2]
     return k_labels[-2] in sub or _contains(sub, k_labels)
+
+
+def saas_tenant(domain: str, known: str) -> bool:
+    """`acme.zendesk.com` for org domain `acme.com`: a per-customer address on a shared service,
+    not a lookalike (operator decision 2026-09-29, OD-203)."""
+    d, k = _unicode(domain), _unicode(known)
+    name = k.split(".")[0]
+    return any(d == f"{name}.{p}" or d.endswith(f".{name}.{p}") for p in SAAS_TENANT_PARENTS)
+
+
+def _unicode(domain: str) -> str:
+    """Lowercase, trailing dot removed, punycode (`xn--`) labels decoded, so homoglyphs in
+    A-label form are compared like the Unicode form (V1.1 review, 2026-09-29)."""
+    return ".".join(_u_label(x) for x in domain.lower().rstrip(".").split("."))
+
+
+def _u_label(label: str) -> str:
+    if not label.startswith("xn--"):
+        return label
+    try:
+        return label.encode("ascii").decode("idna")
+    except UnicodeError:
+        return label
+
+
+def _common_suffix(a: list[str], b: list[str]) -> int:
+    n = 0
+    while n < min(len(a), len(b)) - 1 and a[-1 - n] == b[-1 - n]:
+        n += 1
+    return n
 
 
 def _contains(labels: list[str], needle: list[str]) -> bool:
@@ -257,9 +304,18 @@ def _display_domains(name: str) -> list[str]:
 
 
 def _display_mismatch(name: str, from_domain: str | None) -> str | None:
-    """The first domain or address domain in the display name that isn't the From domain or one
-    of its subdomains (trigger 7)."""
-    for d in _display_domains(name):
-        if from_domain is None or not (d == from_domain or d.endswith("." + from_domain)):
+    """The first address domain, or domain name ending in a common top-level domain, in the
+    display name that isn't the From domain, a subdomain or a parent of it (trigger 7). Parents
+    count ("Booking.com" from mailer.booking.com), and product names like "Node.js" don't
+    (V1.1 review, 2026-09-29)."""
+    text = normalize(name).casefold()
+    addresses = {m.group(1) for m in _ADDRESS.finditer(text)}
+    bare = {m.group(1) for m in _DOMAIN.finditer(text)}
+    bare = {d for d in bare if d.rsplit(".", 1)[-1] in DISPLAY_TLDS}
+    for d in sorted(addresses | bare):
+        if from_domain is None:
+            return d
+        f = from_domain.lower()
+        if not (d == f or d.endswith("." + f) or f.endswith("." + d)):
             return d
     return None
