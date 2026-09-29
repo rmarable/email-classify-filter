@@ -27,8 +27,9 @@ ALLOWED = {
 }
 # Named runtime exceptions (operator decision 2026-09-27, OD-128): used unmodified.
 EXCEPTIONS = {"certifi": "MPL-2.0"}
-# Reviewed entries for packages whose metadata can't be parsed, or that aren't installed on the
-# platform running the check (platform-specific dependencies): name -> (license, source checked).
+# Reviewed entries for packages that aren't installed on the platform running the check
+# (platform-specific dependencies), or whose installed metadata can't be parsed. Readable metadata
+# always wins; an entry applies only at its reviewed version.
 OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, license, source)
     "colorama": ("0.4.6", "BSD", "PyPI classifiers, 2026-09-27 (Windows-only, via click)"),
     # Linux-only, via keyring (Secret Service); PyPI metadata at the locked versions, 2026-09-27
@@ -43,6 +44,10 @@ OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, licen
     "pyobjc-core": ("12.2.2", "MIT", "PyPI License field"),
     "pyobjc-framework-cocoa": ("12.2.2", "MIT", "PyPI License field"),
     "pyobjc-framework-security": ("12.2.2", "MIT", "PyPI License field"),
+    # Metadata says "BSD-like" / "New BSD"; the license files shipped in the wheels (read
+    # 2026-09-28) are the zlib text and the BSD-3-Clause text respectively.
+    "dkimpy": ("1.1.8", "Zlib", "dist-info licenses/LICENSE, 2026-09-28"),
+    "imapclient": ("4.1.0", "BSD-3-Clause", "dist-info licenses/COPYING, 2026-09-28"),
 }
 
 CLASSIFIER_MAP = {
@@ -110,16 +115,27 @@ def markdown_table() -> str:
 
 def license_of(name: str, version: str) -> str:
     """Installed metadata first; the reviewed override only for a package that isn't installed
-    here (platform-specific), and only at the version that was reviewed."""
+    here (platform-specific) or whose metadata can't be read, and only at the reviewed version."""
     override = OVERRIDES.get(name.lower())
     try:
         md = metadata.metadata(name)
     except metadata.PackageNotFoundError:
-        if override is None:
-            return "UNKNOWN (not installed here; add a reviewed entry to OVERRIDES)"
-        if override[0] != version:
-            return f"UNKNOWN (reviewed at {override[0]}, locked at {version}: re-review)"
-        return override[1]
+        return _override(override, version, "not installed here")
+    found = _from_metadata(md)
+    if found.startswith("UNKNOWN") and override is not None:
+        return _override(override, version, "metadata unreadable")
+    return found
+
+
+def _override(override: tuple[str, str, str] | None, version: str, why: str) -> str:
+    if override is None:
+        return f"UNKNOWN ({why}; add a reviewed entry to OVERRIDES)"
+    if override[0] != version:
+        return f"UNKNOWN (reviewed at {override[0]}, locked at {version}: re-review)"
+    return override[1]
+
+
+def _from_metadata(md: metadata.PackageMetadata) -> str:
     if expr := md.get("License-Expression"):
         return expr.strip()
     text = (md.get("License") or "").strip()

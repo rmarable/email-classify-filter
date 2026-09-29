@@ -47,3 +47,16 @@ def test_override_used_only_at_the_reviewed_version(monkeypatch: pytest.MonkeyPa
 def test_installed_metadata_beats_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(cl.OVERRIDES, "pydantic", ("0.0", "GPL-3.0", "wrong on purpose"))
     assert cl.license_of("pydantic", "whatever") == "MIT"
+
+
+def test_override_covers_unreadable_metadata_only_at_the_reviewed_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # dkimpy's metadata says "BSD-like", which the checker can't map; the reviewed entry applies.
+    version = cl.metadata.version("dkimpy")
+    monkeypatch.setitem(cl.OVERRIDES, "dkimpy", (version, "Zlib", "test"))
+    assert cl.license_of("dkimpy", version) == "Zlib"
+    monkeypatch.setitem(cl.OVERRIDES, "dkimpy", ("0.0", "Zlib", "test"))
+    assert cl.license_of("dkimpy", version).startswith("UNKNOWN (reviewed at 0.0")
+    monkeypatch.delitem(cl.OVERRIDES, "dkimpy")
+    assert cl.license_of("dkimpy", version).startswith("UNKNOWN (")

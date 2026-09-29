@@ -51,7 +51,7 @@ Each ends with something runnable (operator decision 2026-09-26, OD-008). Each v
 | Milestone | Content | Gate test first |
 |---|---|---|
 | **V1.0 Foundations** | Repo layout (single project), packaging, CI on Linux plus a local macOS test gate before each merge (license check, release build; OD-180), CLI skeleton, local service skeleton (launchd/systemd), SQLite state and job queue, secret adapters (Keychain, Secret Service, `systemd-creds`), `ecf claude` wrapper skeleton, config and schema compiler, state machine, `ecf-server dev`, the fake-email/PDF generator and eval harness basics; `CONTRIBUTING.md`, `GENERATE-FAKE-TESTING-EMAILS.md`, the no-code ADRs. Linux secret adapters built and tested with fakes, unverified until V1.6 (operator decision 2026-09-27, OD-009). | Keychain gate (§21.1) |
-| **V1.1 Mail and checks** | IMAP broker and per-address probe, fetch with size limits, DKIM/DMARC, fraud and regulator triggers, model-free rules, scheduled pre-check, audit log, `ecf check` (model-free until V1.3), UIDVALIDITY recovery, `resolved_by_mailbox`. Escalations post only from V1.2, so V1.1 runs as if in shadow. | mail and sender authentication |
+| **V1.1 Mail and checks** | IMAP broker and per-address probe, fetch with size limits, DKIM/DMARC, fraud and regulator triggers, model-free rules, scheduled pre-check, audit log, `ecf check` (model-free until V1.3), UIDVALIDITY recovery, `resolved_by_mailbox`. Escalations post only from V1.2, so V1.1 runs as if in shadow. Label and flag writes and their undo are built and tested against Dovecot only; real addresses stay in shadow (operator decision 2026-09-28, OD-189). Alerts in V1.1 are desktop notifications and `ecf doctor` only; Slack delivery comes in V1.2, email in V1.5 (operator decision 2026-09-28, OD-190). | mail and sender authentication |
 | **V1.2 Slack and approvals** | Socket Mode, channels, threads, "Needs you", buttons and forms, OS step-up on every send, 10-minute delay on `high` sends, alerts, desktop notifications, optional email alerts; `ecf init` (model step added in V1.3, export step in V1.5), `ecf config apply`, `ecf alerts set`, daily retention job, `ecf backfill`. Linux PAM/polkit built, unverified until V1.6. | Slack Socket Mode; local step-up (Touch ID) |
 | **V1.3 Local models (preset A)** | Ollama/Gemma classifier and actor, `ecf watch`, catch-up, shadow → assist → live with the go-live gate, eval runs on the Air, the single-token confidence experiment (operator decision 2026-09-26, OD-010), Gemma token and speed metrics, `ecf stats`. | none |
 | **V1.4 Claude on demand (B, C)** | Plugin, stdio MCP with per-session profile tokens, `/ecf-review`, `ecf claude`, pinned model IDs, weekly model watch, Claude metrics via Claude Code telemetry. | none |
@@ -566,7 +566,7 @@ Purelymail: keywords persist (operator test) but its webmail doesn't show them; 
 
 ### 8.5 Deterministic triggers
 
-Computed by the service over every decoded MIME part, the Subject, display name and attachment filenames. Before matching, text is NFKC-normalized, format characters removed and folded to a UTS #39 confusable skeleton; triggers run over both the visible text (hidden HTML text stripped) and the full text; a hit in either counts.
+Computed by the service over every decoded MIME part, the Subject, display name and attachment filenames. Before matching, text is NFKC-normalized, format characters removed and folded to a UTS #39 confusable skeleton, using Unicode's `confusables.txt` shipped as a data file under the Unicode License v3 (operator decision 2026-09-28, OD-188); triggers run over both the visible text (hidden HTML text stripped) and the full text; a hit in either counts.
 
 **Keyword matching** (operator decision 2026-09-27, OD-063): whole-word; case-sensitive for acronyms (`SEC`, `IRS`, `FTC`), case-insensitive for phrases. Keyword lists ship as data [proposed: `ecf_server/data/keywords.yaml`, versioned per release].
 
@@ -1296,7 +1296,7 @@ Checked 2026-09-26 on PyPI and upstream; V1.0 secrets and HTTP rows 2026-09-27. 
 | `pydantic`, `typer`, `keyring`, `ruamel.yaml`, `anyio`, `slack_sdk`, `ollama`, `mcp`, `PyJWT` (via `mcp`) | MIT | client/service | keep notice |
 | `structlog` | MIT or Apache-2.0 | client/service | keep notice |
 | `dnspython` | ISC | service | keep notice |
-| `dkimpy` | zlib | service | keep notice; mark altered copies |
+| `dkimpy` 1.1.8 | zlib (metadata says "BSD-like"; the wheel's license file is the zlib text, read 2026-09-28) | service | keep notice; mark altered copies |
 | `PyNaCl` (via `dkimpy[ed25519]`) | Apache-2.0 | service | keep license and NOTICE |
 | `imapclient` 4.1.0 | BSD-3-Clause (verified 2026-09-27, upstream COPYING; version from PyPI) | service | keep notice |
 | `starlette` 1.7.0, `uvicorn` 0.54.0 (core), `httpx` 0.28.1 | BSD-3-Clause | service, client | keep notice |
@@ -1312,7 +1312,7 @@ Checked 2026-09-26 on PyPI and upstream; V1.0 secrets and HTTP rows 2026-09-27. 
 | `reportlab` (BSD), `Pillow` (MIT-CMU) | | test tooling | keep notice |
 | `import-linter` | BSD-2-Clause | CI | keep notice |
 
-No GPL, AGPL or LGPL dependency. CI license allow-list: MIT, MIT-0, BSD, ISC, Apache-2.0, zlib, MIT-CMU, PSF-2.0; MPL-2.0 for dev-only packages plus the named runtime exception for unmodified `certifi` (operator decision 2026-09-27, OD-128). `publicsuffixlist` is not used. Gemma 4 weights are Apache-2.0, recorded in the model table.
+No GPL, AGPL or LGPL dependency. CI license allow-list: MIT, MIT-0, BSD, ISC, Apache-2.0, zlib, MIT-CMU, PSF-2.0; MPL-2.0 for dev-only packages plus the named runtime exception for unmodified `certifi` (operator decision 2026-09-27, OD-128). Unicode-3.0 is allowed for the shipped `confusables.txt` data file, which is not a package (operator decision 2026-09-28, OD-188). `publicsuffixlist` is not used. Gemma 4 weights are Apache-2.0, recorded in the model table.
 
 ## 18. IMAP provider compatibility
 
@@ -1944,6 +1944,9 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-185 | 2026-09-27 | (V1.0 review) | SPEC §16.1 | Hygiene scan: file-extension domain rule, defanged and non-ASCII names, more number and token shapes |
 | OD-186 | 2026-09-28 | (V1.1 prep) | SPEC §17.3 | Test containers: Colima on macOS, Docker Engine on Linux |
 | OD-187 | 2026-09-28 | (V1.1 prep) | SPEC §7.3 | Unsigned MIME headers downgrade `auth_result` to `none` only for payment and fraud rules (narrows OD-048) |
+| OD-188 | 2026-09-28 | (V1.1 prep) | SPEC §8.5, §17.5 | Unicode `confusables.txt` shipped as data; Unicode-3.0 allowed for it |
+| OD-189 | 2026-09-28 | (V1.1 prep) | SPEC §1.3 | Label and flag writes and undo built in V1.1, tested against Dovecot only; real addresses stay in shadow |
+| OD-190 | 2026-09-28 | (V1.1 prep) | SPEC §1.3 | V1.1 alerts: desktop notifications and `ecf doctor` only |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

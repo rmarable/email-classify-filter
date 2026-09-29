@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- New dependencies for mail and sender authentication: `imapclient`, `dkimpy` (with ed25519 support via PyNaCl) and `dnspython`; all pass the license check.
+- Lookalike-character detection will use Unicode's confusables data, shipped under the Unicode License v3 (OD-188).
+- V1.1 builds label and flag writes but uses them only in tests; real addresses stay in shadow (OD-189). V1.1 alerts are desktop notifications and `ecf doctor` only (OD-190).
 - Sender authentication: a DKIM signature that leaves Content-Type or MIME-Version unsigned still passes for ordinary mail, but counts as unverified for payment and fraud rules (OD-187). Purelymail signs neither header, so the full rule made all internal mail look like fraud.
 - Real-service test (mail and sender authentication) passed on Purelymail; results in SPEC §21.1 and the provider table.
 - Test containers (Dovecot, later Postfix) run on Colima on macOS and Docker Engine on Linux (OD-186).

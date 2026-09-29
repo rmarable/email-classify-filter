@@ -111,11 +111,13 @@ Details, rules and the card format: `GENERATE-FAKE-TESTING-EMAILS.md`.
 This table is owned here (SPEC §17.5) and generated from `uv.lock` with
 `uv run python scripts/check_licenses.py --markdown`. The allow-list is MIT, MIT-0, BSD, ISC,
 Apache-2.0, zlib, MIT-CMU and PSF-2.0; MPL-2.0 only for development tools, plus the named runtime
-exception for unmodified `certifi` (OD-128). A package that exists on only one platform needs a
-reviewed entry in the script, checked against PyPI at its locked version. Development-only tools
+exception for unmodified `certifi` (OD-128); Unicode-3.0 only for the shipped `confusables.txt`
+data file (OD-188). A package that exists on only one platform, or whose metadata the script can't
+read, needs a reviewed entry in the script, checked at its locked version (readable metadata always
+wins). Development-only tools
 (pytest, ruff, pyright, import-linter, hypothesis) never ship and aren't listed.
 
-Runtime dependencies (generated 2026-09-27):
+Runtime dependencies (generated 2026-09-28):
 
 | Package | Version | License | Installed on |
 |---|---|---|---|
@@ -123,15 +125,18 @@ Runtime dependencies (generated 2026-09-27):
 | `annotated-types` | 0.8.0 | MIT | all platforms |
 | `anyio` | 4.15.1 | MIT | all platforms |
 | `certifi` | 2026.7.22 | MPL-2.0 | all platforms |
-| `cffi` | 2.1.1 | MIT-0 | Linux |
+| `cffi` | 2.1.1 | MIT-0 | all platforms |
 | `charset-normalizer` | 3.5.1 | MIT | `[eval]` extra only |
 | `click` | 8.5.0 | BSD-3-Clause | all platforms |
 | `colorama` | 0.4.6 | BSD | Windows |
 | `cryptography` | 50.0.1 | Apache-2.0 OR BSD-3-Clause | Linux |
+| `dkimpy` | 1.1.8 | Zlib | all platforms |
+| `dnspython` | 2.8.0 | ISC | all platforms |
 | `h11` | 0.16.0 | MIT | all platforms |
 | `httpcore` | 1.0.9 | BSD-3-Clause | all platforms |
 | `httpx` | 0.28.1 | BSD-3-Clause | all platforms |
 | `idna` | 3.20 | BSD-3-Clause | all platforms |
+| `imapclient` | 4.1.0 | BSD-3-Clause | all platforms |
 | `jaraco-classes` | 3.4.0 | MIT | all platforms |
 | `jaraco-context` | 6.1.2 | MIT | all platforms |
 | `jaraco-functools` | 4.6.0 | MIT | all platforms |
@@ -141,10 +146,11 @@ Runtime dependencies (generated 2026-09-27):
 | `mdurl` | 0.1.2 | MIT | all platforms |
 | `more-itertools` | 11.1.0 | MIT | all platforms |
 | `pillow` | 12.3.0 | MIT-CMU | `[eval]` extra only |
-| `pycparser` | 3.0 | BSD-3-Clause | Linux |
+| `pycparser` | 3.0 | BSD-3-Clause | all platforms |
 | `pydantic` | 2.13.5 | MIT | all platforms |
 | `pydantic-core` | 2.46.5 | MIT | all platforms |
 | `pygments` | 2.21.0 | BSD-2-Clause | all platforms |
+| `pynacl` | 1.6.2 | Apache-2.0 | all platforms |
 | `pyobjc-core` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-cocoa` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-security` | 12.2.2 | MIT | macOS |
