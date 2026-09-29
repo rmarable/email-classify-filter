@@ -229,7 +229,7 @@ State, blob storage and identity are plain modules in v1 (redesigned against Dyn
 1. **Take the check lease:** 3 minutes, renewed every 60 s by a dedicated renewal thread (operator decision 2026-09-26, OD-023), with a fencing token required on every write; a per-address `threading.Lock` gives in-process exclusion. A crashed or sleeping holder blocks the address for at most 3 minutes. If the lease is busy, skip the address.
 2. **Start with what changed elsewhere:** approvals, answers, executions, and `prechecked` records still at `new`.
 3. **Fetch a page** via the broker since the service-owned cursor (§6.4):
-   - `UID SEARCH UID <last+1>:*`, filtered to `uid > last_uid` (IMAP may return the highest existing UID); batched `UID FETCH` of `RFC822.SIZE`, envelope and `BODYSTRUCTURE`;
+   - `UID SEARCH UID <last+1>:*`, filtered to `uid > last_uid` (IMAP may return the highest existing UID); a NOOP precedes each query about what INBOX holds, since a server may hold back changes made by other sessions until then (Dovecot does; tested 2026-09-28); batched `UID FETCH` of `RFC822.SIZE`, envelope and `BODYSTRUCTURE`;
    - the **full raw message** via `BODY.PEEK[]` (IMAPClient returns it under `b'BODY[]'`) when `RFC822.SIZE ≤ max_message_bytes` (64 MB on `high`, 16 MB on `standard`; operator decision 2026-09-26, OD-024), because DKIM signs the whole body including attachments (RFC 6376, except with `l=`);
    - messages over 16 MB (a fixed threshold) are processed after the rest of the page, counted against the time budget, and deferred to the next check if time runs out (never skipped; listed in `deferred_uids`);
    - messages over the limit get headers and the first `max_scan_bytes_per_part` of each text part only; ecf never sets `\Seen` while fetching;

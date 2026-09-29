@@ -8,6 +8,9 @@ rule and the commit rules are in `CLAUDE.md`.
 - macOS or Linux (Linux is unverified until milestone V1.6).
 - Python 3.12 or newer, managed by [uv](https://docs.astral.sh/uv/) (`.python-version` pins 3.12).
 - v1 needs no AWS and no CDK. `infra/` (arriving in M1) is the AWS infrastructure source.
+- A container engine for the IMAP tests (a Dovecot container, OD-186): on macOS
+  `brew install colima docker && brew services start colima`; on Linux, Docker Engine. Without one,
+  the `imap` tests are skipped locally (they always run in CI).
 
 ## Set up
 
@@ -23,6 +26,7 @@ uv run pyright                                  # strict everywhere (src, tests,
 uv run lint-imports                             # the client (ecf) never imports ecf_server
 uv run pytest                                   # everything this OS can run
 uv run pytest -m "not macos"                    # what CI runs (Linux)
+uv run pytest -m imap                           # the IMAP adapter against Dovecot
 uv run pytest tests/test_state_machine.py::test_edges_match_spec   # one test
 uv run python scripts/check_licenses.py         # dependency license allow-list
 uv run python scripts/check_licenses.py --markdown   # regenerate the table below

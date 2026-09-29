@@ -40,6 +40,7 @@ dev = [
     "pyright>=1.1.380",
     "import-linter>=2.0",
     "hypothesis>=6.100",
+    "testcontainers>=4.8",
 ]
 
 [build-system]
@@ -84,6 +85,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "macos: needs macOS (Keychain, launchd, LocalAuthentication); run locally before merging to main",
     "linux_only: needs Linux (Secret Service, systemd, PAM)",
+    "imap: needs a Docker socket for the Dovecot container (Colima on macOS; OD-186)",
 ]
 
 [tool.importlinter]
