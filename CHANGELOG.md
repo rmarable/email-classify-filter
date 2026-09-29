@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Mail-health alerts: a desktop notification when a mailbox can't be reached for 15 minutes while your network is up (`Mail Provider Unreachable`), or rejects the app password 3 times (`Mailbox Login Rejected`; checks then slow to hourly), and again when it recovers. `ecf status` lists open alerts. New command `ecf address retry <address>` checks again now; `ecf address set --app-password` clears the rejection count. `ecf doctor` now reports each address's last check, open alerts, your organization's domains and DNS reachability (OD-190).
 - Security: a crafted email can no longer crash parsing on Python 3.12.3 (Ubuntu 24.04's system Python), whose email header parser fails on some malformed headers; ecf now falls back to Python's older, tolerant parser for that message.
 - When a mailbox resets its message numbering (UIDVALIDITY), ecf now recovers on its own: it re-reads recent mail, recognizes messages it already has, and re-points them instead of treating them as new. Items whose message you move, archive or delete in your mail client are closed automatically (`resolved_by_mailbox`).
 - The audit log is now also written to daily JSON-lines files in the data folder (one per address, plus one for install-wide events), and the new command `ecf logs` shows it, with filters for address, event, time and `--follow`. It records what ecf did and decided, never message content.

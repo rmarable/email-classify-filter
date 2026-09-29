@@ -39,10 +39,11 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, audit, checks, db
+from ecf_server import addresses, audit, checks, db, health
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
 
 API_VERSION = 1
@@ -88,6 +89,7 @@ class ServiceState:
     db_path: Path | None = None
     secrets: SecretStore | None = field(default=None, repr=False)
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
+    notifier: Notifier = field(default_factory=NullNotifier, repr=False)
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -161,6 +163,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "breaker": state.breaker,
                 "secret_store": state.secret_store,
                 "addresses": _address_states(state),
+                "alerts": _alerts(state),
             }
         )
 
@@ -251,6 +254,16 @@ def _address_states(state: ServiceState) -> list[dict[str, Any]]:
         conn.close()
 
 
+def _alerts(state: ServiceState) -> list[dict[str, Any]]:
+    if state.db_path is None:
+        return []
+    conn = state.connect()
+    try:
+        return health.open_alerts(conn)
+    finally:
+        conn.close()
+
+
 def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def run_checks(request: Request) -> StreamingResponse:
@@ -285,6 +298,7 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
                             factory=factory,
                             connect=state.connect,
                         )
+                        health.after_check(conn, state.clock, state.notifier, r)
                         yield json.dumps(r.to_json()) + "\n"
                         if not r.more:
                             break
@@ -402,8 +416,20 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         log.info("address.removed", address_id=a["address_id"])
         return JSONResponse(a)
 
+    @allow(Caller.CLI)
+    def retry_address(request: Request) -> JSONResponse:
+        """`ecf address retry`: check this address at the next tick, even while logins are
+        backing off (SPEC §13.3)."""
+        conn = state.connect()
+        try:
+            a = addresses.retry(conn, state.clock, str(request.path_params["ref"]), actor="os_user")
+        finally:
+            conn.close()
+        return JSONResponse(a)
+
     return [
         Route("/v1/addresses", list_addresses, methods=["GET"]),
+        Route("/v1/addresses/{ref}/retry", retry_address, methods=["POST"]),
         Route("/v1/addresses", add_address, methods=["POST"]),
         Route("/v1/addresses/{ref}", set_address, methods=["POST"]),
         Route("/v1/addresses/{ref}", remove_address, methods=["DELETE"]),

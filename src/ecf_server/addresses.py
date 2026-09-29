@@ -196,6 +196,7 @@ def set_app_password(
     secrets.set(secret_name(a["address_id"]), password)
     with write_tx(conn):
         probe.store(conn, clock, a["address_id"], a["imap_host"], found)
+        _due_now(conn, clock, a["address_id"], clear_login_failures=True)
         _audit(
             conn,
             to_ts(clock.now()),
@@ -205,6 +206,30 @@ def set_app_password(
             {"name": secret_name(a["address_id"])},
         )
     return get_address(conn, a["address_id"])
+
+
+def retry(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> dict[str, Any]:
+    """Make the address due now, even while rejected logins are backing off to hourly."""
+    a = get_address(conn, ref)
+    with write_tx(conn):
+        _due_now(conn, clock, a["address_id"], clear_login_failures=False)
+        _audit(conn, to_ts(clock.now()), a["address_id"], "address.retry", actor, {})
+    return a
+
+
+def _due_now(
+    conn: sqlite3.Connection, clock: Clock, address_id: str, *, clear_login_failures: bool
+) -> None:
+    now = to_ts(clock.now())
+    conn.execute(
+        "INSERT INTO check_state (address_id, next_due_at) VALUES (?, ?)"
+        " ON CONFLICT (address_id) DO UPDATE SET next_due_at = excluded.next_due_at",
+        (address_id, now),
+    )
+    if clear_login_failures:
+        conn.execute(
+            "UPDATE check_state SET login_failures = 0 WHERE address_id = ?", (address_id,)
+        )
 
 
 def remove_address(

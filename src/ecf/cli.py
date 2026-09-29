@@ -102,6 +102,8 @@ def status() -> None:
         typer.echo(line)
         if a["last_error"] and a["last_status"] in ("error", "login_rejected", "lease_lost"):
             typer.echo(f"{'':<16} last error: {a['last_error']}")
+    for alert in st.get("alerts", []):
+        typer.echo(f"ALERT      {alert['title']}: {alert['detail']}")
 
 
 @app.command()
@@ -402,6 +404,14 @@ def address_set(
         a = c.request("POST", f"/v1/addresses/{address}", {"app_password": pw})
     typer.echo(f"stored a new app password for {a['email']} (login checked)")
     _echo_probe(a)
+
+
+@address_app.command("retry")
+def address_retry(address: Annotated[str, typer.Argument(help="Address id or email.")]) -> None:
+    """Check a mailbox at the next minute, even while rejected logins retry only hourly."""
+    with LocalClient(_paths()) as c:
+        a = c.request("POST", f"/v1/addresses/{address}/retry")
+    typer.echo(f"{a['email']} will be checked within a minute")
 
 
 @address_app.command("remove")

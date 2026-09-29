@@ -29,7 +29,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ecf.ids import AddressId
-from ecf_server import jobs
+from ecf_server import health, jobs
 from ecf_server.checks import CheckReport
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -49,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
 }
 CATCH_UP_PAUSE = timedelta(seconds=30)
 BUSY_RETRY = timedelta(seconds=60)
+LOGIN_RETRY = timedelta(hours=1)
 SLEEP_DRIFT_S = 60.0
 CHECK_TIMEOUT_S = 420  # a check's 6-minute budget plus a margin (job claims expire at 6x this)
 
@@ -140,6 +141,8 @@ def after_check(
     )
     if report.status == "busy":
         due = now + BUSY_RETRY
+    elif report.status == "login_rejected" and health.login_backoff(conn, report.address_id):
+        due = now + LOGIN_RETRY  # don't get the account locked (SPEC §13.3)
     elif waiting and allowed:
         since = since or now
         if now - since >= timedelta(minutes=int(s["catch_up_max_minutes"])):

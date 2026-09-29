@@ -8,6 +8,7 @@ would make it 0666. A single-instance lock guards the data directory.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import secrets
 import signal
@@ -27,13 +28,14 @@ import uvicorn
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import audit, breaker, checks, db, jobs, schedule
+from ecf_server import audit, breaker, checks, db, health, jobs, schedule
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import ImapSource
+from ecf_server.notify import Notifier, NullNotifier, host_notifier
 from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
@@ -167,6 +169,17 @@ class Service:
         except Exception as exc:  # the rows stay in the table; the next start copies them
             log.error("audit.flush_failed", error_type=type(exc).__name__)
 
+    def _notifier(self) -> Notifier:
+        """Desktop notifications (OD-190): none in dev mode or with `notifications: off`."""
+        if self.dev or self.state.db_path is None:
+            return NullNotifier()
+        conn = db.connect(self.state.db_path)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'notifications'").fetchone()
+        finally:
+            conn.close()
+        return NullNotifier() if row and json.loads(row["value"]) == "off" else host_notifier()
+
     def _checks(self) -> None:
         """Run due checks from the `fetch` queue, one at a time (SPEC §5.4)."""
         while not self.stop.is_set():
@@ -195,6 +208,7 @@ class Service:
                 factory=self.state.mail_factory or imap_factory,
                 connect=self.state.connect,
             )
+            health.after_check(conn, self.clock, self.state.notifier, report)
             schedule.after_check(conn, self.clock, report, self.scheduler.power())
             jobs.complete(conn, job.job_id, WORKER)
         except NotFoundError:  # removed since it was queued
@@ -279,6 +293,7 @@ class Service:
         self._prepare_state(conn)
         conn.close()
         self.state.db_path = self.paths.db
+        self.state.notifier = self._notifier()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
         self.state.token = write_token(self.paths)
