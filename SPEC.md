@@ -259,7 +259,7 @@ State, blob storage and identity are plain modules in v1 (redesigned against Dyn
 ### 5.3 Catch-up
 
 `catch_up: auto|off` (default `auto`; operator decisions 2026-09-26, OD-031). When a check ends with messages still waiting, the next check starts after a 30 s pause instead of the interval, until the backlog is empty or `catch_up_max_minutes` passes; then normal intervals resume.
-- `catch_up_max_minutes`: 30 on fanless laptops (MacBook Air, from a shipped lookup table of `hw.model` values), 60 elsewhere including all Linux machines, 30 on unknown Apple laptops.
+- `catch_up_max_minutes`: 30 on fanless laptops (MacBook Air, from a shipped lookup table of `hw.model` values), 60 elsewhere including all Linux machines, 30 on unknown Apple laptops. **V1.1** (V1.1 build, 2026-09-29): no verified table of fanless `hw.model` values exists yet (Apple Silicon models report identifiers like `Mac14,2`), so every Mac laptop (one with a battery) gets 30, the stricter value; Mac desktops and all Linux machines get 60.
 - After the cap, catch-up can't restart for `catch_up_cooldown_minutes` (15).
 - If the lease is busy when a round wants to start, catch-up waits up to 60 s rather than ending.
 - On laptops it runs only on AC power (`pmset` on macOS, `/sys/class/power_supply` on Linux) unless `catch_up_on_battery: true` (default false).
@@ -281,6 +281,7 @@ Runs in the service with no model and no client session, while the computer is o
 ### 5.5 Clocks and sleep
 
 - Due-ness, lease expiry and approval TTLs use wall-clock time. The tick and the 10-minute send delay use the monotonic clock, which stops during sleep on macOS and Linux (documented).
+- **Scheduling in V1.1** (V1.1 build, 2026-09-29; code: `ecf_server/schedule.py`): the 1-minute tick enqueues a `fetch` job for each address whose `next_due_at` has passed (or that was never checked), never twice; a `checks` worker thread runs them one at a time and sets the next due time: the interval for the hour, 30 s while catching up, 60 s after a busy lease. Power comes from `pmset -g batt` (macOS) or `/sys/class/power_supply` (Linux); unknown means a desktop on AC. A failed tick is logged and never stops the timer; a crashed check fails its job, which retries with the queue's backoff.
 - Sleep is detected when wall-clock minus monotonic drift exceeds a threshold (60 s [proposed]); on wake every address's due time is re-evaluated at once and a pending send delay re-announces "sending in 10 minutes".
 - A watchdog exits non-zero (so launchd/systemd restart the service) and notifies you if no tick happens for 5 minutes while awake.
 

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- The service now checks each address on its own: every 10 minutes in business hours (Mon-Fri 08:00-17:00 New York by default) and every 30 minutes otherwise, every 30 seconds while a backlog remains (catch-up, with a cap and a cooldown, on AC power only on laptops), and straight away after the computer wakes.
 - New command `ecf check [address] [--until-empty]`: fetches new mail, checks each sender's DKIM and DMARC, runs the fraud and regulator checks and records what the pre-check would do (every address is in shadow in V1.1, so nothing in the mailbox changes). The first check of an address starts from now; older mail isn't fetched. `ecf status` now shows each address's last check, backlog and last error.
 - Fraud and regulator triggers (not yet run on a schedule): bank-detail changes, first-time payment senders with a second signal, lookalike domains (including lookalike letters, via Unicode's confusables data), DMARC fail on payment mail, reused Message-IDs, your own domain unauthenticated, misleading display names, multiple or ambiguous From headers (OD-194), regulator keywords, and unverified payment senders.
 - Sender authentication (not yet run on a schedule): ecf checks DKIM and DMARC itself (RFC 9989). `fail` means more than one From header, or every signature aligned with the sender broken under a quarantine or reject policy; unsigned mail stays `none` (OD-192).

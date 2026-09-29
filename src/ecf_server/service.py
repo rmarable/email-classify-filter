@@ -24,16 +24,17 @@ from typing import TextIO
 
 import uvicorn
 
-from ecf.errors import ServiceUnavailableError
+from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import breaker, db
+from ecf_server import breaker, checks, db, jobs, schedule
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import ImapSource
+from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -47,6 +48,7 @@ from ecf_server.secretstore.select import (
 )
 
 TICK_SECONDS = 60
+WORKER = "checks"
 WATCHDOG_SECONDS = 300
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
@@ -127,6 +129,8 @@ class Service:
         self.state = ServiceState(
             install=paths.install, token="", started_at=to_ts(self.clock.now()), clock=self.clock
         )
+        self.scheduler = Scheduler(self.clock)
+        self.work = threading.Event()  # set when checks are due
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -137,6 +141,54 @@ class Service:
         self._last_tick_mono = self.clock.monotonic()
         self.state.last_tick_at = to_ts(self.clock.now())
         self.state.ticks += 1
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                if self.scheduler.tick(conn):
+                    self.work.set()
+            finally:
+                conn.close()
+        except Exception as exc:  # a scheduling failure must never stop the timer
+            log.error("schedule.tick_failed", error_type=type(exc).__name__)
+
+    def _checks(self) -> None:
+        """Run due checks from the `fetch` queue, one at a time (SPEC §5.4)."""
+        while not self.stop.is_set():
+            self.work.wait(5.0)
+            self.work.clear()
+            if self.state.db_path is None:
+                continue
+            conn = db.connect(self.state.db_path)
+            try:
+                while not self.stop.is_set() and self._one_check(conn):
+                    pass
+            finally:
+                conn.close()
+
+    def _one_check(self, conn: sqlite3.Connection) -> bool:
+        job = jobs.claim(conn, self.clock, jobs.Queue.FETCH, WORKER)
+        if job is None:
+            return False
+        try:
+            report = checks.run_check(
+                conn,
+                self.clock,
+                address_id=job.address_id,
+                install=self.paths.install,
+                secrets=self.state.store(),
+                factory=self.state.mail_factory or imap_factory,
+                connect=self.state.connect,
+            )
+            schedule.after_check(conn, self.clock, report, self.scheduler.power())
+            jobs.complete(conn, job.job_id, WORKER)
+        except NotFoundError:  # removed since it was queued
+            jobs.complete(conn, job.job_id, WORKER)
+        except Exception as exc:
+            log.error("check.crashed", address_id=job.address_id, error_type=type(exc).__name__)
+            jobs.fail(conn, self.clock, job.job_id, WORKER, type(exc).__name__)
+        return True
 
     def watchdog_expired(self) -> bool:
         # monotonic time stops while the computer sleeps, so sleep never trips the watchdog
@@ -230,11 +282,14 @@ class Service:
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
+        worker = threading.Thread(target=self._checks, name="checks", daemon=True)
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
         timer.start()
+        worker.start()
+        self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
         while not self.stop.wait(1.0):
             if self.watchdog_expired():
@@ -244,6 +299,8 @@ class Service:
         server.should_exit = True
         web.join(STOP_TIMEOUT)
         timer.join(STOP_TIMEOUT)
+        self.work.set()
+        worker.join(STOP_TIMEOUT)
         sock.close()
         with suppress(FileNotFoundError):
             self.paths.socket.unlink()
