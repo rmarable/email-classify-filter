@@ -125,11 +125,15 @@ class ImapSource:
     def capabilities(self) -> Capabilities:
         conn = self._connect()
         caps = self._call(conn.capabilities)
+        # PERMANENTFLAGS from a read-write SELECT: servers may report none on a read-only
+        # EXAMINE (Dovecot does; tested 2026-09-28). Selecting read-write changes no message.
+        _conn, info = self._inbox(readonly=False)
         return Capabilities(
-            custom_keywords="\\*" in self.inbox().permanent_flags,
+            custom_keywords="\\*" in lib.flag_set(info.get("PERMANENTFLAGS")),
             move="MOVE" in caps,
             uidplus="UIDPLUS" in caps,
             condstore="CONDSTORE" in caps,
+            append_limit=_append_limit(caps),
         )
 
     def folders(self) -> list[Folder]:
@@ -230,6 +234,14 @@ class ImapSource:
 
 def _valid_section(section: str) -> bool:
     return section == "HEADER" or all(p.isdigit() and p != "0" for p in section.split("."))
+
+
+def _append_limit(caps: frozenset[str]) -> int | None:
+    for c in caps:
+        name, _, value = c.partition("=")
+        if name == "APPENDLIMIT" and value.isdigit():
+            return int(value)
+    return None
 
 
 def _chunks(uids: Sequence[int]) -> Iterable[list[int]]:

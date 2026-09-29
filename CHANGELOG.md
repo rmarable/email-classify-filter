@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Adding an address (or changing its app password) now probes the mailbox: folders, keyword support and size limit, with a note for anything missing. `ecf address list` shows the number of notes.
 - New commands `ecf address add`, `list`, `set --app-password` and `remove`. Adding checks the app password by logging in before the service stores it in the OS secret store; new mailboxes start in shadow with outbound off. The first address sets your organization's domains (public mail domains such as gmail.com are refused); later changes go through `ecf config apply` (V1.2). Removing an address with open items waits for step-up in V1.2 (OD-191).
 - Commands that ask for a secret refuse at once, with an explanation, when there is no real terminal to hide your typing.
 - New dependencies for mail and sender authentication: `imapclient`, `dkimpy` (with ed25519 support via PyNaCl) and `dnspython`; all pass the license check.

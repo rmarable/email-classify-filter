@@ -1331,7 +1331,7 @@ Every cell is "unverified, confirm in V1.1" unless marked. Sources: each provide
 | Migadu | not documented | unverified | unverified | unverified | unverified | unverified |
 | Proton (Bridge) | not documented | labels appear as folders | none (`\*` absent; evidence) | unverified | unverified | unverified |
 
-Runtime detection (`PERMANENTFLAGS`, the folder flags returned by `LIST`, whether or not `SPECIAL-USE` is advertised) is the rule. Provider Authentication-Results are not used in v1 regardless.
+Runtime detection (`PERMANENTFLAGS`, the folder flags returned by `LIST`, whether or not `SPECIAL-USE` is advertised) is the rule. `PERMANENTFLAGS` is read from a read-write `SELECT`: a server may report none on a read-only `EXAMINE` (Dovecot 2.4.5 does, Purelymail doesn't; tested 2026-09-28). The probe (V1.1) records capabilities, folder roles and keyword support, and warns about missing folders or features; whether a provider saves sent mail, and its size limit when it doesn't advertise `APPENDLIMIT`, come from the tested cells of this table and are otherwise unknown until sending arrives in V1.5. Provider Authentication-Results are not used in v1 regardless.
 
 Purelymail setup (operator test 2026-09-28): a subdomain works as a mail domain. The V1.1 test mailbox is `ecftest@mail.rodneymarable.com`; its MX, SPF, ownership, three DKIM and DMARC records sit at the subdomain host and resolve in public DNS (checked with `dig`, 2026-09-28), and the root domain's MX is untouched. With symbolic subaddressing on, user names can't contain symbols (`-` is the subaddress separator: `a-b@` delivers to `a@`). Its documentation doesn't mention subdomains (purelymail.com/docs/domainDocs, read 2026-09-28).
 

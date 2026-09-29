@@ -18,6 +18,7 @@ from typing import Any
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import SLUG_PATTERN
 from ecf.status import OPEN
+from ecf_server import probe
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail import MailSource
@@ -102,11 +103,12 @@ def _check_password(pw: str) -> str:
     return pw
 
 
-def verify_login(factory: MailFactory, host: str, user: str, password: str) -> None:
-    """Log in and read INBOX's state; raises MailUnavailableError or MailLoginRejectedError."""
+def login_and_probe(factory: MailFactory, host: str, user: str, password: str) -> probe.ProbeResult:
+    """Log in and probe the mailbox; raises MailUnavailableError or MailLoginRejectedError."""
     src = factory(host, user, lambda: password)
     try:
         src.inbox()
+        return probe.probe(src, host)
     finally:
         src.close()
 
@@ -142,7 +144,7 @@ def add_address(
         )
 
     _refuse_duplicates(conn, address_id, email)
-    verify_login(factory, host, email, password)  # network: outside any transaction
+    found = login_and_probe(factory, host, email, password)  # network: outside any transaction
 
     now = to_ts(clock.now())
     secrets.set(secret_name(address_id), password)
@@ -161,11 +163,7 @@ def add_address(
                     " VALUES (?, ?, ?, ?, ?)",
                     (address_id, email, req.sensitivity, req.preset, now),
                 )
-            conn.execute(
-                "INSERT INTO probe (address_id, host, probed_at) VALUES (?, ?, ?)"
-                " ON CONFLICT (address_id) DO UPDATE SET host = excluded.host",
-                (address_id, host, now),
-            )
+            probe.store(conn, clock, address_id, host, found)
             if not org and new_org is not None:
                 _set(conn, ORG_DOMAINS_KEY, new_org, now, actor)
                 _audit(conn, now, None, "config.applied", actor, {"key": ORG_DOMAINS_KEY})
@@ -194,9 +192,10 @@ def set_app_password(
     actor: str,
 ) -> dict[str, Any]:
     a = get_address(conn, ref)
-    verify_login(factory, a["imap_host"], a["email"], _check_password(password))
+    found = login_and_probe(factory, a["imap_host"], a["email"], _check_password(password))
     secrets.set(secret_name(a["address_id"]), password)
     with write_tx(conn):
+        probe.store(conn, clock, a["address_id"], a["imap_host"], found)
         _audit(
             conn,
             to_ts(clock.now()),
@@ -205,7 +204,7 @@ def set_app_password(
             actor,
             {"name": secret_name(a["address_id"])},
         )
-    return a
+    return get_address(conn, a["address_id"])
 
 
 def remove_address(
@@ -241,7 +240,7 @@ def remove_address(
 
 def list_addresses(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(f"{_SELECT} WHERE a.removed_at IS NULL ORDER BY a.address_id").fetchall()
-    return [_row(r) for r in rows]
+    return [_row(r) | {"probe": probe.load(conn, r["address_id"])} for r in rows]
 
 
 def get_address(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
@@ -252,7 +251,7 @@ def get_address(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
     ).fetchone()
     if row is None:
         raise NotFoundError(f"no address {ref!r}")
-    return _row(row)
+    return _row(row) | {"probe": probe.load(conn, row["address_id"])}
 
 
 _SELECT = (

@@ -6,7 +6,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -234,6 +234,21 @@ def address_add(
         f"added {a['email']} as {a['address_id']!r}: {a['sensitivity']}, preset "
         f"{a['preset']}, stage {a['stage']}, outbound off"
     )
+    _echo_probe(a)
+
+
+def _echo_probe(a: dict[str, Any]) -> None:
+    p = a.get("probe")
+    if not p:
+        return
+    size = p["max_message_bytes"]
+    typer.echo(
+        f"probe: folders {', '.join(sorted(p['roles'].values())) or 'none marked'}; "
+        f"keywords {'yes' if p['custom_keywords'] else 'no'}; "
+        f"size limit {f'{size:,} bytes' if size else 'unknown'}"
+    )
+    for w in p["warnings"]:
+        typer.echo(f"  note: {w}")
 
 
 @address_app.command("list")
@@ -246,6 +261,8 @@ def address_list() -> None:
         flags = [a["stage"], a["sensitivity"], f"preset {a['preset']}"]
         if a["paused"]:
             flags.append("PAUSED")
+        if a.get("probe") and a["probe"]["warnings"]:
+            flags.append(f"{len(a['probe']['warnings'])} probe warning(s)")
         typer.echo(f"{a['address_id']:<16} {a['email']:<36} {', '.join(flags)}  ({a['imap_host']})")
     if not data["addresses"]:
         typer.echo("no addresses yet: `ecf address add <email> --imap-host <host>`")
@@ -266,6 +283,7 @@ def address_set(
         pw = hidden(f"New app password for {address} (hidden): ")
         a = c.request("POST", f"/v1/addresses/{address}", {"app_password": pw})
     typer.echo(f"stored a new app password for {a['email']} (login checked)")
+    _echo_probe(a)
 
 
 @address_app.command("remove")

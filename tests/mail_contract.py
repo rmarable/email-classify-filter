@@ -122,7 +122,15 @@ class MailSourceContract:
     def test_capabilities_and_folders(self, harness: Harness) -> None:
         src = harness.source
         caps = src.capabilities()
-        assert ("\\*" in src.inbox().permanent_flags) == caps.custom_keywords
+        assert caps.custom_keywords  # both test servers allow them; the probe reads it read-write
+        assert src.inbox().permanent_flags <= {
+            "\\Answered",
+            "\\Deleted",
+            "\\Draft",
+            FLAGGED,
+            SEEN,
+            "\\*",
+        }
         folders = src.folders()
         assert any(f.name.upper() == "INBOX" for f in folders)
         for f in folders:

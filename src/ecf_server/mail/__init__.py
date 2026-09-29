@@ -38,6 +38,7 @@ class Capabilities:
     move: bool
     uidplus: bool
     condstore: bool
+    append_limit: int | None = None  # RFC 7889 APPENDLIMIT=n, when the server advertises it
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class Folder:
 class InboxState:
     uidvalidity: int
     uidnext: int
+    # as reported on a read-only EXAMINE, which may be empty; use Capabilities for keywords
     permanent_flags: frozenset[str]
 
 
