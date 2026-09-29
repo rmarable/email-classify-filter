@@ -20,8 +20,11 @@ import quopri
 import re
 from dataclasses import dataclass
 from email import message_from_bytes, policy
+from email.errors import HeaderParseError
+from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
 from email.parser import BytesHeaderParser
+from email.policy import Policy
 from email.utils import getaddresses
 
 from ecf_server.htmltext import html_to_text, strip_data_uris, tidy
@@ -56,6 +59,10 @@ KEPT_HEADERS = (
     "content-transfer-encoding",
 )
 _MSGID = re.compile(r"<[^<>\s]+>")
+# Exceptions the modern header parser raises on malformed input in some Python releases: 3.12.3
+# raises IndexError on a truncated Message-ID and on some address headers (found by the fuzz tests
+# on CI, 2026-09-29; later 3.12 releases and 3.13 don't). parse() then falls back to compat32.
+PARSER_BUGS = (IndexError, AttributeError, TypeError, ValueError, HeaderParseError)
 
 
 @dataclass(frozen=True)
@@ -143,11 +150,20 @@ def normalize_text(text: str) -> str:
 
 
 def parse(raw: bytes, *, max_scan_bytes: int = DEFAULT_SCAN_BYTES) -> ParsedMessage:
-    msg = message_from_bytes(raw, policy=policy.default)
+    """Parse with the modern email policy; if its header parser fails on malformed input (it does
+    in some Python releases, see PARSER_BUGS), parse again with the tolerant compat32 policy."""
+    try:
+        return _parse(raw, policy.default, max_scan_bytes)
+    except PARSER_BUGS:
+        return _parse(raw, policy.compat32, max_scan_bytes)
+
+
+def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
+    msg = message_from_bytes(raw, policy=pol)
     h = hashlib.sha256(b"ecf-content-v1\0")
     texts: list[TextPart] = []
     attachments: list[Attachment] = []
-    defects = len(msg.defects)
+    defects = len(msg.defects) + (pol is policy.compat32)
     for part in msg.walk():
         if part.is_multipart():
             continue
@@ -229,7 +245,12 @@ def parse_partial(
     not Received or Delivered-To) and each part's section, type and encoded size. Nobody can
     mistake it for a content hash.
     """
-    msg = BytesHeaderParser(policy=policy.default).parsebytes(header_block)
+    try:
+        msg = BytesHeaderParser(policy=policy.default).parsebytes(header_block)
+        for name in ("message-id", "date", "from", "subject", "reply-to", "to", "cc"):
+            msg.get_all(name)  # force header parsing now, inside the try
+    except PARSER_BUGS:
+        msg = BytesHeaderParser(policy=policy.compat32).parsebytes(header_block)
     h = hashlib.sha256(b"ecf-partial-v1\0")
     for name in ("message-id", "date", "from", "subject"):
         value = "\n".join(_all(msg, name)).encode("utf-8", "replace")
@@ -313,13 +334,23 @@ def _decode_text(part: Message) -> str:
 
 
 def _all(msg: Message, name: str) -> tuple[str, ...]:
+    """Header values as text. Under compat32 values are raw, so encoded words are decoded here."""
     out: list[str] = []
     for v in msg.get_all(name) or []:
         try:
-            out.append(str(v))
+            text = str(v)
         except (ValueError, UnicodeError, IndexError):
-            out.append("")
+            text = ""
+        out.append(_decode_words(text) if msg.policy is policy.compat32 else text)
     return tuple(out)
+
+
+def _decode_words(value: str) -> str:
+    """RFC 2047 encoded words in a raw header value; the raw value if they can't be decoded."""
+    try:
+        return str(make_header(decode_header(value)))
+    except (*PARSER_BUGS, LookupError, UnicodeError):
+        return value
 
 
 def _first(msg: Message, name: str) -> str | None:

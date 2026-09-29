@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from email.message import EmailMessage
 from email.policy import SMTP
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -285,3 +286,40 @@ def test_partial_hash_ignores_routing_headers_but_not_parts() -> None:
     assert parse_partial(rerouted, _parts(), {}, size=1).content_hash == a
     assert parse_partial(HEADER, _parts(size=90_000_004), {}, size=1).content_hash != a
     assert parse(b"From: x@y.example\r\n\r\nhi").content_hash != a  # a different hash family
+
+
+# ---- header-parser fallback (CI found Python 3.12.3's parser crashing, 2026-09-29) ----------
+
+
+def test_truncated_message_id_does_not_crash() -> None:
+    p = parse(b"From: a@b.example\r\nMessage-ID: <\r\nSubject: hi\r\n\r\nbody\r\n")
+    assert p.from_addr == "a@b.example" and len(p.content_hash) == 64
+
+
+def test_fallback_to_compat32_when_the_modern_parser_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from email import policy as email_policy  # noqa: PLC0415
+
+    from ecf_server import message as m  # noqa: PLC0415
+
+    real = m._parse  # pyright: ignore[reportPrivateUsage]
+
+    def modern_parser_bug(raw: bytes, pol: Any, max_scan_bytes: int) -> m.ParsedMessage:
+        if pol is email_policy.default:
+            raise IndexError("list index out of range")  # what 3.12.3 raises
+        return real(raw, pol, max_scan_bytes)
+
+    monkeypatch.setattr(m, "_parse", modern_parser_bug)
+    raw = (
+        b"From: =?utf-8?q?Zo=C3=AB_Payable?= <zoe@vendor-a.example>\r\nTo: ap@acme.example\r\n"
+        b"Subject: =?utf-8?q?Rechnung_f=C3=BCr_Oktober?=\r\n"
+        b"Message-ID: <m1@vendor-a.example>\r\n\r\n"
+        b"Invoice attached.\r\n"
+    )
+    p = parse(raw)
+    assert p.from_name == "Zoë Payable" and p.from_addr == "zoe@vendor-a.example"
+    assert p.subject == "Rechnung für Oktober" and p.message_id == "<m1@vendor-a.example>"
+    assert p.to == ("ap@acme.example",) and "Invoice attached." in p.full_text()
+    assert p.defects >= 1  # the fallback counts as a defect
+    assert p.content_hash == real(raw, email_policy.default, 1 << 20).content_hash
