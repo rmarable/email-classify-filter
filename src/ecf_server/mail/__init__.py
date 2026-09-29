@@ -22,8 +22,9 @@ SEEN = "\\Seen"
 # Folder roles ecf uses (RFC 6154 flags). Read from each folder's LIST flags, whether or not the
 # server advertises SPECIAL-USE (Purelymail doesn't; real-service test 2026-09-28).
 ROLES = frozenset({"\\Archive", "\\Drafts", "\\Junk", "\\Sent", "\\Trash", "\\All", "\\Flagged"})
-# An IMAP keyword is an atom; ecf's own keywords are `$ecf_<install>_<t>` (SPEC §6.4).
-_KEYWORD = re.compile(r"^\$?[A-Za-z0-9_]{1,64}$")
+# An IMAP keyword is an atom; ecf's own keywords are `$ecf_<install>_<t>` (SPEC §6.4). Install
+# names may contain `-` (allowed in atoms) but never `_`, so the install can be read back.
+_KEYWORD = re.compile(r"^\$?[A-Za-z0-9_-]{1,64}$")
 
 
 def check_keyword(keyword: str) -> str:
