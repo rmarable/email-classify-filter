@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- The list of shared platforms (senders that never count as "seen before") now uses each vendor's researched sending domains: added Adobe Sign, Dropbox Sign (HelloSign), PandaDoc, Zoho Invoice and Wave; removed `quickbooks.com`, which isn't a sending domain (Intuit sends from `intuit.com`) (OD-197).
 - Shadow run on the test mailbox (in progress): first results in SPEC §21.1; V1.1 measurement items closed or carried forward in §21.2; additions to the shared-platform sender list proposed for review (§7.2).
 - Fixed: a check that lost its lease partway through a message counted that as one of the message's two allowed crash attempts, so repeated interruptions could quarantine an ordinary message. Only real failures on the message count now (found in the shadow run).
 - Fixed: `ecf check` run while a scheduled check of the same address was in progress could take over that check's lease, stopping it (nothing was written twice). A second check of the same address now reports "busy" (found in the shadow run).

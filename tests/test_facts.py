@@ -244,3 +244,18 @@ def test_fetch_with_the_analyzer_builds_sender_history(
         seen.append(f["sender_seen_before"])
         clock.advance(7 * 86400 + day)
     assert seen == [False, False, False, True]  # the 4th, after 3 passes over 14+ days
+
+
+@pytest.mark.parametrize(
+    ("domain", "shared"),
+    [
+        ("notification.intuit.com", True),  # Intuit's documented sender
+        ("email.pandadoc.net", True),
+        ("mail.hellosign.com", True),
+        ("sender.zohoinvoice.com", True),
+        ("quickbooks.com", False),  # removed: not a sending domain (OD-197)
+        ("pandadoc.com", False),
+    ],
+)
+def test_shared_platform_list(domain: str, shared: bool) -> None:
+    assert facts.in_domains(domain, facts.SHARED_PLATFORMS) is shared

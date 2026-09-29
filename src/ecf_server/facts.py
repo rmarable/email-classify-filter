@@ -20,19 +20,27 @@ from ecf_server.message import ParsedMessage
 
 SEEN_COUNT = 3  # OD-043: at least 3 earlier DMARC-pass messages ...
 SEEN_SPREAD = timedelta(days=14)  # ... spread over 14 days or more
-# OD-158 (initial list; finalized in V1.1): shared platforms send for many unrelated customers,
-# so their senders never count as seen. A subdomain of a listed domain counts as listed.
+# Shared platforms send for many unrelated customers, so their senders never count as seen.
+# A subdomain of a listed domain counts as listed. Initial list OD-158; finalized 2026-09-29
+# (OD-197) from each vendor's sending domains, with sources in SPEC §7.2. Some of these services
+# can also send from the customer's own domain, which no list can recognise.
 SHARED_PLATFORMS = (
+    "adobesign.com",
+    "bill.com",
     "docusign.net",
     "echosign.com",
-    "bill.com",
-    "intuit.com",
-    "quickbooks.com",
-    "xero.com",
     "freshbooks.com",
-    "stripe.com",
+    "getpandadoc.com",
+    "hellosign.com",
+    "intuit.com",
+    "pandadoc.email",
+    "pandadoc.net",
     "paypal.com",
     "squareup.com",
+    "stripe.com",
+    "waveapps.com",
+    "xero.com",
+    "zohoinvoice.com",
 )
 NO_REPLY = re.compile(r"^(no-?reply|do-?not-?reply|donotreply|mailer-daemon|bounces?)([+._-].*)?$")
 BULK_PRECEDENCE = ("bulk", "list", "junk")
