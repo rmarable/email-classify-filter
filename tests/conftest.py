@@ -8,6 +8,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -15,6 +16,14 @@ import pytest
 from ecf.paths import Paths
 from ecf_server import db
 from ecf_server.clock import FakeClock
+
+
+@pytest.fixture(scope="session")
+def dovecot_server() -> Iterator[Any]:
+    """One Dovecot container for the whole run (tests/dovecot.py); skipped without Docker."""
+    from tests import dovecot  # noqa: PLC0415 - only IMAP tests pay for the import
+
+    yield from dovecot.start()
 
 
 @pytest.fixture

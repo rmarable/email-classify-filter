@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json as json_module
+from collections.abc import Iterator
 from types import TracebackType
 from typing import Any, Self, cast
 
@@ -11,6 +13,7 @@ from ecf.errors import EcfError, InternalError, ServiceUnavailableError, Unautho
 from ecf.paths import Paths
 
 TIMEOUT_S = 10.0  # SPEC §15.4
+STREAM_READ_S = 900.0  # a streamed check may run for minutes between lines (§15.4: checks stream)
 NOT_RUNNING = "service not running: `ecf service start` or `ecf watch`"
 
 
@@ -57,3 +60,23 @@ class LocalClient:
 
     def get(self, path: str, *, auth: bool = True) -> Any:
         return self.request("GET", path, auth=auth)
+
+    def stream(self, method: str, path: str, json: Any = None) -> Iterator[dict[str, Any]]:
+        """JSON lines from a streaming route, one object at a time."""
+        if not self.paths.socket.exists():
+            raise ServiceUnavailableError(NOT_RUNNING)
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        timeout = httpx.Timeout(TIMEOUT_S, read=STREAM_READ_S)
+        try:
+            with self._http.stream(method, path, json=json, headers=headers, timeout=timeout) as r:
+                if not r.is_success:
+                    r.read()
+                    body: Any = r.json()
+                    if isinstance(body, dict):
+                        raise EcfError.from_problem(cast(dict[str, Any], body))
+                    raise InternalError(f"unexpected reply ({r.status_code})")
+                for line in r.iter_lines():
+                    if line.strip():
+                        yield cast(dict[str, Any], json_module.loads(line))
+        except httpx.TransportError as exc:
+            raise ServiceUnavailableError(NOT_RUNNING) from exc

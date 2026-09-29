@@ -76,6 +76,7 @@ uv build                                  # wheel + sdist
 ## Commits
 
 - A commit message ends with exactly one trailer line: `Co-Authored-By: Claude <noreply@anthropic.com>`. Never name the model, and never add a `Claude-Session:` link or any other trailer.
+- **After every push, wait for CI and check it passed** (`gh run watch <id> --exit-status`) before reporting the push done or starting the next step, and include the result in the report. A green local run isn't enough: CI runs Python 3.12 and 3.13 on Linux. If CI fails, stop and investigate before anything else. (In V1.1 a CI failure went unnoticed for 9 pushes.)
 
 ## Changelog
 
@@ -94,9 +95,9 @@ uv build                                  # wheel + sdist
 
 - `CLAUDE-STATE.md` holds local working state. It is gitignored, must never be committed, and is loaded automatically through `CLAUDE.local.md` (gitignored; the single line `@CLAUDE-STATE.md`).
 - If either file is missing (fresh clone, another worktree), create a short placeholder for each (rule 3 applies).
-- Update it as work progresses (rule 3 applies). At most 80 lines, in four sections: Current task, Next steps, Open questions, Recent progress (the last 10 entries).
+- Update it as work progresses (rule 3 applies). At most 80 lines, in four sections: Current task, Next steps, Open questions, Recent progress (the last 24 entries; operator decision 2026-09-28).
 - Decisions don't live there. A decision made during the build becomes an ADR in `docs/adr/` (committed with the operator's OK); a small decision that doesn't justify an ADR (a default value, a name) goes in the relevant SPEC section, marked with its date and "operator decision", and the commit message names the change. Either way the state file keeps at most a one-line pointer.
-- **Archiving:** at each `ms-…` tag, or when the file passes 80 lines, progress entries older than the last 10 and resolved open questions (each with a one-line pointer to where its answer landed) move to `state-archive/YYYY-MM.md` (gitignored, never imported). Propose the rollover, show what moves, and do it only after the operator confirms.
+- **Archiving:** at each `ms-…` tag, or when the file passes 80 lines, progress entries older than the last 24 and resolved open questions (each with a one-line pointer to where its answer landed) move to `state-archive/YYYY-MM.md` (gitignored, never imported). Propose the rollover, show what moves, and do it only after the operator confirms.
 
 ## Path-scoped rules
 

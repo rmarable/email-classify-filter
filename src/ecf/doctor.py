@@ -171,7 +171,74 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
         )
     else:
         out.append(Check("secret store", Level.OK, ss["backend"]))
+    out += judge_addresses(st)
     return out
+
+
+def judge_addresses(st: dict[str, Any]) -> list[Check]:
+    """Each address's last check, and open alerts (SPEC §13.2; OD-190)."""
+    out: list[Check] = []
+    failing = {"error", "login_rejected", "lease_lost"}
+    for a in st.get("addresses", []):
+        name = f"address {a['address_id']}"
+        if a["last_status"] is None:
+            out.append(Check(name, Level.WARN, "not checked yet", "ecf check " + a["address_id"]))
+        elif a["last_status"] in failing:
+            fix = (
+                f"ecf address set {a['address_id']} --app-password"
+                if a["last_status"] == "login_rejected"
+                else "see `ecf logs --event check.`"
+            )
+            out.append(Check(name, Level.FAIL, f"{a['last_status']}: {a['last_error']}", fix))
+        else:
+            out.append(
+                Check(name, Level.OK, f"last check {a['last_finished_at']} ({a['last_status']})")
+            )
+    for alert in st.get("alerts", []):
+        out.append(Check("alert", Level.FAIL, f"{alert['title']}: {alert['detail']}"))
+    return out
+
+
+def check_org_domains(paths: Paths) -> Check:
+    try:
+        with LocalClient(paths) as c:
+            org: list[str] = c.get("/v1/addresses")["org_domains"]
+    except EcfError:
+        return Check("org domains", Level.WARN, "can't ask the service")
+    if not org:
+        return Check(
+            "org domains", Level.WARN, "not set", "ecf address add (the first address sets them)"
+        )
+    return Check("org domains", Level.OK, ", ".join(org))
+
+
+DNS_PROBE = "_dmarc.gmail.com"  # a long-standing public DMARC record
+
+
+def check_dns(resolve: Callable[[str], bool] | None = None) -> Check:
+    """Sender authentication needs DNS (SPEC §7.3); resolve one known DMARC record."""
+    ok = (resolve or _resolves_txt)(DNS_PROBE)
+    if ok:
+        return Check("dns", Level.OK, f"resolves {DNS_PROBE}")
+    return Check(
+        "dns",
+        Level.FAIL,
+        f"can't resolve {DNS_PROBE}",
+        "check the network; without DNS every message is unverified",
+    )
+
+
+def _resolves_txt(name: str) -> bool:
+    import dns.exception  # noqa: PLC0415 - only doctor needs it on the client side
+    import dns.resolver  # noqa: PLC0415
+
+    r = dns.resolver.Resolver()
+    r.timeout, r.lifetime = 1.5, 3.0
+    try:
+        r.resolve(name, "TXT")
+    except (dns.exception.DNSException, OSError):
+        return False
+    return True
 
 
 def check_database(paths: Paths) -> list[Check]:
@@ -270,6 +337,8 @@ def run_checks(
     checks = [check_python(), check_sqlite(), *check_data_dir(paths)]
     checks.append(check_unit(manager or manager_for(paths)))
     checks += check_service(paths, now or datetime.now(UTC))
+    checks.append(check_org_domains(paths))
+    checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))
     checks.append(check_claude())

@@ -37,6 +37,10 @@ class FakeClock:
         self._now += timedelta(seconds=seconds)
         self._mono += seconds
 
+    def sleep(self, seconds: float) -> None:
+        """The computer sleeps: wall-clock time moves, monotonic time doesn't (SPEC §5.5)."""
+        self._now += timedelta(seconds=seconds)
+
 
 def to_ts(dt: datetime) -> str:
     """Timestamps are stored as fixed-width UTC ISO-8601 text, so they compare correctly as text."""

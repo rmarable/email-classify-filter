@@ -8,6 +8,7 @@ would make it 0666. A single-instance lock guards the data directory.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import secrets
 import signal
@@ -15,6 +16,7 @@ import socket
 import sqlite3
 import sys
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,14 +25,18 @@ from typing import TextIO
 
 import uvicorn
 
-from ecf.errors import ServiceUnavailableError
+from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import breaker, db
+from ecf_server import audit, breaker, checks, db, health, jobs, schedule
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.mail import MailSource
+from ecf_server.mail.imap import ImapSource
+from ecf_server.notify import Notifier, NullNotifier, host_notifier
+from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -39,10 +45,12 @@ from ecf_server.secretstore.select import (
     host_probe,
     interpreter_changed,
     interpreter_sha256,
+    open_store,
     record_interpreter,
 )
 
 TICK_SECONDS = 60
+WORKER = "checks"
 WATCHDOG_SECONDS = 300
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
@@ -52,6 +60,10 @@ EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 class Options:
     tick_seconds: float = TICK_SECONDS
     watchdog_seconds: float = WATCHDOG_SECONDS
+
+
+def imap_factory(host: str, user: str, password: Callable[[], str]) -> MailSource:
+    return ImapSource(host, user, password)
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -119,6 +131,8 @@ class Service:
         self.state = ServiceState(
             install=paths.install, token="", started_at=to_ts(self.clock.now()), clock=self.clock
         )
+        self.scheduler = Scheduler(self.clock)
+        self.work = threading.Event()  # set when checks are due
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -129,6 +143,80 @@ class Service:
         self._last_tick_mono = self.clock.monotonic()
         self.state.last_tick_at = to_ts(self.clock.now())
         self.state.ticks += 1
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                if self.scheduler.tick(conn):
+                    self.work.set()
+                audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
+            finally:
+                conn.close()
+        except Exception as exc:  # a scheduling failure must never stop the timer
+            log.error("schedule.tick_failed", error_type=type(exc).__name__)
+
+    def _final_flush(self) -> None:
+        """Copy the last audit rows to the files before exiting."""
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
+            finally:
+                conn.close()
+        except Exception as exc:  # the rows stay in the table; the next start copies them
+            log.error("audit.flush_failed", error_type=type(exc).__name__)
+
+    def _notifier(self) -> Notifier:
+        """Desktop notifications (OD-190): none in dev mode or with `notifications: off`."""
+        if self.dev or self.state.db_path is None:
+            return NullNotifier()
+        conn = db.connect(self.state.db_path)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'notifications'").fetchone()
+        finally:
+            conn.close()
+        return NullNotifier() if row and json.loads(row["value"]) == "off" else host_notifier()
+
+    def _checks(self) -> None:
+        """Run due checks from the `fetch` queue, one at a time (SPEC §5.4)."""
+        while not self.stop.is_set():
+            self.work.wait(5.0)
+            self.work.clear()
+            if self.state.db_path is None:
+                continue
+            conn = db.connect(self.state.db_path)
+            try:
+                while not self.stop.is_set() and self._one_check(conn):
+                    pass
+            finally:
+                conn.close()
+
+    def _one_check(self, conn: sqlite3.Connection) -> bool:
+        job = jobs.claim(conn, self.clock, jobs.Queue.FETCH, WORKER)
+        if job is None:
+            return False
+        try:
+            report = checks.run_check(
+                conn,
+                self.clock,
+                address_id=job.address_id,
+                install=self.paths.install,
+                secrets=self.state.store(),
+                factory=self.state.mail_factory or imap_factory,
+                connect=self.state.connect,
+            )
+            health.after_check(conn, self.clock, self.state.notifier, report)
+            schedule.after_check(conn, self.clock, report, self.scheduler.power())
+            jobs.complete(conn, job.job_id, WORKER)
+        except NotFoundError:  # removed since it was queued
+            jobs.complete(conn, job.job_id, WORKER)
+        except Exception as exc:
+            log.error("check.crashed", address_id=job.address_id, error_type=type(exc).__name__)
+            jobs.fail(conn, self.clock, job.job_id, WORKER, type(exc).__name__)
+        return True
 
     def watchdog_expired(self) -> bool:
         # monotonic time stops while the computer sleeps, so sleep never trips the watchdog
@@ -164,6 +252,27 @@ class Service:
         finally:
             lock.close()
 
+    def _prepare_state(self, conn: sqlite3.Connection) -> None:
+        """Dev hooks and memory secrets in dev mode; the OS secret store (prompts off) otherwise."""
+        if self.dev:
+            self.state.mode = "dev"
+            self.state.secret_store = {"backend": "memory", "interpreter_changed": False}
+            if not isinstance(self.clock, FakeClock):
+                raise TypeError("dev mode needs a FakeClock")
+            self.state.dev = DevHooks(self.clock, FakeChat(), self.tick)
+        else:
+            self.state.secret_store = self._secret_store_report(conn)
+            if self.state.secret_store.get("backend"):
+                try:
+                    self.secrets = open_store(
+                        self.paths.install,
+                        self.paths.data_dir,
+                        interactive=False,
+                        probe=host_probe(),
+                    )
+                except ServiceUnavailableError as exc:
+                    self.state.secret_store["detail"] = exc.detail
+
     def _run_locked(self) -> int:
         st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
         self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
@@ -181,15 +290,12 @@ class Service:
         applied = db.migrate(conn)
         with db.write_tx(conn):
             conn.execute("DELETE FROM leases")  # one process in v1: all leases are stale at start
-        if self.dev:
-            self.state.mode = "dev"
-            self.state.secret_store = {"backend": "memory", "interpreter_changed": False}
-            if not isinstance(self.clock, FakeClock):
-                raise TypeError("dev mode needs a FakeClock")
-            self.state.dev = DevHooks(self.clock, FakeChat(), self.tick)
-        else:
-            self.state.secret_store = self._secret_store_report(conn)
+        self._prepare_state(conn)
         conn.close()
+        self.state.db_path = self.paths.db
+        self.state.notifier = self._notifier()
+        self.state.secrets = self.secrets
+        self.state.mail_factory = imap_factory
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)
         server = uvicorn.Server(
@@ -205,11 +311,14 @@ class Service:
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
+        worker = threading.Thread(target=self._checks, name="checks", daemon=True)
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
         timer.start()
+        worker.start()
+        self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
         while not self.stop.wait(1.0):
             if self.watchdog_expired():
@@ -219,6 +328,9 @@ class Service:
         server.should_exit = True
         web.join(STOP_TIMEOUT)
         timer.join(STOP_TIMEOUT)
+        self.work.set()
+        worker.join(STOP_TIMEOUT)
+        self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):
             self.paths.socket.unlink()

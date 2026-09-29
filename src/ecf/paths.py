@@ -65,6 +65,11 @@ class Paths:
         return self.data_dir / "logs" / "ecf.log"
 
     @property
+    def audit_dir(self) -> Path:
+        """Append-only audit JSON lines, one file per address per day (SPEC §15.2)."""
+        return self.data_dir / "audit"
+
+    @property
     def crash_state(self) -> Path:
         return self.data_dir / "crash.json"
 
