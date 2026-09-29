@@ -23,12 +23,14 @@ import sqlite3
 import threading
 import tracemalloc
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
+from ecf.status import OPEN, Status
 from ecf_server import items, leases
-from ecf_server.clock import Clock, to_ts
+from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
@@ -40,6 +42,7 @@ from ecf_server.message import (
     parse_partial,
     stable_id,
 )
+from ecf_server.state_machine import TransitionContext
 
 PAGE_MESSAGES = 30
 PAGE_S = 20.0
@@ -74,6 +77,7 @@ class Cursor:
     last_uid: int
     deferred: list[int]
     version: int
+    recovering_until: int = 0  # UIDs up to this are a re-fetch after a mailbox reset (§6.4)
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,7 @@ class PageResult:
     created: list[str] = field(default_factory=list[str])
     duplicates: int = 0
     quarantined: list[int] = field(default_factory=list[int])
+    relocated: int = 0  # known messages re-pointed after a mailbox reset
     deferred: list[int] = field(default_factory=list[int])  # still waiting after this check
     large_done: list[int] = field(default_factory=list[int])  # deferred messages handled now
     remaining: int = 0  # new UIDs not reached in this page
@@ -115,7 +120,11 @@ def load_cursor(conn: sqlite3.Connection, address_id: str) -> Cursor | None:
     if row is None:
         return None
     return Cursor(
-        row["uidvalidity"], row["last_uid"], json.loads(row["deferred_uids"]), row["version"]
+        row["uidvalidity"],
+        row["last_uid"],
+        json.loads(row["deferred_uids"]),
+        row["version"],
+        row["recovering_until_uid"],
     )
 
 
@@ -128,20 +137,34 @@ def save_cursor(conn: sqlite3.Connection, clock: Clock, lease: leases.Lease, cur
             raise LeaseLostError(f"lease on {lease.address_id} lost; cursor not saved")
         if cur.version == 0 and load_cursor(conn, lease.address_id) is None:
             conn.execute(
-                "INSERT INTO cursors (address_id, uidvalidity, last_uid, deferred_uids, version)"
-                " VALUES (?, ?, ?, ?, 1)",
-                (lease.address_id, cur.uidvalidity, cur.last_uid, deferred),
+                "INSERT INTO cursors (address_id, uidvalidity, last_uid, deferred_uids, version,"
+                " recovering_until_uid) VALUES (?, ?, ?, ?, 1, ?)",
+                (lease.address_id, cur.uidvalidity, cur.last_uid, deferred, cur.recovering_until),
             )
         elif (
             conn.execute(
                 "UPDATE cursors SET uidvalidity = ?, last_uid = ?, deferred_uids = ?,"
-                " version = version + 1 WHERE address_id = ? AND version = ?",
-                (cur.uidvalidity, cur.last_uid, deferred, lease.address_id, cur.version),
+                " recovering_until_uid = ?, version = version + 1"
+                " WHERE address_id = ? AND version = ?",
+                (
+                    cur.uidvalidity,
+                    cur.last_uid,
+                    deferred,
+                    cur.recovering_until,
+                    lease.address_id,
+                    cur.version,
+                ),
             ).rowcount
             != 1
         ):
             raise LeaseLostError(f"cursor for {lease.address_id} moved; not saved")
-    return Cursor(cur.uidvalidity, cur.last_uid, sorted(set(cur.deferred)), cur.version + 1)
+    return Cursor(
+        cur.uidvalidity,
+        cur.last_uid,
+        sorted(set(cur.deferred)),
+        cur.version + 1,
+        cur.recovering_until,
+    )
 
 
 def fetch_page(
@@ -165,13 +188,16 @@ def fetch_page(
         result.first_run = True
         return result
     if cur.uidvalidity != state.uidvalidity:
-        result.reset_detected = True  # recovery is step 13; nothing is fetched meanwhile
-        return result
+        result.reset_detected = True
+        cur, result.relocated = _start_recovery(
+            conn, clock, src, lease, cur, state.uidvalidity, state.uidnext
+        )
 
     new = src.uids_after(cur.last_uid)
     page = new[:PAGE_MESSAGES]
     metas = src.meta(page)
     pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer)
+    pg.recovering_until = cur.recovering_until
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -186,8 +212,10 @@ def fetch_page(
         if meta is not None and (meta.size > cfg.max_message_bytes or meta.size > LARGE_BYTES):
             cur.deferred.append(uid)
         elif meta is not None:
-            _process(pg, uid)
+            _process(pg, uid, meta.internaldate)
         cur.last_uid = uid  # vanished messages (no meta) are simply passed
+        if cur.recovering_until and cur.last_uid >= cur.recovering_until:
+            cur.recovering_until = 0  # recovery done
         cur = save_cursor(conn, clock, lease, cur)
         done += 1
     if result.stopped == "done" and len(new) > len(page):
@@ -218,9 +246,9 @@ def _deferred(pg: _Page, cur: Cursor, end: float, lost: threading.Event | None) 
             break  # another address is processing a large message
         try:
             if oversized:
-                _process_partial(pg, uid, meta.size)
+                _process_partial(pg, uid, meta.size, meta.internaldate)
             else:
-                _process_large(pg, uid)
+                _process_large(pg, uid, meta.internaldate)
         finally:
             LARGE_LOCK.release()
         cur.deferred.remove(uid)
@@ -241,6 +269,7 @@ class _Page:
     analyzer: Analyzer | None
     fetched_bytes: int = 0
     fetch_s: float = 0.0
+    recovering_until: int = 0
 
     def rate(self) -> float:
         """Measured fetch throughput in bytes/s, or DEFAULT_RATE before there is enough data."""
@@ -249,7 +278,7 @@ class _Page:
         return self.fetched_bytes / self.fetch_s
 
 
-def _process(pg: _Page, uid: int) -> None:
+def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
     attempts = _mark(conn, clock, cfg.address_id, uv, uid)
     if attempts > QUARANTINE_AFTER:
@@ -263,17 +292,17 @@ def _process(pg: _Page, uid: int) -> None:
         return
     pg.fetched_bytes += len(raw)
     pg.fetch_s += clock.monotonic() - t0
-    _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {})
+    _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
 
 
-def _process_large(pg: _Page, uid: int) -> None:
+def _process_large(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
     """A message over 16 MB but within the limit: read whole, peak memory logged (§5.1)."""
     tracing = not tracemalloc.is_tracing()
     if tracing:
         tracemalloc.start()
     tracemalloc.reset_peak()
     try:
-        _process(pg, uid)
+        _process(pg, uid, internaldate)
     finally:
         peak = tracemalloc.get_traced_memory()[1]
         if tracing:
@@ -281,7 +310,7 @@ def _process_large(pg: _Page, uid: int) -> None:
     log.info("fetch.large_message", address_id=pg.cfg.address_id, uid=uid, peak_bytes=peak)
 
 
-def _process_partial(pg: _Page, uid: int, size: int) -> None:
+def _process_partial(pg: _Page, uid: int, size: int, internaldate: datetime | None = None) -> None:
     """A message over the address's limit: headers and the start of each text part only;
     unscanned beyond that, and never a DKIM pass (§5.1, §7.2)."""
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
@@ -299,13 +328,29 @@ def _process_partial(pg: _Page, uid: int, size: int) -> None:
         if p.content_type in ("text/plain", "text/html") and p.disposition != "attachment":
             texts[p.section] = pg.src.fetch_part(uid, p.section, cfg.max_scan_bytes) or b""
     parsed = parse_partial(header, parts, texts, size=size, max_scan_bytes=cfg.max_scan_bytes)
-    _store(pg, uid, parsed, header, {"oversized": True, "content_unscanned": True})
+    _store(pg, uid, parsed, header, {"oversized": True, "content_unscanned": True}, internaldate)
 
 
-def _store(pg: _Page, uid: int, parsed: ParsedMessage, raw: bytes, extra: dict[str, Any]) -> None:
-    """Create the item for a read message, or record a repeat delivery (§6.3)."""
+def _store(
+    pg: _Page,
+    uid: int,
+    parsed: ParsedMessage,
+    raw: bytes,
+    extra: dict[str, Any],
+    internaldate: datetime | None = None,
+) -> None:
+    """Create the item for a read message, re-point a known one after a mailbox reset, or record
+    a repeat delivery (§6.3, §6.4)."""
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
     sid = stable_id(cfg.address_id, parsed.message_id, parsed.content_hash, uv, uid)
+    when = internaldate.isoformat() if internaldate else None
+    if pg.recovering_until and uid <= pg.recovering_until:
+        known = _known_after_reset(conn, cfg.address_id, sid, parsed, when)
+        if known is not None:
+            if _relocate(conn, clock, lease, known, uid, uv, when):
+                pg.result.relocated += 1
+            _unmark(conn, cfg.address_id, uv, uid)
+            return
     if conn.execute("SELECT 1 FROM items WHERE stable_id = ?", (sid,)).fetchone():
         with write_tx(conn):  # the same message delivered again: recorded, not re-actioned
             _fence(conn, clock, lease)
@@ -350,9 +395,143 @@ def _store(pg: _Page, uid: int, parsed: ParsedMessage, raw: bytes, extra: dict[s
         hash_version=parsed.hash_version,
         duplicate_message_id=int(reused),
         facts=json.dumps(facts, sort_keys=True),
-        locator=json.dumps({"uid": uid, "uidvalidity": uv, "message_id": parsed.message_id}),
+        locator=json.dumps(
+            {"uid": uid, "uidvalidity": uv, "message_id": parsed.message_id, "internaldate": when}
+        ),
     )
     pg.result.created.append(sid)
+
+
+def _start_recovery(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    src: MailSource,
+    lease: leases.Lease,
+    cur: Cursor,
+    uidvalidity: int,
+    uidnext: int,
+) -> tuple[Cursor, int]:
+    """The mailbox reset its UIDs (§6.4): re-fetch from the day before the newest item, re-point
+    open items by Message-ID, and audit it. Known messages are recognized while re-fetching."""
+    aid = lease.address_id
+    newest = conn.execute(
+        "SELECT max(created_at) FROM items WHERE address_id = ?", (aid,)
+    ).fetchone()[0]
+    uids = src.uids_since(from_ts(newest) - timedelta(days=1)) if newest else []
+    start = min(uids) - 1 if uids else uidnext - 1
+    relocated = 0
+    for row in conn.execute(
+        "SELECT stable_id, message_id, locator FROM items WHERE address_id = ?"
+        " AND message_id IS NOT NULL AND status IN (SELECT value FROM json_each(?))",
+        (aid, json.dumps(sorted(OPEN))),
+    ).fetchall():
+        loc: dict[str, Any] = json.loads(row["locator"])
+        if loc.get("uidvalidity") == uidvalidity:
+            continue
+        found = src.find_message_id(row["message_id"])
+        if found and _relocate(
+            conn, clock, lease, row["stable_id"], found[0], uidvalidity, loc.get("internaldate")
+        ):
+            relocated += 1
+    data = {
+        "old_uidvalidity": cur.uidvalidity,
+        "new_uidvalidity": uidvalidity,
+        "refetch": len(uids),
+        "open_items_relocated": relocated,
+    }
+    with write_tx(conn):
+        _fence(conn, clock, lease)
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+            " VALUES (?, ?, 'mailbox.reset', 'service', 'ok', ?)",
+            (to_ts(clock.now()), aid, json.dumps(data)),
+        )
+    fresh = Cursor(uidvalidity, start, [], cur.version, max(uids) if uids else 0)
+    return save_cursor(conn, clock, lease, fresh), relocated
+
+
+def _known_after_reset(
+    conn: sqlite3.Connection,
+    address_id: str,
+    sid: str,
+    parsed: ParsedMessage,
+    when: str | None,
+) -> str | None:
+    """The item a re-fetched message already has: by stable_id, or without a Message-ID by
+    content hash and arrival date (§6.4)."""
+    if conn.execute("SELECT 1 FROM items WHERE stable_id = ?", (sid,)).fetchone():
+        return sid
+    if parsed.message_id is not None or when is None:
+        return None
+    row = conn.execute(
+        "SELECT stable_id FROM items WHERE address_id = ? AND message_id IS NULL"
+        " AND content_hash = ? AND json_extract(locator, '$.internaldate') = ?",
+        (address_id, parsed.content_hash, when),
+    ).fetchone()
+    return None if row is None else str(row["stable_id"])
+
+
+def _relocate(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    lease: leases.Lease,
+    stable: str,
+    uid: int,
+    uidvalidity: int,
+    when: str | None,
+) -> bool:
+    """Point an item at its message's new UID; False if it already pointed there."""
+    with write_tx(conn):
+        _fence(conn, clock, lease)
+        loc: dict[str, Any] = json.loads(
+            conn.execute("SELECT locator FROM items WHERE stable_id = ?", (stable,)).fetchone()[0]
+        )
+        if loc.get("uid") == uid and loc.get("uidvalidity") == uidvalidity:
+            return False
+        loc |= {"uid": uid, "uidvalidity": uidvalidity}
+        if when is not None:
+            loc["internaldate"] = when
+        conn.execute(
+            "UPDATE items SET locator = ?, updated_at = ? WHERE stable_id = ?",
+            (json.dumps(loc), to_ts(clock.now()), stable),
+        )
+    return True
+
+
+def close_gone(
+    conn: sqlite3.Connection, clock: Clock, src: MailSource, lease: leases.Lease, uidvalidity: int
+) -> int:
+    """Close open items whose message has left INBOX (moved, archived or deleted by a person) as
+    `resolved_by_mailbox` (§6.2). Returns how many."""
+    rows = conn.execute(
+        "SELECT stable_id, locator FROM items WHERE address_id = ?"
+        " AND status IN (SELECT value FROM json_each(?))",
+        (lease.address_id, json.dumps(sorted(OPEN))),
+    ).fetchall()
+    by_uid: dict[int, str] = {}
+    for r in rows:
+        loc: dict[str, Any] = json.loads(r["locator"])
+        if loc.get("uidvalidity") == uidvalidity and "uid" in loc:
+            by_uid[int(loc["uid"])] = r["stable_id"]
+    if not by_uid:
+        return 0
+    present = src.existing(by_uid)
+    closed = 0
+    for uid, sid in by_uid.items():
+        if uid in present:
+            continue
+        if not leases.held(conn, clock, lease):
+            raise LeaseLostError(f"lease on {lease.address_id} lost")
+        items.transition(
+            conn,
+            clock,
+            StableId(sid),
+            Status.RESOLVED_BY_MAILBOX,
+            TransitionContext(),
+            actor="service",
+        )
+        closed += 1
+    return closed
 
 
 def _facts(p: ParsedMessage) -> dict[str, Any]:

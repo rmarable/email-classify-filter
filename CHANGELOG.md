@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- When a mailbox resets its message numbering (UIDVALIDITY), ecf now recovers on its own: it re-reads recent mail, recognizes messages it already has, and re-points them instead of treating them as new. Items whose message you move, archive or delete in your mail client are closed automatically (`resolved_by_mailbox`).
 - The audit log is now also written to daily JSON-lines files in the data folder (one per address, plus one for install-wide events), and the new command `ecf logs` shows it, with filters for address, event, time and `--follow`. It records what ecf did and decided, never message content.
 - The service now checks each address on its own: every 10 minutes in business hours (Mon-Fri 08:00-17:00 New York by default) and every 30 minutes otherwise, every 30 seconds while a backlog remains (catch-up, with a cap and a cooldown, on AC power only on laptops), and straight away after the computer wakes.
 - New command `ecf check [address] [--until-empty]`: fetches new mail, checks each sender's DKIM and DMARC, runs the fraud and regulator checks and records what the pre-check would do (every address is in shadow in V1.1, so nothing in the mailbox changes). The first check of an address starts from now; older mail isn't fetched. `ecf status` now shows each address's last check, backlog and last error.

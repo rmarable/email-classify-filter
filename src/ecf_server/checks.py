@@ -27,7 +27,9 @@ from ecf_server.fetch import (
     LeaseLostError,
     PageResult,
     address_config,
+    close_gone,
     fetch_page,
+    load_cursor,
 )
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import MailLoginRejectedError
@@ -39,7 +41,7 @@ DNS_CAP_S = 600  # DNS answers are cached for at most the check interval (§7.3)
 @dataclass
 class CheckReport:
     address_id: str
-    status: str  # ok | first_run | busy | reset_detected | lease_lost | login_rejected | error
+    status: str  # ok | first_run | busy | reset_recovered | lease_lost | login_rejected | error
     started_at: str
     finished_at: str = ""
     created: int = 0
@@ -50,6 +52,8 @@ class CheckReport:
     remaining: int = 0
     escalations: int = 0
     digest: int = 0
+    relocated: int = 0  # known messages re-pointed after a mailbox reset
+    resolved_by_mailbox: int = 0  # open items whose message left INBOX
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -59,7 +63,8 @@ class CheckReport:
     @property
     def more(self) -> bool:
         """Another check now would make progress (for `--until-empty`)."""
-        return self.status == "ok" and (self.remaining > 0 or self.large_done > 0)
+        progressing = self.status in ("ok", "reset_recovered")
+        return progressing and (self.remaining > 0 or self.large_done > 0)
 
 
 def holder() -> str:
@@ -113,6 +118,9 @@ def run_check(
                 analyzer=analyzer,
                 deadline=clock.monotonic() + MAX_PER_CHECK_S,
             )
+            cur = load_cursor(conn, address_id)
+            if cur is not None and cur.uidvalidity is not None:
+                report.resolved_by_mailbox = close_gone(conn, clock, src, lease, cur.uidvalidity)
             outcomes = precheck.run(
                 conn,
                 clock,
@@ -124,6 +132,7 @@ def run_check(
             )
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
+        report.relocated = page.relocated
         report.quarantined, report.large_done = len(page.quarantined), len(page.large_done)
         report.deferred, report.remaining = len(page.deferred), page.remaining
         report.escalations = sum(o.decision.escalate for o in outcomes)
@@ -187,9 +196,9 @@ def _finish(conn: sqlite3.Connection, clock: Clock, r: CheckReport) -> CheckRepo
 def _page_status(page: PageResult) -> str:
     if page.first_run:
         return "first_run"
-    if page.reset_detected:
-        return "reset_detected"
-    return "lease_lost" if page.stopped == "lease_lost" else "ok"
+    if page.stopped == "lease_lost":
+        return "lease_lost"
+    return "reset_recovered" if page.reset_detected else "ok"
 
 
 def _event(status: str) -> str:

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -320,13 +321,56 @@ def test_lost_event_stops_before_touching_anything(
     assert r.stopped == "lease_lost" and r.created == [] and r.remaining == 1
 
 
-def test_mailbox_reset_is_reported_not_handled(setup: sqlite3.Connection, clock: FakeClock) -> None:
+def test_mailbox_reset_recovers_known_messages(setup: sqlite3.Connection, clock: FakeClock) -> None:
+    src = FakeMailSource(uidvalidity=1)
+    started(setup, clock, src)
+    for i in range(3):
+        src.deliver(message(i), clock.now())
+    assert len(run(setup, clock, src).created) == 3
+    src.expunge(1)
+    src.reset(uidvalidity=2)  # the provider renumbers: the two left become UIDs 1 and 2
+    src.deliver(message(9), clock.now())
+    r = run(setup, clock, src)
+    assert r.reset_detected and r.relocated == 2 and len(r.created) == 1 and r.duplicates == 0
+    locs = [json.loads(x["locator"]) for x in setup.execute("SELECT locator FROM items")]
+    assert sorted(loc["uidvalidity"] for loc in locs) == [1, 2, 2, 2]  # the deleted one keeps 1
+    cur = load_cursor(setup, ADDR)
+    assert cur is not None and cur.uidvalidity == 2 and cur.recovering_until == 0
+    events = [x["event"] for x in setup.execute("SELECT event FROM audit")]
+    assert "mailbox.reset" in events
+    assert run(setup, clock, src).created == []
+
+
+def test_reset_matches_messages_without_a_message_id(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = FakeMailSource(uidvalidity=1)
+    started(setup, clock, src)
+    bare = message(0).replace(b"Message-ID: <contract-0@synthetic.acme.example>\r\n", b"")
+    assert b"Message-ID" not in bare
+    src.deliver(bare, datetime(2026, 10, 1, 9, 0, tzinfo=UTC))  # the test clock's day
+    assert len(run(setup, clock, src).created) == 1
+    src.reset(uidvalidity=5)
+    r = run(setup, clock, src)
+    assert r.relocated == 1 and r.created == []
+    assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 1
+
+
+def test_close_gone_resolves_items_whose_message_left(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
     src = FakeMailSource(uidvalidity=1)
     started(setup, clock, src)
     src.deliver(message(0))
-    src.reset(uidvalidity=2)
-    r = run(setup, clock, src)
-    assert r.reset_detected and r.created == []
+    src.deliver(message(1))
+    run(setup, clock, src)
+    src.expunge(1)  # archived by the person
+    lease = take(setup, clock)
+    assert fetch.close_gone(setup, clock, src, lease, 1) == 1
+    statuses = [x["status"] for x in setup.execute("SELECT status FROM items ORDER BY uid")]
+    assert statuses == ["resolved_by_mailbox", "new"]
+    assert fetch.close_gone(setup, clock, src, lease, 1) == 0  # closed items stay closed
+    assert fetch.close_gone(setup, clock, src, lease, 99) == 0  # another UIDVALIDITY: skipped
 
 
 @pytest.mark.imap

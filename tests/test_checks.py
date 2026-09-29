@@ -258,6 +258,9 @@ def test_a_check_against_dovecot(
         dovecot.append(admin, BEC, datetime.now(UTC))
         r = check()
         assert (r.status, r.created, r.escalations) == ("ok", 1, 1)
+        dovecot.expunge(admin, 1)  # the person deletes it in their mail client
+        assert check().resolved_by_mailbox == 1
+        assert conn.execute("SELECT status FROM items").fetchone()[0] == "resolved_by_mailbox"
         wrong = checks.run_check(
             conn,
             clock,

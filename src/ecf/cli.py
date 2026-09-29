@@ -146,8 +146,7 @@ def _check_line(r: dict[str, Any]) -> str:
         return f"{who} first check: started from now (older mail isn't fetched)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
-    if r["status"] == "reset_detected":
-        return f"{who} mailbox reset detected (UIDVALIDITY changed); recovery arrives in step 13"
+
     if r["error"]:
         return f"{who} {r['status'].replace('_', ' ')}: {r['error']}"
     parts = [f"{r['created']} new"]
@@ -158,11 +157,14 @@ def _check_line(r: dict[str, Any]) -> str:
         ("quarantined", "quarantined"),
         ("large_done", "large read"),
         ("deferred", "large deferred"),
+        ("relocated", "re-found after a mailbox reset"),
+        ("resolved_by_mailbox", "closed (left INBOX)"),
         ("remaining", "still waiting"),
     ):
-        if r[key]:
+        if r.get(key):
             parts.append(f"{r[key]} {label}")
-    return f"{who} " + ", ".join(parts)
+    prefix = "mailbox reset recovered: " if r["status"] == "reset_recovered" else ""
+    return f"{who} {prefix}" + ", ".join(parts)
 
 
 @app.command()
