@@ -1,0 +1,246 @@
+"""Computed facts and the analysis pipeline (V1.1 step 8)."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import timedelta
+from email.message import EmailMessage
+from typing import Any
+
+import pytest
+
+from ecf_server import facts, leases
+from ecf_server.analysis import MessageAnalyzer
+from ecf_server.clock import FakeClock, to_ts
+from ecf_server.db import write_tx
+from ecf_server.dnscache import DnsCache
+from ecf_server.fetch import address_config, fetch_page
+from ecf_server.mail.fake import FakeMailSource
+from ecf_server.message import parse, parse_partial
+from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
+
+AP = facts.AddressInfo("ap", "ap@acme.example", "high")
+STD = facts.AddressInfo("ap", "ap@acme.example", "standard")
+
+
+def mail(
+    sender: str = "billing@vendor-a.example",
+    *,
+    to: str = "ap@acme.example",
+    extra: dict[str, str] | None = None,
+    attachment: tuple[str, str] | None = None,
+) -> bytes:
+    m = EmailMessage()
+    m["From"] = sender
+    m["To"] = to
+    m["Subject"] = "Invoice"
+    m["Date"] = "Mon, 28 Sep 2026 12:00:00 +0000"
+    for k, v in (extra or {}).items():
+        m[k] = v
+    m.set_content("Please see the invoice.\n")
+    if attachment:
+        maintype, subtype = attachment[1].split("/")
+        m.add_attachment(b"data", maintype=maintype, subtype=subtype, filename=attachment[0])
+    return m.as_bytes()
+
+
+def compute(
+    conn: sqlite3.Connection,
+    raw: bytes,
+    *,
+    auth: str = "none",
+    address: facts.AddressInfo = STD,
+    payment: bool = False,
+) -> dict[str, Any]:
+    return facts.compute(conn, address, parse(raw), auth, ["acme.example"], payment_keyword=payment)
+
+
+def history(conn: sqlite3.Connection, sender: str, days: list[int], clock: FakeClock) -> None:
+    start = clock.now()
+    for d in days:
+        with write_tx(conn):
+            facts.record_sender(conn, "ap", sender, "pass", to_ts(start + _days(d)))
+
+
+def _days(n: int) -> timedelta:
+    return timedelta(days=n)
+
+
+# ---- origin and history ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sender", "auth", "want"),
+    [
+        ("ceo@acme.example", "pass", "internal"),
+        ("ceo@payroll.acme.example", "pass", "internal"),  # subdomains count (OD-193)
+        ("ceo@acme.example", "none", "external"),  # the org's name alone isn't enough
+        ("ceo@acme.example.evil.test", "pass", "external"),
+        ("ceo@notacme.example", "pass", "external"),
+    ],
+)
+def test_sender_origin(conn: sqlite3.Connection, sender: str, auth: str, want: str) -> None:
+    f = compute(conn, mail(sender), auth=auth)
+    assert f["sender_origin"] == want
+    assert f["from_org_domain"] == sender.endswith(("@acme.example", ".acme.example"))
+
+
+def test_seen_needs_three_passes_over_fourteen_days(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    history(conn, "billing@vendor-a.example", [0, 5, 13], clock)
+    assert not compute(conn, mail())["sender_seen_before"]  # only 13 days apart
+    history(conn, "billing@vendor-a.example", [14], clock)
+    f = compute(conn, mail())
+    assert f["sender_seen_before"] and not f["sender_confirmed"]
+
+
+def test_only_passing_mail_builds_history(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    for d in (0, 7, 20):
+        with write_tx(conn):
+            facts.record_sender(
+                conn, "ap", "billing@vendor-a.example", "none", to_ts(clock.now() + _days(d))
+            )
+    assert conn.execute("SELECT count(*) FROM senders").fetchone()[0] == 0
+
+
+def test_confirmed_and_shared_platform_senders(conn: sqlite3.Connection) -> None:
+    for sender in ("billing@vendor-a.example", "dse@docusign.net", "invoice@mail.stripe.com"):
+        conn.execute(
+            "INSERT INTO senders (address_id, sender_hash, confirmed_category)"
+            " VALUES ('ap', ?, 'invoice')",
+            (facts.sender_hash(sender),),
+        )
+    f = compute(conn, mail())
+    assert f["sender_seen_before"] and f["sender_confirmed"]
+    for sender in ("dse@docusign.net", "invoice@mail.stripe.com"):
+        g = compute(conn, mail(sender))
+        assert g["shared_platform"] and not g["sender_seen_before"] and not g["sender_confirmed"]
+
+
+# ---- mismatches and bulk --------------------------------------------------------------------
+
+
+def test_reply_to_mismatch_and_expected_domain(conn: sqlite3.Connection) -> None:
+    assert not compute(conn, mail())["reply_to_mismatch"]
+    same = mail(extra={"Reply-To": "ar@vendor-a.example"})
+    assert not compute(conn, same)["reply_to_mismatch"]
+    other = mail(extra={"Reply-To": "pay@vendor-a-payments.test"})
+    assert compute(conn, other)["reply_to_mismatch"]
+    conn.execute(
+        "INSERT INTO senders (address_id, sender_hash, expected_reply_to_domain)"
+        " VALUES ('ap', ?, 'vendor-a-payments.test')",
+        (facts.sender_hash("billing@vendor-a.example"),),
+    )
+    assert not compute(conn, other)["reply_to_mismatch"]
+
+
+def test_recipient_mismatch(conn: sqlite3.Connection) -> None:
+    assert not compute(conn, mail(to="AP@acme.example"))["recipient_mismatch"]
+    assert not compute(conn, mail(to="x@acme.example", extra={"Cc": "ap@acme.example"}))[
+        "recipient_mismatch"
+    ]
+    assert compute(conn, mail(to="someone@else.example"))["recipient_mismatch"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"List-Id": "<news.vendor-a.example>"},
+        {"List-Unsubscribe": "<mailto:u@vendor-a.example>"},
+        {"Auto-Submitted": "auto-generated"},
+        {"Precedence": "bulk"},
+        {"X-Autoreply": "yes"},
+        {"Return-Path": "<>"},
+    ],
+)
+def test_bulk_signals(conn: sqlite3.Connection, extra: dict[str, str]) -> None:
+    assert compute(conn, mail(extra=extra))["bulk_signal"]
+
+
+def test_not_bulk(conn: sqlite3.Connection) -> None:
+    assert not compute(conn, mail(extra={"Auto-Submitted": "no"}))["bulk_signal"]
+    assert compute(conn, mail("no-reply@vendor-a.example"))["bulk_signal"]
+    assert compute(conn, mail("noreply+billing@vendor-a.example"))["bulk_signal"]
+    assert not compute(conn, mail("norah@vendor-a.example"))["bulk_signal"]
+
+
+def test_bulk_corroborates_only_when_authenticated_and_known(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    raw = mail(extra={"List-Id": "<n.vendor-a.example>"})
+    assert not compute(conn, raw, auth="pass")["bulk_corroborates"]  # first-time sender
+    history(conn, "billing@vendor-a.example", [0, 7, 20], clock)
+    assert not compute(conn, raw, auth="none")["bulk_corroborates"]
+    assert compute(conn, raw, auth="pass")["bulk_corroborates"]
+
+
+# ---- content_unscanned ----------------------------------------------------------------------
+
+
+def test_unscanned_reasons(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    assert compute(conn, mail())["unscanned_reasons"] == []
+    pdf = mail(attachment=("inv.pdf", "application/pdf"))
+    assert compute(conn, pdf)["unscanned_reasons"] == ["a document from a first-time sender"]
+    assert "an attachment on a high address" in compute(conn, pdf, address=AP)["unscanned_reasons"]
+    assert "attachments on a payment item" in compute(conn, pdf, payment=True)["unscanned_reasons"]
+    history(conn, "billing@vendor-a.example", [0, 7, 20], clock)
+    assert compute(conn, pdf)["content_unscanned"] is False  # a known sender's PDF
+    big = parse_partial(b"From: a@vendor-a.example\r\n\r\n", [], {}, size=99)
+    f = facts.compute(conn, STD, big, "none", [])
+    assert f["unscanned_reasons"] == ["over the size limit"]
+
+
+def test_unnamed_inline_images_are_not_attachments(conn: sqlite3.Connection) -> None:
+    m = EmailMessage()
+    m["From"] = "billing@vendor-a.example"
+    m["To"] = "ap@acme.example"
+    m.set_content("hi")
+    m.add_alternative("<p>hi <img src='cid:logo'></p>", subtype="html")
+    html = next(p for p in m.iter_parts() if p.get_content_type() == "text/html")
+    html.add_related(b"\x89PNG", maintype="image", subtype="png", cid="<logo>")
+    f = facts.compute(conn, AP, parse(m.as_bytes()), "none", ["acme.example"])
+    assert f["unscanned_reasons"] == []
+
+
+# ---- the pipeline, end to end ---------------------------------------------------------------
+
+
+def test_fetch_with_the_analyzer_builds_sender_history(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    conn.execute(
+        "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+        " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO settings (key, value, updated_at, updated_by)"
+        " VALUES ('org_domains', '[\"acme.example\"]', 'now', 'test')"
+    )
+    dns = FakeDns()
+    key = ed25519_key("vendor-a.example")
+    publish(dns, key)
+    dns.txt("_dmarc.vendor-a.example", "v=DMARC1; p=reject")
+    src = FakeMailSource()
+    seen: list[bool] = []
+
+    def one_check() -> list[str]:
+        lease = leases.acquire(conn, clock, "ap", "w")
+        assert lease is not None
+        analyzer = MessageAnalyzer.for_address(conn, clock, "ap", DnsCache(conn, clock, lookup=dns))
+        return fetch_page(
+            conn, clock, src, address_config(conn, "ap"), lease, analyzer=analyzer
+        ).created
+
+    assert one_check() == []  # first run: start from now
+    for day in range(4):
+        src.deliver(sign(mail(), key))
+        (sid,) = one_check()
+        f = json.loads(
+            conn.execute("SELECT facts FROM items WHERE stable_id = ?", (sid,)).fetchone()[0]
+        )
+        assert f["auth_result"] == "pass" and f["auth"]["dmarc_policy"]["effective"] == "reject"
+        seen.append(f["sender_seen_before"])
+        clock.advance(7 * 86400 + day)
+    assert seen == [False, False, False, True]  # the 4th, after 3 passes over 14+ days

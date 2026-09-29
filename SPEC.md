@@ -478,7 +478,7 @@ fields:
 | `bulk_signal` | `List-Id` or `List-Unsubscribe`, `Auto-Submitted` not `no`, a no-reply sender, `Precedence: bulk|list|junk`, `X-Autoreply`, or an empty Return-Path. Counts toward hide corroboration only when `auth_result = pass` and the sender is not first-time (operator decision 2026-09-27, OD-045). |
 | `content_unscanned` | message over `max_message_bytes`; a text part over `max_scan_bytes_per_part`; attachments on a payment-keyword item; a document attachment from a first-time sender; any attachment on a `high` address |
 
-`org_domains` is required config (default: the first address's domain, which must be confirmed); public mailbox-provider domains (gmail.com, outlook.com and a shipped list) are refused. Attachments are metadata only (name capped at 100 characters, type, size, count); contents are never read. Domains are IDNA-normalized and compared exactly.
+**How the facts are computed in V1.1** (V1.1 build, 2026-09-29; code: `ecf_server/facts.py`): a domain is "in" `org_domains` or the shared-platform list when it equals a listed domain or is a subdomain of one (operator decision 2026-09-29, OD-193); a sender is the SHA-256 of its lowercased From address, per monitored address; history counts only `pass` messages, at the service's receipt time (not the Date header), updated in the same transaction that creates the item; `reply_to_mismatch` compares each Reply-To domain exactly with the From domain and the sender's expected Reply-To domain; `recipient_mismatch` compares the monitored address exactly with To and Cc, so mail delivered by Bcc counts as a mismatch (it is only ever a second signal); a no-reply sender is a local part like `noreply`, `no-reply`, `donotreply`, `mailer-daemon` or `bounce(s)`, optionally followed by a separator and more; documents are PDF, Office, OpenDocument, RTF, CSV, ZIP and HTML files; unnamed inline parts (logos in signatures) are not attachments. `bulk_corroborates` is `bulk_signal` restricted by OD-045. `org_domains` is required config (default: the first address's domain, which must be confirmed); public mailbox-provider domains (gmail.com, outlook.com and a shipped list) are refused. Attachments are metadata only (name capped at 100 characters, type, size, count); contents are never read. Domains are IDNA-normalized and compared exactly.
 
 ### 7.3 DKIM and DMARC (operator decision 2026-09-26, OD-046)
 
@@ -1953,6 +1953,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-190 | 2026-09-28 | (V1.1 prep) | SPEC §1.3 | V1.1 alerts: desktop notifications and `ecf doctor` only |
 | OD-191 | 2026-09-28 | (V1.1 build) | SPEC §10.2 | Address IDs, IMAP host, login before storing, org_domains only at the first address, public domains refused, remove refuses with open items until V1.2, revive on re-add |
 | OD-192 | 2026-09-29 | (V1.1 build) | SPEC §7.3 | `fail` = more than one From header, or every aligned DKIM signature broken (key present) under an enforcing policy after `t=y`; no aligned signature stays `none` |
+| OD-193 | 2026-09-29 | (V1.1 build) | SPEC §7.2 | A domain is in `org_domains` or the shared-platform list when it equals a listed domain or is a subdomain of one |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

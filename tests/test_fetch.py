@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,21 @@ def take(conn: sqlite3.Connection, clock: FakeClock, holder: str = "w1") -> leas
 
 def run(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, **kw: Any) -> PageResult:
     return fetch_page(conn, clock, src, address_config(conn, ADDR), take(conn, clock), **kw)
+
+
+class Fn:
+    """An Analyzer from a plain function (record does nothing)."""
+
+    def __init__(self, fn: Callable[[ParsedMessage, bytes], dict[str, Any]]) -> None:
+        self.fn = fn
+
+    def analyze(self, parsed: ParsedMessage, raw: bytes) -> dict[str, Any]:
+        return self.fn(parsed, raw)
+
+    def record(
+        self, conn: sqlite3.Connection, parsed: ParsedMessage, facts: dict[str, Any]
+    ) -> None:
+        pass
 
 
 def started(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource) -> None:
@@ -138,7 +153,7 @@ def test_time_budget_stops_the_page(setup: sqlite3.Connection, clock: FakeClock)
         clock.advance(8)  # FakeClock moves wall and monotonic time together
         return {}
 
-    r = run(setup, clock, src, analyze=slow)
+    r = run(setup, clock, src, analyzer=Fn(slow))
     assert r.stopped == "time" and len(r.created) == 3 and r.remaining == 3
 
 
@@ -150,7 +165,7 @@ def test_analysis_is_merged_into_facts(setup: sqlite3.Connection, clock: FakeClo
     def analyze(_p: ParsedMessage, _raw: bytes) -> dict[str, Any]:
         return {"auth_result": "pass"}
 
-    r = run(setup, clock, src, analyze=analyze)
+    r = run(setup, clock, src, analyzer=Fn(analyze))
     row = setup.execute("SELECT facts FROM items WHERE stable_id = ?", (r.created[0],)).fetchone()
     assert json.loads(row["facts"])["auth_result"] == "pass"
 
@@ -263,9 +278,9 @@ def test_two_crashes_quarantine_the_message(setup: sqlite3.Connection, clock: Fa
 
     for _ in range(2):
         with pytest.raises(RuntimeError):
-            run(setup, clock, src, analyze=boom)
+            run(setup, clock, src, analyzer=Fn(boom))
         assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 0
-    r = run(setup, clock, src, analyze=boom)
+    r = run(setup, clock, src, analyzer=Fn(boom))
     assert r.quarantined == [1] and r.created == []
     row = setup.execute("SELECT * FROM items").fetchone()
     assert json.loads(row["facts"]) == {"quarantined": True, "content_unscanned": True}

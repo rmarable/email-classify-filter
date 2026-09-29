@@ -22,9 +22,8 @@ import json
 import sqlite3
 import threading
 import tracemalloc
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
@@ -54,7 +53,15 @@ MB = 1024 * 1024
 DEFAULT_MAX = {"high": 64 * MB, "standard": 16 * MB}  # OD-024
 DEFAULT_SCAN = 10 * MB  # OD-027
 
-Analyze = Callable[[ParsedMessage, bytes], dict[str, Any]]
+
+class Analyzer(Protocol):
+    """Analysis plugged into fetching (steps 7 to 9): `analyze` reads and returns facts;
+    `record` runs inside the item's transaction (sender history)."""
+
+    def analyze(self, parsed: ParsedMessage, raw: bytes, /) -> dict[str, Any]: ...
+    def record(
+        self, conn: sqlite3.Connection, parsed: ParsedMessage, facts: dict[str, Any], /
+    ) -> None: ...
 
 
 class LeaseLostError(ConflictError):
@@ -145,7 +152,7 @@ def fetch_page(
     lease: leases.Lease,
     *,
     lost: threading.Event | None = None,
-    analyze: Analyze | None = None,
+    analyzer: Analyzer | None = None,
     deadline: float | None = None,
 ) -> PageResult:
     """One page of new mail, then deferred large mail while `deadline` (monotonic; default the
@@ -164,7 +171,7 @@ def fetch_page(
     new = src.uids_after(cur.last_uid)
     page = new[:PAGE_MESSAGES]
     metas = src.meta(page)
-    pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyze)
+    pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -231,7 +238,7 @@ class _Page:
     lease: leases.Lease
     uidvalidity: int
     result: PageResult
-    analyze: Analyze | None
+    analyzer: Analyzer | None
     fetched_bytes: int = 0
     fetch_s: float = 0.0
 
@@ -310,7 +317,7 @@ def _store(pg: _Page, uid: int, parsed: ParsedMessage, raw: bytes, extra: dict[s
             _unmark_in(conn, cfg.address_id, uv, uid)
         pg.result.duplicates += 1
         return
-    facts = _facts(parsed) | extra | (pg.analyze(parsed, raw) if pg.analyze else {})
+    facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw) if pg.analyzer else {})
     reused = (
         parsed.message_id is not None
         and conn.execute(
@@ -326,6 +333,8 @@ def _store(pg: _Page, uid: int, parsed: ParsedMessage, raw: bytes, extra: dict[s
             "INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
             (sid, parsed.excerpt(CLASSIFIER_CHARS), parsed.excerpt(ACTOR_CHARS)),
         )
+        if pg.analyzer is not None:
+            pg.analyzer.record(c, parsed, facts)
         _unmark_in(c, cfg.address_id, uv, uid)
 
     items.create_item(
