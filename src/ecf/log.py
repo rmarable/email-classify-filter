@@ -2,14 +2,20 @@
 no-content processor so email content never reaches a log.
 
 The processor redacts known content fields, drops raw bytes, and truncates any other string longer
-than `MAX_LOG_STRING`, since a long string is most likely message text. The service logs JSON to a
-rotating file (V1.0 step 8); the CLI logs to stderr.
+than `MAX_LOG_STRING`, since a long string is most likely message text. Since V1.2 (security review
+of the V1.2 plan, 2026-09-29) it also works inside nested dicts and lists, redacts any key naming a
+token, secret, password or credential and Slack's payload keys, and removes anything shaped like a
+Slack token from every string, including messages from libraries and rendered exceptions. The
+Slack and websocket libraries' own loggers are held at WARNING whatever the root level is, since
+at DEBUG they write request and event payloads. The service logs JSON to a rotating file (V1.0
+step 8); the CLI logs to stderr.
 """
 
 from __future__ import annotations
 
 import logging
 import logging.handlers
+import re
 import sys
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -47,8 +53,27 @@ CONTENT_KEYS = frozenset(
         "token",
         "secret",
         "passphrase",
+        # Slack interactivity and Web API shapes: they carry subjects, answers and button values
+        "payload",
+        "blocks",
+        "view",
+        "state",
+        "value",
+        "values",
+        "message",
+        "messages",
+        "attachments",
+        "credentials",
     }
 )
+# Any key containing one of these is redacted too ("bot_token", "client_secret", ...).
+SECRET_KEY_PARTS = ("token", "secret", "password", "credential", "passphrase", "authorization")
+# Slack tokens: xoxb-/xoxp-/xoxa-/xoxe.xoxp- (configuration) and xapp- (app-level).
+_SLACK_TOKEN = re.compile(r"\b(?:xox[a-z]?(?:\.xox[a-z])?|xapp)-[A-Za-z0-9-]{6,}")
+TOKEN_REDACTED = "[token redacted]"  # noqa: S105 - the placeholder, not a secret
+MAX_DEPTH = 6
+# Libraries whose DEBUG output includes payloads or request bodies: never below WARNING.
+QUIET_LIBRARIES = ("slack_sdk", "slack_bolt", "websocket", "urllib3", "aiohttp", "imapclient")
 LOG_ROTATE_BYTES = 50 * 1024 * 1024  # OD-160
 LOG_ROTATE_COUNT = 10
 
@@ -57,16 +82,65 @@ def no_content(
     _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
     for key in list(event_dict):
-        value = event_dict[key]
-        if key.lower() in CONTENT_KEYS:
-            event_dict[key] = REDACTED
-        elif isinstance(value, bytes | bytearray):
-            event_dict[key] = f"[{len(value)} bytes dropped]"
-        elif isinstance(value, memoryview):
-            event_dict[key] = f"[{value.nbytes} bytes dropped]"
-        elif isinstance(value, str) and len(value) > MAX_LOG_STRING and key != "exception":
-            event_dict[key] = value[:MAX_LOG_STRING] + f"…[{len(value) - MAX_LOG_STRING} chars cut]"
+        if key == "exception":  # rendered later; redact_tokens runs on it then
+            continue
+        event_dict[key] = _scrub(key, event_dict[key], 0)
     return event_dict
+
+
+def redact_tokens(
+    _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """After exceptions are rendered: tokens out of every string, tracebacks included."""
+    for key in list(event_dict):
+        event_dict[key] = _tokens_out(event_dict[key], 0)
+    return event_dict
+
+
+def _secret_key(key: str) -> bool:
+    k = key.lower()
+    return k in CONTENT_KEYS or any(part in k for part in SECRET_KEY_PARTS)
+
+
+def _scrub(key: str, value: Any, depth: int) -> Any:
+    if _secret_key(key):
+        return REDACTED
+    if isinstance(value, str):
+        return _short(_SLACK_TOKEN.sub(TOKEN_REDACTED, value))
+    if isinstance(value, bytes | bytearray | memoryview):
+        size = value.nbytes if isinstance(value, memoryview) else len(value)
+        return f"[{size} bytes dropped]"
+    if isinstance(value, dict | list | tuple):
+        return _nested(key, value, depth)  # pyright: ignore[reportUnknownArgumentType]
+    return value
+
+
+def _short(value: str) -> str:
+    if len(value) > MAX_LOG_STRING:
+        return value[:MAX_LOG_STRING] + f"…[{len(value) - MAX_LOG_STRING} chars cut]"
+    return value
+
+
+def _nested(key: str, value: dict[Any, Any] | list[Any] | tuple[Any, ...], depth: int) -> Any:
+    if depth >= MAX_DEPTH:
+        return "[nested value dropped]"
+    if isinstance(value, dict):
+        return {k: _scrub(str(k), v, depth + 1) for k, v in value.items()}
+    return [_scrub(key, v, depth + 1) for v in value]
+
+
+def _tokens_out(value: Any, depth: int) -> Any:
+    if isinstance(value, str):
+        return _SLACK_TOKEN.sub(TOKEN_REDACTED, value)
+    if depth >= MAX_DEPTH:
+        return value
+    if isinstance(value, dict):
+        d: dict[Any, Any] = value  # pyright: ignore[reportUnknownVariableType]
+        return {k: _tokens_out(v, depth + 1) for k, v in d.items()}
+    if isinstance(value, list | tuple):
+        items: list[Any] | tuple[Any, ...] = value  # pyright: ignore[reportUnknownVariableType]
+        return [_tokens_out(v, depth + 1) for v in items]
+    return value
 
 
 def configure_logging(
@@ -103,12 +177,19 @@ def configure_logging(
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             foreign_pre_chain=shared,
-            processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta, exc, renderer],
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                exc,
+                redact_tokens,
+                renderer,
+            ],
         )
     )
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+    for name in QUIET_LIBRARIES:
+        logging.getLogger(name).setLevel(max(level, logging.WARNING))
     structlog.configure(
         processors=[*shared, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
         logger_factory=structlog.stdlib.LoggerFactory(),

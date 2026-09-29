@@ -44,6 +44,9 @@ OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, licen
     "pyobjc-core": ("12.2.2", "MIT", "PyPI License field"),
     "pyobjc-framework-cocoa": ("12.2.2", "MIT", "PyPI License field"),
     "pyobjc-framework-security": ("12.2.2", "MIT", "PyPI License field"),
+    # Linux-only (step-up through PAM, V1.2); PyPI metadata has no license; the wheel's own
+    # license file is the MIT text (dist-info licenses/LICENSE, 2.1.0 wheel, read 2026-09-29)
+    "python-pam": ("2.1.0", "MIT", "dist-info licenses/LICENSE, 2026-09-29"),
     # Metadata says "BSD-like" / "New BSD"; the license files shipped in the wheels (read
     # 2026-09-28) are the zlib text and the BSD-3-Clause text respectively.
     "dkimpy": ("1.1.8", "Zlib", "dist-info licenses/LICENSE, 2026-09-28"),
