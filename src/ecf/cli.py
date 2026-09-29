@@ -86,6 +86,18 @@ def status() -> None:
         f"secrets:   {ss.get('backend') or 'none usable'}"
         + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
     )
+    for a in st.get("addresses", []):
+        last = a["last_finished_at"] or "never checked"
+        line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"
+        if a["last_status"]:
+            line += f" ({a['last_status']})"
+        if a["backlog"] or a["deferred"]:
+            line += f", {a['backlog']} waiting, {a['deferred']} large deferred"
+        if a["paused"]:
+            line += ", PAUSED"
+        typer.echo(line)
+        if a["last_error"] and a["last_status"] in ("error", "login_rejected", "lease_lost"):
+            typer.echo(f"{'':<16} last error: {a['last_error']}")
 
 
 @app.command()
@@ -99,6 +111,54 @@ def doctor() -> None:
             typer.echo(f"{'':>4}  {'':<{width}}  fix: {c.fix}")
     if any(c.level is Level.FAIL for c in checks):
         raise typer.Exit(3)
+
+
+@app.command()
+def check(
+    address: Annotated[str | None, typer.Argument(help="One address (default: all).")] = None,
+    until_empty: Annotated[
+        bool, typer.Option("--until-empty", help="Keep checking while mail is waiting.")
+    ] = False,
+) -> None:
+    """Check mail now: fetch, verify senders, run the fraud and regulator checks. Model checks
+    arrive in V1.3; until then this is the model-free pre-check."""
+    body: dict[str, object] = {"until_empty": until_empty}
+    if address:
+        body["address_id"] = address
+    failed = False
+    with LocalClient(_paths()) as c:
+        for r in c.stream("POST", "/v1/checks", body):
+            if r.get("done"):
+                break
+            failed |= r["status"] in ("error", "login_rejected", "lease_lost")
+            typer.echo(_check_line(r))
+    if failed:
+        raise typer.Exit(3)
+
+
+def _check_line(r: dict[str, Any]) -> str:
+    who = f"{r['address_id']:<16}"
+    if r["status"] == "first_run":
+        return f"{who} first check: started from now (older mail isn't fetched)"
+    if r["status"] == "busy":
+        return f"{who} skipped: another check holds this address"
+    if r["status"] == "reset_detected":
+        return f"{who} mailbox reset detected (UIDVALIDITY changed); recovery arrives in step 13"
+    if r["error"]:
+        return f"{who} {r['status'].replace('_', ' ')}: {r['error']}"
+    parts = [f"{r['created']} new"]
+    for key, label in (
+        ("escalations", "to escalate"),
+        ("digest", "for the digest"),
+        ("duplicates", "repeat deliveries"),
+        ("quarantined", "quarantined"),
+        ("large_done", "large read"),
+        ("deferred", "large deferred"),
+        ("remaining", "still waiting"),
+    ):
+        if r[key]:
+            parts.append(f"{r[key]} {label}")
+    return f"{who} " + ", ".join(parts)
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -291,10 +351,13 @@ def address_remove(address: Annotated[str, typer.Argument(help="Address id or em
     """Stop watching a mailbox and delete its app password from the secret store."""
     with LocalClient(_paths()) as c:
         target = next(
-            (a for a in c.get("/v1/addresses")["addresses"]
-             if address in (a["address_id"], a["email"].lower(), a["email"])),
+            (
+                a
+                for a in c.get("/v1/addresses")["addresses"]
+                if address in (a["address_id"], a["email"].lower(), a["email"])
+            ),
             None,
-        )  # fmt: skip
+        )
         if target is None:
             raise typer.BadParameter(f"no address {address!r}")
         typed = typer.prompt(f"Type {target['email']} to remove it")

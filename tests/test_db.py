@@ -29,7 +29,9 @@ def test_files_are_private(conn: sqlite3.Connection, db_path: Path) -> None:
 def test_migrate_is_idempotent(conn: sqlite3.Connection) -> None:
     assert db.migrate(conn) == []
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert len(tables - {"schema_migrations"}) == 22  # 21 initial + processing (0003)
+    assert (
+        len(tables - {"schema_migrations"}) == 23
+    )  # 21 initial + processing (0003) + check_state (0005)
 
 
 def test_strict_rejects_wrong_types(conn: sqlite3.Connection) -> None:

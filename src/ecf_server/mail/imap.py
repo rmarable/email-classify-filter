@@ -82,6 +82,9 @@ class ImapSource:
         except (OSError, lib.IMAPClientError, imaplib.IMAP4.error) as exc:
             _quiet(conn.logout)
             raise MailUnavailableError(f"login to {self._host} failed: {_why(exc)}") from None
+        except BaseException:  # e.g. no password stored: never leave the connection open
+            _quiet(conn.logout)
+            raise
         self._conn, self._readonly = conn, None
         return conn
 

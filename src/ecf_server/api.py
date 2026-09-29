@@ -24,7 +24,7 @@ from typing import Any, cast
 import anyio.from_thread
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ecf import __version__
@@ -39,7 +39,7 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, db
+from ecf_server import addresses, checks, db
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
@@ -122,13 +122,13 @@ def _problem(err: EcfError, request: Request) -> JSONResponse:
     )
 
 
-Handler = Callable[[Request], JSONResponse]
+Handler = Callable[[Request], Response]
 
 
 def create_app(state: ServiceState) -> Starlette:
     def allow(*callers: Caller) -> Callable[[Handler], Handler]:
         def deco(handler: Handler) -> Handler:
-            def wrapper(request: Request) -> JSONResponse:
+            def wrapper(request: Request) -> Response:
                 header = request.headers.get("authorization", "")
                 given = (
                     header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
@@ -160,6 +160,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "ticks": state.ticks,
                 "breaker": state.breaker,
                 "secret_store": state.secret_store,
+                "addresses": _address_states(state),
             }
         )
 
@@ -228,6 +229,7 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/sessions", create_session, methods=["POST"]),
             Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
             *_address_routes(state, allow),
+            *_check_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -236,6 +238,63 @@ def create_app(state: ServiceState) -> Starlette:
 
 
 Allow = Callable[..., Callable[[Handler], Handler]]
+MAX_ROUNDS = 100  # `--until-empty` stops after this many checks per address
+
+
+def _address_states(state: ServiceState) -> list[dict[str, Any]]:
+    if state.db_path is None:
+        return []
+    conn = state.connect()
+    try:
+        return checks.states(conn)
+    finally:
+        conn.close()
+
+
+def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    @allow(Caller.CLI)
+    def run_checks(request: Request) -> StreamingResponse:
+        """SPEC §15.1 `POST /v1/checks`: one JSON line per check, then a summary line."""
+        body = _body(request)
+        wanted = body.get("address_id")
+        until_empty = bool(body.get("until_empty", False))
+        secrets, factory = state.store(), state.mail_factory
+        if factory is None:
+            raise ServiceUnavailableError("mail access isn't configured in this service")
+        conn = state.connect()
+        try:
+            ids = [a["address_id"] for a in checks.states(conn)]
+        finally:
+            conn.close()
+        if wanted is not None:
+            if not isinstance(wanted, str) or wanted not in ids:
+                raise NotFoundError(f"no address {wanted!r}")
+            ids = [wanted]
+
+        def lines() -> Any:
+            conn = state.connect()
+            try:
+                for address_id in ids:
+                    for _ in range(MAX_ROUNDS if until_empty else 1):
+                        r = checks.run_check(
+                            conn,
+                            state.clock,
+                            address_id=address_id,
+                            install=state.install,
+                            secrets=secrets,
+                            factory=factory,
+                            connect=state.connect,
+                        )
+                        yield json.dumps(r.to_json()) + "\n"
+                        if not r.more:
+                            break
+                yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+            finally:
+                conn.close()
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    return [Route("/v1/checks", run_checks, methods=["POST"])]
 
 
 def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -291,9 +350,14 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         conn = state.connect()
         try:
             a = addresses.set_app_password(
-                conn, state.clock, state.store(), _factory(), ref,
-                _str(body, "app_password"), actor="os_user",
-            )  # fmt: skip
+                conn,
+                state.clock,
+                state.store(),
+                _factory(),
+                ref,
+                _str(body, "app_password"),
+                actor="os_user",
+            )
         finally:
             conn.close()
         log.info("secret.written", address_id=a["address_id"])
