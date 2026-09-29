@@ -3,8 +3,9 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.1-mail-checks (not yet tagged)
+## ms-v1.1-mail-checks (2026-09-29)
 
+- Decisions at the tag: the Mail Provider Unreachable alert treats the network as up when the mail provider's host name resolves (OD-198); four V1.1 measurement items are carried to later milestones (OD-199, SPEC §21.2).
 - The list of shared platforms (senders that never count as "seen before") now uses each vendor's researched sending domains: added Adobe Sign, Dropbox Sign (HelloSign), PandaDoc, Zoho Invoice and Wave; removed `quickbooks.com`, which isn't a sending domain (Intuit sends from `intuit.com`) (OD-197).
 - Shadow run on the test mailbox done (33 messages, ended early by the operator): results in SPEC §21.1; V1.1 measurement items closed or carried forward in §21.2; additions to the shared-platform sender list proposed for review (§7.2).
 - Fixed: a check that lost its lease partway through a message counted that as one of the message's two allowed crash attempts, so repeated interruptions could quarantine an ordinary message. Only real failures on the message count now (found in the shadow run).
