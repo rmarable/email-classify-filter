@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.1.1-fixes (not yet tagged)
+## ms-v1.1.1-fixes (2026-09-29)
 
 Fixes from an adversarial review of V1.1 (four reviewers; SPEC §5.1, §6.3, §6.4, §7.3, §8.5).
 
@@ -12,7 +12,7 @@ Fixes from an adversarial review of V1.1 (four reviewers; SPEC §5.1, §6.3, §6
 - Security: at most 8 DKIM signatures are checked per message, DNS lookups for one message stay within the check's DNS budget, and a DNS error on the way to a sender's DMARC policy now gives "unverified" instead of falling back to a parent domain's policy.
 - Security: a re-send with the same Message-ID and body but a different sender, display name, Reply-To or Subject is now checked as a new message and flagged "Message-ID reused", instead of being filed as a repeat delivery.
 - Security: text attachments and text bodies in other formats are now scanned for fraud and regulator keywords; bank details laid out in an HTML table are now recognized; lookalike domains written in punycode are caught.
-- Fewer false alarms: a vendor's own parent domain, subdomains and sibling subdomains no longer count as lookalikes; brand names like "Booking.com" and product names like "Node.js" in a display name no longer fire; bare "bank", "banking" and "wire" no longer count as bank details (OD-202); "not addressed to this mailbox" counts as a fraud signal only on authenticated mail (OD-201); your organization's help desk on Zendesk, Freshdesk, Atlassian or ServiceNow isn't a lookalike (OD-203).
+- Fewer false alarms: a vendor's own parent domain, subdomains and sibling subdomains no longer count as lookalikes; brand names like "Booking.com" and product names like "Node.js" in a display name no longer fire (OD-205); bare "bank", "banking" and "wire" no longer count as bank details (OD-202); "not addressed to this mailbox" counts as a fraud signal only on authenticated mail (OD-201); your organization's help desk on Zendesk, Freshdesk, Atlassian or ServiceNow isn't a lookalike (OD-203).
 - Fixed: a network error while reading a message counted as a crash, so two of them quarantined an ordinary email unread and escalated it as fraud.
 - Fixed: after a mailbox reset, mail that had waited days before being read, and deferred large mail, could be skipped; recovery now looks back from when the mail arrived. Items whose message was deleted before a reset now close.
 - Fixed: an unexpected error in a check skipped all record-keeping and made `ecf check` say the service wasn't running; it's now recorded as `internal_error`. A missing app password now shows as `secret_unavailable` instead of raising "Mail Provider Unreachable".

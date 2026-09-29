@@ -246,7 +246,7 @@ State, blob storage and identity are plain modules in v1 (redesigned against Dyn
 8. **Policy** (§8, §9): stage, sensitivity ceiling, action policy, `high_risk_route`, outbound switch. Automatic actions get a grant and go to the action queue; items needing a person go to Slack through the Slack output queue.
 9. **Report:** Slack threads only for items needing a person; the pinned "Needs you"; automatic actions roll into an hourly digest (with a per-address `content_unscanned` count); audit events are written by the service. No idle posts.
 
-**Crash safety:** the service records "processing `<stable_id>`" before each message. After 2 crashes on the same message it quarantines it (`content_unscanned` plus escalate) and moves on, so one crafted email can't trip the crash-loop breaker and stop fraud checks everywhere. **Since the V1.1 review (2026-09-29):** every message is parsed and DKIM-checked in a short-lived child process with a time limit (30 s plus 3 s per MB), so a crash, a hang or runaway work on one message counts as a crash on it and can never stall the single check thread (OD-204, pending operator confirmation); a lost lease or a mail-connection error doesn't count as an attempt, since neither is the message's fault (a message the server can never deliver fails the check each time, which shows in `ecf status` and raises Mail Provider Unreachable).
+**Crash safety:** the service records "processing `<stable_id>`" before each message. After 2 crashes on the same message it quarantines it (`content_unscanned` plus escalate) and moves on, so one crafted email can't trip the crash-loop breaker and stop fraud checks everywhere. **Since the V1.1 review (2026-09-29):** every message is parsed and DKIM-checked in a short-lived child process with a time limit (30 s plus 3 s per MB), so a crash, a hang or runaway work on one message counts as a crash on it and can never stall the single check thread (operator decision 2026-09-29, OD-204); a lost lease or a mail-connection error doesn't count as an attempt, since neither is the message's fault (a message the server can never deliver fails the check each time, which shows in `ecf status` and raises Mail Provider Unreachable).
 
 ### 5.2 Time budgets and the model queue
 
@@ -585,7 +585,7 @@ Computed by the service over every decoded MIME part, the Subject, display name 
 4. DMARC fail on a payment item.
 5. `duplicate_message_id`.
 6. A From domain in `org_domains` with `auth_result ≠ pass`.
-7. A display name containing an address or domain different from the From domain, or matching an org address or staff name. (V1.1: staff names aren't configurable yet; an address, or a bare domain ending in a common top-level domain, other than the From domain, its subdomains or its parents fires, so "Booking.com" from mailer.booking.com and product names like "Node.js" don't; V1.1 review, 2026-09-29, pending operator confirmation.)
+7. A display name containing an address or domain different from the From domain, or matching an org address or staff name. (V1.1: staff names aren't configurable yet; an address, or a bare domain ending in a common top-level domain, other than the From domain, its subdomains or its parents fires, so "Booking.com" from mailer.booking.com and product names like "Node.js" don't; operator decision 2026-09-29, OD-205.)
 8. More than one From header, or an ambiguous one (operator decision 2026-09-29, OD-194): a From header with more than one `@` outside quotes and comments, or not exactly one address (`ceo@acme.example <x@evil.test>` unquoted), because parsers and mail clients may disagree on the sender; its `auth_result` is `none`. A bare CR in the header block fires it too (V1.1 review, 2026-09-29; §7.3).
 9. An `X-ECF-Install` header on a message not skipped as ecf's own. Exception: a mismatched `X-ECF-Install` from this install's own address with `auth_result = pass` on an otherwise ecf-shaped message pauses the address as a possible second install (§13.6).
 
@@ -1976,7 +1976,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-201 | 2026-09-29 | (V1.1 review) | SPEC §8.5 | `recipient_mismatch` is a fraud second signal only when `auth_result = pass` |
 | OD-202 | 2026-09-29 | (V1.1 review) | SPEC §8.5 | Bare "bank", "banking" and "wire" removed from the bank-detail keywords |
 | OD-203 | 2026-09-29 | (V1.1 review) | SPEC §8.5 | A per-customer subdomain on a shared service isn't a lookalike of an org domain |
-| OD-204 | 2026-09-29 | (V1.1 review) | SPEC §5.1 | Every message is parsed and verified in a child process with a time limit (pending operator confirmation) |
+| OD-204 | 2026-09-29 | (V1.1 review) | SPEC §5.1 | Every message is parsed and verified in a child process with a time limit |
+| OD-205 | 2026-09-29 | (V1.1 review) | SPEC §8.5 | Trigger 7: a bare domain in a display name counts only with a common top-level domain; an address always counts; the From domain's parents are accepted |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
