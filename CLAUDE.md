@@ -76,6 +76,7 @@ uv build                                  # wheel + sdist
 ## Commits
 
 - A commit message ends with exactly one trailer line: `Co-Authored-By: Claude <noreply@anthropic.com>`. Never name the model, and never add a `Claude-Session:` link or any other trailer.
+- **After every push, wait for CI and check it passed** (`gh run watch <id> --exit-status`) before reporting the push done or starting the next step, and include the result in the report. A green local run isn't enough: CI runs Python 3.12 and 3.13 on Linux. If CI fails, stop and investigate before anything else. (In V1.1 a CI failure went unnoticed for 9 pushes.)
 
 ## Changelog
 
