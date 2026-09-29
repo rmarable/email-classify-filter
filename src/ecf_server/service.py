@@ -27,7 +27,7 @@ import uvicorn
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import breaker, checks, db, jobs, schedule
+from ecf_server import audit, breaker, checks, db, jobs, schedule
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -148,10 +148,24 @@ class Service:
             try:
                 if self.scheduler.tick(conn):
                     self.work.set()
+                audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
             finally:
                 conn.close()
         except Exception as exc:  # a scheduling failure must never stop the timer
             log.error("schedule.tick_failed", error_type=type(exc).__name__)
+
+    def _final_flush(self) -> None:
+        """Copy the last audit rows to the files before exiting."""
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
+            finally:
+                conn.close()
+        except Exception as exc:  # the rows stay in the table; the next start copies them
+            log.error("audit.flush_failed", error_type=type(exc).__name__)
 
     def _checks(self) -> None:
         """Run due checks from the `fetch` queue, one at a time (SPEC §5.4)."""
@@ -301,6 +315,7 @@ class Service:
         timer.join(STOP_TIMEOUT)
         self.work.set()
         worker.join(STOP_TIMEOUT)
+        self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):
             self.paths.socket.unlink()

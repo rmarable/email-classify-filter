@@ -39,7 +39,7 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, checks, db
+from ecf_server import addresses, audit, checks, db
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
@@ -294,7 +294,34 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
-    return [Route("/v1/checks", run_checks, methods=["POST"])]
+    @allow(Caller.CLI)
+    def logs(request: Request) -> JSONResponse:
+        """SPEC §15.1 `GET /v1/logs`: audit events, newest `limit`, oldest first."""
+        q = request.query_params
+        try:
+            limit = int(q.get("limit", "50"))
+            after = int(q["after_id"]) if "after_id" in q else None
+        except ValueError as exc:
+            raise InvalidInputError("limit and after_id must be numbers") from exc
+        conn = state.connect()
+        try:
+            events = audit.query(
+                conn,
+                state.install,
+                address_id=q.get("address_id"),
+                event_prefix=q.get("event"),
+                since=q.get("since"),
+                after_id=after,
+                limit=limit,
+            )
+        finally:
+            conn.close()
+        return JSONResponse({"events": events})
+
+    return [
+        Route("/v1/checks", run_checks, methods=["POST"]),
+        Route("/v1/logs", logs, methods=["GET"]),
+    ]
 
 
 def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:

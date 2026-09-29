@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sys
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 import typer
 
@@ -159,6 +163,58 @@ def _check_line(r: dict[str, Any]) -> str:
         if r[key]:
             parts.append(f"{r[key]} {label}")
     return f"{who} " + ", ".join(parts)
+
+
+@app.command()
+def logs(
+    address: Annotated[str | None, typer.Option("--address", help="Only this address.")] = None,
+    event: Annotated[
+        str | None, typer.Option("--event", help="Event name or prefix, e.g. check. or action.")
+    ] = None,
+    since: Annotated[
+        str | None, typer.Option("--since", help="A time (2026-09-29T08:00) or an age (2h, 3d).")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", help="How many of the newest events.")] = 50,
+    follow: Annotated[
+        bool, typer.Option("--follow", "-f", help="Keep showing new events.")
+    ] = False,
+) -> None:
+    """Show the audit log: what the service did and decided, never message content."""
+    params: dict[str, str] = {"limit": str(limit)}
+    if address:
+        params["address_id"] = address
+    if event:
+        params["event"] = event
+    if since:
+        params["since"] = _since(since)
+    with LocalClient(_paths()) as c:
+        last = 0
+        while True:
+            events = c.get("/v1/logs?" + urlencode(params))["events"]
+            for e in events:
+                typer.echo(_log_line(e))
+                last = max(last, int(e["id"]))
+            if not follow:
+                return
+            params["after_id"] = str(last)
+            time.sleep(2)
+
+
+def _since(value: str) -> str:
+    """An age like 30m, 2h or 3d becomes a UTC timestamp; anything else is passed through."""
+    m = re.fullmatch(r"(\d+)([mhd])", value.strip())
+    if not m:
+        return value
+    unit = {"m": "minutes", "h": "hours", "d": "days"}[m.group(2)]
+    when = datetime.now(UTC) - timedelta(**{unit: int(m.group(1))})
+    return when.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _log_line(e: dict[str, Any]) -> str:
+    where = e.get("address_id") or "-"
+    data = json.dumps(e["data"], sort_keys=True) if e["data"] else ""
+    flag = "" if e["outcome"] == "ok" else f" [{e['outcome']}]"
+    return f"{e['ts'][:19]}  {where:<12} {e['event']}{flag}  {data}".rstrip()
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
