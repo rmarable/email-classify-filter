@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Shadow run on the test mailbox (in progress): first results in SPEC §21.1; V1.1 measurement items closed or carried forward in §21.2; additions to the shared-platform sender list proposed for review (§7.2).
 - Fixed: a check that lost its lease partway through a message counted that as one of the message's two allowed crash attempts, so repeated interruptions could quarantine an ordinary message. Only real failures on the message count now (found in the shadow run).
 - Fixed: `ecf check` run while a scheduled check of the same address was in progress could take over that check's lease, stopping it (nothing was written twice). A second check of the same address now reports "busy" (found in the shadow run).
 - An address's message size limit is now capped at the mail provider's own limit when the probe finds a smaller one (for Purelymail, 48.8 MB instead of 64 MB on `high` addresses); sizes are printed in MB (OD-196).
