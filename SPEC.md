@@ -571,7 +571,7 @@ Purelymail: keywords persist (operator test) but its webmail doesn't show them; 
 
 Computed by the service over every decoded MIME part, the Subject, display name and attachment filenames. Hidden HTML text (V1.1 build, 2026-09-28) is text under `display:none`, `visibility:hidden`, a zero font size, opacity or max-height, or the `hidden` attribute; `<script>`, `<style>`, `<head>`, `<template>`, `<noscript>`, `<title>` and comments are never text. Colour tricks (white on white) are not detected as hidden; the full text still carries them. Before matching, text is NFKC-normalized, format characters removed and folded to a UTS #39 confusable skeleton, using Unicode's `confusables.txt` shipped as a data file under the Unicode License v3 (operator decision 2026-09-28, OD-188); triggers run over both the visible text (hidden HTML text stripped) and the full text; a hit in either counts.
 
-**Keyword matching** (operator decision 2026-09-27, OD-063): whole-word; case-sensitive for acronyms (`SEC`, `IRS`, `FTC`), case-insensitive for phrases. Keyword lists ship as data [proposed: `ecf_server/data/keywords.yaml`, versioned per release].
+**Keyword matching** (operator decision 2026-09-27, OD-063): whole-word; case-sensitive for acronyms (`SEC`, `IRS`, `FTC`), case-insensitive for phrases. Keyword lists ship as data in `ecf_server/data/keywords.yaml`, versioned per release; the V1.1 lists (bank, change wording, payment, regulator) were reviewed by the operator on 2026-09-29. **Folding in V1.1** (V1.1 build, 2026-09-29): acronyms match `skeleton(NFKC, format characters removed)`; phrases and domains match `skeleton(casefold(…))`, casefolded first because the UTS #39 skeleton is case-sensitive (it maps `I` to `l` and `m` to `rn`); domains in display names are read from the text before the skeleton. Lookalike domains (trigger 3) are compared with `org_domains` and known vendors (senders with a confirmed category or enough passing history; the `senders.domain` column, migration 0004): the same skeleton, the same name under another top-level domain, a one-edit typo of a name of 5 or more letters, or the known domain or its name used as a subdomain elsewhere; subdomains of the known domain never count.
 
 **Fraud triggers:**
 1. Bank-detail keywords (bank, IBAN, routing, wire, account number) **together with** a first-time sender, change wording ("new account", "updated bank details", "change of remittance"), or `reply_to_mismatch` (operator decision 2026-09-26, OD-060). Bank keywords alone do not trigger. For this trigger only a human-confirmed sender counts as known.
@@ -580,11 +580,13 @@ Computed by the service over every decoded MIME part, the Subject, display name 
 4. DMARC fail on a payment item.
 5. `duplicate_message_id`.
 6. A From domain in `org_domains` with `auth_result ≠ pass`.
-7. A display name containing an address or domain different from the From domain, or matching an org address or staff name.
-8. More than one From header.
+7. A display name containing an address or domain different from the From domain, or matching an org address or staff name. (V1.1: staff names aren't configurable yet; an address or domain other than the From domain or its subdomains fires.)
+8. More than one From header, or an ambiguous one (operator decision 2026-09-29, OD-194): a From header with more than one `@` outside quotes and comments, or not exactly one address (`ceo@acme.example <x@evil.test>` unquoted), because parsers and mail clients may disagree on the sender; its `auth_result` is `none`.
 9. An `X-ECF-Install` header on a message not skipped as ecf's own. Exception: a mismatched `X-ECF-Install` from this install's own address with `auth_result = pass` on an otherwise ecf-shaped message pauses the address as a possible second install (§13.6).
 
 **Regulator trigger** (separate, so rule 1 doesn't swallow it): agency names and terms; blocks hide actions and routes to rule 2.
+
+**Not in V1.1** (they need V1.5's `sent` table): the second-install exception to trigger 9 (any `X-ECF-Install` header fires it) and loop suppression.
 
 **Loop suppression:** auto-replies and bounces whose `In-Reply-To`/`References` cite an alert-type `sent` entry, with a DSN or `Auto-Submitted` plus DMARC pass, are labelled and left; this runs after rule 1 and suppresses only the alert email, never the fraud label, flag or escalation.
 
@@ -1954,6 +1956,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-191 | 2026-09-28 | (V1.1 build) | SPEC §10.2 | Address IDs, IMAP host, login before storing, org_domains only at the first address, public domains refused, remove refuses with open items until V1.2, revive on re-add |
 | OD-192 | 2026-09-29 | (V1.1 build) | SPEC §7.3 | `fail` = more than one From header, or every aligned DKIM signature broken (key present) under an enforcing policy after `t=y`; no aligned signature stays `none` |
 | OD-193 | 2026-09-29 | (V1.1 build) | SPEC §7.2 | A domain is in `org_domains` or the shared-platform list when it equals a listed domain or is a subdomain of one |
+| OD-194 | 2026-09-29 | (V1.1 build) | SPEC §8.5 | An ambiguous From header (more than one `@` outside quotes and comments, or not exactly one address) is a fraud trigger and gives `auth_result = none` |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

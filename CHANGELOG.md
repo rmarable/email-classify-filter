@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- Fraud and regulator triggers (not yet run on a schedule): bank-detail changes, first-time payment senders with a second signal, lookalike domains (including lookalike letters, via Unicode's confusables data), DMARC fail on payment mail, reused Message-IDs, your own domain unauthenticated, misleading display names, multiple or ambiguous From headers (OD-194), regulator keywords, and unverified payment senders.
 - Sender authentication (not yet run on a schedule): ecf checks DKIM and DMARC itself (RFC 9989). `fail` means more than one From header, or every signature aligned with the sender broken under a quarantine or reject policy; unsigned mail stays `none` (OD-192).
 - Adding an address (or changing its app password) now probes the mailbox: folders, keyword support and size limit, with a note for anything missing. `ecf address list` shows the number of notes.
 - New commands `ecf address add`, `list`, `set --app-password` and `remove`. Adding checks the app password by logging in before the service stores it in the OS secret store; new mailboxes start in shadow with outbound off. The first address sets your organization's domains (public mail domains such as gmail.com are refused); later changes go through `ecf config apply` (V1.2). Removing an address with open items waits for step-up in V1.2 (OD-191).

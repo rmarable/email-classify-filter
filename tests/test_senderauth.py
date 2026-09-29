@@ -370,3 +370,16 @@ def test_budget_and_prefetch(conn: sqlite3.Connection, clock: FakeClock) -> None
     assert c.queries == 20 and c.get("n7.example").records == ("7",) and c.queries == 20
     clock.advance(31)
     assert c.get("late.example").status == "error" and c.queries == 20
+
+
+def test_ambiguous_from_is_none_even_when_signed(
+    conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns
+) -> None:
+    key = ed25519_key("vendor-a.example")
+    publish(dns, key)
+    raw = sign(mail("billing@vendor-a.example"), key).replace(
+        b"From: Vendor A <billing@vendor-a.example>",
+        b"From: billing@vendor-a.example <mallory@mail.test>",
+    )
+    out = check(conn, clock, dns, raw)
+    assert out.result == "none" and "ambiguous" in out.reason

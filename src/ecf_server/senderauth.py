@@ -91,6 +91,8 @@ def evaluate(raw: bytes, parsed: ParsedMessage, dns: DnsCache) -> AuthOutcome:
         return AuthOutcome("fail", "more than one From header")
     if not parsed.from_addr or "@" not in parsed.from_addr:
         return AuthOutcome("none", "no usable From address")
+    if parsed.from_ambiguous:
+        return AuthOutcome("none", "ambiguous From header: parsers may disagree on the sender")
     author = parsed.from_addr.rsplit("@", 1)[1].rstrip(".").lower()
     sigs = _dkim.signatures(raw)
     dns.prefetch(

@@ -91,6 +91,7 @@ class ParsedMessage:
     defects: int
     hash_version: int = HASH_VERSION
     size: int = 0
+    from_ambiguous: bool = False  # the From header doesn't name exactly one clear address
 
     @property
     def any_truncated(self) -> bool:
@@ -179,8 +180,11 @@ def _parsed(
     hash_version: int,
 ) -> ParsedMessage:
     from_values = _all(msg, "from")
-    froms = getaddresses(list(from_values))
+    froms = [(n, a) for n, a in getaddresses(list(from_values)) if a]
     from_name, from_addr = froms[0] if froms else ("", "")
+    # raw values: the parsed header object re-renders the address and hides the ambiguity
+    raw_from = [str(v) for k, v in msg.raw_items() if k.lower() == "from"]
+    ambiguous = len(froms) != 1 or any(_ats(v) > 1 for v in raw_from)
     return ParsedMessage(
         message_id=normalize_message_id(_first(msg, "message-id")),
         from_count=len(from_values),
@@ -197,7 +201,16 @@ def _parsed(
         defects=defects,
         hash_version=hash_version,
         size=size,
+        from_ambiguous=bool(from_values) and ambiguous,
     )
+
+
+def _ats(value: str) -> int:
+    """`@` signs outside quoted strings and comments: more than one means parsers can disagree
+    about which address is the sender (`ceo@acme.example <x@evil.test>`)."""
+    without = re.sub(r'"(?:[^"\\]|\\.)*"', "", value)
+    without = re.sub(r"\([^()]*\)", "", without)
+    return without.count("@")
 
 
 def parse_partial(

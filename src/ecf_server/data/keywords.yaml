@@ -1,0 +1,88 @@
+# Trigger keyword lists (SPEC §8.5), versioned with each release. Reviewed by the operator on
+# 2026-09-29.
+#
+# Matching (OD-063): whole words. `acronyms` are case-sensitive, `phrases` case-insensitive; both
+# are compared after folding (NFKC, format characters removed, UTS #39 skeleton), so lookalike
+# letters still match. Words in a phrase may be separated by any run of whitespace.
+version: 1
+
+# Bank details. Alone they never trigger (OD-060): they need a first-time sender (human-confirmed
+# only, OD-044), change wording, or a Reply-To mismatch.
+bank:
+  acronyms: [IBAN, SWIFT, BIC, ACH, ABA]
+  phrases:
+    - bank
+    - banking
+    - bank account
+    - bank details
+    - account number
+    - routing number
+    - sort code
+    - wire
+    - wire transfer
+    - wiring instructions
+    - remittance details
+
+# Wording that says payment details changed (OD-060, OD-061).
+change:
+  acronyms: []
+  phrases:
+    - new account
+    - new bank
+    - new banking details
+    - updated bank details
+    - updated banking details
+    - update our bank details
+    - changed our bank
+    - change of bank
+    - bank details have changed
+    - change of remittance
+    - new remittance
+    - updated remittance
+    - new payment details
+    - updated payment details
+    - new wiring instructions
+    - update your records
+
+# Money moving or owed (SPEC §6: payment keyword).
+payment:
+  acronyms: [ACH]
+  phrases:
+    - invoice
+    - invoices
+    - payment
+    - payments
+    - remittance
+    - remit
+    - wire transfer
+    - bank transfer
+    - balance due
+    - amount due
+    - past due
+    - overdue
+    - outstanding balance
+    - direct deposit
+    - purchase order
+    - please pay
+    - pay now
+
+# Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
+# common terms; add state and non-US agencies as needed.
+regulator:
+  acronyms: [SEC, IRS, FTC, FDA, FINRA, CFPB, OSHA, EPA, FCC, DOJ, HMRC]
+  phrases:
+    - internal revenue service
+    - securities and exchange commission
+    - federal trade commission
+    - food and drug administration
+    - consumer financial protection bureau
+    - department of labor
+    - department of justice
+    - department of revenue
+    - attorney general
+    - subpoena
+    - civil investigative demand
+    - notice of deficiency
+    - regulatory inquiry
+    - warning letter
+    - cease and desist

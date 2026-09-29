@@ -133,13 +133,25 @@ def record_sender(
     if auth_result != "pass" or not from_addr:
         return
     conn.execute(
-        "INSERT INTO senders (address_id, sender_hash, dmarc_pass_count, first_pass_at,"
-        " last_pass_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT (address_id, sender_hash) DO UPDATE"
-        " SET dmarc_pass_count = dmarc_pass_count + 1,"
+        "INSERT INTO senders (address_id, sender_hash, domain, dmarc_pass_count, first_pass_at,"
+        " last_pass_at) VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT (address_id, sender_hash) DO UPDATE"
+        " SET dmarc_pass_count = dmarc_pass_count + 1, domain = excluded.domain,"
         " first_pass_at = coalesce(first_pass_at, excluded.first_pass_at),"
         " last_pass_at = excluded.last_pass_at",
-        (address_id, sender_hash(from_addr), now, now),
+        (address_id, sender_hash(from_addr), domain_of(from_addr), now, now),
     )
+
+
+def known_vendor_domains(conn: sqlite3.Connection, address_id: str) -> list[str]:
+    """Domains of this address's known senders (confirmed, or enough passing history), for the
+    lookalike trigger."""
+    out: set[str] = set()
+    for row in conn.execute(
+        "SELECT * FROM senders WHERE address_id = ? AND domain IS NOT NULL", (address_id,)
+    ):
+        if row["confirmed_category"] is not None or _enough_history(row):
+            out.add(row["domain"])
+    return sorted(d for d in out if not in_domains(d, SHARED_PLATFORMS))
 
 
 def reply_to_mismatch(p: ParsedMessage, from_domain: str | None, expected: str | None) -> bool:

@@ -116,7 +116,7 @@ This table is owned here (SPEC §17.5) and generated from `uv.lock` with
 `uv run python scripts/check_licenses.py --markdown`. The allow-list is MIT, MIT-0, BSD, ISC,
 Apache-2.0, zlib, MIT-CMU and PSF-2.0; MPL-2.0 only for development tools, plus the named runtime
 exception for unmodified `certifi` (OD-128); Unicode-3.0 only for the shipped `confusables.txt`
-data file (OD-188). A package that exists on only one platform, or whose metadata the script can't
+data file (OD-188; `src/ecf_server/data/unicode/`, with its license and provenance). A package that exists on only one platform, or whose metadata the script can't
 read, needs a reviewed entry in the script, checked at its locked version (readable metadata always
 wins). Development-only tools
 (pytest, ruff, pyright, import-linter, hypothesis) never ship and aren't listed.
