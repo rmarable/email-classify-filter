@@ -14,7 +14,7 @@ import pytest
 from ecf import doctor
 from ecf.doctor import Level
 from ecf.paths import Paths
-from ecf_server import addresses, health, notify, schedule
+from ecf_server import addresses, health, notify, schedule, service
 from ecf_server.api import ServiceState, create_app
 from ecf_server.checks import CheckReport
 from ecf_server.clock import FakeClock, from_ts
@@ -128,11 +128,17 @@ def test_notification_failures_are_not_raised() -> None:
 
 
 def test_service_notifier_choice(
-    ap: sqlite3.Connection, db_path: Path, tmp_path: Path, clock: FakeClock
+    ap: sqlite3.Connection,
+    db_path: Path,
+    tmp_path: Path,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    host = FakeNotifier()  # CI runners have no desktop, so the real host choice would be none
+    monkeypatch.setattr(service, "host_notifier", lambda: host)
     svc = Service(Paths(install="t", root=tmp_path), clock)
     svc.state.db_path = db_path
-    assert not isinstance(svc._notifier(), NullNotifier)  # pyright: ignore[reportPrivateUsage]
+    assert svc._notifier() is host  # pyright: ignore[reportPrivateUsage]
     with write_tx(ap):
         ap.execute(
             "INSERT INTO settings (key, value, updated_at, updated_by)"
