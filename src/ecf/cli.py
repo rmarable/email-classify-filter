@@ -357,6 +357,11 @@ def address_add(
     _echo_probe(a)
 
 
+def _mb(size: int) -> str:
+    """ecf's MB is 1,048,576 bytes, as in its 64 MB and 16 MB limits."""
+    return f"{size / 1_048_576:.1f} MB"
+
+
 def _echo_probe(a: dict[str, Any]) -> None:
     p = a.get("probe")
     if not p:
@@ -365,7 +370,7 @@ def _echo_probe(a: dict[str, Any]) -> None:
     typer.echo(
         f"probe: folders {', '.join(sorted(p['roles'].values())) or 'none marked'}; "
         f"keywords {'yes' if p['custom_keywords'] else 'no'}; "
-        f"size limit {f'{size:,} bytes' if size else 'unknown'}"
+        f"size limit {f'{_mb(size)} (ecf caps its own limit to it)' if size else 'unknown'}"
     )
     for w in p["warnings"]:
         typer.echo(f"  note: {w}")

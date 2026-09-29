@@ -29,7 +29,7 @@ from typing import Any, Protocol
 from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, leases
+from ecf_server import items, leases, probe
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.isolate import Isolator
@@ -114,7 +114,11 @@ def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
     return AddressConfig(
         address_id=address_id,
         sensitivity=row["sensitivity"],
-        max_message_bytes=int(overrides.get("max_message_bytes", DEFAULT_MAX[row["sensitivity"]])),
+        max_message_bytes=probe.cap_to_provider(
+            conn,
+            address_id,
+            int(overrides.get("max_message_bytes", DEFAULT_MAX[row["sensitivity"]])),
+        ),
         max_scan_bytes=int(overrides.get("max_scan_bytes_per_part", DEFAULT_SCAN)),
     )
 

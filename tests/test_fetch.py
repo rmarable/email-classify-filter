@@ -184,6 +184,33 @@ def _limit(conn: sqlite3.Connection, max_bytes: int) -> None:
     )
 
 
+def _provider_limit(conn: sqlite3.Connection, max_bytes: int | None) -> None:
+    conn.execute(
+        "INSERT INTO probe (address_id, max_message_bytes, host, probed_at)"
+        " VALUES (?, ?, 'imap.example', 'now')",
+        (ADDR, max_bytes),
+    )
+
+
+@pytest.mark.parametrize(
+    ("override", "provider", "expected"),
+    [
+        (None, 51_200_000, 51_200_000),  # high default 64 MB, provider smaller: capped
+        (None, 80 * fetch.MB, 64 * fetch.MB),  # provider larger: ecf's own limit
+        (None, None, 64 * fetch.MB),  # provider limit unknown
+        (60 * fetch.MB, 51_200_000, 51_200_000),  # an explicit setting is capped too
+        (20 * fetch.MB, 51_200_000, 20 * fetch.MB),  # a smaller setting is kept
+    ],
+)
+def test_size_limit_is_capped_at_the_provider(
+    setup: sqlite3.Connection, override: int | None, provider: int | None, expected: int
+) -> None:
+    if override is not None:
+        _limit(setup, override)
+    _provider_limit(setup, provider)
+    assert address_config(setup, ADDR).max_message_bytes == expected
+
+
 def test_oversized_mail_is_read_partially_after_the_page(
     setup: sqlite3.Connection, clock: FakeClock
 ) -> None:

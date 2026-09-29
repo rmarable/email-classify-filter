@@ -135,6 +135,17 @@ def store(
     )
 
 
+def cap_to_provider(conn: sqlite3.Connection, address_id: str, limit: int) -> int:
+    """ecf's size limit, lowered to the provider's when the probe found a smaller one: mail
+    above the provider's limit can't arrive, so a larger ecf limit would only mislead (SPEC §5.1;
+    operator decision 2026-09-29, OD-196)."""
+    row = conn.execute(
+        "SELECT max_message_bytes FROM probe WHERE address_id = ?", (address_id,)
+    ).fetchone()
+    provider = row["max_message_bytes"] if row is not None else None
+    return min(limit, int(provider)) if provider else limit
+
+
 def load(conn: sqlite3.Connection, address_id: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM probe WHERE address_id = ?", (address_id,)).fetchone()
     if row is None:

@@ -210,3 +210,10 @@ def test_doctor_exit_code_matches_failures(running: Paths) -> None:
     d = CliRunner().invoke(app, ["--install", "t", "doctor"])
     failed = any(line.lstrip().startswith("FAIL") for line in d.output.splitlines())
     assert d.exit_code == (3 if failed else 0), d.output
+
+
+def test_sizes_print_in_ecf_megabytes() -> None:
+    from ecf import cli  # noqa: PLC0415
+
+    assert cli._mb(51_200_000) == "48.8 MB"  # pyright: ignore[reportPrivateUsage]
+    assert cli._mb(64 * 1_048_576) == "64.0 MB"  # pyright: ignore[reportPrivateUsage]
