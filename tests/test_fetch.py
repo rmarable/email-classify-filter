@@ -306,6 +306,26 @@ def test_an_isolator_failure_counts_as_a_crash(
     assert r.quarantined == [1]
 
 
+def test_losing_the_lease_is_not_a_crash(setup: sqlite3.Connection, clock: FakeClock) -> None:
+    """A check that loses its lease mid-message gives the attempt back, so repeated lease losses
+    never quarantine the message (found in the V1.1 shadow run, 2026-09-29)."""
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0))
+
+    def taken(_p: ParsedMessage, _r: bytes) -> dict[str, Any]:
+        setup.execute("UPDATE leases SET fencing_token = fencing_token + 1")  # another holder
+        return {}
+
+    for _ in range(fetch.QUARANTINE_AFTER + 1):
+        with pytest.raises(LeaseLostError):
+            run(setup, clock, src, analyzer=Fn(taken))
+        setup.execute("DELETE FROM leases")
+        assert setup.execute("SELECT count(*) FROM processing").fetchone()[0] == 0
+    r = run(setup, clock, src)
+    assert len(r.created) == 1 and r.quarantined == []
+
+
 def test_deferred_mail_that_disappears_is_dropped(
     setup: sqlite3.Connection, clock: FakeClock
 ) -> None:

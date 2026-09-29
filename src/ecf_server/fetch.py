@@ -297,18 +297,22 @@ def _process(
         _quarantine(conn, clock, lease, uv, uid)
         pg.result.quarantined.append(uid)
         return
-    t0 = clock.monotonic()
-    raw = pg.src.fetch(uid)
-    if raw is None:  # gone since the search
-        _unmark(conn, cfg.address_id, uv, uid)
-        return
-    pg.fetched_bytes += len(raw)
-    pg.fetch_s += clock.monotonic() - t0
-    if isolated and pg.isolator is not None:
-        parsed, auth = pg.isolator(raw, cfg.max_scan_bytes)
-        _store(pg, uid, parsed, raw, {}, internaldate, auth)
-    else:
-        _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
+    try:
+        t0 = clock.monotonic()
+        raw = pg.src.fetch(uid)
+        if raw is None:  # gone since the search
+            _unmark(conn, cfg.address_id, uv, uid)
+            return
+        pg.fetched_bytes += len(raw)
+        pg.fetch_s += clock.monotonic() - t0
+        if isolated and pg.isolator is not None:
+            parsed, auth = pg.isolator(raw, cfg.max_scan_bytes)
+            _store(pg, uid, parsed, raw, {}, internaldate, auth)
+        else:
+            _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
+    except LeaseLostError:
+        _give_back(conn, cfg.address_id, uv, uid)
+        raise
 
 
 def _process_large(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
@@ -335,17 +339,23 @@ def _process_partial(pg: _Page, uid: int, size: int, internaldate: datetime | No
         _quarantine(conn, clock, lease, uv, uid)
         pg.result.quarantined.append(uid)
         return
-    parts = pg.src.structure(uid)
-    header = pg.src.fetch_part(uid, "HEADER", HEADER_LIMIT)
-    if parts is None or header is None:
-        _unmark(conn, cfg.address_id, uv, uid)
-        return
-    texts: dict[str, bytes] = {}
-    for p in parts:
-        if p.content_type in ("text/plain", "text/html") and p.disposition != "attachment":
-            texts[p.section] = pg.src.fetch_part(uid, p.section, cfg.max_scan_bytes) or b""
-    parsed = parse_partial(header, parts, texts, size=size, max_scan_bytes=cfg.max_scan_bytes)
-    _store(pg, uid, parsed, header, {"oversized": True, "content_unscanned": True}, internaldate)
+    try:
+        parts = pg.src.structure(uid)
+        header = pg.src.fetch_part(uid, "HEADER", HEADER_LIMIT)
+        if parts is None or header is None:
+            _unmark(conn, cfg.address_id, uv, uid)
+            return
+        texts: dict[str, bytes] = {}
+        for p in parts:
+            if p.content_type in ("text/plain", "text/html") and p.disposition != "attachment":
+                texts[p.section] = pg.src.fetch_part(uid, p.section, cfg.max_scan_bytes) or b""
+        parsed = parse_partial(header, parts, texts, size=size, max_scan_bytes=cfg.max_scan_bytes)
+        _store(
+            pg, uid, parsed, header, {"oversized": True, "content_unscanned": True}, internaldate
+        )
+    except LeaseLostError:
+        _give_back(conn, cfg.address_id, uv, uid)
+        raise
 
 
 def _store(
@@ -578,6 +588,23 @@ def _mark(conn: sqlite3.Connection, clock: Clock, address_id: str, uv: int, uid:
             (address_id, uv, uid),
         ).fetchone()
     return int(row["attempts"])
+
+
+def _give_back(conn: sqlite3.Connection, address_id: str, uv: int, uid: int) -> None:
+    """Undo this attempt's count: losing the lease is never the message's fault, so it mustn't
+    move the message toward quarantine (found in the V1.1 shadow run, 2026-09-29). A decrement,
+    not a delete, keeps any count another holder has added since."""
+    with write_tx(conn):
+        conn.execute(
+            "UPDATE processing SET attempts = attempts - 1"
+            " WHERE address_id = ? AND uidvalidity = ? AND uid = ?",
+            (address_id, uv, uid),
+        )
+        conn.execute(
+            "DELETE FROM processing WHERE address_id = ? AND uidvalidity = ? AND uid = ?"
+            " AND attempts <= 0",
+            (address_id, uv, uid),
+        )
 
 
 def _unmark(conn: sqlite3.Connection, address_id: str, uv: int, uid: int) -> None:
