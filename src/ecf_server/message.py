@@ -13,25 +13,48 @@ hash, while a swapped attachment changes it. Header bytes and the message size a
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import quopri
 import re
 from dataclasses import dataclass
 from email import message_from_bytes, policy
 from email.message import EmailMessage, Message
+from email.parser import BytesHeaderParser
 from email.utils import getaddresses
 
 from ecf_server.htmltext import html_to_text, strip_data_uris, tidy
+from ecf_server.mail import PartInfo
 
 HASH_VERSION = 1
+PARTIAL_HASH_VERSION = 0  # oversized messages: headers and part sizes only (see parse_partial)
 CLASSIFIER_CHARS = 1500  # SPEC §5.1 step 4
 ACTOR_CHARS = 4000
 NAME_CHARS = 100  # attachment names are capped (§7.2)
 DEFAULT_SCAN_BYTES = 10 * 1024 * 1024  # max_scan_bytes_per_part default (OD-027)
 KEPT_HEADERS = (
-    "from", "sender", "reply-to", "to", "cc", "subject", "date", "message-id", "in-reply-to",
-    "references", "list-id", "list-unsubscribe", "precedence", "auto-submitted", "x-autoreply",
-    "return-path", "x-ecf-install", "content-type", "mime-version", "content-transfer-encoding",
-)  # fmt: skip
+    "from",
+    "sender",
+    "reply-to",
+    "to",
+    "cc",
+    "subject",
+    "date",
+    "message-id",
+    "in-reply-to",
+    "references",
+    "list-id",
+    "list-unsubscribe",
+    "precedence",
+    "auto-submitted",
+    "x-autoreply",
+    "return-path",
+    "x-ecf-install",
+    "content-type",
+    "mime-version",
+    "content-transfer-encoding",
+)
 _MSGID = re.compile(r"<[^<>\s]+>")
 
 
@@ -143,6 +166,18 @@ def parse(raw: bytes, *, max_scan_bytes: int = DEFAULT_SCAN_BYTES) -> ParsedMess
             attachments.append(
                 Attachment(name[:NAME_CHARS], ctype, len(data), disposition != "attachment")
             )
+    return _parsed(msg, texts, attachments, h.hexdigest(), defects, len(raw), HASH_VERSION)
+
+
+def _parsed(
+    msg: Message,
+    texts: list[TextPart],
+    attachments: list[Attachment],
+    content_hash: str,
+    defects: int,
+    size: int,
+    hash_version: int,
+) -> ParsedMessage:
     from_values = _all(msg, "from")
     froms = getaddresses(list(from_values))
     from_name, from_addr = froms[0] if froms else ("", "")
@@ -158,10 +193,73 @@ def parse(raw: bytes, *, max_scan_bytes: int = DEFAULT_SCAN_BYTES) -> ParsedMess
         headers={k: v for k in KEPT_HEADERS if (v := _all(msg, k))},
         texts=tuple(texts),
         attachments=tuple(attachments),
-        content_hash=h.hexdigest(),
+        content_hash=content_hash,
         defects=defects,
-        size=len(raw),
+        hash_version=hash_version,
+        size=size,
     )
+
+
+def parse_partial(
+    header_block: bytes,
+    parts: list[PartInfo],
+    texts: dict[str, bytes],
+    *,
+    size: int,
+    max_scan_bytes: int = DEFAULT_SCAN_BYTES,
+) -> ParsedMessage:
+    """A message over the size limit (SPEC §5.1): its headers and the first bytes of each text
+    part (`texts`, keyed by section, as fetched), plus the attachment list from BODYSTRUCTURE.
+
+    Its content can't be hashed without fetching it all, so the hash (`hash_version` 0) covers
+    fields that stay the same when a message is delivered again (Message-ID, Date, From, Subject;
+    not Received or Delivered-To) and each part's section, type and encoded size. Nobody can
+    mistake it for a content hash.
+    """
+    msg = BytesHeaderParser(policy=policy.default).parsebytes(header_block)
+    h = hashlib.sha256(b"ecf-partial-v1\0")
+    for name in ("message-id", "date", "from", "subject"):
+        value = "\n".join(_all(msg, name)).encode("utf-8", "replace")
+        h.update(len(value).to_bytes(8, "big") + value)
+    out_texts: list[TextPart] = []
+    attachments: list[Attachment] = []
+    for p in parts:
+        h.update(f"{p.section}|{p.content_type}|{p.size}\n".encode())
+        if p.content_type in ("text/plain", "text/html") and p.disposition != "attachment":
+            fetched = texts.get(p.section, b"")
+            decoded = normalize_text(_charset(_transfer_decode(fetched, p.encoding), p.charset))
+            text = _text_part(p.content_type, decoded, max_scan_bytes)
+            cut = p.size > len(fetched)
+            out_texts.append(
+                TextPart(text.content_type, text.full, text.visible, text.truncated or cut)
+            )
+        else:
+            approx = p.size * 3 // 4 if p.encoding == "base64" else p.size
+            name = (p.filename or "")[:NAME_CHARS]
+            attachments.append(
+                Attachment(name, p.content_type, approx, p.disposition != "attachment")
+            )
+    return _parsed(msg, out_texts, attachments, h.hexdigest(), 0, size, PARTIAL_HASH_VERSION)
+
+
+def _transfer_decode(data: bytes, encoding: str) -> bytes:
+    if encoding == "base64":
+        compact = re.sub(rb"[^A-Za-z0-9+/=]", b"", data)
+        compact = compact[: len(compact) - len(compact) % 4]  # a cut fetch ends mid-quantum
+        try:
+            return base64.b64decode(compact)
+        except binascii.Error:
+            return b""
+    if encoding == "quoted-printable":
+        return quopri.decodestring(data)
+    return data
+
+
+def _charset(data: bytes, charset: str | None) -> str:
+    try:
+        return data.decode(charset or "utf-8", "replace")
+    except (LookupError, ValueError):
+        return data.decode("utf-8", "replace")
 
 
 def _text_part(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:

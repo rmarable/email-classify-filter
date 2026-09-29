@@ -11,11 +11,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from ecf_server.htmltext import html_to_text
+from ecf_server.mail import PartInfo
 from ecf_server.message import (
     ACTOR_CHARS,
     CLASSIFIER_CHARS,
     normalize_message_id,
     parse,
+    parse_partial,
     stable_id,
 )
 
@@ -246,3 +248,40 @@ def test_random_bytes_never_crash(raw: bytes) -> None:
 def test_corrupted_messages_never_crash(at: int, junk: bytes) -> None:
     p = parse(_SEED[:at] + junk + _SEED[at:])
     assert len(p.content_hash) == 64
+
+
+# ---- oversized messages (parse_partial) -----------------------------------------------------
+
+HEADER = (
+    b"From: Vendor A <billing@vendor-a.example>\r\nTo: ap@acme.example\r\n"
+    b"Subject: Big invoice\r\nDate: Mon, 28 Sep 2026 12:00:00 +0000\r\n"
+    b"Message-ID: <big-1@vendor-a.example>\r\n\r\n"
+)
+
+
+def _parts(size: int = 90_000_000) -> list[PartInfo]:
+    return [
+        PartInfo("1", "text/plain", None, None, "base64", "utf-8", 1000),
+        PartInfo("2", "text/html", None, None, "quoted-printable", "iso-8859-1", 800),
+        PartInfo("3", "application/pdf", "attachment", "scan.pdf", "base64", None, size),
+    ]
+
+
+def test_partial_decodes_cut_base64_and_qp() -> None:
+    plain = base64.b64encode(b"Pay invoice 99 by Friday, the IBAN changed.")
+    texts = {"1": plain[:30], "2": b"<p>Gr=FC=DFe from Vendor A</p>"}
+    p = parse_partial(HEADER, _parts(), texts, size=90_001_800)
+    assert p.hash_version == 0 and p.subject == "Big invoice"
+    assert p.message_id == "<big-1@vendor-a.example>" and p.size == 90_001_800
+    assert p.texts[0].full.startswith("Pay invoice 99") and p.texts[0].truncated
+    assert "Grüße from Vendor A" in p.texts[1].visible
+    (att,) = p.attachments
+    assert (att.name, att.size) == ("scan.pdf", 90_000_000 * 3 // 4)
+
+
+def test_partial_hash_ignores_routing_headers_but_not_parts() -> None:
+    a = parse_partial(HEADER, _parts(), {}, size=1).content_hash
+    rerouted = b"Received: from relay2.example\r\nDelivered-To: ap@acme.example\r\n" + HEADER
+    assert parse_partial(rerouted, _parts(), {}, size=1).content_hash == a
+    assert parse_partial(HEADER, _parts(size=90_000_004), {}, size=1).content_hash != a
+    assert parse(b"From: x@y.example\r\n\r\nhi").content_hash != a  # a different hash family

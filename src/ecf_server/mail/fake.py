@@ -15,6 +15,7 @@ from ecf_server.mail import (
     Folder,
     InboxState,
     MessageMeta,
+    PartInfo,
     check_keyword,
 )
 
@@ -129,6 +130,34 @@ class FakeMailSource:
             return None
         linesep = "\r\n" if b"\r\n" in s.raw else "\n"
         return _split(part.as_bytes(policy=policy.compat32.clone(linesep=linesep)))[1][:limit]
+
+    def structure(self, uid: int) -> list[PartInfo] | None:
+        s = self._msgs.get(uid)
+        if s is None:
+            return None
+        out: list[PartInfo] = []
+        linesep = "\r\n" if b"\r\n" in s.raw else "\n"
+
+        def walk(part: Message, prefix: str) -> None:
+            if part.is_multipart() and part.get_content_type() != "message/rfc822":
+                for i, sub in enumerate(_children(part), 1):
+                    walk(sub, f"{prefix}.{i}" if prefix else str(i))
+                return
+            body = _split(part.as_bytes(policy=policy.compat32.clone(linesep=linesep)))[1]
+            out.append(
+                PartInfo(
+                    section=prefix or "1",
+                    content_type=part.get_content_type(),
+                    disposition=part.get_content_disposition(),
+                    filename=part.get_filename(),
+                    encoding=str(part.get("Content-Transfer-Encoding", "7bit")).strip().lower(),
+                    charset=part.get_content_charset(),
+                    size=len(body),
+                )
+            )
+
+        walk(_parse(s.raw), "")
+        return out
 
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(self._msgs[u].flags) for u in uids if u in self._msgs}

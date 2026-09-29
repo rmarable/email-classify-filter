@@ -23,6 +23,7 @@ from ecf_server.mail import (
     Folder,
     InboxState,
     MessageMeta,
+    PartInfo,
     check_keyword,
 )
 from ecf_server.mail import _imapclient as lib
@@ -203,6 +204,13 @@ class ImapSource:
         if uid not in data:
             return None
         return lib.as_bytes(data[uid].get(f"BODY[{section}]<0>")) or None
+
+    def structure(self, uid: int) -> list[PartInfo] | None:
+        conn = self._reads()
+        data = self._call(lambda: conn.fetch([uid], ["BODYSTRUCTURE"]))
+        if uid not in data or data[uid].get("BODYSTRUCTURE") is None:
+            return None
+        return [PartInfo(**p) for p in lib.leaf_parts(data[uid]["BODYSTRUCTURE"])]
 
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         conn = self._reads()

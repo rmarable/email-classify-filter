@@ -13,7 +13,7 @@ import importlib
 import ssl
 from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 
 _lib: Any = importlib.import_module("imapclient")
 _exc: Any = importlib.import_module("imapclient.exceptions")
@@ -92,3 +92,51 @@ def flag_set(v: Any) -> frozenset[str]:
 
 def _s(v: Any) -> str:
     return v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+
+
+def leaf_parts(bs: Any) -> list[dict[str, Any]]:
+    """Flatten a BODYSTRUCTURE into leaf parts with IMAP section numbers.
+
+    Layout as imapclient returns it (checked against Dovecot 2.4.5, 2026-09-28): a multipart body
+    is `([parts...], subtype, params, ...)`; a single part is `(type, subtype, params, id, desc,
+    encoding, size, ...)` whose disposition sits at index 9 for text parts, 11 for message/rfc822
+    and 8 otherwise (RFC 3501 body-type-1part plus extension fields). An attached message is one
+    leaf; its own parts are not listed.
+    """
+    out: list[dict[str, Any]] = []
+
+    def walk(node: Any, prefix: str) -> None:
+        if node and isinstance(node[0], list):
+            for i, child in enumerate(node[0], 1):
+                walk(child, f"{prefix}.{i}" if prefix else str(i))
+            return
+        ctype = f"{_s(node[0]).lower()}/{_s(node[1]).lower()}"
+        dsp_at = 9 if ctype.startswith("text/") else 11 if ctype == "message/rfc822" else 8
+        raw_dsp: Any = node[dsp_at] if len(node) > dsp_at else None
+        dsp: tuple[Any, ...] | None = (
+            cast("tuple[Any, ...]", raw_dsp) if isinstance(raw_dsp, tuple) else None
+        )
+        params = _pairs(node[2])
+        dsp_params = _pairs(dsp[1]) if dsp is not None and len(dsp) > 1 else {}
+        out.append(
+            {
+                "section": prefix or "1",
+                "content_type": ctype,
+                "disposition": _s(dsp[0]).lower() if dsp else None,
+                "filename": dsp_params.get("filename") or params.get("name"),
+                "encoding": _s(node[5]).lower() if node[5] is not None else "7bit",
+                "charset": params.get("charset"),
+                "size": int(node[6] or 0),
+            }
+        )
+
+    walk(bs, "")
+    return out
+
+
+def _pairs(v: Any) -> dict[str, str]:
+    """A flat IMAP parameter list (k1, v1, k2, v2, ...) as a dict with lowercase keys."""
+    if not isinstance(v, tuple):
+        return {}
+    items: list[Any] = list(cast("tuple[Any, ...]", v))
+    return {_s(items[i]).lower(): _s(items[i + 1]) for i in range(0, len(items) - 1, 2)}

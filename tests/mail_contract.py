@@ -135,3 +135,21 @@ class MailSourceContract:
         assert any(f.name.upper() == "INBOX" for f in folders)
         for f in folders:
             assert f.roles <= ROLES
+
+    def test_structure(self, harness: Harness) -> None:
+        harness.deliver(message(0, multipart=True), DAY1)
+        harness.deliver(message(1), DAY1)
+        multi, single = harness.source.uids_after(0)
+        parts = harness.source.structure(multi)
+        assert parts is not None
+        shape = [(p.section, p.content_type, p.disposition, p.filename) for p in parts]
+        assert shape == [
+            ("1.1", "text/plain", None, None),
+            ("1.2", "text/html", None, None),
+            ("2", "application/pdf", "attachment", "inv.pdf"),
+        ]
+        assert parts[0].charset == "utf-8" and parts[2].encoding == "base64"
+        assert all(p.size > 0 for p in parts)
+        (only,) = harness.source.structure(single) or []
+        assert (only.section, only.content_type) == ("1", "text/plain")
+        assert harness.source.structure(single + 100) is None

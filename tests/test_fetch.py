@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from ecf_server import db, leases
+from ecf_server import db, fetch, leases
 from ecf_server.clock import FakeClock
 from ecf_server.fetch import (
     LeaseLostError,
@@ -155,21 +155,83 @@ def test_analysis_is_merged_into_facts(setup: sqlite3.Connection, clock: FakeClo
     assert json.loads(row["facts"])["auth_result"] == "pass"
 
 
-def test_large_messages_are_deferred_not_skipped(
+def _limit(conn: sqlite3.Connection, max_bytes: int) -> None:
+    conn.execute(
+        "UPDATE addresses SET overrides = ? WHERE address_id = ?",
+        (json.dumps({"max_message_bytes": max_bytes}), ADDR),
+    )
+
+
+def test_oversized_mail_is_read_partially_after_the_page(
     setup: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    setup.execute(
-        "UPDATE addresses SET overrides = ? WHERE address_id = ?",
-        (json.dumps({"max_message_bytes": 600}), ADDR),
-    )
+    _limit(setup, 600)
     src = FakeMailSource()
     started(setup, clock, src)
+    big = message(1, multipart=True)  # over 600 bytes
     src.deliver(message(0))  # small
-    src.deliver(message(1, multipart=True))  # over 600 bytes
+    src.deliver(big)
     r = run(setup, clock, src)
-    assert len(r.created) == 1 and r.deferred == [2]
+    assert len(r.created) == 2 and r.large_done == [2] and r.deferred == []
+    row = setup.execute("SELECT * FROM items WHERE uid = 2").fetchone()
+    facts = json.loads(row["facts"])
+    assert facts["oversized"] and facts["content_unscanned"] and row["hash_version"] == 0
+    assert facts["attachments"][0]["name"] == "inv.pdf"
+    ex = setup.execute(
+        "SELECT classifier_text FROM excerpts WHERE stable_id = ?", (row["stable_id"],)
+    ).fetchone()
+    assert ex["classifier_text"].startswith("Plain body 1")
     cur = load_cursor(setup, ADDR)
-    assert cur is not None and cur.deferred == [2] and cur.last_uid == 2
+    assert cur is not None and cur.deferred == [] and cur.last_uid == 2
+    src.deliver(big)  # the same large message again
+    src.deliver(b"Received: from relay2.example by mx.acme.example\r\n" + big)  # another route
+    assert run(setup, clock, src).duplicates == 2
+
+
+def test_large_mail_waits_for_budget_and_the_lock(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _limit(setup, 600)
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0, multipart=True))
+    lease = take(setup, clock)
+    cfg = address_config(setup, ADDR)
+    r = fetch_page(setup, clock, src, cfg, lease, deadline=clock.monotonic())  # no time left
+    assert r.deferred == [1] and r.large_done == [] and r.created == []
+    with fetch.LARGE_LOCK:  # another address is busy with a large message
+        r = fetch_page(setup, clock, src, cfg, take(setup, clock))
+    assert r.deferred == [1]
+    r = fetch_page(setup, clock, src, cfg, take(setup, clock))
+    assert r.large_done == [1] and r.deferred == []
+
+
+def test_large_mail_within_the_limit_is_read_whole(
+    setup: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fetch, "LARGE_BYTES", 600)  # "large" without building 16 MB messages
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0, multipart=True))
+    r = run(setup, clock, src)
+    assert r.large_done == [1]
+    row = setup.execute("SELECT facts, hash_version FROM items").fetchone()
+    assert row["hash_version"] == 1 and "oversized" not in json.loads(row["facts"])
+
+
+def test_deferred_mail_that_disappears_is_dropped(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _limit(setup, 600)
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0, multipart=True))
+    cfg = address_config(setup, ADDR)
+    fetch_page(setup, clock, src, cfg, take(setup, clock), deadline=clock.monotonic())
+    src.expunge(1)
+    r = fetch_page(setup, clock, src, cfg, take(setup, clock))
+    assert r.deferred == [] and r.large_done == []
+    assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 0
 
 
 def test_duplicate_delivery_and_reused_message_id(
@@ -250,3 +312,39 @@ def test_mailbox_reset_is_reported_not_handled(setup: sqlite3.Connection, clock:
     src.reset(uidvalidity=2)
     r = run(setup, clock, src)
     assert r.reset_detected and r.created == []
+
+
+@pytest.mark.imap
+def test_oversized_path_against_dovecot(
+    setup: sqlite3.Connection, clock: FakeClock, dovecot_server: Any
+) -> None:
+    import uuid  # noqa: PLC0415
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from ecf_server.mail.imap import ImapSource  # noqa: PLC0415
+    from tests import dovecot  # noqa: PLC0415
+
+    dv: dovecot.Dovecot = dovecot_server
+    user = f"ecf-t-{uuid.uuid4().hex[:12]}"
+    src = ImapSource(
+        dv.host, user, lambda: dovecot.PASSWORD, port=dv.port, ssl_context=dv.context()
+    )
+    admin = dv.admin(user)
+    try:
+        _limit(setup, 600)
+        cfg = address_config(setup, ADDR)
+        assert fetch_page(setup, clock, src, cfg, take(setup, clock)).first_run
+        dovecot.append(admin, message(0), datetime.now(UTC))
+        dovecot.append(admin, message(1, multipart=True), datetime.now(UTC))
+        r = fetch_page(setup, clock, src, cfg, take(setup, clock))
+        assert len(r.created) == 2 and r.large_done == [2] and r.deferred == []
+        row = setup.execute("SELECT * FROM items WHERE uid = 2").fetchone()
+        assert row["hash_version"] == 0 and json.loads(row["facts"])["oversized"]
+        ex = setup.execute(
+            "SELECT classifier_text FROM excerpts WHERE stable_id = ?", (row["stable_id"],)
+        ).fetchone()
+        assert ex["classifier_text"].startswith("Plain body 1")
+        assert "\\Seen" not in src.flags([1, 2])[2]
+    finally:
+        src.close()
+        admin.logout()

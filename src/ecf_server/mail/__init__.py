@@ -56,6 +56,19 @@ class InboxState:
 
 
 @dataclass(frozen=True)
+class PartInfo:
+    """One leaf MIME part, from BODYSTRUCTURE (SPEC §5.1: oversized messages)."""
+
+    section: str  # IMAP section number, e.g. "1", "2.1"
+    content_type: str  # lowercase type/subtype
+    disposition: str | None  # "attachment", "inline" or None
+    filename: str | None
+    encoding: str  # content-transfer-encoding, lowercase
+    charset: str | None
+    size: int  # encoded size in bytes
+
+
+@dataclass(frozen=True)
 class MessageMeta:
     uid: int
     size: int  # RFC822.SIZE
@@ -87,6 +100,10 @@ class MailSource(Protocol):
 
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         """The first `limit` bytes of a body section (`"HEADER"`, `"1"`, `"2.1"`, …)."""
+        ...
+
+    def structure(self, uid: int) -> list[PartInfo] | None:
+        """Leaf parts in document order; an attached message counts as one part. None if gone."""
         ...
 
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]: ...
