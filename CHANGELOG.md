@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.1-mail-checks (not yet tagged)
 
+- New commands `ecf address add`, `list`, `set --app-password` and `remove`. Adding checks the app password by logging in before the service stores it in the OS secret store; new mailboxes start in shadow with outbound off. The first address sets your organization's domains (public mail domains such as gmail.com are refused); later changes go through `ecf config apply` (V1.2). Removing an address with open items waits for step-up in V1.2 (OD-191).
+- Commands that ask for a secret refuse at once, with an explanation, when there is no real terminal to hide your typing.
 - New dependencies for mail and sender authentication: `imapclient`, `dkimpy` (with ed25519 support via PyNaCl) and `dnspython`; all pass the license check.
 - Lookalike-character detection will use Unicode's confusables data, shipped under the Unicode License v3 (OD-188).
 - V1.1 builds label and flag writes but uses them only in tests; real addresses stay in shadow (OD-189). V1.1 alerts are desktop notifications and `ecf doctor` only (OD-190).

@@ -18,9 +18,9 @@ from tests.mail_contract import Harness, MailSourceContract, message
 pytestmark = pytest.mark.imap
 
 
-@pytest.fixture(scope="session")
-def server() -> Iterator[dovecot.Dovecot]:
-    yield from dovecot.start()
+@pytest.fixture
+def server(dovecot_server: dovecot.Dovecot) -> dovecot.Dovecot:
+    return dovecot_server
 
 
 def _source(dv: dovecot.Dovecot, user: str, password: str = dovecot.PASSWORD) -> ImapSource:

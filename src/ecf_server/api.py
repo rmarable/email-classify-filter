@@ -10,14 +10,18 @@ token (SPEC §10.4). `/v1/health` needs no token. Errors are RFC 9457 problem+js
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import secrets
+import sqlite3
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
+import anyio.from_thread
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -31,12 +35,15 @@ from ecf.errors import (
     InternalError,
     InvalidInputError,
     NotFoundError,
+    ServiceUnavailableError,
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
+from ecf_server import addresses, db
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.secretstore import SecretStore
 
 API_VERSION = 1
 
@@ -78,6 +85,22 @@ class ServiceState:
     sessions: dict[str, Session] = field(default_factory=dict[str, Session])
     lock: threading.Lock = field(default_factory=threading.Lock)
     clock: Clock = field(default_factory=SystemClock, repr=False)
+    db_path: Path | None = None
+    secrets: SecretStore | None = field(default=None, repr=False)
+    mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
+
+    def connect(self) -> sqlite3.Connection:
+        if self.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return db.connect(self.db_path)
+
+    def store(self) -> SecretStore:
+        if self.secrets is None:
+            detail = self.secret_store.get("detail")
+            raise ServiceUnavailableError(
+                f"no usable secret store{f': {detail}' if detail else ''}"
+            )
+        return self.secrets
 
     def caller_for(self, token: str) -> tuple[Caller, Session | None]:
         # compare bytes: compare_digest raises on non-ASCII str (headers decode as latin-1)
@@ -204,8 +227,123 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/status", status, methods=["GET"]),
             Route("/v1/sessions", create_session, methods=["POST"]),
             Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
+            *_address_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
         exception_handlers={EcfError: on_ecf_error, 404: on_not_found, Exception: on_unexpected},
     )
+
+
+Allow = Callable[..., Callable[[Handler], Handler]]
+
+
+def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    # -- addresses (SPEC §15.1) ------------------------------------------------------------------
+    def _factory() -> addresses.MailFactory:
+        if state.mail_factory is None:
+            raise ServiceUnavailableError("mail access isn't configured in this service")
+        return state.mail_factory
+
+    @allow(Caller.CLI)
+    def list_addresses(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(
+                {
+                    "addresses": addresses.list_addresses(conn),
+                    "org_domains": addresses.get_org_domains(conn),
+                }
+            )
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def add_address(request: Request) -> JSONResponse:
+        body = _body(request)
+        org = body.get("org_domains")
+        req = addresses.AddRequest(
+            email=_str(body, "email"),
+            imap_host=_str(body, "imap_host"),
+            sensitivity=_str(body, "sensitivity"),
+            preset=_str(body, "preset"),
+            app_password=_str(body, "app_password"),
+            address_id=_str(body, "address_id") if body.get("address_id") is not None else None,
+            org_domains=_str_list(org) if org is not None else None,
+        )
+        conn = state.connect()
+        try:
+            a = addresses.add_address(
+                conn, state.clock, state.store(), _factory(), req, actor="os_user"
+            )
+        finally:
+            conn.close()
+        log.info("address.added", address_id=a["address_id"])
+        return JSONResponse(a, status_code=201)
+
+    @allow(Caller.CLI)
+    def set_address(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        body = _body(request)
+        unknown = set(body) - {"app_password"}
+        if unknown:
+            raise InvalidInputError(f"can't set {', '.join(sorted(unknown))} here yet")
+        conn = state.connect()
+        try:
+            a = addresses.set_app_password(
+                conn, state.clock, state.store(), _factory(), ref,
+                _str(body, "app_password"), actor="os_user",
+            )  # fmt: skip
+        finally:
+            conn.close()
+        log.info("secret.written", address_id=a["address_id"])
+        return JSONResponse(a)
+
+    @allow(Caller.CLI)
+    def remove_address(request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            a = addresses.remove_address(
+                conn, state.clock, state.store(), str(request.path_params["ref"]), actor="os_user"
+            )
+        finally:
+            conn.close()
+        log.info("address.removed", address_id=a["address_id"])
+        return JSONResponse(a)
+
+    return [
+        Route("/v1/addresses", list_addresses, methods=["GET"]),
+        Route("/v1/addresses", add_address, methods=["POST"]),
+        Route("/v1/addresses/{ref}", set_address, methods=["POST"]),
+        Route("/v1/addresses/{ref}", remove_address, methods=["DELETE"]),
+    ]
+
+
+MAX_BODY = 64 * 1024
+
+
+def _body(request: Request) -> dict[str, Any]:
+    """The JSON object body of a sync handler (run in a worker thread by Starlette)."""
+    raw = anyio.from_thread.run(request.body)
+    if len(raw) > MAX_BODY:
+        raise InvalidInputError("request body too large")
+    try:
+        data: Any = json.loads(raw or b"{}")
+    except ValueError as exc:
+        raise InvalidInputError("request body isn't JSON") from exc
+    if not isinstance(data, dict):
+        raise InvalidInputError("request body must be a JSON object")
+    return cast(dict[str, Any], data)
+
+
+def _str(body: dict[str, Any], key: str) -> str:
+    v = body.get(key)
+    if not isinstance(v, str):
+        raise InvalidInputError(f"{key} must be a string")
+    return v
+
+
+def _str_list(v: Any) -> list[str]:
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in cast(list[Any], v)):
+        raise InvalidInputError("expected a list of strings")
+    return cast(list[str], v)

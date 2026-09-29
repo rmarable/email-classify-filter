@@ -15,6 +15,7 @@ import socket
 import sqlite3
 import sys
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,8 @@ from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.mail import MailSource
+from ecf_server.mail.imap import ImapSource
 from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.macos_interaction import set_interaction_allowed
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -39,6 +42,7 @@ from ecf_server.secretstore.select import (
     host_probe,
     interpreter_changed,
     interpreter_sha256,
+    open_store,
     record_interpreter,
 )
 
@@ -52,6 +56,10 @@ EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 class Options:
     tick_seconds: float = TICK_SECONDS
     watchdog_seconds: float = WATCHDOG_SECONDS
+
+
+def imap_factory(host: str, user: str, password: Callable[[], str]) -> MailSource:
+    return ImapSource(host, user, password)
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -164,6 +172,27 @@ class Service:
         finally:
             lock.close()
 
+    def _prepare_state(self, conn: sqlite3.Connection) -> None:
+        """Dev hooks and memory secrets in dev mode; the OS secret store (prompts off) otherwise."""
+        if self.dev:
+            self.state.mode = "dev"
+            self.state.secret_store = {"backend": "memory", "interpreter_changed": False}
+            if not isinstance(self.clock, FakeClock):
+                raise TypeError("dev mode needs a FakeClock")
+            self.state.dev = DevHooks(self.clock, FakeChat(), self.tick)
+        else:
+            self.state.secret_store = self._secret_store_report(conn)
+            if self.state.secret_store.get("backend"):
+                try:
+                    self.secrets = open_store(
+                        self.paths.install,
+                        self.paths.data_dir,
+                        interactive=False,
+                        probe=host_probe(),
+                    )
+                except ServiceUnavailableError as exc:
+                    self.state.secret_store["detail"] = exc.detail
+
     def _run_locked(self) -> int:
         st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
         self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
@@ -181,15 +210,11 @@ class Service:
         applied = db.migrate(conn)
         with db.write_tx(conn):
             conn.execute("DELETE FROM leases")  # one process in v1: all leases are stale at start
-        if self.dev:
-            self.state.mode = "dev"
-            self.state.secret_store = {"backend": "memory", "interpreter_changed": False}
-            if not isinstance(self.clock, FakeClock):
-                raise TypeError("dev mode needs a FakeClock")
-            self.state.dev = DevHooks(self.clock, FakeChat(), self.tick)
-        else:
-            self.state.secret_store = self._secret_store_report(conn)
+        self._prepare_state(conn)
         conn.close()
+        self.state.db_path = self.paths.db
+        self.state.secrets = self.secrets
+        self.state.mail_factory = imap_factory
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)
         server = uvicorn.Server(

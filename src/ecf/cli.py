@@ -17,6 +17,7 @@ from ecf.errors import EcfError
 from ecf.ids import SLUG_PATTERN
 from ecf.log import configure_logging
 from ecf.paths import Paths, paths_for
+from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
@@ -24,6 +25,8 @@ service_app = typer.Typer(no_args_is_help=True, help="Install and control the ba
 app.add_typer(service_app, name="service")
 eval_app = typer.Typer(no_args_is_help=True, help="Synthetic eval set and results.")
 app.add_typer(eval_app, name="eval")
+address_app = typer.Typer(no_args_is_help=True, help="Monitored mailboxes.")
+app.add_typer(address_app, name="address")
 EVAL_ROOT = Path("tests/eval/synthetic")
 
 
@@ -158,6 +161,132 @@ def service_status() -> None:
         typer.echo(f"last exit: {s.last_exit}")
     if not s.running:
         raise typer.Exit(3)
+
+
+FINANCE_HINTS = (
+    "ap",
+    "payable",
+    "invoice",
+    "billing",
+    "finance",
+    "payroll",
+    "treasury",
+    "accounting",
+    "remit",
+)  # SPEC §9.4; the service holds the rules
+
+
+def _suggest_sensitivity(email: str) -> str:
+    local = email.split("@", 1)[0].lower()
+    words = set(re.split(r"[^a-z0-9]+", local))
+    long_hit = any(h in local for h in FINANCE_HINTS if len(h) >= 4)
+    return "high" if words & set(FINANCE_HINTS) or long_hit else "standard"
+
+
+@address_app.command("add")
+def address_add(
+    email: Annotated[str, typer.Argument(help="The mailbox to watch, e.g. ap@example.com.")],
+    imap_host: Annotated[str, typer.Option("--imap-host", help="IMAP server (port 993, TLS).")],
+    sensitivity: Annotated[
+        str | None, typer.Option(help="standard, or high for finance mailboxes (extra checks).")
+    ] = None,
+    preset: Annotated[
+        str | None, typer.Option(help="A all-local, B local + Claude actor, C all-Claude.")
+    ] = None,
+    address_id: Annotated[
+        str | None, typer.Option("--id", help="Short name (default: from the local part).")
+    ] = None,
+) -> None:
+    """Add a mailbox: checks the app password by logging in, then stores it in the OS secret
+    store. It starts in shadow (watch only) with outbound off. Needs a real terminal."""
+    require_terminal()
+    paths = _paths()
+    with LocalClient(paths) as c:
+        current = c.get("/v1/addresses")
+        if sensitivity is None:
+            suggestion = _suggest_sensitivity(email)
+            sensitivity = typer.prompt(
+                "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
+            )
+        if preset is None:
+            preset = typer.prompt(
+                "Preset (A all-local, B local + Claude, C all-Claude)", default="A"
+            )
+        body: dict[str, object] = {
+            "email": email,
+            "imap_host": imap_host,
+            "sensitivity": sensitivity,
+            "preset": (preset or "").upper(),
+        }
+        if address_id:
+            body["address_id"] = address_id
+        if not current["org_domains"]:
+            domain = email.rsplit("@", 1)[-1].lower()
+            typer.echo(
+                "Your organization's domains decide which senders count as internal "
+                "(changing them later is `ecf config apply`, V1.2)."
+            )
+            answer = typer.prompt("Organization domains, comma-separated", default=domain)
+            body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
+        body["app_password"] = hidden(f"App password for {email} (hidden): ")
+        a = c.request("POST", "/v1/addresses", body)
+    typer.echo(
+        f"added {a['email']} as {a['address_id']!r}: {a['sensitivity']}, preset "
+        f"{a['preset']}, stage {a['stage']}, outbound off"
+    )
+
+
+@address_app.command("list")
+def address_list() -> None:
+    """List monitored mailboxes."""
+    with LocalClient(_paths()) as c:
+        data = c.get("/v1/addresses")
+    typer.echo(f"org domains: {', '.join(data['org_domains']) or 'not set'}")
+    for a in data["addresses"]:
+        flags = [a["stage"], a["sensitivity"], f"preset {a['preset']}"]
+        if a["paused"]:
+            flags.append("PAUSED")
+        typer.echo(f"{a['address_id']:<16} {a['email']:<36} {', '.join(flags)}  ({a['imap_host']})")
+    if not data["addresses"]:
+        typer.echo("no addresses yet: `ecf address add <email> --imap-host <host>`")
+
+
+@address_app.command("set")
+def address_set(
+    address: Annotated[str, typer.Argument(help="Address id or email.")],
+    app_password: Annotated[
+        bool, typer.Option("--app-password", help="Enter a new app password (hidden prompt).")
+    ] = False,
+) -> None:
+    """Change a mailbox's settings. Now: `--app-password` (re-enter or rotate)."""
+    if not app_password:
+        raise typer.BadParameter("nothing to set; use --app-password")
+    require_terminal()
+    with LocalClient(_paths()) as c:
+        pw = hidden(f"New app password for {address} (hidden): ")
+        a = c.request("POST", f"/v1/addresses/{address}", {"app_password": pw})
+    typer.echo(f"stored a new app password for {a['email']} (login checked)")
+
+
+@address_app.command("remove")
+def address_remove(address: Annotated[str, typer.Argument(help="Address id or email.")]) -> None:
+    """Stop watching a mailbox and delete its app password from the secret store."""
+    with LocalClient(_paths()) as c:
+        target = next(
+            (a for a in c.get("/v1/addresses")["addresses"]
+             if address in (a["address_id"], a["email"].lower(), a["email"])),
+            None,
+        )  # fmt: skip
+        if target is None:
+            raise typer.BadParameter(f"no address {address!r}")
+        typed = typer.prompt(f"Type {target['email']} to remove it")
+        if typed.strip().lower() != target["email"].lower():
+            typer.echo("not removed")
+            raise typer.Exit(1)
+        a = c.request("DELETE", f"/v1/addresses/{target['address_id']}")
+    typer.echo(f"removed {a['email']}. Left for you to do:")
+    for line in a["residue"]:
+        typer.echo(f"  - {line}")
 
 
 RootOpt = Annotated[Path, typer.Option("--root", help="The synthetic set folder.")]
