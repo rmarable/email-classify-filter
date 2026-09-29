@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -28,8 +29,10 @@ def create_item(
     address_id: AddressId,
     content_hash: str,
     actor: str = "service",
+    also: Callable[[sqlite3.Connection], None] | None = None,
     **columns: Any,
 ) -> None:
+    """Insert one item at `new`. `also` runs inside the same transaction (excerpts, markers)."""
     now = to_ts(clock.now())
     cols = {
         "stable_id": stable_id,
@@ -47,6 +50,8 @@ def create_item(
     with write_tx(conn), items_writer("create"):
         conn.execute(f"INSERT INTO items ({names}) VALUES ({marks})", tuple(cols.values()))  # noqa: S608
         _audit(conn, now, address_id, stable_id, "item.created", actor, {})
+        if also is not None:
+            also(conn)
 
 
 def get_status(conn: sqlite3.Connection, stable_id: StableId) -> Status:

@@ -318,6 +318,7 @@ Normalized tables per entity (operator decision 2026-09-27, OD-150; Fable/Opus r
 | `audit` | `id` | ts, address_id, event, actor, data (JSON; no content) |
 | `heartbeats` | `watcher` | last_seen, addresses |
 | `slack_dedupe` | `payload_id` | seen_at |
+| `processing` | (`address_id`, `uidvalidity`, `uid`) | attempts, started_at: the crash-safety marker written before a message is read and removed with its item; two crashes quarantine the message (V1.1 build, 2026-09-28) |
 
 Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open statuses>)` feeds "Needs you" and `ecf inbox`.
 
