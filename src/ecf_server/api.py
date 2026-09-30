@@ -47,11 +47,13 @@ from ecf_server import (
     approvals,
     audit,
     checks,
+    config,
     db,
     execute,
     health,
     inbox,
     pause,
+    ruletest,
     settings,
     slack_admin,
     slack_routes,
@@ -264,6 +266,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
             *_stage_routes(state, allow),
+            *_config_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -489,6 +492,40 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
         Route("/v1/settings", show_settings, methods=["GET"]),
         Route("/v1/settings", set_setting, methods=["POST"]),
+    ]
+
+
+def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`."""
+
+    @allow(Caller.CLI)
+    def apply_config(request: Request) -> JSONResponse:
+        body = _body(request)
+        text, nonce = _str(body, "document"), _opt_str(body, "nonce_id")
+        dry = body.get("dry_run") is True
+        conn = state.connect()
+        try:
+            r = config.apply(conn, state.clock, state.notifier, text, dry_run=dry, nonce=nonce)
+        finally:
+            conn.close()
+        return JSONResponse(r.to_json())
+
+    @allow(Caller.CLI)
+    def test_rules(request: Request) -> JSONResponse:
+        body = _body(request)
+        text, root = _str(body, "rules"), Path(_str(body, "cases_dir"))
+        if not root.is_absolute():
+            raise InvalidInputError("cases_dir must be an absolute path")
+        conn = state.connect()
+        try:
+            current = config.current_rules(conn)
+        finally:
+            conn.close()
+        return JSONResponse(ruletest.run(state.clock, current, text, root))
+
+    return [
+        Route("/v1/config/apply", apply_config, methods=["POST"]),
+        Route("/v1/rules/test", test_rules, methods=["POST"]),
     ]
 
 

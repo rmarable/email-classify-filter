@@ -142,7 +142,7 @@ def add_address(
     if org and new_org is not None and new_org != org:
         raise InvalidInputError(
             "org_domains is already set; changing it is security-relevant config "
-            "(`ecf config apply`, with step-up, arrives in V1.2)"
+            "(`ecf config apply`, with step-up)"
         )
 
     _refuse_duplicates(conn, address_id, email)

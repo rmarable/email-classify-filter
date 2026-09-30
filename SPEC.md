@@ -626,6 +626,7 @@ rules:
 - Actions: vocabulary names from §8.3; `continue` hands the item to the actor after running the listed actions.
 - Additions (operator decision 2026-09-27, OD-170), needed by the starter rules: an action may carry `if: <condition>` (rules 3, 4); `actor` may be `none`, `continue` or `{continue_if: <condition>}` (rules 3-5); `label` may take its value from an enum field, `{label: {field: category}}` (rule 9); a rule without `when` always matches, and the last rule must be such a catch-all; a `hide: never` rule may not contain hide actions; **rules may only emit `label`, `flag`, `escalate`, `leave`, `mark_read`, `archive`, `move` and `junk`**, so sends and drafts come only from actor proposals, behind approval.
 - `ecf rules test <file>` runs a change against the synthetic set locally and shows which outcomes change.
+- **As built in V1.2** (step 10b, 2026-09-30; code: `ecf_server/ruletest.py`): `ecf rules test <file> [--cases <folder>] [--all]` (default folder `tests/eval/synthetic`, so it runs from a checkout). For each case in `labels.jsonl` the service analyzes the `.eml` offline, in a scratch in-memory database: a message to `ap@acme.example`, a `standard` address with `org_domains: [acme.example]`, from a first-time sender, with no DNS (so `auth_result` is `none`). The case's expected facts then override the computed ones, and its expected labels stand in for the classifier. Both the rules in force (the applied rules, else the starter rules) and the proposed ones run; the output lists the cases whose outcome (rule, actions, hand-off to the actor) changes, and how many match their expected rule under each. Unbuilt cases (`ecf eval build`) and files over 64 MB are skipped and named. Nothing touches the live database, mail, Slack or the network. Because every sender is first-time here, a case whose expected rule assumes a known sender (e.g. an invoice from a regular vendor) matches the weak-fraud rule instead; the comparison between the two rule sets is what counts. The full set took about 25 s per run on the development Mac (measured 2026-09-30), mostly the two large built cases.
 
 **Starter rules:**
 1. **Fraud guard:** `fraud_risk ∈ {medium, high}`, `category = vendor_change_request`, `sender_type = staff ∧ sender_origin = external`, `payment_related ∧ auth_result = fail`, or a fraud trigger (not the regulator trigger, not the weak first-time + payment case, which gets `label(suspicious)`, `flag` and a digest section) → `label(suspicious)`, `flag`, `escalate`. Stop: no actor, never hidden.
@@ -721,6 +722,22 @@ Item cards have ✅ **Correct** and ✏️ **Fix**; review posts have **All othe
 ### 9.7 Security-relevant configuration
 
 `org_domains`, the forward allow-list, the move-folder allow-list, templates, the action policy, rules and `export_schedule` are changed only with `ecf config apply <file>` (validated, diff shown; operator decision 2026-09-26, OD-075), with step-up and a Slack announcement. `security_config_delay_minutes` is 0 in local mode (reviewer recommendation confirmed by the operator 2026-09-26, OD-074), so there is no Cancel. `export_dir` and the export keys change only through their own fingerprint step-up.
+
+**As built in V1.2** (step 10b, 2026-09-30; code: `ecf_server/config.py`, `ecf/cli_admin.py`): the config file shape [proposed in SPEC, pending operator review]:
+
+```yaml
+version: 1
+org_domains: [acme.example]                     # public mailbox domains refused (§7.2)
+forward_allow_list:                             # each within org_domains, never a monitored address
+  - {id: ap_lead, address: lead@acme.example}   # id ^[a-z0-9_]{1,40}$
+move_folders: [Receipts]                        # not INBOX; rules may `move` only to these
+action_policy:
+  standard: {archive: approve}                  # only mark_read, archive, move, junk; auto | approve
+rules: {version: 1, rules: [...]}               # §8.6
+templates: {version: 1, templates: [...]}       # §8.7
+```
+
+Every section is optional; an omitted one stays as it is. At most 50 entries per list; the file at most 48 KB. `action_policy` has no `high` key: `high` is a hard ceiling, and every other action's policy is fixed (§8.3). A change to one section must keep the others valid (new org domains must still cover the forward allow-list; new move folders must still hold every applied rule's `move` target). `export_schedule` and alert routes are refused (V1.5, OD-206; alert routes use `ecf alerts set`), as is any unknown key. `ecf config apply <file>` shows the diff per section, asks, then needs step-up; `--yes` skips the question, not the step-up. The step-up target is the whole validated document: the service computes the dialog text from it, and the bound hash covers the document and the configuration it replaces, so a nonce can't apply another document, and a change made in between voids it. With the delay at 0 in local mode (OD-074) the change applies at once: stored in the settings table (`org_domains`, `config.<section>`), audited (`config.applied`, with the document's SHA-256 and the per-section changes) and sent as a Security Notice. In V1.2 only `org_domains` has a reader; rules, the action policy and the move folders are read from V1.3, the forward allow-list and templates from V1.5. Without applied rules, the starter rules apply.
 
 ### 9.8 Outbound enablement and reminders
 
@@ -1214,6 +1231,8 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/pause-all` · `/v1/resume-all` | CLI | → the addresses that changed (V1.2 step 8a) |
 | POST | `/v1/senders/{hash}/confirm` · `/reply-to` · `/verified` | CLI | `{category}` / `{domain}` / `{}` plus `nonce_id?` → sender record |
 | GET/POST | `/v1/settings` | CLI | `{key, value, address_id?, nonce_id?}` → setting; GET → all settings |
+| POST | `/v1/config/apply` | CLI | `{document, dry_run?, nonce_id?}` → `{changed, applied, changes: [{section, change}], sha256}`; step-up (V1.2 step 10b) |
+| POST | `/v1/rules/test` | CLI | `{rules, cases_dir}` (absolute) → per-case outcomes under current and proposed rules, `changed`, `skipped`, `expected_matched` (V1.2 step 10b) |
 | POST | `/v1/config/apply` | CLI | `{document, dry_run, nonce_id?}` → diff; applied version |
 | POST | `/v1/rules/test` | CLI | `{rules}` → changed outcomes on the synthetic set |
 | POST | `/v1/secrets/{name}` | CLI | `{value, nonce_id?}` → `{stored}` (write-only; never returned) |

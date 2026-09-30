@@ -399,7 +399,7 @@ def address_add(
             domain = email.rsplit("@", 1)[-1].lower()
             typer.echo(
                 "Your organization's domains decide which senders count as internal "
-                "(changing them later is `ecf config apply`, V1.2)."
+                "(change them later with `ecf config apply`)."
             )
             answer = typer.prompt("Organization domains, comma-separated", default=domain)
             body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
