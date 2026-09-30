@@ -4,7 +4,9 @@
 the summary channel. V1.2 says: what's waiting on you per address, open items, stale items (up to
 10), approvals that expired twice (listed only here, §6.2), escalations in the last 24 hours,
 emails not fully scanned in the last 24 hours, paused addresses, and who else is in ecf's channels.
-Lines for backups, battery and backlog, and newer models arrive with those features (V1.3-V1.5).
+From V1.3: items waiting for the local model and how that changed since the last summary, and hours
+on battery since then (§10.1; V1.3 step 2b). Lines for backups and newer models arrive with those
+features (V1.4-V1.5).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -27,6 +29,8 @@ from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 
 LAST = "slack_daily_on"  # the local date of the last summary
+BATTERY = "daily.battery_seconds"  # seconds on battery since the last summary (V1.3 step 2b)
+BACKLOG = "daily.model_backlog"  # items waiting for the local model at the last summary
 MEMBERS, MEMBERS_AT = "slack_channel_others", "slack_channel_others_at"
 MEMBERS_EVERY = timedelta(hours=1)
 STALE_LIST = 10
@@ -57,8 +61,11 @@ def run(conn: sqlite3.Connection, clock: Clock) -> bool:
         return False
     slack_out.enqueue_post(conn, clock, key=f"daily:{today}", route=route,
                            card=card(conn, clock.now(), today))  # fmt: skip
+    now = to_ts(clock.now())
     with write_tx(conn):
-        slack_admin.put_setting(conn, LAST, today, to_ts(clock.now()), actor="service")
+        slack_admin.put_setting(conn, LAST, today, now, actor="service")
+        slack_admin.put_setting(conn, BATTERY, "0", now, actor="service")
+        slack_admin.put_setting(conn, BACKLOG, str(_model_backlog(conn)), now, actor="service")
     return True
 
 
@@ -96,6 +103,7 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     if twice:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
+    lines += _model_lines(conn)
     since_model = models.waiting_since(conn)
     if since_model:
         n = sum(v[1] for v in per_addr.values())
@@ -113,6 +121,35 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Nobody else is in ecf's channels.")
     lines.append("All of it: ecf inbox")
     return Card(f"Daily summary {today}", fields=fields, text="\n".join(lines))
+
+
+def record_battery(conn: sqlite3.Connection, clock: Clock, seconds: float) -> None:
+    """Add time spent on battery (the service's tick calls this; §10.1)."""
+    with write_tx(conn):
+        was = float(slack_admin.setting(conn, BATTERY) or 0)
+        slack_admin.put_setting(conn, BATTERY, str(round(was + seconds)), to_ts(clock.now()),
+                                actor="service")  # fmt: skip
+
+
+def _model_backlog(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT count(*) FROM items i JOIN addresses a USING (address_id)"
+        " WHERE i.status = 'new' AND i.model_failed = 0 AND a.removed_at IS NULL"
+    ).fetchone()
+    return int(row[0])
+
+
+def _model_lines(conn: sqlite3.Connection) -> list[str]:
+    out: list[str] = []
+    now, was = _model_backlog(conn), slack_admin.setting(conn, BACKLOG)
+    if now or was not in ("", "0"):
+        change = f" ({now - int(was):+d} since the last summary)" if was else ""
+        out.append(f"Waiting for the local model: {now}{change}")
+    hours = float(slack_admin.setting(conn, BATTERY) or 0) / 3600
+    if hours >= 0.1:
+        out.append(f"On battery {hours:.1f} h since the last summary (model work slows on battery;"
+                   " keep the Mac plugged in)")  # fmt: skip
+    return out
 
 
 def _counts(waiting: int, model: int, other: int, escalated: int, unscanned: int) -> str:

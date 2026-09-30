@@ -35,6 +35,7 @@ from ecf_server import (
     audit,
     breaker,
     checks,
+    daily,
     db,
     execute,
     health,
@@ -165,6 +166,7 @@ class Service:
         self.work = threading.Event()  # set when checks are due
         self.model_wake = threading.Event()  # set when the local model has new work
         self.rounds = modelq.RoundSchedule(self.clock)
+        self.throttle = modelq.Throttle()  # generation speeds across rounds (heat, OD-029/OD-243)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -184,6 +186,9 @@ class Service:
         try:
             conn = db.connect(self.state.db_path)
             try:
+                power = self.scheduler.power()
+                if power.laptop and not power.on_ac and not slept:
+                    daily.record_battery(conn, self.clock, awake)
                 if self.scheduler.tick(conn):
                     self.work.set()
                 audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
@@ -379,16 +384,20 @@ class Service:
             if not modelq.waiting(conn):
                 return
             power = self.scheduler.power()
+            on_battery = power.laptop and not power.on_ac
             client = self.state.model_client()
             try:
-                report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
-                                          resident=modelq.resident(conn),
-                                          check_kw=self.state.model_check,
-                                          stop=self.stop)  # fmt: skip
+                with modelq.awake(on_ac=not on_battery):
+                    report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
+                                              resident=modelq.resident(conn),
+                                              check_kw=self.state.model_check, stop=self.stop,
+                                              throttle=self.throttle)  # fmt: skip
             finally:
                 client.close()
-            self.rounds.after(report, on_battery=power.laptop and not power.on_ac,
-                              offhours=schedule.interval_offhours(conn))  # fmt: skip
+            now_interval = schedule.install_interval(conn, self.clock.now())
+            self.rounds.after(report, on_battery=on_battery,
+                              offhours=schedule.interval_offhours(conn),
+                              interval=now_interval)  # fmt: skip
             log.info("model.round", status=report.status, done=report.done, failed=report.failed,
                      waiting=report.waiting)  # fmt: skip
         finally:

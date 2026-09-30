@@ -79,6 +79,12 @@ class CheckReport:
         )
 
 
+def max_per_check_s(conn: sqlite3.Connection) -> float:
+    """`max_per_check` in seconds: a check's IMAP and rules work (1-30 min; OD-228)."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'max_per_check'").fetchone()
+    return float(json.loads(row[0]) * 60) if row else MAX_PER_CHECK_S
+
+
 def holder() -> str:
     """Unique per check: a holder may renew or re-take its own lease, so two checks must never
     share a name."""
@@ -170,7 +176,7 @@ def _locked_check(
             cfg = address_config(conn, address_id)
             dns = DnsCache(conn, clock, cap_s=DNS_CAP_S)
             analyzer = MessageAnalyzer.for_address(conn, clock, address_id, dns)
-            deadline = clock.monotonic() + MAX_PER_CHECK_S
+            deadline = clock.monotonic() + max_per_check_s(conn)
             page = fetch_page(
                 conn,
                 clock,

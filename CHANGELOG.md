@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- `ecf settings set` accepts `resident` (keep the local model loaded) and `max_per_check` (1-30 minutes of IMAP and rules work per check, OD-228). The daily summary shows how many items wait for the local model, how that changed, and hours on battery. Local-model work keeps the Mac awake on AC power only, and pauses after three slow calls in a row (heat, OD-243).
 - New commands `ecf models serve install|uninstall|status`: ecf runs Ollama from its own login item with fixed settings (loopback only, one request at a time, cloud off), replacing `brew services`; `ecf models install` starts it when nothing serves Ollama yet (OD-246).
 - Install-wide alerts (Slack, the local model) no longer disappear from `ecf status` and `ecf doctor` once any address has been removed.
 - New commands `ecf models install` (pulls the pinned Gemma 4 12B into Ollama, checks its digest and keeps ecf's own copy) and `ecf models status`. Once installed, ecf raises a System Error when Ollama isn't running, the model is missing or changed, or Ollama isn't safe to use (listening beyond this computer, request logging on, or a check that can't run; those mention you). `ecf doctor` checks Ollama and its settings.

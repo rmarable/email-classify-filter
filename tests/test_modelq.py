@@ -4,9 +4,13 @@ leases and pause, unloading, eval exclusivity, round scheduling."""
 
 from __future__ import annotations
 
+import itertools
+import os
 import sqlite3
 import subprocess
+import sys
 import threading
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -239,3 +243,84 @@ def test_when_the_next_round_is_due(
         assert s.next_due == clock.now() + timedelta(seconds=due_in) and not s.due()
         clock.advance(due_in)
         assert s.due()
+
+
+# ---- heat and power (V1.3 step 2b; OD-029 as amended by OD-243) --------------------------------
+
+
+def _ok(tps: float) -> ItemResult:
+    return ItemResult("ok", ollama.Metrics(500, 0, 60, 1, int(60 / tps * 1e9), 1, 1))
+
+
+def test_three_slow_calls_in_a_row_pause_for_heat() -> None:
+    t = modelq.Throttle()
+    assert not any(t.record(_ok(30)) for _ in range(5))
+    assert not t.record(_ok(15)) and not t.record(_ok(15))
+    assert t.record(_ok(15))  # the third in a row
+    assert not t.record(_ok(15))  # the run starts again
+
+
+def test_a_normal_call_resets_the_run_and_failures_never_count() -> None:
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(30))
+    t.record(_ok(15))
+    t.record(_ok(15))
+    assert not t.record(_ok(30))  # back to normal
+    for _ in range(5):  # slow failures and calls without metrics don't enter the median
+        assert not t.record(ItemResult("failed", _ok(1).metrics))
+        assert not t.record(ItemResult("ok"))
+    assert t.median() == 30
+
+
+def test_no_judgement_before_enough_calls() -> None:
+    t = modelq.Throttle()
+    assert not any(t.record(_ok(1)) for _ in range(4))
+
+
+def test_a_hot_round_ends_and_waits_for_the_next_interval(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _address(conn, clock, "ap")
+    _items(conn, clock, "ap", 12)
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(30))
+
+    class Slow(Work):
+        def __call__(self, *a: Any) -> ItemResult:
+            super().__call__(*a)
+            return _ok(10)
+
+    report = _round(conn, clock, Slow(), throttle=t)
+    assert report.status == "hot" and report.done == 3
+    s = RoundSchedule(clock)
+    s.after(report, on_battery=False, offhours=timedelta(minutes=30),
+            interval=timedelta(minutes=10))  # fmt: skip
+    assert s.next_due == clock.now() + timedelta(minutes=10)
+
+
+def test_awake_holds_no_assertion_on_battery_or_off_macos() -> None:
+    with modelq.awake(on_ac=False, platform="darwin"):
+        pass
+    with modelq.awake(on_ac=True, platform="linux"):
+        pass
+
+
+@pytest.mark.macos
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_awake_holds_prevent_user_idle_system_sleep_on_ac() -> None:
+    def ours() -> bool:
+        out = subprocess.run(["/usr/bin/pmset", "-g", "assertions"], capture_output=True,
+                             text=True, check=True).stdout  # fmt: skip
+        lines = out.splitlines()  # the assertion line, then "Details: ... on behalf of Process ID"
+        return any("(caffeinate)" in a and "PreventUserIdleSystemSleep" in a
+                   and f"on behalf of Process ID {os.getpid()}" in b
+                   for a, b in itertools.pairwise(lines))  # fmt: skip
+
+    with modelq.awake(on_ac=True):
+        deadline = time.monotonic() + 5
+        while not ours() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert ours()
+    assert not ours()

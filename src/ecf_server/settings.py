@@ -117,6 +117,8 @@ _install = [
     Key("notifications", "install", _choice("on", "off"), "on", restart=True),
     Key("deadman_offhours", "install", _bool, False),  # OD-219
     Key("stale_item_days", "install", _int(7, 365), 30),
+    Key("max_per_check", "install", _int(1, 30), 6),  # minutes of IMAP and rules work (OD-228)
+    Key("resident", "install", _bool, False),  # keep the local model loaded (§5.2)
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),
@@ -133,7 +135,6 @@ ELSEWHERE = {
     "install_role": "fixed when the install is created",
     "sensitivity": "change it with `ecf sensitivity set`",
     "stage": "change it with `ecf stage set`",
-    "resident": "arrives with local models in V1.3",
     "review_sample_rate": "arrives with review posts in V1.3",
     "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
     "classifier_high_batch": "arrives with Claude on demand in V1.4",
@@ -145,7 +146,6 @@ ELSEWHERE = {
     "max_sends_per_hour": "arrives with outbound in V1.5",
     "max_sends_per_day": "arrives with outbound in V1.5",
     "dns.doh_url": "not built yet",
-    "max_per_check": "fixed at 6 minutes in V1.2; settable from V1.3",
     "claude_review_reminder_hours": "arrives with Claude on demand in V1.4",
     "alerts.email.monitored_address": "arrives with email alerts in V1.5 (OD-206)",
     "alerts.email.destination_address": "arrives with email alerts in V1.5 (OD-206)",

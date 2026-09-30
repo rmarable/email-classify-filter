@@ -25,9 +25,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import statistics
+import subprocess
+import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
@@ -63,7 +68,7 @@ class Work(Protocol):
 
 @dataclass
 class RoundReport:
-    status: str  # done | budget | not_ready | eval | stopped
+    status: str  # done | budget | hot | not_ready | eval | stopped
     done: int = 0
     failed: int = 0
     marked_failed: int = 0
@@ -123,6 +128,48 @@ def _holder() -> str:
     return f"model-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
+# ---------------------------------------------------------------------------- heat and power
+
+SLOW_FACTOR = 0.7  # a call more than 30% below the rolling median is slow (OD-029)
+SLOW_IN_A_ROW = 3  # amended by OD-243: three slow calls in a row, not one
+WINDOW = 20
+MIN_WINDOW = 5  # no judgement until this many normal calls are known
+
+
+class Throttle:
+    """Heat (§5.2, OD-029 as amended by OD-243): generation speed of each normal call against a
+    rolling median of recent ones; three slow calls in a row pause model work until the next
+    interval. Timed-out, truncated or failed calls never enter the median, so a run of crafted
+    slow emails can't drag it down or trip the pause on its own."""
+
+    def __init__(self) -> None:
+        self.speeds: deque[float] = deque(maxlen=WINDOW)
+        self.slow_run = 0
+
+    def median(self) -> float | None:
+        if len(self.speeds) < MIN_WINDOW:
+            return None
+        return statistics.median(self.speeds)
+
+    def record(self, result: ItemResult) -> bool:
+        """Count one call; True when model work should pause for heat."""
+        if result.outcome != "ok" or result.metrics is None:
+            return False
+        tps = result.metrics.generation_tps
+        if tps is None:
+            return False
+        med = self.median()
+        if med is not None and tps < SLOW_FACTOR * med:
+            self.slow_run += 1
+            if self.slow_run >= SLOW_IN_A_ROW:
+                self.slow_run = 0
+                return True
+            return False
+        self.slow_run = 0
+        self.speeds.append(tps)
+        return False
+
+
 class _Stop(Exception):
     pass
 
@@ -138,6 +185,7 @@ class _Round:
     report: RoundReport
     holder: str = field(default_factory=_holder)
     tried: set[str] = field(default_factory=set[str])  # each item at most once per round
+    throttle: Throttle = field(default_factory=Throttle)
 
 
 def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
@@ -152,6 +200,7 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
     exclusive: Exclusive = EXCLUSIVE,
     check_kw: dict[str, Any] | None = None,
     stop: threading.Event | None = None,
+    throttle: Throttle | None = None,
 ) -> RoundReport:
     if exclusive.held():
         return RoundReport("eval", waiting=sum(waiting(conn).values()))
@@ -159,7 +208,8 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
     if ready is None:
         return RoundReport("not_ready", waiting=sum(waiting(conn).values()))
     started = clock.monotonic()
-    r = _Round(conn, clock, notifier, client, ready, work, RoundReport("done"))
+    r = _Round(conn, clock, notifier, client, ready, work, RoundReport("done"),
+               throttle=throttle or Throttle())  # fmt: skip
     try:
         while r.report.status == "done":
             progressed = False
@@ -215,6 +265,8 @@ def _one(r: _Round, address_id: str) -> bool:
                     raise _Stop from e  # the server itself: no attempt counts against the item
                 result = ItemResult("failed")
             _account(r.conn, r.clock, r.notifier, item, result, r.report)
+            if r.throttle.record(result):
+                r.report.status = "hot"  # three slow calls in a row: pause until the next interval
             r.report.per_address[address_id] = r.report.per_address.get(address_id, 0) + 1
             return True
         finally:
@@ -305,12 +357,23 @@ class RoundSchedule:
     def due(self) -> bool:
         return self.next_due is None or self.clock.now() >= self.next_due
 
-    def after(self, report: RoundReport, *, on_battery: bool, offhours: timedelta) -> None:
+    def after(
+        self,
+        report: RoundReport,
+        *,
+        on_battery: bool,
+        offhours: timedelta,
+        interval: timedelta | None = None,
+    ) -> None:
+        """`interval`: the current check interval, for a pause after heat (else off-hours)."""
+        interval = interval or offhours
         now = self.clock.now()
         if report.status in ("not_ready", "eval"):
             self.next_due = now + RETRY
         elif on_battery:
             self.next_due = now + offhours
+        elif report.status == "hot":
+            self.next_due = now + interval
         elif report.status == "budget":
             self.next_due = now + CATCH_UP
         else:
@@ -320,3 +383,30 @@ class RoundSchedule:
 def resident(conn: sqlite3.Connection) -> bool:
     row = conn.execute("SELECT value FROM settings WHERE key = 'resident'").fetchone()
     return bool(row and json.loads(row["value"]) is True)
+
+
+@contextmanager
+def awake(on_ac: bool, platform: str = sys.platform) -> Generator[None]:
+    """On AC power, hold a PreventUserIdleSystemSleep assertion for the round (§5.2, OD-029):
+    `caffeinate -i` on macOS, tied to this process. Never on battery. Other platforms: none."""
+    proc: subprocess.Popen[bytes] | None = None
+    if on_ac and platform == "darwin" and os.path.exists(CAFFEINATE):
+        try:
+            proc = subprocess.Popen(  # noqa: S603 - fixed path and arguments
+                [CAFFEINATE, "-i", "-w", str(os.getpid())],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )  # fmt: skip
+        except OSError as e:
+            log.warning("model.awake_failed", error_type=type(e).__name__)
+    try:
+        yield
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+CAFFEINATE = "/usr/bin/caffeinate"
