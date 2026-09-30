@@ -117,6 +117,8 @@ def compute(
     unscanned = _unscanned_reasons(parsed, address, payment_keyword, first_time)
     return {
         "from_domain": from_domain,
+        # the sender record's key, so a later decision can read a confirmed category (V1.3)
+        "sender_hash": sender_hash(parsed.from_addr) if parsed.from_addr else None,
         "sender_origin": "internal"
         if in_domains(from_domain, org_domains) and auth_result == "pass"
         else "external",

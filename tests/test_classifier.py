@@ -37,8 +37,9 @@ def _item(conn: sqlite3.Connection, clock: FakeClock, sid: str, text: str, aid: 
         c.execute("INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
                   (sid, text, text[:4000]))  # fmt: skip
 
+    facts = json.dumps({"triggers": {"fraud": ["fraud_1"]}})
     items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId(aid),
-                      content_hash="h", facts=json.dumps({"triggers": ["fraud_1"]}), subject="s",
+                      content_hash="h", facts=facts, subject="s",
                       sender="billing@vendor-a.example", also=excerpt)  # fmt: skip
     return sid
 
@@ -105,7 +106,10 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
     result = classifier.classify_item(conn, clock, fake.client(), _ready(), _row(conn, sid))
     assert result.outcome == "ok"
     row = _row(conn, sid)
-    assert row["status"] == "classified"
+    # the policy ran next (step 4b): the fraud trigger escalates, and in shadow nothing is done
+    assert row["status"] == "observed"
+    assert json.loads(row["proposal"])["plan"]["rule"] == "fraud_guard"
+    assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
     assert json.loads(row["classification"]) == GOOD
     assert json.loads(row["pinned_models"]) == {"classifier": PIN.ecf_tag, "digest": PIN.digest,
                                                 "schema": 1}  # fmt: skip
@@ -169,7 +173,7 @@ def test_the_queue_runs_the_classifier(conn: sqlite3.Connection, clock: FakeCloc
     report = modelq.run_round(conn, clock, FakeNotifier(), fake.client(), classifier.classify_item,
                               check_kw=check_kw())  # fmt: skip
     assert (report.status, report.done, report.waiting) == ("done", 3, 0)
-    assert {_row(conn, s)["status"] for s in sids} == {"classified"}
+    assert {_row(conn, s)["status"] for s in sids} == {"observed"}
 
 
 # ---- the real model (this Mac) ---------------------------------------------------------------

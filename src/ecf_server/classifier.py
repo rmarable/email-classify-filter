@@ -29,7 +29,7 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import CompiledSchema, load_schema_v1
-from ecf_server import items, ollama
+from ecf_server import decide, items, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -158,3 +158,8 @@ def _store(
                          actor="classifier", expected=Status.NEW)  # fmt: skip
     except ConflictError:
         log.info("classifier.item_moved_on", stable_id=stable_id[:8])  # resolved meanwhile
+        return
+    try:
+        decide.apply(conn, clock, stable_id)
+    except Exception as exc:  # the tick's sweep tries again; the classification is kept
+        log.error("policy.apply_failed", stable_id=stable_id[:8], error_type=type(exc).__name__)

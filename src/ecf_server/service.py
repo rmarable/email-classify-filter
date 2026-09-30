@@ -38,6 +38,7 @@ from ecf_server import (
     classifier,
     daily,
     db,
+    decide,
     execute,
     health,
     jobs,
@@ -231,6 +232,7 @@ class Service:
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 self._model_check(conn)
+                decide.sweep(conn, self.clock)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):
                     if not execute.run_once(conn, self.clock, self.state.executor):
