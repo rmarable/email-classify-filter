@@ -18,8 +18,9 @@ from ecf_server._slack import Envelope
 from ecf_server.clock import Clock, FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
 from ecf_server.secretstore.memory import MemorySecretStore
+from ecf_server.slack_admin import APP_SECRET, BOT_SECRET
 from ecf_server.slack_in import Click, Inbound, SlackIdentity, SlackReceiver
-from ecf_server.slack_runtime import APP_SECRET, BOT_SECRET, SlackRuntime
+from ecf_server.slack_runtime import SlackRuntime
 from tests.test_slack_out import FakeWeb
 
 ME = SlackIdentity("A1", "T1", "U1")
@@ -54,7 +55,7 @@ class Listener:
     def __init__(self, db_path: Path, clock: FakeClock) -> None:
         self.acked: list[str] = []
         self.views: list[tuple[str, dict[str, Any]]] = []
-        self.inbound = Inbound(ME, clock, lambda: db.connect(db_path), self.acked.append,
+        self.inbound = Inbound(lambda _c: ME, clock, lambda: db.connect(db_path), self.acked.append,
                                lambda t, v: self.views.append((t, v)))  # fmt: skip
 
 

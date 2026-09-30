@@ -1,7 +1,8 @@
 """The Slack connection manager (SPEC §10.1; V1.2 step 3b). One thread in the service:
 
-- idle until Slack is installed (`ecf slack install`, step 4, stores the bot and app-level tokens
-  in the secret store and the app, workspace and member IDs in settings);
+- idle until Slack is installed (`ecf slack install` stores the bot and app-level tokens in the
+  secret store and the app and workspace IDs in settings; `slack_admin`);
+- reconnects at once when `reload` is called (after an install or new tokens);
 - then connects Socket Mode, and runs the output queue (`slack_out`) and the click queue
   (`slack_in`) one job at a time;
 - keeps "connected" and "last connected" for `ecf status` and the "Needs you" header (OD-118);
@@ -10,41 +11,27 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, slack_in
+from ecf_server import _slack, slack_admin, slack_in
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
 from ecf_server.secretstore import SecretStore
+from ecf_server.slack_admin import APP_SECRET, BOT_SECRET
 from ecf_server.slack_chat import SlackChat
-from ecf_server.slack_in import Inbound, SlackIdentity, SlackReceiver
+from ecf_server.slack_in import Inbound, SlackReceiver
 from ecf_server.slack_out import SlackSender
 
-BOT_SECRET = "slack/bot"  # noqa: S105 - the secret store's entry name, not a secret
-APP_SECRET = "slack/app"  # noqa: S105 - the secret store's entry name, not a secret
-IDENTITY_KEYS = ("slack_app_id", "slack_team_id", "slack_member_id")
 RETRY_S = 60.0
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0
 
 WebFactory = Callable[[str], Any]
 SocketFactory = Callable[[str, Any, Callable[[_slack.Envelope], None]], Any]
-
-
-def identity(conn: sqlite3.Connection) -> SlackIdentity | None:
-    """The app, workspace and member IDs `ecf slack install` recorded, or None."""
-    rows = conn.execute(
-        "SELECT key, value FROM settings WHERE key IN (?, ?, ?)", IDENTITY_KEYS
-    ).fetchall()
-    found = {r["key"]: str(json.loads(r["value"])) for r in rows}
-    if not all(found.get(k) for k in IDENTITY_KEYS):
-        return None
-    return SlackIdentity(found["slack_app_id"], found["slack_team_id"], found["slack_member_id"])
 
 
 class SlackRuntime:
@@ -65,6 +52,7 @@ class SlackRuntime:
         self._sender: SlackSender | None = None
         self._receiver = SlackReceiver(clock)
         self._web: Any = None
+        self._reload = threading.Event()
         self.status: dict[str, Any] = {"installed": False, "connected": False,
                                        "last_connected_at": None}  # fmt: skip
 
@@ -72,7 +60,7 @@ class SlackRuntime:
         """Connect if Slack is installed; True when connected."""
         conn = self._connect()
         try:
-            ident = identity(conn)
+            ident = slack_admin.identity(conn)
         finally:
             conn.close()
         store = self._secrets()
@@ -83,7 +71,8 @@ class SlackRuntime:
         self.status["installed"] = True
         self._web = self._make_web(bot)
         self._sender = SlackSender(SlackChat(self._web), self._clock, self._notifier)
-        inbound = Inbound(ident, self._clock, self._connect, self._ack, self._open_view)
+        inbound = Inbound(slack_admin.identity, self._clock, self._connect, self._ack,
+                          self._open_view)  # fmt: skip
         self._socket = self._make_socket(app, self._web, inbound.on_envelope)
         try:
             self._socket.connect()
@@ -99,6 +88,11 @@ class SlackRuntime:
         last_prune = 0.0
         waited = 0.0
         while not stop.is_set():
+            if self._reload.is_set():
+                self._reload.clear()
+                self.close()
+                self._sender = None
+                last_try = waited - RETRY_S  # connect now
             if self._socket is None and waited - last_try >= RETRY_S:
                 last_try = waited
                 self.start()
@@ -122,6 +116,10 @@ class SlackRuntime:
         finally:
             conn.close()
         return sent or handled
+
+    def reload(self) -> None:
+        """Called from the API thread: reconnect with the stored tokens on the next pass."""
+        self._reload.set()
 
     def close(self) -> None:
         if self._socket is not None:

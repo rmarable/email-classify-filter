@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 import typer
 
 from ecf import __version__
+from ecf.cli_slack import make_app as make_slack_app
 from ecf.client import LocalClient
 from ecf.doctor import Level, run_checks
 from ecf.errors import EcfError
@@ -67,6 +68,9 @@ def _paths() -> Paths:
     return paths_for(STATE.install)
 
 
+app.add_typer(make_slack_app(_paths), name="slack")
+
+
 @app.command()
 def version() -> None:
     """Print the ecf version."""
@@ -96,6 +100,12 @@ def status() -> None:
         f"secrets:   {ss.get('backend') or 'none usable'}"
         + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
     )
+    sl = st.get("slack", {})
+    if not sl.get("installed"):
+        typer.echo("slack:     not installed (`ecf slack install`)")
+    else:
+        state = "connected" if sl.get("connected") else "NOT connected"
+        typer.echo(f"slack:     {state}; last connected {sl.get('last_connected_at') or 'never'}")
     for a in st.get("addresses", []):
         last = a["last_finished_at"] or "never checked"
         line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"

@@ -51,8 +51,10 @@ class Envelope:
 
 
 class Web:
-    def __init__(self, token: str) -> None:
-        self._client: Any = _web.WebClient(token=token, timeout=TIMEOUT_S, logger=_log)
+    def __init__(self, token: str, *, base_url: str | None = None) -> None:
+        """`base_url` only in tests (a local server standing in for slack.com)."""
+        kw: dict[str, Any] = {"base_url": base_url} if base_url else {}
+        self._client: Any = _web.WebClient(token=token, timeout=TIMEOUT_S, logger=_log, **kw)
 
     @property
     def sdk_client(self) -> Any:

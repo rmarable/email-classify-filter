@@ -40,6 +40,7 @@ FATAL = frozenset(
     {"invalid_auth", "account_inactive", "token_revoked", "token_expired", "not_authed",
      "missing_scope", "no_permission"}
 )  # fmt: skip
+GONE = frozenset({"message_not_found"})  # the card was deleted in Slack: post it again
 ALERT = "slack_delivery_failed"
 FIX = "Fix: ecf slack set-tokens, then ecf slack reauthorize"
 
@@ -131,16 +132,24 @@ class SlackSender:
             self._chat.ephemeral(route, str(p["user"]), str(p["text"]))
             return
         card = _card(p["card"])
-        existing = message_ref(conn, str(p["key"]))
+        key = str(p["key"])
+        existing = message_ref(conn, key)
+        ref: ThreadRef | None = None
         if existing is not None:  # a retry or a later edit: never a second post
-            self._chat.update(existing, card)
-            ref = existing
-        else:
+            try:
+                self._chat.update(existing, card)
+                ref = existing
+            except SlackError as exc:
+                if exc.code not in GONE:
+                    raise
+                _forget(conn, key)  # deleted in Slack: post it again below
+        if ref is None:
             thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
             ident = p.get("identity")
             identity = Identity(str(ident["name"]), str(ident["icon_emoji"])) if ident else None
             ref = self._chat.post(route, card, thread=thread, identity=identity)
-            _remember(conn, self._clock, str(p["key"]), ref, thread)
+        _remember(conn, self._clock, key, ref, message_ref(conn, str(p.get("thread_key") or "")),
+                  {k: v for k, v in p.items() if k != "op"})  # fmt: skip
         if p.get("pin"):
             self._chat.pin(ref)
 
@@ -173,16 +182,41 @@ def _card(d: dict[str, Any]) -> Card:
 
 
 def _remember(
-    conn: sqlite3.Connection, clock: Clock, key: str, ref: ThreadRef, thread: ThreadRef | None
+    conn: sqlite3.Connection,
+    clock: Clock,
+    key: str,
+    ref: ThreadRef,
+    thread: ThreadRef | None,
+    post: dict[str, Any],
 ) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute(
-            "INSERT INTO slack_messages (key, channel, ts, thread_ts, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET channel = excluded.channel,"
-            " ts = excluded.ts, updated_at = excluded.updated_at",
-            (key, ref.route.channel, ref.ts, thread.ts if thread else None, now, now),
-        )
+            "INSERT INTO slack_messages (key, channel, ts, thread_ts, created_at, updated_at, post)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET"
+            " channel = excluded.channel, ts = excluded.ts, updated_at = excluded.updated_at,"
+            " post = excluded.post",
+            (key, ref.route.channel, ref.ts, thread.ts if thread else None, now, now,
+             json.dumps(post)),
+        )  # fmt: skip
+
+
+def _forget(conn: sqlite3.Connection, key: str) -> None:
+    with write_tx(conn):
+        conn.execute("DELETE FROM slack_messages WHERE key = ?", (key,))
+
+
+def repost_all(conn: sqlite3.Connection, clock: Clock) -> int:
+    """Queue every recorded post again: each edits its card, or re-posts it if the message is
+    gone (`ecf slack reauthorize`). Thread replies follow their top post in the channel's order."""
+    rows = conn.execute(
+        "SELECT post FROM slack_messages WHERE post != '{}' ORDER BY created_at, key"
+    ).fetchall()
+    for r in rows:
+        p: dict[str, Any] = json.loads(r["post"])
+        jobs.enqueue(conn, clock, jobs.Queue.SLACK_OUT, AddressId(str(p["channel"])),
+                     {**p, "op": "post", "pin": False}, timeout_s=TIMEOUT_S)  # fmt: skip
+    return len(rows)
 
 
 def dead_posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:

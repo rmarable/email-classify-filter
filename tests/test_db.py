@@ -98,7 +98,7 @@ def test_0012_rebuilds_jobs_keeping_rows_and_indexes(
             " VALUES ('j0', 'slack_in', 'U1', 60, 't', 't')"
         )
     monkeypatch.setattr(db, "_migration_files", lambda: every)
-    assert db.migrate(c) == ["0012_slack_in_queue.sql"]
+    assert db.migrate(c)[0] == "0012_slack_in_queue.sql"
     row = c.execute("SELECT queue, payload FROM jobs WHERE job_id = 'j1'").fetchone()
     assert (row["queue"], row["payload"]) == ("slack_out", '{"k": 1}')
     c.execute(

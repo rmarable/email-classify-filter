@@ -742,6 +742,8 @@ An **Answer** button opens a Slack modal; answers are authorized to you; first a
 
 **As built in V1.2** (steps 3a and 3b, 2026-09-29; code: `ecf_server/slack_render.py`, `slack_chat.py`, `slack_out.py`, `slack_in.py`, `slack_runtime.py`): cards render as `plain_text` Block Kit only (header ≤ 150 characters, fields ≤ 2,000, text ≤ 3,000, button labels ≤ 75, ≤ 10 fields per section, ≤ 25 buttons); control and format characters are stripped, URL schemes defanged (`https[:]//`), and the fallback `text` is escaped. Posts are `slack_out` jobs, FIFO per channel, one per second per channel; each post has a key, and the message it made is stored (`slack_messages`), so later edits and retries use `chat.update` on the stored ts and never post twice. Network errors hold the post without counting the attempt; `Slack Delivery Failed` opens after 15 minutes of failures while the network is up, or at once on a revoked or invalid token (the post is held, not dropped); other Slack errors retry with backoff and then dead-letter, recorded by key only. Clicks: the listener acknowledges every envelope, refuses any not from this app, this workspace and your member ID (audited as `slack.click_refused` with the member ID only), drops repeated envelope IDs (kept 1 day), opens a form at once when the button has one, and otherwise queues the click as a `slack_in` job (migration 0012; 3 attempts); a worker runs the handler registered for the action. A refusal by policy or state is audited (`slack.click_failed`) and not retried; an unknown action is audited (`slack.click_unknown`). The connection manager is one service thread (not in `ecf-server dev`): it stays idle until the Slack tokens and the app, workspace and member IDs are stored, retries a failed connection every minute, and reports `installed`, `connected` and `last connected` in `ecf status`.
 
+**As built in V1.2** (step 4, 2026-09-29; code: `ecf_server/slack_admin.py`, `ecf/cli_slack.py`): `ecf slack install` asks for a configuration token (hidden), and the service calls `apps.manifest.create` with ecf's manifest (Socket Mode on, interactivity on, the §10.1 bot scopes, the Messages tab read-only); it keeps only the app ID, never the configuration token or the credentials Slack returns. You then click "Install to Workspace" and create the app-level token; both tokens are typed into hidden prompts and the service checks them with Slack before storing them: `auth.test` gives the workspace and bot, `bots.info` the app (it must be the app ecf created), `apps.connections.open` checks the app-level token (Slack API shapes verified 2026-09-29, docs.slack.dev). Slack's docs don't say whether an app-level token names its app, so a token from another app is caught only when its clicks arrive (refused as `wrong_app`). Your member ID is confirmed by a Confirm button that the service DMs to it; the click is handled by the running service over its own Socket Mode connection (not a temporary one opened by the CLI), must come from that member ID and carry the DM's one-time value, and until it arrives no other click is accepted. `ecf slack set-member <id>` changes the member ID (step-up; a Security Notice to the old ID's DM, the summary channel once it exists and the desktop; the old ID keeps working until the new one clicks Confirm). `ecf slack set-tokens` needs step-up bound to a hash of the new tokens (never the tokens themselves) and the tokens must be for the same workspace and app; it sends a Security Notice and reconnects at once. `ecf slack reauthorize` takes a fresh configuration token for `apps.manifest.update`, says when Slack needs "Reinstall to Workspace", then queues an edit of every card ecf posted; a card whose message is gone (`message_not_found`) is posted again. To do that, each post's card, display name and thread are kept with its message record (migration 0013). `ecf slack status` shows the app, workspace, member ID and connection. Security Notices go by email too once email alerts exist (V1.5, OD-206). The OD-211 summary post of escalations recorded in V1.1 needs the summary channel and comes with step 5.
+
 ### 10.2 CLI reference [v1]
 
 `--help` marks "(admin)", "(destructive)" and "(step-up)". Global options: `--install <name>` (default `default`); `ECF_HOME` overrides the data path only (operator decision 2026-09-27, OD-085). CLI calls carry a token read from a 0600 file; commands are socket requests; with no service running they print "service not running: `ecf service start` or `ecf watch`" (`doctor` reads SQLite directly when the socket is absent).
@@ -756,7 +758,7 @@ An **Answer** button opens a Slack modal; answers are authorized to you; first a
 | settings | `settings show|set` (install defaults and per-address keys, incl. `slack_member_id`, `export_dir` and export keys, `--claude-model-override`, `claude_queue_timeout`, `approval_ttl_days(_send)`, `catch_up*`, `classifier_high_batch`, `resident`; `install_role` fixed at init), `config apply <file>`, `rules test <file>` |
 | data | `logs`, `export`, `import [--replace]`, `restore <bundle>`, `retention set`, `replay <eml-dir> [--via append|smtp]` (dev only; refuses production) |
 | eval | `eval run [--classifier] [--actor] [--fraud-only]`, `eval compare|label|new-case|build|show` |
-| integration | `slack install|reauthorize|set-tokens`, `alerts set|show|test`, `models status|install`, `claude` |
+| integration | `slack install|status|set-tokens|set-member|reauthorize`, `alerts set|show|test`, `models status|install`, `claude` |
 
 Notes:
 - `ecf watch` asks, then stops the unit (`launchctl bootout` / `systemctl --user stop`) and `execv`s `ecf-server local --foreground`, which releases the instance lock and restarts the unit when it exits.
@@ -1094,7 +1096,7 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | `sensitivity_downgrade_delay_minutes` | 0 (local) | 0 in local mode | OD 2026-09-26 |
 | `install_role` | `prod` | `prod`, `test`; fixed at init | OD 2026-09-26 |
 | `trust_provider_authentication_results` | false | fixed | RR |
-| `slack_member_id` | asked at install | a Slack member ID | OD 2026-09-27 |
+| `slack_member_id` | asked at install; changed with `ecf slack set-member` (step-up) | a Slack member ID | OD 2026-09-27 |
 
 ### 14.2 Per-address settings
 
@@ -1191,7 +1193,11 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/config/apply` | CLI | `{document, dry_run, nonce_id?}` → diff; applied version |
 | POST | `/v1/rules/test` | CLI | `{rules}` → changed outcomes on the synthetic set |
 | POST | `/v1/secrets/{name}` | CLI | `{value, nonce_id?}` → `{stored}` (write-only; never returned) |
-| POST | `/v1/slack/install` · `/reauthorize` · `/member` | CLI | tokens, config token, member ID → install status |
+| GET | `/v1/slack` | CLI | → app, workspace, member, pending member, connection (V1.2 step 4) |
+| POST | `/v1/slack/app` | CLI | configuration token → app ID (`apps.manifest.create`; token and returned credentials not kept) |
+| POST | `/v1/slack/install` | CLI | bot token, app-level token, member ID → install status (a DM asks the member to confirm) |
+| POST | `/v1/slack/tokens` · `/member` | CLI | new tokens or member ID, `stepup_nonce` → install status (step-up, Security Notice) |
+| POST | `/v1/slack/reauthorize` · `/refresh` | CLI | configuration token → `permissions_updated`; then queue an edit of every card |
 | POST | `/v1/alerts` · `/v1/alerts/test` | CLI | `{class?, routes, nonce_id}` → routes; test → sent |
 | POST | `/v1/export` · `/v1/import` · `/v1/restore` | CLI | `{path, passphrase?, replace?, nonce_id}` → manifest, preview, result |
 | POST | `/v1/retention` | CLI | `{days, nonce_id}` → setting |

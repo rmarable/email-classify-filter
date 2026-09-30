@@ -40,13 +40,18 @@ FIELDS_MAX = 10
 DEDUPE_KEEP = timedelta(days=1)
 
 
+CONFIRM_ACTION = "confirm_member"  # the one click a member ID waiting for confirmation may make
+
+
 @dataclass(frozen=True)
 class SlackIdentity:
-    """Who may click: this app, this workspace, and you (OD-084)."""
+    """Who may click: this app, this workspace, and you (OD-084). `member` is "" until your
+    member ID is confirmed; `pending` is a member ID waiting for its Confirm click (V1.2 step 4)."""
 
     app_id: str
     team_id: str
     member: str
+    pending: str = ""
 
 
 @dataclass(frozen=True)
@@ -87,13 +92,13 @@ def opens_form(action: str) -> Callable[[FormBuilder], FormBuilder]:
 class Inbound:
     def __init__(
         self,
-        ident: SlackIdentity,
+        identity: Callable[[sqlite3.Connection], SlackIdentity | None],
         clock: Clock,
         connect: Callable[[], sqlite3.Connection],
         ack: Callable[[str], None],
         open_view: Callable[[str, dict[str, Any]], None],
     ) -> None:
-        self._ident, self._clock, self._connect = ident, clock, connect
+        self._identity, self._clock, self._connect = identity, clock, connect
         self._ack, self._open_view = ack, open_view
 
     def on_envelope(self, env: Envelope) -> None:
@@ -102,8 +107,9 @@ class Inbound:
             return
         p = env.payload
         conn = self._connect()
-        try:
-            why = refusal(p, self._ident)
+        try:  # read per click, so a confirmed or changed member ID applies at once
+            ident = self._identity(conn)
+            why = "not_installed" if ident is None else refusal(p, ident)
             if why is not None:
                 _refused(conn, self._clock, why, _user(p))
                 return
@@ -157,9 +163,19 @@ def refusal(p: dict[str, Any], ident: SlackIdentity) -> str | None:
         return "wrong_app"
     if _obj(p.get("team")).get("id") != ident.team_id:
         return "wrong_team"
-    if _user(p) != ident.member:
-        return "not_you"
-    return None
+    user = _user(p)
+    if ident.member and user == ident.member:
+        return None
+    if ident.pending and user == ident.pending and _first_action(p) == CONFIRM_ACTION:
+        return None
+    return "not_you"
+
+
+def _first_action(p: dict[str, Any]) -> str:
+    if p.get("type") != "block_actions":
+        return ""
+    actions = cast("list[Any]", p.get("actions") or [])
+    return action_name(str(_obj(actions[0]).get("action_id", ""))) if actions else ""
 
 
 def to_click(p: dict[str, Any]) -> Click | None:

@@ -39,7 +39,7 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, audit, checks, db, health, stepup
+from ecf_server import _slack, addresses, audit, checks, db, health, slack_admin, stepup
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
@@ -93,6 +93,8 @@ class ServiceState:
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
     stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
+    slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
+    slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -238,6 +240,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_address_routes(state, allow),
             *_check_routes(state, allow),
             *_stepup_routes(state, allow),
+            *_slack_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -352,6 +355,84 @@ def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/stepup/nonces", issue, methods=["POST"]),
         Route("/v1/stepup/{nonce}/verify", verify, methods=["POST"]),
+    ]
+
+
+def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.1, §15.1 (V1.2 step 4): CLI only. Tokens arrive over the 0600 socket and go
+    straight to the secret store; they are never logged or returned."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    def _nonce(body: dict[str, Any]) -> str | None:
+        n = body.get("stepup_nonce")
+        return n if isinstance(n, str) else None
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: slack_admin.status(c) | {"runtime": dict(state.slack)})
+
+    @allow(Caller.CLI)
+    def create(request: Request) -> JSONResponse:
+        token = _str(_body(request), "config_token")
+        return _with_conn(lambda c: slack_admin.create_app(c, state.clock, state.slack_web,
+                                                           token, state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def install(request: Request) -> JSONResponse:
+        body = _body(request)
+        bot, app, member = (_str(body, "bot_token"), _str(body, "app_token"),
+                            _str(body, "member"))  # fmt: skip
+        r = _with_conn(lambda c: slack_admin.install(c, state.clock, state.store(),
+                                                     state.slack_web, bot_token=bot,
+                                                     app_token=app, member=member))  # fmt: skip
+        state.slack_reload()
+        log.info("slack.installed")
+        return r
+
+    @allow(Caller.CLI)
+    def tokens(request: Request) -> JSONResponse:
+        body = _body(request)
+        bot, app, nonce = _str(body, "bot_token"), _str(body, "app_token"), _nonce(body)
+        r = _with_conn(lambda c: slack_admin.set_tokens(c, state.clock, state.store(),
+                                                        state.slack_web, state.notifier,
+                                                        bot_token=bot, app_token=app,
+                                                        nonce=nonce))  # fmt: skip
+        state.slack_reload()
+        log.info("slack.tokens_replaced")
+        return r
+
+    @allow(Caller.CLI)
+    def member(request: Request) -> JSONResponse:
+        body = _body(request)
+        new, nonce = _str(body, "member"), _nonce(body)
+        return _with_conn(lambda c: slack_admin.set_member(c, state.clock, state.store(),
+                                                           state.slack_web, state.notifier,
+                                                           new, nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reauthorize(request: Request) -> JSONResponse:
+        token = _str(_body(request), "config_token")
+        return _with_conn(lambda c: slack_admin.reauthorize(c, state.clock, state.slack_web,
+                                                            token, state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def refresh(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: {"queued": slack_admin.refresh(c, state.clock)})
+
+    return [
+        Route("/v1/slack", show, methods=["GET"]),
+        Route("/v1/slack/app", create, methods=["POST"]),
+        Route("/v1/slack/install", install, methods=["POST"]),
+        Route("/v1/slack/tokens", tokens, methods=["POST"]),
+        Route("/v1/slack/member", member, methods=["POST"]),
+        Route("/v1/slack/reauthorize", reauthorize, methods=["POST"]),
+        Route("/v1/slack/refresh", refresh, methods=["POST"]),
     ]
 
 
