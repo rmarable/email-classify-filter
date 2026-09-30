@@ -52,6 +52,8 @@ PAGE_S = 20.0
 MAX_PARTIAL_TEXTS = 20  # text parts fetched from an oversized message (one IMAP fetch each)
 LARGE_BYTES = 16 * 1024 * 1024  # fixed threshold: processed after smaller mail (§5.1)
 QUARANTINE_AFTER = 2  # crashes on the same message
+SUBJECT_MAX = 500  # kept on the item for its card (metadata; cards cap fields at 2,000)
+SENDER_MAX = 320
 MAX_PER_CHECK_S = 360.0  # max_per_check default: a check's IMAP and rules work (§5.2)
 DEFAULT_RATE = 2 * 1024 * 1024  # bytes/s assumed until a page has measured throughput
 HEADER_LIMIT = 256 * 1024  # header block fetched for an oversized message
@@ -435,6 +437,9 @@ def _store(
         hash_version=parsed.hash_version,
         duplicate_message_id=int(reused),
         facts=json.dumps(facts, sort_keys=True),
+        subject=parsed.subject[:SUBJECT_MAX],
+        sender=(parsed.from_addr or "")[:SENDER_MAX] or None,
+        sender_name=parsed.from_name[:SENDER_MAX] or None,
         locator=json.dumps(
             {"uid": uid, "uidvalidity": uv, "message_id": parsed.message_id, "internaldate": when}
         ),

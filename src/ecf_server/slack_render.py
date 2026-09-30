@@ -2,7 +2,10 @@
 so everything is rendered as plain text:
 
 - Block Kit `plain_text` objects only, never `mrkdwn`: Slack shows `<!channel> *bold* <link>` in
-  them literally (tested 2026-09-29, §21.1). The notification fallback `text` is escaped (`&`,
+  them literally (tested 2026-09-29, §21.1). The one exception is a mention of your member ID on
+  escalations (`Card.mention`): a `mrkdwn` section holding only `<@U…>`, built from a validated ID
+  (V1.2 step 6). It notifies on desktop and phone and counts as a mention (real-service test 0c,
+  2026-09-29, §21.1). The notification fallback `text` is escaped (`&`,
   `<`, `>`) and sent with `mrkdwn: false`, and posts turn unfurls off.
 - Control and format characters are removed (a right-to-left override can reorder a sender line;
   zero-width characters hide text), keeping line breaks and tabs.
@@ -29,6 +32,7 @@ FIELDS_PER_SECTION = 10
 BUTTONS_MAX = 25
 FALLBACK_MAX = 3000
 _SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}):(//)")
+_MEMBER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
 
 def clean(text: str, limit: int) -> str:
@@ -54,6 +58,8 @@ def _plain(text: str, limit: int) -> dict[str, Any]:
 
 def blocks(card: Card) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = [{"type": "header", "text": _plain(card.title, HEADER_MAX)}]
+    if _MEMBER.fullmatch(card.mention):  # the one mrkdwn object: a mention, built by ecf
+        out.append({"type": "section", "text": {"type": "mrkdwn", "text": f"<@{card.mention}>"}})
     fields = [_plain(f"{label}: {value}", FIELD_MAX) for label, value in card.fields]
     for i in range(0, len(fields), FIELDS_PER_SECTION):
         out.append({"type": "section", "fields": fields[i : i + FIELDS_PER_SECTION]})

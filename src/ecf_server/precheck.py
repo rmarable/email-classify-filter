@@ -11,7 +11,8 @@ Runs on items just created by a fetch, before any model. Each trigger that fired
 The decision is stored on the item (`prechecked`, and `facts.precheck`) and audited. Items stay at
 `new` (§5.4: no status change); the model check picks them up later. In shadow, nothing is done to
 the mailbox; outside shadow, label and flag run under a grant (actions.py). Pause never stops the
-pre-check (§5.4). Escalations reach Slack from V1.2; until then they are recorded as pending.
+pre-check (§5.4). Each escalation is queued in `escalations`, and the Slack thread posts it
+(`escalations.py`, V1.2); V1.1 recorded them only as pending.
 """
 
 from __future__ import annotations
@@ -166,7 +167,7 @@ def _record(
         "stage": stage,
         "executed": o.executed,
         "skipped": o.skipped,
-        "escalation": "pending Slack (V1.2)" if o.decision.escalate else None,
+        "escalation": "queued" if o.decision.escalate else None,
         "at": to_ts(clock.now()),
     }
     with write_tx(conn):
@@ -174,6 +175,12 @@ def _record(
             "UPDATE items SET prechecked = 1, facts = ?, updated_at = ? WHERE stable_id = ?",
             (json.dumps(facts, sort_keys=True), to_ts(clock.now()), item["stable_id"]),
         )
+        if o.decision.escalate:  # posted by the Slack thread (escalations.py)
+            conn.execute(
+                "INSERT INTO escalations (stable_id, address_id, state, created_at)"
+                " VALUES (?, ?, 'pending', ?) ON CONFLICT (stable_id) DO NOTHING",
+                (item["stable_id"], item["address_id"], to_ts(clock.now())),
+            )
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'precheck.decided', 'service', 'ok', ?)",

@@ -49,6 +49,7 @@ class Card:
     text: str = ""
     buttons: tuple[Button, ...] = ()
     note: str = ""  # a line under the buttons, e.g. "This acts on the email only."
+    mention: str = ""  # a Slack member ID to mention (escalations); never text from an email
 
 
 @dataclass(frozen=True)

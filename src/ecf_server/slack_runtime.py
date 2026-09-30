@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, slack_admin, slack_in, slack_routes
+from ecf_server import _slack, escalations, slack_admin, slack_in, slack_routes
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
@@ -119,6 +119,7 @@ class SlackRuntime:
         conn = self._connect()
         try:
             self._channels(conn)
+            escalations.sweep(conn, self._clock)
             sent = self._sender.run_once(conn)
             handled = self._receiver.run_once(conn)
         finally:

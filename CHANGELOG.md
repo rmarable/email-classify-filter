@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Real-service test (Slack mentions) passed: a mention inside a card's block notifies you on desktop and phone, so escalation cards reach you; results in SPEC §21.1.
+- Fraud, quarantine and regulatory escalations now post to the address's Slack channel as cards that mention you: sender, subject, why, the sender check, flags and what was done, never the body. More than 5 in a minute merge into one thread, and escalations from before Slack was connected get one summary post (OD-211). "Show excerpt" shows the first 200 characters to you alone (OD-214); "Dismiss" is offered only on items that aren't payment, fraud or regulatory (OD-213).
+- New items keep their subject and sender, so cards can show them.
 - Slack channels: once your member ID is confirmed, ecf makes a private summary channel and one private channel per address, invites you, and lists them in `ecf slack status`. If your workspace doesn't let apps create channels, ecf tells you which channel to create and uses it. A channel archived or deleted in Slack is replaced within an hour.
 - `ecf address remove` now works while the address has open items: it resolves them first, with step-up when any is a payment or fraud item (OD-218), then archives the address's Slack channel.
 - New commands `ecf slack install`, `ecf slack status`, `ecf slack set-tokens`, `ecf slack set-member` and `ecf slack reauthorize`: ecf creates its own Slack app from a one-time configuration token (never kept), checks the tokens you paste with Slack before storing them in the secret store, and accepts clicks only after your member ID clicks Confirm in a DM from ecf. Replacing tokens or changing the member ID needs step-up and sends a Security Notice; `reauthorize` updates the app's permissions and then edits every card ecf posted, re-posting any that were deleted.

@@ -108,7 +108,7 @@ def execute(
                 src.set_flagged(uid, True)
                 done.append("flag")
             elif a.name == "escalate":
-                done.append("escalate (Slack arrives in V1.2)")
+                done.append("escalate")
     except Exception as exc:
         with write_tx(conn):
             _audit(

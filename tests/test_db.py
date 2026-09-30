@@ -1,3 +1,4 @@
+import json
 import re
 import sqlite3
 import stat
@@ -5,8 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from ecf.ids import AddressId, StableId
 from ecf.status import Status
 from ecf_server import db
+from ecf_server.clock import FakeClock
+from ecf_server.items import create_item
 
 
 def test_pragmas(conn: sqlite3.Connection) -> None:
@@ -30,8 +34,9 @@ def test_migrate_is_idempotent(conn: sqlite3.Connection) -> None:
     assert db.migrate(conn) == []
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert (
-        len(tables - {"schema_migrations"}) == 25
-    )  # 21 initial + processing (0003), check_state (0005), alerts (0008), slack_messages (0011)
+        len(tables - {"schema_migrations"}) == 26
+    )  # 21 initial + processing (0003), check_state (0005), alerts (0008), slack_messages (0011),
+    # escalations (0015)
 
 
 def test_strict_rejects_wrong_types(conn: sqlite3.Connection) -> None:
@@ -108,4 +113,26 @@ def test_0012_rebuilds_jobs_keeping_rows_and_indexes(
     indexes = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'"
                                        " AND tbl_name = 'jobs' AND sql IS NOT NULL")}  # fmt: skip
     assert indexes == {"jobs_ready", "jobs_claimed"}
+    c.close()
+
+
+def test_0015_carries_v11_pending_escalations_over(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every = db._migration_files()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < 15])
+    c = db.connect(db_path)
+    db.migrate(c)
+    c.execute(
+        "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+        " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')"
+    )
+    for sid, esc in (("s1", "pending Slack (V1.2)"), ("s2", None)):
+        facts = json.dumps({"precheck": {"escalation": esc, "at": "2026-09-29T10:00:00.000000Z"}})
+        create_item(c, FakeClock(), stable_id=StableId(sid), address_id=AddressId("ap"),
+                    content_hash="h", facts=facts)  # fmt: skip
+    monkeypatch.setattr(db, "_migration_files", lambda: every)
+    db.migrate(c)
+    rows = c.execute("SELECT stable_id, state, created_at FROM escalations").fetchall()
+    assert [tuple(r) for r in rows] == [("s1", "v1.1", "2026-09-29T10:00:00.000000Z")]
     c.close()
