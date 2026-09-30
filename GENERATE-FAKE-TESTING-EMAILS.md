@@ -162,8 +162,9 @@ These parts of the plan arrive with the milestones that need them:
   fraud-guard cases), with pairwise fill. Built as the set grows toward 150-200 cases.
 - **Drafting:** the maintainer skill `/ecf-eval-gen` (Claude, interactive) and local Gemma drafts
   (V1.3).
-- **Replay:** `ecf replay` into Dovecot (`--via append`) and through Postfix + OpenDMARC
-  (`--via smtp`), with test senders signed by OpenDKIM (V1.1).
+- **Replay through Postfix + OpenDMARC** (`ecf replay --via smtp`), with test senders signed by
+  OpenDKIM. `ecf replay --via append` (IMAP APPEND into a test mailbox, fresh Message-IDs) is built
+  (V1.3).
 - **gitleaks** as an extra secret scan in pre-commit.
 
 ## Maintenance

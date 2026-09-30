@@ -428,6 +428,34 @@ def service_start() -> None:
     typer.echo("started")
 
 
+@app.command("replay")
+def replay_command(
+    folder: Annotated[Path, typer.Argument(help="A folder of .eml files.")],
+    host: Annotated[str, typer.Option("--host", help="The test IMAP server.")],
+    user: Annotated[str, typer.Option("--user")],
+    port: Annotated[int, typer.Option("--port")] = 993,
+    count: Annotated[
+        int | None, typer.Option("--count", help="Append this many (cycling).")
+    ] = None,
+    cafile: Annotated[Path | None, typer.Option("--cafile", help="Trust this certificate.")] = None,
+    keep_ids: Annotated[
+        bool, typer.Option("--keep-ids", help="Keep the files' Message-IDs.")
+    ] = False,
+    via: Annotated[str, typer.Option("--via", help="append (smtp isn't built).")] = "append",
+) -> None:
+    """Development only: append .eml files into a test IMAP mailbox with fresh Message-IDs
+    (the load test, end-to-end runs). Never point it at a real mailbox."""
+    from ecf import replay  # noqa: PLC0415
+    from ecf.prompts import hidden  # noqa: PLC0415
+
+    if via != "append":
+        raise typer.BadParameter("only --via append is built", param_hint="--via")
+    password = hidden(f"Password for {user} on {host}: ")
+    n = replay.replay(folder, host=host, port=port, user=user, password=password, count=count,
+                      fresh_ids=not keep_ids, cafile=cafile)  # fmt: skip
+    typer.echo(f"appended {n} message(s) to {user} on {host}")
+
+
 @app.command("watch")
 def watch_command() -> None:
     """Run the service in this terminal instead of the background (Ctrl-C to stop); the
