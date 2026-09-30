@@ -184,4 +184,4 @@ def test_cli_show_and_turning_scrutiny_back_on(running: Paths) -> None:
     r = CliRunner().invoke(app, ["--install", "t", "sender", "set-verified", VENDOR, "--off"])
     assert r.exit_code == 0, r.output  # no step-up needed to add scrutiny back
     r = CliRunner().invoke(app, ["--install", "t", "sender", "set-reply-to", VENDOR])
-    assert r.exit_code != 0 and "--clear" in r.output
+    assert r.exit_code == 2  # usage error: a domain or --clear (the text is styled by Rich)
