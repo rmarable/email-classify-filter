@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- New commands `ecf inbox`, `ecf item show <id>` and `ecf item resolve` (one or more IDs, `--ids` or `--older-than N`, with `--reason`): see what's waiting on you, everything ecf keeps about one email including its excerpt, and close emails without acting on them. Resolving a payment or fraud item needs step-up (one for a whole set); a bulk resolve shows the list and asks first. Item IDs can be shortened to 8 characters.
+- Fixed: the service could hang instead of stopping when it got two stop signals at once (for example `pkill` plus the signal `uv run` forwards); launchd would then have had to kill it.
 - Real-service test (Slack mentions) passed: a mention inside a card's block notifies you on desktop and phone, so escalation cards reach you; results in SPEC §21.1.
 - Fraud, quarantine and regulatory escalations now post to the address's Slack channel as cards that mention you: sender, subject, why, the sender check, flags and what was done, never the body. More than 5 in a minute merge into one thread, and escalations from before Slack was connected get one summary post (OD-211). "Show excerpt" shows the first 200 characters to you alone (OD-214); "Dismiss" is offered only on items that aren't payment, fraud or regulatory (OD-213).
 - New items keep their subject and sender, so cards can show them.

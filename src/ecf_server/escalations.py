@@ -199,14 +199,20 @@ def _dismiss(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
         raise PolicyDeniedError("dismiss refused: item already closed")
     items.transition(conn, clock, StableId(item["stable_id"]), Status.RESOLVED_MANUAL,
                      TransitionContext(), actor=f"slack:{click.user}")  # fmt: skip
-    route = slack_routes.route_for(conn, item["address_id"])
-    key = f"item:{item['stable_id']}"
+    close_card(conn, clock, item["stable_id"], "Dismissed")
+
+
+def close_card(conn: sqlite3.Connection, clock: Clock, stable_id: str, title: str) -> None:
+    """Edit an item's card to `title`, without buttons, if one was posted for it. The edit is
+    queued behind the card's post, so it edits that card even if the post hasn't gone out yet."""
+    key = f"item:{stable_id}"
     carded = conn.execute(
-        "SELECT 1 FROM escalations WHERE stable_id = ? AND thread_key = ?", (item["stable_id"], key)
+        "SELECT 1 FROM escalations WHERE stable_id = ? AND thread_key = ?", (stable_id, key)
     ).fetchone()
-    if route is not None and carded:  # queued behind its post, so it edits that card
-        item = _item(conn, click.ref)
-        card = cards.item_card(item, title="Dismissed")
+    item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (stable_id,)).fetchone()
+    route = slack_routes.route_for(conn, item["address_id"]) if item else None
+    if carded and route is not None:
+        card = cards.item_card(item, title=title)
         slack_out.enqueue_post(conn, clock, key=key, route=route,
                                card=Card(card.title, fields=card.fields),
                                identity=slack_routes.identity(item["address_id"]))  # fmt: skip

@@ -46,6 +46,7 @@ from ecf_server import (
     checks,
     db,
     health,
+    inbox,
     slack_admin,
     slack_routes,
     stepup,
@@ -251,6 +252,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_check_routes(state, allow),
             *_stepup_routes(state, allow),
             *_slack_routes(state, allow),
+            *_item_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -365,6 +367,64 @@ def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/stepup/nonces", issue, methods=["POST"]),
         Route("/v1/stepup/{nonce}/verify", verify, methods=["POST"]),
+    ]
+
+
+def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1 (V1.2 step 7a). Item routes carry email metadata: CLI only, except counts."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI, Caller.WORK)
+    def counts(request: Request) -> JSONResponse:
+        aid = request.query_params.get("address_id")
+        return _with_conn(lambda c: {"counts": inbox.counts(c, aid)})
+
+    @allow(Caller.CLI)
+    def list_inbox(request: Request) -> JSONResponse:
+        q = request.query_params
+        aid, stale = q.get("address_id"), q.get("stale") in ("1", "true")
+        return _with_conn(lambda c: {"items": inbox.inbox(c, address_id=aid, stale_only=stale)})
+
+    @allow(Caller.CLI)
+    def show(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: inbox.show(c, ref))
+
+    @allow(Caller.CLI)
+    def resolve_one(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        reason, nonce = _str(body, "reason"), _opt_str(body, "nonce_id")
+        one = inbox.Selection(refs=[ref])
+        return _with_conn(lambda c: {"resolved": inbox.resolve(
+            c, state.clock, one, reason=reason, nonce=nonce)})  # fmt: skip
+
+    @allow(Caller.CLI)
+    def resolve_many(request: Request) -> JSONResponse:
+        body = _body(request)
+        ids, days = body.get("ids"), body.get("older_than_days")
+        if days is not None and (not isinstance(days, int) or isinstance(days, bool)):
+            raise InvalidInputError("older_than_days must be a whole number")
+        refs = _str_list(ids) if ids is not None else None
+        reason, nonce, aid = (_str(body, "reason"), _opt_str(body, "nonce_id"),
+                              _opt_str(body, "address_id"))  # fmt: skip
+        dry = body.get("dry_run") is True
+        key = "would_resolve" if dry else "resolved"
+        sel = inbox.Selection(refs=refs, older_than_days=days, address_id=aid)
+        return _with_conn(lambda c: {key: inbox.resolve(
+            c, state.clock, sel, reason=reason, nonce=nonce, dry_run=dry)})  # fmt: skip
+
+    return [
+        Route("/v1/counts", counts, methods=["GET"]),
+        Route("/v1/inbox", list_inbox, methods=["GET"]),
+        Route("/v1/items/resolve", resolve_many, methods=["POST"]),
+        Route("/v1/items/{ref}", show, methods=["GET"]),
+        Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
     ]
 
 
@@ -642,6 +702,13 @@ def _str(body: dict[str, Any], key: str) -> str:
     v = body.get(key)
     if not isinstance(v, str):
         raise InvalidInputError(f"{key} must be a string")
+    return v
+
+
+def _opt_str(body: dict[str, Any], key: str) -> str | None:
+    v = body.get(key)
+    if v is not None and not isinstance(v, str):
+        raise InvalidInputError(f"{key} must be text")
     return v
 
 

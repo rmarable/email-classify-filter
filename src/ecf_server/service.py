@@ -133,6 +133,7 @@ class Service:
         self.clock = clock or SystemClock()
         self.opts = opts or Options()
         self.stop = threading.Event()
+        self._signalled: int | None = None  # set by the signal handler, read by the main loop
         self.exit_code = EXIT_OK
         self._last_tick_mono = self.clock.monotonic()
         self.dev = dev
@@ -245,8 +246,11 @@ class Service:
         return self.clock.monotonic() - self._last_tick_mono > self.opts.watchdog_seconds
 
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
-        log.info("service.signal", signal=signal.Signals(signum).name)
-        self.stop.set()
+        """Only records the signal: the main loop logs it and sets `stop` within a second. Setting
+        an Event or logging here can deadlock, since the handler runs on the main thread, which
+        may be holding the Event's lock inside `stop.wait` (found 2026-09-29 when two SIGTERMs
+        arrived together; the service never stopped)."""
+        self._signalled = signum
 
     def _secret_store_report(self, conn: sqlite3.Connection) -> dict[str, object]:
         try:
@@ -372,7 +376,10 @@ class Service:
         self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
         while not self.stop.wait(1.0):
-            if self.watchdog_expired():
+            if self._signalled is not None:
+                log.info("service.signal", signal=signal.Signals(self._signalled).name)
+                self.stop.set()
+            elif self.watchdog_expired():
                 log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
                 self.exit_code = EXIT_CRASH
                 self.stop.set()
