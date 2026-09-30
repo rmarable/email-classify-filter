@@ -176,6 +176,54 @@ def test_applied_rules_replace_the_starter_rules(
     assert [x.id for x in config.current_rules(conn).rules] == ["only"]
 
 
+def _apply(conn: sqlite3.Connection, clock: FakeClock, doc: str) -> config.Result:
+    with pytest.raises(StepupRequiredError) as ei:
+        config.apply(conn, clock, FakeNotifier(), doc, dry_run=False, nonce=None)
+    return config.apply(conn, clock, FakeNotifier(), doc, dry_run=False,
+                        nonce=_nonce(conn, clock, ei.value))  # fmt: skip
+
+
+def test_default_returns_each_section_to_its_shipped_value(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    _apply(conn, clock, DOC + "rules: {version: 1, rules: [{id: only, then: [flag]}]}\n")
+    reset = ("version: 1\nforward_allow_list: default\nmove_folders: default\n"
+             "action_policy: default\nrules: default\ntemplates: default\n")  # fmt: skip
+    r = _apply(conn, clock, reset)
+    changes = {c["section"]: c["change"] for c in r.changes}
+    assert changes == {
+        "forward_allow_list": "reset to none: -ap_lead",
+        "move_folders": "reset to none: -Receipts",
+        "action_policy": "reset to the default policy: archive: approve to auto",
+        "rules": changes["rules"],
+        "templates": changes["templates"],
+    }
+    assert changes["rules"].startswith("reset to the starter rules: +fraud_guard")
+    assert changes["templates"].startswith("reset to the shipped templates: ")
+    now = config.current(conn)
+    assert all(now[s] is None for s in config.SECTIONS if s != "org_domains")
+    assert config.current_rules(conn).rules[0].id == "fraud_guard"
+    assert addresses.get_org_domains(conn) == ["acme-group.example", "acme.example"]
+    # already at the shipped values: nothing to apply, no step-up asked
+    again = config.apply(conn, clock, FakeNotifier(), reset, dry_run=False, nonce=None)
+    assert again.changed is False
+
+
+def test_a_reset_must_keep_the_other_sections_valid(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    with pytest.raises(InvalidInputError, match="org_domains has no default"):
+        config.parse(conn, "version: 1\norg_domains: default")
+    moves = "rules: {version: 1, rules: [{id: r, then: [{move: Receipts}]}]}"
+    _apply(conn, clock, f"version: 1\nmove_folders: [Receipts]\n{moves}")
+    with pytest.raises(InvalidInputError, match="isn't in move_folders"):
+        config.parse(conn, "version: 1\nmove_folders: default")  # the applied rule moves there
+    r = _apply(conn, clock, "version: 1\nmove_folders: default\nrules: default")  # both at once
+    assert {c["section"] for c in r.changes} == {"move_folders", "rules"}
+
+
 # ---- rules test -----------------------------------------------------------------------------
 
 

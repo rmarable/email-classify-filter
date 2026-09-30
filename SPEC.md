@@ -733,7 +733,7 @@ Item cards have ✅ **Correct** and ✏️ **Fix**; review posts have **All othe
 
 `org_domains`, the forward allow-list, the move-folder allow-list, templates, the action policy, rules and `export_schedule` are changed only with `ecf config apply <file>` (validated, diff shown; operator decision 2026-09-26, OD-075), with step-up and a Slack announcement. `security_config_delay_minutes` is 0 in local mode (reviewer recommendation confirmed by the operator 2026-09-26, OD-074), so there is no Cancel. `export_dir` and the export keys change only through their own fingerprint step-up.
 
-**As built in V1.2** (step 10b, 2026-09-30; code: `ecf_server/config.py`, `ecf/cli_admin.py`): the config file shape [proposed in SPEC, pending operator review]:
+**As built in V1.2** (step 10b, 2026-09-30; code: `ecf_server/config.py`, `ecf/cli_admin.py`): the config file shape (accepted by the operator 2026-09-30, OD-225):
 
 ```yaml
 version: 1
@@ -747,7 +747,7 @@ rules: {version: 1, rules: [...]}               # §8.6
 templates: {version: 1, templates: [...]}       # §8.7
 ```
 
-Every section is optional; an omitted one stays as it is. At most 50 entries per list; the file at most 48 KB. `action_policy` has no `high` key: `high` is a hard ceiling, and every other action's policy is fixed (§8.3). A change to one section must keep the others valid (new org domains must still cover the forward allow-list; new move folders must still hold every applied rule's `move` target). `export_schedule` and alert routes are refused (V1.5, OD-206; alert routes use `ecf alerts set`), as is any unknown key. `ecf config apply <file>` shows the diff per section, asks, then needs step-up; `--yes` skips the question, not the step-up. The step-up target is the whole validated document: the service computes the dialog text from it, and the bound hash covers the document and the configuration it replaces, so a nonce can't apply another document, and a change made in between voids it. With the delay at 0 in local mode (OD-074) the change applies at once: stored in the settings table (`org_domains`, `config.<section>`), audited (`config.applied`, with the document's SHA-256 and the per-section changes) and sent as a Security Notice. The dialog and the notice list the riskiest sections first (forward allow-list, rules, action policy, org domains, templates, move folders) and count any that don't fit (V1.2 review, 2026-09-30). In V1.2 only `org_domains` has a reader; rules, the action policy and the move folders are read from V1.3, the forward allow-list and templates from V1.5. Without applied rules, the starter rules apply.
+Every section is optional; an omitted one stays as it is, and `<section>: default` returns it to its shipped value (the starter rules, the shipped templates, the §8.3 policy, or an empty list; operator decision 2026-09-30, OD-225). `org_domains` has no default and refuses it. A reset is a change like any other: diff, step-up, audit and Security Notice, and it must keep the other sections valid. At most 50 entries per list; the file at most 48 KB. `action_policy` has no `high` key: `high` is a hard ceiling, and every other action's policy is fixed (§8.3). A change to one section must keep the others valid (new org domains must still cover the forward allow-list; new move folders must still hold every applied rule's `move` target). `export_schedule` and alert routes are refused (V1.5, OD-206; alert routes use `ecf alerts set`), as is any unknown key. `ecf config apply <file>` shows the diff per section, asks, then needs step-up; `--yes` skips the question, not the step-up. The step-up target is the whole validated document: the service computes the dialog text from it, and the bound hash covers the document and the configuration it replaces, so a nonce can't apply another document, and a change made in between voids it. With the delay at 0 in local mode (OD-074) the change applies at once: stored in the settings table (`org_domains`, `config.<section>`), audited (`config.applied`, with the document's SHA-256 and the per-section changes) and sent as a Security Notice. The dialog and the notice list the riskiest sections first (forward allow-list, rules, action policy, org domains, templates, move folders) and count any that don't fit (V1.2 review, 2026-09-30). In V1.2 only `org_domains` has a reader; rules, the action policy and the move folders are read from V1.3, the forward allow-list and templates from V1.5. Without applied rules, the starter rules apply.
 
 ### 9.8 Outbound enablement and reminders
 
@@ -908,7 +908,7 @@ UMask=0077
 WantedBy=default.target
 ```
 
-The unit uses the absolute `ecf-server` path from the `uv tool` install. When `ECF_HOME` is set, it is written into the unit so the background service uses the same data folder; `ecf service status` exits 3 when the service isn't running (operator decision 2026-09-27, OD-174). `ProcessType=Interactive`: the V1.2 LocalAuthentication test found it isn't needed for step-up (§21.1, 2026-09-29). It stays in the unit (V1.2 review, 2026-09-30) because launchd applies "light resource limits" throttling CPU and I/O to a job with no ProcessType, and none to an Interactive job (verified 2026-09-30, `man launchd.plist` on macOS 27.0); whether that throttling would slow checks or model work is unverified, confirm in V1.3 with the model load test.
+The unit uses the absolute `ecf-server` path from the `uv tool` install. When `ECF_HOME` is set, it is written into the unit so the background service uses the same data folder; `ecf service status` exits 3 when the service isn't running (operator decision 2026-09-27, OD-174). `ProcessType=Interactive`: the V1.2 LocalAuthentication test found it isn't needed for step-up (§21.1, 2026-09-29). It stays in the unit (V1.2 review, 2026-09-30) because launchd applies "light resource limits" throttling CPU and I/O to a job with no ProcessType, and none to an Interactive job (verified 2026-09-30, `man launchd.plist` on macOS 27.0); whether that throttling would slow checks or model work is unverified, confirm in V1.3 with the model load test, run with and without it (operator decision 2026-09-30, OD-226: it stays until that measurement says otherwise).
 
 ### 11.2 SQLite and threading (operator decision 2026-09-27, OD-104)
 
@@ -1485,16 +1485,14 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 - **V1.1, done (2026-09-29):** peak memory for 64 MB messages (§5.1: 557 MB Python peak and 871 MB process growth for 64.6 MB in one process; now a child process, OD-195); the `BytesHeaderParser` option (not needed, §5.1); dkimpy on real senders and the RFC 9989 tree walk on real senders (shadow run, §21.1).
 - **Carried from V1.1 (accepted by the operator 2026-09-29, OD-199):** the share of real payment mail ending at `auth_result = none` (the test mailbox gets only test and newsletter mail; all 4 payment-keyword messages in the shadow run were Gmail tests and passed; measure on the first real mailbox, before the unsigned-MIME-header rule (OD-187) is locked in); further shared-platform domains (§7.2 lists the services still to research; the list itself was finalized 2026-09-29, OD-197); Purelymail's receiving limit (the inbound MX announces `SIZE 51200000` on port 587, tested 2026-09-29; port 25, which receives mail, is blocked on the test network; ecf caps its limit at the probe's figure, OD-196); each other provider's maximum message size (from the probe's `APPENDLIMIT` when an address on that provider is added).
 - **V1.2:** `osascript` notifications; Slack behavior on battery while the Mac sleeps (on AC, tested 2026-09-29, §10.1). (`ProcessType=Interactive`: not needed for LocalAuthentication, tested 2026-09-29, §21.1.)
-- **V1.3:** Gemma 4 12B digest; pulling a specific digest; the single-token experiment (`top_logprobs` range, before/after constraint); whether `prompt_eval_count` includes cached tokens; prompt-cache benefit of `OLLAMA_NUM_PARALLEL=1`; reload on option change; IOPM assertions from a LaunchAgent; 150-email backlog time on the Air; optional `-mlx` vs default speed and q8 size.
+- **V1.3:** Gemma 4 12B digest; pulling a specific digest; the single-token experiment (`top_logprobs` range, before/after constraint); whether `prompt_eval_count` includes cached tokens; prompt-cache benefit of `OLLAMA_NUM_PARALLEL=1`; reload on option change; IOPM assertions from a LaunchAgent; 150-email backlog time on the Air; the model load test with and without `ProcessType=Interactive` (OD-226); optional `-mlx` vs default speed and q8 size.
 - **V1.4:** `--strict-mcp-config` with the plugin; subagents unable to use Bash/WebFetch; plan usage per `/ecf-review` per preset; the Haiku retirement (not sooner than 2026-10-15) handled by a release.
 - **V1.5:** Time Machine vs a consistent snapshot.
 - **V1.6:** `pam_faillock` behavior; which distros pass headless `systemd-creds`; a Linux performance run.
 
 ### 21.3 Operator review
 
-The [proposed] items were accepted on 2026-09-27 (OD-156 to OD-162). Open (V1.2 review, 2026-09-30):
-
-- The `ecf config apply` file shape (§9.7, V1.2 step 10b), marked "proposed in SPEC, pending operator review". It is built and tested; rules, the action policy and the move folders are first read in V1.3, so a change before then costs little.
+The [proposed] items were accepted on 2026-09-27 (OD-156 to OD-162). The two items left open by the V1.2 review were settled on 2026-09-30: the `ecf config apply` file shape (§9.7, OD-225) and `ProcessType=Interactive` (§11.1, OD-226). None is open.
 
 ## 22. Diagrams
 
@@ -2092,6 +2090,8 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-222 | 2026-09-30 | (V1.2 review) | SPEC §10.1 | The dead-man's switch is disarmed only by `ecf service stop` or `uninstall`; it stays armed through OS shutdown, logout and a crash, and ecf posts "back" when the message fired while it was down |
 | OD-223 | 2026-09-30 | (V1.2 review) | SPEC §6.2, §9.5 | `ecf approve <id>` re-offers an approval that expired twice (`expired → awaiting_approval`, then approve); the daily summary and card say so |
 | OD-224 | 2026-09-30 | (V1.2 review) | SPEC §1.3, §9.6 | Linux step-up in V1.2 is PAM only; polkit (and the `jeepney` dependency) arrive with V1.6 |
+| OD-225 | 2026-09-30 | (V1.3 start) | SPEC §9.7 | The `ecf config apply` file shape is accepted; `<section>: default` returns a section to its shipped value (not `org_domains`) |
+| OD-226 | 2026-09-30 | (V1.3 start) | SPEC §11.1 | `ProcessType=Interactive` stays in the launchd unit; the V1.3 model load test runs with and without it |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

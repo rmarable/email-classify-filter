@@ -1,6 +1,7 @@
 """`ecf config apply` (SPEC §9.7; V1.2 step 10b): security-relevant configuration.
 
-One YAML document, `version: 1`, with optional sections; an omitted section is left unchanged.
+One YAML document, `version: 1`, with optional sections; an omitted section is left unchanged,
+and a section set to `default` returns to its shipped value (OD-225; `org_domains` has none).
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
 `templates`. `export_schedule` and email alert routes are refused until V1.5 (OD-206); alert
 routes change with `ecf alerts set`. Unknown keys are refused.
@@ -49,6 +50,7 @@ DEFAULT_POLICY = dict.fromkeys(sorted(rules.HIDE_ACTIONS), "auto")  # §8.3, `st
 _ENTRY_ID = re.compile(r"^[a-z0-9_]{1,40}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _POLICY_SHAPE = "{standard: {action: auto|approve}}"
+DEFAULT = "default"  # `<section>: default` returns the section to its shipped value (OD-225)
 
 
 def canonical_json(value: Any) -> str:
@@ -92,7 +94,7 @@ def parse(conn: sqlite3.Connection, text: str) -> dict[str, Any]:
     return validate(conn, {k: v for k, v in doc.items() if k != "version"})
 
 
-def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
+def _check_sections(doc: dict[str, Any]) -> None:
     for k in doc:
         if k in LATER:
             raise InvalidInputError(f"config: {k}: {LATER[k]}")
@@ -101,29 +103,41 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
                                     f"{', '.join(SECTIONS)}")  # fmt: skip
     if not doc:
         raise InvalidInputError("config: no sections to apply")
+    if doc.get("org_domains") == DEFAULT:
+        raise InvalidInputError("config: org_domains has no default; list your domains")
+
+
+def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
+    _check_sections(doc)
     now = current(conn)
-    out: dict[str, Any] = {}
+    out: dict[str, Any] = {k: DEFAULT for k, v in doc.items() if v == DEFAULT}
     if "org_domains" in doc:
         domains = _strings(doc["org_domains"], "org_domains")
         out["org_domains"] = addresses.check_org_domains(domains)
     org = out.get("org_domains", now["org_domains"] or [])
-    if "move_folders" in doc:
+    if "move_folders" in doc and "move_folders" not in out:
         out["move_folders"] = _folders(doc["move_folders"])
-    folders = out.get("move_folders", now["move_folders"] or [])
-    if "forward_allow_list" in doc:
+    folders: list[str] = _effective(out, now, "move_folders") or []
+    if "forward_allow_list" in doc and "forward_allow_list" not in out:
         out["forward_allow_list"] = _forwards(conn, doc["forward_allow_list"], org)
-    elif "org_domains" in doc and now["forward_allow_list"]:
+    elif "org_domains" in doc and now["forward_allow_list"] and "forward_allow_list" not in out:
         _forwards(conn, now["forward_allow_list"], org)  # new org domains must still cover them
-    if "action_policy" in doc:
+    if "action_policy" in doc and "action_policy" not in out:
         out["action_policy"] = _policy(doc["action_policy"])
-    if "rules" in doc:
+    if "rules" in doc and "rules" not in out:
         out["rules"] = _rules(doc["rules"], folders)
-    elif "move_folders" in doc and now["rules"] is not None:
-        _rules(now["rules"], folders)  # applied rules must still move only to allowed folders
-    if "templates" in doc:
+    elif "move_folders" in doc:  # the rules in force must still move only to allowed folders
+        _rules(_effective(out, now, "rules") or _starter(), folders)
+    if "templates" in doc and "templates" not in out:
         templates.load_templates(canonical_json(doc["templates"]), source="templates")
         out["templates"] = doc["templates"]
     return out
+
+
+def _effective(out: dict[str, Any], now: dict[str, Any], section: str) -> Any:
+    """The section's value after this document: None where the shipped default applies."""
+    v = out.get(section, now[section])
+    return None if v == DEFAULT else v
 
 
 def _strings(v: Any, where: str) -> list[str]:
@@ -216,13 +230,32 @@ def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
     """One line per section that changes, in plain words."""
     out: list[dict[str, str]] = []
     for s in SECTIONS:
-        if s not in doc or canonical_json(doc[s]) == canonical_json(before[s]):
+        new = None if doc.get(s) == DEFAULT else doc.get(s)
+        if s not in doc or canonical_json(new) == canonical_json(before[s]):
             continue
-        out.append({"section": s, "change": _describe_change(s, before[s], doc[s])})
+        out.append({"section": s, "change": _describe_change(s, before[s], new)})
     return out
 
 
+_SHIPPED_NAME = {"forward_allow_list": "none", "move_folders": "none",
+                 "action_policy": "the default policy", "rules": "the starter rules",
+                 "templates": "the shipped templates"}  # fmt: skip
+
+
+def _shipped_value(section: str) -> Any:
+    if section == "rules":
+        return _starter()
+    if section == "templates":
+        return _shipped_templates()
+    if section == "action_policy":
+        return {"standard": DEFAULT_POLICY}
+    return []
+
+
 def _describe_change(section: str, old: Any, new: Any) -> str:
+    if new is None:  # a reset; old is set, or there would be no change
+        change = _describe_change(section, old, _shipped_value(section))
+        return f"reset to {_SHIPPED_NAME[section]}: {change}"
     if section in ("org_domains", "move_folders"):
         return _set_change(old or [], new)
     if section == "forward_allow_list":
@@ -353,6 +386,9 @@ def apply(
     with write_tx(conn):
         for c in changes:
             s = c["section"]
+            if doc[s] == DEFAULT:
+                conn.execute("DELETE FROM settings WHERE key = ?", (KEY[s],))
+                continue
             conn.execute(
                 "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)"
                 " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"

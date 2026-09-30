@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.3-local-models (not yet tagged)
+
+- `ecf config apply` accepts `<section>: default` to return a section (rules, templates, action policy, move folders, forward allow-list) to its shipped value; before, applied rules could not be undone back to the starter rules (OD-225).
+
 ## ms-v1.2-slack-approvals (2026-09-30)
 
 - `ecf settings set` now names where every configuration key lives, when it arrives, or that it is fixed, instead of "no setting" for some.
