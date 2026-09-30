@@ -28,7 +28,18 @@ import uvicorn
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import approvals, audit, breaker, checks, db, execute, health, jobs, schedule
+from ecf_server import (
+    answers,
+    approvals,
+    audit,
+    breaker,
+    checks,
+    db,
+    execute,
+    health,
+    jobs,
+    schedule,
+)
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -182,6 +193,7 @@ class Service:
             conn = db.connect(self.state.db_path)
             try:
                 approvals.expire(conn, self.clock)
+                answers.expire(conn, self.clock)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):
                     if not execute.run_once(conn, self.clock, self.state.executor):

@@ -42,6 +42,7 @@ from ecf.ids import new_random_id
 from ecf_server import (
     _slack,
     addresses,
+    answers,
     approvals,
     audit,
     checks,
@@ -462,6 +463,13 @@ def _decision_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(lambda c: approvals.cancel(c, state.clock, ref, actor="os_user"))
 
     @allow(Caller.CLI)
+    def answer(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        text, nonce = _opt_str(body, "text"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: answers.answer(c, state.clock, ref, text, actor="os_user",
+                                                   nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
     def requeue(request: Request) -> JSONResponse:
         ref, nonce = str(request.path_params["ref"]), _opt_str(_body(request), "nonce_id")
         return _with_conn(lambda c: approvals.requeue(c, state.clock, ref, actor="os_user",
@@ -483,6 +491,7 @@ def _decision_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/items/{ref}/reject", reject, methods=["POST"]),
         Route("/v1/items/{ref}/cancel", cancel, methods=["POST"]),
         Route("/v1/items/{ref}/requeue", requeue, methods=["POST"]),
+        Route("/v1/items/{ref}/answer", answer, methods=["POST"]),
     ]
 
 

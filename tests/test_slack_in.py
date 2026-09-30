@@ -122,7 +122,7 @@ def test_non_interactive_envelopes_are_acked_and_ignored(
 def test_a_form_button_opens_its_form_at_once_and_queues_nothing(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def build(c: Click) -> dict[str, Any]:
+    def build(_conn: sqlite3.Connection, c: Click) -> dict[str, Any]:
         return {"callback_id": "answer", "private_metadata": c.ref}
 
     monkeypatch.setitem(slack_in.FORMS, "answer", build)
@@ -333,7 +333,7 @@ def test_a_form_opens_through_views_open(
 ) -> None:
     store, web = MemorySecretStore(), FakeWeb()
     _install(conn, clock, store)
-    monkeypatch.setitem(slack_in.FORMS, "answer", lambda c: {"callback_id": "answer"})
+    monkeypatch.setitem(slack_in.FORMS, "answer", lambda _conn, _c: {"callback_id": "answer"})
     rt = _runtime(db_path, clock, store, web)
     assert rt.start()
     FakeSocket.instances[0].on_envelope(_env(_click("answer#0")))

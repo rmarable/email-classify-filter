@@ -65,7 +65,7 @@ class Click:
 
 
 Handler = Callable[[sqlite3.Connection, Clock, Click], None]
-FormBuilder = Callable[[Click], dict[str, Any]]
+FormBuilder = Callable[[sqlite3.Connection, Click], dict[str, Any]]
 HANDLERS: dict[str, Handler] = {}
 FORMS: dict[str, FormBuilder] = {}  # buttons that open a form instead of queueing a click
 
@@ -120,7 +120,7 @@ class Inbound:
                 return
             form = FORMS.get(click.action) if click.kind == "button" else None
             if form is not None:
-                self._open_view(str(p.get("trigger_id", "")), form(click))
+                self._open_view(str(p.get("trigger_id", "")), form(conn, click))
                 return
             jobs.enqueue(conn, self._clock, jobs.Queue.SLACK_IN, AddressId(click.user),
                          asdict(click), timeout_s=TIMEOUT_S, max_attempts=3)  # fmt: skip

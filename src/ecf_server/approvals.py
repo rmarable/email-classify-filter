@@ -306,8 +306,8 @@ def pending(conn: sqlite3.Connection) -> dict[str, Any]:
     batch: list[dict[str, Any]] = []
     sends: list[dict[str, Any]] = []
     for r in rows:
-        if not r["proposal"]:
-            continue  # an answer waiting for step-up (7c), not an approval
+        if not _actions(r):
+            continue  # an answer waiting for step-up (answers.py), not an approval
         entry = inbox.summary(r) | {"action": describe(_actions(r))}
         (sends if is_send(_actions(r)) else batch).append(entry)
     return {"batch": batch[:PENDING_MAX], "more": max(0, len(batch) - PENDING_MAX),
@@ -328,7 +328,7 @@ def approve_pending(
     rows = [inbox.find(conn, i) for i in ids]
     grants: list[Grant] = []
     for r in rows:
-        if r["status"] != Status.AWAITING_STEPUP or not r["proposal"]:
+        if r["status"] != Status.AWAITING_STEPUP or not _actions(r):
             raise ConflictError(f"{r['stable_id'][:8]} isn't waiting for step-up")
         if is_send(_actions(r)):
             raise InvalidInputError(f"{r['stable_id'][:8]} is a send: approve it on its own")
@@ -526,7 +526,7 @@ def _edit(
     """Edit the item's card in place, if it has one."""
     key = f"item:{item['stable_id']}"
     route = slack_routes.route_for(conn, item["address_id"])
-    if route is None or not _has_card(conn, key):
+    if route is None or not has_card(conn, key):
         return
     base = cards.item_card(item)
     fields = (("Action", describe(_actions(item))), *base.fields)
@@ -540,7 +540,7 @@ def edit_card(conn: sqlite3.Connection, clock: Clock, sid: str, title: str) -> N
     _edit(conn, clock, _item(conn, sid), title, [])
 
 
-def _has_card(conn: sqlite3.Connection, key: str) -> bool:
+def has_card(conn: sqlite3.Connection, key: str) -> bool:
     """Posted, or queued to be posted (an edit queued behind it edits it)."""
     if slack_out.message_ref(conn, key):
         return True

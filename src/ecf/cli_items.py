@@ -132,6 +132,31 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                                                     {"nonce_id": n}), echo=typer.echo)  # fmt: skip
         typer.echo(_after(r["status"]))
 
+    @app.command("answer")
+    def answer(
+        item: Annotated[str, typer.Argument(help="Item ID.")],
+        text: Annotated[
+            str | None, typer.Argument(help="Your answer (asked for if left out).")
+        ] = None,
+    ) -> None:
+        """Answer ecf's question about an email, or confirm an answer you gave in Slack.
+        (step-up on payment or fraud items)"""
+        with LocalClient(paths()) as c:
+            d = c.get(f"/v1/items/{item}")
+            p: dict[str, Any] = d.get("proposal") or {}
+            if text is None and p.get("answer_pending"):
+                typer.echo(plain(f"Your answer from Slack: {p['answer_pending']}"))
+                if not typer.confirm("Send it?", default=True):
+                    raise typer.Exit(1)
+            elif text is None:
+                typer.echo(plain(f"ecf's model asks (it can be wrong): {p.get('question', '')}"))
+                text = typer.prompt("Your answer")
+            body = {"text": text}
+            path = f"/v1/items/{item}/answer"
+            with_step_up(c, lambda n: c.request("POST", path, body | {"nonce_id": n}),
+                         echo=typer.echo)  # fmt: skip
+        typer.echo("answered: ecf will use it")
+
     @app.command("reject")
     def reject(item: Annotated[str, typer.Argument(help="Item ID.")]) -> None:
         """Reject an action ecf proposed; nothing is done."""
