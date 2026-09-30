@@ -129,6 +129,23 @@ def status(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return out
 
 
+def undecided(
+    conn: sqlite3.Connection, address_id: str, bf: Backfill, skip: list[str]
+) -> list[str]:
+    """Backfilled mail a failed pass left behind in the backfill's range: created but never
+    pre-checked, or pre-checked records-only but not yet closed (V1.2 review, 2026-09-30). New mail
+    is above `end_uid`; `--act` items stay `new` after the pre-check by design, and deciding them
+    again does nothing (the pre-check skips what it has seen)."""
+    rows = conn.execute(
+        "SELECT stable_id FROM items WHERE address_id = ? AND status = 'new'"
+        " AND (prechecked = 0 OR (? AND json_extract(facts, '$.backfill') = 1))"
+        " AND json_extract(locator, '$.uidvalidity') = ?"
+        " AND json_extract(locator, '$.uid') <= ?",
+        (address_id, int(not bf.act), bf.uidvalidity, bf.end_uid),
+    ).fetchall()
+    return [r[0] for r in rows if r[0] not in skip]
+
+
 def decide(
     conn: sqlite3.Connection,
     clock: Clock,

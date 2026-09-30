@@ -22,17 +22,23 @@ import re
 import sqlite3
 from typing import Any
 
-from ecf.errors import ConflictError, InvalidInputError
+from ecf.errors import ConflictError, EcfError, InvalidInputError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import approvals, cards, inbox, items, slack_in, slack_out, slack_routes, stepup
-from ecf_server.chat import Button, Card
+from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
+from ecf_server.log_bridge import log
 from ecf_server.precheck import payment_or_fraud
 from ecf_server.slack_in import Click
 from ecf_server.slack_render import clean
-from ecf_server.state_machine import MAX_CLARIFICATION_ROUNDS, Origin, TransitionContext
+from ecf_server.state_machine import (
+    MAX_CLARIFICATION_ROUNDS,
+    Origin,
+    TransitionContext,
+    check_transition,
+)
 
 ANSWER = "answer"  # the button, the form's callback_id and its handler
 QUESTION_MAX = 300
@@ -70,6 +76,8 @@ def ask(
 ) -> str:
     """The actor needs to know something. Returns the item's new status. (V1.3's actor; tests.)"""
     item = inbox.find(conn, sid)
+    # refuse before writing: a refused question must not replace the stored one (or an answer)
+    check_transition(Status(item["status"]), Status.NEEDS_CLARIFICATION, TransitionContext())
     state = _state(item)
     state["question"] = model_text(question)
     _save(conn, clock, sid, state)
@@ -204,21 +212,31 @@ def expire(conn: sqlite3.Connection, clock: Clock) -> int:
         at = state.get("answer_at")
         if "answer_pending" not in state or at is None or from_ts(str(at)) > cutoff:
             continue
-        sid = StableId(item["stable_id"])
-        ctx = TransitionContext(origin=Origin.ANSWER)
-        items.transition(conn, clock, sid, Status.EXPIRED, ctx, actor="service",
-                         expected=Status.AWAITING_STEPUP)  # fmt: skip
-        _save(conn, clock, sid, {k: v for k, v in state.items() if not k.startswith("answer_")})
-        items.transition(conn, clock, sid, Status.NEEDS_CLARIFICATION, ctx, actor="service",
-                         expected=Status.EXPIRED)  # fmt: skip
-        _audit(conn, clock, item, "answer.expired", "service", {})
-        again = inbox.find(conn, sid)
-        if again["clarification_rounds"] > MAX_CLARIFICATION_ROUNDS:
-            _to_person(conn, clock, again)
-        else:
-            _question_card(conn, clock, again, title="Your answer expired: answer again")
-        n += 1
+        try:
+            n += _expire_one(conn, clock, item, state)
+        except EcfError as exc:  # e.g. answered meanwhile: the rest still expire
+            log.warning("answer.expire_skipped", stable_id=str(item["stable_id"])[:8],
+                        error_type=type(exc).__name__)  # fmt: skip
     return n
+
+
+def _expire_one(
+    conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, state: dict[str, Any]
+) -> int:
+    sid = StableId(item["stable_id"])
+    ctx = TransitionContext(origin=Origin.ANSWER)
+    items.transition(conn, clock, sid, Status.EXPIRED, ctx, actor="service",
+                     expected=Status.AWAITING_STEPUP)  # fmt: skip
+    _save(conn, clock, sid, {k: v for k, v in state.items() if not k.startswith("answer_")})
+    items.transition(conn, clock, sid, Status.NEEDS_CLARIFICATION, ctx, actor="service",
+                     expected=Status.EXPIRED)  # fmt: skip
+    _audit(conn, clock, item, "answer.expired", "service", {})
+    again = inbox.find(conn, sid)
+    if again["clarification_rounds"] > MAX_CLARIFICATION_ROUNDS:
+        _to_person(conn, clock, again)
+    else:
+        _question_card(conn, clock, again, title="Your answer expired: answer again")
+    return 1
 
 
 # ---- Slack ----------------------------------------------------------------------------------
@@ -256,7 +274,16 @@ def _answer_form(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
 @slack_in.handles(ANSWER)
 def _answer_submitted(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
     text = click.values.get(ANSWER, "")
-    answer(conn, clock, click.ref, text, actor=f"slack:{click.user}")
+    try:
+        answer(conn, clock, click.ref, text, actor=f"slack:{click.user}")
+    except EcfError as exc:  # a form has no channel: say so by DM (V1.2 review, 2026-09-30)
+        card = Card(
+            "Your answer wasn't recorded",
+            text=f"{exc.detail} The email is still in ecf inbox ({click.ref[:8]}).",
+        )
+        slack_out.enqueue_post(conn, clock, key=f"answer-refused:{click.ref}:{to_ts(clock.now())}",
+                               route=RouteRef(click.user), card=card)  # fmt: skip
+        raise
 
 
 def _question_card(

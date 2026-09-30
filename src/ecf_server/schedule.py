@@ -128,7 +128,7 @@ def after_check(
     now = clock.now()
     s = settings(conn, report.address_id, power)
     row = conn.execute(
-        "SELECT catch_up_since, cooldown_until FROM check_state WHERE address_id = ?",
+        "SELECT catch_up_since, cooldown_until, next_due_at FROM check_state WHERE address_id = ?",
         (report.address_id,),
     ).fetchone()
     since = from_ts(row["catch_up_since"]) if row and row["catch_up_since"] else None
@@ -154,6 +154,10 @@ def after_check(
     else:
         since = None
         due = now + interval(now, s)
+    # made due during this check (an Undo click): keep it, or it waits a whole interval
+    asked = row["next_due_at"] if row and row["next_due_at"] else None
+    if asked and asked > report.started_at and from_ts(asked) < due:
+        due = from_ts(asked)
     with write_tx(conn):
         conn.execute(
             "INSERT INTO check_state (address_id, next_due_at, catch_up_since, cooldown_until)"

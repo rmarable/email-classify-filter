@@ -49,6 +49,7 @@ GONE = frozenset({"message_not_found"})  # the card was deleted in Slack: post i
 CHANNEL_GONE = frozenset({"channel_not_found", "is_archived", "not_in_channel"})
 RATE_LIMITED = frozenset({"ratelimited", "rate_limited"})
 RATE_HOLD_S = 60
+PINNED = frozenset({"needs-you"})  # re-pinned when re-posted after a deletion in Slack
 ALERT = "slack_delivery_failed"
 FIX = "Fix: ecf slack set-tokens, then ecf slack reauthorize"
 
@@ -164,6 +165,7 @@ class SlackSender:
         key = str(p["key"])
         existing = message_ref(conn, key)
         ref: ThreadRef | None = None
+        pin = bool(p.get("pin"))
         if existing is not None:  # a retry or a later edit: never a second post
             try:
                 self._chat.update(existing, card)
@@ -172,6 +174,7 @@ class SlackSender:
                 if exc.code not in GONE:
                     raise
                 _forget(conn, key)  # deleted in Slack: post it again below
+                pin = pin or key in PINNED  # and pin it again (V1.2 review, 2026-09-30)
         if ref is None:
             thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
             ident = p.get("identity")
@@ -179,7 +182,7 @@ class SlackSender:
             ref = self._chat.post(route, card, thread=thread, identity=identity)
         _remember(conn, self._clock, key, ref, message_ref(conn, str(p.get("thread_key") or "")),
                   {k: v for k, v in p.items() if k != "op"})  # fmt: skip
-        if p.get("pin"):
+        if pin:
             self._chat.pin(ref)
 
     def _pace(self, channel: str) -> None:

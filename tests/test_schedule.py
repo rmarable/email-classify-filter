@@ -209,3 +209,18 @@ def test_a_crashing_check_is_recorded_and_rescheduled(
     assert state["last_status"] == "internal_error"
     assert state["last_error"] == "internal error (RuntimeError)"
     assert state["next_due_at"] > to_ts(clock.now())
+
+
+def test_a_due_time_set_during_the_check_is_kept(
+    conn_ap: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """An Undo click during a check used to wait a whole interval (V1.2 review, 2026-09-30)."""
+    started = to_ts(clock.now())
+    clock.advance(20)
+    asked = clock.now()
+    with schedule.write_tx(conn_ap):  # what an Undo click does
+        conn_ap.execute("INSERT INTO check_state (address_id, next_due_at) VALUES ('ap', ?)",
+                        (to_ts(asked),))  # fmt: skip
+    clock.advance(10)
+    due = schedule.after_check(conn_ap, clock, CheckReport("ap", "ok", started), DESKTOP)
+    assert due == asked

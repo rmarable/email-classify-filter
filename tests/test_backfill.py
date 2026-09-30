@@ -167,3 +167,26 @@ def test_remaining_backfill_schedules_a_catch_up_pause(env: Env, clock: FakeCloc
     assert schedule.after_check(conn, clock, r, power) == clock.now() + schedule.CATCH_UP_PAUSE
     r = checks.CheckReport("ap", "ok", "now")
     assert schedule.after_check(conn, clock, r, power) > clock.now() + schedule.CATCH_UP_PAUSE
+
+
+def test_a_pass_that_failed_to_decide_is_picked_up_next_time(
+    env: Env, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Progress was saved before the decision, stranding items at `new` (V1.2 review)."""
+    conn, _ = env
+    box = Box()
+    old = _old(box, clock, PLAIN, 3)
+    run(env, clock, box)
+    backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
+    real = backfill.decide
+
+    def fail(*_a: object, **_k: object) -> list[object]:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(backfill, "decide", fail)
+    assert run(env, clock, box).status == "internal_error"
+    assert _items(conn)[old]["status"] == Status.NEW  # created, not decided
+    monkeypatch.setattr(backfill, "decide", real)
+    run(env, clock, box)
+    assert _items(conn)[old]["status"] == Status.OBSERVED
+    assert backfill.load(conn, "ap") is None

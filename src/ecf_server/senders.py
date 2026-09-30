@@ -127,7 +127,8 @@ def _write(
         conn.execute(
             f"INSERT INTO senders (address_id, sender_hash, domain, {column}, confirmed_at)"  # noqa: S608 - column is one of three fixed names
             " VALUES (?, ?, ?, ?, ?) ON CONFLICT (address_id, sender_hash) DO UPDATE SET"
-            f" {column} = excluded.{column}{extra}",
+            f" {column} = excluded.{column}{extra},"
+            " domain = coalesce(senders.domain, excluded.domain)",  # rows from before 0004
             (aid, sender_hash(email), domain_of(email), value,
              now if column == "confirmed_category" else None),
         )  # fmt: skip

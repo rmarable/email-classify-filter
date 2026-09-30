@@ -208,3 +208,61 @@ def test_a_waiting_answer_expires_and_counts_as_a_round(
     clock.advance(15 * 86400)
     answers.expire(conn, clock)  # expiring in the second round: a person
     assert _status(conn, sid) == Status.NEEDS_HUMAN
+
+
+def test_a_queued_answer_is_not_an_approval(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """`ecf reject` could drop an answer waiting for step-up (V1.2 review, 2026-09-30)."""
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64, FRAUD)
+    answers.ask(conn, clock, sid, "Did you ask for the new account?")
+    _submit(db_path, clock, conn, sid, "No, never")
+    for decide in (approvals.reject, approvals.cancel):
+        with pytest.raises(ConflictError):
+            decide(conn, clock, sid, actor="os_user")
+    with pytest.raises(ConflictError, match="ecf answer aaaaaaaa"):
+        approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")
+    assert _status(conn, sid) == Status.AWAITING_STEPUP
+    assert _state(conn, sid)["answer_pending"] == "No, never"
+
+
+def test_a_refused_question_changes_nothing(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """A refused `ask` used to overwrite the stored question (V1.2 review, 2026-09-30)."""
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64)
+    approvals.request(conn, clock, sid, [approvals.Planned("archive")])
+    before = _state(conn, sid)
+    with pytest.raises(ConflictError):  # awaiting_approval can't take a question
+        answers.ask(conn, clock, sid, "Which cost center?")
+    assert _state(conn, sid) == before
+    with pytest.raises(ConflictError):  # nor a second request
+        approvals.request(conn, clock, sid, [approvals.Planned("junk")])
+    assert _state(conn, sid) == before
+
+
+def test_an_expired_answer_does_not_count_as_an_approval_expiry(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """One counter served both (V1.2 review, 2026-09-30)."""
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64, FRAUD)
+    answers.ask(conn, clock, sid, "Did you ask for the new account?")
+    _submit(db_path, clock, conn, sid, "No")
+    clock.advance(15 * 86400)
+    answers.expire(conn, clock)
+    count = conn.execute("SELECT expiry_count FROM items WHERE stable_id = ?", (sid,)).fetchone()
+    assert count[0] == 0
+
+
+def test_a_refused_slack_answer_is_told_by_dm(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """The form closed as if it worked (V1.2 review, 2026-09-30)."""
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64)
+    answers.ask(conn, clock, sid, "Which cost center?")
+    answers.answer(conn, clock, sid, "CC-1", actor="os_user")  # answered at the computer first
+    _submit(db_path, clock, conn, sid, "CC-2")
+    dm = _posts(conn)[-1]
+    assert dm["channel"] == ME and dm["card"]["title"] == "Your answer wasn't recorded"

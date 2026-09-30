@@ -47,9 +47,10 @@ from ecf_server.actions import Planned, action_hash
 from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
+from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.precheck import payment_or_fraud
-from ecf_server.state_machine import Origin, Stage, TransitionContext
+from ecf_server.state_machine import Origin, Stage, TransitionContext, check_transition
 
 SENDS = frozenset({"forward_internal", "reply_template"})
 HIDE = frozenset({"mark_read", "archive", "move", "junk"})
@@ -115,6 +116,16 @@ def _actions(item: sqlite3.Row) -> list[Planned]:
     return [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]
 
 
+def queued_answer(item: sqlite3.Row) -> bool:
+    """An answer from Slack waiting for step-up at `awaiting_stepup` (answers.py), not an approval:
+    told apart by the item's state, never by the caller (V1.2 review, 2026-09-30)."""
+    p: dict[str, Any] = json.loads(item["proposal"] or "{}")
+    return item["status"] == Status.AWAITING_STEPUP and "answer_pending" in p
+
+
+ANSWER_WAITS = "this is your answer from Slack waiting for step-up: finish it with ecf answer {}"
+
+
 def _facts(item: sqlite3.Row) -> dict[str, Any]:
     return json.loads(item["facts"] or "{}")
 
@@ -130,12 +141,17 @@ def request(
     if not actions:
         raise InvalidInputError("nothing to approve")
     item = _item(conn, sid)
+    ctx = TransitionContext(stage=_stage(conn, item))
+    # refuse before writing: a refused request must not replace the live card's proposal
+    if item["status"] != Status.PROPOSED:
+        raise ConflictError(f"this email is {item['status']}, not proposed",
+                            current=str(item["status"]))  # fmt: skip
+    check_transition(Status.PROPOSED, Status.AWAITING_APPROVAL, ctx)
     with write_tx(conn):
         conn.execute("UPDATE items SET proposal = ?, updated_at = ? WHERE stable_id = ?",
                      (json.dumps({"actions": [a.to_json() for a in actions]}),
                       to_ts(clock.now()), sid))  # fmt: skip
-    items.transition(conn, clock, StableId(sid), Status.AWAITING_APPROVAL,
-                     TransitionContext(stage=_stage(conn, item)), actor="service",
+    items.transition(conn, clock, StableId(sid), Status.AWAITING_APPROVAL, ctx, actor="service",
                      expected=Status.PROPOSED)  # fmt: skip
     grant_id = _issue(conn, clock, _item(conn, sid), actions)
     _card(conn, clock, _item(conn, sid), grant_id, member=member)
@@ -195,8 +211,12 @@ def approve(
 ) -> dict[str, Any]:
     item = inbox.find(conn, ref)
     status = Status(item["status"])
+    if status is Status.EXPIRED and not actor.startswith("slack:") and _actions(item):
+        item, status = _reoffer(conn, clock, item, actor), Status.AWAITING_APPROVAL
     if status not in (Status.AWAITING_APPROVAL, Status.AWAITING_STEPUP):
         raise ConflictError(f"this email is {status}: nothing to approve", current=str(status))
+    if queued_answer(item):
+        raise ConflictError(ANSWER_WAITS.format(item["stable_id"][:8]), current=str(status))
     g = _open_grant(conn, clock, item, grant_id)
     actions = _actions(item)
     sid = StableId(item["stable_id"])
@@ -220,6 +240,19 @@ def approve(
     _set_grant(conn, g.grant_id, "issued", "approved")
     _audit(conn, clock, item, "approval.approved", actor, {"grant_id": g.grant_id}, tx=True)
     return _after_approved(conn, clock, _item(conn, sid), g.grant_id, actions)
+
+
+def _reoffer(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actor: str) -> sqlite3.Row:
+    """An approval that expired twice waits at `expired` (§6.2); `ecf approve <id>` offers it
+    again with a fresh grant, then approves as usual (operator decision 2026-09-30, OD-223)."""
+    sid = StableId(item["stable_id"])
+    items.transition(conn, clock, sid, Status.AWAITING_APPROVAL,
+                     TransitionContext(origin=Origin.APPROVAL), actor=actor,
+                     expected=Status.EXPIRED)  # fmt: skip
+    grant = _issue(conn, clock, _item(conn, sid), _actions(item))
+    _audit(conn, clock, item, "approval.reoffered", actor, {"grant_id": grant}, tx=True)
+    _card(conn, clock, _item(conn, sid), grant, title="Offered again")
+    return _item(conn, sid)
 
 
 def _queue_for_computer(
@@ -283,6 +316,8 @@ def reject(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> d
     status = Status(item["status"])
     if status not in (Status.AWAITING_APPROVAL, Status.AWAITING_STEPUP):
         raise ConflictError(f"this email is {status}: nothing to reject", current=str(status))
+    if queued_answer(item):  # the edge is for approvals only (§6.2)
+        raise ConflictError(ANSWER_WAITS.format(item["stable_id"][:8]), current=str(status))
     items.transition(conn, clock, StableId(item["stable_id"]), Status.REJECTED,
                      TransitionContext(origin=Origin.APPROVAL), actor=actor,
                      expected=status)  # fmt: skip
@@ -317,7 +352,7 @@ def pending(conn: sqlite3.Connection) -> dict[str, Any]:
     batch: list[dict[str, Any]] = []
     sends: list[dict[str, Any]] = []
     for r in rows:
-        if not _actions(r):
+        if queued_answer(r) or not _actions(r):
             continue  # an answer waiting for step-up (answers.py), not an approval
         entry = inbox.summary(r) | {"action": describe(_actions(r))}
         (sends if is_send(_actions(r)) else batch).append(entry)
@@ -362,6 +397,10 @@ def advance_delays(conn: sqlite3.Connection, clock: Clock, awake_s: float, *, wo
         conn.execute("UPDATE delays SET remaining_s = max(0, remaining_s - ?)", (max(awake_s, 0),))
     for d in conn.execute("SELECT * FROM delays ORDER BY created_at").fetchall():
         sid = StableId(d["stable_id"])
+        if _item(conn, sid)["status"] != Status.DELAYED:  # closed meanwhile (V1.2 review)
+            with write_tx(conn):
+                conn.execute("DELETE FROM delays WHERE stable_id = ?", (sid,))
+            continue
         if d["remaining_s"] <= 0:
             if pause.is_paused(conn, _item(conn, sid)["address_id"]):
                 continue  # starts on resume
@@ -401,23 +440,33 @@ def expire(conn: sqlite3.Connection, clock: Clock) -> int:
         (now,),
     ).fetchall()
     for r in rows:
-        sid = StableId(r["stable_id"])
-        ctx = TransitionContext(origin=Origin.APPROVAL)
-        items.transition(conn, clock, sid, Status.EXPIRED, ctx, actor="service",
-                         expected=Status(r["status"]))  # fmt: skip
-        _void(conn, sid)
-        item = _item(conn, sid)
-        _audit(conn, clock, item, "approval.expired", "service", {"grant_id": r["grant_id"]},
-               tx=True)  # fmt: skip
-        if item["expiry_count"] >= 2:  # a second expiry: the daily summary lists it (§6.2)
-            _edit(conn, clock, item, "Expired twice: see the daily summary or ecf inbox", [])
-            continue
-        items.transition(conn, clock, sid, Status.AWAITING_APPROVAL,
-                         TransitionContext(origin=Origin.APPROVAL), actor="service",
-                         expected=Status.EXPIRED)  # fmt: skip
-        grant = _issue(conn, clock, _item(conn, sid), _actions(item))
-        _card(conn, clock, _item(conn, sid), grant, title="Expired, decide again")
+        try:
+            _expire_one(conn, clock, r)
+        except EcfError as exc:  # e.g. a click decided it meanwhile: the rest still expire
+            log.warning("approval.expire_skipped", stable_id=str(r["stable_id"])[:8],
+                        error_type=type(exc).__name__)  # fmt: skip
     return len(rows)
+
+
+def _expire_one(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row) -> None:
+    sid = StableId(r["stable_id"])
+    ctx = TransitionContext(origin=Origin.APPROVAL)
+    items.transition(conn, clock, sid, Status.EXPIRED, ctx, actor="service",
+                     expected=Status(r["status"]))  # fmt: skip
+    _void(conn, sid)
+    item = _item(conn, sid)
+    _audit(conn, clock, item, "approval.expired", "service", {"grant_id": r["grant_id"]},
+           tx=True)  # fmt: skip
+    if item["expiry_count"] >= 2:  # a second expiry: the daily summary lists it (§6.2)
+        short = item["stable_id"][:8]
+        _edit(conn, clock, item, f"Expired twice: ecf approve {short} offers it again, or"
+              f" ecf item resolve {short}", [])  # fmt: skip
+        return
+    items.transition(conn, clock, sid, Status.AWAITING_APPROVAL,
+                     TransitionContext(origin=Origin.APPROVAL), actor="service",
+                     expected=Status.EXPIRED)  # fmt: skip
+    grant = _issue(conn, clock, _item(conn, sid), _actions(item))
+    _card(conn, clock, _item(conn, sid), grant, title="Expired, decide again")
 
 
 @stepup.purpose("item_requeue")

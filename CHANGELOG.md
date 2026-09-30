@@ -5,6 +5,15 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- `ecf approve <id>` now offers an approval that expired twice again, instead of refusing it (OD-223).
+- An answer from Slack waiting for step-up can no longer be rejected or approved as if it were an approval; ecf points to `ecf answer <id>`.
+- Closing a delayed send (resolve, Dismiss, or moved in the mail client) now cancels its countdown; it used to break the next timer tick.
+- An expired answer no longer counts as an approval expiry.
+- A backfill that fails partway no longer leaves messages undecided.
+- An Undo clicked while a check is running now runs within a minute.
+- A refused answer from a Slack form now says so by DM.
+- "Needs you" stays pinned when it is re-posted after a deletion in Slack.
+- Confirming an older sender record now adds its domain to the known vendors.
 - An action whose grant was already used (it may have run before a crash) is marked "outcome unknown" instead of failed, and a send is never retried unchecked.
 - ecf's Slack connection keeps running after an unexpected error, shows it in `ecf status` and `ecf doctor`, and tells the desktop if it keeps failing.
 - A Slack post that can't be delivered is no longer lost silently: a channel that was archived or deleted is created again and its escalation re-posted, rate limits wait, and a post that gives up raises Slack Delivery Failed.

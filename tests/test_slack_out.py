@@ -287,3 +287,18 @@ def test_each_text_line_is_its_own_section() -> None:
     sections = [s["text"]["text"] for s in many if s["type"] == "section"]
     assert len(sections) == slack_render.TEXT_LINES_MAX
     assert sections[-1].startswith("line 29 · line 30") and sections[-1].endswith("line 39")
+
+
+def test_needs_you_is_pinned_again_when_it_was_deleted(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A re-post after a deletion in Slack came back unpinned (V1.2 review, 2026-09-30)."""
+    web, n = FakeWeb(), FakeNotifier()
+    s = _sender(web, clock, n)
+    slack_out.enqueue_post(conn, clock, key="needs-you", route=C1, card=Card("x"), pin=True)
+    s.run_once(conn)
+    slack_out.enqueue_post(conn, clock, key="needs-you", route=C1, card=Card("y"))  # an edit
+    web.fail["chat.update"] = [SlackError("chat.update", "message_not_found")]
+    clock.advance(2)
+    s.run_once(conn)
+    assert web.methods()[-3:] == ["chat.update", "chat.postMessage", "pins.add"]

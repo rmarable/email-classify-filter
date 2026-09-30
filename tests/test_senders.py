@@ -185,3 +185,17 @@ def test_cli_show_and_turning_scrutiny_back_on(running: Paths) -> None:
     assert r.exit_code == 0, r.output  # no step-up needed to add scrutiny back
     r = CliRunner().invoke(app, ["--install", "t", "sender", "set-reply-to", VENDOR])
     assert r.exit_code == 2  # usage error: a domain or --clear (the text is styled by Rich)
+
+
+def test_confirming_an_old_record_fills_in_its_domain(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Rows from before migration 0004 have no domain, so a confirmed sender never counted as a
+    known vendor (V1.2 review, 2026-09-30)."""
+    _setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO senders (address_id, sender_hash, dmarc_pass_count)"
+                     " VALUES ('ap', ?, 1)", (facts.sender_hash(VENDOR),))  # fmt: skip
+    _with_step_up(conn, clock, lambda n: senders.confirm(
+        conn, clock, VENDOR, "invoice", address=None, nonce=n))  # fmt: skip
+    assert facts.known_vendor_domains(conn, "ap") == ["vendor-a.example"]

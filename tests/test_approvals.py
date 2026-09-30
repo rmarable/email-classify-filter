@@ -19,7 +19,7 @@ from ecf.errors import (
 )
 from ecf.ids import AddressId, StableId
 from ecf.status import Status
-from ecf_server import approvals, db, execute, items, slack_admin, stepup
+from ecf_server import approvals, db, execute, inbox, items, slack_admin, stepup
 from ecf_server._slack import Envelope
 from ecf_server.actions import Planned
 from ecf_server.clock import Clock, FakeClock, to_ts
@@ -425,3 +425,36 @@ def test_the_decision_routes(conn: sqlite3.Connection, db_path: Path, clock: Fak
     r = anyio.run(call, "/v1/items/aaaaaaaa/reject")
     assert r.status_code == 200 and r.json()["status"] == "rejected"
     assert _status(conn, sid) == Status.REJECTED
+
+
+def test_ecf_approve_offers_a_twice_expired_approval_again(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """It was a dead end the daily summary pointed at (OD-223)."""
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64)
+    approvals.request(conn, clock, sid, ARCHIVE)
+    for _ in range(2):
+        clock.advance(15 * 86400)
+        approvals.expire(conn, clock)
+    assert _status(conn, sid) == Status.EXPIRED
+    assert "ecf approve aaaaaaaa offers it again" in _posts(conn)[-1]["card"]["title"]
+    with pytest.raises(ConflictError):  # never from a Slack click
+        approvals.approve(conn, clock, FakeNotifier(), sid, actor=f"slack:{ME}")
+    r = approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")
+    assert r["status"] == Status.EXECUTING
+    events = [e[0] for e in conn.execute("SELECT event FROM audit ORDER BY id")]
+    assert "approval.reoffered" in events
+
+
+def test_closing_a_delayed_send_clears_its_countdown_and_grant(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """The countdown survived `ecf item resolve` and broke the next tick (V1.2 review)."""
+    sid = _delayed_send(conn, clock)
+    inbox.resolve(conn, clock, inbox.Selection(refs=[sid]), reason="sent it myself", nonce=None,
+                  dry_run=False)  # fmt: skip
+    assert _status(conn, sid) == Status.RESOLVED_MANUAL
+    assert conn.execute("SELECT count(*) FROM delays").fetchone()[0] == 0
+    assert _grants(conn, sid) == ["voided"]
+    assert approvals.advance_delays(conn, clock, approvals.SEND_DELAY_S, woke=False) == 0

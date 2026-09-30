@@ -247,9 +247,11 @@ def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
     if page.stopped == "reset":
         backfill.finish(conn, clock, cfg.address_id, bf, "mailbox reset")
         return []
-    backfill.save(conn, clock, cfg.address_id, bf)
-    outcomes = backfill.decide(conn, clock, src, cfg.address_id, page.created, bf,
+    # decide first, then save: plus anything a failed pass left undecided in the range
+    todo = [*page.created, *backfill.undecided(conn, cfg.address_id, bf, page.created)]
+    outcomes = backfill.decide(conn, clock, src, cfg.address_id, todo, bf,
                                install=install, max_scan_bytes=cfg.max_scan_bytes)  # fmt: skip
+    backfill.save(conn, clock, cfg.address_id, bf)
     report.backfill_created, report.backfill_remaining = len(page.created), page.remaining
     if page.remaining == 0 and page.stopped == "done":
         backfill.finish(conn, clock, cfg.address_id, bf, "done")
