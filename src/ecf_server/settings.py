@@ -135,7 +135,7 @@ ELSEWHERE = {
     "stage": "change it with `ecf stage set`",
     "resident": "arrives with local models in V1.3",
     "review_sample_rate": "arrives with review posts in V1.3",
-    "claude_queue_timeout": "arrives with presets B and C (V1.3/V1.4)",
+    "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
     "classifier_high_batch": "arrives with Claude on demand in V1.4",
     "escalations_per_hour": "applies from V1.3 (V1.2's escalations are all exempt, OD-212)",
     "label_folder": "arrives in V1.3",

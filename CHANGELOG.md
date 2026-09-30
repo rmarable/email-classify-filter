@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- V1.3 plan recorded: `claude_queue_timeout` moves to V1.4, `max_per_check` becomes settable, evals pause on battery at 15% (`--battery-floor`), go-live overrides can't waive the safety gates, "All others correct" skips risky items, and model work stops if Ollama listens beyond this computer (OD-227 to OD-240); eval label confirmations are kept in git, a listener check that can't confirm loopback-only fails loudly, and heat pauses model work only after 3 slow calls in a row (OD-241 to OD-243).
 - `ecf config apply` accepts `<section>: default` to return a section (rules, templates, action policy, move folders, forward allow-list) to its shipped value; before, applied rules could not be undone back to the starter rules (OD-225).
 
 ## ms-v1.2-slack-approvals (2026-09-30)

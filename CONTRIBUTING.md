@@ -14,6 +14,14 @@ rule and the commit rules are in `CLAUDE.md`.
 - On macOS, GNU sed as `gsed` (`brew install gnu-sed`) for scripted edits: the built-in BSD sed
   doesn't accept GNU syntax such as `\|` alternation or `sed -i` without a suffix argument.
   Nothing in the build or tests calls sed; Linux's sed is already GNU sed.
+- For local-model work (V1.3 on), Ollama. On macOS use the Homebrew formula and pin it with its
+  dependency, so it changes only when you choose (OD-232):
+  `brew install ollama && brew pin ollama mlx-c`; `brew list --pinned` shows both. Don't run
+  `brew services start ollama`: its service turns on flash attention and a q8 KV cache, which may
+  change model output (unverified; measured in V1.3). Avoid the Ollama app (cask `ollama-app` or the ollama.com download): it
+  may update itself even when pinned, and has a setting that exposes Ollama on the network. To
+  upgrade on purpose: `brew unpin ollama mlx-c && brew upgrade ollama && brew pin ollama mlx-c`,
+  then rerun the eval. How Ollama is started is settled by the V1.3 measurements.
 
 ## Set up
 
