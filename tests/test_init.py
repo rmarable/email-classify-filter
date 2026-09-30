@@ -98,7 +98,11 @@ def quiet(monkeypatch: pytest.MonkeyPatch) -> FakeManager:
     def manager_for(_p: Paths) -> FakeManager:
         return m
 
+    def secret_store(_c: LocalClient) -> tuple[str | None, str]:
+        return "test-store", ""  # the host's own store varies (CI's Linux runners have none)
+
     monkeypatch.setattr(cli_init, "manager_for", manager_for)
+    monkeypatch.setattr(cli_init, "secret_store", secret_store)
     monkeypatch.setattr(cli_init, "require_terminal", lambda: None)
     monkeypatch.setattr(cli_init.doctor, "check_disk_encryption",
                         lambda: doctor.Check("disk encryption", doctor.Level.OK, "On"))  # fmt: skip
@@ -153,3 +157,14 @@ def test_a_foreground_service_is_left_alone(running: Paths, quiet: FakeManager) 
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\n")
     assert r.exit_code == 0, r.output
     assert "outside its unit" in r.output and quiet.calls == []
+
+
+def test_no_usable_secret_store_stops_init(
+    running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def none(_c: LocalClient) -> tuple[str | None, str]:
+        return None, "no keyring"
+
+    monkeypatch.setattr(cli_init, "secret_store", none)
+    r = CliRunner().invoke(_app(running, []), ["init", "--resume"])
+    assert r.exit_code == 3 and "secret store: unavailable (no keyring)" in r.output

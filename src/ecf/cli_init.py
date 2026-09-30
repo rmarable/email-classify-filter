@@ -148,12 +148,18 @@ def _checks(c: LocalClient) -> None:
                    " mail metadata are on this computer.")  # fmt: skip
         if not typer.confirm("Continue anyway?", default=False):
             raise typer.Exit(1)
-    store: dict[str, Any] = c.get("/v1/status")["secret_store"]
-    if not store.get("backend"):
-        typer.echo(f"secret store: unavailable ({store.get('detail') or 'unknown'}); see"
-                   " `ecf doctor`")  # fmt: skip
+    backend, detail = secret_store(c)
+    if backend is None:
+        typer.echo(f"secret store: unavailable ({detail}); see `ecf doctor`")
         raise typer.Exit(3)
-    typer.echo(f"secret store: {store['backend']}")
+    typer.echo(f"secret store: {backend}")
+
+
+def secret_store(c: LocalClient) -> tuple[str | None, str]:
+    """The service's secret-store backend, or None and why not."""
+    store: dict[str, Any] = c.get("/v1/status")["secret_store"]
+    backend = store.get("backend")
+    return (str(backend) if backend else None), str(store.get("detail") or "unknown")
 
 
 def _role(c: LocalClient, st: dict[str, Any]) -> None:
