@@ -322,7 +322,8 @@ class Service:
         )
 
     def _slack_runtime(self) -> tuple[SlackRuntime, threading.Thread]:
-        slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store)
+        slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store,
+                             install=self.paths.install)  # fmt: skip
         self.state.slack = slack.status  # the same dict: status shows it live
         self.state.slack_reload = slack.reload
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)

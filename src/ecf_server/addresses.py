@@ -16,13 +16,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
-from ecf.ids import SLUG_PATTERN
-from ecf.status import OPEN
-from ecf_server import probe
+from ecf.ids import SLUG_PATTERN, StableId
+from ecf.status import OPEN, Status
+from ecf_server import items, probe, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail import MailSource
+from ecf_server.precheck import payment_or_fraud
 from ecf_server.secretstore import SecretStore
+from ecf_server.state_machine import TransitionContext
 
 ORG_DOMAINS_KEY = "org_domains"
 SENSITIVITIES = ("standard", "high")
@@ -233,39 +235,68 @@ def _due_now(
 
 
 def remove_address(
-    conn: sqlite3.Connection, clock: Clock, secrets: SecretStore, ref: str, *, actor: str
+    conn: sqlite3.Connection,
+    clock: Clock,
+    secrets: SecretStore,
+    ref: str,
+    *,
+    actor: str,
+    nonce: str | None = None,
 ) -> dict[str, Any]:
+    """Stop watching an address. Its open items are resolved first (`resolved_manual`), with
+    step-up when any is a payment or fraud item (OD-218)."""
     a = get_address(conn, ref)
-    open_count = conn.execute(
-        "SELECT count(*) FROM items WHERE address_id = ?"
-        " AND status IN (SELECT value FROM json_each(?))",
-        (a["address_id"], json.dumps(sorted(OPEN))),
-    ).fetchone()[0]
-    if open_count:
-        raise ConflictError(
-            f"{a['email']} has {open_count} open item(s); resolve them first "
-            "(removing an address with open items arrives with step-up in V1.2)"
-        )
+    aid = a["address_id"]
+    items_open = _open_items(conn, aid)
+    risky = sum(1 for _, pf in items_open if pf)
+    if risky:
+        stepup.consume(conn, clock, "address_remove", {"address_id": aid}, nonce)
+    for stable_id, pf in items_open:
+        ctx = TransitionContext(payment_or_fraud=pf, stepup_verified=bool(risky))
+        items.transition(conn, clock, StableId(stable_id), Status.RESOLVED_MANUAL, ctx,
+                         actor=actor)  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
-        conn.execute(
-            "UPDATE addresses SET removed_at = ? WHERE address_id = ?", (now, a["address_id"])
-        )
+        conn.execute("UPDATE addresses SET removed_at = ? WHERE address_id = ?", (now, aid))
         # its alerts end with it, without a "Resolved" notification (V1.1 review, 2026-09-29)
         conn.execute(
             "UPDATE alerts SET resolved_at = ? WHERE address_id = ? AND resolved_at IS NULL",
-            (now, a["address_id"]),
+            (now, aid),
         )
-        _audit(conn, now, a["address_id"], "address.removed", actor, {})
-    secrets.delete(secret_name(a["address_id"]))
+        _audit(conn, now, aid, "address.removed", actor, {"resolved": len(items_open)})
+    secrets.delete(secret_name(aid))
     return {
         **a,
         "removed_at": now,
+        "resolved": len(items_open),
         "residue": [
             f"revoke the app password for {a['email']} at your mail provider",
             "ecf keywords stay on messages already labelled",
         ],
     }
+
+
+def _open_items(conn: sqlite3.Connection, address_id: str) -> list[tuple[str, bool]]:
+    """(stable_id, payment or fraud) for each open item, in a stable order."""
+    rows = conn.execute(
+        "SELECT stable_id, facts FROM items WHERE address_id = ?"
+        " AND status IN (SELECT value FROM json_each(?)) ORDER BY stable_id",
+        (address_id, json.dumps(sorted(OPEN))),
+    ).fetchall()
+    return [(r["stable_id"], payment_or_fraud(json.loads(r["facts"] or "{}"))) for r in rows]
+
+
+@stepup.purpose("address_remove")
+def _describe_remove(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
+    """Bound to the exact set of open items, so an item arriving meanwhile needs a new step-up."""
+    a = get_address(conn, str(target.get("address_id", "")))
+    open_ = _open_items(conn, a["address_id"])
+    risky = sum(1 for _, pf in open_ if pf)
+    prompt = (
+        f"ecf: stop watching {a['email']} and resolve its {len(open_)} open item(s), "
+        f"{risky} of them payment or fraud"
+    )
+    return stepup.Bound(stepup.digest("address_remove", a["address_id"], open_), prompt)
 
 
 def list_addresses(conn: sqlite3.Connection) -> list[dict[str, Any]]:

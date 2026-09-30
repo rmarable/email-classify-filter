@@ -10,7 +10,7 @@ import pytest
 
 from ecf_server import jobs, slack_out
 from ecf_server._slack import SlackError, SlackNetworkError
-from ecf_server.chat import Button, Card, Identity, RouteRef
+from ecf_server.chat import Button, Card, Identity, RouteGoneError, RouteRef
 from ecf_server.clock import FakeClock
 from ecf_server.notify import FakeNotifier
 from ecf_server.slack_chat import SlackChat
@@ -119,7 +119,7 @@ def test_channel_name_taken_is_reused_and_harmless_errors_pass() -> None:
     assert chat.create_route("ecf-default-ap") == RouteRef("CTAKEN")
     chat.invite(RouteRef("CTAKEN"), "U1")
     web.fail["conversations.invite"] = [SlackError("conversations.invite", "channel_not_found")]
-    with pytest.raises(SlackError):
+    with pytest.raises(RouteGoneError):  # archived or deleted in Slack: ecf makes a new one
         chat.invite(RouteRef("CGONE"), "U1")
 
 

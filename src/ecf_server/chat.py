@@ -59,6 +59,18 @@ class Identity:
     icon_emoji: str
 
 
+class RouteNameTakenError(Exception):
+    """The name belongs to a route ecf can't use (archived, or one it isn't in)."""
+
+
+class RouteGoneError(Exception):
+    """The route was deleted or archived outside ecf, or ecf was removed from it."""
+
+
+class RouteNotAllowedError(Exception):
+    """The workspace doesn't let ecf create routes; a person must create it and add ecf."""
+
+
 @dataclass(frozen=True)
 class Capabilities:
     private_routes: bool
@@ -87,9 +99,18 @@ class ChatSurface(Protocol):
 
     def ephemeral(self, route: RouteRef, user: str, text: str) -> None: ...
 
-    def create_route(self, name: str) -> RouteRef: ...
+    def create_route(self, name: str) -> RouteRef:
+        """A private route; if the name is taken by one ecf is in, that one. Raises
+        RouteNameTakenError or RouteNotAllowedError."""
+        ...
 
-    def invite(self, route: RouteRef, user: str) -> None: ...
+    def find_route(self, name: str) -> RouteRef | None:
+        """An unarchived private route with this name that ecf is already in, or None."""
+        ...
+
+    def invite(self, route: RouteRef, user: str) -> None:
+        """Raises RouteGoneError when the route no longer exists for ecf."""
+        ...
 
     def archive(self, route: RouteRef) -> None: ...
 
@@ -110,6 +131,7 @@ class FakeChat:
     )
     posts: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     routes: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    creation_refused: bool = False  # like a workspace that restricts channel creation
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def post(
@@ -150,12 +172,31 @@ class FakeChat:
     def create_route(self, name: str) -> RouteRef:
         route = RouteRef("C" + new_random_id()[:10].upper())
         with self._lock:
+            for channel, r in self.routes.items():  # Slack's name_taken, as SlackChat handles it
+                if r["name"] == name:
+                    if r["archived"]:
+                        raise RouteNameTakenError(name)
+                    return RouteRef(channel)
+            if self.creation_refused:
+                raise RouteNotAllowedError(name)
             self.routes[route.channel] = {"name": name, "members": [], "archived": False}
         return route
 
+    def find_route(self, name: str) -> RouteRef | None:
+        with self._lock:
+            for channel, r in self.routes.items():
+                if r["name"] == name and not r["archived"]:
+                    return RouteRef(channel)
+        return None
+
     def invite(self, route: RouteRef, user: str) -> None:
         with self._lock:
-            self.routes[route.channel]["members"].append(user)
+            r = self.routes.get(route.channel)
+            if r is None or r["archived"]:
+                raise RouteGoneError(route.channel)
+            members = r["members"]
+            if user not in members:  # like Slack's already_in_channel, which ecf ignores
+                members.append(user)
 
     def archive(self, route: RouteRef) -> None:
         with self._lock:

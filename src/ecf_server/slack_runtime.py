@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, slack_admin, slack_in
+from ecf_server import _slack, slack_admin, slack_in, slack_routes
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
@@ -29,6 +29,8 @@ from ecf_server.slack_out import SlackSender
 RETRY_S = 60.0
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0
+ROUTES_EVERY_S = 30.0
+RECHECK_EVERY_S = 3600.0  # re-invite you everywhere: finds gone channels (slack_routes.ensure)
 
 WebFactory = Callable[[str], Any]
 SocketFactory = Callable[[str, Any, Callable[[_slack.Envelope], None]], Any]
@@ -44,7 +46,12 @@ class SlackRuntime:
         *,
         make_web: WebFactory = _slack.Web,
         make_socket: SocketFactory = _slack.Socket,
+        install: str = "default",
     ) -> None:
+        self._install = install
+        self._routes_at = -ROUTES_EVERY_S  # monotonic time of the last channel check
+        self._recheck_at = -RECHECK_EVERY_S
+        self._problem = ""
         self._clock, self._notifier = clock, notifier
         self._connect, self._secrets = connect, secrets
         self._make_web, self._make_socket = make_web, make_socket
@@ -54,7 +61,7 @@ class SlackRuntime:
         self._web: Any = None
         self._reload = threading.Event()
         self.status: dict[str, Any] = {"installed": False, "connected": False,
-                                       "last_connected_at": None}  # fmt: skip
+                                       "last_connected_at": None, "channels": None}  # fmt: skip
 
     def start(self) -> bool:
         """Connect if Slack is installed; True when connected."""
@@ -111,11 +118,37 @@ class SlackRuntime:
         self._mark_connected()
         conn = self._connect()
         try:
+            self._channels(conn)
             sent = self._sender.run_once(conn)
             handled = self._receiver.run_once(conn)
         finally:
             conn.close()
         return sent or handled
+
+    def _channels(self, conn: sqlite3.Connection) -> None:
+        """Every ROUTES_EVERY_S: create, record and invite whatever channel is missing."""
+        now = self._clock.monotonic()
+        if now - self._routes_at < ROUTES_EVERY_S or self._web is None:
+            return
+        self._routes_at = now
+        recheck = now - self._recheck_at >= RECHECK_EVERY_S
+        try:
+            for change in slack_routes.ensure(conn, self._clock, SlackChat(self._web),
+                                              self._install, recheck=recheck):  # fmt: skip
+                log.info("slack.channels", change=change)
+            problem = ""
+            if recheck:
+                self._recheck_at = now
+        except slack_routes.ChannelProblemError as exc:
+            problem = str(exc)
+        except (_slack.SlackError, _slack.SlackNetworkError) as exc:
+            log.warning("slack.channels_failed", error_type=type(exc).__name__,
+                        code=getattr(exc, "code", None))  # fmt: skip
+            return  # retried at the next check
+        if problem and problem != self._problem:  # tell the person once per new problem
+            self._notifier.notify("ecf: Slack channel needs you", problem)
+        self._problem = problem
+        self.status["channels"] = problem or None
 
     def reload(self) -> None:
         """Called from the API thread: reconnect with the stored tokens on the next pass."""

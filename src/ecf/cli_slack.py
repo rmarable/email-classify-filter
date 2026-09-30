@@ -139,6 +139,13 @@ def describe(s: dict[str, Any]) -> list[str]:
     ]
     if s["pending_member"]:
         lines.append(f"waiting:    {s['pending_member']} to click Confirm in ecf's DM")
+    if rt.get("channels"):
+        lines.append(f"CHANNELS:   {rt['channels']}")
+    channels: list[dict[str, str]] = s.get("channels") or []
+    for ch in channels:
+        lines.append(f"channel:    {ch['name']} ({ch['for']})")
+    if not channels and s["member"]:
+        lines.append("channels:   none yet (created within a minute of connecting)")
     return lines
 
 

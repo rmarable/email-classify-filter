@@ -67,6 +67,18 @@ class Decision:
         }
 
 
+def payment_or_fraud(facts: dict[str, Any]) -> bool:
+    """A "payment or fraud item" for step-up rules (§9.6): a payment keyword, any fraud trigger
+    (weak ones and lookalike domains included), an unverified payment sender, or quarantine.
+    The classifier's `payment_related` joins this in V1.3."""
+    t: dict[str, Any] = facts.get("triggers") or {}
+    return bool(
+        facts.get("payment_keyword")
+        or facts.get("quarantined")
+        or any(t.get(k) for k in ("fraud", "fraud_weak", "unverified_payment", "lookalikes"))
+    )
+
+
 def fired(facts: dict[str, Any]) -> set[str]:
     """The trigger names that fired, as the rules engine's `trigger:` operand reads them."""
     t: dict[str, Any] = facts.get("triggers") or {}

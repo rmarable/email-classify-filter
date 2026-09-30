@@ -50,7 +50,7 @@ PENDING_APP = "slack_app_pending"  # created by `create_app`, not yet installed
 PENDING_MEMBER, CONFIRM_NONCE = "slack_member_pending", "slack_member_nonce"
 # a hash of the stored tokens, so a step-up binds to what it replaces
 TOKEN_FP = "slack_token_fp"  # noqa: S105 - a settings key, not a secret
-SUMMARY_CHANNEL = "slack_summary_channel"  # written when channels are created (V1.2 step 5)
+SUMMARY_CHANNEL = "slack_summary_channel"  # recorded by `slack_routes.ensure`
 # §10.1; all confirmed in real-service test 0a, 2026-09-29
 BOT_SCOPES = (
     "chat:write", "chat:write.customize", "groups:write", "groups:read", "users:read",
@@ -359,7 +359,7 @@ def notice(
     key = f"notice:{secrets.token_hex(8)}"
     for m in dms:
         slack_out.enqueue_post(conn, clock, key=f"{key}:{m}", route=RouteRef(m), card=card)
-    summary = _settings(conn, SUMMARY_CHANNEL).get(SUMMARY_CHANNEL)
+    summary = setting(conn, SUMMARY_CHANNEL)
     if summary:
         slack_out.enqueue_post(conn, clock, key=f"{key}:summary", route=RouteRef(summary),
                                card=card)  # fmt: skip
@@ -392,6 +392,16 @@ def _call(web: WebLike, method: str, *, what: str = "token", **params: Any) -> d
         raise InvalidInputError(f"Slack refused the {what} ({method}: {exc.code})") from None
     except SlackNetworkError as exc:
         raise ServiceUnavailableError("Slack couldn't be reached; try again") from exc
+
+
+def setting(conn: sqlite3.Connection, key: str) -> str:
+    """One Slack setting, or "" when unset."""
+    return _settings(conn, key).get(key, "")
+
+
+def put_setting(conn: sqlite3.Connection, key: str, value: str, now: str, actor: str) -> None:
+    """Inside the caller's write transaction."""
+    _set(conn, key, value, now, actor)
 
 
 def _settings(conn: sqlite3.Connection, *keys: str) -> dict[str, str]:

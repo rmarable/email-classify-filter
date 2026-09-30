@@ -36,6 +36,12 @@ def test_create_invite_post_thread_update_pin_archive(chat: ChatSurface) -> None
     chat.archive(route)
 
 
+def test_find_route_and_creating_a_taken_name(chat: ChatSurface) -> None:
+    """A name that isn't there is None; creating a name ecf already has gives that route."""
+    assert chat.find_route("ecf-default-none") is None
+    assert chat.create_route("ecf-default-xy") == chat.create_route("ecf-default-xy")
+
+
 def test_the_fake_records_plain_text_and_opaque_refs() -> None:
     chat = FakeChat()
     route = chat.create_route("ecf-default-ap")

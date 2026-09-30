@@ -14,17 +14,28 @@ import anyio
 import httpx
 import pytest
 
-from ecf.errors import ConflictError, InvalidInputError, NotFoundError, ServiceUnavailableError
+from ecf.errors import (
+    ConflictError,
+    InvalidInputError,
+    NotFoundError,
+    ServiceUnavailableError,
+    StepupRequiredError,
+)
 from ecf.ids import AddressId, StableId
 from ecf.prompts import NO_TERMINAL, hidden
+from ecf.status import Status
 from ecf_server import addresses as ad
+from ecf_server import slack_admin, slack_routes, stepup
 from ecf_server.api import ServiceState, create_app
+from ecf_server.chat import FakeChat
 from ecf_server.clock import FakeClock
+from ecf_server.db import write_tx
 from ecf_server.items import create_item
 from ecf_server.mail import MailSource
 from ecf_server.mail.fake import FakeMailSource
 from ecf_server.mail.imap import MailLoginRejectedError
 from ecf_server.secretstore.memory import MemorySecretStore
+from ecf_server.stepper import FakeStepper
 
 GOOD = "right-password"
 
@@ -175,15 +186,38 @@ def test_remove_then_add_again_revives_the_row(env: Env) -> None:
     assert conn.execute("SELECT count(*) FROM addresses").fetchone()[0] == 1
 
 
-def test_remove_refuses_while_items_are_open(env: Env) -> None:
+def test_remove_resolves_ordinary_open_items_without_step_up(env: Env) -> None:
     conn, clock, secrets, _mail = env
     add(env, req())
     create_item(
         conn, clock, stable_id=StableId("a" * 64), address_id=AddressId("ap"), content_hash="h"
     )
-    with pytest.raises(ConflictError, match="open item"):
+    a = ad.remove_address(conn, clock, secrets, "ap", actor="os_user")
+    assert a["resolved"] == 1 and secrets.get("mailbox/ap") is None
+    row = conn.execute("SELECT status FROM items").fetchone()
+    assert row["status"] == Status.RESOLVED_MANUAL.value
+
+
+def test_remove_with_a_fraud_item_needs_step_up_for_that_exact_set(env: Env) -> None:
+    conn, clock, secrets, _mail = env
+    add(env, req())
+    fraud = json.dumps({"triggers": {"fraud": ["bank change"]}})
+    create_item(conn, clock, stable_id=StableId("a" * 64), address_id=AddressId("ap"),
+                content_hash="h", facts=fraud)  # fmt: skip
+    with pytest.raises(StepupRequiredError) as ei:
         ad.remove_address(conn, clock, secrets, "ap", actor="os_user")
-    assert secrets.get("mailbox/ap") == GOOD
+    assert secrets.get("mailbox/ap") == GOOD  # nothing changed
+    issued = stepup.issue(conn, clock, FakeStepper(), "address_remove", ei.value.extra["target"])
+    assert "1 open item(s), 1 of them payment or fraud" in issued.prompt
+    stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
+    create_item(conn, clock, stable_id=StableId("b" * 64), address_id=AddressId("ap"),
+                content_hash="h2")  # arrives after the step-up  # fmt: skip
+    with pytest.raises(StepupRequiredError):
+        ad.remove_address(conn, clock, secrets, "ap", actor="os_user", nonce=issued.nonce_id)
+    issued = stepup.issue(conn, clock, FakeStepper(), "address_remove", ei.value.extra["target"])
+    stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
+    a = ad.remove_address(conn, clock, secrets, "ap", actor="os_user", nonce=issued.nonce_id)
+    assert a["resolved"] == 2
 
 
 # ---- the API --------------------------------------------------------------------------------
@@ -239,6 +273,28 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
     assert r.status_code == 400
     r = call(st, "DELETE", "/v1/addresses/ap")
     assert r.status_code == 200 and secrets.get("mailbox/ap") is None
+    assert r.json()["slack_channel_archived"] is None  # no Slack: nothing recorded to archive
+
+
+def test_api_names_the_slack_channel_and_archives_it_on_removal(
+    conn: sqlite3.Connection, db_path: Path
+) -> None:
+    st = make_state(db_path, MemorySecretStore())
+    now = "2026-10-01T12:00:00.000000Z"
+    with write_tx(conn):
+        for k, v in (("slack_app_id", "A1"), ("slack_team_id", "T1"),
+                     ("slack_member_id", "U0ME1")):  # fmt: skip
+            slack_admin.put_setting(conn, k, v, now, actor="test")
+    body = {"email": "ap@acme.example", "imap_host": "imap.acme.example",
+            "sensitivity": "standard", "preset": "A", "app_password": GOOD,
+            "org_domains": ["acme.example"]}  # fmt: skip
+    r = call(st, "POST", "/v1/addresses", body)
+    assert r.status_code == 201 and r.json()["slack_channel"] == "ecf-t-ap"
+    slack_routes.ensure(conn, FakeClock(), FakeChat(), "t")  # what the Slack thread does
+    r = call(st, "DELETE", "/v1/addresses/ap")
+    assert r.status_code == 200 and r.json()["slack_channel_archived"] == "ecf-t-ap"
+    job = conn.execute("SELECT payload FROM jobs WHERE queue = 'slack_out'").fetchone()
+    assert json.loads(job["payload"])["op"] == "archive"
 
 
 def test_api_rejects_bad_bodies_and_non_cli_callers(

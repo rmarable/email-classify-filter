@@ -128,6 +128,9 @@ class SlackSender:
 
     def _do(self, conn: sqlite3.Connection, p: dict[str, Any]) -> None:
         route = RouteRef(str(p["channel"]))
+        if p["op"] == "archive":  # a removed address's channel (only channels ecf recorded)
+            self._chat.archive(route)
+            return
         if p["op"] == "ephemeral":
             self._chat.ephemeral(route, str(p["user"]), str(p["text"]))
             return

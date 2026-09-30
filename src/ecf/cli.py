@@ -25,7 +25,7 @@ from ecf.paths import Paths, paths_for
 from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 from ecf.status import CHECK_FAILED
-from ecf.stepup import step_up
+from ecf.stepup import step_up, with_step_up
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -371,6 +371,8 @@ def address_add(
         f"{a['preset']}, stage {a['stage']}, outbound off"
     )
     _echo_probe(a)
+    if a.get("slack_channel"):
+        typer.echo(f"Slack: private channel {a['slack_channel']} is created within a minute")
 
 
 def _mb(size: int) -> str:
@@ -465,12 +467,18 @@ def address_remove(address: Annotated[str, typer.Argument(help="Address id or em
         )
         if target is None:
             raise typer.BadParameter(f"no address {address!r}")
+        typer.echo("Its open items are resolved first (step-up if any is payment or fraud).")
         typed = typer.prompt(f"Type {target['email']} to remove it")
         if typed.strip().lower() != target["email"].lower():
             typer.echo("not removed")
             raise typer.Exit(1)
-        a = c.request("DELETE", f"/v1/addresses/{target['address_id']}")
-    typer.echo(f"removed {a['email']}. Left for you to do:")
+        path = f"/v1/addresses/{target['address_id']}"
+        a = with_step_up(c, lambda n: c.request("DELETE", path, {"stepup_nonce": n}),
+                         echo=typer.echo)  # fmt: skip
+    typer.echo(f"removed {a['email']}; resolved {a['resolved']} open item(s).")
+    if a.get("slack_channel_archived"):
+        typer.echo(f"Slack channel {a['slack_channel_archived']} will be archived.")
+    typer.echo("Left for you to do:")
     for line in a["residue"]:
         typer.echo(f"  - {line}")
 

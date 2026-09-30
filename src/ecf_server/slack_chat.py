@@ -12,9 +12,19 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from ecf_server._slack import SlackError
-from ecf_server.chat import Capabilities, Card, Identity, RouteRef, ThreadRef
+from ecf_server.chat import (
+    Capabilities,
+    Card,
+    Identity,
+    RouteGoneError,
+    RouteNameTakenError,
+    RouteNotAllowedError,
+    RouteRef,
+    ThreadRef,
+)
 from ecf_server.slack_render import blocks, clean, fallback
 
+GONE = frozenset({"channel_not_found", "is_archived", "not_in_channel"})
 HARMLESS = {
     "conversations.invite": {"already_in_channel"},
     "conversations.archive": {"already_archived"},
@@ -85,15 +95,25 @@ class SlackChat:
             r = self._web.call("conversations.create", name=name, is_private=True)
             return RouteRef(str(r["channel"]["id"]))
         except SlackError as exc:
+            if exc.code == "restricted_action":
+                raise RouteNotAllowedError(name) from None
             if exc.code != "name_taken":
                 raise
         found = self._find_private(name)
-        if found is None:
-            raise SlackError("conversations.create", "name_taken_elsewhere")
+        if found is None:  # archived, or a channel ecf isn't in
+            raise RouteNameTakenError(name)
         return found
 
+    def find_route(self, name: str) -> RouteRef | None:
+        return self._find_private(name)
+
     def invite(self, route: RouteRef, user: str) -> None:
-        self._harmless("conversations.invite", channel=route.channel, users=user)
+        try:
+            self._harmless("conversations.invite", channel=route.channel, users=user)
+        except SlackError as exc:
+            if exc.code in GONE:
+                raise RouteGoneError(route.channel) from None
+            raise
 
     def archive(self, route: RouteRef) -> None:
         self._harmless("conversations.archive", channel=route.channel)

@@ -14,7 +14,7 @@ import pytest
 from ecf.errors import ConflictError
 from ecf.ids import AddressId
 from ecf_server import db, jobs, slack_in
-from ecf_server._slack import Envelope
+from ecf_server._slack import Envelope, SlackError
 from ecf_server.clock import Clock, FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -270,7 +270,13 @@ def _install(conn: sqlite3.Connection, clock: FakeClock, store: MemorySecretStor
 
 
 def _runtime(
-    db_path: Path, clock: FakeClock, store: MemorySecretStore, web: FakeWeb, *, fail: bool = False
+    db_path: Path,
+    clock: FakeClock,
+    store: MemorySecretStore,
+    web: FakeWeb,
+    *,
+    fail: bool = False,
+    notifier: FakeNotifier | None = None,
 ) -> SlackRuntime:
     FakeSocket.instances.clear()
 
@@ -279,8 +285,9 @@ def _runtime(
         s.fail = fail
         return s
 
-    return SlackRuntime(clock, FakeNotifier(), lambda: db.connect(db_path), lambda: store,
-                        make_web=lambda _token: web, make_socket=make_socket)  # fmt: skip
+    return SlackRuntime(clock, notifier or FakeNotifier(), lambda: db.connect(db_path),
+                        lambda: store, make_web=lambda _token: web,
+                        make_socket=make_socket)  # fmt: skip
 
 
 def test_not_installed_stays_idle(
@@ -288,7 +295,8 @@ def test_not_installed_stays_idle(
 ) -> None:
     rt = _runtime(db_path, clock, MemorySecretStore(), FakeWeb())
     assert not rt.start() and not rt.run_once()
-    assert rt.status == {"installed": False, "connected": False, "last_connected_at": None}
+    assert rt.status == {"installed": False, "connected": False, "last_connected_at": None,
+                         "channels": None}  # fmt: skip
     assert FakeSocket.instances == []
 
 
@@ -313,7 +321,8 @@ def test_installed_connects_acks_and_runs_both_queues(
 
     slack_out.enqueue_post(conn, clock, key="k", route=RouteRef("C1"), card=Card("hi"))
     assert rt.run_once()
-    assert handled == ["g-1"] and web.methods() == ["chat.postMessage"]
+    assert handled == ["g-1"] and web.methods()[-1] == "chat.postMessage"
+    assert "conversations.create" in web.methods()  # the first pass made the channels
 
     rt.close()
     assert not sock.connected and rt.status["connected"] is False
@@ -341,3 +350,20 @@ def test_a_failed_connection_is_retried_later(
     assert not rt.start()
     assert rt.status["installed"] and not rt.status["connected"]
     assert rt.status["last_connected_at"] is None
+
+
+def test_a_channel_problem_is_shown_and_notified_once(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    store, web, n = MemorySecretStore(), FakeWeb(), FakeNotifier()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, web, notifier=n)
+    assert rt.start()
+    for _ in range(3):  # the workspace doesn't let apps create channels
+        web.fail["conversations.create"] = [SlackError("conversations.create", "restricted_action")]
+        rt.run_once()
+        clock.advance(31)
+    assert rt.status["channels"] and "ecf-default-summary" in rt.status["channels"]
+    assert [t for t, _ in n.sent] == ["ecf: Slack channel needs you"]  # once, not every pass
+    rt.run_once()  # the person made the channel... here creation just works again
+    assert rt.status["channels"] is None

@@ -39,7 +39,17 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import _slack, addresses, audit, checks, db, health, slack_admin, stepup
+from ecf_server import (
+    _slack,
+    addresses,
+    audit,
+    checks,
+    db,
+    health,
+    slack_admin,
+    slack_routes,
+    stepup,
+)
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
@@ -375,7 +385,11 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def show(_request: Request) -> JSONResponse:
-        return _with_conn(lambda c: slack_admin.status(c) | {"runtime": dict(state.slack)})
+        def build(c: sqlite3.Connection) -> dict[str, Any]:
+            extra = {"runtime": dict(state.slack), "channels": slack_routes.list_channels(c)}
+            return slack_admin.status(c) | extra
+
+        return _with_conn(build)
 
     @allow(Caller.CLI)
     def create(request: Request) -> JSONResponse:
@@ -530,6 +544,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
         log.info("address.added", address_id=a["address_id"])
+        a["slack_channel"] = _planned_channel(state, a["address_id"])
         return JSONResponse(a, status_code=201)
 
     @allow(Caller.CLI)
@@ -557,15 +572,9 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def remove_address(request: Request) -> JSONResponse:
-        conn = state.connect()
-        try:
-            a = addresses.remove_address(
-                conn, state.clock, state.store(), str(request.path_params["ref"]), actor="os_user"
-            )
-        finally:
-            conn.close()
-        log.info("address.removed", address_id=a["address_id"])
-        return JSONResponse(a)
+        nonce = _body(request).get("stepup_nonce")
+        ref = str(request.path_params["ref"])
+        return JSONResponse(_remove_address(state, ref, nonce if isinstance(nonce, str) else None))
 
     @allow(Caller.CLI)
     def retry_address(request: Request) -> JSONResponse:
@@ -585,6 +594,31 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/addresses/{ref}", set_address, methods=["POST"]),
         Route("/v1/addresses/{ref}", remove_address, methods=["DELETE"]),
     ]
+
+
+def _remove_address(state: ServiceState, ref: str, nonce: str | None) -> dict[str, Any]:
+    """Resolve open items (step-up for payment or fraud, OD-218), stop watching, then archive
+    the address's recorded Slack channel only."""
+    conn = state.connect()
+    try:
+        a = addresses.remove_address(conn, state.clock, state.store(), ref, actor="os_user",
+                                     nonce=nonce)  # fmt: skip
+        a["slack_channel_archived"] = slack_routes.archive(conn, state.clock, a["address_id"])
+    finally:
+        conn.close()
+    log.info("address.removed", address_id=a["address_id"])
+    return a
+
+
+def _planned_channel(state: ServiceState, address_id: str) -> str | None:
+    """The channel name an added address will get once Slack is installed and you're confirmed
+    (the Slack thread creates it within a minute; the name may gain a suffix if taken)."""
+    conn = state.connect()
+    try:
+        installed = slack_admin.identity(conn) is not None
+    finally:
+        conn.close()
+    return slack_routes.channel_name(state.install, address_id) if installed else None
 
 
 MAX_BODY = 64 * 1024
