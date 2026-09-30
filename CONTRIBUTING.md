@@ -23,7 +23,9 @@ rule and the commit rules are in `CLAUDE.md`.
   upgrade on purpose: `brew unpin ollama mlx-c && brew upgrade ollama && brew pin ollama mlx-c`,
   then rerun the eval. Start Ollama with `uv run ecf models serve install` (ecf's login item with
   ecf's settings, OD-246); `ecf models install` does it for you when nothing serves Ollama yet. The
-  macOS tests expect port 11434 free or served by that login item.
+  macOS tests expect port 11434 free or served by that login item, and one of them runs the
+  starter cards through the real model, so run `uv run ecf models install` once first. A dev service
+  (`ecf-server dev`) classifies only with `ECF_DEV_MODEL=1`.
 
 ## Set up
 

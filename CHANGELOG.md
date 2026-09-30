@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- New mail is now classified by the local model (Gemma 4 12B through Ollama) in the service's model queue; an email the model can't classify twice waits in "Needs you". What a classification may lead to arrives with rules and policy.
 - `ecf settings set` accepts `resident` (keep the local model loaded) and `max_per_check` (1-30 minutes of IMAP and rules work per check, OD-228). The daily summary shows how many items wait for the local model, how that changed, and hours on battery. Local-model work keeps the Mac awake on AC power only, and pauses after three slow calls in a row (heat, OD-243).
 - New commands `ecf models serve install|uninstall|status`: ecf runs Ollama from its own login item with fixed settings (loopback only, one request at a time, cloud off), replacing `brew services`; `ecf models install` starts it when nothing serves Ollama yet (OD-246).
 - Install-wide alerts (Slack, the local model) no longer disappear from `ecf status` and `ecf doctor` once any address has been removed.

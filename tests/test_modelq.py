@@ -41,7 +41,9 @@ class RecordingOllama(FakeOllama):
         return super().handler(req)
 
 
-def _address(conn: sqlite3.Connection, clock: FakeClock, aid: str, *, paused: bool = False) -> None:
+def add_address(
+    conn: sqlite3.Connection, clock: FakeClock, aid: str, *, paused: bool = False
+) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
                      " paused) VALUES (?, ?, 'standard', 'A', ?, ?)",
@@ -98,7 +100,7 @@ def test_round_robin_by_address_until_nothing_waits(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     for aid in ("ap", "hr"):
-        _address(conn, clock, aid)
+        add_address(conn, clock, aid)
     _items(conn, clock, "ap", 3)
     _items(conn, clock, "hr", 2)
     fake = RecordingOllama()
@@ -110,7 +112,7 @@ def test_round_robin_by_address_until_nothing_waits(
 
 
 def test_resident_keeps_the_model_loaded(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 1)
     fake = RecordingOllama()
     assert not _round(conn, clock, Work(), fake=fake, resident=True).unloaded
@@ -118,7 +120,7 @@ def test_resident_keeps_the_model_loaded(conn: sqlite3.Connection, clock: FakeCl
 
 
 def test_the_budget_ends_a_round(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 10)
     report = _round(conn, clock, Work(seconds=100), budget_s=360)
     assert report.status == "budget" and report.done == 4 and report.waiting == 6
@@ -126,7 +128,7 @@ def test_the_budget_ends_a_round(conn: sqlite3.Connection, clock: FakeClock) -> 
 
 
 def test_not_ready_runs_nothing(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 2)
     work = Work()
     nobody = subprocess.CalledProcessError(1, ["lsof"], output="")
@@ -137,7 +139,7 @@ def test_not_ready_runs_nothing(conn: sqlite3.Connection, clock: FakeClock) -> N
 def test_failures_count_once_per_round_then_mark_model_failed(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     [sid] = _items(conn, clock, "ap", 1)
     work = Work(outcome="failed")
     r1 = _round(conn, clock, work)
@@ -154,7 +156,7 @@ def test_failures_count_once_per_round_then_mark_model_failed(
 def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", modelq.FAILED_ALERT_AFTER)
     n = FakeNotifier()
     for _ in range(modelq.MAX_ATTEMPTS):
@@ -163,7 +165,7 @@ def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
     assert kinds == ["model_failures"]
     assert any("failed on 5 items" in body for _t, body in n.sent)
     clock.advance(3700)
-    _address(conn, clock, "hr")
+    add_address(conn, clock, "hr")
     _items(conn, clock, "hr", 1)
     _round(conn, clock, Work(), notifier=n)
     assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
@@ -172,7 +174,7 @@ def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
 def test_a_server_fault_mid_round_stops_without_counting_an_attempt(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 3)
     work = Work(raise_=OllamaError("not_running", "gone"))
     report = _round(conn, clock, work)
@@ -181,7 +183,7 @@ def test_a_server_fault_mid_round_stops_without_counting_an_attempt(
 
 
 def test_a_timeout_counts_as_an_attempt(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 1)
     report = _round(conn, clock, Work(raise_=OllamaError("timeout")))
     assert report.failed == 1
@@ -191,9 +193,9 @@ def test_a_timeout_counts_as_an_attempt(conn: sqlite3.Connection, clock: FakeClo
 def test_paused_addresses_and_busy_leases_are_skipped(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "ap", paused=True)
-    _address(conn, clock, "hr")
-    _address(conn, clock, "it")
+    add_address(conn, clock, "ap", paused=True)
+    add_address(conn, clock, "hr")
+    add_address(conn, clock, "it")
     for aid in ("ap", "hr", "it"):
         _items(conn, clock, aid, 1)
     assert leases.acquire(conn, clock, "it", "a-check") is not None  # a fetch check holds it
@@ -204,7 +206,7 @@ def test_paused_addresses_and_busy_leases_are_skipped(
 
 
 def test_an_eval_holds_the_queue(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 1)
     assert modelq.EXCLUSIVE.acquire("eval-1")
     work = Work()
@@ -214,7 +216,7 @@ def test_an_eval_holds_the_queue(conn: sqlite3.Connection, clock: FakeClock) -> 
 
 
 def test_a_stopping_service_ends_the_round(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 3)
     stop = threading.Event()
     stop.set()
@@ -281,7 +283,7 @@ def test_no_judgement_before_enough_calls() -> None:
 def test_a_hot_round_ends_and_waits_for_the_next_interval(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "ap")
+    add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 12)
     t = modelq.Throttle()
     for _ in range(5):
