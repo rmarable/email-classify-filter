@@ -1060,6 +1060,8 @@ Steps are idempotent (`--resume`, `init status`). V1.2 delivers the Slack, org-d
 
 Service running and last timer tick; secret-store backend and access (including after interpreter changes) and any wait state; full-disk encryption; Slack bot and app-level tokens, Socket Mode connection, channel membership, DM delivery; IMAP probe results and last broker error per address; DNS/DKIM reachability; Ollama availability, digest and server settings; pinned Claude IDs and minimum `claude --version` (v2.1.242); the `ecf-mcp` path resolves and the installed wheel's RECORD hash matches the plugin; package/plugin version match; `claude_queue_timeout` reminder; `org_domains` set; outbound state; scheduled-export age, writability and volume; last successful and next scheduled check per address; held count and days in stage; crash-loop breaker state; SQLite `quick_check`, minimum version and free disk; socket path length; on Linux, "unverified until V1.6"; a warning when neither email nor desktop notifications can reach you.
 
+**As built in V1.2** (step 12a, 2026-09-30; code: `ecf_server/slack_doctor.py`, `ecf/doctor.py`): the Slack and step-up checks run in the service, which holds the tokens (`GET /v1/doctor/slack`), and `doctor` prints them with the rest: step-up available here (the checker's name; `ecf stepup test` tries it; none is a failure); Slack installed; your member ID confirmed; the bot token accepted by `auth.test` and still in the recorded workspace; the Socket Mode connection (with the last connected time when down); your membership in every channel ecf recorded (summary and per address); that a DM to you can be opened (nothing is sent; `ecf alerts test` sends one); and an open Slack Delivery Failed alert. Each failure names its fix (`ecf slack set-tokens` then `reauthorize`, Confirm in the DM, `set-member`). The app-level token is judged by the live connection, not by opening a second one.
+
 ### 13.3 Alerting
 
 - **Routes** (`alerts.routes`: `slack`, `email`, or both; default `slack` in local mode, `slack,email` once `ecf init` enables email; at least one required). Per-class overrides `alerts.<class>.routes`. Changed with `ecf alerts set [<class>] --to …` (step-up, Security Notice). `ecf alerts test` sends a test.
@@ -1252,6 +1254,7 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/slack/reauthorize` · `/refresh` | CLI | configuration token → `permissions_updated`; then queue an edit of every card |
 | GET · POST | `/v1/alerts` · POST `/v1/alerts/test` | CLI | GET → routes per class; POST `{class?, to, nonce_id?}` → routes (step-up); test → where it was sent |
 | POST | `/v1/export` · `/v1/import` · `/v1/restore` | CLI | `{path, passphrase?, replace?, nonce_id}` → manifest, preview, result |
+| GET | `/v1/doctor/slack` | CLI | → `{checks: [{name, level, detail, fix}]}`: Slack and step-up, run by the service (V1.2 step 12a) |
 | GET | `/v1/init` | CLI | → `{install_role, slack_installed, slack_member, slack_pending_app, org_domains, addresses}` (V1.2 step 11c) |
 | POST | `/v1/init/role` | CLI | `{install_role}` → set once, then refused (V1.2 step 11c) |
 | GET | `/v1/retention` | CLI | → `{days, last_run}` (V1.2 step 11a) |

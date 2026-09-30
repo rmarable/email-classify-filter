@@ -60,6 +60,7 @@ from ecf_server import (
     senders,
     settings,
     slack_admin,
+    slack_doctor,
     slack_routes,
     stages,
     stepup,
@@ -273,6 +274,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
             *_data_routes(state, allow),
+            *_setup_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -535,6 +537,43 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
+def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks."""
+
+    @allow(Caller.CLI)
+    def init_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.status(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def init_role(request: Request) -> JSONResponse:
+        value = _str(_body(request), "install_role")
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.set_role(conn, state.clock, value))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def doctor_slack(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            rows = slack_doctor.checks(conn, state.secrets, state.slack_web, dict(state.slack),
+                                       state.stepper)  # fmt: skip
+            return JSONResponse({"checks": rows})
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/init", init_status, methods=["GET"]),
+        Route("/v1/init/role", init_role, methods=["POST"]),
+        Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+    ]
+
+
 def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §6.5, §10.2 (V1.2 step 11): retention and backfill; CLI only."""
 
@@ -581,26 +620,7 @@ def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
-    @allow(Caller.CLI)
-    def init_status(_request: Request) -> JSONResponse:
-        conn = state.connect()
-        try:
-            return JSONResponse(initsetup.status(conn))
-        finally:
-            conn.close()
-
-    @allow(Caller.CLI)
-    def init_role(request: Request) -> JSONResponse:
-        value = _str(_body(request), "install_role")
-        conn = state.connect()
-        try:
-            return JSONResponse(initsetup.set_role(conn, state.clock, value))
-        finally:
-            conn.close()
-
     return [
-        Route("/v1/init", init_status, methods=["GET"]),
-        Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/retention", show_retention, methods=["GET"]),
         Route("/v1/retention", set_retention, methods=["POST"]),
         Route("/v1/backfill", start_backfill, methods=["POST"]),

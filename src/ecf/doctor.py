@@ -200,6 +200,16 @@ def judge_addresses(st: dict[str, Any]) -> list[Check]:
     return out
 
 
+def check_slack(paths: Paths) -> list[Check]:
+    """Slack and step-up, checked by the service, which holds the tokens (V1.2 step 12a)."""
+    try:
+        with LocalClient(paths) as c:
+            rows: list[dict[str, str]] = c.get("/v1/doctor/slack")["checks"]
+    except EcfError:
+        return []  # the service check already says it isn't answering
+    return [Check(r["name"], Level(r["level"]), r["detail"], r["fix"]) for r in rows]
+
+
 def check_org_domains(paths: Paths) -> Check:
     try:
         with LocalClient(paths) as c:
@@ -338,6 +348,7 @@ def run_checks(
     checks = [check_python(), check_sqlite(), *check_data_dir(paths)]
     checks.append(check_unit(manager or manager_for(paths)))
     checks += check_service(paths, now or datetime.now(UTC))
+    checks += check_slack(paths)
     checks.append(check_org_domains(paths))
     checks.append(check_dns())
     checks += check_database(paths)

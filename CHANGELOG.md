@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- `ecf doctor` now checks Slack and step-up: whether step-up can run here, your confirmed member ID, the bot token, the Socket Mode connection, your membership in every ecf channel, that ecf can DM you, and an open Slack delivery failure, each with its fix.
 - New commands `ecf init [--mode local] [--resume]` (sets up the service, checks disk encryption and the secret store, asks prod or test once, connects Slack and adds the first mailbox; safe to run again) and `ecf init status`. `ecf address add` now reminds you, for presets B and C, that the local fallback is off, and for C that it uses your Claude plan.
 - New command `ecf backfill <address> --since <date> [--act]` reads older mail with the checks, new mail first. By default it only records and checks it (nothing is done to the mailbox or escalated, OD-216, OD-221); `--act` labels, flags and escalates as for new mail. `ecf backfill` alone shows backfills in progress.
 - Finished items are now deleted once a day after `log_retention_days` (90 by default); fraud, weak-fraud and regulator items, open items, sender history and the audit log are kept (OD-217, OD-040). New commands `ecf retention show` and `ecf retention set <days>` (step-up; lowering it sends a Security Notice).
