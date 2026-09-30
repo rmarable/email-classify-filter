@@ -710,6 +710,59 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
     typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
 
 
+@eval_app.command("label")
+def eval_label(
+    case_id: Annotated[
+        str | None, typer.Argument(help="One case (default: every pending one).")
+    ] = None,
+    root: RootOpt = EVAL_ROOT,
+    status_only: Annotated[
+        bool, typer.Option("--status", help="Only count what's confirmed.")
+    ] = False,
+) -> None:
+    """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
+    toward the gates; editing its card undoes the confirmation."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from ecf.eval import labels  # noqa: PLC0415
+    from ecf.eval.cards import load_cards  # noqa: PLC0415
+    from ecf.prompts import require_terminal  # noqa: PLC0415
+
+    n = labels.counts(root)
+    typer.echo(f"{n['confirmed']} of {n['cases']} cases confirmed")
+    if status_only:
+        return
+    require_terminal()
+    cards = {c.id: c for c in load_cards(root / "cases")}
+    todo = [r for r in labels.pending(root) if case_id is None or r["id"] == case_id]
+    if case_id and not todo:
+        typer.echo(f"{case_id}: nothing to confirm (unknown, or already confirmed)")
+        return
+    for r in todo:
+        card = cards.get(r["id"])
+        if card is None:
+            continue
+        typer.echo("")
+        typer.echo(f"== {card.id} ({card.author}): {card.title}")
+        typer.echo(f"   tests: {card.threat}; control: {card.control}")
+        typer.echo(f"   from: {card.from_}   subject: {card.subject}")
+        body = " ".join(card.body.split())
+        typer.echo(f"   body: {body[:400]}{'...' if len(body) > 400 else ''}")
+        typer.echo(f"   expected: {json.dumps(r['expected'], sort_keys=True)}")
+        answer = typer.prompt("   Right? [y]es / [n]o, skip / [q]uit", default="n").strip().lower()
+        if answer == "q":
+            break
+        if answer == "y":
+            labels.confirm(root, card.id, datetime.now(UTC).date())
+            typer.echo("   confirmed")
+        else:
+            typer.echo(f"   skipped: fix {card.id}.md, run `ecf eval build`, then label it again")
+    n = labels.counts(root)
+    typer.echo(
+        f"{n['confirmed']} of {n['cases']} cases confirmed; commit labels.jsonl to keep them"
+    )
+
+
 @eval_app.command("show")
 def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
     """Show a case the way a mail client would: headers, text, attachments."""

@@ -1,0 +1,16 @@
+Received: from mail.consulting-co.example (mail.consulting-co.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id regulator-fda-inspection; Sat,
+ 03 Oct 2026 15:00:00 +0000
+From: Compliance Consultant <compliance@consulting-co.example>
+To: ap@acme.example
+Subject: FDA inspection window next month
+Date: Sat, 03 Oct 2026 15:00:00 +0000
+Message-ID: <regulator-fda-inspection.f1f4c23aba@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The FDA district office has asked to schedule the facility inspection in the =
+first two weeks of
+November. Please confirm three candidate dates by October 20 and name a site =
+contact.

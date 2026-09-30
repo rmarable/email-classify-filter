@@ -1,0 +1,13 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id reused-message-id; Sat, 03 Oct 2026 16:00:00
+ +0000
+From: Vendor A Billing <billing@vendor-a.example>
+To: ap@acme.example
+Subject: Invoice INV-4101 (resend)
+Date: Sat, 03 Oct 2026 16:00:00 +0000
+Message-ID: <fraud-hidden-html-dup@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Resending invoice INV-4101 in case the first copy didn't arrive.

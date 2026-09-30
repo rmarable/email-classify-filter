@@ -144,9 +144,14 @@ detected automatically; review catches them.
 
 ## Labels and review
 
-A card's `expected` values count toward gates only after the operator confirms them. Model-drafted
-cards (`author: claude` or `gemma`) stay pending until reviewed. The eight starter cards committed
-in V1.0 are Claude drafts pending review.
+A card's `expected` values count toward gates only after the operator confirms them with
+`ecf eval label` (V1.3; OD-229, OD-241). It shows each pending case (what it tests, the headers,
+the start of the body, the expected values) and asks yes, skip or quit; a yes writes `confirmed`
+(the built file's SHA-256, a SHA-256 of the expected values, and the date) into `labels.jsonl`.
+Editing the card's message or expected values undoes it, and `ecf eval build` keeps a confirmation
+only while both hashes still match. `ecf eval label --status` counts them. Commit `labels.jsonl`
+after labelling. Model-drafted cards (`author: claude` or `gemma`) stay pending until you confirm
+them.
 
 ## Not built yet
 
@@ -157,7 +162,6 @@ These parts of the plan arrive with the milestones that need them:
   fraud-guard cases), with pairwise fill. Built as the set grows toward 150-200 cases.
 - **Drafting:** the maintainer skill `/ecf-eval-gen` (Claude, interactive) and local Gemma drafts
   (V1.3).
-- **`ecf eval label`:** the operator confirms each label (V1.3).
 - **Replay:** `ecf replay` into Dovecot (`--via append`) and through Postfix + OpenDMARC
   (`--via smtp`), with test senders signed by OpenDKIM (V1.1).
 - **gitleaks** as an extra secret scan in pre-commit.

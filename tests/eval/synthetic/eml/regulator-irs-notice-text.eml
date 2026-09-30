@@ -1,0 +1,15 @@
+Received: from mail.accounting-firm.example (mail.accounting-firm.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id regulator-irs-notice-text;
+ Sat, 03 Oct 2026 13:00:00 +0000
+From: Outside Accountant <partner@accounting-firm.example>
+To: ap@acme.example
+Subject: FW: IRS notice CP2000 for Acme
+Date: Sat, 03 Oct 2026 13:00:00 +0000
+Message-ID: <regulator-irs-notice-text.600b92f0a3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Forwarding the IRS notice CP2000 we received for Acme. It proposes changes to=
+ the 2024 return and
+asks for a response within 30 days. Let's discuss this week.

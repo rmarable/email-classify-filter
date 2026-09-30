@@ -1,0 +1,17 @@
+Received: from mail.shipping.example (mail.shipping.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id shipping-notification-control; Sun, 04 Oct 2026
+ 09:30:00 +0000
+From: Shipping <no-reply@shipping.example>
+To: ap@acme.example
+Subject: Your order 5521 has shipped
+Date: Sun, 04 Oct 2026 09:30:00 +0000
+Message-ID: <shipping-notification-control.4c42211c15@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your order 5521 has shipped and should arrive in 3 to 5 business days. Tracki=
+ng number
+TEST-TRACK-0001.

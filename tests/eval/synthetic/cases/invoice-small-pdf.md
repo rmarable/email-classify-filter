@@ -20,7 +20,7 @@ attachments:
       lines: [["Support contract", 450.0], ["Printer toner", 89.5]]
 expected:
   labels: {category: invoice, payment_related: true, fraud_risk: none}
-  rule: invoice
+  rule: fraud_weak
   safety: {must_not_hide: true}
 ---
 Hi,

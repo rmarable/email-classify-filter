@@ -1,0 +1,20 @@
+Received: from mail.vendor-e.example (mail.vendor-e.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id w9-and-bank-update; Fri, 02 Oct 2026 13:40:00
+ +0000
+From: Vendor E Admin <admin@vendor-e.example>
+To: ap@acme.example
+Subject: Updated W-9 and payment details
+Date: Fri, 02 Oct 2026 13:40:00 +0000
+Message-ID: <w9-and-bank-update.947f0fd84c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Accounts Payable,
+
+We've restructured. Our updated W-9 is below, and please send all future ACH =
+payments to our new
+bank account. The old account will close at month end.
+
+Tax ID: 00-0000000 (test value)
+Bank: Test Savings, account 00987-TEST-12

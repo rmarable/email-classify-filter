@@ -1,0 +1,17 @@
+Received: from mail.vendor-h.example (mail.vendor-h.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id crypto-payment-demand; Sat, 03 Oct 2026
+ 08:30:00 +0000
+From: Vendor H Collections <collections@vendor-h.example>
+To: ap@acme.example
+Subject: Final notice: settle INV-5150 today
+Date: Sat, 03 Oct 2026 08:30:00 +0000
+Message-ID: <crypto-payment-demand.4934711101@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your account is past due. Settle INV-5150 (2,150.00) within 4 hours by sendin=
+g the equivalent in
+cryptocurrency to wallet TEST-WALLET-0001, or legal action begins today. Bank=
+ transfers are no
+longer accepted.

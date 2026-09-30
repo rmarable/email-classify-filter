@@ -183,6 +183,8 @@ def _synthetic_texts() -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for line in (SYNTHETIC / "labels.jsonl").read_text().splitlines():
         row = json.loads(line)
+        if not row["id"].startswith("starter-"):  # a fixed few; the full set is `ecf eval run`
+            continue
         msg = email.message_from_bytes((SYNTHETIC / row["file"]).read_bytes(),
                                        policy=email.policy.default)  # fmt: skip
         body = msg.get_body(("plain", "html"))

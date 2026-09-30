@@ -16,6 +16,7 @@ from email.message import EmailMessage, Message
 from email.utils import format_datetime, parseaddr
 from pathlib import Path
 
+from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, load_cards
 from ecf.eval.hygiene import Finding, dedupe, scan_text
 
@@ -146,7 +147,6 @@ def build_all(root: Path) -> BuildReport:
                 "expected": card.expected.model_dump(mode="json"),
             }
         )
-    (root / "labels.jsonl").write_text(
-        "".join(json.dumps(x, sort_keys=True) + "\n" for x in labels), encoding="utf-8"
-    )
+    # your confirmations stay while the case is unchanged (ecf eval label; OD-241)
+    label_file.write(root, label_file.carry_over(label_file.read(root), labels))
     return BuildReport(built, large, [])

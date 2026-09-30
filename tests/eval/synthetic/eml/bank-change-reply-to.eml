@@ -1,0 +1,21 @@
+Received: from mail.vendor-c.example (mail.vendor-c.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id bank-change-reply-to; Fri, 02 Oct 2026 10:30:00
+ +0000
+From: Vendor C Billing <billing@vendor-c.example>
+To: ap@acme.example
+Reply-To: vendor-c-finance@mailhost.test
+Subject: New banking information effective immediately
+Date: Fri, 02 Oct 2026 10:30:00 +0000
+Message-ID: <bank-change-reply-to.10d2dba456@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear customer,
+
+Due to an audit our bank account has changed. Please update your records and =
+remit all open
+invoices to the new account. Reply to confirm once updated.
+
+New account: published example IBAN GB82 WEST 1234 5698 7654 32
+Vendor C Billing, 555-0117

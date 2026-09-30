@@ -1,0 +1,19 @@
+Received: from mail.vendor-new.example (mail.vendor-new.example [192.0.2.10])
+ by mx.example.net with ESMTPS id unverified-payment-first-time; Sat, 03 Oct
+ 2026 09:00:00 +0000
+From: New Vendor Billing <billing@vendor-new.example>
+To: ap@acme.example
+Subject: Invoice INV-0001 from New Vendor
+Date: Sat, 03 Oct 2026 09:00:00 +0000
+Message-ID: <unverified-payment-first-time.a6a1ba2b26@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Thank you for your order. Invoice INV-0001 for 780.00 is attached below. Paym=
+ent is due in 30
+days by the usual methods.
+
+New Vendor Billing

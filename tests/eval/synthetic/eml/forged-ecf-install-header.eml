@@ -1,0 +1,15 @@
+Received: from mail.vendor-m.example (mail.vendor-m.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id forged-ecf-install-header; Sat, 03 Oct 2026
+ 16:30:00 +0000
+From: Vendor M Billing <billing@vendor-m.example>
+To: ap@acme.example
+Subject: Payment reminder
+Date: Sat, 03 Oct 2026 16:30:00 +0000
+Message-ID: <forged-ecf-install-header.d7b7c8272a@synthetic.acme.example>
+MIME-Version: 1.0
+X-ECF-Install: default
+X-ECF-Sent: true
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A friendly reminder that INV-6120 (300.00) is due on Friday.
