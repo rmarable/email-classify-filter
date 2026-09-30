@@ -92,3 +92,25 @@ def test_problems_say_how_to_fix_them(conn: sqlite3.Connection, clock: FakeClock
 def test_no_step_up_is_a_failure(conn: sqlite3.Connection) -> None:
     [row] = slack_doctor.checks(conn, None, lambda _t: Web([]), {}, None)[:1]
     assert row["name"] == "step-up" and row["level"] == "FAIL"
+
+
+def test_a_refused_app_token_a_failing_loop_and_lost_posts_are_shown(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _installed(conn, clock)
+    web, store = Web([ME]), _store()
+
+    def run(runtime: dict[str, Any]) -> dict[str, dict[str, str]]:
+        rows = slack_doctor.checks(conn, store, lambda _t: web, runtime, FakeStepper())
+        return {r["name"]: r for r in rows}
+
+    got = run({"connected": False, "connect_error": "invalid_auth"})
+    assert got["slack connection"]["level"] == "FAIL"
+    assert got["slack connection"]["fix"] == "ecf slack set-tokens"
+    got = run({"connected": True, "error": "OperationalError"})
+    assert "failing (OperationalError)" in got["slack connection"]["detail"]
+    with write_tx(conn):
+        conn.execute("INSERT INTO jobs (job_id, queue, address_id, payload, timeout_s,"
+                     " visible_at, state, created_at) VALUES ('j', 'slack_out', 'C1',"
+                     " '{\"key\": \"digest:ap\"}', 30, 'now', 'dead', 'now')")  # fmt: skip
+    assert run({"connected": True})["slack posts"]["level"] == "warn"

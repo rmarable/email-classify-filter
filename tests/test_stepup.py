@@ -213,3 +213,17 @@ def test_client_steps_up_for_what_the_service_names(
     refusing: Any = _Client(_state(db_path, clock, FakeStepper(["declined"])))
     with pytest.raises(StepupFailedError, match="you declined"):
         step_up(refusing, "test", {}, echo=printed.append)
+
+
+def test_dialog_text_from_email_is_cleaned() -> None:
+    """Subjects and senders reach the Touch ID dialog and the terminal (V1.2 review, 2026-09-30)."""
+    from ecf.text import one_line, plain  # noqa: PLC0415
+
+    rlo, esc, zwsp, bell = chr(0x202E), chr(0x1B), chr(0x200B), chr(0x07)
+    evil = f"Invoice{rlo} fdp.exe{esc}[2K\r\n\nApprove: label{zwsp}"
+    bound = stepup.Bound("h", f"ecf: archive the email from x@a.example, {evil}")
+    shown = stepup._dialog(bound, "ABCD")  # pyright: ignore[reportPrivateUsage]
+    assert not {rlo, esc, zwsp, "\n", "\r"} & set(shown)
+    assert shown.endswith("Approve: label (code ABCD)")
+    assert plain(f"a{rlo}b{bell}c\nd") == "abc\nd"
+    assert one_line("a  \n b" + "x" * 500, 10) == "a bxxxxxx…"

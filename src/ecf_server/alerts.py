@@ -35,6 +35,7 @@ TITLES = {
     "mail_unreachable": "Mail Provider Unreachable",
     "login_rejected": "Mailbox Login Rejected",
     "slack_delivery_failed": "Slack Delivery Failed",
+    "slack_connection": "Slack Delivery Failed",
     "system_error": "System Error",
     "operator_input": "Operator Input Needed",
     "security_notice": "Security Notice",
@@ -45,6 +46,7 @@ CLASS_OF = {
     "system_error": "system",
     "operator_input": "operator",
     "slack_delivery_failed": "slack",
+    "slack_connection": "slack",
     "security_notice": "security",
 }
 CLASSES = ("mail", "system", "operator", "slack")

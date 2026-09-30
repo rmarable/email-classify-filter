@@ -4,7 +4,6 @@ escape sequences to it)."""
 
 from __future__ import annotations
 
-import unicodedata
 from collections.abc import Callable
 from typing import Annotated, Any
 
@@ -13,15 +12,9 @@ import typer
 from ecf.client import LocalClient
 from ecf.paths import Paths
 from ecf.stepup import with_step_up
+from ecf.text import plain
 
 PREVIEW = 20
-
-
-def plain(text: Any) -> str:
-    """Text safe for a terminal: no control or format characters except line breaks and tabs."""
-    return "".join(
-        ch for ch in str(text) if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf")
-    )
 
 
 def item_line(i: dict[str, Any]) -> str:

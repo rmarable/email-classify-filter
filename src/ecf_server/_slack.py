@@ -91,7 +91,12 @@ class Socket:
         self._client.socket_mode_request_listeners.append(self._dispatch)
 
     def connect(self) -> None:
-        self._client.connect()
+        """Slack's refusal (a bad app-level token) comes back as `SlackError` with its code."""
+        try:
+            self._client.connect()
+        except _errors.SlackApiError as exc:
+            data: dict[str, Any] = dict(getattr(exc.response, "data", {}) or {})
+            raise SlackError("apps.connections.open", str(data.get("error", "unknown"))) from None
 
     def close(self) -> None:
         self._client.close()

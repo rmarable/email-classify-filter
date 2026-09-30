@@ -156,7 +156,10 @@ def check_members(
         slack_admin.put_setting(conn, MEMBERS, json.dumps(others, sort_keys=True), to_ts(now),
                                 actor="service")  # fmt: skip
         slack_admin.put_setting(conn, MEMBERS_AT, to_ts(now), to_ts(now), actor="service")
-    if before and json.loads(before) != others:
+    # the first check reports anyone already there too: a channel ecf adopted may have come with
+    # people (V1.2 review, 2026-09-30)
+    if (not before and others) or (before and json.loads(before) != others):
+        before = before or "{}"
         slack_admin.notice(conn, clock, notifier, _change_text(json.loads(before), others),
                            dms=[ident.member])  # fmt: skip
     return others

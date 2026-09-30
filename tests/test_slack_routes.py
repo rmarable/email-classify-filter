@@ -150,3 +150,20 @@ def test_removal_archives_only_the_recorded_channel(
         pass
     assert chat.routes[route.channel]["archived"] is True
     assert chat.routes[other.channel]["archived"] is False
+
+
+def test_adopting_a_channel_with_someone_else_in_it_sends_a_security_notice(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Someone in the workspace could make ecf's channel first (V1.2 review, 2026-09-30)."""
+    _identity(conn, clock)
+    _address(conn, clock, "ap")
+    chat = FakeChat()
+    chat.routes["CX"] = {"name": "ecf-default-ap", "members": ["U0EVE"], "archived": False}
+    n = FakeNotifier()
+    ensure(conn, clock, chat, "default", notifier=n)
+    # still used, since making the channel by hand is the way when apps can't
+    assert slack_routes.route_for(conn, "ap") == RouteRef("CX")
+    [(title, text)] = n.sent
+    assert title == "[ecf-alert] Security Notice"
+    assert "ecf-default-ap" in text and "U0EVE" in text

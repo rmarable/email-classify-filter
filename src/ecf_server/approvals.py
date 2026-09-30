@@ -445,6 +445,15 @@ def requeue(
     elif status not in (Status.FAILED, Status.FAILED_UNKNOWN):
         raise ConflictError(f"this email is {status}: nothing to requeue", current=str(status))
     actions = _actions(item)
+    ran = conn.execute(
+        "SELECT 1 FROM grants WHERE stable_id = ? AND status = 'consumed' AND action_hash = ?",
+        (sid, action_hash(sid, item["content_hash"], actions)),
+    ).fetchone()
+    if is_send(actions) and (status is Status.FAILED_UNKNOWN or ran):
+        raise ConflictError(
+            "this send may already have gone out; check the Sent folder, then close it with"
+            " `ecf item resolve` (a send is never retried unchecked)"
+        )  # until V1.5 reconciles against Sent (§6.2)
     if is_send(actions):
         stepup.consume(conn, clock, "item_requeue", {"stable_id": sid}, nonce)
     _void(conn, sid)

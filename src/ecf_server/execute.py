@@ -60,7 +60,10 @@ def run_once(conn: sqlite3.Connection, clock: Clock, executor: Executor) -> bool
     try:
         _consume(conn, clock, grant_id, action_hash(sid, item["content_hash"], actions))
     except GrantInvalidError as exc:
-        _failed(conn, clock, job, item, f"grant: {exc}")
+        if _grant_status(conn, grant_id) == "consumed":  # it may have run before a crash
+            _outcome_unknown(conn, clock, job, item)
+        else:
+            _failed(conn, clock, job, item, f"grant: {exc}")
         return True
     try:
         done = executor(conn, clock, item, actions)
@@ -79,6 +82,25 @@ def run_once(conn: sqlite3.Connection, clock: Clock, executor: Executor) -> bool
     jobs.complete(conn, job.job_id, WORKER)
     approvals.edit_card(conn, clock, sid, f"Done: {', '.join(done) or 'nothing to do'}")
     return True
+
+
+def _grant_status(conn: sqlite3.Connection, grant_id: str) -> str | None:
+    row = conn.execute("SELECT status FROM grants WHERE grant_id = ?", (grant_id,)).fetchone()
+    return None if row is None else str(row[0])
+
+
+def _outcome_unknown(
+    conn: sqlite3.Connection, clock: Clock, job: jobs.Job, item: sqlite3.Row
+) -> None:
+    """The grant was already used: the action may have run before a crash or an expired claim.
+    Never run it again unchecked (§6.2 `failed_unknown`; V1.2 review, 2026-09-30)."""
+    items.transition(conn, clock, StableId(item["stable_id"]), Status.FAILED_UNKNOWN,
+                     TransitionContext(), actor="service", expected=Status.EXECUTING)  # fmt: skip
+    _audit(conn, clock, item, "action.outcome_unknown", {}, outcome="error")
+    jobs.complete(conn, job.job_id, WORKER)
+    approvals.edit_card(conn, clock, item["stable_id"],
+                        "Outcome unknown: it may already have run. Check the mailbox, then"
+                        f" ecf item show {item['stable_id'][:8]}")  # fmt: skip
 
 
 def _consume(conn: sqlite3.Connection, clock: Clock, grant_id: str, expected_hash: str) -> None:

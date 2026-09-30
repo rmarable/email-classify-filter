@@ -5,6 +5,12 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- An action whose grant was already used (it may have run before a crash) is marked "outcome unknown" instead of failed, and a send is never retried unchecked.
+- ecf's Slack connection keeps running after an unexpected error, shows it in `ecf status` and `ecf doctor`, and tells the desktop if it keeps failing.
+- A Slack post that can't be delivered is no longer lost silently: a channel that was archived or deleted is created again and its escalation re-posted, rate limits wait, and a post that gives up raises Slack Delivery Failed.
+- A revoked app-level Slack token (buttons stop working) now raises Slack Delivery Failed with the fix, and `ecf doctor` says so.
+- Email subjects and senders shown in the Touch ID dialog and the terminal are cleaned of control characters (a crafted subject could garble the approval prompt).
+- A Security Notice when ecf starts using an existing Slack channel that already has other people in it, and on the first member check.
 - Fixes from the V1.2 shadow run: Slack posts keep their line breaks; senders in lists and step-up dialogs are never cut mid-address (a cut domain could hide a lookalike); a card's "Why:" names only the fraud signals that fired; the daily summary shows mail waiting for the classifier apart from what waits on you; a lost and restored Slack connection shows in `ecf logs`; pasted Slack tokens with surrounding spaces are accepted.
 - New command `ecf digest <address>` posts that address's digest in Slack now, at any hour, instead of waiting for the hourly one (operator decision 2026-09-30).
 - `ecf doctor` now checks Slack and step-up: whether step-up can run here, your confirmed member ID, the bot token, the Socket Mode connection, your membership in every ecf channel, that ecf can DM you, and an open Slack delivery failure, each with its fix.

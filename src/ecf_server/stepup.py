@@ -36,6 +36,7 @@ from ecf.errors import (
     StepupRequiredError,
 )
 from ecf.ids import new_nonce_id
+from ecf.text import one_line
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.stepper import Stepper
@@ -214,7 +215,8 @@ def _describe(conn: sqlite3.Connection, name: str, target: dict[str, Any]) -> Bo
 
 
 def _dialog(bound: Bound, code: str) -> str:
-    return f"{bound.prompt} (code {code})"
+    """The dialog text, cleaned: prompts carry email subjects and senders (`ecf.text`)."""
+    return f"{one_line(bound.prompt)} (code {code})"
 
 
 def _load(conn: sqlite3.Connection, nonce_id: str) -> sqlite3.Row:

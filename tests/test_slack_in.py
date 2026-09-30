@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ import pytest
 
 from ecf.errors import ConflictError
 from ecf.ids import AddressId
-from ecf_server import db, jobs, slack_in
+from ecf_server import db, jobs, slack_in, slack_runtime
 from ecf_server._slack import Envelope, SlackError
 from ecf_server.clock import Clock, FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
@@ -296,7 +297,7 @@ def test_not_installed_stays_idle(
     rt = _runtime(db_path, clock, MemorySecretStore(), FakeWeb())
     assert not rt.start() and not rt.run_once()
     assert rt.status == {"installed": False, "connected": False, "last_connected_at": None,
-                         "channels": None}  # fmt: skip
+                         "channels": None, "connect_error": None, "error": None}  # fmt: skip
     assert FakeSocket.instances == []
 
 
@@ -417,3 +418,49 @@ def test_a_dropped_connection_and_its_return_are_audited(
                         " ORDER BY id").fetchall()  # fmt: skip
     assert [(r[0], json.loads(r[1])) for r in rows] == [
         ("slack.disconnected", {}), ("slack.reconnected", {"down_s": 42})]  # fmt: skip
+
+
+def test_a_failing_pass_never_ends_slack_and_tells_the_desktop_once_it_keeps_failing(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The thread used to end silently on a non-Slack error (V1.2 review, 2026-09-30)."""
+    n = FakeNotifier()
+    rt = _runtime(db_path, clock, MemorySecretStore(), FakeWeb(), notifier=n)
+    calls: list[int] = []
+
+    def broken() -> bool:
+        calls.append(1)
+        if len(calls) <= slack_runtime.LOOP_ALERT_AFTER:
+            raise sqlite3.OperationalError("database is locked")
+        stop.set()
+        return False
+
+    monkeypatch.setattr(slack_runtime, "RETRY_S", 0.0)
+    monkeypatch.setattr(rt, "run_once", broken)
+    stop = threading.Event()
+    rt.run(stop)  # returns only because `broken` stops it after the failures
+    assert len(calls) == slack_runtime.LOOP_ALERT_AFTER + 1
+    assert [t for t, _ in n.sent] == ["[ecf-alert] System Error"]  # once, not per failure
+    assert rt.status["error"] is None  # the last pass worked
+
+
+def test_a_refused_app_token_alerts_at_once_and_resolves_on_connect(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    store, n = MemorySecretStore(), FakeNotifier()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, FakeWeb(), notifier=n)
+
+    class Refused(FakeSocket):
+        def connect(self) -> None:
+            raise SlackError("apps.connections.open", "invalid_auth")
+
+    rt._make_socket = Refused  # pyright: ignore[reportPrivateUsage]
+    assert rt.start() is False
+    assert rt.status["connect_error"] == "invalid_auth"
+    assert n.sent[-1][0] == "[ecf-alert] Slack Delivery Failed"
+    assert "app-level token" in n.sent[-1][1] and "set-tokens" in n.sent[-1][1]
+    rt._make_socket = FakeSocket  # pyright: ignore[reportPrivateUsage]
+    assert rt.start() is True
+    assert rt.status["connect_error"] is None
+    assert n.sent[-1][0] == "[ecf-alert] Resolved: Slack Delivery Failed"

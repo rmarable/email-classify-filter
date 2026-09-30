@@ -261,3 +261,16 @@ def test_channel_members_are_checked_hourly_and_changes_are_a_security_notice(
     clock.advance(3601)
     assert daily.check_members(conn, clock, chat, n) == {"ecf-default-ap": ["U0EVE"]}
     assert len(n.sent) == 1  # unchanged: no second notice
+
+
+def test_the_first_member_check_reports_anyone_already_there(conn: sqlite3.Connection) -> None:
+    """A channel ecf adopted may have come with people (V1.2 review, 2026-09-30)."""
+    clock = FakeClock(MORNING)
+    _setup(conn, clock)
+    chat = FakeChat()
+    chat.routes["CSUM"] = {"name": "ecf-default-summary", "members": [ME, BOT], "archived": False}
+    chat.routes["CAP"] = {"name": "ecf-default-ap", "members": [ME, BOT, "U0EVE"],
+                          "archived": False}  # fmt: skip
+    n = FakeNotifier()
+    assert daily.check_members(conn, clock, chat, n) == {"ecf-default-ap": ["U0EVE"]}
+    assert n.sent[0][0] == "[ecf-alert] Security Notice" and "U0EVE" in n.sent[0][1]

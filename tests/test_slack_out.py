@@ -8,10 +8,12 @@ from typing import Any, cast
 
 import pytest
 
-from ecf_server import jobs, slack_out, slack_render
+from ecf.ids import AddressId, StableId
+from ecf_server import items, jobs, slack_out, slack_render
 from ecf_server._slack import SlackError, SlackNetworkError
 from ecf_server.chat import Button, Card, Identity, RouteGoneError, RouteRef
 from ecf_server.clock import FakeClock
+from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
 from ecf_server.slack_chat import SlackChat
 from ecf_server.slack_out import SlackSender
@@ -220,19 +222,61 @@ def test_a_revoked_token_alerts_at_once_and_holds(
     assert conn.execute("SELECT state FROM jobs").fetchone()["state"] == "queued"
 
 
-def test_other_errors_retry_then_dead_letter_without_text(
+def test_other_errors_retry_then_dead_letter_and_say_what_was_lost(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     web, n = FakeWeb(), FakeNotifier()
     s = _sender(web, clock, n)
-    slack_out.enqueue_post(conn, clock, key="item:9", route=C1, card=Card("Invoice 42 subject"))
+    slack_out.enqueue_post(conn, clock, key="item:9abcdef0", route=C1,
+                           card=Card("Invoice 42 subject"))  # fmt: skip
     for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):
-        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "channel_not_found")]
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
         s.run_once(conn)
         clock.advance(3600)
     dead = slack_out.dead_posts(conn)
-    assert [d["key"] for d in dead] == ["item:9"] and "Invoice" not in str(dead)
-    assert n.sent == []  # not a delivery failure alert: a problem with one post
+    assert [d["key"] for d in dead] == ["item:9abcdef0"] and "Invoice" not in str(dead)
+    # a lost post is no longer silent (V1.2 review, 2026-09-30); never the card's text
+    [(title, text)] = n.sent
+    assert title == "[ecf-alert] Slack Delivery Failed" and "item 9abcdef0" in text
+    assert "Invoice" not in text
+
+
+def test_a_gone_channel_is_forgotten_and_its_escalation_queued_again(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    web, n = FakeWeb(), FakeNotifier()
+    s = _sender(web, clock, n)
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+        conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
+                     " VALUES ('ap', 'slack', ?, 'ecf-default-ap')", (C1.channel,))  # fmt: skip
+    items.create_item(conn, clock, stable_id=StableId("e" * 64), address_id=AddressId("ap"),
+                      content_hash="h")  # fmt: skip
+    with write_tx(conn):
+        conn.execute("INSERT INTO escalations (stable_id, address_id, state, created_at)"
+                     " VALUES (?, 'ap', 'posted', 'now')", ("e" * 64,))  # fmt: skip
+    slack_out.enqueue_post(conn, clock, key="item:" + "e" * 64, route=C1, card=Card("x"))
+    web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "is_archived")]
+    s.run_once(conn)
+    assert conn.execute("SELECT count(*) FROM routes").fetchone()[0] == 0  # created again next
+    assert conn.execute("SELECT state FROM escalations").fetchone()[0] == "pending"
+    assert conn.execute("SELECT state FROM jobs").fetchone()[0] == "done"  # not retried 5 times
+    assert n.sent[0][0] == "[ecf-alert] Slack Delivery Failed" and "gone" in n.sent[0][1]
+
+
+def test_rate_limits_hold_without_counting_an_attempt(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    web, n = FakeWeb(), FakeNotifier()
+    s = _sender(web, clock, n)
+    slack_out.enqueue_post(conn, clock, key="k", route=C1, card=Card("x"))
+    for _ in range(jobs.DEFAULT_MAX_ATTEMPTS + 2):
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "ratelimited")]
+        s.run_once(conn)
+        clock.advance(3600)
+    assert conn.execute("SELECT state, attempts FROM jobs").fetchone()[0] == "queued"
+    assert n.sent == []
 
 
 def test_each_text_line_is_its_own_section() -> None:

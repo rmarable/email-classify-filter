@@ -15,7 +15,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from ecf_server import (
@@ -27,10 +27,12 @@ from ecf_server import (
     deadman,
     digests,
     escalations,
+    health,
     needs_you,
     pause,
     slack_admin,
     slack_in,
+    slack_out,
     slack_routes,
 )
 from ecf_server.clock import Clock, to_ts
@@ -46,6 +48,9 @@ from ecf_server.slack_out import SlackSender
 # Modules whose Slack button handlers (`slack_in.handles`) must be registered before clicks arrive.
 HANDLER_MODULES = (slack_admin, escalations, approvals, answers, pause, digests)
 RETRY_S = 60.0
+LOOP_ALERT_AFTER = 5  # consecutive failed passes before a desktop System Error
+CONNECT_ALERT_AFTER = timedelta(minutes=15)  # as posts (§13.3); a refused token alerts at once
+CONNECTION = "slack_connection"
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0
 ROUTES_EVERY_S = 30.0
@@ -81,9 +86,12 @@ class SlackRuntime:
         self._web: Any = None
         self._reload = threading.Event()
         self._lost_at: datetime | None = None  # when a live connection dropped
+        self._down_since: datetime | None = None  # first failed connect in a row
+        self._failures = 0  # consecutive failed passes of the loop
         self._was_connected = False
         self.status: dict[str, Any] = {"installed": False, "connected": False,
-                                       "last_connected_at": None, "channels": None}  # fmt: skip
+                                       "last_connected_at": None, "channels": None,
+                                       "connect_error": None, "error": None}  # fmt: skip
 
     def start(self) -> bool:
         """Connect if Slack is installed; True when connected."""
@@ -107,32 +115,92 @@ class SlackRuntime:
         try:
             self._socket.connect()
         except Exception as exc:  # retried on the next pass; posts wait in the queue meanwhile
-            log.warning("slack.connect_failed", error_type=type(exc).__name__)
+            code = exc.code if isinstance(exc, _slack.SlackError) else type(exc).__name__
+            log.warning("slack.connect_failed", code=code)
             self._socket = None
+            self._connect_failed(code)
             return False
+        self._connect_ok()
         self._mark_connected()
         return True
+
+    def _connect_failed(self, code: str) -> None:
+        """Record why Socket Mode is down; alert when Slack refuses the app-level token, or after
+        15 minutes of failures while the network is up (V1.2 review, 2026-09-30)."""
+        now = self._clock.now()
+        self._down_since = self._down_since or now
+        self.status["connect_error"] = code
+        if code in slack_out.FATAL:
+            detail = (f"Slack refused the app-level token ({code}); buttons in Slack don't reach"
+                      " ecf. Fix: ecf slack set-tokens")  # fmt: skip
+        elif now - self._down_since >= CONNECT_ALERT_AFTER and health.resolves("slack.com"):
+            minutes = int((now - self._down_since).total_seconds() // 60)
+            detail = (f"ecf can't connect to Slack for {minutes} minutes while the network is"
+                      f" up ({code}); buttons in Slack don't reach ecf")  # fmt: skip
+        else:
+            return
+        conn = self._connect()
+        try:
+            health.open_alert(conn, self._clock, self._notifier, CONNECTION, None, detail)
+        finally:
+            conn.close()
+
+    def _connect_ok(self) -> None:
+        self.status["connect_error"] = None
+        if self._down_since is None:
+            return
+        self._down_since = None
+        conn = self._connect()
+        try:
+            health.resolve_alert(conn, self._clock, self._notifier, CONNECTION, None)
+        finally:
+            conn.close()
 
     def run(self, stop: threading.Event) -> None:
         last_try = -RETRY_S
         last_prune = 0.0
         waited = 0.0
         while not stop.is_set():
-            if self._reload.is_set():
-                self._reload.clear()
-                self.close()
-                self._sender = None
-                last_try = waited - RETRY_S  # connect now
-            if self._socket is None and waited - last_try >= RETRY_S:
-                last_try = waited
-                self.start()
-            did = self.run_once()
-            if waited - last_prune >= PRUNE_EVERY_S:
-                last_prune = waited
-                self._prune()
+            try:
+                if self._reload.is_set():
+                    self._reload.clear()
+                    self.close()
+                    self._sender = None
+                    last_try = waited - RETRY_S  # connect now
+                if self._socket is None and waited - last_try >= RETRY_S:
+                    last_try = waited
+                    self.start()
+                did = self.run_once()
+                if waited - last_prune >= PRUNE_EVERY_S:
+                    last_prune = waited
+                    self._prune()
+                self._pass_ok()
+            except Exception as exc:  # never let one bad pass end Slack for the process
+                self._pass_failed(exc)
+                stop.wait(RETRY_S)
+                waited += RETRY_S
+                continue
             if not did:
                 stop.wait(IDLE_S)
                 waited += IDLE_S
+
+    def _pass_ok(self) -> None:
+        if self._failures:
+            log.info("slack.loop_recovered", after=self._failures)
+        self._failures = 0
+        self.status["error"] = None
+
+    def _pass_failed(self, exc: Exception) -> None:
+        """Log, show it in `ecf status` and doctor, and tell the desktop once it keeps failing
+        (the thread used to end silently; V1.2 review, 2026-09-30)."""
+        self._failures += 1
+        name = type(exc).__name__
+        log.error("slack.loop_failed", error_type=name, failures=self._failures)
+        self.status["error"] = name
+        if self._failures == LOOP_ALERT_AFTER:
+            self._notifier.notify(alerts.title("system_error"),
+                                  f"ecf's Slack work keeps failing ({name}); posts and clicks"
+                                  " wait. Details: ecf logs")  # fmt: skip
 
     def run_once(self) -> bool:
         """One output job and one click, if any; True if either did something."""
@@ -172,7 +240,8 @@ class SlackRuntime:
         recheck = now - self._recheck_at >= RECHECK_EVERY_S
         try:
             for change in slack_routes.ensure(conn, self._clock, SlackChat(self._web),
-                                              self._install, recheck=recheck):  # fmt: skip
+                                              self._install, recheck=recheck,
+                                              notifier=self._notifier):  # fmt: skip
                 log.info("slack.channels", change=change)
             problem = ""
             if recheck:

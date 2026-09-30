@@ -12,6 +12,7 @@ from typing import Any
 from ecf.client import LocalClient
 from ecf.errors import StepupFailedError, StepupRequiredError
 from ecf.prompts import hidden
+from ecf.text import one_line
 
 VERIFY_TIMEOUT_S = 90.0  # the service's check waits up to 60 s for Touch ID or the password
 
@@ -33,8 +34,8 @@ def step_up(
 ) -> str:
     """Run one step-up; returns the verified nonce ID, or raises StepupFailedError."""
     n = c.request("POST", "/v1/stepup/nonces", {"purpose": purpose, "target": target})
-    echo(f"Step-up: {n['prompt_text']}")
-    echo(f"The dialog should show the same code: {n['code']}")
+    echo(f"Step-up: {one_line(n['prompt_text'])}")
+    echo(f"The dialog should show the same code: {one_line(n['code'], 8)}")
     body: dict[str, Any] = {}
     if n["needs_password"]:
         prompt = "Your login password (hidden): "

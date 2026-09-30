@@ -32,6 +32,7 @@ TITLES = {
     "mail_unreachable": "Mail Provider Unreachable",
     "login_rejected": "Mailbox Login Rejected",
     "slack_delivery_failed": "Slack Delivery Failed",
+    "slack_connection": "Slack Delivery Failed",  # clicks can't arrive (V1.2 review)
 }
 Resolver = Callable[[str], bool]
 

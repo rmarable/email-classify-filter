@@ -334,6 +334,41 @@ def test_a_failing_action_retries_then_fails_and_can_be_requeued(
     assert _status(conn, sid) == Status.EXECUTED and ex.ran == [(sid, ["archive"])]
 
 
+def _crash_after_running(conn: sqlite3.Connection, sid: str) -> None:
+    """The executor acted, then the service died before recording it: the grant is used and the
+    job is back in the queue (V1.2 review, 2026-09-30)."""
+    with write_tx(conn):
+        conn.execute("UPDATE grants SET status = 'consumed', consumed_at = 'x'"
+                     " WHERE stable_id = ? AND status = 'approved'", (sid,))  # fmt: skip
+
+
+def test_a_used_grant_means_outcome_unknown_and_a_send_is_never_retried_unchecked(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    hide = _proposed(conn, clock, "a" * 64)
+    approvals.request(conn, clock, hide, ARCHIVE)
+    approvals.approve(conn, clock, FakeNotifier(), hide, actor="os_user")
+    _crash_after_running(conn, hide)
+    ex = FakeExecutor()
+    assert execute.run_once(conn, clock, ex)
+    assert _status(conn, hide) == Status.FAILED_UNKNOWN and ex.ran == []  # not run again
+    assert _posts(conn)[-1]["card"]["title"].startswith("Outcome unknown")
+    approvals.requeue(conn, clock, hide, actor="os_user", nonce=None)  # a hide: a person decides
+    send = _proposed(conn, clock, "b" * 64)
+    approvals.request(conn, clock, send, SEND)
+    with pytest.raises(StepupRequiredError) as ei:
+        approvals.approve(conn, clock, FakeNotifier(), send, actor="os_user")
+    approvals.approve(conn, clock, FakeNotifier(), send, actor="os_user",
+                      nonce=_verified_nonce(conn, clock, ei.value))  # fmt: skip
+    _crash_after_running(conn, send)
+    while execute.run_once(conn, clock, ex):
+        pass
+    assert _status(conn, send) == Status.FAILED_UNKNOWN
+    with pytest.raises(ConflictError, match="may already have gone out"):
+        approvals.requeue(conn, clock, send, actor="os_user", nonce=None)
+
+
 def test_v12_has_no_real_executor_for_approvals(conn: sqlite3.Connection, clock: FakeClock) -> None:
     _setup(conn, clock)
     sid = _proposed(conn, clock, "a" * 64)

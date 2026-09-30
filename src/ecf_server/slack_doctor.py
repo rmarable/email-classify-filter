@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, slack_admin, slack_routes
+from ecf_server import _slack, slack_admin, slack_out, slack_routes
 from ecf_server.chat import RouteRef
 from ecf_server.secretstore import SecretStore
 from ecf_server.slack_chat import SlackChat
@@ -77,11 +77,19 @@ def _stepup(stepper: Stepper | None) -> dict[str, str]:
 
 
 def _socket(runtime: dict[str, Any]) -> dict[str, str]:
+    if runtime.get("error"):
+        return _c("slack connection", FAIL, f"ecf's Slack work is failing ({runtime['error']})",
+                  "see ecf logs; ecf retries every minute")  # fmt: skip
     if runtime.get("connected"):
         return _c("slack connection", OK, "Socket Mode connected")
     last = runtime.get("last_connected_at") or "never"
-    return _c("slack connection", FAIL, f"not connected (last connected {last}); buttons in Slack"
-              " do nothing until it is", "check the network; ecf reconnects by itself")  # fmt: skip
+    code = runtime.get("connect_error")
+    if code in slack_out.FATAL:
+        return _c("slack connection", FAIL, f"Slack refused the app-level token ({code}); buttons"
+                  " in Slack do nothing", "ecf slack set-tokens")  # fmt: skip
+    why = f" ({code})" if code else ""
+    detail = f"not connected{why}, last connected {last}; buttons in Slack do nothing until it is"
+    return _c("slack connection", FAIL, detail, "check the network; ecf reconnects by itself")
 
 
 def _channels(conn: sqlite3.Connection, chat: SlackChat, member: str) -> list[dict[str, str]]:
@@ -112,9 +120,14 @@ def _dm(web: Any, member: str) -> dict[str, str]:
 
 
 def _delivery(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
     row = conn.execute("SELECT detail, opened_at FROM alerts WHERE kind = 'slack_delivery_failed'"
                        " AND resolved_at IS NULL LIMIT 1").fetchone()  # fmt: skip
-    if row is None:
-        return []
-    return [_c("slack delivery", FAIL, f"failing since {row['opened_at']}: {row['detail']}",
-               SET_TOKENS)]  # fmt: skip
+    if row is not None:
+        fix = SET_TOKENS if "set-tokens" in row["detail"] else "see the detail; ecf retries"
+        out.append(_c("slack delivery", FAIL, f"since {row['opened_at']}: {row['detail']}", fix))
+    dead = slack_out.dead_posts(conn)
+    if dead:
+        out.append(_c("slack posts", WARN, f"{len(dead)} post(s) gave up; their emails are still"
+                      " listed", "ecf inbox"))  # fmt: skip
+    return out

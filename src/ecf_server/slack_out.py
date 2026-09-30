@@ -8,7 +8,12 @@ ordered per channel and sent one at a time, at most one per second per channel.
   of failures while the network is up (the same rule as mail, §13.3) `Slack Delivery Failed` opens.
 - A revoked or invalid token holds everything and opens `Slack Delivery Failed` at once. It goes to
   a desktop notification, since Slack can't carry it.
-- Other Slack errors retry with the queue's backoff, then the post is dead-lettered and logged.
+- A channel that is gone (archived, deleted, or ecf removed from it) isn't retried: ecf forgets it,
+  so the next channel pass (30 s) creates it again, re-queues an escalation card that was lost, and
+  opens `Slack Delivery Failed` (V1.2 review, 2026-09-30).
+- Rate limits hold the post, like the network (not counted as a failure).
+- Other Slack errors retry with the queue's backoff; a post that gives up opens `Slack Delivery
+  Failed` naming what was lost (`ecf doctor` lists them too).
 """
 
 from __future__ import annotations
@@ -41,6 +46,9 @@ FATAL = frozenset(
      "missing_scope", "no_permission"}
 )  # fmt: skip
 GONE = frozenset({"message_not_found"})  # the card was deleted in Slack: post it again
+CHANNEL_GONE = frozenset({"channel_not_found", "is_archived", "not_in_channel"})
+RATE_LIMITED = frozenset({"ratelimited", "rate_limited"})
+RATE_HOLD_S = 60
 ALERT = "slack_delivery_failed"
 FIX = "Fix: ecf slack set-tokens, then ecf slack reauthorize"
 
@@ -113,18 +121,36 @@ class SlackSender:
             self._network_failed(conn)
             return True
         except SlackError as exc:
-            if exc.code in FATAL:
-                jobs.hold(conn, self._clock, job.job_id, WORKER, AUTH_HOLD_S, exc.code)
-                health.open_alert(conn, self._clock, self._notifier, ALERT, None,
-                                  f"Slack refused ecf ({exc.code}). {FIX}")  # fmt: skip
-                return True
-            state = jobs.fail(conn, self._clock, job.job_id, WORKER, f"slack:{exc.code}")
-            log.warning("slack.post_failed", code=exc.code, method=exc.method, state=state)
+            self._slack_failed(conn, job, p, exc)
             return True
         jobs.complete(conn, job.job_id, WORKER)
         self.failing_since = None
         health.resolve_alert(conn, self._clock, self._notifier, ALERT, None)
         return True
+
+    def _slack_failed(
+        self, conn: sqlite3.Connection, job: jobs.Job, p: dict[str, Any], exc: SlackError
+    ) -> None:
+        """Slack answered with an error: hold, re-route, retry or give up (see the module notes)."""
+        if exc.code in FATAL:
+            jobs.hold(conn, self._clock, job.job_id, WORKER, AUTH_HOLD_S, exc.code)
+            health.open_alert(conn, self._clock, self._notifier, ALERT, None,
+                              f"Slack refused ecf ({exc.code}). {FIX}")  # fmt: skip
+        elif exc.code in RATE_LIMITED:
+            jobs.hold(conn, self._clock, job.job_id, WORKER, RATE_HOLD_S, exc.code)
+        elif exc.code in CHANNEL_GONE and p.get("op") == "post":
+            jobs.complete(conn, job.job_id, WORKER)
+            _channel_gone(conn, self._clock, str(p["channel"]), str(p["key"]), exc.code)
+            health.open_alert(conn, self._clock, self._notifier, ALERT, None,
+                              f"A Slack channel ecf posts to is gone ({exc.code}); ecf creates it"
+                              " again and re-posts escalations there")  # fmt: skip
+        else:
+            state = jobs.fail(conn, self._clock, job.job_id, WORKER, f"slack:{exc.code}")
+            log.warning("slack.post_failed", code=exc.code, method=exc.method, state=state)
+            if state == "dead":
+                health.open_alert(conn, self._clock, self._notifier, ALERT, None,
+                                  f"A Slack post gave up ({exc.code}): {_what(p)}. The email is"
+                                  " still in ecf inbox")  # fmt: skip
 
     def _do(self, conn: sqlite3.Connection, p: dict[str, Any]) -> None:
         route = RouteRef(str(p["channel"]))
@@ -172,6 +198,35 @@ class SlackSender:
             health.open_alert(conn, self._clock, self._notifier, ALERT, None,
                               f"Slack unreachable for {minutes} minutes while the network is up;"
                               " posts are held and will be sent")  # fmt: skip
+
+
+def _what(p: dict[str, Any]) -> str:
+    """What a lost post was, without its text: the kind of key and a short ID."""
+    kind, _, rest = str(p.get("key") or p.get("op", "post")).partition(":")
+    return f"{kind} {rest[:8]}".strip()
+
+
+def _channel_gone(
+    conn: sqlite3.Connection, clock: Clock, channel: str, key: str, code: str
+) -> None:
+    """Forget a channel Slack says is gone, so the next channel pass creates it again, and put an
+    escalation whose card was lost back in the queue."""
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        for (aid,) in conn.execute("SELECT address_id FROM routes WHERE route_ref = ?",
+                                   (channel,)).fetchall():  # fmt: skip
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'slack.channel_gone', 'service', 'ok', ?)",
+                (now, aid, json.dumps({"channel": channel, "code": code})),
+            )
+        conn.execute("DELETE FROM routes WHERE route_ref = ?", (channel,))
+        conn.execute("DELETE FROM settings WHERE key = 'slack_summary_channel' AND value = ?",
+                     (json.dumps(channel),))  # fmt: skip
+        conn.execute("DELETE FROM slack_messages WHERE channel = ?", (channel,))
+        if key.startswith("item:"):
+            conn.execute("UPDATE escalations SET state = 'pending' WHERE stable_id = ?",
+                         (key.removeprefix("item:"),))  # fmt: skip
 
 
 def _card(d: dict[str, Any]) -> Card:

@@ -32,6 +32,7 @@ from ecf_server.chat import (
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
+from ecf_server.notify import Notifier
 
 SURFACE = "slack"
 NAME_MAX = 80  # Slack: lowercase letters, digits, hyphens, underscores; 80 at most (verified
@@ -93,6 +94,7 @@ def ensure(
     install: str,
     *,
     recheck: bool = False,
+    notifier: Notifier | None = None,
 ) -> list[str]:
     """Create, record and invite what's missing. With `recheck`, invite you to every recorded
     channel again: Slack ignores an invite for a member already there, so this finds channels
@@ -105,7 +107,9 @@ def ensure(
     taken = _recorded(conn)
     ch = slack_admin.setting(conn, SUMMARY)
     if not ch:
-        name, route = _find_or_create(chat, install, "summary", taken)
+        name, route, found = _find_or_create(chat, install, "summary", taken)
+        if found:
+            _adopted(conn, clock, chat, notifier, name, route, member)
         _set(conn, clock, {SUMMARY: route.channel, SUMMARY_NAME: name})
         ch, taken = route.channel, taken | {route.channel}
         done.append(f"created {name}")
@@ -124,7 +128,9 @@ def ensure(
     ).fetchall():
         aid, channel = row["address_id"], row["route_ref"]
         if channel is None:
-            name, route = _find_or_create(chat, install, aid, taken)
+            name, route, found = _find_or_create(chat, install, aid, taken)
+            if found:
+                _adopted(conn, clock, chat, notifier, name, route, member)
             _record(conn, clock, aid, route, name)
             channel, taken = route.channel, taken | {route.channel}
             done.append(f"created {name}")
@@ -166,13 +172,37 @@ def archive(conn: sqlite3.Connection, clock: Clock, address_id: str) -> str | No
     return str(row["name"]) or None
 
 
+def _adopted(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    chat: ChatSurface,
+    notifier: Notifier | None,
+    name: str,
+    route: RouteRef,
+    member: str,
+) -> None:
+    """ecf found an existing channel with its name (you made it, or someone else did): anyone in
+    it besides you and the bot gets a Security Notice before ecf posts there (V1.2 review,
+    2026-09-30). It is still used, since making it by hand is the way when apps can't."""
+    bot = slack_admin.setting(conn, slack_admin.BOT_USER)
+    others = sorted(set(chat.members(route)) - {member, bot})
+    if others and notifier is not None:
+        slack_admin.notice(conn, clock, notifier,
+                           f"ecf is using the existing channel {name}, which already has"
+                           f" {', '.join(others)} in it. They can see subjects, senders and"
+                           " escalations there. If you didn't add them, remove them.",
+                           dms=[member])  # fmt: skip
+
+
 def _find_or_create(
     chat: ChatSurface, install: str, part: str, taken: set[str]
-) -> tuple[str, RouteRef]:
+) -> tuple[str, RouteRef, bool]:
+    """The channel's name, its route, and whether it already existed (found, not created)."""
     for suffix in SUFFIXES:
         name = channel_name(install, part, suffix)
         try:
-            route = chat.find_route(name) or chat.create_route(name)
+            found = chat.find_route(name)
+            route = found or chat.create_route(name)
         except RouteNameTakenError:
             continue
         except RouteNotAllowedError:
@@ -182,7 +212,7 @@ def _find_or_create(
                 "app's name), and ecf will use it within a minute."
             ) from None
         if route.channel not in taken:
-            return name, route
+            return name, route, found is not None
     raise ChannelProblemError(
         f"every name from {channel_name(install, part)} to "
         f"{channel_name(install, part, SUFFIXES[-1])} is taken; archive or rename one in Slack"
