@@ -85,7 +85,8 @@ def inbox(
     sql = (
         "SELECT i.*, e.state AS escalation FROM items i LEFT JOIN escalations e USING (stable_id)"
         " WHERE i.status IN (SELECT value FROM json_each(?))"
-        " AND (e.stable_id IS NOT NULL OR i.status IN (SELECT value FROM json_each(?)))"
+        " AND (e.stable_id IS NOT NULL OR i.status IN (SELECT value FROM json_each(?))"
+        " OR i.model_failed = 1)"  # the local model gave up on it (OD-236)
     )
     args: list[Any] = [marks, person]
     if address_id:
@@ -111,6 +112,7 @@ def summary(r: sqlite3.Row) -> dict[str, Any]:
         "subject": cards.subject_line(r),
         "why": why,
         "payment_or_fraud": payment_or_fraud(facts),
+        "model_failed": bool(r["model_failed"]),
     }
 
 

@@ -121,6 +121,15 @@ def interval(now: datetime, s: dict[str, Any]) -> timedelta:
     return timedelta(minutes=min(120, max(5, int(minutes))))
 
 
+def interval_offhours(conn: sqlite3.Connection) -> timedelta:
+    """The install's off-hours interval: model rounds on battery run at most this often (OD-029)."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'mail_fetch_interval_offhours'"
+    ).fetchone()
+    minutes = json.loads(row["value"]) if row else DEFAULTS["mail_fetch_interval_offhours"]
+    return timedelta(minutes=min(120, max(5, int(minutes))))
+
+
 def after_check(
     conn: sqlite3.Connection, clock: Clock, report: CheckReport, power: Power
 ) -> datetime:

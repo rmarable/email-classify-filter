@@ -39,6 +39,7 @@ from ecf_server import (
     execute,
     health,
     jobs,
+    modelq,
     models,
     needs_you,
     retention,
@@ -162,6 +163,8 @@ class Service:
         )
         self.scheduler = Scheduler(self.clock)
         self.work = threading.Event()  # set when checks are due
+        self.model_wake = threading.Event()  # set when the local model has new work
+        self.rounds = modelq.RoundSchedule(self.clock)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -343,6 +346,8 @@ class Service:
                 connect=self.state.connect,
             )
             health.after_check(conn, self.clock, self.state.notifier, report)
+            if report.created:
+                self.model_wake.set()  # new mail for the local model
             schedule.after_check(conn, self.clock, report, self.scheduler.power())
             jobs.complete(conn, job.job_id, WORKER)
         except NotFoundError:  # removed since it was queued
@@ -351,6 +356,43 @@ class Service:
             log.error("check.crashed", address_id=job.address_id, error_type=type(exc).__name__)
             jobs.fail(conn, self.clock, job.job_id, WORKER, type(exc).__name__)
         return True
+
+    def _models(self) -> None:
+        """Run model rounds (SPEC §5.2; V1.3 step 2a): woken by new mail, else every few seconds
+        to see whether a round is due. Idle until a `Work` exists (the classifier, V1.3 step 3)."""
+        while not self.stop.is_set():
+            self.model_wake.wait(5.0)
+            self.model_wake.clear()
+            work = self.state.model_work
+            if work is None or self.state.db_path is None or not self.rounds.due():
+                continue
+            try:
+                self._model_round(work)
+            except Exception as exc:  # never stops the worker; the next wake tries again
+                log.error("model.round_crashed", error_type=type(exc).__name__)
+
+    def _model_round(self, work: modelq.Work) -> None:
+        if self.state.db_path is None:
+            return
+        conn = db.connect(self.state.db_path)
+        try:
+            if not modelq.waiting(conn):
+                return
+            power = self.scheduler.power()
+            client = self.state.model_client()
+            try:
+                report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
+                                          resident=modelq.resident(conn),
+                                          check_kw=self.state.model_check,
+                                          stop=self.stop)  # fmt: skip
+            finally:
+                client.close()
+            self.rounds.after(report, on_battery=power.laptop and not power.on_ac,
+                              offhours=schedule.interval_offhours(conn))  # fmt: skip
+            log.info("model.round", status=report.status, done=report.done, failed=report.failed,
+                     waiting=report.waiting)  # fmt: skip
+        finally:
+            conn.close()
 
     def watchdog_expired(self) -> bool:
         # monotonic time stops while the computer sleeps, so sleep never trips the watchdog
@@ -445,6 +487,11 @@ class Service:
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread
 
+    def _workers(self) -> tuple[threading.Thread, threading.Thread]:
+        """The checks worker and the model worker (V1.3 step 2a)."""
+        return (threading.Thread(target=self._checks, name="checks", daemon=True),
+                threading.Thread(target=self._models, name="models", daemon=True))  # fmt: skip
+
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
         web.join(STOP_TIMEOUT)
@@ -478,7 +525,7 @@ class Service:
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
-        worker = threading.Thread(target=self._checks, name="checks", daemon=True)
+        worker, model_worker = self._workers()
         slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         self._last_tick_wall = self.clock.now()
@@ -487,6 +534,7 @@ class Service:
         web.start()
         timer.start()
         worker.start()
+        model_worker.start()
         if not self.dev:  # dev mode has no Slack; its chat is the recording fake
             slack_thread.start()
         self.work.set()  # check anything already due at start

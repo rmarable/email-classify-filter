@@ -55,6 +55,7 @@ from ecf_server import (
     health,
     inbox,
     initsetup,
+    modelq,
     models,
     ollama,
     pause,
@@ -129,6 +130,7 @@ class ServiceState:
     executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
+    model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:

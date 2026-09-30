@@ -40,7 +40,7 @@ def _run(lsof: str | Exception = LSOF_OK, ps: str = PS_ENV) -> Callable[[list[st
     return run
 
 
-def _kw(**kw: Any) -> dict[str, Any]:
+def check_kw(**kw: Any) -> dict[str, Any]:
     return {"run": _run(**kw), "platform": "darwin"}
 
 
@@ -101,13 +101,13 @@ def test_ollama_not_running_opens_one_system_error_then_resolves(
 ) -> None:
     n = FakeNotifier()
     nobody = subprocess.CalledProcessError(1, ["lsof"], output="")
-    assert models.check(conn, clock, n, FakeOllama().client(), **_kw(lsof=nobody)) is None
-    assert models.check(conn, clock, n, FakeOllama().client(), **_kw(lsof=nobody)) is None
+    assert models.check(conn, clock, n, FakeOllama().client(), **check_kw(lsof=nobody)) is None
+    assert models.check(conn, clock, n, FakeOllama().client(), **check_kw(lsof=nobody)) is None
     assert _open(conn) == ["local_model"]
     assert n.sent == [("[ecf-alert] System Error",
                        "Ollama isn't running (nothing listens on port 11434). Model work is"
                        " stopped until it's fixed: start Ollama.")]  # fmt: skip
-    assert models.check(conn, clock, n, FakeOllama().client(), **_kw()) is not None
+    assert models.check(conn, clock, n, FakeOllama().client(), **check_kw()) is not None
     assert _open(conn) == []
     assert n.sent[-1][0] == "[ecf-alert] Resolved: System Error"
 
@@ -125,7 +125,7 @@ def test_unsafe_or_unconfirmed_is_loud_and_mentions_you(
 ) -> None:
     _slack(conn, clock)
     n = FakeNotifier()
-    assert models.check(conn, clock, n, FakeOllama().client(), **_kw(**kw)) is None
+    assert models.check(conn, clock, n, FakeOllama().client(), **check_kw(**kw)) is None
     assert _open(conn) == ["local_model_unsafe"]
     assert words in n.sent[0][1]
     assert alerts.sweep(conn, clock) == 1
@@ -137,13 +137,13 @@ def test_unsafe_or_unconfirmed_is_loud_and_mentions_you(
 def test_a_changed_model_is_loud(conn: sqlite3.Connection, clock: FakeClock) -> None:
     fake = FakeOllama()
     fake.models[PIN.ecf_tag] = "b" * 64
-    assert models.check(conn, clock, FakeNotifier(), fake.client(), **_kw()) is None
+    assert models.check(conn, clock, FakeNotifier(), fake.client(), **check_kw()) is None
     assert _open(conn) == ["local_model_unsafe"]
 
 
 def test_a_quiet_alert_is_not_mentioned(conn: sqlite3.Connection, clock: FakeClock) -> None:
     _slack(conn, clock)
-    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **_kw())
+    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **check_kw())
     assert _open(conn) == ["local_model"]
     alerts.sweep(conn, clock)
     assert _posts(conn)[0]["card"]["mention"] == ""
@@ -151,8 +151,8 @@ def test_a_quiet_alert_is_not_mentioned(conn: sqlite3.Connection, clock: FakeClo
 
 def test_switching_cause_keeps_one_alert_open(conn: sqlite3.Connection, clock: FakeClock) -> None:
     n = FakeNotifier()
-    models.check(conn, clock, n, FakeOllama(installed=False).client(), **_kw())
-    models.check(conn, clock, n, FakeOllama().client(), **_kw(lsof="p1\nn*:11434\n"))
+    models.check(conn, clock, n, FakeOllama(installed=False).client(), **check_kw())
+    models.check(conn, clock, n, FakeOllama().client(), **check_kw(lsof="p1\nn*:11434\n"))
     assert _open(conn) == ["local_model_unsafe"]
 
 
@@ -205,9 +205,9 @@ def test_one_install_at_a_time(conn: sqlite3.Connection, db_path: Path, clock: F
 
 
 def test_status_ready_and_not(conn: sqlite3.Connection) -> None:
-    st = models.status(conn, FakeOllama().client(), **_kw())
+    st = models.status(conn, FakeOllama().client(), **check_kw())
     assert st["ready"] and st["env"] == {"OLLAMA_NUM_PARALLEL": "1", "OLLAMA_NO_CLOUD": "1"}
-    st = models.status(conn, FakeOllama(installed=False).client(), **_kw())
+    st = models.status(conn, FakeOllama(installed=False).client(), **check_kw())
     assert not st["ready"] and st["fault"]["cause"] == "model_missing"
     assert st["fault"]["fix"] == "run `ecf models install`"
 
@@ -218,7 +218,7 @@ def test_the_routes(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -
     fake = FakeOllama()
     state = ServiceState(install="t", token="tok", started_at="2026-10-01T12:00:00.000000Z",
                          clock=clock, db_path=db_path, model_client=fake.client,
-                         model_check=_kw())  # fmt: skip
+                         model_check=check_kw())  # fmt: skip
 
     async def call(method: str, path: str) -> httpx.Response:
         transport = httpx.ASGITransport(app=create_app(state))
@@ -275,7 +275,7 @@ def test_doctor_fails_on_a_fault_but_only_warns_before_the_first_install() -> No
 def test_the_daily_summary_says_items_wait_for_the_local_model(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **_kw())
+    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **check_kw())
     card = daily.card(conn, clock.now(), "2026-10-01")
     assert "items waiting for the local model since" in card.text
 
@@ -290,5 +290,5 @@ def test_install_wide_alerts_stay_listed_after_an_address_is_removed(
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
                      " removed_at) VALUES ('old', 'old@acme.example', 'standard', 'A', ?, ?)",
                      (now, now))  # fmt: skip
-    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **_kw())
+    models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **check_kw())
     assert [a["kind"] for a in health.open_alerts(conn)] == ["local_model"]

@@ -39,6 +39,7 @@ TITLES = {
     "system_error": "System Error",
     "local_model": "System Error",
     "local_model_unsafe": "System Error",
+    "model_failures": "System Error",
     "operator_input": "Operator Input Needed",
     "security_notice": "Security Notice",
 }
@@ -48,6 +49,7 @@ CLASS_OF = {
     "system_error": "system",
     "local_model": "system",
     "local_model_unsafe": "system",
+    "model_failures": "system",
     "operator_input": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",
