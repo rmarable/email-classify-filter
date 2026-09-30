@@ -21,7 +21,9 @@ rule and the commit rules are in `CLAUDE.md`.
   change model output (unverified; measured in V1.3). Avoid the Ollama app (cask `ollama-app` or the ollama.com download): it
   may update itself even when pinned, and has a setting that exposes Ollama on the network. To
   upgrade on purpose: `brew unpin ollama mlx-c && brew upgrade ollama && brew pin ollama mlx-c`,
-  then rerun the eval. How Ollama is started is settled by the V1.3 measurements.
+  then rerun the eval. Start Ollama with `uv run ecf models serve install` (ecf's login item with
+  ecf's settings, OD-246); `ecf models install` does it for you when nothing serves Ollama yet. The
+  macOS tests expect port 11434 free or served by that login item.
 
 ## Set up
 

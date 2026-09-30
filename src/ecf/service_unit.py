@@ -24,7 +24,7 @@ STOP_TIMEOUT_S = 60
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(args, capture_output=True, text=True, check=False, timeout=60)  # noqa: S603
     except FileNotFoundError:
@@ -100,7 +100,7 @@ class LaunchdManager:
         self,
         paths: Paths,
         *,
-        runner: Runner = _run,
+        runner: Runner = run_command,
         server: Path | None = None,
         agents_dir: Path | None = None,
     ) -> None:
@@ -230,7 +230,7 @@ class SystemdManager:
         self,
         paths: Paths,
         *,
-        runner: Runner = _run,
+        runner: Runner = run_command,
         server: Path | None = None,
         units_dir: Path | None = None,
     ) -> None:
