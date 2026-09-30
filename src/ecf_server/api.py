@@ -60,6 +60,7 @@ from ecf_server import (
     pause,
     retention,
     ruletest,
+    schedule,
     senders,
     settings,
     slack_admin,
@@ -129,6 +130,7 @@ class ServiceState:
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
+    power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -206,6 +208,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
+                "model": _model_status(state),
             }
         )
 
@@ -357,7 +360,50 @@ def _check_lines(
             yield json.dumps(r.to_json()) + "\n"
             if not r.more:
                 break
+    for line in _model_lines(state, until_empty):
+        yield json.dumps({"model": line}) + "\n"
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+
+
+def _model_lines(state: ServiceState, until_empty: bool) -> Iterator[dict[str, Any]]:
+    """`ecf check` runs the local model on what waits (V1.3 step 7): one round, or rounds until
+    nothing waits with `--until-empty`. The model worker may run rounds too; each item is taken
+    under its address's lock and lease, so the two never work on the same one."""
+    work = state.model_work
+    if work is None:
+        yield {"status": "off", "detail": "this service doesn't run the local model"}
+        return
+    for _ in range(MAX_ROUNDS if until_empty else 1):
+        conn, client = state.connect(), state.model_client()
+        try:
+            r = modelq.run_round(conn, state.clock, state.notifier, client, work,
+                                 resident=modelq.resident(conn),
+                                 check_kw=state.model_check)  # fmt: skip
+            line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
+                                    "waiting": r.waiting}  # fmt: skip
+            if r.status == "not_ready":
+                row = conn.execute(
+                    "SELECT detail FROM alerts WHERE kind IN ('local_model',"
+                    " 'local_model_unsafe') AND resolved_at IS NULL"
+                ).fetchone()
+                line["detail"] = row[0] if row else "the local model isn't ready"
+        finally:
+            client.close()
+            conn.close()
+        yield line
+        if not until_empty or r.status != "budget" or r.waiting == 0:
+            return
+
+
+def _model_status(state: ServiceState) -> dict[str, Any] | None:
+    if state.db_path is None:
+        return None
+    power = state.power()
+    conn = state.connect()
+    try:
+        return modelq.status(conn, laptop=power.laptop, on_ac=power.on_ac)
+    finally:
+        conn.close()
 
 
 def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:

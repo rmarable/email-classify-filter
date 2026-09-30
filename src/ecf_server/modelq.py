@@ -418,3 +418,27 @@ def awake(on_ac: bool, platform: str = sys.platform) -> Generator[None]:
 
 
 CAFFEINATE = "/usr/bin/caffeinate"
+
+
+# ---------------------------------------------------------------------------- status (§5.3)
+
+ETA_SAMPLE = 50
+
+
+def seconds_per_item(conn: sqlite3.Connection) -> float | None:
+    """The median wall time of recent successful model calls, from `model_calls`."""
+    rows = conn.execute("SELECT total_ns FROM model_calls WHERE outcome = 'ok' AND total_ns IS"
+                        " NOT NULL ORDER BY id DESC LIMIT ?", (ETA_SAMPLE,)).fetchall()  # fmt: skip
+    if not rows:
+        return None
+    return statistics.median(r[0] for r in rows) / 1e9
+
+
+def status(conn: sqlite3.Connection, *, laptop: bool, on_ac: bool) -> dict[str, Any]:
+    """For `ecf status`: what waits for the local model, an estimate of how long it takes from
+    measured speed, and whether it waits for AC power (on battery, model work runs only at the
+    off-hours interval, OD-029)."""
+    n = sum(waiting(conn).values())
+    per = seconds_per_item(conn)
+    return {"waiting": n, "eta_s": round(n * per) if per is not None and n else None,
+            "on_battery": laptop and not on_ac, "eval": EXCLUSIVE.held()}  # fmt: skip

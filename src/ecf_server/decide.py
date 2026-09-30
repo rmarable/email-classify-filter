@@ -11,8 +11,10 @@ After the classifier stores a classification, `apply` plans (policy.py) and move
 - **assist:** when every mailbox action is safe (label, flag), `proposed → executing` under an
   automatic grant; otherwise the whole plan is `held` until the address goes live.
 - **live:** when an action needs a person, the whole plan goes to approval (`awaiting_approval`, a
-  card with the grant); otherwise `proposed → executing` under an automatic grant. A plan with no
-  mailbox action (only escalate or leave) runs an empty grant, so the item still ends `executed`.
+  card with the grant; while more than 100 emails wait for the model, no card each: the digest's
+  "Approve all N reversible" lists them, §5.3); otherwise `proposed → executing` under an
+  automatic grant. A plan with no mailbox action (only escalate or leave) runs an empty grant, so
+  the item still ends `executed`.
 
 The proposal stored on the item holds the mailbox actions the runner executes (`actions`, bound to
 the grant's hash) and the plan's reasons (`plan`: rule, dropped actions and why, risk, and whether
@@ -28,7 +30,7 @@ from typing import Any
 
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.schema import load_schema_v1
-from ecf_server import approvals, config, items, jobs, policy
+from ecf_server import approvals, config, items, jobs, modelq, policy
 from ecf_server.actions import Planned as MailAction
 from ecf_server.actions import action_hash
 from ecf_server.clock import Clock, to_ts
@@ -41,6 +43,7 @@ MAILBOX = frozenset({"label", "flag", "mark_read", "archive", "move", "junk", "d
 ASSIST_SAFE = frozenset({"label", "flag"})
 AUTO_GRANT_TTL_S = 3600
 EXECUTE_ATTEMPTS = 3
+BACKLOG_BATCH = 100  # §5.3: above this, approvals go to digests in batches, not one card each
 
 
 def context(conn: sqlite3.Connection, item: sqlite3.Row) -> Context:
@@ -102,7 +105,8 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
         items.transition(conn, clock, StableId(sid), Status.HELD, ctx, actor="service")
         return Status.HELD
     if needs_person:
-        approvals.request(conn, clock, sid, mailbox)
+        backlog = sum(modelq.waiting(conn).values())
+        approvals.request(conn, clock, sid, mailbox, card=backlog <= BACKLOG_BATCH)
         return Status.AWAITING_APPROVAL
     _run(conn, clock, sid, mailbox, ctx)
     return Status.EXECUTING

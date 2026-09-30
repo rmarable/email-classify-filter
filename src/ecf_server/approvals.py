@@ -134,7 +134,13 @@ def _facts(item: sqlite3.Row) -> dict[str, Any]:
 
 
 def request(
-    conn: sqlite3.Connection, clock: Clock, sid: str, actions: list[Planned], *, member: str = ""
+    conn: sqlite3.Connection,
+    clock: Clock,
+    sid: str,
+    actions: list[Planned],
+    *,
+    member: str = "",
+    card: bool = True,
 ) -> str:
     """A proposed item needs a person: record the proposal, issue its grant and post its card.
     Returns the grant ID. (Called by the rules from V1.3; by tests in V1.2.)"""
@@ -155,7 +161,8 @@ def request(
     items.transition(conn, clock, StableId(sid), Status.AWAITING_APPROVAL, ctx, actor="service",
                      expected=Status.PROPOSED)  # fmt: skip
     grant_id = _issue(conn, clock, _item(conn, sid), actions)
-    _card(conn, clock, _item(conn, sid), grant_id, member=member)
+    if card:  # during a large backlog they're listed on digests instead (§5.3; V1.3 step 7)
+        _card(conn, clock, _item(conn, sid), grant_id, member=member)
     return grant_id
 
 

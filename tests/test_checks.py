@@ -201,8 +201,9 @@ def test_checks_route_streams_and_until_empty_drains_the_backlog(
     for i in range(35):
         box.fake.deliver(mail(f"note {i}"))
     code, lines = post(st, "/v1/checks", {"address_id": "ap", "until_empty": True})
-    reports = [x for x in lines if not x.get("done")]
+    reports = [x for x in lines if not x.get("done") and "model" not in x]
     assert [r["created"] for r in reports] == [30, 5] and reports[-1]["remaining"] == 0
+    assert [x["model"]["status"] for x in lines if "model" in x] == ["off"]  # no model here
     code, lines = post(st, "/v1/checks", {"address_id": "nope"})
     assert code == 404
 

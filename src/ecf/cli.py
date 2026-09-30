@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__
+from ecf import __version__, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
@@ -127,6 +127,11 @@ def status() -> None:
     paths = _paths()
     unit = manager_for(paths).status()
     typer.echo(f"install:   {paths.install}")
+    m = watch.marker(paths)
+    if m:
+        typer.echo(f"watch:     `ecf watch` took over at {m['started_at']}"
+                   + ("" if m["alive"] else "; it ended without restoring the background"
+                      " service: ecf service start"))  # fmt: skip
     typer.echo(
         f"unit:      {'installed' if unit.installed else 'not installed'}, "
         f"{'running' if unit.running else 'not running'}"
@@ -150,6 +155,9 @@ def status() -> None:
     else:
         state = "connected" if sl.get("connected") else "NOT connected"
         typer.echo(f"slack:     {state}; last connected {sl.get('last_connected_at') or 'never'}")
+    m = st.get("model")
+    if m:
+        typer.echo(f"model:     {_model_backlog(m)}")
     for a in st.get("addresses", []):
         last = a["last_finished_at"] or "never checked"
         line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"
@@ -186,8 +194,8 @@ def check(
         bool, typer.Option("--until-empty", help="Keep checking while mail is waiting.")
     ] = False,
 ) -> None:
-    """Check mail now: fetch, verify senders, run the fraud and regulator checks. Model checks
-    arrive in V1.3; until then this is the model-free pre-check."""
+    """Check mail now: fetch, verify senders, run the fraud and regulator checks, then the local
+    model on what waits for it. Exit 3 when a check failed or the local model isn't ready."""
     body: dict[str, object] = {"until_empty": until_empty}
     if address:
         body["address_id"] = address
@@ -196,10 +204,42 @@ def check(
         for r in c.stream("POST", "/v1/checks", body):
             if r.get("done"):
                 break
+            if "model" in r:
+                m = r["model"]
+                failed |= m["status"] == "not_ready"
+                typer.echo(_model_line(m))
+                continue
             failed |= r["status"] in CHECK_FAILED
             typer.echo(_check_line(r))
     if failed:
         raise typer.Exit(3)
+
+
+def _model_backlog(m: dict[str, Any]) -> str:
+    if not m["waiting"]:
+        return "nothing waiting"
+    text = f"{m['waiting']} waiting"
+    if m.get("eta_s") is not None:
+        text += f", about {max(1, round(m['eta_s'] / 60))} min at the measured speed"
+    if m.get("eval"):
+        text += "; an eval holds the model"
+    elif m.get("on_battery"):
+        text += "; on battery it runs at the off-hours interval (plug in to catch up)"
+    return text
+
+
+def _model_line(m: dict[str, Any]) -> str:
+    who = f"{'local model':<16}"
+    if m["status"] == "off":
+        return f"{who} {m['detail']}"
+    if m["status"] == "not_ready":
+        return f"{who} not ready: {m['detail']}"
+    if m["status"] == "eval":
+        return f"{who} an eval holds the model; {m['waiting']} waiting"
+    extra = {"budget": " (6-minute budget used)", "hot": " (paused: running hot)",
+             "stopped": " (service stopping)"}.get(m["status"], "")  # fmt: skip
+    return (f"{who} {m['done']} done, {m['failed']} failed, {m['waiting']} still waiting"
+            f"{extra}")  # fmt: skip
 
 
 def _check_line(r: dict[str, Any]) -> str:
@@ -378,8 +418,25 @@ def service_uninstall() -> None:
 @service_app.command("start")
 def service_start() -> None:
     """Start the service (also clears the crash-loop breaker)."""
-    manager_for(_paths()).start()
+    paths = _paths()
+    m = watch.marker(paths)
+    if m and m["alive"]:
+        typer.echo(f"`ecf watch` is running the service (pid {m['pid']}); stop it first", err=True)
+        raise typer.Exit(3)
+    manager_for(paths).start()
+    watch.clear(paths)
     typer.echo("started")
+
+
+@app.command("watch")
+def watch_command() -> None:
+    """Run the service in this terminal instead of the background (Ctrl-C to stop); the
+    background service is stopped first and started again afterwards."""
+    paths = _paths()
+    typer.echo("stopping the background service, then running ecf here (Ctrl-C to stop)")
+    code = watch.run(paths, manager_for(paths))
+    typer.echo(f"ecf stopped (exit {code}); the background service is as it was before")
+    raise typer.Exit(code)
 
 
 @service_app.command("stop")

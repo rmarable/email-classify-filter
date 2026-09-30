@@ -98,6 +98,19 @@ def check_data_dir(paths: Paths) -> list[Check]:
     return out
 
 
+def check_watch(paths: Paths) -> list[Check]:
+    """A marker left by an `ecf watch` that ended without restoring the unit (V1.3 step 7)."""
+    from ecf import watch  # noqa: PLC0415
+
+    m = watch.marker(paths)
+    if m is None:
+        return []
+    if m["alive"]:
+        return [Check("watch", Level.OK, f"`ecf watch` runs the service (pid {m['pid']})")]
+    return [Check("watch", Level.FAIL, f"`ecf watch` took over at {m['started_at']} and ended"
+                  " without restoring the background service", "ecf service start")]  # fmt: skip
+
+
 def check_unit(manager: ServiceManager) -> Check:
     s = manager.status()
     if not s.installed:
@@ -402,6 +415,7 @@ def run_checks(
 ) -> list[Check]:
     checks = [check_python(), check_sqlite(), *check_data_dir(paths)]
     checks.append(check_unit(manager or manager_for(paths)))
+    checks += check_watch(paths)
     checks += check_service(paths, now or datetime.now(UTC))
     checks += check_slack(paths)
     checks.append(check_org_domains(paths))
