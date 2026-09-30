@@ -113,7 +113,9 @@ def test_shadow_decides_but_leaves_the_mailbox_alone(
     assert o.decision.escalate and o.executed == [] and o.skipped == "shadow: decided, not done"
     row = conn.execute("SELECT status, prechecked, facts FROM items").fetchone()
     assert row["status"] == "new" and row["prechecked"] == 1
-    assert json.loads(row["facts"])["precheck"]["escalation"] == "pending Slack (V1.2)"
+    assert json.loads(row["facts"])["precheck"]["escalation"] == "queued"
+    esc = conn.execute("SELECT stable_id, state FROM escalations").fetchone()
+    assert (esc["stable_id"], esc["state"]) == (o.stable_id, "pending")  # for the Slack thread
     assert src.flags([1])[1] == frozenset()
     assert conn.execute("SELECT count(*) FROM grants").fetchone()[0] == 0
     assert (
@@ -134,7 +136,7 @@ def test_live_labels_and_flags_under_a_grant_and_can_undo(
     assert o.executed == [
         "label suspicious",
         "flag",
-        "escalate (Slack arrives in V1.2)",
+        "escalate",
         "label unverified_sender",
     ]
     assert {KW, FLAGGED} <= src.flags([1])[1]

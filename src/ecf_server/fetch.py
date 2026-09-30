@@ -11,8 +11,10 @@ A marker that is still there after two crashes quarantines the message: an item 
 `quarantined` and `content_unscanned` set and nothing parsed, so one crafted email can't keep
 tripping the crash-loop breaker.
 
-Messages over the size limit, or over 16 MB, are deferred in `deferred_uids` (step 6b adds
-their handling); nothing is ever skipped. A UIDVALIDITY change is reported, not handled (step 13).
+Messages over the size limit, or over 16 MB, are deferred in `deferred_uids` and read after the
+rest of the page; nothing is ever skipped. A UIDVALIDITY change (a mailbox reset) is recovered
+here: known messages are re-pointed and the rest fetched again, deduplicated by `stable_id`
+(§6.4). `backfill_page` reads older mail for `ecf backfill`.
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ PAGE_S = 20.0
 MAX_PARTIAL_TEXTS = 20  # text parts fetched from an oversized message (one IMAP fetch each)
 LARGE_BYTES = 16 * 1024 * 1024  # fixed threshold: processed after smaller mail (§5.1)
 QUARANTINE_AFTER = 2  # crashes on the same message
+SUBJECT_MAX = 500  # kept on the item for its card (metadata; cards cap fields at 2,000)
+SENDER_MAX = 320
 MAX_PER_CHECK_S = 360.0  # max_per_check default: a check's IMAP and rules work (§5.2)
 DEFAULT_RATE = 2 * 1024 * 1024  # bytes/s assumed until a page has measured throughput
 HEADER_LIMIT = 256 * 1024  # header block fetched for an oversized message
@@ -251,6 +255,96 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     return result
 
 
+@dataclass
+class Backfill:
+    """Progress of `ecf backfill` for one address (OD-216): mail that arrived since `since`, up to
+    the cursor's position when it started (`end_uid`); `after_uid` is the last UID handled."""
+
+    since: str  # ISO date
+    act: bool
+    uidvalidity: int
+    end_uid: int
+    after_uid: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        return {"since": self.since, "act": self.act, "uidvalidity": self.uidvalidity,
+                "end_uid": self.end_uid, "after_uid": self.after_uid}  # fmt: skip
+
+
+def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collaborators
+    conn: sqlite3.Connection,
+    clock: Clock,
+    src: MailSource,
+    cfg: AddressConfig,
+    lease: leases.Lease,
+    bf: Backfill,
+    *,
+    lost: threading.Event | None = None,
+    analyzer: Analyzer | None = None,
+    deadline: float | None = None,
+    isolator: Isolator | None = None,
+) -> PageResult:
+    """One page of older mail, oldest first, within the same limits as a check (30 messages or
+    20 s, the check budget). `bf.after_uid` advances past each message handled; the caller saves
+    it. Mail ecf already has (by UID) and mail waiting as deferred is left alone. A mailbox reset
+    ends the backfill (`stopped = "reset"`)."""
+    result = PageResult()
+    state = src.inbox()
+    if state.uidvalidity != bf.uidvalidity:
+        result.stopped = "reset"
+        return result
+    cur = load_cursor(conn, cfg.address_id)
+    waiting = set(cur.deferred) if cur else set[int]()
+    known = {
+        r[0]
+        for r in conn.execute(
+            "SELECT json_extract(locator, '$.uid') FROM items WHERE address_id = ?"
+            " AND json_extract(locator, '$.uidvalidity') = ?",
+            (cfg.address_id, bf.uidvalidity),
+        )
+    }
+    since = datetime.fromisoformat(bf.since).replace(tzinfo=UTC)
+    todo = [
+        u for u in src.uids_since(since)
+        if bf.after_uid < u <= bf.end_uid and u not in known and u not in waiting
+    ]  # fmt: skip
+    page = todo[:PAGE_MESSAGES]
+    metas = src.meta(page)
+    pg = _Page(conn, clock, src, cfg, lease, bf.uidvalidity, result, analyzer, isolator)
+    started = clock.monotonic()
+    end = deadline if deadline is not None else started + MAX_PER_CHECK_S
+    done = 0
+    for uid in page:
+        if lost is not None and lost.is_set():
+            result.stopped = "lease_lost"
+            break
+        if clock.monotonic() - started > PAGE_S or clock.monotonic() > end:
+            result.stopped = "time"
+            break
+        meta = metas.get(uid)
+        if meta is not None and (meta.size > cfg.max_message_bytes or meta.size > LARGE_BYTES):
+            oversized = meta.size > cfg.max_message_bytes
+            need = HEADER_LIMIT + cfg.max_scan_bytes if oversized else meta.size
+            if clock.monotonic() + need / pg.rate() > end or not LARGE_LOCK.acquire(blocking=False):
+                result.stopped = "time"  # the next backfill job picks it up
+                break
+            try:
+                if oversized:
+                    _process_partial(pg, uid, meta.size, meta.internaldate)
+                else:
+                    _process_large(pg, uid, meta.internaldate)
+            finally:
+                LARGE_LOCK.release()
+        elif meta is not None:
+            _process(pg, uid, meta.internaldate)
+        bf.after_uid = uid  # vanished messages (no meta) are simply passed
+        done += 1
+    if result.stopped == "done" and len(todo) > len(page):
+        result.stopped = "page_limit"
+    result.remaining = len(todo) - done
+    return result
+
+
 def _deferred(pg: _Page, cur: Cursor, end: float, lost: threading.Event | None) -> Cursor:
     """Large and oversized mail after the page (§5.1, OD-030): oldest first, one at a time across
     the service, only when the estimate from size and measured throughput fits the budget."""
@@ -435,6 +529,9 @@ def _store(
         hash_version=parsed.hash_version,
         duplicate_message_id=int(reused),
         facts=json.dumps(facts, sort_keys=True),
+        subject=parsed.subject[:SUBJECT_MAX],
+        sender=(parsed.from_addr or "")[:SENDER_MAX] or None,
+        sender_name=parsed.from_name[:SENDER_MAX] or None,
         locator=json.dumps(
             {"uid": uid, "uidvalidity": uv, "message_id": parsed.message_id, "internaldate": when}
         ),

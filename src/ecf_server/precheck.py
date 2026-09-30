@@ -11,7 +11,8 @@ Runs on items just created by a fetch, before any model. Each trigger that fired
 The decision is stored on the item (`prechecked`, and `facts.precheck`) and audited. Items stay at
 `new` (§5.4: no status change); the model check picks them up later. In shadow, nothing is done to
 the mailbox; outside shadow, label and flag run under a grant (actions.py). Pause never stops the
-pre-check (§5.4). Escalations reach Slack from V1.2; until then they are recorded as pending.
+pre-check (§5.4). Each escalation is queued in `escalations`, and the Slack thread posts it
+(`escalations.py`, V1.2); V1.1 recorded them only as pending.
 """
 
 from __future__ import annotations
@@ -65,6 +66,18 @@ class Decision:
             "escalate": self.escalate,
             "digest": self.digest,
         }
+
+
+def payment_or_fraud(facts: dict[str, Any]) -> bool:
+    """A "payment or fraud item" for step-up rules (§9.6): a payment keyword, any fraud trigger
+    (weak ones and lookalike domains included), an unverified payment sender, or quarantine.
+    The classifier's `payment_related` joins this in V1.3."""
+    t: dict[str, Any] = facts.get("triggers") or {}
+    return bool(
+        facts.get("payment_keyword")
+        or facts.get("quarantined")
+        or any(t.get(k) for k in ("fraud", "fraud_weak", "unverified_payment", "lookalikes"))
+    )
 
 
 def fired(facts: dict[str, Any]) -> set[str]:
@@ -142,6 +155,22 @@ def run(
     return out
 
 
+def record_only(
+    conn: sqlite3.Connection, clock: Clock, stable_ids: list[str], why: str
+) -> list[Outcome]:
+    """Decide and record without acting or escalating (`ecf backfill` without --act, OD-216)."""
+    out: list[Outcome] = []
+    for sid in stable_ids:
+        item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
+        if item is None or item["prechecked"]:
+            continue
+        facts: dict[str, Any] = json.loads(item["facts"])
+        o = Outcome(sid, decide(facts), skipped=why)
+        _record(conn, clock, item, facts, "backfill", o, escalate=False)
+        out.append(o)
+    return out
+
+
 def _record(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -149,12 +178,15 @@ def _record(
     facts: dict[str, Any],
     stage: str,
     o: Outcome,
+    *,
+    escalate: bool = True,
 ) -> None:
+    queued = escalate and o.decision.escalate
     facts["precheck"] = o.decision.to_json() | {
         "stage": stage,
         "executed": o.executed,
         "skipped": o.skipped,
-        "escalation": "pending Slack (V1.2)" if o.decision.escalate else None,
+        "escalation": "queued" if queued else None,
         "at": to_ts(clock.now()),
     }
     with write_tx(conn):
@@ -162,6 +194,12 @@ def _record(
             "UPDATE items SET prechecked = 1, facts = ?, updated_at = ? WHERE stable_id = ?",
             (json.dumps(facts, sort_keys=True), to_ts(clock.now()), item["stable_id"]),
         )
+        if queued:  # posted by the Slack thread (escalations.py)
+            conn.execute(
+                "INSERT INTO escalations (stable_id, address_id, state, created_at)"
+                " VALUES (?, ?, 'pending', ?) ON CONFLICT (stable_id) DO NOTHING",
+                (item["stable_id"], item["address_id"], to_ts(clock.now())),
+            )
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'precheck.decided', 'service', 'ok', ?)",

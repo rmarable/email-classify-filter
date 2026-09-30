@@ -3,6 +3,82 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.2-slack-approvals (2026-09-30)
+
+- `ecf settings set` now names where every configuration key lives, when it arrives, or that it is fixed, instead of "no setting" for some.
+- `jeepney` is no longer a direct dependency: Linux step-up is PAM only until polkit arrives in V1.6 (OD-224); it still comes in through `keyring` for the Secret Service.
+- `ecf config apply` lists the riskiest changes first in the step-up dialog and Security Notice, and counts sections that didn't fit.
+- Records of old one-off Slack posts (digests, summaries, alerts) are now deleted with the rest of the history after `log_retention_days`.
+- The dead-man's switch is now disarmed only by `ecf service stop` or `ecf service uninstall`; a shutdown, logout or crash leaves it armed, and ecf posts "ecf is back" when it returns after the message fired (OD-222).
+- New option `ecf backfill <address> --stop`. `--act` asks to confirm (or `--yes`), and `ecf backfill` shows the last backfill's outcome and how many backfilled emails had a fraud signal.
+- Timer work that keeps failing now raises a System Error and shows in `ecf doctor`.
+- One failing Slack task (member check, digests, summaries and so on) no longer stops the others.
+- `ecf slack set-tokens` now releases Slack posts held for a bad token and clears the Slack Delivery Failed alert.
+- `ecf slack install` can be run again after an install stopped partway.
+- `ecf doctor` shows a failed Slack check or an unusable secret store as a FAIL line instead of stopping.
+- `ecf slack reauthorize` re-posts only "Needs you" and open cards, not old digests and summaries.
+- `ecf alerts test` says the Slack copy is queued rather than sent.
+- Step-up refuses a request with a made-up value before showing it in the Touch ID dialog.
+- `ecf approve <id>` now offers an approval that expired twice again, instead of refusing it (OD-223).
+- An answer from Slack waiting for step-up can no longer be rejected or approved as if it were an approval; ecf points to `ecf answer <id>`.
+- Closing a delayed send (resolve, Dismiss, or moved in the mail client) now cancels its countdown; it used to break the next timer tick.
+- An expired answer no longer counts as an approval expiry.
+- A backfill that fails partway no longer leaves messages undecided.
+- An Undo clicked while a check is running now runs within a minute.
+- A refused answer from a Slack form now says so by DM.
+- "Needs you" stays pinned when it is re-posted after a deletion in Slack.
+- Confirming an older sender record now adds its domain to the known vendors.
+- An action whose grant was already used (it may have run before a crash) is marked "outcome unknown" instead of failed, and a send is never retried unchecked.
+- ecf's Slack connection keeps running after an unexpected error, shows it in `ecf status` and `ecf doctor`, and tells the desktop if it keeps failing.
+- A Slack post that can't be delivered is no longer lost silently: a channel that was archived or deleted is created again and its escalation re-posted, rate limits wait, and a post that gives up raises Slack Delivery Failed.
+- A revoked app-level Slack token (buttons stop working) now raises Slack Delivery Failed with the fix, and `ecf doctor` says so.
+- Email subjects and senders shown in the Touch ID dialog and the terminal are cleaned of control characters (a crafted subject could garble the approval prompt).
+- A Security Notice when ecf starts using an existing Slack channel that already has other people in it, and on the first member check.
+- Slack posts keep their line breaks (found in the V1.2 shadow run).
+- Senders in lists and step-up dialogs are never cut mid-address; a cut domain could hide a lookalike (shadow run).
+- A card's "Why:" names only the fraud signals that fired (shadow run).
+- The daily summary shows mail waiting for the classifier apart from what waits on you (shadow run).
+- A lost and restored Slack connection shows in `ecf logs` (shadow run).
+- Pasted Slack tokens with surrounding spaces are accepted (shadow run).
+- Real-service test (Slack shadow run on the test mailbox) passed: install through `ecf init`, escalations with mentions, "Needs you", digests, the daily summary, alerts, pause and resume, Touch ID for a stage change, a label and flag applied in assist, and a restart without a false dead-man post; results in SPEC §21.1.
+- New command `ecf digest <address>` posts that address's digest in Slack now, at any hour, instead of waiting for the hourly one (operator decision 2026-09-30).
+- `ecf doctor` now checks Slack and step-up: whether step-up can run here, your confirmed member ID, the bot token, the Socket Mode connection, your membership in every ecf channel, that ecf can DM you, and an open Slack delivery failure, each with its fix.
+- New commands `ecf init [--mode local] [--resume]` (sets up the service, checks disk encryption and the secret store, asks prod or test once, connects Slack and adds the first mailbox; safe to run again) and `ecf init status`.
+- `ecf address add` now reminds you, for presets B and C, that the local fallback is off, and for C that it uses your Claude plan.
+- New command `ecf backfill <address> --since <date> [--act]` reads older mail with the checks, new mail first. By default it only records and checks it (nothing is done to the mailbox or escalated, OD-216, OD-221); `--act` labels, flags and escalates as for new mail. `ecf backfill` alone shows backfills in progress.
+- Finished items are now deleted once a day after `log_retention_days` (90 by default); fraud, weak-fraud and regulator items, open items, sender history and the audit log are kept (OD-217, OD-040). New commands `ecf retention show` and `ecf retention set <days>` (step-up; lowering it sends a Security Notice).
+- New commands `ecf sender show`, `ecf sender confirm <sender> --category <c>`, `ecf sender set-reply-to <sender> <domain>|--clear` and `ecf sender set-verified <sender> [--off]` (step-up to confirm, set or verify; clearing needs none). A human-verified sender's payment mail is no longer flagged as from an unverified sender; fraud checks stay on (OD-065).
+- New commands `ecf config apply <file>` (org domains, the forward and move-folder allow-lists, the action policy for `standard` addresses, rules and reply templates; shows the changes, needs step-up, sends a Security Notice) and `ecf rules test <file>` (runs proposed rules on the synthetic set and shows which outcomes change). Changing org domains after the first address now works through `config apply`.
+- New commands `ecf stage status` and `ecf stage set <address> shadow|assist` (step-up to move forward; `live` waits for V1.3, OD-209).
+- New command `ecf sensitivity set <address> standard|high` (lowering needs a reason and step-up, and sends a Security Notice).
+- New commands `ecf settings show|set` for the schedule, business hours, catch-up, notifications, the dead-man's switch, stale days, size limits (1 to 64 MB, OD-220) and approval expiry (per address with `--address`).
+- Alerts now reach Slack as well as the desktop, titled `[ecf-alert] …` (and `[ecf-alert] Resolved: …` when they clear): mail-provider problems, rejected logins, system errors (including a restart after a crash, jobs that gave up, and the crash-loop breaker stopping ecf), items waiting on you, and Security Notices. Slack delivery problems stay on the desktop.
+- New commands `ecf alerts show`, `ecf alerts set [<class>] --to slack` (step-up) and `ecf alerts test`; email routes wait for V1.5 (OD-206).
+- CONTRIBUTING lists GNU sed (`gsed`) for scripted edits on macOS.
+- Hourly digests in each address channel during business hours: new mail, weak fraud signals and unverified payment senders, with Undo (never for fraud or regulator labels) and Pause. Nothing is posted when nothing came in.
+- A daily summary at the start of business hours: what waits on you, stale items, approvals that expired twice, paused addresses, and who else is in ecf's channels. Someone joining or leaving one of those channels sends a Security Notice (OD-215).
+- New commands `ecf pause <address>|--all` and `ecf resume <address>|--all`, and Pause and Resume buttons: a paused address keeps being checked for fraud and regulator mail, but ecf takes no other action on it until you resume.
+- A pinned "Needs you" message in the Slack summary channel lists what is waiting on you (edited only when it changes). Emails open for 30 days are marked stale and announced once.
+- If ecf stops checking (a crash, a dead computer, or a long sleep), a scheduled Slack message tells you ("ecf hasn't checked in since …"); a normal stop cancels it. By default it posts only in business hours, so an overnight sleep isn't reported unless the computer is still off once the workday starts; the setting `deadman_offhours` lets it post off-hours too (OD-219).
+- Answers are built, for the questions ecf's model asks from V1.3: an Answer button opens a form in Slack, and `ecf answer <id> [text]` answers from the terminal. Questions are labelled as model output, with links, addresses and phone numbers removed. On payment or fraud email an answer needs step-up; one given in Slack waits for `ecf answer <id>` at your computer. After two rounds of questions the email goes to you.
+- Approvals are built, for the proposals the classifier makes from V1.3 (OD-207): `ecf approve <id>`, `ecf approve --pending` (up to 10 at once with one step-up, never sends), `ecf reject <id>`, `ecf cancel <id>` and `ecf item requeue <id>`, and Approve, Reject and Cancel buttons in Slack. A send, anything irreversible, or hiding fraud or regulatory email needs step-up; clicked in Slack it waits for your computer ("Queued for your computer"). Sends on `high` addresses wait 10 minutes of awake time with Cancel. Approvals expire after 4 days (sends) or 14 days and are offered once more (OD-041, OD-208).
+- An approval queued for step-up can still be rejected (new transition `awaiting_stepup` → `rejected`).
+- New commands `ecf inbox`, `ecf item show <id>` and `ecf item resolve` (one or more IDs, `--ids` or `--older-than N`, with `--reason`): see what's waiting on you, everything ecf keeps about one email including its excerpt, and close emails without acting on them. Resolving a payment or fraud item needs step-up (one for a whole set); a bulk resolve shows the list and asks first. Item IDs can be shortened to 8 characters.
+- Fixed: the service could hang instead of stopping when it got two stop signals at once (for example `pkill` plus the signal `uv run` forwards); launchd would then have had to kill it.
+- Real-service test (Slack mentions) passed: a mention inside a card's block notifies you on desktop and phone, so escalation cards reach you; results in SPEC §21.1.
+- Fraud, quarantine and regulatory escalations now post to the address's Slack channel as cards that mention you: sender, subject, why, the sender check, flags and what was done, never the body. More than 5 in a minute merge into one thread, and escalations from before Slack was connected get one summary post (OD-211). "Show excerpt" shows the first 200 characters to you alone (OD-214); "Dismiss" is offered only on items that aren't payment, fraud or regulatory (OD-213).
+- New items keep their subject and sender, so cards can show them.
+- Slack channels: once your member ID is confirmed, ecf makes a private summary channel and one private channel per address, invites you, and lists them in `ecf slack status`. If your workspace doesn't let apps create channels, ecf tells you which channel to create and uses it. A channel archived or deleted in Slack is replaced within an hour.
+- `ecf address remove` now works while the address has open items: it resolves them first, with step-up when any is a payment or fraud item (OD-218), then archives the address's Slack channel.
+- New commands `ecf slack install`, `ecf slack status`, `ecf slack set-tokens`, `ecf slack set-member` and `ecf slack reauthorize`: ecf creates its own Slack app from a one-time configuration token (never kept), checks the tokens you paste with Slack before storing them in the secret store, and accepts clicks only after your member ID clicks Confirm in a DM from ecf. Replacing tokens or changing the member ID needs step-up and sends a Security Notice; `reauthorize` updates the app's permissions and then edits every card ecf posted, re-posting any that were deleted.
+- `ecf status` shows whether Slack is installed and connected, and when it last connected. Slack posts and clicks go through durable queues, so a post or a click survives a restart; clicks from anyone but you are refused and logged.
+- New command `ecf stepup test`: checks that Touch ID or your password works for ecf on this computer, changing nothing. Every step-up names exactly what it approves, shows a short code that the Mac's dialog repeats, must be used within 2 minutes, and runs one at a time; the service computes what the dialog says, never the command that asked.
+- Security: the log scrubber now works inside nested values, redacts any field named like a token, secret or password and Slack's payload fields, and removes anything shaped like a Slack token from every log line, including messages from libraries and error tracebacks; the Slack and websocket libraries can no longer write their debug output (which includes payloads) to the log.
+- New dependencies for Slack and step-up: `slack-sdk`, and on macOS `pyobjc-framework-localauthentication`, on Linux `python-pam`; all pass the license check (`python-pam` from its wheel's license file, since PyPI lists none).
+- Real-service test (Slack Socket Mode) passed: install from the manifest, private channels, custom names in threads, pins, DMs, scheduled messages, buttons and forms all work, and text from email shows literally; a click on a sleeping Mac (on AC power) is handled, but forms need it awake; results in SPEC §21.1 and §10.1.
+- Real-service test (Touch ID from the background service) passed: the service can ask for Touch ID or your password from its LaunchAgent, a prompt never succeeds on its own, and Cancel is reported as declined; results in SPEC §21.1.
+- V1.2 plan decisions (OD-206 to OD-218): email alerts move to V1.5 and approval expiry to V1.2; sends' step-up and 10-minute delay are built now and used in V1.5; `assist` becomes available with step-up; fraud and regulator escalations are never held back by the hourly cap; hiding a fraud or regulator item needs step-up and Undo never removes those labels; "Show excerpt" is visible only to you; channel membership changes are announced; `ecf backfill` records only unless `--act`; the audit log and fraud or regulator items are never pruned; `address remove` resolves open items first.
+
 ## ms-v1.1.1-fixes (2026-09-29)
 
 Fixes from an adversarial review of V1.1 (four reviewers; SPEC §5.1, §6.3, §6.4, §7.3, §8.5).

@@ -15,10 +15,10 @@ from typing import Any
 
 from ecf.errors import ConflictError, NotFoundError
 from ecf.ids import AddressId, StableId
-from ecf.status import Status
+from ecf.status import TERMINAL, Status
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import items_writer, write_tx
-from ecf_server.state_machine import TransitionContext, check_transition
+from ecf_server.state_machine import Origin, TransitionContext, check_transition
 
 
 def create_item(
@@ -95,7 +95,10 @@ def transition(
         )
         check_transition(frm, to, ctx)
         rounds = row["clarification_rounds"] + (1 if to is Status.NEEDS_CLARIFICATION else 0)
-        expiries = row["expiry_count"] + (1 if to is Status.EXPIRED else 0)
+        # only approvals count: an expired answer is already one of the two rounds (§6.2), and a
+        # shared count made a first approval expiry look like a second (V1.2 review, 2026-09-30)
+        counts = to is Status.EXPIRED and ctx.origin is Origin.APPROVAL
+        expiries = row["expiry_count"] + (1 if counts else 0)
         with items_writer("transition"):
             cur = conn.execute(
                 "UPDATE items SET status = ?, updated_at = ?, clarification_rounds = ?, "
@@ -104,6 +107,10 @@ def transition(
             )
         if cur.rowcount != 1:
             raise ConflictError("item changed concurrently")
+        if to in TERMINAL:  # closed however it happened: nothing may run from it any more
+            conn.execute("UPDATE grants SET status = 'voided' WHERE stable_id = ?"
+                         " AND status IN ('issued', 'approved')", (stable_id,))  # fmt: skip
+            conn.execute("DELETE FROM delays WHERE stable_id = ?", (stable_id,))
         _audit(
             conn,
             now,

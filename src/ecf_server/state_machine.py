@@ -46,6 +46,7 @@ class TransitionContext:
     stepup_verified: bool = False
     clarification_rounds: int = 0
     expiry_count: int = 0
+    backfill: bool = False  # a records-only backfilled item (OD-216, OD-221)
 
 
 Guard = Callable[[TransitionContext], bool]
@@ -64,7 +65,7 @@ def _answer(c: TransitionContext) -> bool:
 
 
 _TABLE: dict[Status, frozenset[Status]] = {
-    S.NEW: frozenset({S.CLASSIFIED, S.AWAITING_CLAUDE}),
+    S.NEW: frozenset({S.CLASSIFIED, S.AWAITING_CLAUDE, S.OBSERVED}),
     S.CLASSIFIED: frozenset({S.AWAITING_CLAUDE, S.PROPOSED}),
     S.AWAITING_CLAUDE: frozenset({S.CLASSIFIED, S.PROPOSED}),
     S.PROPOSED: frozenset(
@@ -74,7 +75,7 @@ _TABLE: dict[Status, frozenset[Status]] = {
     S.AWAITING_APPROVAL: frozenset(
         {S.APPROVED, S.AWAITING_STEPUP, S.REJECTED, S.EXPIRED, S.PROPOSED}
     ),
-    S.AWAITING_STEPUP: frozenset({S.APPROVED, S.CLARIFIED, S.EXPIRED}),
+    S.AWAITING_STEPUP: frozenset({S.APPROVED, S.CLARIFIED, S.EXPIRED, S.REJECTED}),
     S.APPROVED: frozenset({S.EXECUTING, S.DELAYED}),
     S.DELAYED: frozenset({S.EXECUTING, S.CANCELLED}),
     S.EXPIRED: frozenset({S.AWAITING_APPROVAL, S.NEEDS_CLARIFICATION}),
@@ -105,12 +106,16 @@ GUARDS: Mapping[tuple[Status, Status], Guard] = {
     (S.PROPOSED, S.EXECUTING): lambda c: _live(c) or (c.stage is Stage.ASSIST and c.assist_safe),
     (S.PROPOSED, S.AWAITING_APPROVAL): _live,
     (S.PROPOSED, S.OBSERVED): lambda c: c.stage is Stage.SHADOW,
+    # `ecf backfill` without --act: recorded and decided, nothing done (OD-216, OD-221)
+    (S.NEW, S.OBSERVED): lambda c: c.backfill,
     (S.PROPOSED, S.HELD): lambda c: c.stage is Stage.ASSIST,
     (S.HELD, S.PROPOSED): _live,
     (S.AWAITING_APPROVAL, S.APPROVED): lambda c: c.reversible,
     (S.AWAITING_APPROVAL, S.PROPOSED): lambda c: c.fix,
     (S.AWAITING_STEPUP, S.APPROVED): lambda c: _approval(c) and c.stepup_verified,
     (S.AWAITING_STEPUP, S.CLARIFIED): lambda c: _answer(c) and c.stepup_verified,
+    # V1.2 step 7b: an approval queued for step-up can still be rejected (never an answer)
+    (S.AWAITING_STEPUP, S.REJECTED): _approval,
     (S.APPROVED, S.EXECUTING): lambda c: not c.send_on_high,
     (S.APPROVED, S.DELAYED): lambda c: c.send_on_high,
     (S.EXPIRED, S.AWAITING_APPROVAL): _approval,

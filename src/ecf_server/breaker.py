@@ -24,6 +24,7 @@ QUIET_RESET = timedelta(minutes=30)
 class BreakerState:
     crashes: list[str] = field(default_factory=list[str])
     tripped: bool = False
+    crashed_before: bool = False  # this start follows a crash (not saved)
 
 
 def load(path: Path) -> BreakerState:
@@ -62,6 +63,7 @@ def on_start(state_path: Path, marker: Path, now: datetime) -> BreakerState:
         st.crashes = []
     if marker.exists():
         st.crashes.append(to_ts(now))
+        st.crashed_before = True
     recent = [c for c in st.crashes if now - from_ts(c) <= WINDOW]
     st.crashes = recent  # only the window matters; keeps the file small
     if len(recent) >= THRESHOLD:

@@ -40,12 +40,24 @@ class LocalClient:
         except PermissionError as exc:
             raise UnauthorizedError("can't read the CLI token file") from exc
 
-    def request(self, method: str, path: str, json: Any = None, *, auth: bool = True) -> Any:
+    def request(
+        self,
+        method: str,
+        path: str,
+        json: Any = None,
+        *,
+        auth: bool = True,
+        timeout: float | None = None,
+    ) -> Any:
         if not self.paths.socket.exists():
             raise ServiceUnavailableError(NOT_RUNNING)
         headers = {"Authorization": f"Bearer {self._token()}"} if auth else {}
         try:
-            r = self._http.request(method, path, json=json, headers=headers)
+            r = self._http.request(
+                method, path, json=json, headers=headers, timeout=timeout or TIMEOUT_S
+            )
+        except httpx.TimeoutException as exc:
+            raise ServiceUnavailableError("the service didn't answer in time") from exc
         except httpx.TransportError as exc:
             raise ServiceUnavailableError(NOT_RUNNING) from exc
         if r.is_success:

@@ -13,8 +13,11 @@ dependencies = [
     "imapclient>=3.0",
     "keyring>=25",
     "pydantic>=2.8",
+    "pyobjc-framework-localauthentication>=12 ; sys_platform == 'darwin'",
     "pyobjc-framework-security>=10 ; sys_platform == 'darwin'",
+    "python-pam>=2.0 ; sys_platform == 'linux'",
     "ruamel-yaml>=0.18",
+    "slack-sdk>=3.44",
     "starlette>=0.40",
     "structlog>=24.4",
     "typer>=0.12",
@@ -90,9 +93,16 @@ markers = [
 
 [tool.importlinter]
 root_packages = ["ecf", "ecf_server"]
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "The client (ecf) never imports the service (ecf_server)"
 type = "forbidden"
 source_modules = ["ecf"]
 forbidden_modules = ["ecf_server"]
+
+[[tool.importlinter.contracts]]
+name = "The client (ecf) never imports Slack, LocalAuthentication or PAM (V1.2 security review)"
+type = "forbidden"
+source_modules = ["ecf"]
+forbidden_modules = ["slack_sdk", "LocalAuthentication", "pam"]

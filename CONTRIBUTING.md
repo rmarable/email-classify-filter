@@ -11,6 +11,9 @@ rule and the commit rules are in `CLAUDE.md`.
 - A container engine for the IMAP tests (a Dovecot container, OD-186): on macOS
   `brew install colima docker && brew services start colima`; on Linux, Docker Engine. Without one,
   the `imap` tests are skipped locally (they always run in CI).
+- On macOS, GNU sed as `gsed` (`brew install gnu-sed`) for scripted edits: the built-in BSD sed
+  doesn't accept GNU syntax such as `\|` alternation or `sed -i` without a suffix argument.
+  Nothing in the build or tests calls sed; Linux's sed is already GNU sed.
 
 ## Set up
 
@@ -144,7 +147,7 @@ Runtime dependencies (generated 2026-09-28):
 | `jaraco-classes` | 3.4.0 | MIT | all platforms |
 | `jaraco-context` | 6.1.2 | MIT | all platforms |
 | `jaraco-functools` | 4.6.0 | MIT | all platforms |
-| `jeepney` | 0.9.0 | MIT | Linux |
+| `jeepney` | 0.9.0 | MIT | Linux (via `keyring`) |
 | `keyring` | 25.7.0 | MIT | all platforms |
 | `markdown-it-py` | 4.2.0 | MIT | all platforms |
 | `mdurl` | 0.1.2 | MIT | all platforms |

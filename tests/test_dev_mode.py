@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ecf.paths import Paths, paths_for
-from ecf_server.chat import FakeChat
+from ecf_server.chat import Card, FakeChat, RouteRef
 
 from .conftest import spawn, stop, uds_client, wait_answering
 
@@ -79,8 +79,8 @@ def test_ecf_socket_steers_clients_only(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 def test_fake_chat_records() -> None:
     chat = FakeChat()
-    ref = chat.post("summary", "hello")
-    assert chat.posts == [{"ref": ref, "route": "summary", "text": "hello"}]
+    ref = chat.post(RouteRef("summary"), Card("hello"))
+    assert [p["card"]["title"] for p in chat.posts] == ["hello"] and ref.route.channel == "summary"
     chat.clear()
     assert chat.posts == []
 

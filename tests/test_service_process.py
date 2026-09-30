@@ -1,13 +1,17 @@
 """Runs the real `ecf-server local` process in a short /tmp folder (socket path limits)."""
 
 import os
+import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any, cast
 
 from ecf.paths import Paths
+from ecf_server.service import Service
 
 from .conftest import spawn, start_service, stop, uds_client, wait_answering
 
@@ -135,3 +139,33 @@ def test_service_files_are_private(home: Path) -> None:
             assert stat.S_IMODE(f.stat().st_mode) == 0o600, f
     finally:
         stop(proc)
+
+
+def test_two_sigterms_at_once_still_stop_the_service(home: Path) -> None:
+    """Found 2026-09-29: the handler set the stop Event, which can deadlock when the signal lands
+    while the main thread holds the Event's lock inside `stop.wait`; two SIGTERMs (a `pkill` plus
+    the one `uv run` forwards) left a dev service hung."""
+    p = Paths("t", home)
+    proc = start_service(home)
+    wait_answering(p, proc)
+    for _ in range(3):
+        proc.send_signal(signal.SIGTERM)
+    assert proc.wait(30) == 0
+
+
+def test_the_signal_handler_takes_no_lock(tmp_path: Path) -> None:
+    """Deterministic form of the above: the handler runs while the stop Event's lock is held."""
+    svc = Service(Paths("t", tmp_path))
+    done = threading.Event()
+
+    def handler_while_locked() -> None:
+        cond: Any = cast("Any", svc.stop)._cond  # the Event's lock, held inside stop.wait
+        with cond:
+            svc._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+        done.set()
+
+    t = threading.Thread(target=handler_while_locked, daemon=True)
+    t.start()
+    assert done.wait(5), "the signal handler blocked on the stop Event's lock"
+    assert svc._signalled == signal.SIGTERM  # pyright: ignore[reportPrivateUsage]
+    assert not svc.stop.is_set()  # the main loop sets it, outside the handler

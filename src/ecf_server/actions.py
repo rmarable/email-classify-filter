@@ -7,7 +7,7 @@ shadow until they go live (OD-189). Every execution:
 - runs under a single-use grant bound to the item, its content hash and the action set, consumed
   by a conditional update (§6.4); pre-check actions change no item status (§5.4);
 - is audited (`action.granted`, `action.executed`, `action.undone`).
-Escalations are recorded for Slack, which arrives in V1.2.
+Escalations are recorded here and posted to Slack by `escalations.py`.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def execute(
                 src.set_flagged(uid, True)
                 done.append("flag")
             elif a.name == "escalate":
-                done.append("escalate (Slack arrives in V1.2)")
+                done.append("escalate")
     except Exception as exc:
         with write_tx(conn):
             _audit(

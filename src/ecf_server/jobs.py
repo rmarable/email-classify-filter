@@ -25,6 +25,7 @@ CLAIM_FACTOR = 6
 class Queue(StrEnum):
     ACTIONS = "actions"
     SLACK_OUT = "slack_out"
+    SLACK_IN = "slack_in"  # clicks and form submissions (migration 0012)
     FETCH = "fetch"
     MODEL = "model"
 
@@ -156,6 +157,21 @@ def fail(conn: sqlite3.Connection, clock: Clock, job_id: JobId, worker: str, err
             (state, visible, error[:500], job_id),
         )
     return state
+
+
+def hold(
+    conn: sqlite3.Connection, clock: Clock, job_id: JobId, worker: str, delay_s: int, why: str
+) -> None:
+    """Put a claimed job back to wait `delay_s`, without counting the attempt: for failures that
+    aren't the job's fault (Slack unreachable, a revoked token), so it is held, never dead-lettered
+    (SPEC §10.1; V1.2 step 3)."""
+    with write_tx(conn):
+        _owned(conn, job_id, worker)
+        conn.execute(
+            "UPDATE jobs SET state = 'queued', attempts = max(attempts - 1, 0), visible_at = ?,"
+            " claimed_by = NULL, claim_expires = NULL, last_error = ? WHERE job_id = ?",
+            (to_ts(clock.now() + timedelta(seconds=delay_s)), why[:500], job_id),
+        )
 
 
 def _owned(conn: sqlite3.Connection, job_id: JobId, worker: str) -> sqlite3.Row:

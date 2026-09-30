@@ -292,3 +292,14 @@ def test_bare_cr_in_headers_is_a_fraud_trigger() -> None:
     raw = mail("hi").replace(b"Subject:", b"X-Note: a\rReply-To: x@evil.test\r\nSubject:", 1)
     assert parse(raw).headers_ambiguous
     assert "bare CR in the headers: parsers may disagree on them" in fire("", raw=raw).fraud
+
+
+def test_the_reason_names_only_what_held() -> None:
+    """The card's "Why:" said the whole rule (V1.2 shadow run, 2026-09-30)."""
+    t = fire("Our bank account details have changed; the new account number is below.",
+             sender_confirmed=False)  # fmt: skip
+    assert t.fraud[0] == "bank details with a sender you haven't confirmed and change wording"
+    known = fire(
+        "Our bank account details are below.", sender_confirmed=True, reply_to_mismatch=True
+    )
+    assert known.fraud[0] == "bank details with a Reply-To mismatch"

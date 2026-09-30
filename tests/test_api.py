@@ -39,6 +39,7 @@ def test_status_needs_the_token() -> None:
     r = get("/v1/status", AUTH)
     assert r.status_code == 200
     assert body(r)["install"] == "t" and body(r)["api_version"] == 1
+    assert body(r)["slack"] == {"installed": False}
 
 
 def test_unknown_route_is_problem_json() -> None:
@@ -83,3 +84,10 @@ def test_non_ascii_token_is_401_not_500() -> None:
 
 def test_tokens_are_not_in_repr() -> None:
     assert "secret-token" not in repr(STATE)
+
+
+def test_pasted_tokens_lose_surrounding_spaces() -> None:
+    """A copied token often brings a space or line break (V1.2 shadow run, 2026-09-30)."""
+    from ecf_server.api import _token  # noqa: PLC0415  # pyright: ignore[reportPrivateUsage]
+
+    assert _token({"bot_token": "  xoxb-1-2\n"}, "bot_token") == "xoxb-1-2"

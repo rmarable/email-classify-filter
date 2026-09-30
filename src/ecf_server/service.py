@@ -28,7 +28,21 @@ import uvicorn
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import audit, breaker, checks, db, health, jobs, schedule
+from ecf_server import (
+    alerts,
+    answers,
+    approvals,
+    audit,
+    breaker,
+    checks,
+    db,
+    execute,
+    health,
+    jobs,
+    needs_you,
+    retention,
+    schedule,
+)
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -48,10 +62,15 @@ from ecf_server.secretstore.select import (
     open_store,
     record_interpreter,
 )
+from ecf_server.slack_runtime import SlackRuntime
+from ecf_server.stepper import FakeStepper, host_stepper
 
 TICK_SECONDS = 60
 WORKER = "checks"
 WATCHDOG_SECONDS = 300
+SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
+TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
+ACTIONS_PER_TICK = 20
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
@@ -131,8 +150,10 @@ class Service:
         self.clock = clock or SystemClock()
         self.opts = opts or Options()
         self.stop = threading.Event()
+        self._signalled: int | None = None  # set by the signal handler, read by the main loop
         self.exit_code = EXIT_OK
         self._last_tick_mono = self.clock.monotonic()
+        self._last_tick_wall = self.clock.now()
         self.dev = dev
         self.secrets: SecretStore | None = MemorySecretStore() if dev else None
         self.state = ServiceState(
@@ -147,11 +168,15 @@ class Service:
             self.tick()
 
     def tick(self) -> None:
-        self._last_tick_mono = self.clock.monotonic()
-        self.state.last_tick_at = to_ts(self.clock.now())
+        mono, wall = self.clock.monotonic(), self.clock.now()
+        awake = mono - self._last_tick_mono  # the monotonic clock stops during sleep (§5.5)
+        slept = (wall - self._last_tick_wall).total_seconds() - awake > SLEEP_GAP_S
+        self._last_tick_mono, self._last_tick_wall = mono, wall
+        self.state.last_tick_at = to_ts(wall)
         self.state.ticks += 1
         if self.state.db_path is None:
             return
+        ok = True
         try:
             conn = db.connect(self.state.db_path)
             try:
@@ -161,7 +186,49 @@ class Service:
             finally:
                 conn.close()
         except Exception as exc:  # a scheduling failure must never stop the timer
-            log.error("schedule.tick_failed", error_type=type(exc).__name__)
+            ok = self._tick_failed("schedule.tick_failed", exc)
+        if not self._approvals(awake, woke=slept):
+            ok = False
+        if ok:
+            self.state.tick_failures, self.state.tick_error = 0, None
+
+    def _tick_failed(self, event: str, exc: Exception) -> bool:
+        """Log (a SQLite error's own text is safe: no mail content) and count; after
+        TICK_ALERT_AFTER failing ticks in a row tell the desktop, once (V1.2 review: a tick that
+        kept failing looked fine in doctor)."""
+        detail = str(exc)[:200] if isinstance(exc, sqlite3.Error) else ""
+        log.error(event, error_type=type(exc).__name__, detail=detail)
+        self.state.tick_failures += 1
+        self.state.tick_error = f"{type(exc).__name__} {detail}".strip()
+        if self.state.tick_failures == TICK_ALERT_AFTER:
+            text = (f"ecf's timer work keeps failing ({self.state.tick_error}); approvals, delays"
+                    " and retention wait. Details: ecf logs")  # fmt: skip
+            self.state.notifier.notify(alerts.title("system_error"), text)
+        return False
+
+    def _approvals(self, awake: float, *, woke: bool) -> bool:
+        """Expire approvals, count down delayed sends and run approved actions (§9.5; V1.2 step
+        7b). V1.3 moves the runner into the checks worker, which holds the address lease."""
+        if self.state.db_path is None:
+            return True
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                approvals.expire(conn, self.clock)
+                answers.expire(conn, self.clock)
+                needs_you.mark_stale(conn, self.clock)
+                if retention.due(conn, self.clock):  # once a day (§6.5)
+                    retention.run(conn, self.clock)
+                alerts.dead_jobs(conn, self.clock, self.state.notifier)
+                approvals.advance_delays(conn, self.clock, awake, woke=woke)
+                for _ in range(ACTIONS_PER_TICK):
+                    if not execute.run_once(conn, self.clock, self.state.executor):
+                        break
+            finally:
+                conn.close()
+        except Exception as exc:  # never stops the timer; retried next tick
+            return self._tick_failed("approvals.tick_failed", exc)
+        return True
 
     def _final_flush(self) -> None:
         """Copy the last audit rows to the files before exiting."""
@@ -175,6 +242,40 @@ class Service:
                 conn.close()
         except Exception as exc:  # the rows stay in the table; the next start copies them
             log.error("audit.flush_failed", error_type=type(exc).__name__)
+
+    def _report_restart(self, crashes: int) -> None:
+        """System Error: this start follows a crash (Slack and desktop, §11.1)."""
+        try:
+            conn = db.connect(self.paths.db)
+            try:
+                alerts.event(conn, self.clock, self.state.notifier, "system_error",
+                             f"ecf restarted after a crash ({crashes} in the last 10 minutes; "
+                             "5 stop it). Details: ecf logs.")  # fmt: skip
+            finally:
+                conn.close()
+        except Exception as exc:  # reporting must never stop the start
+            log.error("service.restart_report_failed", error_type=type(exc).__name__)
+
+    def _report_trip(self, crashes: int) -> None:
+        """The breaker tripped: the service is about to exit, so nothing will send a queued post.
+        Tell the desktop, and Slack directly (best effort, §11.1)."""
+        text = (f"ecf stopped after {crashes} crashes in 10 minutes and stays stopped."
+                " Run `ecf service start` after checking `ecf logs`.")  # fmt: skip
+        if self.dev:
+            return
+        try:
+            host_notifier().notify(alerts.title("system_error"), text)
+            if sys.platform == "darwin":
+                set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+            store = open_store(self.paths.install, self.paths.data_dir, interactive=False,
+                               probe=host_probe())  # fmt: skip
+            conn = db.connect(self.paths.db)
+            try:
+                alerts.post_now(conn, store, alerts.title("system_error"), text)
+            finally:
+                conn.close()
+        except Exception as exc:  # the service is stopping either way
+            log.error("service.trip_report_failed", error_type=type(exc).__name__)
 
     def _notifier(self) -> Notifier:
         """Desktop notifications (OD-190): none in dev mode or with `notifications: off`."""
@@ -243,8 +344,11 @@ class Service:
         return self.clock.monotonic() - self._last_tick_mono > self.opts.watchdog_seconds
 
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
-        log.info("service.signal", signal=signal.Signals(signum).name)
-        self.stop.set()
+        """Only records the signal: the main loop logs it and sets `stop` within a second. Setting
+        an Event or logging here can deadlock, since the handler runs on the main thread, which
+        may be holding the Event's lock inside `stop.wait` (found 2026-09-29 when two SIGTERMs
+        arrived together; the service never stopped)."""
+        self._signalled = signum
 
     def _secret_store_report(self, conn: sqlite3.Connection) -> dict[str, object]:
         try:
@@ -293,19 +397,8 @@ class Service:
                 except ServiceUnavailableError as exc:
                     self.state.secret_store["detail"] = exc.detail
 
-    def _run_locked(self) -> int:
-        st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
-        self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
-        if st.tripped:
-            log.error("service.breaker_tripped", crashes=len(st.crashes))
-            sys.stderr.write(
-                "ecf-server: stopped after repeated crashes; run `ecf service start`\n"
-            )
-            breaker.mark_clean_exit(self.paths.running_marker)
-            return EXIT_OK  # exit 0 so launchd/systemd don't restart it
-        breaker.mark_running(self.paths.running_marker)
-        if sys.platform == "darwin" and not self.dev:
-            set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+    def _open_state(self) -> list[str]:
+        """Migrate the database and fill the shared service state; returns migrations applied."""
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
         _clear_stale(conn)
@@ -313,11 +406,14 @@ class Service:
         conn.close()
         self.state.db_path = self.paths.db
         self.state.notifier = self._notifier()
+        # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
+        self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
-        self.state.token = write_token(self.paths)
-        sock = bind_socket(self.paths)
-        server = uvicorn.Server(
+        return applied
+
+    def _api_server(self) -> uvicorn.Server:
+        return uvicorn.Server(
             uvicorn.Config(
                 create_app(self.state),
                 uds=str(self.paths.socket),
@@ -326,29 +422,74 @@ class Service:
                 access_log=False,
             )
         )
+
+    def _slack_runtime(self) -> tuple[SlackRuntime, threading.Thread]:
+        slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store,
+                             install=self.paths.install)  # fmt: skip
+        self.state.slack = slack.status  # the same dict: status shows it live
+        self.state.slack_reload = slack.reload
+        approvals.desktop = self.state.notifier  # Slack clicks queued for step-up notify here
+        thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
+        return slack, thread
+
+    def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
+              slack: threading.Thread) -> None:  # fmt: skip
+        web.join(STOP_TIMEOUT)
+        timer.join(STOP_TIMEOUT)
+        self.work.set()  # wake the checks worker so it sees the stop
+        worker.join(STOP_TIMEOUT)
+        if slack.is_alive():  # never started in dev mode
+            slack.join(STOP_TIMEOUT)
+
+    def _run_locked(self) -> int:
+        st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
+        self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
+        if st.tripped:
+            log.error("service.breaker_tripped", crashes=len(st.crashes))
+            self._report_trip(len(st.crashes))
+            sys.stderr.write(
+                "ecf-server: stopped after repeated crashes; run `ecf service start`\n"
+            )
+            breaker.mark_clean_exit(self.paths.running_marker)
+            return EXIT_OK  # exit 0 so launchd/systemd don't restart it
+        breaker.mark_running(self.paths.running_marker)
+        if sys.platform == "darwin" and not self.dev:
+            set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+        applied = self._open_state()
+        if st.crashed_before:
+            self._report_restart(len(st.crashes))
+        self.state.token = write_token(self.paths)
+        sock = bind_socket(self.paths)
+        server = self._api_server()
         web = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
         worker = threading.Thread(target=self._checks, name="checks", daemon=True)
+        slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
+        self._last_tick_wall = self.clock.now()
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
         timer.start()
         worker.start()
+        if not self.dev:  # dev mode has no Slack; its chat is the recording fake
+            slack_thread.start()
         self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
         while not self.stop.wait(1.0):
-            if self.watchdog_expired():
+            if self._signalled is not None:
+                log.info("service.signal", signal=signal.Signals(self._signalled).name)
+                self.stop.set()
+            elif self.watchdog_expired():
                 log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
                 self.exit_code = EXIT_CRASH
                 self.stop.set()
         server.should_exit = True
-        web.join(STOP_TIMEOUT)
-        timer.join(STOP_TIMEOUT)
-        self.work.set()
-        worker.join(STOP_TIMEOUT)
+        self._join(web, timer, worker, slack_thread)
+        # only a stop you asked for disarms the dead-man's switch (OD-222)
+        slack.close(clean_stop=self.exit_code == EXIT_OK and self.state.stopping_on_purpose)
         self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):

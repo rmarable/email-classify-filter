@@ -15,6 +15,10 @@ from urllib.parse import urlencode
 import typer
 
 from ecf import __version__
+from ecf.cli_admin import make_commands as make_admin_commands
+from ecf.cli_init import make_commands as make_init_commands
+from ecf.cli_items import make_commands as make_item_commands
+from ecf.cli_slack import make_app as make_slack_app
 from ecf.client import LocalClient
 from ecf.doctor import Level, run_checks
 from ecf.errors import EcfError
@@ -24,6 +28,7 @@ from ecf.paths import Paths, paths_for
 from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 from ecf.status import CHECK_FAILED
+from ecf.stepup import step_up, with_step_up
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -32,6 +37,10 @@ eval_app = typer.Typer(no_args_is_help=True, help="Synthetic eval set and result
 app.add_typer(eval_app, name="eval")
 address_app = typer.Typer(no_args_is_help=True, help="Monitored mailboxes.")
 app.add_typer(address_app, name="address")
+stepup_app = typer.Typer(
+    no_args_is_help=True, help="Confirm actions with Touch ID or your password."
+)
+app.add_typer(stepup_app, name="stepup")
 EVAL_ROOT = Path("tests/eval/synthetic")
 
 
@@ -60,6 +69,48 @@ def root(
 
 def _paths() -> Paths:
     return paths_for(STATE.install)
+
+
+app.add_typer(make_slack_app(_paths), name="slack")
+app.add_typer(make_item_commands(app, _paths), name="item")
+make_admin_commands(app, _paths)
+alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
+app.add_typer(alerts_app, name="alerts")
+
+
+@alerts_app.command("show")
+def alerts_show() -> None:
+    """Where each class of alert goes."""
+    with LocalClient(_paths()) as c:
+        r = c.get("/v1/alerts")
+    typer.echo(f"default: {', '.join(r['default'])} (desktop notifications: {r['desktop']})")
+    for cls, routes in r["classes"].items():
+        typer.echo(f"{cls:<9} {', '.join(routes) or 'desktop only'}")
+
+
+@alerts_app.command("set")
+def alerts_set(
+    to: Annotated[str, typer.Option("--to", help="slack (email arrives in V1.5).")],
+    cls: Annotated[
+        str | None, typer.Argument(help="mail, system or operator (all when left out).")
+    ] = None,
+) -> None:
+    """Change where alerts go. (step-up)"""
+    body: dict[str, Any] = {"class": cls, "to": [t for t in to.split(",") if t.strip()]}
+    with LocalClient(_paths()) as c:
+        with_step_up(c, lambda n: c.request("POST", "/v1/alerts", body | {"nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo("changed; a Security Notice says so in Slack")
+
+
+@alerts_app.command("test")
+def alerts_test() -> None:
+    """Send a test alert on every route."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/alerts/test")
+    where = [("slack (queued: it posts within a minute)" if w == "slack" else w)
+             for w in r["sent"]]  # fmt: skip
+    typer.echo(f"sent to: {', '.join(where) or 'nowhere (desktop off, no Slack)'}")
 
 
 @app.command()
@@ -91,6 +142,12 @@ def status() -> None:
         f"secrets:   {ss.get('backend') or 'none usable'}"
         + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
     )
+    sl = st.get("slack", {})
+    if not sl.get("installed"):
+        typer.echo("slack:     not installed (`ecf slack install`)")
+    else:
+        state = "connected" if sl.get("connected") else "NOT connected"
+        typer.echo(f"slack:     {state}; last connected {sl.get('last_connected_at') or 'never'}")
     for a in st.get("addresses", []):
         last = a["last_finished_at"] or "never checked"
         line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"
@@ -146,7 +203,7 @@ def check(
 def _check_line(r: dict[str, Any]) -> str:
     who = f"{r['address_id']:<16}"
     if r["status"] == "first_run":
-        return f"{who} first check: started from now (older mail isn't fetched)"
+        return f"{who} first check: started from now (older mail: `ecf backfill`)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
 
@@ -163,11 +220,64 @@ def _check_line(r: dict[str, Any]) -> str:
         ("relocated", "re-found after a mailbox reset"),
         ("resolved_by_mailbox", "closed (left INBOX)"),
         ("remaining", "still waiting"),
+        ("backfill_created", "backfilled"),
+        ("backfill_remaining", "older still to backfill"),
     ):
         if r.get(key):
             parts.append(f"{r[key]} {label}")
     prefix = "mailbox reset recovered: " if r["status"] == "reset_recovered" else ""
     return f"{who} {prefix}" + ", ".join(parts)
+
+
+@app.command()
+def backfill(
+    address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
+    since: Annotated[
+        str | None, typer.Option("--since", help="Read mail that arrived since this date.")
+    ] = None,
+    act: Annotated[
+        bool, typer.Option("--act", help="Label, flag and escalate as for new mail.")
+    ] = False,
+    stop: Annotated[bool, typer.Option("--stop", help="End a running backfill.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Don't ask before --act.")] = False,
+) -> None:
+    """Read older mail (records only unless --act); with no address, show each backfill."""
+    with LocalClient(_paths()) as c:
+        if address is None:
+            _backfill_status(c.get("/v1/backfill")["running"])
+            return
+        if stop:
+            r = c.request("POST", "/v1/backfill/stop", {"address_id": address})
+            typer.echo(f"stopped the backfill of {r['address_id']}; {r['items']} read so far stay")
+            return
+        if since is None:
+            raise typer.BadParameter("add --since <date>, e.g. --since 2026-09-01")
+        if act and not yes:
+            stage = next((s["stage"] for s in c.get("/v1/stages")["addresses"]
+                          if address in (s["address_id"], s.get("email"))), "?")  # fmt: skip
+            typer.echo(f"--act runs the pre-check on every email since {since} as on new mail;"
+                       f" {address} is in {stage} (shadow does nothing, assist labels and flags),"
+                       " and escalations post to Slack.")  # fmt: skip
+            if not typer.confirm("Go ahead?", default=False):
+                raise typer.Exit(1)
+        r = c.request("POST", "/v1/backfill", {"address_id": address, "since": since, "act": act})
+    how = "labels, flags and escalations as for new mail" if r["act"] else (
+        "records only: nothing is done to the mailbox or escalated")  # fmt: skip
+    typer.echo(f"backfill of {r['address_id']} since {r['since']} started ({how}); it runs with"
+               " the checks, new mail first. Progress: ecf backfill; to end it:"
+               f" ecf backfill {r['address_id']} --stop")  # fmt: skip
+
+
+def _backfill_status(rows: list[dict[str, Any]]) -> None:
+    for r in rows:
+        how = "acting" if r["act"] else "records only"
+        fraud = (f", {r['fraud']} with a fraud signal (ecf logs --address {r['address_id']}"
+                 " --event precheck)") if r.get("fraud") else ""  # fmt: skip
+        when = "" if r["outcome"] == "running" else f" at {r['at'][:16]}"
+        typer.echo(f"{r['address_id']:<16} since {r['since']} ({how}): {r['outcome']}{when},"
+                   f" {r['items']} read{fraud}")  # fmt: skip
+    if not rows:
+        typer.echo("no backfill yet")
 
 
 @app.command()
@@ -243,10 +353,22 @@ def service_install() -> None:
     typer.echo(f"installed {m.unit_path}")
 
 
+def _stopping_on_purpose() -> None:
+    """Tell the service this stop is deliberate, so it removes the dead-man's message; a shutdown
+    or logout leaves it armed (OD-222). Best effort: a service that isn't answering has nothing
+    to disarm now."""
+    try:
+        with LocalClient(_paths()) as c:
+            c.request("POST", "/v1/service/stopping", {})
+    except EcfError:
+        pass
+
+
 @service_app.command("uninstall")
 def service_uninstall() -> None:
     """Stop the service and remove its unit. Data is kept (use `ecf destroy` to remove it)."""
     m = manager_for(_paths())
+    _stopping_on_purpose()
     m.uninstall()
     typer.echo(f"removed {m.unit_path}")
 
@@ -261,6 +383,7 @@ def service_start() -> None:
 @service_app.command("stop")
 def service_stop() -> None:
     """Stop the service until the next login."""
+    _stopping_on_purpose()
     manager_for(_paths()).stop()
     typer.echo("stopped until your next login; use `ecf pause` to keep fraud checks running")
 
@@ -321,41 +444,63 @@ def address_add(
     """Add a mailbox: checks the app password by logging in, then stores it in the OS secret
     store. It starts in shadow (watch only) with outbound off. Needs a real terminal."""
     require_terminal()
-    paths = _paths()
-    with LocalClient(paths) as c:
-        current = c.get("/v1/addresses")
-        if sensitivity is None:
-            suggestion = _suggest_sensitivity(email)
-            sensitivity = typer.prompt(
-                "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
-            )
-        if preset is None:
-            preset = typer.prompt(
-                "Preset (A all-local, B local + Claude, C all-Claude)", default="A"
-            )
-        body: dict[str, object] = {
-            "email": email,
-            "imap_host": imap_host,
-            "sensitivity": sensitivity,
-            "preset": (preset or "").upper(),
-        }
-        if address_id:
-            body["address_id"] = address_id
-        if not current["org_domains"]:
-            domain = email.rsplit("@", 1)[-1].lower()
-            typer.echo(
-                "Your organization's domains decide which senders count as internal "
-                "(changing them later is `ecf config apply`, V1.2)."
-            )
-            answer = typer.prompt("Organization domains, comma-separated", default=domain)
-            body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
-        body["app_password"] = hidden(f"App password for {email} (hidden): ")
-        a = c.request("POST", "/v1/addresses", body)
+    with LocalClient(_paths()) as c:
+        add_address(c, email, imap_host, sensitivity, preset, address_id)
+
+
+PRESET_NOTES = {
+    "B": "Preset B: Claude acts only when you run /ecf-review (V1.4). The local fallback for items"
+    " waiting on Claude (claude_queue_timeout) is off.",
+    "C": "Preset C: every message waits for /ecf-review (V1.4) and uses your Claude plan. The"
+    " local fallback (claude_queue_timeout) is off.",
+}
+
+
+def add_address(
+    c: LocalClient,
+    email: str,
+    imap_host: str,
+    sensitivity: str | None,
+    preset: str | None,
+    address_id: str | None,
+) -> dict[str, Any]:
+    """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
+    current = c.get("/v1/addresses")
+    if sensitivity is None:
+        suggestion = _suggest_sensitivity(email)
+        sensitivity = typer.prompt(
+            "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
+        )
+    if preset is None:
+        preset = typer.prompt("Preset (A all-local, B local + Claude, C all-Claude)", default="A")
+    body: dict[str, object] = {
+        "email": email,
+        "imap_host": imap_host,
+        "sensitivity": sensitivity,
+        "preset": (preset or "").upper(),
+    }
+    if address_id:
+        body["address_id"] = address_id
+    if not current["org_domains"]:
+        domain = email.rsplit("@", 1)[-1].lower()
+        typer.echo(
+            "Your organization's domains decide which senders count as internal "
+            "(change them later with `ecf config apply`)."
+        )
+        answer = typer.prompt("Organization domains, comma-separated", default=domain)
+        body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
+    if body["preset"] in PRESET_NOTES:
+        typer.echo(PRESET_NOTES[str(body["preset"])])
+    body["app_password"] = hidden(f"App password for {email} (hidden): ")
+    a: dict[str, Any] = c.request("POST", "/v1/addresses", body)
     typer.echo(
         f"added {a['email']} as {a['address_id']!r}: {a['sensitivity']}, preset "
         f"{a['preset']}, stage {a['stage']}, outbound off"
     )
     _echo_probe(a)
+    if a.get("slack_channel"):
+        typer.echo(f"Slack: private channel {a['slack_channel']} is created within a minute")
+    return a
 
 
 def _mb(size: int) -> str:
@@ -420,6 +565,14 @@ def address_set(
     _echo_probe(a)
 
 
+@stepup_app.command("test")
+def stepup_test() -> None:
+    """Check that step-up works on this computer. Changes nothing. (step-up)"""
+    with LocalClient(_paths()) as c:
+        step_up(c, "test", {"label": "ecf stepup test"}, echo=typer.echo)
+    typer.echo("step-up works: the service checked it's you")
+
+
 @address_app.command("retry")
 def address_retry(address: Annotated[str, typer.Argument(help="Address id or email.")]) -> None:
     """Check a mailbox at the next minute, even while rejected logins retry only hourly."""
@@ -442,12 +595,18 @@ def address_remove(address: Annotated[str, typer.Argument(help="Address id or em
         )
         if target is None:
             raise typer.BadParameter(f"no address {address!r}")
+        typer.echo("Its open items are resolved first (step-up if any is payment or fraud).")
         typed = typer.prompt(f"Type {target['email']} to remove it")
         if typed.strip().lower() != target["email"].lower():
             typer.echo("not removed")
             raise typer.Exit(1)
-        a = c.request("DELETE", f"/v1/addresses/{target['address_id']}")
-    typer.echo(f"removed {a['email']}. Left for you to do:")
+        path = f"/v1/addresses/{target['address_id']}"
+        a = with_step_up(c, lambda n: c.request("DELETE", path, {"stepup_nonce": n}),
+                         echo=typer.echo)  # fmt: skip
+    typer.echo(f"removed {a['email']}; resolved {a['resolved']} open item(s).")
+    if a.get("slack_channel_archived"):
+        typer.echo(f"Slack channel {a['slack_channel_archived']} will be archived.")
+    typer.echo("Left for you to do:")
     for line in a["residue"]:
         typer.echo(f"  - {line}")
 
@@ -534,3 +693,6 @@ def main() -> None:
     except EcfError as exc:
         sys.stderr.write(f"ecf: {exc.detail}\n")
         raise SystemExit(int(exc.exit_code)) from exc
+
+
+make_init_commands(app, _paths, add_address)  # after add_address, which `ecf init` reuses

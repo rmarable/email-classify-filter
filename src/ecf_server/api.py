@@ -39,12 +39,39 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
-from ecf_server import addresses, audit, checks, db, health
+from ecf_server import (
+    _slack,
+    addresses,
+    alerts,
+    answers,
+    approvals,
+    audit,
+    backfill,
+    checks,
+    config,
+    db,
+    digests,
+    execute,
+    health,
+    inbox,
+    initsetup,
+    pause,
+    retention,
+    ruletest,
+    senders,
+    settings,
+    slack_admin,
+    slack_doctor,
+    slack_routes,
+    stages,
+    stepup,
+)
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
+from ecf_server.stepper import Stepper
 
 API_VERSION = 1
 
@@ -78,6 +105,9 @@ class ServiceState:
     started_at: str
     last_tick_at: str | None = None
     ticks: int = 0
+    tick_failures: int = 0  # consecutive ticks whose work failed (V1.2 review)
+    stopping_on_purpose: bool = False  # `ecf service stop|uninstall` said so (OD-222)
+    tick_error: str | None = None
     breaker: dict[str, Any] = field(default_factory=dict[str, Any])
     secret_store: dict[str, Any] = field(default_factory=dict[str, Any])
     pid: int = field(default_factory=os.getpid)
@@ -90,6 +120,11 @@ class ServiceState:
     secrets: SecretStore | None = field(default=None, repr=False)
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
+    stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
+    slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
+    slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
+    slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -159,11 +194,14 @@ def create_app(state: ServiceState) -> Starlette:
                 "pid": state.pid,
                 "started_at": state.started_at,
                 "last_tick_at": state.last_tick_at,
+                "tick_failures": state.tick_failures,
+                "tick_error": state.tick_error,
                 "ticks": state.ticks,
                 "breaker": state.breaker,
                 "secret_store": state.secret_store,
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
+                "slack": dict(state.slack),
             }
         )
 
@@ -233,6 +271,16 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/sessions/{session_id}", delete_session, methods=["DELETE"]),
             *_address_routes(state, allow),
             *_check_routes(state, allow),
+            *_stepup_routes(state, allow),
+            *_slack_routes(state, allow),
+            *_item_routes(state, allow),
+            *_pause_routes(state, allow),
+            *_alert_routes(state, allow),
+            *_stage_routes(state, allow),
+            *_config_routes(state, allow),
+            *_sender_routes(state, allow),
+            *_data_routes(state, allow),
+            *_setup_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -305,6 +353,574 @@ def _check_lines(
             if not r.more:
                 break
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+
+
+def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.6, §15.1: CLI only, never an MCP profile token (V1.2 step 2)."""
+
+    @allow(Caller.CLI)
+    def issue(request: Request) -> JSONResponse:
+        body = _body(request)
+        name, target = body.get("purpose"), body.get("target", {})
+        if not isinstance(name, str) or not isinstance(target, dict):
+            raise InvalidInputError("purpose (text) and target (object) are required")
+        conn = state.connect()
+        try:
+            i = stepup.issue(conn, state.clock, state.stepper, name, cast(dict[str, Any], target))
+        finally:
+            conn.close()
+        return JSONResponse(
+            {
+                "nonce_id": i.nonce_id,
+                "code": i.code,
+                "prompt_text": i.prompt,
+                "expires_at": i.expires_at,
+                "needs_password": i.needs_password,
+            }
+        )
+
+    @allow(Caller.CLI)
+    def verify(request: Request) -> JSONResponse:
+        nonce = request.path_params["nonce"]
+        password = _body(request).get("password")
+        if password is not None and not isinstance(password, str):
+            raise InvalidInputError("password must be text")
+        conn = state.connect()
+        try:  # the OS dialog is up for up to a minute; no transaction is held meanwhile
+            outcome = stepup.verify(conn, state.clock, state.stepper, nonce, password=password)
+        finally:
+            conn.close()
+        return JSONResponse({"verified": outcome == "verified", "outcome": outcome})
+
+    return [
+        Route("/v1/stepup/nonces", issue, methods=["POST"]),
+        Route("/v1/stepup/{nonce}/verify", verify, methods=["POST"]),
+    ]
+
+
+def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1 (V1.2 step 7a). Item routes carry email metadata: CLI only, except counts."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI, Caller.WORK)
+    def counts(request: Request) -> JSONResponse:
+        aid = request.query_params.get("address_id")
+        return _with_conn(lambda c: {"counts": inbox.counts(c, aid)})
+
+    @allow(Caller.CLI)
+    def list_inbox(request: Request) -> JSONResponse:
+        q = request.query_params
+        aid, stale = q.get("address_id"), q.get("stale") in ("1", "true")
+        return _with_conn(lambda c: {"items": inbox.inbox(c, address_id=aid, stale_only=stale)})
+
+    @allow(Caller.CLI)
+    def show(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: inbox.show(c, ref))
+
+    @allow(Caller.CLI)
+    def resolve_one(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        reason, nonce = _str(body, "reason"), _opt_str(body, "nonce_id")
+        one = inbox.Selection(refs=[ref])
+        return _with_conn(lambda c: {"resolved": inbox.resolve(
+            c, state.clock, one, reason=reason, nonce=nonce)})  # fmt: skip
+
+    @allow(Caller.CLI)
+    def resolve_many(request: Request) -> JSONResponse:
+        body = _body(request)
+        ids, days = body.get("ids"), body.get("older_than_days")
+        if days is not None and (not isinstance(days, int) or isinstance(days, bool)):
+            raise InvalidInputError("older_than_days must be a whole number")
+        refs = _str_list(ids) if ids is not None else None
+        reason, nonce, aid = (_str(body, "reason"), _opt_str(body, "nonce_id"),
+                              _opt_str(body, "address_id"))  # fmt: skip
+        dry = body.get("dry_run") is True
+        key = "would_resolve" if dry else "resolved"
+        sel = inbox.Selection(refs=refs, older_than_days=days, address_id=aid)
+        return _with_conn(lambda c: {key: inbox.resolve(
+            c, state.clock, sel, reason=reason, nonce=nonce, dry_run=dry)})  # fmt: skip
+
+    return [
+        *_decision_routes(state, allow),
+        Route("/v1/counts", counts, methods=["GET"]),
+        Route("/v1/inbox", list_inbox, methods=["GET"]),
+        Route("/v1/items/resolve", resolve_many, methods=["POST"]),
+        Route("/v1/items/{ref}", show, methods=["GET"]),
+        Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
+    ]
+
+
+def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.1, §9.4, §14 (V1.2 step 10a): stages, sensitivity and settings; CLI only."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def stage_status(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: {"addresses": stages.status(c, state.clock.now())})
+
+    @allow(Caller.CLI)
+    def set_stage(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: stages.set_stage(c, state.clock, ref, to, reason=reason,
+                                                     nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def set_sensitivity(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: stages.set_sensitivity(
+            c, state.clock, state.notifier, ref, to, reason=reason, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def show_settings(request: Request) -> JSONResponse:
+        aid = request.query_params.get("address_id")
+        return _with_conn(lambda c: {"settings": settings.show(
+            c, addresses.get_address(c, aid)["address_id"] if aid else None)})  # fmt: skip
+
+    @allow(Caller.CLI)
+    def set_setting(request: Request) -> JSONResponse:
+        body = _body(request)
+        key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
+        return _with_conn(lambda c: settings.set_value(c, state.clock, key, value, address=aid,
+                                                       actor="os_user"))  # fmt: skip
+
+    return [
+        Route("/v1/stages", stage_status, methods=["GET"]),
+        Route("/v1/addresses/{ref}/stage", set_stage, methods=["POST"]),
+        Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
+        Route("/v1/settings", show_settings, methods=["GET"]),
+        Route("/v1/settings", set_setting, methods=["POST"]),
+    ]
+
+
+def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`."""
+
+    @allow(Caller.CLI)
+    def apply_config(request: Request) -> JSONResponse:
+        body = _body(request)
+        text, nonce = _str(body, "document"), _opt_str(body, "nonce_id")
+        dry = body.get("dry_run") is True
+        conn = state.connect()
+        try:
+            r = config.apply(conn, state.clock, state.notifier, text, dry_run=dry, nonce=nonce)
+        finally:
+            conn.close()
+        return JSONResponse(r.to_json())
+
+    @allow(Caller.CLI)
+    def test_rules(request: Request) -> JSONResponse:
+        body = _body(request)
+        text, root = _str(body, "rules"), Path(_str(body, "cases_dir"))
+        if not root.is_absolute():
+            raise InvalidInputError("cases_dir must be an absolute path")
+        conn = state.connect()
+        try:
+            current = config.current_rules(conn)
+        finally:
+            conn.close()
+        return JSONResponse(ruletest.run(state.clock, current, text, root))
+
+    return [
+        Route("/v1/config/apply", apply_config, methods=["POST"]),
+        Route("/v1/rules/test", test_rules, methods=["POST"]),
+    ]
+
+
+def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks."""
+
+    @allow(Caller.CLI)
+    def init_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.status(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def init_role(request: Request) -> JSONResponse:
+        value = _str(_body(request), "install_role")
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.set_role(conn, state.clock, value))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def doctor_slack(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            rows = slack_doctor.checks(conn, state.secrets, state.slack_web, dict(state.slack),
+                                       state.stepper)  # fmt: skip
+            return JSONResponse({"checks": rows})
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def digest_now(request: Request) -> JSONResponse:
+        ref = _str(_body(request), "address_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(digests.post_now(conn, state.clock, ref))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def stopping(_request: Request) -> JSONResponse:
+        """The CLI is about to stop the service on purpose: disarm the dead-man's switch at the
+        stop (a shutdown or logout leaves it armed, OD-222)."""
+        state.stopping_on_purpose = True
+        return JSONResponse({"ok": True})
+
+    return [
+        Route("/v1/service/stopping", stopping, methods=["POST"]),
+        Route("/v1/digests", digest_now, methods=["POST"]),
+        Route("/v1/init", init_status, methods=["GET"]),
+        Route("/v1/init/role", init_role, methods=["POST"]),
+        Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+    ]
+
+
+def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §6.5, §10.2 (V1.2 step 11): retention and backfill; CLI only."""
+
+    @allow(Caller.CLI)
+    def show_retention(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            last = conn.execute("SELECT value FROM settings WHERE key = ?",
+                                (retention.LAST_RUN_KEY,)).fetchone()  # fmt: skip
+            return JSONResponse({"days": retention.days(conn),
+                                 "last_run": json.loads(last[0]) if last else None})  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def set_retention(request: Request) -> JSONResponse:
+        body = _body(request)
+        value, nonce = body.get("days"), _opt_str(body, "nonce_id")
+        if not isinstance(value, int):
+            raise InvalidInputError("days must be a whole number")
+        conn = state.connect()
+        try:
+            r = retention.set_days(conn, state.clock, state.notifier, value, nonce=nonce)
+        finally:
+            conn.close()
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def start_backfill(request: Request) -> JSONResponse:
+        body = _body(request)
+        ref, since, act = _str(body, "address_id"), _str(body, "since"), body.get("act") is True
+        conn = state.connect()
+        try:
+            r = backfill.start(conn, state.clock, ref, since, act=act)
+        finally:
+            conn.close()
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def backfill_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse({"running": backfill.status(conn)})
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def stop_backfill(request: Request) -> JSONResponse:
+        ref = _str(_body(request), "address_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(backfill.stop(conn, state.clock, ref))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/backfill/stop", stop_backfill, methods=["POST"]),
+        Route("/v1/retention", show_retention, methods=["GET"]),
+        Route("/v1/retention", set_retention, methods=["POST"]),
+        Route("/v1/backfill", start_backfill, methods=["POST"]),
+        Route("/v1/backfill", backfill_status, methods=["GET"]),
+    ]
+
+
+def _sender_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.2, §8.5 (V1.2 step 10c): sender records; setting them needs step-up."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def show_sender(request: Request) -> JSONResponse:
+        q = request.query_params
+        sender, aid = q.get("sender") or "", q.get("address_id")
+        return _with_conn(lambda c: senders.show(c, sender, aid))
+
+    @allow(Caller.CLI)
+    def confirm(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, category = _str(body, "sender"), _str(body, "category")
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.confirm(c, state.clock, sender, category,
+                                                    address=aid, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reply_to(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, domain = _str(body, "sender"), _opt_str(body, "domain")
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.set_reply_to(c, state.clock, sender, domain,
+                                                         address=aid, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def verified(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, on = _str(body, "sender"), body.get("on") is not False
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.set_verified(c, state.clock, sender, on,
+                                                         address=aid, nonce=nonce))  # fmt: skip
+
+    return [
+        Route("/v1/senders", show_sender, methods=["GET"]),
+        Route("/v1/senders/confirm", confirm, methods=["POST"]),
+        Route("/v1/senders/reply-to", reply_to, methods=["POST"]),
+        Route("/v1/senders/verified", verified, methods=["POST"]),
+    ]
+
+
+def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        return _with_conn(alerts.show)
+
+    @allow(Caller.CLI)
+    def set_routes(request: Request) -> JSONResponse:
+        body = _body(request)
+        cls, nonce = _opt_str(body, "class"), _opt_str(body, "nonce_id")
+        to = _str_list(body.get("to", []))
+        return _with_conn(lambda c: alerts.set_routes(c, state.clock, state.notifier, cls, to,
+                                                      nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def test(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: alerts.test(c, state.clock, state.notifier))
+
+    return [
+        Route("/v1/alerts", show, methods=["GET"]),
+        Route("/v1/alerts", set_routes, methods=["POST"]),
+        Route("/v1/alerts/test", test, methods=["POST"]),
+    ]
+
+
+def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1 (V1.2 step 8a): pause and resume one address, or all of them. Instant, no
+    step-up (§9.1); the pre-check and fraud flagging never pause."""
+
+    def change(ref: str, paused: bool) -> JSONResponse:
+        conn = state.connect()
+        try:
+            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user")
+        finally:
+            conn.close()
+        return JSONResponse({"changed": changed, "message": pause.describe(changed, paused)})
+
+    @allow(Caller.CLI)
+    def pause_one(request: Request) -> JSONResponse:
+        return change(str(request.path_params["ref"]), True)
+
+    @allow(Caller.CLI)
+    def resume_one(request: Request) -> JSONResponse:
+        return change(str(request.path_params["ref"]), False)
+
+    @allow(Caller.CLI)
+    def pause_all(_request: Request) -> JSONResponse:
+        return change(pause.ALL, True)
+
+    @allow(Caller.CLI)
+    def resume_all(_request: Request) -> JSONResponse:
+        return change(pause.ALL, False)
+
+    return [
+        Route("/v1/addresses/{ref}/pause", pause_one, methods=["POST"]),
+        Route("/v1/addresses/{ref}/resume", resume_one, methods=["POST"]),
+        Route("/v1/pause-all", pause_all, methods=["POST"]),
+        Route("/v1/resume-all", resume_all, methods=["POST"]),
+    ]
+
+
+def _decision_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.5, §15.1 (V1.2 step 7b): approve, reject, cancel, requeue, `approve --pending`.
+    CLI only: decisions never accept an MCP profile token."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def approve(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        grant, nonce = _opt_str(body, "grant_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: approvals.approve(
+            c, state.clock, state.notifier, ref, actor="os_user", grant_id=grant,
+            nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reject(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: approvals.reject(c, state.clock, ref, actor="os_user"))
+
+    @allow(Caller.CLI)
+    def cancel(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: approvals.cancel(c, state.clock, ref, actor="os_user"))
+
+    @allow(Caller.CLI)
+    def answer(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        text, nonce = _opt_str(body, "text"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: answers.answer(c, state.clock, ref, text, actor="os_user",
+                                                   nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def requeue(request: Request) -> JSONResponse:
+        ref, nonce = str(request.path_params["ref"]), _opt_str(_body(request), "nonce_id")
+        return _with_conn(lambda c: approvals.requeue(c, state.clock, ref, actor="os_user",
+                                                      nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def pending(request: Request) -> JSONResponse:
+        body = _body(request)
+        ids = body.get("confirm_ids")
+        if ids is None:
+            return _with_conn(approvals.pending)
+        confirm, nonce = _str_list(ids), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: {"results": approvals.approve_pending(
+            c, state.clock, state.notifier, confirm, nonce=nonce)})  # fmt: skip
+
+    return [
+        Route("/v1/approvals/pending", pending, methods=["POST"]),
+        Route("/v1/items/{ref}/approve", approve, methods=["POST"]),
+        Route("/v1/items/{ref}/reject", reject, methods=["POST"]),
+        Route("/v1/items/{ref}/cancel", cancel, methods=["POST"]),
+        Route("/v1/items/{ref}/requeue", requeue, methods=["POST"]),
+        Route("/v1/items/{ref}/answer", answer, methods=["POST"]),
+    ]
+
+
+def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.1, §15.1 (V1.2 step 4): CLI only. Tokens arrive over the 0600 socket and go
+    straight to the secret store; they are never logged or returned."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    def _nonce(body: dict[str, Any]) -> str | None:
+        n = body.get("stepup_nonce")
+        return n if isinstance(n, str) else None
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        def build(c: sqlite3.Connection) -> dict[str, Any]:
+            extra = {"runtime": dict(state.slack), "channels": slack_routes.list_channels(c)}
+            return slack_admin.status(c) | extra
+
+        return _with_conn(build)
+
+    @allow(Caller.CLI)
+    def create(request: Request) -> JSONResponse:
+        token = _token(_body(request), "config_token")
+        return _with_conn(lambda c: slack_admin.create_app(c, state.clock, state.slack_web,
+                                                           token, state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def install(request: Request) -> JSONResponse:
+        body = _body(request)
+        bot, app, member = (_token(body, "bot_token"), _token(body, "app_token"),
+                            _str(body, "member"))  # fmt: skip
+        r = _with_conn(lambda c: slack_admin.install(c, state.clock, state.store(),
+                                                     state.slack_web, bot_token=bot,
+                                                     app_token=app, member=member))  # fmt: skip
+        state.slack_reload()
+        log.info("slack.installed")
+        return r
+
+    @allow(Caller.CLI)
+    def tokens(request: Request) -> JSONResponse:
+        body = _body(request)
+        bot, app, nonce = _token(body, "bot_token"), _token(body, "app_token"), _nonce(body)
+        r = _with_conn(lambda c: slack_admin.set_tokens(c, state.clock, state.store(),
+                                                        state.slack_web, state.notifier,
+                                                        bot_token=bot, app_token=app,
+                                                        nonce=nonce))  # fmt: skip
+        state.slack_reload()
+        log.info("slack.tokens_replaced")
+        return r
+
+    @allow(Caller.CLI)
+    def member(request: Request) -> JSONResponse:
+        body = _body(request)
+        new, nonce = _str(body, "member"), _nonce(body)
+        return _with_conn(lambda c: slack_admin.set_member(c, state.clock, state.store(),
+                                                           state.slack_web, state.notifier,
+                                                           new, nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reauthorize(request: Request) -> JSONResponse:
+        token = _token(_body(request), "config_token")
+        return _with_conn(lambda c: slack_admin.reauthorize(c, state.clock, state.slack_web,
+                                                            token, state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def refresh(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: {"queued": slack_admin.refresh(c, state.clock)})
+
+    return [
+        Route("/v1/slack", show, methods=["GET"]),
+        Route("/v1/slack/app", create, methods=["POST"]),
+        Route("/v1/slack/install", install, methods=["POST"]),
+        Route("/v1/slack/tokens", tokens, methods=["POST"]),
+        Route("/v1/slack/member", member, methods=["POST"]),
+        Route("/v1/slack/reauthorize", reauthorize, methods=["POST"]),
+        Route("/v1/slack/refresh", refresh, methods=["POST"]),
+    ]
 
 
 def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -401,6 +1017,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
         log.info("address.added", address_id=a["address_id"])
+        a["slack_channel"] = _planned_channel(state, a["address_id"])
         return JSONResponse(a, status_code=201)
 
     @allow(Caller.CLI)
@@ -428,15 +1045,9 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def remove_address(request: Request) -> JSONResponse:
-        conn = state.connect()
-        try:
-            a = addresses.remove_address(
-                conn, state.clock, state.store(), str(request.path_params["ref"]), actor="os_user"
-            )
-        finally:
-            conn.close()
-        log.info("address.removed", address_id=a["address_id"])
-        return JSONResponse(a)
+        nonce = _body(request).get("stepup_nonce")
+        ref = str(request.path_params["ref"])
+        return JSONResponse(_remove_address(state, ref, nonce if isinstance(nonce, str) else None))
 
     @allow(Caller.CLI)
     def retry_address(request: Request) -> JSONResponse:
@@ -456,6 +1067,31 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/addresses/{ref}", set_address, methods=["POST"]),
         Route("/v1/addresses/{ref}", remove_address, methods=["DELETE"]),
     ]
+
+
+def _remove_address(state: ServiceState, ref: str, nonce: str | None) -> dict[str, Any]:
+    """Resolve open items (step-up for payment or fraud, OD-218), stop watching, then archive
+    the address's recorded Slack channel only."""
+    conn = state.connect()
+    try:
+        a = addresses.remove_address(conn, state.clock, state.store(), ref, actor="os_user",
+                                     nonce=nonce)  # fmt: skip
+        a["slack_channel_archived"] = slack_routes.archive(conn, state.clock, a["address_id"])
+    finally:
+        conn.close()
+    log.info("address.removed", address_id=a["address_id"])
+    return a
+
+
+def _planned_channel(state: ServiceState, address_id: str) -> str | None:
+    """The channel name an added address will get once Slack is installed and you're confirmed
+    (the Slack thread creates it within a minute; the name may gain a suffix if taken)."""
+    conn = state.connect()
+    try:
+        installed = slack_admin.identity(conn) is not None
+    finally:
+        conn.close()
+    return slack_routes.channel_name(state.install, address_id) if installed else None
 
 
 MAX_BODY = 64 * 1024
@@ -479,6 +1115,19 @@ def _str(body: dict[str, Any], key: str) -> str:
     v = body.get(key)
     if not isinstance(v, str):
         raise InvalidInputError(f"{key} must be a string")
+    return v
+
+
+def _token(body: dict[str, Any], key: str) -> str:
+    """A pasted token: spaces and line breaks around it removed (a copy often brings one; V1.2
+    shadow run, 2026-09-30)."""
+    return _str(body, key).strip()
+
+
+def _opt_str(body: dict[str, Any], key: str) -> str | None:
+    v = body.get(key)
+    if v is not None and not isinstance(v, str):
+        raise InvalidInputError(f"{key} must be text")
     return v
 
 

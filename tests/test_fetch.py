@@ -128,6 +128,11 @@ def test_page_creates_items_with_excerpts(setup: sqlite3.Connection, clock: Fake
     row = setup.execute("SELECT * FROM items WHERE stable_id = ?", (r.created[0],)).fetchone()
     assert row["status"] == "new" and row["uid"] == 1 and row["uidvalidity"] == 1
     assert row["message_id"] == "<contract-0@synthetic.acme.example>"
+    assert (row["subject"], row["sender"], row["sender_name"]) == (
+        "Test message 0",
+        "s0@vendor-a.example",
+        "Sender 0",
+    )  # what its card shows (V1.2)
     assert json.loads(row["locator"])["uid"] == 1
     facts = json.loads(row["facts"])
     assert facts["attachments"][0]["name"] == "inv.pdf" and facts["from_count"] == 1

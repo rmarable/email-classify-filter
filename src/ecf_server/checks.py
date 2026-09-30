@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -19,7 +20,7 @@ from typing import Any
 
 from ecf.errors import MailUnavailableError, NotFoundError, ServiceUnavailableError
 from ecf.status import CHECK_FAILED
-from ecf_server import leases, precheck
+from ecf_server import backfill, leases, precheck
 from ecf_server.addresses import MailFactory, secret_name
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock, to_ts
@@ -27,9 +28,11 @@ from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import (
     MAX_PER_CHECK_S,
+    AddressConfig,
     LeaseLostError,
     PageResult,
     address_config,
+    backfill_page,
     close_gone,
     fetch_page,
     load_cursor,
@@ -55,6 +58,8 @@ class CheckReport:
     large_done: int = 0
     deferred: int = 0
     remaining: int = 0
+    backfill_created: int = 0
+    backfill_remaining: int = 0  # older mail an `ecf backfill` still has to read
     escalations: int = 0
     digest: int = 0
     relocated: int = 0  # known messages re-pointed after a mailbox reset
@@ -69,7 +74,9 @@ class CheckReport:
     def more(self) -> bool:
         """Another check now would make progress (for `--until-empty`)."""
         progressing = self.status in ("ok", "reset_recovered")
-        return progressing and (self.remaining > 0 or self.large_done > 0)
+        return progressing and (
+            self.remaining > 0 or self.large_done > 0 or self.backfill_remaining > 0
+        )
 
 
 def holder() -> str:
@@ -127,6 +134,12 @@ class SecretUnavailableError(ServiceUnavailableError):
     """The app password couldn't be read: not a mail provider problem (V1.1 review)."""
 
 
+# Work that needs the address lease and the open mailbox, run in every check after the pre-check.
+# Registered by the modules that own it (digests.py: queued Undos), so checks needs no Slack code.
+InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int], object]
+IN_LEASE: list[InLease] = []
+
+
 def _locked_check(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -157,6 +170,7 @@ def _locked_check(
             cfg = address_config(conn, address_id)
             dns = DnsCache(conn, clock, cap_s=DNS_CAP_S)
             analyzer = MessageAnalyzer.for_address(conn, clock, address_id, dns)
+            deadline = clock.monotonic() + MAX_PER_CHECK_S
             page = fetch_page(
                 conn,
                 clock,
@@ -165,7 +179,7 @@ def _locked_check(
                 lease,
                 lost=renewer.lost,
                 analyzer=analyzer,
-                deadline=clock.monotonic() + MAX_PER_CHECK_S,
+                deadline=deadline,
                 isolator=_isolator(conn, dns),
             )
             cur = load_cursor(conn, address_id)
@@ -182,6 +196,12 @@ def _locked_check(
                 install=install,
                 max_scan_bytes=cfg.max_scan_bytes,
             )
+            if page.remaining == 0 and page.stopped != "lease_lost":  # new mail first
+                outcomes += _backfill(conn, clock, src, cfg, lease, report, install=install,
+                                      analyzer=analyzer, lost=renewer.lost, dns=dns,
+                                      deadline=deadline)  # fmt: skip
+            for work in IN_LEASE:  # e.g. queued Undos (digests.py)
+                work(conn, clock, src, address_id, install, cfg.max_scan_bytes)
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
@@ -202,6 +222,40 @@ def _locked_check(
         if src is not None:
             src.close()
         leases.release(conn, lease)
+
+
+def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
+    conn: sqlite3.Connection,
+    clock: Clock,
+    src: MailSource,
+    cfg: AddressConfig,
+    lease: leases.Lease,
+    report: CheckReport,
+    *,
+    install: str,
+    analyzer: MessageAnalyzer,
+    lost: threading.Event,
+    dns: DnsCache,
+    deadline: float,
+) -> list[precheck.Outcome]:
+    """A page of an `ecf backfill` in progress, after the new mail (V1.2 step 11b)."""
+    bf = backfill.load(conn, cfg.address_id)
+    if bf is None:
+        return []
+    page = backfill_page(conn, clock, src, cfg, lease, bf, lost=lost, analyzer=analyzer,
+                         deadline=deadline, isolator=_isolator(conn, dns))  # fmt: skip
+    if page.stopped == "reset":
+        backfill.finish(conn, clock, cfg.address_id, bf, "mailbox reset")
+        return []
+    # decide first, then save: plus anything a failed pass left undecided in the range
+    todo = [*page.created, *backfill.undecided(conn, cfg.address_id, bf, page.created)]
+    outcomes = backfill.decide(conn, clock, src, cfg.address_id, todo, bf,
+                               install=install, max_scan_bytes=cfg.max_scan_bytes)  # fmt: skip
+    backfill.save(conn, clock, cfg.address_id, bf)
+    report.backfill_created, report.backfill_remaining = len(page.created), page.remaining
+    if page.remaining == 0 and page.stopped == "done":
+        backfill.finish(conn, clock, cfg.address_id, bf, "done")
+    return outcomes
 
 
 def _isolator(conn: sqlite3.Connection, dns: DnsCache) -> Isolator | None:

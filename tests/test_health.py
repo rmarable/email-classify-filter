@@ -62,7 +62,7 @@ def test_unreachable_after_15_minutes_while_the_network_is_up(
     after(ap, clock, n, "error")
     assert n.sent == [
         (
-            "ecf: Mail Provider Unreachable",
+            "[ecf-alert] Mail Provider Unreachable",
             "ap: can't reach imap.acme.example for 15 minutes while the network is up",
         )
     ]
@@ -72,7 +72,7 @@ def test_unreachable_after_15_minutes_while_the_network_is_up(
     (alert,) = health.open_alerts(ap)
     assert alert["title"] == "Mail Provider Unreachable" and "25 minutes" in alert["detail"]
     after(ap, clock, n, "ok")
-    assert n.sent[-1] == ("ecf: Resolved: Mail Provider Unreachable", "ap: working again")
+    assert n.sent[-1] == ("[ecf-alert] Resolved: Mail Provider Unreachable", "ap: working again")
     assert health.open_alerts(ap) == []
     events = [r["event"] for r in ap.execute("SELECT event FROM audit ORDER BY id")]
     assert events == ["alert.opened", "alert.resolved"]
@@ -92,7 +92,7 @@ def test_login_rejected_three_times_then_hourly(ap: sqlite3.Connection, clock: F
         after(ap, clock, n, "login_rejected")
     assert n.sent == [] and not health.login_backoff(ap, "ap")
     after(ap, clock, n, "login_rejected")
-    assert n.sent[0][0] == "ecf: Mailbox Login Rejected" and "--app-password" in n.sent[0][1]
+    assert n.sent[0][0] == "[ecf-alert] Mailbox Login Rejected" and "--app-password" in n.sent[0][1]
     assert health.login_backoff(ap, "ap")
     due = schedule.after_check(ap, clock, CheckReport("ap", "login_rejected", "t"), DESKTOP)
     assert due - clock.now() == timedelta(hours=1)
