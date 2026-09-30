@@ -100,7 +100,86 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
                                 echo=typer.echo)["resolved"]  # fmt: skip
         typer.echo(f"closed {len(done)} email(s) as resolved by you")
 
+    @item_app.command("requeue")
+    def requeue(item: Annotated[str, typer.Argument(help="Item ID.")]) -> None:
+        """Run a failed or stuck action again. (step-up for sends)"""
+        with LocalClient(paths()) as c:
+            with_step_up(c, lambda n: c.request("POST", f"/v1/items/{item}/requeue",
+                                                {"nonce_id": n}), echo=typer.echo)  # fmt: skip
+        typer.echo("queued to run again")
+
+    _decision_commands(app, paths)
     return item_app
+
+
+def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    @app.command("approve")
+    def approve(
+        item: Annotated[str | None, typer.Argument(help="Item ID (8 or more characters).")] = None,
+        pending: Annotated[
+            bool, typer.Option("--pending", help="Approvals queued from Slack for step-up.")
+        ] = False,
+    ) -> None:
+        """Approve an action ecf proposed. (step-up for sends, irreversible actions, and hiding
+        fraud or regulator email)"""
+        with LocalClient(paths()) as c:
+            if pending:
+                _approve_pending(c)
+                return
+            if not item:
+                raise typer.BadParameter("give an item ID, or --pending")
+            r = with_step_up(c, lambda n: c.request("POST", f"/v1/items/{item}/approve",
+                                                    {"nonce_id": n}), echo=typer.echo)  # fmt: skip
+        typer.echo(_after(r["status"]))
+
+    @app.command("reject")
+    def reject(item: Annotated[str, typer.Argument(help="Item ID.")]) -> None:
+        """Reject an action ecf proposed; nothing is done."""
+        with LocalClient(paths()) as c:
+            c.request("POST", f"/v1/items/{item}/reject")
+        typer.echo("rejected: nothing was done")
+
+    @app.command("cancel")
+    def cancel(item: Annotated[str, typer.Argument(help="Item ID.")]) -> None:
+        """Cancel a send during its 10-minute delay."""
+        with LocalClient(paths()) as c:
+            c.request("POST", f"/v1/items/{item}/cancel")
+        typer.echo("cancelled: not sent")
+
+
+AFTER = {
+    "executing": "approved: running now",
+    "delayed": "approved: sending in 10 minutes (ecf cancel <id> to stop it)",
+    "awaiting_stepup": "queued for step-up",
+}
+
+
+def _after(status: str) -> str:
+    return AFTER.get(status, f"approved ({status})")
+
+
+def _approve_pending(c: LocalClient) -> None:
+    p = c.request("POST", "/v1/approvals/pending", {})
+    for s in p["sends"]:
+        typer.echo(plain(f"send (approve on its own): ecf approve {s['short_id']}: {s['action']}"))
+    batch: list[dict[str, Any]] = p["batch"]
+    if not batch:
+        typer.echo("no approvals waiting for step-up" + (" besides sends" if p["sends"] else ""))
+        return
+    typer.echo(f"{len(batch)} approval(s) waiting for step-up:")
+    for b in batch:
+        typer.echo(plain(f"  {b['short_id']}  {b['action']}: {b['sender'][:40]}: "
+                         f"{b['subject'][:50]}"))  # fmt: skip
+    if p["more"]:
+        typer.echo(f"  ({p['more']} more after these)")
+    if not typer.confirm("Approve all of these with one step-up?", default=False):
+        raise typer.Exit(1)
+    ids = [b["id"] for b in batch]
+    r = with_step_up(c, lambda n: c.request("POST", "/v1/approvals/pending",
+                                            {"confirm_ids": ids, "nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    for x in r["results"]:
+        typer.echo(f"  {x['id'][:8]}: {_after(x['status'])}")
 
 
 def describe(d: dict[str, Any]) -> list[str]:

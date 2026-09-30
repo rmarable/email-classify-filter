@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, escalations, slack_admin, slack_in, slack_routes
+from ecf_server import _slack, approvals, escalations, slack_admin, slack_in, slack_routes
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
@@ -26,6 +26,8 @@ from ecf_server.slack_chat import SlackChat
 from ecf_server.slack_in import Inbound, SlackReceiver
 from ecf_server.slack_out import SlackSender
 
+# Modules whose Slack button handlers (`slack_in.handles`) must be registered before clicks arrive.
+HANDLER_MODULES = (slack_admin, escalations, approvals)
 RETRY_S = 60.0
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0

@@ -42,9 +42,11 @@ from ecf.ids import new_random_id
 from ecf_server import (
     _slack,
     addresses,
+    approvals,
     audit,
     checks,
     db,
+    execute,
     health,
     inbox,
     slack_admin,
@@ -106,6 +108,7 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -420,11 +423,66 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
             c, state.clock, sel, reason=reason, nonce=nonce, dry_run=dry)})  # fmt: skip
 
     return [
+        *_decision_routes(state, allow),
         Route("/v1/counts", counts, methods=["GET"]),
         Route("/v1/inbox", list_inbox, methods=["GET"]),
         Route("/v1/items/resolve", resolve_many, methods=["POST"]),
         Route("/v1/items/{ref}", show, methods=["GET"]),
         Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
+    ]
+
+
+def _decision_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.5, §15.1 (V1.2 step 7b): approve, reject, cancel, requeue, `approve --pending`.
+    CLI only: decisions never accept an MCP profile token."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def approve(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        grant, nonce = _opt_str(body, "grant_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: approvals.approve(
+            c, state.clock, state.notifier, ref, actor="os_user", grant_id=grant,
+            nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reject(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: approvals.reject(c, state.clock, ref, actor="os_user"))
+
+    @allow(Caller.CLI)
+    def cancel(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: approvals.cancel(c, state.clock, ref, actor="os_user"))
+
+    @allow(Caller.CLI)
+    def requeue(request: Request) -> JSONResponse:
+        ref, nonce = str(request.path_params["ref"]), _opt_str(_body(request), "nonce_id")
+        return _with_conn(lambda c: approvals.requeue(c, state.clock, ref, actor="os_user",
+                                                      nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def pending(request: Request) -> JSONResponse:
+        body = _body(request)
+        ids = body.get("confirm_ids")
+        if ids is None:
+            return _with_conn(approvals.pending)
+        confirm, nonce = _str_list(ids), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: {"results": approvals.approve_pending(
+            c, state.clock, state.notifier, confirm, nonce=nonce)})  # fmt: skip
+
+    return [
+        Route("/v1/approvals/pending", pending, methods=["POST"]),
+        Route("/v1/items/{ref}/approve", approve, methods=["POST"]),
+        Route("/v1/items/{ref}/reject", reject, methods=["POST"]),
+        Route("/v1/items/{ref}/cancel", cancel, methods=["POST"]),
+        Route("/v1/items/{ref}/requeue", requeue, methods=["POST"]),
     ]
 
 

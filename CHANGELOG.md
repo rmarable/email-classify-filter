@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Approvals are built, for the proposals the classifier makes from V1.3 (OD-207): `ecf approve <id>`, `ecf approve --pending` (up to 10 at once with one step-up, never sends), `ecf reject <id>`, `ecf cancel <id>` and `ecf item requeue <id>`, and Approve, Reject and Cancel buttons in Slack. A send, anything irreversible, or hiding fraud or regulatory email needs step-up; clicked in Slack it waits for your computer ("Queued for your computer"). Sends on `high` addresses wait 10 minutes of awake time with Cancel. Approvals expire after 4 days (sends) or 14 days and are offered once more (OD-041, OD-208).
+- An approval queued for step-up can still be rejected (new transition `awaiting_stepup` → `rejected`).
 - New commands `ecf inbox`, `ecf item show <id>` and `ecf item resolve` (one or more IDs, `--ids` or `--older-than N`, with `--reason`): see what's waiting on you, everything ecf keeps about one email including its excerpt, and close emails without acting on them. Resolving a payment or fraud item needs step-up (one for a whole set); a bulk resolve shows the list and asks first. Item IDs can be shortened to 8 characters.
 - Fixed: the service could hang instead of stopping when it got two stop signals at once (for example `pkill` plus the signal `uv run` forwards); launchd would then have had to kill it.
 - Real-service test (Slack mentions) passed: a mention inside a card's block notifies you on desktop and phone, so escalation cards reach you; results in SPEC §21.1.

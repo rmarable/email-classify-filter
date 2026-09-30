@@ -28,7 +28,7 @@ import uvicorn
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
-from ecf_server import audit, breaker, checks, db, health, jobs, schedule
+from ecf_server import approvals, audit, breaker, checks, db, execute, health, jobs, schedule
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -54,6 +54,8 @@ from ecf_server.stepper import FakeStepper, host_stepper
 TICK_SECONDS = 60
 WORKER = "checks"
 WATCHDOG_SECONDS = 300
+SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
+ACTIONS_PER_TICK = 20
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
@@ -136,6 +138,7 @@ class Service:
         self._signalled: int | None = None  # set by the signal handler, read by the main loop
         self.exit_code = EXIT_OK
         self._last_tick_mono = self.clock.monotonic()
+        self._last_tick_wall = self.clock.now()
         self.dev = dev
         self.secrets: SecretStore | None = MemorySecretStore() if dev else None
         self.state = ServiceState(
@@ -150,8 +153,11 @@ class Service:
             self.tick()
 
     def tick(self) -> None:
-        self._last_tick_mono = self.clock.monotonic()
-        self.state.last_tick_at = to_ts(self.clock.now())
+        mono, wall = self.clock.monotonic(), self.clock.now()
+        awake = mono - self._last_tick_mono  # the monotonic clock stops during sleep (§5.5)
+        slept = (wall - self._last_tick_wall).total_seconds() - awake > SLEEP_GAP_S
+        self._last_tick_mono, self._last_tick_wall = mono, wall
+        self.state.last_tick_at = to_ts(wall)
         self.state.ticks += 1
         if self.state.db_path is None:
             return
@@ -165,6 +171,25 @@ class Service:
                 conn.close()
         except Exception as exc:  # a scheduling failure must never stop the timer
             log.error("schedule.tick_failed", error_type=type(exc).__name__)
+        self._approvals(awake, woke=slept)
+
+    def _approvals(self, awake: float, *, woke: bool) -> None:
+        """Expire approvals, count down delayed sends and run approved actions (§9.5; V1.2 step
+        7b). V1.3 moves the runner into the checks worker, which holds the address lease."""
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                approvals.expire(conn, self.clock)
+                approvals.advance_delays(conn, self.clock, awake, woke=woke)
+                for _ in range(ACTIONS_PER_TICK):
+                    if not execute.run_once(conn, self.clock, self.state.executor):
+                        break
+            finally:
+                conn.close()
+        except Exception as exc:  # never stops the timer; retried next tick
+            log.error("approvals.tick_failed", error_type=type(exc).__name__)
 
     def _final_flush(self) -> None:
         """Copy the last audit rows to the files before exiting."""
@@ -330,6 +355,7 @@ class Service:
                              install=self.paths.install)  # fmt: skip
         self.state.slack = slack.status  # the same dict: status shows it live
         self.state.slack_reload = slack.reload
+        approvals.desktop = self.state.notifier  # Slack clicks queued for step-up notify here
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread
 
@@ -366,6 +392,7 @@ class Service:
         worker = threading.Thread(target=self._checks, name="checks", daemon=True)
         slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
+        self._last_tick_wall = self.clock.now()
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
