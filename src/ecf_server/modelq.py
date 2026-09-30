@@ -102,11 +102,18 @@ class Exclusive:
 EXCLUSIVE = Exclusive()
 
 
+# what waits for the local model: new mail for the classifier, and the actor's items (a rule
+# continued to it, or you answered its question)
+WAITING = ("i.model_failed = 0 AND (i.status = 'new' OR i.status = 'clarified'"
+           " OR (i.status = 'classified' AND i.decision_source = 'rule'"
+           " AND json_extract(i.proposal, '$.plan.to_actor') = 1))")  # fmt: skip
+
+
 def waiting(conn: sqlite3.Connection) -> dict[str, int]:
     """Items waiting for the local model, per address (not paused, not removed)."""
     rows = conn.execute(
-        "SELECT i.address_id, count(*) FROM items i JOIN addresses a USING (address_id)"
-        " WHERE i.status = 'new' AND i.model_failed = 0 AND a.removed_at IS NULL AND a.paused = 0"
+        "SELECT i.address_id, count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608 - WAITING is a constant
+        f" WHERE {WAITING} AND a.removed_at IS NULL AND a.paused = 0"
         " GROUP BY i.address_id ORDER BY i.address_id"
     ).fetchall()
     return {r[0]: r[1] for r in rows}
@@ -116,7 +123,7 @@ def _next_item(conn: sqlite3.Connection, address_id: str, tried: set[str]) -> sq
     marks = ",".join("?" * len(tried))
     skip = f" AND stable_id NOT IN ({marks})" if tried else ""
     row: sqlite3.Row | None = conn.execute(
-        "SELECT * FROM items WHERE address_id = ? AND status = 'new' AND model_failed = 0"  # noqa: S608 - placeholders only
+        f"SELECT * FROM items i WHERE address_id = ? AND {WAITING}"  # noqa: S608 - constants
         + skip
         + " ORDER BY created_at, stable_id LIMIT 1",
         (address_id, *sorted(tried)),
@@ -295,7 +302,7 @@ def _account(
     with write_tx(conn):
         conn.execute(
             "UPDATE items SET model_attempts = ?, model_failed = ?, model_failed_at = ?,"
-            " updated_at = ? WHERE stable_id = ? AND status = 'new'",
+            " updated_at = ? WHERE stable_id = ? AND status IN ('new', 'classified', 'clarified')",
             (attempts, int(failed), now if failed else None, now, item["stable_id"]),
         )
         if failed:
@@ -332,7 +339,8 @@ def _resolve_quiet(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -
 
 def failed_items(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in conn.execute(
-        "SELECT stable_id FROM items WHERE model_failed = 1 AND status = 'new'"
+        "SELECT stable_id FROM items WHERE model_failed = 1"
+        " AND status IN ('new', 'classified', 'clarified')"
         " ORDER BY model_failed_at")]  # fmt: skip
 
 

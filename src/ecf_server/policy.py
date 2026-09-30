@@ -67,6 +67,7 @@ class Plan:
     high_risk: bool = False
     payment_or_fraud: bool = False
     offer_confirm: bool = False  # the digest may offer "confirm this sender's category"
+    actor: dict[str, Any] | None = None  # the local actor's proposal and its (cleaned) reason
 
     @property
     def hides(self) -> list[Planned]:

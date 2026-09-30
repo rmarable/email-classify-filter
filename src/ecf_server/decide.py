@@ -90,8 +90,8 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     if p.to_actor and source == "rule":
         return Status.CLASSIFIED  # the actor decides next (step 4c)
     ctx = TransitionContext(stage=stage)
-    items.transition(conn, clock, StableId(sid), Status.PROPOSED, ctx, actor="service",
-                     expected=Status.CLASSIFIED)  # fmt: skip
+    if item["status"] != Status.PROPOSED:  # from classified, or clarified after an answer
+        items.transition(conn, clock, StableId(sid), Status.PROPOSED, ctx, actor="service")
     if stage is Stage.SHADOW:
         items.transition(conn, clock, StableId(sid), Status.OBSERVED, ctx, actor="service")
         return Status.OBSERVED
@@ -120,8 +120,12 @@ def _record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan,
             "high_risk": p.high_risk,
             "payment_or_fraud": p.payment_or_fraud,
             "offer_confirm": p.offer_confirm,
+            "actor": p.actor,
         },
     }
+    item = conn.execute("SELECT proposal FROM items WHERE stable_id = ?", (sid,)).fetchone()
+    kept: dict[str, Any] = json.loads(item["proposal"] or "{}") if item else {}
+    doc = kept | doc  # questions and answers (answers.py) stay with the item
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute(

@@ -35,7 +35,6 @@ from ecf_server import (
     audit,
     breaker,
     checks,
-    classifier,
     daily,
     db,
     decide,
@@ -45,6 +44,7 @@ from ecf_server import (
     modelq,
     models,
     needs_you,
+    pipeline,
     retention,
     schedule,
 )
@@ -480,7 +480,7 @@ class Service:
         # the local classifier (V1.3 step 3); a dev service runs it only when asked, so tests that
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
-            self.state.model_work = classifier.classify_item
+            self.state.model_work = pipeline.work
         return applied
 
     def _api_server(self) -> uvicorn.Server:

@@ -23,7 +23,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ecf.status import OPEN
-from ecf_server import cards, inbox, models, pause, schedule, slack_admin, slack_out, slack_routes
+from ecf_server import (
+    cards,
+    inbox,
+    modelq,
+    models,
+    pause,
+    schedule,
+    slack_admin,
+    slack_out,
+    slack_routes,
+)
 from ecf_server.chat import Card, ChatSurface, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -133,8 +143,8 @@ def record_battery(conn: sqlite3.Connection, clock: Clock, seconds: float) -> No
 
 def _model_backlog(conn: sqlite3.Connection) -> int:
     row = conn.execute(
-        "SELECT count(*) FROM items i JOIN addresses a USING (address_id)"
-        " WHERE i.status = 'new' AND i.model_failed = 0 AND a.removed_at IS NULL"
+        "SELECT count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608 - WAITING is a constant
+        f" WHERE {modelq.WAITING} AND a.removed_at IS NULL"
     ).fetchone()
     return int(row[0])
 
