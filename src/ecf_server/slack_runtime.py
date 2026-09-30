@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Callable
-from typing import Any
+from datetime import datetime
+from typing import Any, cast
 
 from ecf_server import (
     _slack,
@@ -78,6 +80,8 @@ class SlackRuntime:
         self._receiver = SlackReceiver(clock)
         self._web: Any = None
         self._reload = threading.Event()
+        self._lost_at: datetime | None = None  # when a live connection dropped
+        self._was_connected = False
         self.status: dict[str, Any] = {"installed": False, "connected": False,
                                        "last_connected_at": None, "channels": None}  # fmt: skip
 
@@ -222,8 +226,37 @@ class SlackRuntime:
     def _mark_connected(self) -> None:
         connected = bool(self._socket is not None and self._socket.is_connected())
         self.status["connected"] = connected
+        now = self._clock.now()
         if connected:
-            self.status["last_connected_at"] = to_ts(self._clock.now())
+            self.status["last_connected_at"] = to_ts(now)
+        if connected != self._was_connected:
+            self._connection_changed(connected, now)
+        self._was_connected = connected
+
+    def _connection_changed(self, connected: bool, now: datetime) -> None:
+        """Audit a Socket Mode connection lost and restored, so gaps show in `ecf logs` (Slack's
+        library only logs its retries; V1.2 shadow run, 2026-09-30). The first connect isn't one."""
+        if connected and self._lost_at is None:
+            return
+        if connected:
+            down = int((now - cast(datetime, self._lost_at)).total_seconds())
+            event, data = "slack.reconnected", {"down_s": down}
+            self._lost_at = None
+            log.info("slack.reconnected", down_s=down)
+        else:
+            self._lost_at = now
+            event, data = "slack.disconnected", {}
+            log.warning("slack.disconnected")
+        conn = self._connect()
+        try:
+            with write_tx(conn):
+                conn.execute(
+                    "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                    " VALUES (?, NULL, ?, 'service', 'ok', ?)",
+                    (to_ts(now), event, json.dumps(data)),
+                )
+        finally:
+            conn.close()
 
     def _ack(self, envelope_id: str) -> None:
         if self._socket is not None:

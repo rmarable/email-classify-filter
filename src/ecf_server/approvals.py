@@ -167,7 +167,8 @@ def _describe_approve(conn: sqlite3.Connection, target: dict[str, Any]) -> stepu
     g = _grant(conn, str(target.get("grant_id", "")))
     item = _item(conn, g.stable_id)
     s = inbox.summary(item)
-    prompt = (f"ecf: {describe(_actions(item))}: the email from {s['sender'][:60]},"
+    sender = cards.short_sender(s["sender"], 60)
+    prompt = (f"ecf: {describe(_actions(item))}: the email from {sender},"
               f' "{s["subject"][:60]}" on {item["address_id"]}')  # fmt: skip
     return stepup.Bound(stepup.digest("approve", g.grant_id, g.action_hash, item["status"]), prompt)
 

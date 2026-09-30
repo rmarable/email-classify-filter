@@ -79,12 +79,25 @@ def item_card(item: sqlite3.Row, *, mention: str = "", title: str = "") -> Card:
     )
 
 
+NOT_RECORDED = " (sender not recorded before V1.2)"
+
+
 def sender_line(item: sqlite3.Row, facts: dict[str, Any]) -> str:
     sender, name = item["sender"], item["sender_name"]
     if sender:
         return f"{name} <{sender}>" if name else str(sender)
     domain = facts.get("from_domain") or "an unknown domain"
-    return f"someone at {domain} (sender not recorded before V1.2)"
+    return f"someone at {domain}{NOT_RECORDED}"
+
+
+def short_sender(sender: str, limit: int = 40) -> str:
+    """A sender line for a list: past `limit`, the display name goes first; the address is never
+    cut, since a cut domain can hide a lookalike (V1.2 shadow run, 2026-09-30)."""
+    if len(sender) <= limit:
+        return sender
+    if sender.endswith(">") and "<" in sender:
+        return sender[sender.rindex("<") + 1 : -1]
+    return sender.removesuffix(NOT_RECORDED)
 
 
 def subject_line(item: sqlite3.Row) -> str:

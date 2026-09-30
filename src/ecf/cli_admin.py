@@ -229,6 +229,18 @@ def _config_and_sender_commands(app: typer.Typer, paths: Callable[[], Paths]) ->
     sender_app = typer.Typer(no_args_is_help=True, help="What ecf knows about a sender.")
     app.add_typer(sender_app, name="sender")
     _sender_commands(sender_app, paths)
+
+    @app.command("digest")
+    def digest(address: Annotated[str, typer.Argument(help="Address id or email.")]) -> None:
+        """Post this address's digest in Slack now, instead of waiting for the hour."""
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/digests", {"address_id": address})
+        if r["posted"]:
+            typer.echo(f"posted {r['address_id']}'s digest (mail since {r['since']}); the next"
+                       " one comes an hour from now")  # fmt: skip
+        else:
+            typer.echo(f"nothing new for {r['address_id']} since {r['since']}")
+
     retention_app = typer.Typer(no_args_is_help=True, help="How long finished items are kept.")
     app.add_typer(retention_app, name="retention")
     _retention_commands(retention_app, paths)

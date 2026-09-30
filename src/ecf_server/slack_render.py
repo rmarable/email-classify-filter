@@ -31,6 +31,7 @@ LABEL_MAX = 75
 FIELDS_PER_SECTION = 10
 BUTTONS_MAX = 25
 FALLBACK_MAX = 3000
+TEXT_LINES_MAX = 30  # text sections per message; Slack caps a message's blocks (50, unverified)
 _SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}):(//)")
 _MEMBER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
@@ -63,8 +64,7 @@ def blocks(card: Card) -> list[dict[str, Any]]:
     fields = [_plain(f"{label}: {value}", FIELD_MAX) for label, value in card.fields]
     for i in range(0, len(fields), FIELDS_PER_SECTION):
         out.append({"type": "section", "fields": fields[i : i + FIELDS_PER_SECTION]})
-    if card.text:
-        out.append({"type": "section", "text": _plain(card.text, TEXT_MAX)})
+    out += _text_sections(card.text)
     if card.buttons:
         elements: list[dict[str, Any]] = []
         for i, b in enumerate(card.buttons[:BUTTONS_MAX]):
@@ -81,6 +81,15 @@ def blocks(card: Card) -> list[dict[str, Any]]:
     if card.note:
         out.append({"type": "context", "elements": [_plain(card.note, TEXT_MAX)]})
     return out
+
+
+def _text_sections(text: str) -> list[dict[str, Any]]:
+    """One section per non-empty line: Slack runs the lines of one plain_text section together
+    (seen in the V1.2 shadow run, 2026-09-30). Lines past the cap share the last section."""
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if len(lines) > TEXT_LINES_MAX:
+        lines = [*lines[: TEXT_LINES_MAX - 1], " · ".join(lines[TEXT_LINES_MAX - 1 :])]
+    return [{"type": "section", "text": _plain(ln, TEXT_MAX)} for ln in lines]
 
 
 def action_name(action_id: str) -> str:

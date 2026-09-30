@@ -396,3 +396,24 @@ def test_a_clean_stop_deletes_the_dead_mans_message_and_a_crash_leaves_it(
     rt2.close(clean_stop=True)
     method, params = web2.calls[-1]
     assert (method, params["scheduled_message_id"]) == ("chat.deleteScheduledMessage", "Q1")
+
+
+def test_a_dropped_connection_and_its_return_are_audited(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """Slack's library only logs its retries (V1.2 shadow run, 2026-09-30)."""
+    store = MemorySecretStore()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, FakeWeb())
+    assert rt.start()
+    rt.run_once()  # the first connect is not an event
+    [sock] = FakeSocket.instances
+    sock.connected = False
+    rt.run_once()
+    clock.advance(42)
+    sock.connected = True
+    rt.run_once()
+    rows = conn.execute("SELECT event, data FROM audit WHERE event LIKE 'slack.%connected'"
+                        " ORDER BY id").fetchall()  # fmt: skip
+    assert [(r[0], json.loads(r[1])) for r in rows] == [
+        ("slack.disconnected", {}), ("slack.reconnected", {"down_s": 42})]  # fmt: skip

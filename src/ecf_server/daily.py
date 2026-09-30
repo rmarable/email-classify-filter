@@ -21,7 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ecf.status import OPEN
-from ecf_server import inbox, pause, schedule, slack_admin, slack_out, slack_routes
+from ecf_server import cards, inbox, pause, schedule, slack_admin, slack_out, slack_routes
 from ecf_server.chat import Card, ChatSurface, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -67,6 +67,7 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     waiting = inbox.inbox(conn)
     per_addr: dict[str, list[int]] = {}
     open_ = json.dumps(sorted(OPEN))
+    model = ("new", "awaiting_claude", "classified")  # waiting for a model, not for you
     for (aid,) in conn.execute(
         "SELECT address_id FROM addresses WHERE removed_at IS NULL ORDER BY address_id"
     ):
@@ -77,16 +78,18 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         unscanned = _count(conn, "SELECT count(*) FROM items WHERE address_id = ?"
                            " AND created_at > ? AND json_extract(facts, '$.content_unscanned') = 1",
                            aid, since)  # fmt: skip
-        per_addr[aid] = [sum(1 for i in waiting if i["address_id"] == aid), n_open, esc, unscanned]
-    fields = tuple(
-        (aid, f"{w} waiting on you, {o} open; last 24 h: {e} escalated, {u} not fully scanned")
-        for aid, (w, o, e, u) in per_addr.items()
-    )
+        mine = [i for i in waiting if i["address_id"] == aid]
+        n_model = _count(conn, "SELECT count(*) FROM items WHERE address_id = ? AND status IN"
+                         " (SELECT value FROM json_each(?))", aid, json.dumps(model))  # fmt: skip
+        n_model -= sum(1 for i in mine if i["status"] in model)  # escalated ones wait on you
+        per_addr[aid] = [len(mine), n_model, n_open - len(mine) - n_model, esc, unscanned]
+    fields = tuple((aid, _counts(*n)) for aid, n in per_addr.items())
     lines: list[str] = []
     stale = [i for i in waiting if i["stale"]]
     if stale:
         lines += [f"Stale (30+ days): {len(stale)}", *(
-            f"  {i['short_id']} {i['address_id']}: {i['sender'][:40]}: {i['subject'][:50]}"
+            f"  {i['short_id']} {i['address_id']}: {cards.short_sender(i['sender'])}: "
+            f"{i['subject'][:50]}"
             for i in stale[:STALE_LIST])]  # fmt: skip
     twice = conn.execute("SELECT stable_id, address_id FROM items WHERE status = 'expired'"
                          " AND expiry_count >= 2 ORDER BY stable_id").fetchall()  # fmt: skip
@@ -104,6 +107,18 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Nobody else is in ecf's channels.")
     lines.append("All of it: ecf inbox")
     return Card(f"Daily summary {today}", fields=fields, text="\n".join(lines))
+
+
+def _counts(waiting: int, model: int, other: int, escalated: int, unscanned: int) -> str:
+    """Waiting on you apart from mail waiting for the classifier ("40 open" mixed them, V1.2
+    shadow run, 2026-09-30)."""
+    parts = [f"{waiting} waiting on you"]
+    if model:
+        parts.append(f"{model} waiting for the classifier (V1.3)")
+    if other:
+        parts.append(f"{other} in progress")
+    return (f"{', '.join(parts)}; last 24 h: {escalated} escalated,"
+            f" {unscanned} not fully scanned")  # fmt: skip
 
 
 def _count(conn: sqlite3.Connection, sql: str, *args: Any) -> int:

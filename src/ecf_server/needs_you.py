@@ -20,7 +20,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from ecf.status import OPEN, Status
-from ecf_server import inbox, pause, slack_admin, slack_out, slack_routes
+from ecf_server import cards, inbox, pause, slack_admin, slack_out, slack_routes
 from ecf_server.chat import Button, Card
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -56,7 +56,8 @@ def card(conn: sqlite3.Connection, *, computer: str, last_connected: datetime) -
     listed = [i for i in waiting if i not in stale_bulk]
     lines = [
         f"{'STALE ' if i['stale'] else ''}{i['short_id']} {i['address_id']}: "
-        f"{LABELS.get(i['status'], i['status'])}: {i['sender'][:40]}: {i['subject'][:60]}"
+        f"{LABELS.get(i['status'], i['status'])}: {cards.short_sender(i['sender'])}: "
+        f"{i['subject'][:60]}"
         for i in listed[:TOP]
     ]
     if len(listed) > TOP:

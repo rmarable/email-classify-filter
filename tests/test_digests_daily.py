@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
 from ecf_server import checks, daily, db, digests, items, pause, slack_admin
 from ecf_server._slack import Envelope
@@ -110,6 +111,33 @@ def test_no_idle_digests_and_none_outside_business_hours(conn: sqlite3.Connectio
     assert _posts(conn)[-1]["card"]["text"].startswith("Caught up: 1 message(s) since")
 
 
+def test_a_digest_on_demand_at_any_hour_restarts_the_clock(conn: sqlite3.Connection) -> None:
+    clock = FakeClock(MORNING)
+    _setup(conn, clock)
+    digests.run(conn, clock)  # the hourly clock starts
+    clock.advance(600)
+    _item(conn, clock, "a" * 64, WEAK)
+    r = digests.post_now(conn, clock, "ap@acme.example")
+    assert r == {"address_id": "ap", "posted": True, "since": to_ts(MORNING)}
+    assert _posts(conn)[-1]["card"]["title"] == "Digest: ap"
+    clock.advance(3600)
+    assert digests.run(conn, clock) == 0  # nothing new since the one just posted
+    clock.advance(10 * 3600)  # 20:00 in New York: outside business hours, still posts on demand
+    _item(conn, clock, "b" * 64, UNVERIFIED)
+    assert digests.post_now(conn, clock, "ap")["posted"] is True
+    assert digests.post_now(conn, clock, "ap")["posted"] is False  # nothing new
+    assert len(_posts(conn)) == 2
+
+
+def test_a_digest_on_demand_needs_a_channel(conn: sqlite3.Connection) -> None:
+    clock = FakeClock(MORNING)
+    _setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("DELETE FROM routes")
+    with pytest.raises(ConflictError, match="no Slack channel"):
+        digests.post_now(conn, clock, "ap")
+
+
 # ---- Undo -----------------------------------------------------------------------------------
 
 
@@ -199,9 +227,11 @@ def test_the_daily_summary_says_what_waits_and_who_else_is_there(
         slack_admin.put_setting(conn, daily.MEMBERS, json.dumps({"ecf-default-ap": ["U0EVE"]}),
                                 to_ts(clock.now()), actor="test")  # fmt: skip
     pause.set_paused(conn, clock, "ap", True, actor="os_user")
+    _item(conn, clock, "d" * 64, {})  # ordinary mail: waits for the classifier, not for you
     c = daily.card(conn, clock.now(), "2026-10-01")
     assert dict(c.fields)["ap"] == (
-        "1 waiting on you, 1 open; last 24 h: 1 escalated, 0 not fully scanned"
+        "1 waiting on you, 1 waiting for the classifier (V1.3); last 24 h: 1 escalated,"
+        " 0 not fully scanned"
     )
     lines = c.text.splitlines()
     assert lines[0] == "Stale (30+ days): 1" and lines[1].startswith("  cccccccc ap:")

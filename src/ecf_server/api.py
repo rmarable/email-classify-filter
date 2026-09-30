@@ -50,6 +50,7 @@ from ecf_server import (
     checks,
     config,
     db,
+    digests,
     execute,
     health,
     inbox,
@@ -567,7 +568,17 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
+    @allow(Caller.CLI)
+    def digest_now(request: Request) -> JSONResponse:
+        ref = _str(_body(request), "address_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(digests.post_now(conn, state.clock, ref))
+        finally:
+            conn.close()
+
     return [
+        Route("/v1/digests", digest_now, methods=["POST"]),
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
@@ -832,14 +843,14 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def create(request: Request) -> JSONResponse:
-        token = _str(_body(request), "config_token")
+        token = _token(_body(request), "config_token")
         return _with_conn(lambda c: slack_admin.create_app(c, state.clock, state.slack_web,
                                                            token, state.install))  # fmt: skip
 
     @allow(Caller.CLI)
     def install(request: Request) -> JSONResponse:
         body = _body(request)
-        bot, app, member = (_str(body, "bot_token"), _str(body, "app_token"),
+        bot, app, member = (_token(body, "bot_token"), _token(body, "app_token"),
                             _str(body, "member"))  # fmt: skip
         r = _with_conn(lambda c: slack_admin.install(c, state.clock, state.store(),
                                                      state.slack_web, bot_token=bot,
@@ -851,7 +862,7 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def tokens(request: Request) -> JSONResponse:
         body = _body(request)
-        bot, app, nonce = _str(body, "bot_token"), _str(body, "app_token"), _nonce(body)
+        bot, app, nonce = _token(body, "bot_token"), _token(body, "app_token"), _nonce(body)
         r = _with_conn(lambda c: slack_admin.set_tokens(c, state.clock, state.store(),
                                                         state.slack_web, state.notifier,
                                                         bot_token=bot, app_token=app,
@@ -870,7 +881,7 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def reauthorize(request: Request) -> JSONResponse:
-        token = _str(_body(request), "config_token")
+        token = _token(_body(request), "config_token")
         return _with_conn(lambda c: slack_admin.reauthorize(c, state.clock, state.slack_web,
                                                             token, state.install))  # fmt: skip
 
@@ -1082,6 +1093,12 @@ def _str(body: dict[str, Any], key: str) -> str:
     if not isinstance(v, str):
         raise InvalidInputError(f"{key} must be a string")
     return v
+
+
+def _token(body: dict[str, Any], key: str) -> str:
+    """A pasted token: spaces and line breaks around it removed (a copy often brings one; V1.2
+    shadow run, 2026-09-30)."""
+    return _str(body, key).strip()
 
 
 def _opt_str(body: dict[str, Any], key: str) -> str | None:

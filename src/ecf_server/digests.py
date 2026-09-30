@@ -6,7 +6,8 @@ in ("Caught up: N messages since <time>" after a gap of more than 2 hours), then
 digest owns: weak fraud signals (a first-time sender asking for payment, OD-171) and unverified
 payment senders (OD-065), each with what was done, and how many emails weren't fully scanned.
 Escalations are not repeated here: they have their own cards. Buttons: Pause (this address), and
-Undo on items it may undo. No digest when nothing came in (no idle posts).
+Undo on items it may undo. No digest when nothing came in (no idle posts). `ecf digest <address>`
+posts one now, at any hour, and restarts the hourly clock (operator decision 2026-09-30).
 
 **Undo** removes the labels and flag ecf added to an email outside shadow. It is never offered on,
 and never runs for, an item with a fraud or regulator signal (OD-213): in V1.2 that leaves
@@ -24,6 +25,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf_server import (
+    addresses,
     approvals,
     cards,
     checks,
@@ -82,6 +84,24 @@ def run(conn: sqlite3.Connection, clock: Clock) -> int:
     return posted
 
 
+def post_now(conn: sqlite3.Connection, clock: Clock, ref: str) -> dict[str, Any]:
+    """`ecf digest <address>`: this address's digest now, whatever the hour, covering mail since
+    the last one; the hourly clock restarts from now, so nothing is listed twice."""
+    aid = addresses.get_address(conn, ref)["address_id"]
+    route = slack_routes.route_for(conn, aid)
+    if route is None:
+        raise ConflictError(f"{aid} has no Slack channel yet: see `ecf slack status`")
+    now = clock.now()
+    last = slack_admin.setting(conn, LAST + aid)
+    since = from_ts(last) if last else now - EVERY
+    card = build(conn, aid, since, now)
+    if card is not None:
+        slack_out.enqueue_post(conn, clock, key=f"digest:{aid}:{to_ts(now)}", route=route,
+                               card=card, identity=slack_routes.identity(aid))  # fmt: skip
+    _set_last(conn, aid, now)
+    return {"address_id": aid, "posted": card is not None, "since": to_ts(since)}
+
+
 def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) -> Card | None:
     rows = conn.execute(
         "SELECT * FROM items WHERE address_id = ? AND created_at > ? AND created_at <= ?"
@@ -124,7 +144,8 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
 
 
 def _line(r: sqlite3.Row, facts: dict[str, Any]) -> str:
-    return (f"{r['stable_id'][: cards.SHORT_ID]} {cards.sender_line(r, facts)[:40]}: "
+    sender = cards.short_sender(cards.sender_line(r, facts))
+    return (f"{r['stable_id'][: cards.SHORT_ID]} {sender}: "
             f"{cards.subject_line(r)[:60]} ({cards.done(facts)})")  # fmt: skip
 
 

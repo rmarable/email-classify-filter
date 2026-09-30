@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Fixes from the V1.2 shadow run: Slack posts keep their line breaks; senders in lists and step-up dialogs are never cut mid-address (a cut domain could hide a lookalike); a card's "Why:" names only the fraud signals that fired; the daily summary shows mail waiting for the classifier apart from what waits on you; a lost and restored Slack connection shows in `ecf logs`; pasted Slack tokens with surrounding spaces are accepted.
+- New command `ecf digest <address>` posts that address's digest in Slack now, at any hour, instead of waiting for the hourly one (operator decision 2026-09-30).
 - `ecf doctor` now checks Slack and step-up: whether step-up can run here, your confirmed member ID, the bot token, the Socket Mode connection, your membership in every ecf channel, that ecf can DM you, and an open Slack delivery failure, each with its fix.
 - New commands `ecf init [--mode local] [--resume]` (sets up the service, checks disk encryption and the secret store, asks prod or test once, connects Slack and adds the first mailbox; safe to run again) and `ecf init status`. `ecf address add` now reminds you, for presets B and C, that the local fallback is off, and for C that it uses your Claude plan.
 - New command `ecf backfill <address> --since <date> [--act]` reads older mail with the checks, new mail first. By default it only records and checks it (nothing is done to the mailbox or escalated, OD-216, OD-221); `--act` labels, flags and escalates as for new mail. `ecf backfill` alone shows backfills in progress.

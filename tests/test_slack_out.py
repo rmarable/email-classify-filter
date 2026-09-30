@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from ecf_server import jobs, slack_out
+from ecf_server import jobs, slack_out, slack_render
 from ecf_server._slack import SlackError, SlackNetworkError
 from ecf_server.chat import Button, Card, Identity, RouteGoneError, RouteRef
 from ecf_server.clock import FakeClock
@@ -233,3 +233,13 @@ def test_other_errors_retry_then_dead_letter_without_text(
     dead = slack_out.dead_posts(conn)
     assert [d["key"] for d in dead] == ["item:9"] and "Invoice" not in str(dead)
     assert n.sent == []  # not a delivery failure alert: a problem with one post
+
+
+def test_each_text_line_is_its_own_section() -> None:
+    """Slack runs the lines of one plain_text section together (V1.2 shadow run, 2026-09-30)."""
+    b = blocks(Card("t", text="first\n\n  second  \nthird"))
+    assert [s["text"]["text"] for s in b if s["type"] == "section"] == ["first", "second", "third"]
+    many = blocks(Card("t", text="\n".join(f"line {i}" for i in range(40))))
+    sections = [s["text"]["text"] for s in many if s["type"] == "section"]
+    assert len(sections) == slack_render.TEXT_LINES_MAX
+    assert sections[-1].startswith("line 29 · line 30") and sections[-1].endswith("line 39")

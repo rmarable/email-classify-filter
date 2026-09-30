@@ -284,3 +284,14 @@ def test_cards_render_through_the_real_sender(conn: sqlite3.Connection, clock: F
         pass
     [post] = chat.posts
     assert post["card"]["mention"] == ME and post["card"]["title"] == "Possible fraud"
+
+
+def test_a_short_sender_never_cuts_the_address() -> None:
+    """A cut domain can hide a lookalike (V1.2 shadow run, 2026-09-30)."""
+    long = "Mistry Babylon <mistrybabylon@atomicmail.example>"
+    assert cards.short_sender(long) == "mistrybabylon@atomicmail.example"
+    assert cards.short_sender("Pat <pat@a.example>") == "Pat <pat@a.example>"
+    very = "x" * 50 + "@lookalike-bank.example"
+    assert cards.short_sender(very) == very  # longer than the limit, still whole
+    assert cards.short_sender("someone at gmail.com (sender not recorded before V1.2)") == (
+        "someone at gmail.com")  # fmt: skip

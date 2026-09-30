@@ -156,11 +156,17 @@ def _money_triggers(
     bank, change, payment = (bool(keywords[g]) for g in ("bank", "change", "payment"))
     auth, rtm = found["auth_result"], found["reply_to_mismatch"]
     # 1. bank details with an unconfirmed sender (OD-044), change wording or a Reply-To mismatch
-    if bank and (not found["sender_confirmed"] or change or rtm):
-        fraud.append(
-            "bank details from an unconfirmed sender, with change wording, or with a "
-            "Reply-To mismatch"
+    held = [
+        what
+        for what, hit in (
+            ("a sender you haven't confirmed", not found["sender_confirmed"]),
+            ("change wording", change),
+            ("a Reply-To mismatch", rtm),
         )
+        if hit
+    ]  # only what held, so the card says why (V1.2 shadow run, 2026-09-30)
+    if bank and held:
+        fraud.append(f"bank details with {' and '.join(held)}")
     signals = (
         ("bank or change wording", bank or change),
         ("DMARC fail", auth == "fail"),
@@ -173,14 +179,14 @@ def _money_triggers(
     # 2. a first-time sender with a payment keyword needs a second signal; alone it is weak
     if payment and not found["sender_seen_before"]:
         if second:
-            fraud.append(f"first-time sender with a payment keyword and {second[0]}")
+            fraud.append(f"first-time sender with a payment keyword and {' and '.join(second)}")
         else:
             weak.append("first-time sender with a payment keyword")
     # a known sender: Reply-To mismatch on a payment item is a second signal only (OD-068)
     elif payment and rtm:
         others = [name for name in second if name != "Reply-To mismatch"]
         if others:
-            fraud.append(f"Reply-To mismatch on a payment item and {others[0]}")
+            fraud.append(f"Reply-To mismatch on a payment item and {' and '.join(others)}")
         else:
             weak.append("Reply-To mismatch on a payment item")
     return fraud, weak
