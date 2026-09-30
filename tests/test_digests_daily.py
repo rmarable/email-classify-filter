@@ -35,7 +35,7 @@ FRAUD: dict[str, Any] = {"triggers": {"fraud": ["bank change"]},
                       "executed": ["label suspicious", "flag", "escalate"]}}  # fmt: skip
 
 
-def _setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
+def slack_setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset,"
@@ -74,7 +74,7 @@ def _facts(conn: sqlite3.Connection, sid: str) -> dict[str, Any]:
 
 def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.Connection) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     assert digests.run(conn, clock) == 0  # first sight: starts from now
     clock.advance(600)
     _item(conn, clock, "a" * 64, WEAK)
@@ -99,7 +99,7 @@ def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.
 
 def test_no_idle_digests_and_none_outside_business_hours(conn: sqlite3.Connection) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     digests.run(conn, clock)
     clock.advance(3600)
     assert digests.run(conn, clock) == 0 and _posts(conn) == []  # nothing came in
@@ -113,7 +113,7 @@ def test_no_idle_digests_and_none_outside_business_hours(conn: sqlite3.Connectio
 
 def test_a_digest_on_demand_at_any_hour_restarts_the_clock(conn: sqlite3.Connection) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     digests.run(conn, clock)  # the hourly clock starts
     clock.advance(600)
     _item(conn, clock, "a" * 64, WEAK)
@@ -131,7 +131,7 @@ def test_a_digest_on_demand_at_any_hour_restarts_the_clock(conn: sqlite3.Connect
 
 def test_a_digest_on_demand_needs_a_channel(conn: sqlite3.Connection) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     with write_tx(conn):
         conn.execute("DELETE FROM routes")
     with pytest.raises(ConflictError, match="no Slack channel"):
@@ -155,7 +155,7 @@ def test_undo_is_queued_for_the_next_check_and_refused_on_fraud(
     conn: sqlite3.Connection, db_path: Path
 ) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     _item(conn, clock, "b" * 64, UNVERIFIED)
     _item(conn, clock, "a" * 64, WEAK)
     _click(db_path, clock, conn, "b" * 64)
@@ -171,7 +171,7 @@ def test_undo_is_queued_for_the_next_check_and_refused_on_fraud(
 def test_queued_undos_run_inside_the_check_and_never_on_fraud(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     ran: list[tuple[str, list[Planned]]] = []
 
     def fake_undo(_c: Any, _k: Any, _src: Any, item: sqlite3.Row, actions: list[Planned],
@@ -203,7 +203,7 @@ def test_queued_undos_run_inside_the_check_and_never_on_fraud(
 
 def test_the_daily_summary_posts_once_per_business_day(conn: sqlite3.Connection) -> None:
     clock = FakeClock(datetime(2026, 10, 1, 11, 0, tzinfo=UTC))  # 07:00 in New York
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     assert daily.run(conn, clock) is False
     clock.advance(3600)  # 08:00
     assert daily.run(conn, clock) is True and daily.run(conn, clock) is False
@@ -218,7 +218,7 @@ def test_the_daily_summary_says_what_waits_and_who_else_is_there(
     conn: sqlite3.Connection,
 ) -> None:
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     _item(conn, clock, "c" * 64, FRAUD)
     with write_tx(conn):
         conn.execute("INSERT INTO escalations (stable_id, address_id, state, created_at)"
@@ -242,7 +242,7 @@ def test_the_daily_summary_says_what_waits_and_who_else_is_there(
 def test_channel_members_are_checked_hourly_and_changes_are_a_security_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     chat = FakeChat()
     chat.routes["CSUM"] = {"name": "ecf-default-summary", "members": [ME, BOT], "archived": False}
     chat.routes["CAP"] = {"name": "ecf-default-ap", "members": [ME, BOT], "archived": False}
@@ -266,7 +266,7 @@ def test_channel_members_are_checked_hourly_and_changes_are_a_security_notice(
 def test_the_first_member_check_reports_anyone_already_there(conn: sqlite3.Connection) -> None:
     """A channel ecf adopted may have come with people (V1.2 review, 2026-09-30)."""
     clock = FakeClock(MORNING)
-    _setup(conn, clock)
+    slack_setup(conn, clock)
     chat = FakeChat()
     chat.routes["CSUM"] = {"name": "ecf-default-summary", "members": [ME, BOT], "archived": False}
     chat.routes["CAP"] = {"name": "ecf-default-ap", "members": [ME, BOT, "U0EVE"],

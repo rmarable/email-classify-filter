@@ -29,6 +29,7 @@ from ecf_server import (
     approvals,
     cards,
     checks,
+    digest_actions,
     pause,
     schedule,
     slack_admin,
@@ -137,7 +138,10 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
                 text.append(f"... and {len(lines) - SECTION_MAX} more: ecf inbox")
     if unscanned:
         text += ["", f"Not fully scanned: {unscanned}"]
+    more, offered = digest_actions.lines(conn, now, aid, rows, key=f"{aid}:{to_ts(now)}")
+    text += more
     buttons = [Button(UNDO, f"Undo {sid[: cards.SHORT_ID]}", sid) for sid in undoable[:UNDO_MAX]]
+    buttons += offered
     buttons.append(Button(pause.PAUSE, f"Pause {aid}", aid))
     note = cards.PAYMENT_NOTE if (weak or unverified) else ""
     return Card(f"Digest: {aid}", text="\n".join(text), buttons=tuple(buttons), note=note)

@@ -147,10 +147,11 @@ def request(
         raise ConflictError(f"this email is {item['status']}, not proposed",
                             current=str(item["status"]))  # fmt: skip
     check_transition(Status.PROPOSED, Status.AWAITING_APPROVAL, ctx)
+    kept: dict[str, Any] = json.loads(item["proposal"] or "{}")  # the plan's reasons stay (V1.3)
+    doc = kept | {"actions": [a.to_json() for a in actions]}
     with write_tx(conn):
         conn.execute("UPDATE items SET proposal = ?, updated_at = ? WHERE stable_id = ?",
-                     (json.dumps({"actions": [a.to_json() for a in actions]}),
-                      to_ts(clock.now()), sid))  # fmt: skip
+                     (json.dumps(doc), to_ts(clock.now()), sid))  # fmt: skip
     items.transition(conn, clock, StableId(sid), Status.AWAITING_APPROVAL, ctx, actor="service",
                      expected=Status.PROPOSED)  # fmt: skip
     grant_id = _issue(conn, clock, _item(conn, sid), actions)

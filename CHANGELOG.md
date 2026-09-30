@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- Hourly digests now count what ecf did automatically, offer "Approve all N reversible" for waiting approvals that are safe to batch (never payment, fraud, regulator, unscanned or high-risk mail, nor `high` addresses), and list mail that wasn't hidden because its sender's category isn't confirmed, with a button that tells you the `ecf sender confirm` command (it needs your computer).
 - The local model now also proposes a next step for mail a rule sends to it (for example a customer asking for something): a label, a flag, an escalation, or a question for you in Slack. Its proposals get the same safety checks as the rules', and a question about risky mail escalates instead.
 - After classification, ecf now decides what to do with each email by the rules and policy: in shadow it records the decision; in assist it applies labels and flags and holds the rest; in live it acts automatically where policy allows and asks you otherwise. A classification alone can never hide mail: hiding needs corroboration from ecf's own checks, and never happens for mail with fraud, regulatory or unscanned signals or on `high` addresses. A model-detected fraud risk escalates like a pre-check trigger.
 - New mail is now classified by the local model (Gemma 4 12B through Ollama) in the service's model queue; an email the model can't classify twice waits in "Needs you". What a classification may lead to arrives with rules and policy.
