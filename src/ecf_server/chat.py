@@ -115,6 +115,8 @@ class ChatSurface(Protocol):
 
     def archive(self, route: RouteRef) -> None: ...
 
+    def members(self, route: RouteRef) -> list[str]: ...
+
 
 @dataclass
 class FakeChat:
@@ -202,6 +204,10 @@ class FakeChat:
     def archive(self, route: RouteRef) -> None:
         with self._lock:
             self.routes[route.channel]["archived"] = True
+
+    def members(self, route: RouteRef) -> list[str]:
+        with self._lock:
+            return list(self.routes[route.channel]["members"])
 
     def clear(self) -> None:
         with self._lock:

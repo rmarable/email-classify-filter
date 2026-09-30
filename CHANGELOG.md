@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Hourly digests in each address channel during business hours: new mail, weak fraud signals and unverified payment senders, with Undo (never for fraud or regulator labels) and Pause. Nothing is posted when nothing came in.
+- A daily summary at the start of business hours: what waits on you, stale items, approvals that expired twice, paused addresses, and who else is in ecf's channels. Someone joining or leaving one of those channels sends a Security Notice (OD-215).
 - New commands `ecf pause <address>|--all` and `ecf resume <address>|--all`, and Pause and Resume buttons: a paused address keeps being checked for fraud and regulator mail, but ecf takes no other action on it until you resume.
 - A pinned "Needs you" message in the Slack summary channel lists what is waiting on you (edited only when it changes). Emails open for 30 days are marked stale and announced once.
 - If ecf stops checking (a crash, a dead computer, or a long sleep), a scheduled Slack message tells you ("ecf hasn't checked in since …"); a normal stop cancels it. By default it posts only in business hours, so an overnight sleep isn't reported unless the computer is still off once the workday starts; the setting `deadman_offhours` lets it post off-hours too (OD-219).

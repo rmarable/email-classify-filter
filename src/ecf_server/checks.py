@@ -127,6 +127,12 @@ class SecretUnavailableError(ServiceUnavailableError):
     """The app password couldn't be read: not a mail provider problem (V1.1 review)."""
 
 
+# Work that needs the address lease and the open mailbox, run in every check after the pre-check.
+# Registered by the modules that own it (digests.py: queued Undos), so checks needs no Slack code.
+InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int], object]
+IN_LEASE: list[InLease] = []
+
+
 def _locked_check(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -182,6 +188,8 @@ def _locked_check(
                 install=install,
                 max_scan_bytes=cfg.max_scan_bytes,
             )
+            for work in IN_LEASE:  # e.g. queued Undos (digests.py)
+                work(conn, clock, src, address_id, install, cfg.max_scan_bytes)
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated

@@ -46,6 +46,7 @@ from ecf_server.slack_in import CONFIRM_ACTION, Click, SlackIdentity
 BOT_SECRET = "slack/bot"  # noqa: S105 - the secret store's entry name, not a secret
 APP_SECRET = "slack/app"  # noqa: S105 - the secret store's entry name, not a secret
 APP_ID, TEAM_ID, MEMBER = "slack_app_id", "slack_team_id", "slack_member_id"
+BOT_USER = "slack_bot_user"  # the bot's own member ID (left out of channel-member checks)
 PENDING_APP = "slack_app_pending"  # created by `create_app`, not yet installed
 PENDING_MEMBER, CONFIRM_NONCE = "slack_member_pending", "slack_member_nonce"
 # a hash of the stored tokens, so a step-up binds to what it replaces
@@ -145,7 +146,7 @@ def install(
     if identity(conn) is not None or store.get(BOT_SECRET):
         raise ConflictError("Slack is already installed; use `ecf slack set-tokens`")
     _check_member(member)
-    team_id, app_id = check_tokens(make_web, bot_token, app_token)
+    team_id, app_id, bot_user = check_tokens(make_web, bot_token, app_token)
     pending = _settings(conn, PENDING_APP).get(PENDING_APP)
     if pending and pending != app_id:
         raise InvalidInputError(
@@ -159,14 +160,15 @@ def install(
         _set(conn, APP_ID, app_id, now)
         _set(conn, TEAM_ID, team_id, now)
         _set(conn, TOKEN_FP, fingerprint(bot_token, app_token), now)
+        _set(conn, BOT_USER, bot_user, now)
         _unset(conn, PENDING_APP)
         _audit(conn, now, "slack.installed", {"app_id": app_id, "team_id": team_id})
         _record_pending(conn, now, member, nonce)
     return status(conn)
 
 
-def check_tokens(make_web: WebFactory, bot_token: str, app_token: str) -> tuple[str, str]:
-    """Ask Slack about both tokens; returns (team_id, app_id)."""
+def check_tokens(make_web: WebFactory, bot_token: str, app_token: str) -> tuple[str, str, str]:
+    """Ask Slack about both tokens; returns (team_id, app_id, the bot's own user ID)."""
     if not bot_token.startswith("xoxb-"):
         raise InvalidInputError("the bot token starts with xoxb- (OAuth & Permissions page)")
     if not app_token.startswith("xapp-"):
@@ -181,7 +183,7 @@ def check_tokens(make_web: WebFactory, bot_token: str, app_token: str) -> tuple[
         raise InvalidInputError("Slack didn't identify the workspace and app for that bot token")
     # slack_sdk sends the app-level token for this one method from its `app_token` argument
     _call(web, "apps.connections.open", what="app-level token", app_token=app_token)
-    return team_id, app_id
+    return team_id, app_id, str(who.get("user_id", ""))
 
 
 def fingerprint(bot_token: str, app_token: str) -> str:
@@ -302,7 +304,7 @@ def set_tokens(
     nonce: str | None,
 ) -> dict[str, Any]:
     ident = _installed(conn)
-    team_id, app_id = check_tokens(make_web, bot_token, app_token)
+    team_id, app_id, bot_user = check_tokens(make_web, bot_token, app_token)
     if (team_id, app_id) != (ident.team_id, ident.app_id):
         raise InvalidInputError(
             f"these tokens are for workspace {team_id}, app {app_id}; ecf is installed in "
@@ -316,6 +318,7 @@ def set_tokens(
     now = to_ts(clock.now())
     with write_tx(conn):
         _set(conn, TOKEN_FP, fp, now)
+        _set(conn, BOT_USER, bot_user, now)
         _audit(conn, now, "slack.tokens_replaced", {"app_id": app_id, "team_id": team_id})
     notice(conn, clock, notifier,
            "ecf's Slack tokens were replaced at this computer (`ecf slack set-tokens`). "

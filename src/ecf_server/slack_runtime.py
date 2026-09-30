@@ -20,7 +20,9 @@ from ecf_server import (
     _slack,
     answers,
     approvals,
+    daily,
     deadman,
+    digests,
     escalations,
     needs_you,
     pause,
@@ -29,6 +31,7 @@ from ecf_server import (
     slack_routes,
 )
 from ecf_server.clock import Clock, to_ts
+from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
 from ecf_server.secretstore import SecretStore
@@ -38,7 +41,7 @@ from ecf_server.slack_in import Inbound, SlackReceiver
 from ecf_server.slack_out import SlackSender
 
 # Modules whose Slack button handlers (`slack_in.handles`) must be registered before clicks arrive.
-HANDLER_MODULES = (slack_admin, escalations, approvals, answers, pause)
+HANDLER_MODULES = (slack_admin, escalations, approvals, answers, pause, digests)
 RETRY_S = 60.0
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0
@@ -91,6 +94,7 @@ class SlackRuntime:
             return False
         self.status["installed"] = True
         self._web = self._make_web(bot)
+        self._remember_bot_user()
         self._sender = SlackSender(SlackChat(self._web), self._clock, self._notifier)
         inbound = Inbound(slack_admin.identity, self._clock, self._connect, self._ack,
                           self._open_view)  # fmt: skip
@@ -150,6 +154,9 @@ class SlackRuntime:
         try:
             needs_you.refresh(conn, self._clock, computer=self._computer)
             deadman.keep_armed(conn, self._clock, self._web, computer=self._computer)
+            digests.run(conn, self._clock)
+            daily.check_members(conn, self._clock, SlackChat(self._web), self._notifier)
+            daily.run(conn, self._clock)
         except (_slack.SlackError, _slack.SlackNetworkError) as exc:  # retried next time
             log.warning("slack.housekeeping_failed", error_type=type(exc).__name__,
                         code=getattr(exc, "code", None))  # fmt: skip
@@ -174,6 +181,22 @@ class SlackRuntime:
             self._notifier.notify("ecf: Slack channel needs you", problem)
         self._problem = problem
         self.status["channels"] = problem or None
+
+    def _remember_bot_user(self) -> None:
+        """Installs from before step 8b didn't record the bot's own member ID (the member check
+        leaves it out); ask Slack once."""
+        conn = self._connect()
+        try:
+            if slack_admin.setting(conn, slack_admin.BOT_USER):
+                return
+            who = self._web.call("auth.test")
+            with write_tx(conn):
+                slack_admin.put_setting(conn, slack_admin.BOT_USER, str(who.get("user_id", "")),
+                                        to_ts(self._clock.now()), actor="service")  # fmt: skip
+        except (_slack.SlackError, _slack.SlackNetworkError) as exc:  # tried again next start
+            log.warning("slack.bot_user_unknown", error_type=type(exc).__name__)
+        finally:
+            conn.close()
 
     def reload(self) -> None:
         """Called from the API thread: reconnect with the stored tokens on the next pass."""

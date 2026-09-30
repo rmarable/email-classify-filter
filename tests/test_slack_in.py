@@ -337,8 +337,8 @@ def test_a_form_opens_through_views_open(
     rt = _runtime(db_path, clock, store, web)
     assert rt.start()
     FakeSocket.instances[0].on_envelope(_env(_click("answer#0")))
-    assert web.calls == [("views.open", {"trigger_id": "trig-1",
-                                         "view": {"callback_id": "answer"}})]  # fmt: skip
+    assert web.calls[-1] == ("views.open", {"trigger_id": "trig-1",
+                                            "view": {"callback_id": "answer"}})  # fmt: skip
 
 
 def test_a_failed_connection_is_retried_later(
