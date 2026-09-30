@@ -34,6 +34,8 @@ class DovecotHarness:
         self.imap = _source(dv, self.user)
         self.source: MailSource = self.imap
         self._admin = dv.admin(self.user)
+        self.move_target = "Archive"  # the image has no \\Archive folder; any folder will do
+        self._admin.create(self.move_target)
 
     def deliver(self, raw: bytes, when: datetime) -> None:
         dovecot.append(self._admin, raw, when)

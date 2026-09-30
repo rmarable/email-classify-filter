@@ -17,6 +17,7 @@ KW = "$ecf_test_suspicious"
 
 class Harness(Protocol):
     source: MailSource
+    move_target: str  # a folder moves may go to (V1.3 step 5)
 
     def deliver(self, raw: bytes, when: datetime) -> None: ...
     def expunge(self, uid: int) -> None: ...
@@ -153,3 +154,38 @@ class MailSourceContract:
         (only,) = harness.source.structure(single) or []
         assert (only.section, only.content_type) == ("1", "text/plain")
         assert harness.source.structure(single + 100) is None
+
+    # -- V1.3 step 5: hide actions and their undo ------------------------------------------------
+
+    def _archive(self, h: Harness) -> str:
+        return h.move_target
+
+    def test_set_seen(self, harness: Harness) -> None:
+        [uid] = self._fill(harness, 1)
+        harness.source.set_seen(uid, True)
+        assert SEEN in harness.source.flags([uid])[uid]
+        harness.source.set_seen(uid, False)
+        assert SEEN not in harness.source.flags([uid])[uid]
+
+    def test_move_find_fetch_and_move_back(self, harness: Harness) -> None:
+        src = harness.source
+        uids = self._fill(harness, 2)
+        raw = src.fetch(uids[0])
+        folder = self._archive(harness)
+        src.move(uids[0], folder)
+        assert src.uids_after(0) == [uids[1]]  # gone from INBOX, the other untouched
+        [there] = src.find_in(folder, "<contract-0@synthetic.acme.example>")
+        assert src.fetch_in(folder, there) == raw
+        assert src.find_in(folder, "<contract-1@synthetic.acme.example>") == []
+        src.move_back(folder, there)
+        back = src.find_message_id("<contract-0@synthetic.acme.example>")
+        assert len(back) == 1 and src.fetch(back[0]) == raw
+        assert src.find_in(folder, "<contract-0@synthetic.acme.example>") == []
+
+    def test_copy_leaves_the_message_in_inbox(self, harness: Harness) -> None:
+        src = harness.source
+        [uid] = self._fill(harness, 1)
+        folder = self._archive(harness)
+        src.copy(uid, folder)
+        assert src.existing([uid]) == {uid}
+        assert len(src.find_in(folder, "<contract-0@synthetic.acme.example>")) == 1

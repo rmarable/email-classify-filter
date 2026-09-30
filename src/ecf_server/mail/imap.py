@@ -19,6 +19,7 @@ from ecf.errors import MailUnavailableError
 from ecf_server.mail import (
     FLAGGED,
     ROLES,
+    SEEN,
     Capabilities,
     Folder,
     InboxState,
@@ -231,6 +232,56 @@ class ImapSource:
 
     def set_flagged(self, uid: int, flagged: bool) -> None:
         self._store(uid, FLAGGED, add=flagged)
+
+    def set_seen(self, uid: int, seen: bool) -> None:
+        self._store(uid, SEEN, add=seen)
+
+    def move(self, uid: int, folder: str) -> None:
+        conn = self._writes()
+        self._relocate(conn, uid, folder)
+
+    def copy(self, uid: int, folder: str) -> None:
+        conn = self._writes()
+        self._call(lambda: conn.copy([uid], folder))
+
+    def find_in(self, folder: str, message_id: str) -> list[int]:
+        conn = self._other(folder, readonly=True)
+        hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
+        found: list[int] = []
+        for chunk in _chunks(hits):
+            data = self._call(lambda c=chunk: conn.fetch(c, ["ENVELOPE"]))
+            found += [u for u, d in data.items()
+                      if lib.envelope_message_id(d.get("ENVELOPE")) == message_id]  # fmt: skip
+        return sorted(found)
+
+    def fetch_in(self, folder: str, uid: int) -> bytes | None:
+        conn = self._other(folder, readonly=True)
+        data = self._call(lambda: conn.fetch([uid], ["BODY.PEEK[]"]))
+        return lib.as_bytes(data[uid].get("BODY[]")) if uid in data else None
+
+    def move_back(self, folder: str, uid: int) -> None:
+        conn = self._other(folder, readonly=False)
+        self._relocate(conn, uid, INBOX)
+
+    def _relocate(self, conn: lib.Conn, uid: int, folder: str) -> None:
+        """MOVE when the server has it; else COPY, mark deleted and UID EXPUNGE just this UID
+        (UIDPLUS). Without either, refuse: a plain EXPUNGE could remove other deleted mail."""
+        caps = self._call(conn.capabilities)
+        if "MOVE" in caps:
+            self._call(lambda: conn.move([uid], folder))
+        elif "UIDPLUS" in caps:
+            self._call(lambda: conn.copy([uid], folder))
+            self._call(lambda: conn.add_flags([uid], ["\\Deleted"]))
+            self._call(lambda: conn.uid_expunge([uid]))
+        else:
+            raise MailUnavailableError(f"{self._host} supports neither MOVE nor UIDPLUS")
+
+    def _other(self, folder: str, *, readonly: bool) -> lib.Conn:
+        """Select another folder; the next INBOX call selects INBOX again."""
+        conn = self._connect()
+        self._call(lambda: conn.select(folder, readonly=readonly))
+        self._readonly = None
+        return conn
 
     def _store(self, uid: int, flag: str, *, add: bool) -> None:
         conn = self._writes()

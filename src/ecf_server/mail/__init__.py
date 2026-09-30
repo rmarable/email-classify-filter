@@ -3,8 +3,8 @@
 Every implementation passes the same contract tests (tests/mail_contract.py). Reads never set
 `\\Seen` (fetches use PEEK). Adapters hide provider quirks: `uids_after` never returns a UID at
 or below the one asked about, even though IMAP's `UID SEARCH UID n:*` can (§5.1). Writes cover
-keywords and `\\Flagged` only (label, flag and their undo; operator decision 2026-09-28, OD-189);
-moves and sending arrive with the milestones that use them.
+keywords and `\\Flagged` (label, flag and their undo; OD-189), and from V1.3 `\\Seen`, moving to a
+folder and back, and copying (the hide actions and `label_folder`); sending arrives in V1.5.
 """
 
 from __future__ import annotations
@@ -111,4 +111,22 @@ class MailSource(Protocol):
     def add_keyword(self, uid: int, keyword: str) -> None: ...
     def remove_keyword(self, uid: int, keyword: str) -> None: ...
     def set_flagged(self, uid: int, flagged: bool) -> None: ...
+    def set_seen(self, uid: int, seen: bool) -> None: ...
+    def move(self, uid: int, folder: str) -> None:
+        """Move an INBOX message to `folder` (UID MOVE, or COPY + UID EXPUNGE with UIDPLUS)."""
+        ...
+
+    def copy(self, uid: int, folder: str) -> None:
+        """Copy an INBOX message to `folder`; it stays in INBOX."""
+        ...
+
+    def find_in(self, folder: str, message_id: str) -> list[int]:
+        """UIDs in `folder` whose Message-ID is exactly `message_id`."""
+        ...
+
+    def fetch_in(self, folder: str, uid: int) -> bytes | None: ...
+    def move_back(self, folder: str, uid: int) -> None:
+        """Move a message from `folder` back to INBOX (undo)."""
+        ...
+
     def close(self) -> None: ...

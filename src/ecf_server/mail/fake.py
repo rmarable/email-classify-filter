@@ -9,8 +9,10 @@ from email import message_from_bytes, policy
 from email.message import Message
 from typing import cast
 
+from ecf.errors import MailUnavailableError
 from ecf_server.mail import (
     FLAGGED,
+    SEEN,
     Capabilities,
     Folder,
     InboxState,
@@ -50,6 +52,7 @@ class FakeMailSource:
         )
         self._folders = list(folders)
         self._msgs: dict[int, _Stored] = {}
+        self.elsewhere: dict[str, dict[int, _Stored]] = {}  # other folders (moves, copies)
         self._next = 1
         self.closed = False
 
@@ -178,6 +181,43 @@ class FakeMailSource:
                 s.flags.add(FLAGGED)
             else:
                 s.flags.discard(FLAGGED)
+
+    def set_seen(self, uid: int, seen: bool) -> None:
+        if (s := self._msgs.get(uid)) is not None:
+            if seen:
+                s.flags.add(SEEN)
+            else:
+                s.flags.discard(SEEN)
+
+    def _folder(self, folder: str) -> dict[int, _Stored]:
+        if folder not in {f.name for f in self._folders}:
+            raise MailUnavailableError(f"no folder {folder!r}")
+        return self.elsewhere.setdefault(folder, {})
+
+    def move(self, uid: int, folder: str) -> None:
+        target = self._folder(folder)
+        if (s := self._msgs.pop(uid, None)) is not None:
+            target[self._next] = s  # a new UID in the target folder, as a server gives
+            self._next += 1
+
+    def copy(self, uid: int, folder: str) -> None:
+        target = self._folder(folder)
+        if (s := self._msgs.get(uid)) is not None:
+            target[self._next] = _Stored(s.raw, s.internaldate, set(s.flags))
+            self._next += 1
+
+    def find_in(self, folder: str, message_id: str) -> list[int]:
+        return sorted(u for u, s in self._folder(folder).items()
+                      if _message_id(_parse(s.raw)) == message_id)  # fmt: skip
+
+    def fetch_in(self, folder: str, uid: int) -> bytes | None:
+        s = self._folder(folder).get(uid)
+        return None if s is None else s.raw
+
+    def move_back(self, folder: str, uid: int) -> None:
+        if (s := self._folder(folder).pop(uid, None)) is not None:
+            self._msgs[self._next] = s
+            self._next += 1
 
     def close(self) -> None:
         self.closed = True
