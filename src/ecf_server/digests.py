@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -30,6 +31,8 @@ from ecf_server import (
     cards,
     checks,
     digest_actions,
+    jobs,
+    mailbox_actions,
     pause,
     schedule,
     slack_admin,
@@ -185,6 +188,9 @@ def may_undo(facts: dict[str, Any]) -> bool:
 @slack_in.handles(UNDO)
 def _undo_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (click.ref,)).fetchone()
+    if item is not None and mailbox_actions.undoable(item):  # what the model's plan did (V1.3)
+        _queue_model_undo(conn, clock, item, click)
+        return
     facts: dict[str, Any] = json.loads(item["facts"] or "{}") if item else {}
     if item is None or not may_undo(facts):
         _tell(conn, clock, click, "Nothing to undo here (fraud and regulator labels stay).")
@@ -206,6 +212,47 @@ def _undo_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -
         )
     _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
                               " within a minute while your computer is awake.")  # fmt: skip
+
+
+def _queue_model_undo(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
+                      click: slack_in.Click) -> None:  # fmt: skip
+    doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
+    doc["undo"] = "queued"
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        conn.execute("UPDATE items SET proposal = ?, updated_at = ? WHERE stable_id = ?",
+                     (json.dumps(doc, sort_keys=True), now, item["stable_id"]))  # fmt: skip
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
+            " VALUES (?, ?, ?, 'action.undo_requested', ?, 'ok', '{}')",
+            (now, item["address_id"], item["stable_id"], f"slack:{click.user}"),
+        )
+    jobs.make_due(conn, clock, item["address_id"])
+    _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
+                              " within a minute while your computer is awake.")  # fmt: skip
+
+
+def run_model_undos(conn: sqlite3.Connection, clock: Clock, src: MailSource, address_id: str,
+                    install: str, lost: Callable[[], bool]) -> int:  # fmt: skip
+    """Inside a check: carry out queued Undos of what the model's plans did (V1.3 step 5b)."""
+    rows = conn.execute("SELECT * FROM items WHERE address_id = ? AND status = 'executed'"
+                        " AND json_extract(proposal, '$.undo') = 'queued'",
+                        (address_id,)).fetchall()  # fmt: skip
+    for item in rows:
+        try:
+            done = mailbox_actions.undo_item(conn, clock, src, item, install=install, lost=lost)
+            result, text = "done", f"Undone for {item['stable_id'][:8]}: {', '.join(done)}."
+        except (MessageChangedError, mailbox_actions.LeaseLostError) as exc:
+            result, text = "failed", f"Couldn't undo {item['stable_id'][:8]}: {exc.detail}"
+        row = conn.execute("SELECT proposal FROM items WHERE stable_id = ?",
+                           (item["stable_id"],)).fetchone()  # fmt: skip
+        doc: dict[str, Any] = json.loads(row["proposal"] or "{}")
+        doc["undo"] = result
+        with write_tx(conn):
+            conn.execute("UPDATE items SET proposal = ? WHERE stable_id = ?",
+                         (json.dumps(doc, sort_keys=True), item["stable_id"]))  # fmt: skip
+        _tell_member(conn, clock, address_id, text)
+    return len(rows)
 
 
 def run_undos(
@@ -255,9 +302,17 @@ def _tell_member(conn: sqlite3.Connection, clock: Clock, address_id: str, text: 
         slack_out.enqueue_ephemeral(conn, clock, route=route, user=ident.member, text=text)
 
 
-def _undos_in_check(conn: sqlite3.Connection, clock: Clock, src: MailSource, address_id: str,
-                    install: str, max_scan_bytes: int) -> int:  # fmt: skip
-    return run_undos(conn, clock, src, address_id, install=install, max_scan_bytes=max_scan_bytes)
+def _undos_in_check(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    src: MailSource,
+    address_id: str,
+    install: str,
+    max_scan_bytes: int,
+    lost: Callable[[], bool],
+) -> int:
+    n = run_undos(conn, clock, src, address_id, install=install, max_scan_bytes=max_scan_bytes)
+    return n + run_model_undos(conn, clock, src, address_id, install, lost)
 
 
 checks.IN_LEASE.append(_undos_in_check)

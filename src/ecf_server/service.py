@@ -38,9 +38,9 @@ from ecf_server import (
     daily,
     db,
     decide,
-    execute,
     health,
     jobs,
+    mailbox_actions,
     modelq,
     models,
     needs_you,
@@ -75,7 +75,6 @@ WORKER = "checks"
 WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
 TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
-ACTIONS_PER_TICK = 20
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
@@ -168,6 +167,8 @@ class Service:
         self.work = threading.Event()  # set when checks are due
         self.model_wake = threading.Event()  # set when the local model has new work
         self.rounds = modelq.RoundSchedule(self.clock)
+        # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
+        self.in_check = mailbox_actions.run_in_check
         self.throttle = modelq.Throttle()  # generation speeds across rounds (heat, OD-029/OD-243)
 
     # -- threads -------------------------------------------------------------------------------
@@ -234,9 +235,8 @@ class Service:
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
-                for _ in range(ACTIONS_PER_TICK):
-                    if not execute.run_once(conn, self.clock, self.state.executor):
-                        break
+                # approved and automatic actions run in their address's check, which has the
+                # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
             finally:
                 conn.close()
         except Exception as exc:  # never stops the timer; retried next tick

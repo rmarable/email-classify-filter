@@ -23,13 +23,15 @@ from email.utils import parseaddr
 from typing import Any
 
 from ecf.errors import ConflictError, EcfError
-from ecf_server import approvals, cards, slack_admin, slack_in, slack_out
+from ecf_server import approvals, cards, mailbox_actions, slack_admin, slack_in, slack_out
 from ecf_server.chat import Button, RouteRef
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.precheck import fired
 
 APPROVE_ALL = "approve_all"
+UNDO = "undo"  # the digest's Undo button (digests.py handles it)
+UNDO_MAX = 10
 CONFIRM = "confirm_category"
 BATCH_KEY = "digest_batch:"  # + key: the grant IDs a button binds
 BATCH_MAX = 20
@@ -84,6 +86,8 @@ def lines(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.
             "",
             "Done automatically: " + ", ".join(f"{n} {k}" for k, n in sorted(done.items())),
         ]
+        buttons += [Button(UNDO, f"Undo {r['stable_id'][: cards.SHORT_ID]}", r["stable_id"])
+                    for r in rows if mailbox_actions.undoable(r)][:UNDO_MAX]  # fmt: skip
     waiting = [r for r in conn.execute(
         "SELECT * FROM items WHERE address_id = ? AND status = 'awaiting_approval'"
         " ORDER BY created_at, stable_id", (aid,)) if eligible(conn, r)][:BATCH_MAX]  # fmt: skip

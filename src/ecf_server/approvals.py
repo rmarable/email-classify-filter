@@ -309,6 +309,7 @@ def _start(conn: sqlite3.Connection, clock: Clock, sid: StableId, grant_id: str)
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
                  {"stable_id": sid, "grant_id": grant_id}, timeout_s=120,
                  max_attempts=EXECUTE_ATTEMPTS)  # fmt: skip
+    jobs.make_due(conn, clock, item["address_id"])
     _edit(conn, clock, item, f"Approved: {describe(_actions(item))} (running)", [])
 
 
@@ -520,6 +521,7 @@ def requeue(
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
                  {"stable_id": sid, "grant_id": grant_id}, timeout_s=120,
                  max_attempts=EXECUTE_ATTEMPTS)  # fmt: skip
+    jobs.make_due(conn, clock, item["address_id"])
     _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
     return {"status": Status.EXECUTING.value}
 

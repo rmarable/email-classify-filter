@@ -369,19 +369,6 @@ def test_a_used_grant_means_outcome_unknown_and_a_send_is_never_retried_unchecke
         approvals.requeue(conn, clock, send, actor="os_user", nonce=None)
 
 
-def test_v12_has_no_real_executor_for_approvals(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _setup(conn, clock)
-    sid = _proposed(conn, clock, "a" * 64)
-    approvals.request(conn, clock, sid, ARCHIVE)
-    approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")
-    for _ in range(approvals.EXECUTE_ATTEMPTS):
-        execute.run_once(conn, clock, execute.unavailable)
-        clock.advance(3600)
-    assert _status(conn, sid) == Status.FAILED
-    why = conn.execute("SELECT data FROM audit WHERE event = 'action.failed'").fetchone()[0]
-    assert "not available until V1.3" in why
-
-
 def test_requeuing_a_send_needs_step_up(conn: sqlite3.Connection, clock: FakeClock) -> None:
     _setup(conn, clock)
     sid = _proposed(conn, clock, "a" * 64)

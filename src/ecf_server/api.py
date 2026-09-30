@@ -51,7 +51,6 @@ from ecf_server import (
     config,
     db,
     digests,
-    execute,
     health,
     inbox,
     initsetup,
@@ -127,7 +126,6 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
-    executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)

@@ -4,10 +4,9 @@ A job names an item and its approved grant. The runner consumes the grant once (
 update; a retry puts it back), calls the executor, and moves the item to `executed`, or after 3
 attempts to `failed` (`ecf item requeue` runs it again).
 
-The executor is a port. V1.2 has no real one for approved actions: hiding and moving mail arrive
-with proposals (V1.3) and sends with outbound (V1.5, OD-207), so `unavailable` refuses and the item
-fails with that reason. Tests use a fake. V1.3 moves this into the checks worker, which holds the
-address lease that mailbox changes need.
+The executor is a port. From V1.3 the real one (`mailbox_actions.executor_for`) runs inside each
+address's check, which holds the lease and has the mailbox open; a refusal at execution (stage,
+pause, folders, a changed message) fails the item at once without a retry. Sends arrive in V1.5.
 """
 
 from __future__ import annotations
@@ -17,11 +16,11 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ecf.errors import GrantInvalidError
+from ecf.errors import GrantInvalidError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import approvals, items, jobs, pause
-from ecf_server.actions import Planned, action_hash
+from ecf_server.actions import MessageChangedError, Planned, action_hash
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -32,19 +31,10 @@ PAUSED_RECHECK_S = 60
 Executor = Callable[[sqlite3.Connection, Clock, sqlite3.Row, list[Planned]], list[str]]
 
 
-class ExecutorUnavailableError(Exception):
-    pass
-
-
-def unavailable(_conn: sqlite3.Connection, _clock: Clock, _item: sqlite3.Row,
-                actions: list[Planned]) -> list[str]:  # fmt: skip
-    names = sorted({a.name for a in actions})
-    later = "V1.5" if any(n in approvals.SENDS for n in names) else "V1.3"
-    raise ExecutorUnavailableError(f"{', '.join(names)}: not available until {later}")
-
-
-def run_once(conn: sqlite3.Connection, clock: Clock, executor: Executor) -> bool:
-    job = jobs.claim(conn, clock, jobs.Queue.ACTIONS, WORKER)
+def run_once(  # noqa: PLR0911 - one return per outcome
+    conn: sqlite3.Connection, clock: Clock, executor: Executor, *, address_id: str | None = None
+) -> bool:
+    job = jobs.claim(conn, clock, jobs.Queue.ACTIONS, WORKER, address_id=address_id)
     if job is None:
         return False
     sid, grant_id = str(job.payload["stable_id"]), str(job.payload["grant_id"])
@@ -67,6 +57,11 @@ def run_once(conn: sqlite3.Connection, clock: Clock, executor: Executor) -> bool
         return True
     try:
         done = executor(conn, clock, item, actions)
+    except (PolicyDeniedError, MessageChangedError) as exc:  # refused at execution: no retry
+        with write_tx(conn):
+            conn.execute("UPDATE grants SET status = 'voided' WHERE grant_id = ?", (grant_id,))
+        _failed(conn, clock, job, item, str(exc.detail)[:200])
+        return True
     except Exception as exc:  # retried with backoff, then failed
         with write_tx(conn):  # the grant is usable again for the retry
             conn.execute("UPDATE grants SET status = 'approved', consumed_at = NULL"

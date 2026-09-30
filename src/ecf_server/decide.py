@@ -170,6 +170,7 @@ def _run(conn: sqlite3.Connection, clock: Clock, sid: str, mailbox: list[MailAct
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
                  {"stable_id": sid, "grant_id": grant_id}, timeout_s=120,
                  max_attempts=EXECUTE_ATTEMPTS)  # fmt: skip
+    jobs.make_due(conn, clock, item["address_id"])
 
 
 def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:

@@ -142,7 +142,9 @@ class SecretUnavailableError(ServiceUnavailableError):
 
 # Work that needs the address lease and the open mailbox, run in every check after the pre-check.
 # Registered by the modules that own it (digests.py: queued Undos), so checks needs no Slack code.
-InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int], object]
+# (conn, clock, mailbox, address_id, install, max_scan_bytes, lost): `lost` says the lease is gone
+InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int, Callable[[], bool]],
+                   object]  # fmt: skip
 IN_LEASE: list[InLease] = []
 
 
@@ -206,8 +208,9 @@ def _locked_check(
                 outcomes += _backfill(conn, clock, src, cfg, lease, report, install=install,
                                       analyzer=analyzer, lost=renewer.lost, dns=dns,
                                       deadline=deadline)  # fmt: skip
-            for work in IN_LEASE:  # e.g. queued Undos (digests.py)
-                work(conn, clock, src, address_id, install, cfg.max_scan_bytes)
+            for work in IN_LEASE:  # queued Undos (digests.py), actions (mailbox_actions.py)
+                work(conn, clock, src, address_id, install, cfg.max_scan_bytes,
+                     renewer.lost.is_set)  # fmt: skip
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
