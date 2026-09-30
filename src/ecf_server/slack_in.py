@@ -195,7 +195,9 @@ def to_click(p: dict[str, Any]) -> Click | None:
         state = _obj(_obj(view.get("state")).get("values"))
         for block_id, inputs in list(state.items())[:FIELDS_MAX]:
             for element in _obj(inputs).values():
-                values[block_id] = str(_obj(element).get("value") or "")[:VALUE_MAX]
+                e = _obj(element)
+                chosen = _obj(e.get("selected_option")).get("value")  # a select menu (V1.3)
+                values[block_id] = str(e.get("value") or chosen or "")[:VALUE_MAX]
         callback, ref = str(view.get("callback_id", "")), str(view.get("private_metadata", ""))
         return Click("form", callback, ref, None, user, values)
     return None

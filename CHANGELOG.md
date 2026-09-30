@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- Review posts: once an hour ecf lists in each address's channel what its model said about recent mail, with Fix, Correct and "All others correct" (never for payment, fraud, regulator or unscanned mail, nor `high` addresses); `ecf stage status` shows review progress. New settings `review_sample_rate`, `escalations_per_hour` (now applied, fraud and regulator escalations exempt) and `label_folder`.
 - ecf can now carry out approved and automatic actions in the mailbox: label, flag, mark read, archive, move to an allowed folder and junk, re-checking the stage, pause, folders and the message itself just before acting; `label_folder` gets a copy of suspicious and regulatory mail; the digest's Undo takes back what ecf did, including moving mail back to the inbox.
 - Hourly digests now count what ecf did automatically, offer "Approve all N reversible" for waiting approvals that are safe to batch (never payment, fraud, regulator, unscanned or high-risk mail, nor `high` addresses), and list mail that wasn't hidden because its sender's category isn't confirmed, with a button that tells you the `ecf sender confirm` command (it needs your computer).
 - The local model now also proposes a next step for mail a rule sends to it (for example a customer asking for something): a label, a flag, an escalation, or a question for you in Slack. Its proposals get the same safety checks as the rules', and a question about risky mail escalates instead.

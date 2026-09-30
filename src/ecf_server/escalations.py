@@ -7,9 +7,9 @@ The pre-check queues each escalation (`escalations` table, state `pending`); the
   channel exists (escalations wait for it, never dropped).
 - More than `BURST` (5) in a minute for one address merge into one thread listing them by severity
   (OD-036); later ones in the same minute go into that thread.
-- `escalations_per_hour` (OD-035) doesn't apply: every escalation V1.2 makes is fraud, quarantine or
-  regulator, which the cap never holds back (OD-212). It applies from V1.3, when classifier
-  escalations arrive.
+- `escalations_per_hour` (OD-035), from V1.3: escalations other than fraud, quarantine and regulator
+  ones (OD-212; including fraud and regulatory mail the model found) beyond the cap in the last hour
+  roll into one "N more escalations" thread per hour, most severe first.
 - Escalations V1.1 recorded as pending go into one summary post in the summary channel: counts by
   address and the 5 most severe of the last 7 days (OD-211); no thread each.
 
@@ -38,6 +38,7 @@ from ecf_server.slack_render import clean
 from ecf_server.state_machine import TransitionContext
 
 BURST = 5  # more than this in a minute merge into one thread (OD-036)
+PER_HOUR = 20  # escalations_per_hour default (OD-035)
 BURST_WINDOW = timedelta(minutes=1)
 BURST_LIST = 20  # lines listed in a merged thread's card
 SUMMARY_DAYS = 7
@@ -65,6 +66,9 @@ def _post_address(
     conn: sqlite3.Connection, clock: Clock, aid: str, route: RouteRef, member: str
 ) -> int:
     rows = _items(conn, "e.state = 'pending' AND e.address_id = ?", (aid,))
+    rows = _cap(conn, clock, aid, route, rows)
+    if not rows:
+        return 0
     now = clock.now()
     since = to_ts(now - BURST_WINDOW)
     recent = conn.execute(
@@ -96,6 +100,63 @@ def _post_address(
                                thread_key=head)  # fmt: skip
     _mark(conn, clock, [r["stable_id"] for r in rows], "merged", head)
     return len(rows)
+
+
+def exempt(r: sqlite3.Row) -> bool:
+    """Fraud, quarantine and regulator escalations are never held back by the cap (OD-212),
+    including fraud and regulatory mail the model found (its plan's fraud guard or regulatory
+    rule)."""
+    facts = _facts(r)
+    t: dict[str, Any] = facts.get("triggers") or {}
+    doc: dict[str, Any] = json.loads(r["proposal"] or "{}")
+    plan: dict[str, Any] = doc.get("plan") or {}
+    return bool(t.get("fraud") or t.get("regulator") or facts.get("quarantined")
+                or plan.get("rule") in ("fraud_guard", "regulatory"))  # fmt: skip
+
+
+def _per_hour(conn: sqlite3.Connection, aid: str) -> int:
+    row = conn.execute("SELECT overrides FROM addresses WHERE address_id = ?", (aid,)).fetchone()
+    overrides: dict[str, Any] = json.loads(row["overrides"]) if row else {}
+    if "escalations_per_hour" in overrides:
+        return int(overrides["escalations_per_hour"])
+    s = conn.execute("SELECT value FROM settings WHERE key = 'escalations_per_hour'").fetchone()
+    return int(json.loads(s[0])) if s else PER_HOUR
+
+
+def _cap(conn: sqlite3.Connection, clock: Clock, aid: str, route: RouteRef,
+         rows: list[sqlite3.Row]) -> list[sqlite3.Row]:  # fmt: skip
+    """`escalations_per_hour` (OD-035, from V1.3): escalations other than fraud and regulator ones
+    beyond the cap in the last hour roll into one "N more escalations" thread, most severe first.
+    Returns the ones to post as usual."""
+    capped = [r for r in rows if not exempt(r)]
+    if not capped:
+        return rows
+    since = to_ts(clock.now() - timedelta(hours=1))
+    posted = [r for r in _items(conn, "e.address_id = ? AND e.posted_at >= ?"
+                                " AND e.state IN ('posted', 'merged')"
+                                " AND coalesce(e.thread_key, '') NOT LIKE 'rollup:%'",
+                                (aid, since)) if not exempt(r)]  # fmt: skip
+    room = max(0, _per_hour(conn, aid) - len(posted))
+    over = capped[room:]
+    if not over:
+        return rows
+    hour = clock.now().strftime("%Y-%m-%dT%H")
+    key = f"rollup:{aid}:{hour}"
+    head = conn.execute("SELECT thread_key FROM escalations WHERE address_id = ? AND state ="
+                        " 'merged' AND thread_key = ? LIMIT 1", (aid, key)).fetchone()  # fmt: skip
+    ordered = sorted(over, key=lambda r: (cards.severity(_facts(r)), r["created_at"]))
+    card = _burst_card(f"{len(over)} more escalations this hour (over escalations_per_hour)",
+                       ordered, "")  # fmt: skip
+    if head is None:
+        slack_out.enqueue_post(conn, clock, key=key, route=route, card=card,
+                               identity=slack_routes.identity(aid))  # fmt: skip
+    else:
+        slack_out.enqueue_post(conn, clock, key=f"{key}:{to_ts(clock.now())}", route=route,
+                               card=card, identity=slack_routes.identity(aid),
+                               thread_key=key)  # fmt: skip
+    _mark(conn, clock, [r["stable_id"] for r in over], "merged", key)  # a roll-up, by its key
+    held = {r["stable_id"] for r in over}
+    return [r for r in rows if r["stable_id"] not in held]
 
 
 def _burst_card(title: str, rows: list[sqlite3.Row], member: str) -> Card:

@@ -33,6 +33,8 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
             paused = ", PAUSED" if r["paused"] else ""
             typer.echo(f"{r['address_id']:<16} {r['stage']:<7} ({r['label']}) for {r['days']} "
                        f"day(s), {r['sensitivity']}{paused}; held: {r['held']}")  # fmt: skip
+            if r.get("review"):
+                typer.echo(f"{'':<16} review: {r['review']}")
         if rows:
             typer.echo(f"live: {rows[0]['gate']}")
         else:

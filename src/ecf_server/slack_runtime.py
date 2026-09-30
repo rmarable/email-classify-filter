@@ -30,6 +30,7 @@ from ecf_server import (
     health,
     needs_you,
     pause,
+    review,
     slack_admin,
     slack_in,
     slack_out,
@@ -231,6 +232,7 @@ class SlackRuntime:
                                                    computer=self._computer)),
             ("alerts", lambda: alerts.sweep(conn, self._clock)),
             ("digests", lambda: digests.run(conn, self._clock)),
+            ("review posts", lambda: review.run(conn, self._clock)),
             ("members", lambda: daily.check_members(conn, self._clock, chat, self._notifier)),
             ("daily", lambda: daily.run(conn, self._clock)),
         )  # fmt: skip

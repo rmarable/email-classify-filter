@@ -95,6 +95,17 @@ def business_hours(v: str) -> dict[str, Any]:
     return {"days": days, "start": m.group(3), "end": m.group(4), "tz": m.group(5)}
 
 
+def _folder_name(v: str) -> str:
+    """A folder `label_folder` copies suspicious and regulatory mail into (§8.3): any name the
+    mailbox has except INBOX; checked against the mailbox's folders when it's used."""
+    name = v.strip()
+    if not name or len(name) > 200 or re.search(r"[\x00-\x1f\x7f]", name):
+        raise InvalidInputError("a folder name")
+    if name.upper() == "INBOX":
+        raise InvalidInputError("INBOX isn't a label folder")
+    return name
+
+
 @dataclass(frozen=True)
 class Key:
     name: str
@@ -112,6 +123,7 @@ _both = [
     Key("catch_up_max_minutes", "both", _int(5, 240), "by hardware (30 or 60)"),
     Key("catch_up_cooldown_minutes", "both", _int(0, 120), 15),
     Key("catch_up_on_battery", "both", _bool, False),
+    Key("escalations_per_hour", "both", _int(1, 200), 20),  # OD-035; fraud and regulator exempt
 ]
 _install = [
     Key("notifications", "install", _choice("on", "off"), "on", restart=True),
@@ -119,12 +131,14 @@ _install = [
     Key("stale_item_days", "install", _int(7, 365), 30),
     Key("max_per_check", "install", _int(1, 30), 6),  # minutes of IMAP and rules work (OD-228)
     Key("resident", "install", _bool, False),  # keep the local model loaded (§5.2)
+    Key("review_sample_rate", "install", _int(0, 100), 10),  # percent, after the gate count
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),
     Key("max_scan_bytes_per_part", "address", _megabytes, 10 * MB),
     Key("approval_ttl_days", "address", _int(1, 60), 14),
     Key("approval_ttl_days_send", "address", _int(1, 60), 4),
+    Key("label_folder", "address", _folder_name, None),  # §8.3 (Purelymail)
 ]
 KEYS: dict[str, Key] = {k.name: k for k in (*_both, *_install, *_address)}
 ELSEWHERE = {
@@ -135,11 +149,8 @@ ELSEWHERE = {
     "install_role": "fixed when the install is created",
     "sensitivity": "change it with `ecf sensitivity set`",
     "stage": "change it with `ecf stage set`",
-    "review_sample_rate": "arrives with review posts in V1.3",
     "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
     "classifier_high_batch": "arrives with Claude on demand in V1.4",
-    "escalations_per_hour": "applies from V1.3 (V1.2's escalations are all exempt, OD-212)",
-    "label_folder": "arrives in V1.3",
     "export_schedule": "arrives with exports in V1.5",
     "export_dir": "arrives with exports in V1.5",
     "export_keep": "arrives with exports in V1.5",

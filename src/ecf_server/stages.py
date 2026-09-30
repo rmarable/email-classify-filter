@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from ecf.errors import InvalidInputError, PolicyDeniedError
-from ecf_server import addresses, pause, slack_admin, slack_out, slack_routes, stepup
+from ecf_server import addresses, pause, review, slack_admin, slack_out, slack_routes, stepup
 from ecf_server.chat import Card
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -56,7 +56,8 @@ def status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
             "sensitivity": a["sensitivity"],
             "paused": pause.is_paused(conn, aid),
             "held": held,
-            "gate": "the go-live gate arrives with local models in V1.3",
+            "review": review.progress(conn, aid, a["sensitivity"])["text"],
+            "gate": "the go-live gate arrives in V1.3 step 6b",
         })  # fmt: skip
     return out
 
