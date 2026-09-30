@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.2-slack-approvals (not yet tagged)
+## ms-v1.2-slack-approvals (2026-09-30)
 
 - `ecf settings set` now names where every configuration key lives, when it arrives, or that it is fixed, instead of "no setting" for some.
 - `jeepney` is no longer a direct dependency: Linux step-up is PAM only until polkit arrives in V1.6 (OD-224); it still comes in through `keyring` for the Secret Service.
