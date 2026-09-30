@@ -46,6 +46,7 @@ class TransitionContext:
     stepup_verified: bool = False
     clarification_rounds: int = 0
     expiry_count: int = 0
+    backfill: bool = False  # a records-only backfilled item (OD-216, OD-221)
 
 
 Guard = Callable[[TransitionContext], bool]
@@ -64,7 +65,7 @@ def _answer(c: TransitionContext) -> bool:
 
 
 _TABLE: dict[Status, frozenset[Status]] = {
-    S.NEW: frozenset({S.CLASSIFIED, S.AWAITING_CLAUDE}),
+    S.NEW: frozenset({S.CLASSIFIED, S.AWAITING_CLAUDE, S.OBSERVED}),
     S.CLASSIFIED: frozenset({S.AWAITING_CLAUDE, S.PROPOSED}),
     S.AWAITING_CLAUDE: frozenset({S.CLASSIFIED, S.PROPOSED}),
     S.PROPOSED: frozenset(
@@ -105,6 +106,8 @@ GUARDS: Mapping[tuple[Status, Status], Guard] = {
     (S.PROPOSED, S.EXECUTING): lambda c: _live(c) or (c.stage is Stage.ASSIST and c.assist_safe),
     (S.PROPOSED, S.AWAITING_APPROVAL): _live,
     (S.PROPOSED, S.OBSERVED): lambda c: c.stage is Stage.SHADOW,
+    # `ecf backfill` without --act: recorded and decided, nothing done (OD-216, OD-221)
+    (S.NEW, S.OBSERVED): lambda c: c.backfill,
     (S.PROPOSED, S.HELD): lambda c: c.stage is Stage.ASSIST,
     (S.HELD, S.PROPOSED): _live,
     (S.AWAITING_APPROVAL, S.APPROVED): lambda c: c.reversible,

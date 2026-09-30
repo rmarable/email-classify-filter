@@ -200,7 +200,7 @@ def check(
 def _check_line(r: dict[str, Any]) -> str:
     who = f"{r['address_id']:<16}"
     if r["status"] == "first_run":
-        return f"{who} first check: started from now (older mail isn't fetched)"
+        return f"{who} first check: started from now (older mail: `ecf backfill`)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
 
@@ -217,11 +217,42 @@ def _check_line(r: dict[str, Any]) -> str:
         ("relocated", "re-found after a mailbox reset"),
         ("resolved_by_mailbox", "closed (left INBOX)"),
         ("remaining", "still waiting"),
+        ("backfill_created", "backfilled"),
+        ("backfill_remaining", "older still to backfill"),
     ):
         if r.get(key):
             parts.append(f"{r[key]} {label}")
     prefix = "mailbox reset recovered: " if r["status"] == "reset_recovered" else ""
     return f"{who} {prefix}" + ", ".join(parts)
+
+
+@app.command()
+def backfill(
+    address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
+    since: Annotated[
+        str | None, typer.Option("--since", help="Read mail that arrived since this date.")
+    ] = None,
+    act: Annotated[
+        bool, typer.Option("--act", help="Label, flag and escalate as for new mail.")
+    ] = False,
+) -> None:
+    """Read older mail (records only unless --act); with no address, show backfills running."""
+    with LocalClient(_paths()) as c:
+        if address is None:
+            running = c.get("/v1/backfill")["running"]
+            for r in running:
+                how = "acting" if r["act"] else "records only"
+                typer.echo(f"{r['address_id']:<16} since {r['since']} ({how}): {r['items']} read")
+            if not running:
+                typer.echo("no backfill running")
+            return
+        if since is None:
+            raise typer.BadParameter("add --since <date>, e.g. --since 2026-09-01")
+        r = c.request("POST", "/v1/backfill", {"address_id": address, "since": since, "act": act})
+    how = "labels, flags and escalations as for new mail" if r["act"] else (
+        "records only: nothing is done to the mailbox or escalated")  # fmt: skip
+    typer.echo(f"backfill of {r['address_id']} since {r['since']} started ({how}); it runs with"
+               " the checks, new mail first. Progress: ecf backfill")  # fmt: skip
 
 
 @app.command()

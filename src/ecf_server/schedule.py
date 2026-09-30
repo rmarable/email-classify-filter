@@ -133,7 +133,8 @@ def after_check(
     ).fetchone()
     since = from_ts(row["catch_up_since"]) if row and row["catch_up_since"] else None
     cooldown = from_ts(row["cooldown_until"]) if row and row["cooldown_until"] else None
-    waiting = report.status in ("ok", "reset_recovered") and report.remaining > 0
+    backlog = report.remaining + report.backfill_remaining  # an `ecf backfill` counts too
+    waiting = report.status in ("ok", "reset_recovered") and backlog > 0
     allowed = (
         s["catch_up"] == "auto"
         and (cooldown is None or now >= cooldown)

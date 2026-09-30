@@ -46,6 +46,7 @@ from ecf_server import (
     answers,
     approvals,
     audit,
+    backfill,
     checks,
     config,
     db,
@@ -270,6 +271,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
+            *_data_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -526,6 +528,15 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(ruletest.run(state.clock, current, text, root))
 
+    return [
+        Route("/v1/config/apply", apply_config, methods=["POST"]),
+        Route("/v1/rules/test", test_rules, methods=["POST"]),
+    ]
+
+
+def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §6.5, §10.2 (V1.2 step 11): retention and backfill; CLI only."""
+
     @allow(Caller.CLI)
     def show_retention(_request: Request) -> JSONResponse:
         conn = state.connect()
@@ -550,11 +561,30 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(r)
 
+    @allow(Caller.CLI)
+    def start_backfill(request: Request) -> JSONResponse:
+        body = _body(request)
+        ref, since, act = _str(body, "address_id"), _str(body, "since"), body.get("act") is True
+        conn = state.connect()
+        try:
+            r = backfill.start(conn, state.clock, ref, since, act=act)
+        finally:
+            conn.close()
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def backfill_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse({"running": backfill.status(conn)})
+        finally:
+            conn.close()
+
     return [
         Route("/v1/retention", show_retention, methods=["GET"]),
         Route("/v1/retention", set_retention, methods=["POST"]),
-        Route("/v1/config/apply", apply_config, methods=["POST"]),
-        Route("/v1/rules/test", test_rules, methods=["POST"]),
+        Route("/v1/backfill", start_backfill, methods=["POST"]),
+        Route("/v1/backfill", backfill_status, methods=["GET"]),
     ]
 
 

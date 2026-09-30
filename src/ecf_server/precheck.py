@@ -155,6 +155,22 @@ def run(
     return out
 
 
+def record_only(
+    conn: sqlite3.Connection, clock: Clock, stable_ids: list[str], why: str
+) -> list[Outcome]:
+    """Decide and record without acting or escalating (`ecf backfill` without --act, OD-216)."""
+    out: list[Outcome] = []
+    for sid in stable_ids:
+        item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
+        if item is None or item["prechecked"]:
+            continue
+        facts: dict[str, Any] = json.loads(item["facts"])
+        o = Outcome(sid, decide(facts), skipped=why)
+        _record(conn, clock, item, facts, "backfill", o, escalate=False)
+        out.append(o)
+    return out
+
+
 def _record(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -162,12 +178,15 @@ def _record(
     facts: dict[str, Any],
     stage: str,
     o: Outcome,
+    *,
+    escalate: bool = True,
 ) -> None:
+    queued = escalate and o.decision.escalate
     facts["precheck"] = o.decision.to_json() | {
         "stage": stage,
         "executed": o.executed,
         "skipped": o.skipped,
-        "escalation": "queued" if o.decision.escalate else None,
+        "escalation": "queued" if queued else None,
         "at": to_ts(clock.now()),
     }
     with write_tx(conn):
@@ -175,7 +194,7 @@ def _record(
             "UPDATE items SET prechecked = 1, facts = ?, updated_at = ? WHERE stable_id = ?",
             (json.dumps(facts, sort_keys=True), to_ts(clock.now()), item["stable_id"]),
         )
-        if o.decision.escalate:  # posted by the Slack thread (escalations.py)
+        if queued:  # posted by the Slack thread (escalations.py)
             conn.execute(
                 "INSERT INTO escalations (stable_id, address_id, state, created_at)"
                 " VALUES (?, ?, 'pending', ?) ON CONFLICT (stable_id) DO NOTHING",
