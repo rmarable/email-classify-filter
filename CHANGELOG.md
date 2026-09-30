@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- New commands `ecf init [--mode local] [--resume]` (sets up the service, checks disk encryption and the secret store, asks prod or test once, connects Slack and adds the first mailbox; safe to run again) and `ecf init status`. `ecf address add` now reminds you, for presets B and C, that the local fallback is off, and for C that it uses your Claude plan.
 - New command `ecf backfill <address> --since <date> [--act]` reads older mail with the checks, new mail first. By default it only records and checks it (nothing is done to the mailbox or escalated, OD-216, OD-221); `--act` labels, flags and escalates as for new mail. `ecf backfill` alone shows backfills in progress.
 - Finished items are now deleted once a day after `log_retention_days` (90 by default); fraud, weak-fraud and regulator items, open items, sender history and the audit log are kept (OD-217, OD-040). New commands `ecf retention show` and `ecf retention set <days>` (step-up; lowering it sends a Security Notice).
 - New commands `ecf sender show`, `ecf sender confirm <sender> --category <c>`, `ecf sender set-reply-to <sender> <domain>|--clear` and `ecf sender set-verified <sender> [--off]` (step-up to confirm, set or verify; clearing needs none). A human-verified sender's payment mail is no longer flagged as from an unverified sender; fraud checks stay on (OD-065).

@@ -16,6 +16,7 @@ import typer
 
 from ecf import __version__
 from ecf.cli_admin import make_commands as make_admin_commands
+from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.client import LocalClient
@@ -406,36 +407,55 @@ def address_add(
     """Add a mailbox: checks the app password by logging in, then stores it in the OS secret
     store. It starts in shadow (watch only) with outbound off. Needs a real terminal."""
     require_terminal()
-    paths = _paths()
-    with LocalClient(paths) as c:
-        current = c.get("/v1/addresses")
-        if sensitivity is None:
-            suggestion = _suggest_sensitivity(email)
-            sensitivity = typer.prompt(
-                "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
-            )
-        if preset is None:
-            preset = typer.prompt(
-                "Preset (A all-local, B local + Claude, C all-Claude)", default="A"
-            )
-        body: dict[str, object] = {
-            "email": email,
-            "imap_host": imap_host,
-            "sensitivity": sensitivity,
-            "preset": (preset or "").upper(),
-        }
-        if address_id:
-            body["address_id"] = address_id
-        if not current["org_domains"]:
-            domain = email.rsplit("@", 1)[-1].lower()
-            typer.echo(
-                "Your organization's domains decide which senders count as internal "
-                "(change them later with `ecf config apply`)."
-            )
-            answer = typer.prompt("Organization domains, comma-separated", default=domain)
-            body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
-        body["app_password"] = hidden(f"App password for {email} (hidden): ")
-        a = c.request("POST", "/v1/addresses", body)
+    with LocalClient(_paths()) as c:
+        add_address(c, email, imap_host, sensitivity, preset, address_id)
+
+
+PRESET_NOTES = {
+    "B": "Preset B: Claude acts only when you run /ecf-review (V1.4). The local fallback for items"
+    " waiting on Claude (claude_queue_timeout) is off.",
+    "C": "Preset C: every message waits for /ecf-review (V1.4) and uses your Claude plan. The"
+    " local fallback (claude_queue_timeout) is off.",
+}
+
+
+def add_address(
+    c: LocalClient,
+    email: str,
+    imap_host: str,
+    sensitivity: str | None,
+    preset: str | None,
+    address_id: str | None,
+) -> dict[str, Any]:
+    """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
+    current = c.get("/v1/addresses")
+    if sensitivity is None:
+        suggestion = _suggest_sensitivity(email)
+        sensitivity = typer.prompt(
+            "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
+        )
+    if preset is None:
+        preset = typer.prompt("Preset (A all-local, B local + Claude, C all-Claude)", default="A")
+    body: dict[str, object] = {
+        "email": email,
+        "imap_host": imap_host,
+        "sensitivity": sensitivity,
+        "preset": (preset or "").upper(),
+    }
+    if address_id:
+        body["address_id"] = address_id
+    if not current["org_domains"]:
+        domain = email.rsplit("@", 1)[-1].lower()
+        typer.echo(
+            "Your organization's domains decide which senders count as internal "
+            "(change them later with `ecf config apply`)."
+        )
+        answer = typer.prompt("Organization domains, comma-separated", default=domain)
+        body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
+    if body["preset"] in PRESET_NOTES:
+        typer.echo(PRESET_NOTES[str(body["preset"])])
+    body["app_password"] = hidden(f"App password for {email} (hidden): ")
+    a: dict[str, Any] = c.request("POST", "/v1/addresses", body)
     typer.echo(
         f"added {a['email']} as {a['address_id']!r}: {a['sensitivity']}, preset "
         f"{a['preset']}, stage {a['stage']}, outbound off"
@@ -443,6 +463,7 @@ def address_add(
     _echo_probe(a)
     if a.get("slack_channel"):
         typer.echo(f"Slack: private channel {a['slack_channel']} is created within a minute")
+    return a
 
 
 def _mb(size: int) -> str:
@@ -635,3 +656,6 @@ def main() -> None:
     except EcfError as exc:
         sys.stderr.write(f"ecf: {exc.detail}\n")
         raise SystemExit(int(exc.exit_code)) from exc
+
+
+make_init_commands(app, _paths, add_address)  # after add_address, which `ecf init` reuses

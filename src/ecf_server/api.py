@@ -53,6 +53,7 @@ from ecf_server import (
     execute,
     health,
     inbox,
+    initsetup,
     pause,
     retention,
     ruletest,
@@ -580,7 +581,26 @@ def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
+    @allow(Caller.CLI)
+    def init_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.status(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def init_role(request: Request) -> JSONResponse:
+        value = _str(_body(request), "install_role")
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.set_role(conn, state.clock, value))
+        finally:
+            conn.close()
+
     return [
+        Route("/v1/init", init_status, methods=["GET"]),
+        Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/retention", show_retention, methods=["GET"]),
         Route("/v1/retention", set_retention, methods=["POST"]),
         Route("/v1/backfill", start_backfill, methods=["POST"]),

@@ -35,7 +35,7 @@ def make_app(paths: Callable[[], Paths]) -> typer.Typer:
         """Create ecf's Slack app, store its tokens, and confirm your member ID."""
         require_terminal()
         with LocalClient(paths()) as c:
-            _install(c, new_app=new_app)
+            install_slack(c, new_app=new_app)
 
     @app.command("status")
     def status() -> None:
@@ -81,7 +81,8 @@ def make_app(paths: Callable[[], Paths]) -> typer.Typer:
     return app
 
 
-def _install(c: LocalClient, *, new_app: bool) -> None:
+def install_slack(c: LocalClient, *, new_app: bool = False) -> None:
+    """The steps behind `ecf slack install` (also used by `ecf init`)."""
     s = c.get("/v1/slack")
     if s["app_id"]:
         raise typer.BadParameter("Slack is already installed; see `ecf slack status`")
