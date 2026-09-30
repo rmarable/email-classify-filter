@@ -21,7 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ecf.status import OPEN
-from ecf_server import cards, inbox, pause, schedule, slack_admin, slack_out, slack_routes
+from ecf_server import cards, inbox, models, pause, schedule, slack_admin, slack_out, slack_routes
 from ecf_server.chat import Card, ChatSurface, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -96,6 +96,12 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     if twice:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
+    since_model = models.waiting_since(conn)
+    if since_model:
+        n = sum(v[1] for v in per_addr.values())
+        at = since_model[:16].replace("T", " ")
+        lines.append(f"{n} items waiting for the local model since {at} UTC"
+                     " (see ecf models status)")  # fmt: skip
     paused = pause.paused_addresses(conn)
     if paused:
         lines.append(f"Paused: {', '.join(paused)} (fraud checks continue)")

@@ -37,6 +37,8 @@ TITLES = {
     "slack_delivery_failed": "Slack Delivery Failed",
     "slack_connection": "Slack Delivery Failed",
     "system_error": "System Error",
+    "local_model": "System Error",
+    "local_model_unsafe": "System Error",
     "operator_input": "Operator Input Needed",
     "security_notice": "Security Notice",
 }
@@ -44,6 +46,8 @@ CLASS_OF = {
     "mail_unreachable": "mail",
     "login_rejected": "mail",
     "system_error": "system",
+    "local_model": "system",
+    "local_model_unsafe": "system",
     "operator_input": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",
@@ -52,6 +56,7 @@ CLASS_OF = {
 CLASSES = ("mail", "system", "operator", "slack")
 ROUTES = frozenset({"slack", "email"})
 DEFAULT = ["slack"]
+LOUD_KINDS = frozenset({"local_model_unsafe"})  # posts mention you (OD-242, OD-245)
 DEAD_MARK = "alerts_dead_job_mark"  # the last dead-lettered job already reported
 
 
@@ -186,7 +191,8 @@ def sweep(conn: sqlite3.Connection, clock: Clock) -> int:
         who = f" ({r['address_id']})" if r["address_id"] else ""
         if r["slack_opened_at"] is None and routed:
             _post(conn, clock, f"alert:{r['key']}:{r['opened_at']}",
-                  f"{title(r['kind'])}{who}", str(r["detail"] or ""))  # fmt: skip
+                  f"{title(r['kind'])}{who}", str(r["detail"] or ""),
+                  mention=r["kind"] in LOUD_KINDS)  # fmt: skip
         if r["resolved_at"] is not None and routed:
             _post(conn, clock, f"alert:{r['key']}:{r['opened_at']}:resolved",
                   f"{PREFIX} Resolved: {TITLES[r['kind']]}{who}", "Working again.")  # fmt: skip
@@ -229,10 +235,22 @@ def dead_jobs(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int
     return len(rows)
 
 
-def _post(conn: sqlite3.Connection, clock: Clock, key: str, head: str, detail: str) -> None:
+def _post(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    key: str,
+    head: str,
+    detail: str,
+    *,
+    mention: bool = False,
+) -> None:
     route = slack_routes.summary_route(conn)
-    if route is not None:
-        slack_out.enqueue_post(conn, clock, key=key, route=route, card=Card(head, text=detail))
+    if route is None:
+        return
+    ident = slack_admin.identity(conn) if mention else None
+    who = ident.member if ident and ident.member else ""
+    card = Card(head, text=detail, mention=who)
+    slack_out.enqueue_post(conn, clock, key=key, route=route, card=card)
 
 
 def post_now(conn: sqlite3.Connection, secrets: SecretStore, head: str, detail: str) -> None:

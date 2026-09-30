@@ -39,6 +39,7 @@ from ecf_server import (
     execute,
     health,
     jobs,
+    models,
     needs_you,
     retention,
     schedule,
@@ -220,6 +221,7 @@ class Service:
                 if retention.due(conn, self.clock):  # once a day (§6.5)
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
+                self._model_check(conn)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):
                     if not execute.run_once(conn, self.clock, self.state.executor):
@@ -229,6 +231,17 @@ class Service:
         except Exception as exc:  # never stops the timer; retried next tick
             return self._tick_failed("approvals.tick_failed", exc)
         return True
+
+    def _model_check(self, conn: sqlite3.Connection) -> None:
+        """Keep the local-model alert current once models are installed here (V1.3 step 1b); from
+        step 2 the model queue also checks before each round."""
+        if not models.installed(conn):
+            return
+        client = self.state.model_client()
+        try:
+            models.check(conn, self.clock, self.state.notifier, client, **self.state.model_check)
+        finally:
+            client.close()
 
     def _final_flush(self) -> None:
         """Copy the last audit rows to the files before exiting."""

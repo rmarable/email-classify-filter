@@ -228,6 +228,56 @@ def check_org_domains(paths: Paths) -> Check:
     return Check("org domains", Level.OK, ", ".join(org))
 
 
+def check_models(paths: Paths) -> list[Check]:
+    """The local model, checked by the service (V1.3 step 1b; SPEC §7.5, §13.2)."""
+    try:
+        with LocalClient(paths) as c:
+            st: dict[str, Any] = c.get("/v1/models")
+    except ServiceUnavailableError:
+        return []
+    except EcfError as exc:
+        return [Check("local model", Level.FAIL, f"can't check: {exc.detail}", "see ecf logs")]
+    return judge_models(st)
+
+
+# what `ecf models install`'s login item sets (OD-246); anything else is reported
+EXPECTED_ENV = {"OLLAMA_NUM_PARALLEL": "1"}
+UNWANTED_ENV = ("OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG")
+
+
+def judge_models(st: dict[str, Any]) -> list[Check]:
+    """Turn a /v1/models reply into checks (pure)."""
+    pin = st["pin"]
+    if not st.get("ready"):
+        fault = st["fault"]
+        never = st.get("installed_at") is None and fault["cause"] in (
+            "not_running",
+            "model_missing",
+        )
+        level = Level.WARN if never else Level.FAIL
+        return [Check("local model", level, f"{fault['summary']} Model work is stopped.",
+                      fault["fix"])]  # fmt: skip
+    out = [Check("local model", Level.OK, f"{pin['ecf_tag']} ({pin['digest'][:12]}), Ollama"
+                 f" {st['version']}, listening on {', '.join(st['listener'])} only")]  # fmt: skip
+    env: dict[str, str] = st.get("env", {})
+    for k, want in EXPECTED_ENV.items():
+        if env.get(k) != want:
+            got = env.get(k, "unset")
+            out.append(Check("ollama settings", Level.WARN, f"{k} is {got}, expected {want}",
+                             "restart Ollama with ecf's settings"))  # fmt: skip
+    if env.get("OLLAMA_NO_CLOUD", "").lower() not in ("1", "true"):
+        out.append(Check("ollama settings", Level.WARN, "Ollama's cloud feature is on",
+                         "set OLLAMA_NO_CLOUD=1 for Ollama"))  # fmt: skip
+    for k in UNWANTED_ENV:
+        if env.get(k, "").lower() not in ("", "0", "false"):
+            out.append(Check("ollama settings", Level.WARN, f"{k} is set ({env[k]})",
+                             f"unset {k} for Ollama"))  # fmt: skip
+    if "*" in env.get("OLLAMA_ORIGINS", ""):
+        out.append(Check("ollama settings", Level.WARN, "OLLAMA_ORIGINS allows any web page",
+                         "unset OLLAMA_ORIGINS for Ollama"))  # fmt: skip
+    return out
+
+
 DNS_PROBE = "_dmarc.gmail.com"  # a long-standing public DMARC record
 
 
@@ -355,6 +405,7 @@ def run_checks(
     checks += check_service(paths, now or datetime.now(UTC))
     checks += check_slack(paths)
     checks.append(check_org_domains(paths))
+    checks += check_models(paths)
     checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))

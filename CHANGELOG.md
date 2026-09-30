@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- Install-wide alerts (Slack, the local model) no longer disappear from `ecf status` and `ecf doctor` once any address has been removed.
+- New commands `ecf models install` (pulls the pinned Gemma 4 12B into Ollama, checks its digest and keeps ecf's own copy) and `ecf models status`. Once installed, ecf raises a System Error when Ollama isn't running, the model is missing or changed, or Ollama isn't safe to use (listening beyond this computer, request logging on, or a check that can't run; those mention you). `ecf doctor` checks Ollama and its settings.
 - ecf will run Ollama from its own login item with fixed settings (loopback only, cloud off, no request logging), and refuses model work if Ollama is set to log requests, which writes email text to disk (OD-245, OD-246). The confidence experiment asks one question per field (OD-244).
 - V1.3 plan recorded: `claude_queue_timeout` moves to V1.4, `max_per_check` becomes settable, evals pause on battery at 15% (`--battery-floor`), go-live overrides can't waive the safety gates, "All others correct" skips risky items, and model work stops if Ollama listens beyond this computer (OD-227 to OD-240); eval label confirmations are kept in git, a listener check that can't confirm loopback-only fails loudly, and heat pauses model work only after 3 slow calls in a row (OD-241 to OD-243).
 - `ecf config apply` accepts `<section>: default` to return a section (rules, templates, action policy, move folders, forward allow-list) to its shipped value; before, applied rules could not be undone back to the starter rules (OD-225).

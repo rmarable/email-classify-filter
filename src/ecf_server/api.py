@@ -55,6 +55,8 @@ from ecf_server import (
     health,
     inbox,
     initsetup,
+    models,
+    ollama,
     pause,
     retention,
     ruletest,
@@ -125,6 +127,8 @@ class ServiceState:
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
     executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
+    model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
+    model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -281,6 +285,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_sender_routes(state, allow),
             *_data_routes(state, allow),
             *_setup_routes(state, allow),
+            *_model_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -595,6 +600,28 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+    ]
+
+
+def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.5, §13.2 (V1.3 step 1b): the local model's status and `ecf models install`."""
+
+    @allow(Caller.CLI)
+    def show_models(_request: Request) -> JSONResponse:
+        conn, client = state.connect(), state.model_client()
+        try:
+            return JSONResponse(models.status(conn, client, **state.model_check))
+        finally:
+            client.close()
+            conn.close()
+
+    @allow(Caller.CLI)
+    def install_models(_request: Request) -> JSONResponse:
+        return JSONResponse(models.start_install(state.connect, state.clock, state.model_client))
+
+    return [
+        Route("/v1/models", show_models, methods=["GET"]),
+        Route("/v1/models/install", install_models, methods=["POST"]),
     ]
 
 

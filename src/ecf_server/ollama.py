@@ -265,6 +265,8 @@ class Client:
                 raise OllamaError("model_missing", _error_field(r))
             if r.is_error:
                 raise OllamaError("http", f"HTTP {r.status_code} {_error_field(r)}".strip())
+            if not r.content.strip():  # copy and delete reply 200 with no body
+                return {}
             return cast("dict[str, Any]", r.json())
         raise OllamaError("timeout", f"no reply in {TIMEOUT_S:.0f} s") from last
 
