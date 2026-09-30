@@ -64,6 +64,7 @@ uv build                                  # wheel + sdist
 ## Hard constraints
 
 - **Credentials** (IMAP app passwords, Slack tokens, API keys) never enter the repo, environment variables or secrets files. They live only in the OS secret store (macOS Keychain, Linux Secret Service or `systemd-creds`), written only by the local service.
+- **AWS skills:** v1 is local-only (no AWS). Don't load AWS skills or follow the global AWS guidance until M1 starts (operator decision 2026-09-30; this project file overrides the global one).
 - **Privacy** (SPEC owns the full statement): email content goes only to the mail provider, this computer, Slack (subjects, senders, classifications, the actor's reason, answers; short excerpts only on request), and Anthropic during `/ecf-review` and `/ecf-eval` (presets B and C). Never add another destination. No payload logging.
 - **Models:** exclude PRC-affiliated and Meta/X-affiliated labs (operator preference), e.g. Qwen, DeepSeek, Llama, Grok.
 - **Real-service tests** need the operator's go-ahead each time; their code is throwaway and stays in the session scratchpad, never the repo; Slack resources they create are torn down afterwards; results go in SPEC (an ADR only when a result changes a decision).
