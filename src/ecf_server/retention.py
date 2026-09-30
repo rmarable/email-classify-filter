@@ -122,7 +122,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     """Delete what is past retention; returns counts by kind."""
     cutoff = to_ts(clock.now() - timedelta(days=days(conn)))
     marks = ",".join("?" * len(_TERMINAL))
-    counts = {"items": 0, "jobs": 0, "nonces": 0, "posts": 0}
+    counts = {"items": 0, "jobs": 0, "nonces": 0, "posts": 0, "model_calls": 0}
     while True:
         with write_tx(conn):
             ids = [r[0] for r in conn.execute(
@@ -147,6 +147,9 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
                                " AND NOT (key LIKE 'burst:%' AND EXISTS (SELECT 1 FROM items i"
                                " WHERE m.key LIKE 'burst:%:' || i.stable_id)) LIMIT ?)",
                                (cutoff, json.dumps(sorted(slack_out.PINNED))))  # fmt: skip
+    counts["model_calls"] = _batched(
+        conn, "DELETE FROM model_calls WHERE rowid IN (SELECT rowid FROM model_calls"
+        " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
         _put(conn, LAST_RUN_KEY, now, now, "service")
