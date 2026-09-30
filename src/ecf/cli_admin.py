@@ -1,11 +1,12 @@
 """`ecf stage`, `ecf sensitivity`, `ecf settings` (SPEC §9.1, §9.4, §14; V1.2 step 10a), `ecf config
-apply` and `ecf rules test` (SPEC §8.6, §9.7; step 10b)."""
+apply` and `ecf rules test` (SPEC §8.6, §9.7; step 10b), `ecf sender` (SPEC §8.5; step 10c)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 import typer
 
@@ -21,11 +22,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
     app.add_typer(sens_app, name="sensitivity")
     settings_app = typer.Typer(no_args_is_help=True, help="Install and per-address settings.")
     app.add_typer(settings_app, name="settings")
-    config_app = typer.Typer(no_args_is_help=True, help="Security-relevant configuration.")
-    app.add_typer(config_app, name="config")
-    rules_app = typer.Typer(no_args_is_help=True, help="Try rules before applying them.")
-    app.add_typer(rules_app, name="rules")
-    _config_commands(config_app, rules_app, paths)
+    _config_and_sender_commands(app, paths)
 
     @stage_app.command("status")
     def stage_status() -> None:
@@ -157,3 +154,78 @@ def _config_commands(
                    f" {r['with_expected_rule']}")  # fmt: skip
         if r["skipped"]:
             typer.echo(f"skipped (not built; run `ecf eval build`): {', '.join(r['skipped'])}")
+
+
+AddressOpt = Annotated[
+    str | None, typer.Option("--address", help="The monitored address (if you have several).")
+]
+
+
+def _print_sender(r: dict[str, Any]) -> None:
+    typer.echo(f"{r['sender']} at {r['address_id']}:")
+    typer.echo(f"  category:        {r['confirmed_category'] or 'not confirmed'}")
+    typer.echo(f"  Reply-To domain: {r['expected_reply_to_domain'] or 'none expected'}")
+    typer.echo(f"  human-verified:  {'yes' if r['verified'] else 'no'} (rule 1a)")
+    typer.echo(f"  DMARC passes:    {r['dmarc_pass_count']}")
+    if r["shared_platform"]:
+        typer.echo("  a shared platform: never counts as a known sender")
+
+
+def _sender_commands(sender_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    def post(path: str, body: dict[str, Any]) -> None:
+        with LocalClient(paths()) as c:
+            r = with_step_up(c, lambda n: c.request("POST", path, body | {"nonce_id": n}),
+                             echo=typer.echo)  # fmt: skip
+        _print_sender(r)
+
+    @sender_app.command("show")
+    def sender_show(
+        sender: Annotated[str, typer.Argument(help="The sender's email address.")],
+        address: AddressOpt = None,
+    ) -> None:
+        """Category, expected Reply-To, human-verified, and DMARC history."""
+        params = {"sender": sender} | ({"address_id": address} if address else {})
+        with LocalClient(paths()) as c:
+            _print_sender(c.get(f"/v1/senders?{urlencode(params)}"))
+
+    @sender_app.command("confirm")
+    def sender_confirm(
+        sender: Annotated[str, typer.Argument(help="The sender's email address.")],
+        category: Annotated[str, typer.Option("--category", help="e.g. invoice, notification.")],
+        address: AddressOpt = None,
+    ) -> None:
+        """Confirm a sender's category; it then counts as known, also for bank details. (step-up)"""
+        post("/v1/senders/confirm", {"sender": sender, "category": category,
+                                     "address_id": address})  # fmt: skip
+
+    @sender_app.command("set-reply-to")
+    def sender_set_reply_to(
+        sender: Annotated[str, typer.Argument(help="The sender's email address.")],
+        domain: Annotated[str | None, typer.Argument(help="The Reply-To domain to expect.")] = None,
+        clear: Annotated[bool, typer.Option("--clear", help="Expect none again.")] = False,
+        address: AddressOpt = None,
+    ) -> None:
+        """Expect this Reply-To domain from the sender (no mismatch flag). (step-up)"""
+        if (domain is None) == (not clear):
+            raise typer.BadParameter("give a domain, or --clear")
+        post("/v1/senders/reply-to", {"sender": sender, "domain": domain, "address_id": address})
+
+    @sender_app.command("set-verified")
+    def sender_set_verified(
+        sender: Annotated[str, typer.Argument(help="The sender's email address.")],
+        off: Annotated[bool, typer.Option("--off", help="Flag its unverified mail again.")] = False,
+        address: AddressOpt = None,
+    ) -> None:
+        """No unverified-sender flag on its payment mail; fraud checks stay on. (step-up)"""
+        post("/v1/senders/verified", {"sender": sender, "on": not off, "address_id": address})
+
+
+def _config_and_sender_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    config_app = typer.Typer(no_args_is_help=True, help="Security-relevant configuration.")
+    app.add_typer(config_app, name="config")
+    rules_app = typer.Typer(no_args_is_help=True, help="Try rules before applying them.")
+    app.add_typer(rules_app, name="rules")
+    _config_commands(config_app, rules_app, paths)
+    sender_app = typer.Typer(no_args_is_help=True, help="What ecf knows about a sender.")
+    app.add_typer(sender_app, name="sender")
+    _sender_commands(sender_app, paths)

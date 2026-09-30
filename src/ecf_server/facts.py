@@ -123,6 +123,8 @@ def compute(
         "from_org_domain": in_domains(from_domain, org_domains),
         "sender_seen_before": seen,
         "sender_confirmed": confirmed and not shared,
+        # human-verified for rule 1a (`ecf sender set-verified`, OD-065); fraud triggers ignore it
+        "sender_verified": history is not None and bool(history["verified_rule1a"]),
         "shared_platform": shared,
         "reply_to_mismatch": reply_to_mismatch(parsed, from_domain, expected),
         "recipient_mismatch": address.email.lower() not in {*parsed.to, *parsed.cc},

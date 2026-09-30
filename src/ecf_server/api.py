@@ -54,6 +54,7 @@ from ecf_server import (
     inbox,
     pause,
     ruletest,
+    senders,
     settings,
     slack_admin,
     slack_routes,
@@ -267,6 +268,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_alert_routes(state, allow),
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
+            *_sender_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -526,6 +528,54 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/config/apply", apply_config, methods=["POST"]),
         Route("/v1/rules/test", test_rules, methods=["POST"]),
+    ]
+
+
+def _sender_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.2, §8.5 (V1.2 step 10c): sender records; setting them needs step-up."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def show_sender(request: Request) -> JSONResponse:
+        q = request.query_params
+        sender, aid = q.get("sender") or "", q.get("address_id")
+        return _with_conn(lambda c: senders.show(c, sender, aid))
+
+    @allow(Caller.CLI)
+    def confirm(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, category = _str(body, "sender"), _str(body, "category")
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.confirm(c, state.clock, sender, category,
+                                                    address=aid, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def reply_to(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, domain = _str(body, "sender"), _opt_str(body, "domain")
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.set_reply_to(c, state.clock, sender, domain,
+                                                         address=aid, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def verified(request: Request) -> JSONResponse:
+        body = _body(request)
+        sender, on = _str(body, "sender"), body.get("on") is not False
+        aid, nonce = _opt_str(body, "address_id"), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: senders.set_verified(c, state.clock, sender, on,
+                                                         address=aid, nonce=nonce))  # fmt: skip
+
+    return [
+        Route("/v1/senders", show_sender, methods=["GET"]),
+        Route("/v1/senders/confirm", confirm, methods=["POST"]),
+        Route("/v1/senders/reply-to", reply_to, methods=["POST"]),
+        Route("/v1/senders/verified", verified, methods=["POST"]),
     ]
 
 

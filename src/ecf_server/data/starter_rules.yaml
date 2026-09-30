@@ -22,7 +22,10 @@ rules:
 
   - id: unverified_payment_sender        # 1a
     when:
-      and: [{field: payment_related, eq: true}, {fact: auth_result, eq: none}]
+      and:
+        - {field: payment_related, eq: true}
+        - {fact: auth_result, eq: none}
+        - not: {fact: sender_verified, eq: true}  # `ecf sender set-verified` (OD-065)
     then: [{label: unverified_sender}, flag]
     actor: none
     hide: never
