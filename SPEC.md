@@ -673,6 +673,8 @@ In v1 the OS user is the sole admin and approver; there are no roles (M2).
 - **live:** full policy.
 - `ecf stage status|set` is admin-only; `stage set live` needs step-up; an override needs a written reason, step-up and a post. Rollback and `ecf pause` are instant.
 
+**As built in V1.2** (step 10a, 2026-09-30; code: `ecf_server/stages.py`, `ecf/cli_admin.py`): `ecf stage status` lists each address's stage with its label, days in it, sensitivity, whether paused, and held items. `ecf stage set <address> shadow|assist [--reason]`: moving forward (shadow to assist) needs step-up, bound to the address and its current stage; going back is instant; `live` is refused until the V1.3 go-live gate (OD-209). Every change is audited (`stage.changed`, with the reason) and posted in the address's channel. `ecf sensitivity set <address> standard|high [--reason]`: raising is instant; lowering needs a reason and step-up, and sends a Security Notice (§13.3). Changing sensitivity also changes the address's default size limits (§5.1) unless `max_message_bytes` is set for it.
+
 ### 9.2 Review
 
 Item cards have ✅ **Correct** and ✏️ **Fix**; review posts have **All others correct** (items not Fixed on that post; shows "reviewed N of M"). Review posts are batched: one per address channel per business hour, ≤ 20 items; 100% of items until the gate count is reached, then `review_sample_rate` (10%). A **Show excerpt** button reveals the first ~200 characters of the stored excerpt, to you only (an ephemeral reply, not kept in channel history; `ecf item show` is the durable path; operator decision 2026-09-29, OD-214). `ecf stage status` shows progress ("73/100 reviewed, 91% accurate, 27 to go").
@@ -1126,13 +1128,15 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | `preset`, pair | chosen at add | A, B, C | OD 2026-09-26 |
 | `claude_queue_timeout` | off; N hours set by you (no default) | 1-168 h (P) | OD 2026-09-26 |
 | `classifier_high_batch` | 1 | 1-5 | OD 2026-09-26 |
-| `max_message_bytes` | 64 MB `high`, 16 MB `standard`; capped at the provider's limit when the probe found a smaller one (OD-196) | ≥ 1 MB | OD 2026-09-26 |
-| `max_scan_bytes_per_part` | 10 MB | ≥ 1 MB | OD 2026-09-26 |
+| `max_message_bytes` | 64 MB `high`, 16 MB `standard`; capped at the provider's limit when the probe found a smaller one (OD-196) | 1-64 MB (OD-220) | OD 2026-09-26 |
+| `max_scan_bytes_per_part` | 10 MB | 1-64 MB (OD-220) | OD 2026-09-26 |
 | `max_sends_per_hour` / `_per_day` | 25 / 250 | ≥ 1 (P) | OD 2026-09-26 |
 | `approval_ttl_days_send` / `approval_ttl_days` | 4 / 14 | 1-60 (P) | OD 2026-09-26 |
 | `escalations_per_hour` | 20 | 1-200 (P) | OD 2026-09-27 |
 | `label_folder` | unset | a folder name | RV |
 | intervals, business hours | install defaults | as above | OD 2026-09-26 |
+
+**`ecf settings show|set` in V1.2** (step 10a, 2026-09-30; code: `ecf_server/settings.py`): `set` changes only keys something reads today. For the install, or one address with `--address`: `business_hours` (written `mon-fri 08:00-17:00 America/New_York`), `mail_fetch_interval_workday` and `_offhours`, and the `catch_up*` keys. Install only: `notifications` (read when the service starts), `deadman_offhours` (OD-219) and `stale_item_days`. Per address: `max_message_bytes` and `max_scan_bytes_per_part` (1 to 64 MB: 64 MB is the largest size whose memory use was measured, OD-195, and raising it needs a new measurement; operator decision 2026-09-30, OD-220), `approval_ttl_days` and `approval_ttl_days_send`. Address values are stored in the address's overrides and win over install values. Each change is audited (`settings.changed`). None of these needs step-up (§9.6). Other keys in the tables above are refused with where they live or when they arrive. `slack_member_id` goes through `ecf slack set-member`, which `ecf settings set slack_member_id` also calls; `alerts.*` through `ecf alerts set`; `org_domains` and other security-relevant config through `ecf config apply`; `log_retention_days` through `ecf retention set` (step 11). `resident`, `review_sample_rate`, `claude_queue_timeout`, `label_folder` and `escalations_per_hour` arrive in V1.3; `classifier_high_batch` in V1.4; the export and send-limit keys in V1.5.
 
 ### 14.3 Fixed numbers (no config key)
 
@@ -1205,6 +1209,7 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/checks` | CLI | `{address_id?, until_empty?}` → progress stream (JSON lines), final summary |
 | POST | `/v1/backfill` | CLI | `{address_id, since}` → job id |
 | GET/POST/DELETE | `/v1/addresses`, `/v1/addresses/{id}` | CLI | add/set fields, `nonce_id?` → address record; list; remove → residue list |
+| GET | `/v1/stages` | CLI | → each address's stage, label, days in stage, sensitivity, paused, held count (V1.2 step 10a) |
 | POST | `/v1/addresses/{id}/stage` · `/sensitivity` · `/outbound` · `/pause` · `/resume` · `/retry` | CLI | `{value, reason?, nonce_id?}` → new state, gate or review status |
 | POST | `/v1/pause-all` · `/v1/resume-all` | CLI | → the addresses that changed (V1.2 step 8a) |
 | POST | `/v1/senders/{hash}/confirm` · `/reply-to` · `/verified` | CLI | `{category}` / `{domain}` / `{}` plus `nonce_id?` → sender record |
@@ -2022,6 +2027,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-217 | 2026-09-29 | (V1.2 plan) | SPEC §6.5 | Retention never prunes the audit log or items that fired a fraud or regulator trigger |
 | OD-218 | 2026-09-29 | (V1.2 plan) | SPEC §10.2 | `address remove` with open items resolves them first, with step-up when any is a payment or fraud item (completes OD-191) |
 | OD-219 | 2026-09-29 | (V1.2 step 8a) | SPEC §10.1 | The dead-man's switch posts only in business hours by default; `deadman_offhours` (default false) lets it post off-hours too |
+| OD-220 | 2026-09-30 | (V1.2 step 10a) | SPEC §14 | `max_message_bytes` and `max_scan_bytes_per_part` are settable from 1 to 64 MB; 64 MB is the largest measured size (OD-195), and raising the ceiling needs a new memory measurement first |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

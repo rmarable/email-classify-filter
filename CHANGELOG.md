@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- New commands `ecf stage status`, `ecf stage set <address> shadow|assist` (step-up to move forward; `live` waits for V1.3, OD-209), `ecf sensitivity set <address> standard|high` (lowering needs a reason and step-up, and sends a Security Notice), and `ecf settings show|set` for the schedule, business hours, catch-up, notifications, the dead-man's switch, stale days, size limits (1 to 64 MB, OD-220) and approval expiry (per address with `--address`).
 - Alerts now reach Slack as well as the desktop, titled `[ecf-alert] …` (and `[ecf-alert] Resolved: …` when they clear): mail-provider problems, rejected logins, system errors (including a restart after a crash, jobs that gave up, and the crash-loop breaker stopping ecf), items waiting on you, and Security Notices. Slack delivery problems stay on the desktop. New commands `ecf alerts show`, `ecf alerts set [<class>] --to slack` (step-up) and `ecf alerts test`; email routes wait for V1.5 (OD-206).
 - CONTRIBUTING lists GNU sed (`gsed`) for scripted edits on macOS.
 - Hourly digests in each address channel during business hours: new mail, weak fraud signals and unverified payment senders, with Undo (never for fraud or regulator labels) and Pause. Nothing is posted when nothing came in.

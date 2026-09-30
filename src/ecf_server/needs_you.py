@@ -29,7 +29,7 @@ KEY = "needs-you"
 HASH, AT = "slack_needs_you_hash", "slack_needs_you_at"
 TOP = 20
 REFRESH = timedelta(hours=1)
-STALE_AFTER = timedelta(days=30)  # stale_item_days (OD-042)
+STALE_AFTER = timedelta(days=30)  # stale_item_days' default (OD-042); `ecf settings set` changes it
 COUNT_ONLY: frozenset[Status] = frozenset({Status.HELD, Status.NEW, Status.AWAITING_CLAUDE})
 LABELS = {
     "new": "escalated",
@@ -104,7 +104,10 @@ def refresh(conn: sqlite3.Connection, clock: Clock, *, computer: str | None = No
 
 def mark_stale(conn: sqlite3.Connection, clock: Clock) -> list[str]:
     """Mark open items older than 30 days stale; say so once in the summary channel."""
-    cutoff = to_ts(clock.now() - STALE_AFTER)
+    days = int(conn.execute("SELECT coalesce((SELECT value FROM settings"
+                            " WHERE key = 'stale_item_days'), ?)",
+                            (STALE_AFTER.days,)).fetchone()[0])  # fmt: skip
+    cutoff = to_ts(clock.now() - timedelta(days=days))
     rows = conn.execute(
         "SELECT stable_id, address_id FROM items WHERE stale = 0 AND created_at < ?"
         " AND status IN (SELECT value FROM json_each(?)) ORDER BY stable_id",

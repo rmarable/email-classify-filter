@@ -52,8 +52,10 @@ from ecf_server import (
     health,
     inbox,
     pause,
+    settings,
     slack_admin,
     slack_routes,
+    stages,
     stepup,
 )
 from ecf_server.chat import FakeChat
@@ -261,6 +263,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_item_routes(state, allow),
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
+            *_stage_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -434,6 +437,58 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/items/resolve", resolve_many, methods=["POST"]),
         Route("/v1/items/{ref}", show, methods=["GET"]),
         Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
+    ]
+
+
+def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §9.1, §9.4, §14 (V1.2 step 10a): stages, sensitivity and settings; CLI only."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], Any]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def stage_status(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: {"addresses": stages.status(c, state.clock.now())})
+
+    @allow(Caller.CLI)
+    def set_stage(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: stages.set_stage(c, state.clock, ref, to, reason=reason,
+                                                     nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def set_sensitivity(request: Request) -> JSONResponse:
+        body, ref = _body(request), str(request.path_params["ref"])
+        to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: stages.set_sensitivity(
+            c, state.clock, state.notifier, ref, to, reason=reason, nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def show_settings(request: Request) -> JSONResponse:
+        aid = request.query_params.get("address_id")
+        return _with_conn(lambda c: {"settings": settings.show(
+            c, addresses.get_address(c, aid)["address_id"] if aid else None)})  # fmt: skip
+
+    @allow(Caller.CLI)
+    def set_setting(request: Request) -> JSONResponse:
+        body = _body(request)
+        key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
+        return _with_conn(lambda c: settings.set_value(c, state.clock, key, value, address=aid,
+                                                       actor="os_user"))  # fmt: skip
+
+    return [
+        Route("/v1/stages", stage_status, methods=["GET"]),
+        Route("/v1/addresses/{ref}/stage", set_stage, methods=["POST"]),
+        Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
+        Route("/v1/settings", show_settings, methods=["GET"]),
+        Route("/v1/settings", set_setting, methods=["POST"]),
     ]
 
 

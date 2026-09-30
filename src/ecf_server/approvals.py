@@ -146,7 +146,7 @@ def _issue(
     conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actions: list[Planned]
 ) -> str:
     grant_id = new_grant_id()
-    ttl = TTL_SEND if is_send(actions) else TTL_OTHER
+    ttl = _ttl(conn, item["address_id"], send=is_send(actions))
     with write_tx(conn):
         conn.execute(
             "INSERT INTO grants (grant_id, stable_id, action_hash, content_hash, principal, status,"
@@ -562,6 +562,15 @@ def has_card(conn: sqlite3.Connection, key: str) -> bool:
 
 
 # ---- helpers ------------------------------------------------------------------------------------
+
+
+def _ttl(conn: sqlite3.Connection, address_id: str, *, send: bool) -> timedelta:
+    """`approval_ttl_days_send` / `approval_ttl_days` for the address (OD-041)."""
+    key = "approval_ttl_days_send" if send else "approval_ttl_days"
+    default = TTL_SEND if send else TTL_OTHER
+    row = conn.execute("SELECT json_extract(overrides, '$.' || ?) FROM addresses"
+                       " WHERE address_id = ?", (key, address_id)).fetchone()  # fmt: skip
+    return timedelta(days=int(row[0])) if row and row[0] is not None else default
 
 
 def _item(conn: sqlite3.Connection, sid: str) -> sqlite3.Row:

@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 import typer
 
 from ecf import __version__
+from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.client import LocalClient
@@ -71,6 +72,7 @@ def _paths() -> Paths:
 
 app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
+make_admin_commands(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
 
