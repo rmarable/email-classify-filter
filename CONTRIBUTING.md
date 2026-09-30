@@ -147,7 +147,7 @@ Runtime dependencies (generated 2026-09-28):
 | `jaraco-classes` | 3.4.0 | MIT | all platforms |
 | `jaraco-context` | 6.1.2 | MIT | all platforms |
 | `jaraco-functools` | 4.6.0 | MIT | all platforms |
-| `jeepney` | 0.9.0 | MIT | Linux |
+| `jeepney` | 0.9.0 | MIT | Linux (via `keyring`) |
 | `keyring` | 25.7.0 | MIT | all platforms |
 | `markdown-it-py` | 4.2.0 | MIT | all platforms |
 | `mdurl` | 0.1.2 | MIT | all platforms |

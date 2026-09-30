@@ -145,6 +145,15 @@ ELSEWHERE = {
     "max_sends_per_hour": "arrives with outbound in V1.5",
     "max_sends_per_day": "arrives with outbound in V1.5",
     "dns.doh_url": "not built yet",
+    "max_per_check": "fixed at 6 minutes in V1.2; settable from V1.3",
+    "claude_review_reminder_hours": "arrives with Claude on demand in V1.4",
+    "alerts.email.monitored_address": "arrives with email alerts in V1.5 (OD-206)",
+    "alerts.email.destination_address": "arrives with email alerts in V1.5 (OD-206)",
+    "outbound": "change it with `ecf outbound enable|disable`, which arrive in V1.5",
+    "preset": "chosen with `ecf address add`",
+    "security_config_delay_minutes": "fixed at 0 in local mode (OD-074)",
+    "sensitivity_downgrade_delay_minutes": "fixed at 0 in local mode",
+    "trust_provider_authentication_results": "fixed: provider headers are never trusted in v1",
 }
 
 

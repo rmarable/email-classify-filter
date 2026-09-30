@@ -15,8 +15,8 @@ The pre-check queues each escalation (`escalations` table, state `pending`); the
 
 Buttons: Show excerpt answers with an ephemeral message only you see (OD-214); Dismiss resolves a
 non-payment, non-fraud, non-regulator item (none of V1.2's escalations qualify; the rule is
-enforced here as well as by not showing the button). Undo arrives with digests (step 8); Confirm
-sender category with the classifier (V1.3, OD-210).
+enforced here as well as by not showing the button). Undo is offered on digests (`digests.py`),
+never on escalations; Confirm sender category comes with the classifier (V1.3, OD-210).
 """
 
 from __future__ import annotations

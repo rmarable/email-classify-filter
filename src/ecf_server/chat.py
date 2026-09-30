@@ -1,6 +1,6 @@
 """The ChatSurface port (SPEC §3.3, §10.1). V1.2 step 1: the neutral card, route and thread
 references, capability flags, and the recording fake used by `ecf-server dev` and tests; the Slack
-Socket Mode adapter arrives in V1.2 step 3.
+Socket Mode adapter is `slack_runtime.py`.
 
 A card holds plain text only. Adapters render every field as plain text (never markup), so text
 taken from an email can't mention anyone, format or link (tested against Slack 2026-09-29, §21.1).

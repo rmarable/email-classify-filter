@@ -1,11 +1,11 @@
 """The Stepper port (SPEC §3.3, §9.6): OS authentication for step-up, always run by the service
-(OD-073; a result reported by a client is never trusted). V1.2 step 1: the port, the macOS and
-Linux adapters and the fake; nonces, binding and the routes arrive in step 2.
+(OD-073; a result reported by a client is never trusted). The port, the macOS and Linux adapters
+and the fake; nonces, binding and the routes are in `stepup.py`.
 
 - **macOS:** LocalAuthentication (Touch ID or the login password) from the LaunchAgent; the reason
   text in the dialog names the action, recipient, address and a short code the CLI also prints.
 - **Linux:** PAM with the password the CLI sends over the 0600 socket (unverified until V1.6);
-  polkit on desktops is added in step 2.
+  PAM only in V1.2; polkit on desktops arrives with V1.6 (OD-224).
 
 One authentication at a time across the service: a second request waits for the first to end, so
 a same-user process can't slip its own dialog in beside a real one (security review of the V1.2

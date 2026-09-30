@@ -1,5 +1,5 @@
-"""A typed facade over `slack_sdk` (SPEC §10.1; §17.2: one facade per untyped library). V1.2 step 1;
-the adapter built on it arrives in step 3.
+"""A typed facade over `slack_sdk` (SPEC §10.1; §17.2: one facade per untyped library). The adapter
+built on it is `slack_runtime.py` (with `slack_in.py` and `slack_out.py`).
 
 slack_sdk 3.44.1 behavior relied on (V1.2 real-service test 0a, 2026-09-29, §21.1): the built-in
 Socket Mode client (`slack_sdk.socket_mode.SocketModeClient`) connects with an app-level token and

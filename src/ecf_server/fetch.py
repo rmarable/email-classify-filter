@@ -11,8 +11,10 @@ A marker that is still there after two crashes quarantines the message: an item 
 `quarantined` and `content_unscanned` set and nothing parsed, so one crafted email can't keep
 tripping the crash-loop breaker.
 
-Messages over the size limit, or over 16 MB, are deferred in `deferred_uids` (step 6b adds
-their handling); nothing is ever skipped. A UIDVALIDITY change is reported, not handled (step 13).
+Messages over the size limit, or over 16 MB, are deferred in `deferred_uids` and read after the
+rest of the page; nothing is ever skipped. A UIDVALIDITY change (a mailbox reset) is recovered
+here: known messages are re-pointed and the rest fetched again, deduplicated by `stable_id`
+(§6.4). `backfill_page` reads older mail for `ecf backfill`.
 """
 
 from __future__ import annotations
