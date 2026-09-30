@@ -32,7 +32,17 @@ from typing import Any
 from ecf.errors import ConflictError, EcfError, GrantInvalidError, InvalidInputError
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.status import Status
-from ecf_server import cards, inbox, items, jobs, slack_in, slack_out, slack_routes, stepup
+from ecf_server import (
+    cards,
+    inbox,
+    items,
+    jobs,
+    pause,
+    slack_in,
+    slack_out,
+    slack_routes,
+    stepup,
+)
 from ecf_server.actions import Planned, action_hash
 from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
@@ -352,6 +362,8 @@ def advance_delays(conn: sqlite3.Connection, clock: Clock, awake_s: float, *, wo
     for d in conn.execute("SELECT * FROM delays ORDER BY created_at").fetchall():
         sid = StableId(d["stable_id"])
         if d["remaining_s"] <= 0:
+            if pause.is_paused(conn, _item(conn, sid)["address_id"]):
+                continue  # starts on resume
             with write_tx(conn):
                 conn.execute("DELETE FROM delays WHERE stable_id = ?", (sid,))
             _start(conn, clock, sid, d["grant_id"])

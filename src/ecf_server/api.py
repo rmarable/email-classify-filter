@@ -50,6 +50,7 @@ from ecf_server import (
     execute,
     health,
     inbox,
+    pause,
     slack_admin,
     slack_routes,
     stepup,
@@ -257,6 +258,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_stepup_routes(state, allow),
             *_slack_routes(state, allow),
             *_item_routes(state, allow),
+            *_pause_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -430,6 +432,42 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/items/resolve", resolve_many, methods=["POST"]),
         Route("/v1/items/{ref}", show, methods=["GET"]),
         Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
+    ]
+
+
+def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1 (V1.2 step 8a): pause and resume one address, or all of them. Instant, no
+    step-up (§9.1); the pre-check and fraud flagging never pause."""
+
+    def change(ref: str, paused: bool) -> JSONResponse:
+        conn = state.connect()
+        try:
+            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user")
+        finally:
+            conn.close()
+        return JSONResponse({"changed": changed, "message": pause.describe(changed, paused)})
+
+    @allow(Caller.CLI)
+    def pause_one(request: Request) -> JSONResponse:
+        return change(str(request.path_params["ref"]), True)
+
+    @allow(Caller.CLI)
+    def resume_one(request: Request) -> JSONResponse:
+        return change(str(request.path_params["ref"]), False)
+
+    @allow(Caller.CLI)
+    def pause_all(_request: Request) -> JSONResponse:
+        return change(pause.ALL, True)
+
+    @allow(Caller.CLI)
+    def resume_all(_request: Request) -> JSONResponse:
+        return change(pause.ALL, False)
+
+    return [
+        Route("/v1/addresses/{ref}/pause", pause_one, methods=["POST"]),
+        Route("/v1/addresses/{ref}/resume", resume_one, methods=["POST"]),
+        Route("/v1/pause-all", pause_all, methods=["POST"]),
+        Route("/v1/resume-all", resume_all, methods=["POST"]),
     ]
 
 

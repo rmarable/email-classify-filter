@@ -20,7 +20,7 @@ from typing import Any
 from ecf.errors import GrantInvalidError
 from ecf.ids import StableId
 from ecf.status import Status
-from ecf_server import approvals, items, jobs
+from ecf_server import approvals, items, jobs, pause
 from ecf_server.actions import Planned, action_hash
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -28,6 +28,7 @@ from ecf_server.log_bridge import log
 from ecf_server.state_machine import TransitionContext
 
 WORKER = "actions"
+PAUSED_RECHECK_S = 60
 Executor = Callable[[sqlite3.Connection, Clock, sqlite3.Row, list[Planned]], list[str]]
 
 
@@ -50,6 +51,9 @@ def run_once(conn: sqlite3.Connection, clock: Clock, executor: Executor) -> bool
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
     if item is None or item["status"] != Status.EXECUTING:
         jobs.complete(conn, job.job_id, WORKER)  # resolved or cancelled meanwhile: nothing to do
+        return True
+    if pause.is_paused(conn, item["address_id"]):  # waits for resume; not counted as an attempt
+        jobs.hold(conn, clock, job.job_id, WORKER, PAUSED_RECHECK_S, "paused")
         return True
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
     actions = [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]

@@ -132,6 +132,29 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                                                     {"nonce_id": n}), echo=typer.echo)  # fmt: skip
         typer.echo(_after(r["status"]))
 
+    @app.command("pause")
+    def pause(
+        address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
+        every: Annotated[bool, typer.Option("--all", help="Every address.")] = False,
+    ) -> None:
+        """Stop ecf acting on an address; fraud and regulator checks continue."""
+        typer.echo(_pause(address, every, "pause"))
+
+    @app.command("resume")
+    def resume(
+        address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
+        every: Annotated[bool, typer.Option("--all", help="Every address.")] = False,
+    ) -> None:
+        """Let ecf act on a paused address again."""
+        typer.echo(_pause(address, every, "resume"))
+
+    def _pause(address: str | None, every: bool, verb: str) -> str:
+        if every == bool(address):
+            raise typer.BadParameter("give an address, or --all")
+        path = f"/v1/{verb}-all" if every else f"/v1/addresses/{address}/{verb}"
+        with LocalClient(paths()) as c:
+            return str(c.request("POST", path)["message"])
+
     @app.command("answer")
     def answer(
         item: Annotated[str, typer.Argument(help="Item ID.")],

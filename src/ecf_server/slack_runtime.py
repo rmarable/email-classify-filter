@@ -16,7 +16,18 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, answers, approvals, escalations, slack_admin, slack_in, slack_routes
+from ecf_server import (
+    _slack,
+    answers,
+    approvals,
+    deadman,
+    escalations,
+    needs_you,
+    pause,
+    slack_admin,
+    slack_in,
+    slack_routes,
+)
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
@@ -27,7 +38,7 @@ from ecf_server.slack_in import Inbound, SlackReceiver
 from ecf_server.slack_out import SlackSender
 
 # Modules whose Slack button handlers (`slack_in.handles`) must be registered before clicks arrive.
-HANDLER_MODULES = (slack_admin, escalations, approvals, answers)
+HANDLER_MODULES = (slack_admin, escalations, approvals, answers, pause)
 RETRY_S = 60.0
 IDLE_S = 0.5
 PRUNE_EVERY_S = 3600.0
@@ -51,6 +62,7 @@ class SlackRuntime:
         install: str = "default",
     ) -> None:
         self._install = install
+        self._computer = needs_you.host()
         self._routes_at = -ROUTES_EVERY_S  # monotonic time of the last channel check
         self._recheck_at = -RECHECK_EVERY_S
         self._problem = ""
@@ -120,7 +132,7 @@ class SlackRuntime:
         self._mark_connected()
         conn = self._connect()
         try:
-            self._channels(conn)
+            self._periodic(conn)
             escalations.sweep(conn, self._clock)
             sent = self._sender.run_once(conn)
             handled = self._receiver.run_once(conn)
@@ -128,12 +140,22 @@ class SlackRuntime:
             conn.close()
         return sent or handled
 
-    def _channels(self, conn: sqlite3.Connection) -> None:
-        """Every ROUTES_EVERY_S: create, record and invite whatever channel is missing."""
+    def _periodic(self, conn: sqlite3.Connection) -> None:
+        """Every ROUTES_EVERY_S: channels, then "Needs you" and the dead-man's switch."""
         now = self._clock.monotonic()
         if now - self._routes_at < ROUTES_EVERY_S or self._web is None:
             return
         self._routes_at = now
+        self._channels(conn, now)
+        try:
+            needs_you.refresh(conn, self._clock, computer=self._computer)
+            deadman.keep_armed(conn, self._clock, self._web, computer=self._computer)
+        except (_slack.SlackError, _slack.SlackNetworkError) as exc:  # retried next time
+            log.warning("slack.housekeeping_failed", error_type=type(exc).__name__,
+                        code=getattr(exc, "code", None))  # fmt: skip
+
+    def _channels(self, conn: sqlite3.Connection, now: float) -> None:
+        """Create, record and invite whatever channel is missing."""
         recheck = now - self._recheck_at >= RECHECK_EVERY_S
         try:
             for change in slack_routes.ensure(conn, self._clock, SlackChat(self._web),
@@ -157,7 +179,16 @@ class SlackRuntime:
         """Called from the API thread: reconnect with the stored tokens on the next pass."""
         self._reload.set()
 
-    def close(self) -> None:
+    def close(self, *, clean_stop: bool = False) -> None:
+        """`clean_stop` (the service stopping on purpose) also deletes the dead-man's message."""
+        if clean_stop and self._web is not None:
+            conn = self._connect()
+            try:
+                deadman.disarm(conn, self._web)
+            except (_slack.SlackError, _slack.SlackNetworkError) as exc:
+                log.warning("slack.deadman_disarm_failed", error_type=type(exc).__name__)
+            finally:
+                conn.close()
         if self._socket is not None:
             self._socket.close()
             self._socket = None

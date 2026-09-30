@@ -367,3 +367,30 @@ def test_a_channel_problem_is_shown_and_notified_once(
     assert [t for t, _ in n.sent] == ["ecf: Slack channel needs you"]  # once, not every pass
     rt.run_once()  # the person made the channel... here creation just works again
     assert rt.status["channels"] is None
+
+
+def test_a_clean_stop_deletes_the_dead_mans_message_and_a_crash_leaves_it(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    class Web(FakeWeb):
+        def call(self, method: str, **params: Any) -> dict[str, Any]:
+            r = super().call(method, **params)
+            return r | {"scheduled_message_id": "Q1"} if method == "chat.scheduleMessage" else r
+
+    store = MemorySecretStore()
+    _install(conn, clock, store)
+    web = Web()
+    rt = _runtime(db_path, clock, store, web)
+    assert rt.start()
+    rt.run_once()  # channels, "Needs you", and the dead-man's message
+    assert "chat.scheduleMessage" in web.methods()
+    rt.close()  # a crash or watchdog stop: the message stays scheduled, so it will post
+    assert "chat.deleteScheduledMessage" not in web.methods()
+    web2 = Web()
+    rt2 = _runtime(db_path, clock, store, web2)
+    assert rt2.start()
+    rt2.run_once()  # still far enough ahead: kept, not scheduled again
+    assert "chat.scheduleMessage" not in web2.methods()
+    rt2.close(clean_stop=True)
+    method, params = web2.calls[-1]
+    assert (method, params["scheduled_message_id"]) == ("chat.deleteScheduledMessage", "Q1")

@@ -38,6 +38,7 @@ from ecf_server import (
     execute,
     health,
     jobs,
+    needs_you,
     schedule,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
@@ -194,6 +195,7 @@ class Service:
             try:
                 approvals.expire(conn, self.clock)
                 answers.expire(conn, self.clock)
+                needs_you.mark_stale(conn, self.clock)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):
                     if not execute.run_once(conn, self.clock, self.state.executor):
@@ -424,7 +426,7 @@ class Service:
                 self.stop.set()
         server.should_exit = True
         self._join(web, timer, worker, slack_thread)
-        slack.close()
+        slack.close(clean_stop=self.exit_code == EXIT_OK)
         self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):
