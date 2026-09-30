@@ -1,5 +1,6 @@
-"""Mail-health alerts (SPEC §13.3). V1.1 step 13b: delivered as desktop notifications and shown by
-`ecf doctor` (OD-190); Slack delivery arrives in V1.2, email in V1.5.
+"""Mail-health alerts (SPEC §13.3). V1.1 step 13b: desktop notifications, `ecf status` and
+`ecf doctor` (OD-190). From V1.2 the Slack thread also posts them to the summary channel
+(`alerts.sweep`), except Slack Delivery Failed; email arrives in V1.5.
 
 - **Mail Provider Unreachable:** after 15 minutes of consecutive mail errors while the network is
   up (OD confirmed 2026-09-27). "Up" means the provider's host name resolves through the system
@@ -136,11 +137,12 @@ def open_alert(
         conn.execute(
             "INSERT INTO alerts (key, kind, address_id, detail, opened_at) VALUES (?, ?, ?, ?, ?)"
             " ON CONFLICT (key) DO UPDATE SET detail = excluded.detail,"
-            " opened_at = excluded.opened_at, resolved_at = NULL",
+            " opened_at = excluded.opened_at, resolved_at = NULL, slack_opened_at = NULL,"
+            " slack_resolved_at = NULL",
             (key, kind, aid, detail, to_ts(clock.now())),
         )
         _audit(conn, clock, aid, "alert.opened", kind)
-    notifier.notify(f"ecf: {TITLES[kind]}", detail)
+    notifier.notify(f"[ecf-alert] {TITLES[kind]}", detail)
 
 
 def resolve_alert(
@@ -155,7 +157,7 @@ def resolve_alert(
         if done:
             _audit(conn, clock, aid, "alert.resolved", kind)
     if done:
-        notifier.notify(f"ecf: Resolved: {TITLES[kind]}", f"{aid or 'ecf'}: working again")
+        notifier.notify(f"[ecf-alert] Resolved: {TITLES[kind]}", f"{aid or 'ecf'}: working again")
 
 
 def _audit(conn: sqlite3.Connection, clock: Clock, aid: str | None, event: str, kind: str) -> None:

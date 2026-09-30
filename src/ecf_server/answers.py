@@ -163,7 +163,8 @@ def _queue(
     _save(conn, clock, sid, state)
     _audit(conn, clock, item, "answer.queued", actor, {"length": len(text)})
     short = sid[: cards.SHORT_ID]
-    approvals.desktop.notify("ecf: answer waiting at your computer",
+    approvals.desktop.notify(
+        f"[ecf-alert] Operator Input Needed: answer waiting ({item['address_id']})",
                              f"Confirm your answer: ecf answer {short}")  # fmt: skip
     _card(conn, clock, inbox.find(conn, sid),
           f"Answer queued for your computer: ecf answer {short}", [])  # fmt: skip

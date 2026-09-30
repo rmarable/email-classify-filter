@@ -71,6 +71,41 @@ def _paths() -> Paths:
 
 app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
+alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
+app.add_typer(alerts_app, name="alerts")
+
+
+@alerts_app.command("show")
+def alerts_show() -> None:
+    """Where each class of alert goes."""
+    with LocalClient(_paths()) as c:
+        r = c.get("/v1/alerts")
+    typer.echo(f"default: {', '.join(r['default'])} (desktop notifications: {r['desktop']})")
+    for cls, routes in r["classes"].items():
+        typer.echo(f"{cls:<9} {', '.join(routes) or 'desktop only'}")
+
+
+@alerts_app.command("set")
+def alerts_set(
+    to: Annotated[str, typer.Option("--to", help="slack (email arrives in V1.5).")],
+    cls: Annotated[
+        str | None, typer.Argument(help="mail, system or operator (all when left out).")
+    ] = None,
+) -> None:
+    """Change where alerts go. (step-up)"""
+    body: dict[str, Any] = {"class": cls, "to": [t for t in to.split(",") if t.strip()]}
+    with LocalClient(_paths()) as c:
+        with_step_up(c, lambda n: c.request("POST", "/v1/alerts", body | {"nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo("changed; a Security Notice says so in Slack")
+
+
+@alerts_app.command("test")
+def alerts_test() -> None:
+    """Send a test alert on every route."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/alerts/test")
+    typer.echo(f"sent to: {', '.join(r['sent']) or 'nowhere (desktop off, no Slack)'}")
 
 
 @app.command()

@@ -42,6 +42,7 @@ from ecf.ids import new_random_id
 from ecf_server import (
     _slack,
     addresses,
+    alerts,
     answers,
     approvals,
     audit,
@@ -259,6 +260,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_slack_routes(state, allow),
             *_item_routes(state, allow),
             *_pause_routes(state, allow),
+            *_alert_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -432,6 +434,39 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/items/resolve", resolve_many, methods=["POST"]),
         Route("/v1/items/{ref}", show, methods=["GET"]),
         Route("/v1/items/{ref}/resolve", resolve_one, methods=["POST"]),
+    ]
+
+
+def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        return _with_conn(alerts.show)
+
+    @allow(Caller.CLI)
+    def set_routes(request: Request) -> JSONResponse:
+        body = _body(request)
+        cls, nonce = _opt_str(body, "class"), _opt_str(body, "nonce_id")
+        to = _str_list(body.get("to", []))
+        return _with_conn(lambda c: alerts.set_routes(c, state.clock, state.notifier, cls, to,
+                                                      nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def test(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: alerts.test(c, state.clock, state.notifier))
+
+    return [
+        Route("/v1/alerts", show, methods=["GET"]),
+        Route("/v1/alerts", set_routes, methods=["POST"]),
+        Route("/v1/alerts/test", test, methods=["POST"]),
     ]
 
 

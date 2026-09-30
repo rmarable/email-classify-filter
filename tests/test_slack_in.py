@@ -364,7 +364,9 @@ def test_a_channel_problem_is_shown_and_notified_once(
         rt.run_once()
         clock.advance(31)
     assert rt.status["channels"] and "ecf-default-summary" in rt.status["channels"]
-    assert [t for t, _ in n.sent] == ["ecf: Slack channel needs you"]  # once, not every pass
+    assert [t for t, _ in n.sent] == [
+        "[ecf-alert] Operator Input Needed: a Slack channel"
+    ]  # once, not every pass
     rt.run_once()  # the person made the channel... here creation just works again
     assert rt.status["channels"] is None
 

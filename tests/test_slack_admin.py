@@ -302,7 +302,7 @@ def test_set_tokens_needs_step_up_bound_to_the_new_tokens(
         call(nonce, bot=BOT + "-other")
     call(nonce)
     assert store.get(BOT_SECRET) == new_bot and store.get(APP_SECRET) == new_app
-    assert n.sent and n.sent[0][0] == "ecf: Security Notice"
+    assert n.sent and n.sent[0][0] == "[ecf-alert] Security Notice"
     posts = [json.loads(r["payload"]) for r in
              conn.execute("SELECT payload FROM jobs WHERE queue = 'slack_out'")]  # fmt: skip
     assert any(p["key"].startswith("notice:") and p["channel"] == "U0ME1" for p in posts)

@@ -236,7 +236,7 @@ def _queue_for_computer(
         _audit(conn, clock, item, "approval.queued", actor, {"grant_id": g.grant_id}, tx=True)
     waiting = queued_count(conn)
     short = item["stable_id"][: cards.SHORT_ID]
-    notifier.notify("ecf: approval waiting at your computer",
+    notifier.notify(f"[ecf-alert] Operator Input Needed: approval waiting ({item['address_id']})",
                     f"Confirm with Touch ID or your password: ecf approve {short}"
                     f" ({waiting} waiting)")  # fmt: skip
     _edit(conn, clock, item, f"Queued for your computer ({waiting} waiting)",

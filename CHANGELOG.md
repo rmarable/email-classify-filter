@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- Alerts now reach Slack as well as the desktop, titled `[ecf-alert] …` (and `[ecf-alert] Resolved: …` when they clear): mail-provider problems, rejected logins, system errors (including a restart after a crash, jobs that gave up, and the crash-loop breaker stopping ecf), items waiting on you, and Security Notices. Slack delivery problems stay on the desktop. New commands `ecf alerts show`, `ecf alerts set [<class>] --to slack` (step-up) and `ecf alerts test`; email routes wait for V1.5 (OD-206).
+- CONTRIBUTING lists GNU sed (`gsed`) for scripted edits on macOS.
 - Hourly digests in each address channel during business hours: new mail, weak fraud signals and unverified payment senders, with Undo (never for fraud or regulator labels) and Pause. Nothing is posted when nothing came in.
 - A daily summary at the start of business hours: what waits on you, stale items, approvals that expired twice, paused addresses, and who else is in ecf's channels. Someone joining or leaving one of those channels sends a Security Notice (OD-215).
 - New commands `ecf pause <address>|--all` and `ecf resume <address>|--all`, and Pause and Resume buttons: a paused address keeps being checked for fraud and regulator mail, but ecf takes no other action on it until you resume.

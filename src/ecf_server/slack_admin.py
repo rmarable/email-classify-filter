@@ -357,8 +357,8 @@ def notice(
 ) -> None:
     """A Security Notice (§13.3): a desktop notification, a DM to each member named and a post
     in the summary channel once it exists. Email copies arrive with email alerts (V1.5, OD-206)."""
-    notifier.notify("ecf: Security Notice", text)
-    card = Card("Security Notice", text=text)
+    notifier.notify("[ecf-alert] Security Notice", text)
+    card = Card("[ecf-alert] Security Notice", text=text)
     key = f"notice:{secrets.token_hex(8)}"
     for m in dms:
         slack_out.enqueue_post(conn, clock, key=f"{key}:{m}", route=RouteRef(m), card=card)

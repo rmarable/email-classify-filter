@@ -18,6 +18,7 @@ from typing import Any
 
 from ecf_server import (
     _slack,
+    alerts,
     answers,
     approvals,
     daily,
@@ -154,6 +155,7 @@ class SlackRuntime:
         try:
             needs_you.refresh(conn, self._clock, computer=self._computer)
             deadman.keep_armed(conn, self._clock, self._web, computer=self._computer)
+            alerts.sweep(conn, self._clock)
             digests.run(conn, self._clock)
             daily.check_members(conn, self._clock, SlackChat(self._web), self._notifier)
             daily.run(conn, self._clock)
@@ -178,7 +180,7 @@ class SlackRuntime:
                         code=getattr(exc, "code", None))  # fmt: skip
             return  # retried at the next check
         if problem and problem != self._problem:  # tell the person once per new problem
-            self._notifier.notify("ecf: Slack channel needs you", problem)
+            self._notifier.notify(alerts.title("operator_input", "a Slack channel"), problem)
         self._problem = problem
         self.status["channels"] = problem or None
 

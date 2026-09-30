@@ -187,10 +187,12 @@ def test_network_errors_hold_never_dead_letter_and_alert_after_15_minutes(
         clock.advance(slack_out.NETWORK_HOLD_S)
     row = conn.execute("SELECT state, attempts FROM jobs").fetchone()
     assert row["state"] == "queued" and row["attempts"] == 0  # held, not counted
-    assert n.sent and n.sent[0][0] == "ecf: Slack Delivery Failed" and "15" not in n.sent[0][0]
+    assert (
+        n.sent and n.sent[0][0] == "[ecf-alert] Slack Delivery Failed" and "15" not in n.sent[0][0]
+    )
     assert s.run_once(conn)  # the network is back
     assert web.methods()[-1] == "chat.postMessage"
-    assert n.sent[-1][0] == "ecf: Resolved: Slack Delivery Failed"
+    assert n.sent[-1][0] == "[ecf-alert] Resolved: Slack Delivery Failed"
 
 
 def test_no_alert_when_the_whole_network_is_down(
@@ -214,7 +216,7 @@ def test_a_revoked_token_alerts_at_once_and_holds(
     slack_out.enqueue_post(conn, clock, key="k", route=C1, card=Card("x"))
     web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "token_revoked")]
     s.run_once(conn)
-    assert n.sent[0][0] == "ecf: Slack Delivery Failed" and "set-tokens" in n.sent[0][1]
+    assert n.sent[0][0] == "[ecf-alert] Slack Delivery Failed" and "set-tokens" in n.sent[0][1]
     assert conn.execute("SELECT state FROM jobs").fetchone()["state"] == "queued"
 
 

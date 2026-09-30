@@ -222,7 +222,10 @@ def test_channel_members_are_checked_hourly_and_changes_are_a_security_notice(
     assert daily.check_members(conn, clock, chat, n) is None  # not due yet
     clock.advance(3601)
     assert daily.check_members(conn, clock, chat, n) == {"ecf-default-ap": ["U0EVE"]}
-    assert n.sent[0][0] == "ecf: Security Notice" and "joined ecf-default-ap: U0EVE" in n.sent[0][1]
+    assert (
+        n.sent[0][0] == "[ecf-alert] Security Notice"
+        and "joined ecf-default-ap: U0EVE" in n.sent[0][1]
+    )
     notice = [p for p in _posts(conn) if p["key"].startswith("notice:")]
     assert {p["channel"] for p in notice} == {ME, "CSUM"}
     clock.advance(3601)

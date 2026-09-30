@@ -29,6 +29,7 @@ from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
 from ecf_server import (
+    alerts,
     answers,
     approvals,
     audit,
@@ -196,6 +197,7 @@ class Service:
                 approvals.expire(conn, self.clock)
                 answers.expire(conn, self.clock)
                 needs_you.mark_stale(conn, self.clock)
+                alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):
                     if not execute.run_once(conn, self.clock, self.state.executor):
@@ -217,6 +219,40 @@ class Service:
                 conn.close()
         except Exception as exc:  # the rows stay in the table; the next start copies them
             log.error("audit.flush_failed", error_type=type(exc).__name__)
+
+    def _report_restart(self, crashes: int) -> None:
+        """System Error: this start follows a crash (Slack and desktop, §11.1)."""
+        try:
+            conn = db.connect(self.paths.db)
+            try:
+                alerts.event(conn, self.clock, self.state.notifier, "system_error",
+                             f"ecf restarted after a crash ({crashes} in the last 10 minutes; "
+                             "5 stop it). Details: ecf logs.")  # fmt: skip
+            finally:
+                conn.close()
+        except Exception as exc:  # reporting must never stop the start
+            log.error("service.restart_report_failed", error_type=type(exc).__name__)
+
+    def _report_trip(self, crashes: int) -> None:
+        """The breaker tripped: the service is about to exit, so nothing will send a queued post.
+        Tell the desktop, and Slack directly (best effort, §11.1)."""
+        text = (f"ecf stopped after {crashes} crashes in 10 minutes and stays stopped."
+                " Run `ecf service start` after checking `ecf logs`.")  # fmt: skip
+        if self.dev:
+            return
+        try:
+            host_notifier().notify(alerts.title("system_error"), text)
+            if sys.platform == "darwin":
+                set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+            store = open_store(self.paths.install, self.paths.data_dir, interactive=False,
+                               probe=host_probe())  # fmt: skip
+            conn = db.connect(self.paths.db)
+            try:
+                alerts.post_now(conn, store, alerts.title("system_error"), text)
+            finally:
+                conn.close()
+        except Exception as exc:  # the service is stopping either way
+            log.error("service.trip_report_failed", error_type=type(exc).__name__)
 
     def _notifier(self) -> Notifier:
         """Desktop notifications (OD-190): none in dev mode or with `notifications: off`."""
@@ -387,6 +423,7 @@ class Service:
         self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
         if st.tripped:
             log.error("service.breaker_tripped", crashes=len(st.crashes))
+            self._report_trip(len(st.crashes))
             sys.stderr.write(
                 "ecf-server: stopped after repeated crashes; run `ecf service start`\n"
             )
@@ -396,6 +433,8 @@ class Service:
         if sys.platform == "darwin" and not self.dev:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
         applied = self._open_state()
+        if st.crashed_before:
+            self._report_restart(len(st.crashes))
         self.state.token = write_token(self.paths)
         sock = bind_socket(self.paths)
         server = self._api_server()
