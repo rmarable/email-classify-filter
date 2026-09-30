@@ -34,9 +34,9 @@ def test_migrate_is_idempotent(conn: sqlite3.Connection) -> None:
     assert db.migrate(conn) == []
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert (
-        len(tables - {"schema_migrations"}) == 28
+        len(tables - {"schema_migrations"}) == 29
     )  # 21 initial + processing (0003), check_state (0005), alerts (0008), slack_messages (0011),
-    # escalations (0015), delays (0016), model_calls (0018)
+    # escalations (0015), delays (0016), model_calls (0018), eval_runs (0020)
 
 
 def test_strict_rejects_wrong_types(conn: sqlite3.Connection) -> None:

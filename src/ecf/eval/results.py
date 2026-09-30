@@ -20,6 +20,8 @@ class CaseResult(BaseModel):
     id: str
     correct: bool  # end-to-end decision correct
     fields: dict[str, bool] = Field(default_factory=dict[str, bool])  # per-field correctness
+    confirmed: bool = True  # counts toward the gates only when its labels are confirmed (V1.3)
+    safety: bool = True
 
 
 class ResultFile(BaseModel):
@@ -29,6 +31,8 @@ class ResultFile(BaseModel):
     set_version: str
     created_at: str
     cases: list[CaseResult]
+    digest: str | None = None  # the local model's manifest digest (V1.3)
+    summary: dict[str, object] | None = None  # metrics (V1.3); never message or model text
 
 
 def load_result(path: Path) -> ResultFile:

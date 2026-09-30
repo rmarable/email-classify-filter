@@ -781,6 +781,58 @@ def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
         typer.echo(f"[attachment] {att.name}" + (" (generated PDF)" if att.generate else ""))
 
 
+@eval_app.command("run")
+def eval_run(
+    root: RootOpt = EVAL_ROOT,
+    classifier: Annotated[bool, typer.Option("--classifier/--no-classifier")] = True,
+    actor: Annotated[bool, typer.Option("--actor/--no-actor")] = True,
+    fraud_only: Annotated[
+        bool, typer.Option("--fraud-only", help="Only fraud, injection and escalation cases.")
+    ] = False,
+    battery_floor: Annotated[
+        int, typer.Option("--battery-floor", help="Pause at this battery percent (OD-237).")
+    ] = 15,
+) -> None:
+    """Run the synthetic set through the local model (holds the model; fraud checks go on). A
+    full run takes hours on a laptop: run it overnight on AC power (OD-230)."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/runs", {
+            "root": str(root.resolve()), "classifier": classifier, "actor": actor,
+            "fraud_only": fraud_only, "battery_floor": battery_floor})  # fmt: skip
+    typer.echo(f"eval {r['run_id'][:8]} started: {r['total']} cases; follow it with"
+               " `ecf eval status`, stop it with `ecf eval stop`")  # fmt: skip
+    if r.get("on_battery"):
+        typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
+                   " resumes on AC power.")  # fmt: skip
+
+
+@eval_app.command("status")
+def eval_status() -> None:
+    """The running eval's progress and the latest results."""
+    with LocalClient(_paths()) as c:
+        st = c.get("/v1/eval/runs")
+    cur = st["current"]
+    if cur["state"] != "idle":
+        typer.echo(f"eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+                   + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
+    for r in st["recent"]:
+        m = r["metrics"]
+        typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
+                   f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
+                   f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
+                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}")  # fmt: skip
+    if cur["state"] == "idle" and not st["recent"]:
+        typer.echo("no eval has run yet: ecf eval run")
+
+
+@eval_app.command("stop")
+def eval_stop() -> None:
+    """Stop the running eval after its current case."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/runs/stop", {})
+    typer.echo(f"stopping eval {r['run_id'][:8]} after its current case")
+
+
 @eval_app.command("compare")
 def eval_compare(a: Path, b: Path) -> None:
     """Compare two result files (paired, exact McNemar; non-inferiority at -3 points)."""

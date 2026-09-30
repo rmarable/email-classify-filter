@@ -18,6 +18,7 @@ The tick only decides and enqueues `fetch` jobs; a worker thread runs them (serv
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -81,6 +82,22 @@ def host_power() -> Power:
         return Power(bool(batteries), on_ac)
     except OSError:
         return Power(False, True)
+
+
+def battery_percent() -> int | None:
+    """The battery's charge in percent, or None (no battery, or unknown)."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["/usr/bin/pmset", "-g", "batt"], capture_output=True, text=True,
+                                 timeout=5, check=False).stdout  # fmt: skip
+            m = re.search(r"(\d{1,3})%", out)
+            return int(m.group(1)) if m else None
+        for p in Path("/sys/class/power_supply").glob("*"):
+            if _read(p / "type") == "Battery" and _read(p / "capacity").isdigit():
+                return int(_read(p / "capacity"))
+    except OSError:
+        return None
+    return None
 
 
 def _read(p: Path) -> str:

@@ -104,6 +104,15 @@ def parse(content: str, labels: frozenset[str], folders: frozenset[str]) -> dict
     return {"action": action, "target": target, "reason": answers.model_text(reason, REASON_MAX)}
 
 
+def ask(client: Client, text: str, classification: dict[str, Any],
+        answered: list[dict[str, Any]], labels: frozenset[str],
+        folders: frozenset[str]) -> ollama.Reply:  # fmt: skip
+    """One actor call (the service's items and `ecf eval run` alike)."""
+    return client.chat(ollama.load_pin().ecf_tag, INSTRUCTIONS,
+                       user_message(text, classification, answered, secrets.token_hex(8)),
+                       role="actor", fmt=output_schema(labels, folders))  # fmt: skip
+
+
 def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: ollama.Ready,
              item: sqlite3.Row) -> ItemResult:  # fmt: skip
     """The model queue's `Work` for items waiting for the actor."""
@@ -118,11 +127,8 @@ def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
     excerpt = conn.execute("SELECT actor_text FROM excerpts WHERE stable_id = ?",
                            (item["stable_id"],)).fetchone()  # fmt: skip
     text = str(excerpt[0] or "") if excerpt else ""
-    pin = ollama.load_pin()
     try:
-        reply = client.chat(pin.ecf_tag, INSTRUCTIONS,
-                            user_message(text, ctx.classification, answered, secrets.token_hex(8)),
-                            role="actor", fmt=output_schema(labels, folders))  # fmt: skip
+        reply = ask(client, text, ctx.classification, answered, labels, folders)
     except OllamaError as e:
         if e.cause == "timeout":
             ollama.record_call(conn, clock, role="actor", outcome="timeout", digest=ready.digest,

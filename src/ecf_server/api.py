@@ -51,6 +51,7 @@ from ecf_server import (
     config,
     db,
     digests,
+    evalrun,
     health,
     inbox,
     initsetup,
@@ -65,11 +66,12 @@ from ecf_server import (
     settings,
     slack_admin,
     slack_doctor,
+    slack_out,
     slack_routes,
     stages,
     stepup,
 )
-from ecf_server.chat import FakeChat
+from ecf_server.chat import Card, FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
@@ -289,6 +291,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_data_routes(state, allow),
             *_setup_routes(state, allow),
             *_model_routes(state, allow),
+            *_eval_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -647,6 +650,75 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
     ]
+
+
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`. CLI only in V1.3; MCP-W
+    arrives with `/ecf-eval` in V1.4."""
+
+    @allow(Caller.CLI)
+    def start_eval(request: Request) -> JSONResponse:
+        body = _body(request)
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+            raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
+        floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
+        if not isinstance(floor, int) or not 0 <= floor <= 100:
+            raise InvalidInputError("battery_floor: a percent from 0 to 100")
+        opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
+                               actor=body.get("actor") is not False,
+                               fraud_only=body.get("fraud_only") is True,
+                               battery_floor=floor)  # fmt: skip
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        run = evalrun.start(state.connect, state.clock, state.model_client,
+                            state.db_path.parent, opts, power=state.power,
+                            check_kw=state.model_check)  # fmt: skip
+        _eval_note(state, f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
+                          " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
+        power = state.power()
+        on_battery = power.laptop and not power.on_ac
+        pct = schedule.battery_percent() if on_battery else None
+        return JSONResponse(run | {"on_battery": on_battery, "battery": pct})
+
+    @allow(Caller.CLI)
+    def eval_status(_request: Request) -> JSONResponse:
+        run = evalrun.RUN.snapshot()
+        conn = state.connect()
+        try:
+            rows = conn.execute(
+                "SELECT run_id, digest, created_at, metrics, gate_passed"
+                " FROM eval_runs ORDER BY created_at DESC LIMIT 5"
+            ).fetchall()
+        finally:
+            conn.close()
+        recent = [dict(r) | {"metrics": json.loads(r["metrics"])} for r in rows]
+        return JSONResponse({"current": run, "recent": recent})
+
+    @allow(Caller.CLI)
+    def stop_eval(_request: Request) -> JSONResponse:
+        return JSONResponse(evalrun.stop())
+
+    return [
+        Route("/v1/eval/runs", start_eval, methods=["POST"]),
+        Route("/v1/eval/runs", eval_status, methods=["GET"]),
+        Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
+    ]
+
+
+def _eval_note(state: ServiceState, text: str) -> None:
+    """A line in the summary channel (§16.2): best effort, never fails the request."""
+    try:
+        conn = state.connect()
+        try:
+            route = slack_routes.summary_route(conn)
+            if route is not None:
+                slack_out.enqueue_post(conn, state.clock, key=f"eval:{to_ts(state.clock.now())}",
+                                       route=route, card=Card("Eval", text=text))  # fmt: skip
+        finally:
+            conn.close()
+    except Exception as exc:  # the eval runs either way
+        log.warning("eval.note_failed", error_type=type(exc).__name__)
 
 
 def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:

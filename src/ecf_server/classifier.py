@@ -86,6 +86,18 @@ def parse(content: str, schema: CompiledSchema) -> dict[str, Any] | None:
         return None
 
 
+def ask(client: Client, text: str, schema: CompiledSchema) -> ollama.Reply:
+    """One classifier call on one excerpt (the service's items and `ecf eval run` alike)."""
+    return client.chat(ollama.load_pin().ecf_tag, system_prompt(schema),
+                       user_message(text, secrets.token_hex(8)), role="classifier",
+                       fmt=schema.json_schema())  # fmt: skip
+
+
+def truncated(reply: ollama.Reply) -> bool:
+    n = reply.metrics.prompt_tokens
+    return n is not None and n >= NEAR_CTX
+
+
 def classify_item(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -102,18 +114,15 @@ def classify_item(
                         (item["address_id"],)).fetchone()  # fmt: skip
     tags = {"address_id": item["address_id"], "preset": addr["preset"] if addr else None,
             "stage": addr["stage"] if addr else None}  # fmt: skip
-    token = secrets.token_hex(8)
     try:
-        reply = client.chat(pin.ecf_tag, system_prompt(schema),
-                            user_message(_excerpt(conn, item["stable_id"]), token),
-                            role="classifier", fmt=schema.json_schema())  # fmt: skip
+        reply = ask(client, _excerpt(conn, item["stable_id"]), schema)
     except OllamaError as e:
         if e.cause == "timeout":
             ollama.record_call(conn, clock, role="classifier", outcome="timeout",
                                digest=ready.digest, metrics=None, **tags)  # fmt: skip
         raise
     m = reply.metrics
-    if m.prompt_tokens is not None and m.prompt_tokens >= NEAR_CTX:
+    if truncated(reply):
         ollama.record_call(conn, clock, role="classifier", outcome="truncated",
                            digest=ready.digest, metrics=m, **tags)  # fmt: skip
         log.warning("classifier.near_context", address_id=item["address_id"],
