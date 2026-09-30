@@ -224,16 +224,26 @@ class SlackRuntime:
             return
         self._routes_at = now
         self._channels(conn, now)
-        try:
-            needs_you.refresh(conn, self._clock, computer=self._computer)
-            deadman.keep_armed(conn, self._clock, self._web, computer=self._computer)
-            alerts.sweep(conn, self._clock)
-            digests.run(conn, self._clock)
-            daily.check_members(conn, self._clock, SlackChat(self._web), self._notifier)
-            daily.run(conn, self._clock)
-        except (_slack.SlackError, _slack.SlackNetworkError) as exc:  # retried next time
-            log.warning("slack.housekeeping_failed", error_type=type(exc).__name__,
-                        code=getattr(exc, "code", None))  # fmt: skip
+        chat = SlackChat(self._web)
+        steps: tuple[tuple[str, Callable[[], object]], ...] = (
+            ("needs_you", lambda: needs_you.refresh(conn, self._clock, computer=self._computer)),
+            ("deadman", lambda: deadman.keep_armed(conn, self._clock, self._web,
+                                                   computer=self._computer)),
+            ("alerts", lambda: alerts.sweep(conn, self._clock)),
+            ("digests", lambda: digests.run(conn, self._clock)),
+            ("members", lambda: daily.check_members(conn, self._clock, chat, self._notifier)),
+            ("daily", lambda: daily.run(conn, self._clock)),
+        )  # fmt: skip
+        for name, step in steps:  # each on its own: one failing never skips the rest
+            try:
+                step()
+            except (_slack.SlackError, _slack.SlackNetworkError) as exc:  # retried next time
+                log.warning(
+                    "slack.housekeeping_failed",
+                    step=name,
+                    error_type=type(exc).__name__,
+                    code=getattr(exc, "code", None),
+                )
 
     def _channels(self, conn: sqlite3.Connection, now: float) -> None:
         """Create, record and invite whatever channel is missing."""

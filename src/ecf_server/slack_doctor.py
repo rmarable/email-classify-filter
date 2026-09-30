@@ -10,6 +10,7 @@ doctor prints them.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from typing import Any
@@ -21,7 +22,7 @@ from ecf_server.slack_chat import SlackChat
 from ecf_server.stepper import Stepper
 
 OK, WARN, FAIL = "ok", "warn", "FAIL"
-SET_TOKENS = "ecf slack set-tokens, then ecf slack reauthorize"
+SET_TOKENS = "ecf slack set-tokens (ecf slack reauthorize only for missing_scope)"
 
 
 def _c(name: str, level: str, detail: str, fix: str = "") -> dict[str, str]:
@@ -62,11 +63,36 @@ def checks(
     else:
         out.append(_c("slack token", OK, f"valid for workspace {s['team_id']}"))
     out.append(_socket(runtime))
+    if runtime.get("channels"):  # a person must act in Slack (slack_routes.ChannelProblemError)
+        out.append(_c("slack channels", FAIL, str(runtime["channels"]), "see the detail"))
     if member is not None:
         out += _channels(conn, SlackChat(web), member)
+        out += _unrouted(conn)
         out.append(_dm(web, member))
     out += _delivery(conn)
+    out += _notifications(conn)
     return out
+
+
+def _unrouted(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """Addresses with no channel yet: their escalations wait (V1.2 review, 2026-09-30)."""
+    rows = conn.execute(
+        "SELECT a.address_id FROM addresses a LEFT JOIN routes r ON r.address_id = a.address_id"
+        " AND r.surface = 'slack' WHERE a.removed_at IS NULL AND r.route_ref IS NULL"
+    ).fetchall()
+    return [_c(f"channel for {r[0]}", FAIL, "none yet: its escalations wait",
+               "ecf makes it within a minute; if not, see the slack channels line")
+            for r in rows]  # fmt: skip
+
+
+def _notifications(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """With desktop notifications off, Slack-delivery alerts reach nobody (§13.2; email V1.5)."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'notifications'").fetchone()
+    if row is None or json.loads(row[0]) != "off":
+        return []
+    return [_c("notifications", WARN, "desktop notifications are off, so a Slack delivery"
+               " failure reaches nobody (email alerts arrive in V1.5)",
+               "ecf settings set notifications on")]  # fmt: skip
 
 
 def _stepup(stepper: Stepper | None) -> dict[str, str]:

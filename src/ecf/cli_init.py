@@ -103,7 +103,8 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool) -> list[str]
         row("slack", st["slack_installed"] and st["slack_member"] is not None,
             f"member {st['slack_member']}" if st["slack_member"]
             else "ecf slack install" if not st["slack_installed"]
-            else "click Confirm in the DM ecf sent you"),
+            else "click Confirm in the DM ecf sent you (to send it again: ecf slack"
+            " set-member <your member ID>)"),
         row("org domains", bool(st["org_domains"]),
             ", ".join(st["org_domains"]) or "set with the first address"),
         row("first address", bool(st["addresses"]),
@@ -159,15 +160,19 @@ def secret_store(c: LocalClient) -> tuple[str | None, str]:
     """The service's secret-store backend, or None and why not."""
     store: dict[str, Any] = c.get("/v1/status")["secret_store"]
     backend = store.get("backend")
-    return (str(backend) if backend else None), str(store.get("detail") or "unknown")
+    usable = backend and not store.get("detail")  # a backend it couldn't open isn't usable
+    return (str(backend) if usable else None), str(store.get("detail") or "unknown")
 
 
 def _role(c: LocalClient, st: dict[str, Any]) -> None:
     if st["install_role"]:
         return
-    role = typer.prompt("Is this install prod (your real mail) or test?", default="prod")
-    c.request("POST", "/v1/init/role", {"install_role": role.strip().lower()})
-    typer.echo(f"install role: {role.strip().lower()} (fixed from now on)")
+    role = ""
+    while role not in ("prod", "test"):  # ask again rather than end init on a typo
+        role = typer.prompt("Is this install prod (your real mail) or test?",
+                            default="prod").strip().lower()  # fmt: skip
+    c.request("POST", "/v1/init/role", {"install_role": role})
+    typer.echo(f"install role: {role} (fixed from now on)")
 
 
 def _slack(c: LocalClient, st: dict[str, Any]) -> None:

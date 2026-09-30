@@ -370,18 +370,29 @@ def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
 
     sender = SlackSender(SlackChat(slack.web(BOT)), clock, FakeNotifier(),
                          sleep=lambda _s: None)  # fmt: skip
-    for key in ("item:1", "item:2"):
-        slack_out.enqueue_post(conn, clock, key=key, route=RouteRef("C1"), card=Card(key))
+    from ecf.ids import AddressId, StableId  # noqa: PLC0415
+    from ecf_server import items  # noqa: PLC0415
+    from ecf_server.db import write_tx  # noqa: PLC0415
+
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+    one, two = "1" * 64, "2" * 64
+    for sid in (one, two):
+        items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
+                          content_hash="h")  # fmt: skip
+    for key in (f"item:{one}", f"item:{two}", "digest:ap:old"):
+        slack_out.enqueue_post(conn, clock, key=key, route=RouteRef("C1"), card=Card(key[:10]))
     while sender.run_once(conn):
         pass
     slack.calls.clear()
     slack.fail["chat.update"] = SlackError("chat.update", "message_not_found")
-    assert slack_admin.refresh(conn, clock) == 2
-    sender.run_once(conn)  # item:1 was deleted in Slack: posted again
+    assert slack_admin.refresh(conn, clock) == 2  # the open items' cards, not the old digest
+    sender.run_once(conn)  # the first was deleted in Slack: posted again
     del slack.fail["chat.update"]
-    sender.run_once(conn)  # item:2 still exists: edited in place
+    sender.run_once(conn)  # the second still exists: edited in place
     assert slack.methods() == ["chat.update", "chat.postMessage", "chat.update"]
-    assert slack.calls[1][2]["text"] == "item:1"
+    assert slack.calls[1][2]["text"] == f"item:{one}"[:10]
 
 
 # ---- through the API ------------------------------------------------------------------------
@@ -507,3 +518,43 @@ def test_real_sdk_traffic_leaves_no_token_or_payload_in_the_log(
         assert secret not in text, secret
     ident = slack_admin.identity(conn)
     assert ident is not None and ident.member == "U0ME1"
+
+
+def test_tokens_left_by_an_install_that_stopped_halfway_dont_block_the_next(
+    conn: sqlite3.Connection, clock: FakeClock, slack: FakeSlack, store: MemorySecretStore
+) -> None:
+    """`install` refused and `set-tokens` said "not installed" (V1.2 review, 2026-09-30)."""
+    store.set(BOT_SECRET, "xoxb-old")
+    store.set(APP_SECRET, "xapp-old")
+    assert slack_admin.identity(conn) is None
+    _install(conn, clock, store, slack)
+    assert store.get(BOT_SECRET) == BOT and slack_admin.identity(conn) is not None
+    with pytest.raises(ConflictError, match="already installed"):
+        _install(conn, clock, store, slack)
+
+
+def test_new_tokens_release_held_posts_and_resolve_the_alert(
+    conn: sqlite3.Connection, clock: FakeClock, store: MemorySecretStore, slack: FakeSlack
+) -> None:
+    """Held posts waited up to 5 more minutes and the alert stayed open (V1.2 review)."""
+    from ecf_server import health, jobs, slack_out  # noqa: PLC0415
+    from ecf_server.chat import Card, RouteRef  # noqa: PLC0415
+
+    _install(conn, clock, store, slack)
+    n = FakeNotifier()
+    slack_out.enqueue_post(conn, clock, key="k", route=RouteRef("C1"), card=Card("x"))
+    job = jobs.claim(conn, clock, jobs.Queue.SLACK_OUT, "w")
+    assert job is not None
+    jobs.hold(conn, clock, job.job_id, "w", 300, "token_revoked")
+    health.open_alert(conn, clock, n, slack_out.ALERT, None, "Slack refused ecf (token_revoked)")
+    new_bot, new_app = "xoxb-new-5555", "xapp-1-A1-new"
+
+    def call(nonce: str | None) -> dict[str, Any]:
+        return slack_admin.set_tokens(conn, clock, store, slack.web, n, bot_token=new_bot,
+                                      app_token=new_app, nonce=nonce)  # fmt: skip
+
+    with pytest.raises(StepupRequiredError) as ei:
+        call(None)
+    call(_verified(conn, clock, ei.value))
+    assert jobs.claim(conn, clock, jobs.Queue.SLACK_OUT, "w") is not None  # due now
+    assert "[ecf-alert] Resolved: Slack Delivery Failed" in [t for t, _ in n.sent]

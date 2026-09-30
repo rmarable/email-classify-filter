@@ -313,3 +313,19 @@ def test_an_overnight_message_is_scheduled_once_for_the_morning(
     assert deadman.post_time(clock.now(), s) == clock.now() + timedelta(minutes=90)
     s[deadman.OFFHOURS] = "true"  # a string isn't a yes
     assert deadman.post_time(clock.now(), s) == datetime(2026, 10, 2, 12, 30, tzinfo=UTC)
+
+
+def test_after_the_message_fired_ecf_says_it_is_back(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A shutdown or logout leaves the switch armed, so its message may have posted (OD-222)."""
+    _setup(conn, clock)
+    web = ScheduleWeb()
+    deadman.keep_armed(conn, clock, web, computer="mac")
+    clock.advance(2 * 3600)  # the computer was off past the message's time
+    assert deadman.keep_armed(conn, clock, web, computer="mac")
+    back = [p for p in _posts(conn) if p["key"].startswith("deadman-back:")]
+    assert len(back) == 1 and back[0]["card"]["title"] == "ecf is back"
+    clock.advance(60)
+    deadman.keep_armed(conn, clock, web, computer="mac")  # far enough ahead again: no second
+    assert len([p for p in _posts(conn) if p["key"].startswith("deadman-back:")]) == 1

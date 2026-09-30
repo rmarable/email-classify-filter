@@ -108,7 +108,9 @@ def alerts_test() -> None:
     """Send a test alert on every route."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/alerts/test")
-    typer.echo(f"sent to: {', '.join(r['sent']) or 'nowhere (desktop off, no Slack)'}")
+    where = [("slack (queued: it posts within a minute)" if w == "slack" else w)
+             for w in r["sent"]]  # fmt: skip
+    typer.echo(f"sent to: {', '.join(where) or 'nowhere (desktop off, no Slack)'}")
 
 
 @app.command()
@@ -236,24 +238,46 @@ def backfill(
     act: Annotated[
         bool, typer.Option("--act", help="Label, flag and escalate as for new mail.")
     ] = False,
+    stop: Annotated[bool, typer.Option("--stop", help="End a running backfill.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Don't ask before --act.")] = False,
 ) -> None:
-    """Read older mail (records only unless --act); with no address, show backfills running."""
+    """Read older mail (records only unless --act); with no address, show each backfill."""
     with LocalClient(_paths()) as c:
         if address is None:
-            running = c.get("/v1/backfill")["running"]
-            for r in running:
-                how = "acting" if r["act"] else "records only"
-                typer.echo(f"{r['address_id']:<16} since {r['since']} ({how}): {r['items']} read")
-            if not running:
-                typer.echo("no backfill running")
+            _backfill_status(c.get("/v1/backfill")["running"])
+            return
+        if stop:
+            r = c.request("POST", "/v1/backfill/stop", {"address_id": address})
+            typer.echo(f"stopped the backfill of {r['address_id']}; {r['items']} read so far stay")
             return
         if since is None:
             raise typer.BadParameter("add --since <date>, e.g. --since 2026-09-01")
+        if act and not yes:
+            stage = next((s["stage"] for s in c.get("/v1/stages")["addresses"]
+                          if address in (s["address_id"], s.get("email"))), "?")  # fmt: skip
+            typer.echo(f"--act runs the pre-check on every email since {since} as on new mail;"
+                       f" {address} is in {stage} (shadow does nothing, assist labels and flags),"
+                       " and escalations post to Slack.")  # fmt: skip
+            if not typer.confirm("Go ahead?", default=False):
+                raise typer.Exit(1)
         r = c.request("POST", "/v1/backfill", {"address_id": address, "since": since, "act": act})
     how = "labels, flags and escalations as for new mail" if r["act"] else (
         "records only: nothing is done to the mailbox or escalated")  # fmt: skip
     typer.echo(f"backfill of {r['address_id']} since {r['since']} started ({how}); it runs with"
-               " the checks, new mail first. Progress: ecf backfill")  # fmt: skip
+               " the checks, new mail first. Progress: ecf backfill; to end it:"
+               f" ecf backfill {r['address_id']} --stop")  # fmt: skip
+
+
+def _backfill_status(rows: list[dict[str, Any]]) -> None:
+    for r in rows:
+        how = "acting" if r["act"] else "records only"
+        fraud = (f", {r['fraud']} with a fraud signal (ecf logs --address {r['address_id']}"
+                 " --event precheck)") if r.get("fraud") else ""  # fmt: skip
+        when = "" if r["outcome"] == "running" else f" at {r['at'][:16]}"
+        typer.echo(f"{r['address_id']:<16} since {r['since']} ({how}): {r['outcome']}{when},"
+                   f" {r['items']} read{fraud}")  # fmt: skip
+    if not rows:
+        typer.echo("no backfill yet")
 
 
 @app.command()
@@ -329,10 +353,22 @@ def service_install() -> None:
     typer.echo(f"installed {m.unit_path}")
 
 
+def _stopping_on_purpose() -> None:
+    """Tell the service this stop is deliberate, so it removes the dead-man's message; a shutdown
+    or logout leaves it armed (OD-222). Best effort: a service that isn't answering has nothing
+    to disarm now."""
+    try:
+        with LocalClient(_paths()) as c:
+            c.request("POST", "/v1/service/stopping", {})
+    except EcfError:
+        pass
+
+
 @service_app.command("uninstall")
 def service_uninstall() -> None:
     """Stop the service and remove its unit. Data is kept (use `ecf destroy` to remove it)."""
     m = manager_for(_paths())
+    _stopping_on_purpose()
     m.uninstall()
     typer.echo(f"removed {m.unit_path}")
 
@@ -347,6 +383,7 @@ def service_start() -> None:
 @service_app.command("stop")
 def service_stop() -> None:
     """Stop the service until the next login."""
+    _stopping_on_purpose()
     manager_for(_paths()).stop()
     typer.echo("stopped until your next login; use `ecf pause` to keep fraud checks running")
 

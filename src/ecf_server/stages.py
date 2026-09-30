@@ -65,6 +65,8 @@ def status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
 def _describe_stage(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     a = addresses.get_address(conn, str(target.get("address_id", "")))
     to = str(target.get("stage", ""))
+    if to not in STAGES:  # validated before it reaches the dialog (V1.2 review, 2026-09-30)
+        raise InvalidInputError(f"stages are {', '.join(STAGES)}")
     prompt = f"ecf: move {a['email']} from {a['stage']} to {to} ({LABELS.get(to, to)})"
     return stepup.Bound(stepup.digest("stage_set", a["address_id"], a["stage"], to), prompt)
 

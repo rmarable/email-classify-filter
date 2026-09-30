@@ -114,3 +114,22 @@ def test_a_refused_app_token_a_failing_loop_and_lost_posts_are_shown(
                      " visible_at, state, created_at) VALUES ('j', 'slack_out', 'C1',"
                      " '{\"key\": \"digest:ap\"}', 30, 'now', 'dead', 'now')")  # fmt: skip
     assert run({"connected": True})["slack posts"]["level"] == "warn"
+
+
+def test_a_channel_problem_a_missing_channel_and_notifications_off_are_shown(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """doctor said all was well while escalations waited (V1.2 review, 2026-09-30)."""
+    _installed(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                     " VALUES ('notifications', '\"off\"', 'now', 't')")  # fmt: skip
+    rows = slack_doctor.checks(conn, _store(), lambda _t: Web([ME]),
+                               {"connected": True, "channels": "Slack doesn't let apps create"
+                                " channels in this workspace."}, FakeStepper())  # fmt: skip
+    got = {r["name"]: r for r in rows}
+    assert got["slack channels"]["level"] == "FAIL"
+    assert got["channel for ap"]["level"] == "FAIL"
+    assert got["notifications"]["level"] == "warn"

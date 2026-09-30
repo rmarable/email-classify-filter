@@ -140,7 +140,8 @@ def test_refusals(env: Env, clock: FakeClock) -> None:
     with pytest.raises(ConflictError, match="already running"):
         backfill.start(conn, clock, "ap", _since(clock, 3), act=True)
     assert backfill.status(conn) == [
-        {"address_id": "ap", "since": _since(clock, 7), "act": False, "items": 0}]  # fmt: skip
+        {"address_id": "ap", "since": _since(clock, 7), "act": False, "outcome": "running",
+         "items": 0, "fraud": 0}]  # fmt: skip
     queued = conn.execute("SELECT payload FROM jobs WHERE queue = 'fetch'").fetchall()
     assert [json.loads(q[0]) for q in queued] == [{"reason": "backfill"}]
 
@@ -190,3 +191,22 @@ def test_a_pass_that_failed_to_decide_is_picked_up_next_time(
     run(env, clock, box)
     assert _items(conn)[old]["status"] == Status.OBSERVED
     assert backfill.load(conn, "ap") is None
+
+
+def test_a_backfill_can_be_stopped_and_its_outcome_stays_visible(
+    env: Env, clock: FakeClock
+) -> None:
+    """It couldn't be stopped, and its outcome vanished (V1.2 review, 2026-09-30)."""
+    conn, _ = env
+    box = Box()
+    _old(box, clock, BEC, 3)
+    run(env, clock, box)
+    backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
+    run(env, clock, box)  # reads the fraud mail, records only
+    [done] = backfill.status(conn)
+    assert (done["outcome"], done["items"], done["fraud"]) == ("done", 1, 1)
+    backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
+    assert backfill.stop(conn, clock, "ap") == {"address_id": "ap", "items": 1}
+    assert backfill.status(conn)[0]["outcome"] == "stopped" and backfill.load(conn, "ap") is None
+    with pytest.raises(ConflictError, match="no backfill"):
+        backfill.stop(conn, clock, "ap")

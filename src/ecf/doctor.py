@@ -20,7 +20,7 @@ from typing import Any
 
 from ecf import __version__
 from ecf.client import LocalClient
-from ecf.errors import EcfError
+from ecf.errors import EcfError, ServiceUnavailableError
 from ecf.paths import Paths
 from ecf.service_unit import ServiceManager, manager_for
 from ecf.status import CHECK_FAILED
@@ -130,6 +130,9 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
             "" if same else "ecf service restart (after upgrading)",
         )
     )
+    if st.get("tick_failures"):  # ticking, but its work fails (V1.2 review)
+        out.append(Check("timer work", Level.FAIL, f"failing for {st['tick_failures']} tick(s):"
+                         f" {st.get('tick_error') or 'see ecf logs'}", "see ecf logs"))  # fmt: skip
     last = st.get("last_tick_at")
     if last is None:
         out.append(Check("timer", Level.WARN, "no tick yet (ticks every minute)"))
@@ -152,7 +155,7 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
             Check("crash breaker", Level.OK, f"{br.get('recent_crashes', 0)} recent crashes")
         )
     ss = st.get("secret_store", {})
-    if not ss.get("backend"):
+    if not ss.get("backend") or ss.get("detail"):  # a backend it couldn't open (V1.2 review)
         out.append(
             Check(
                 "secret store",
@@ -205,8 +208,10 @@ def check_slack(paths: Paths) -> list[Check]:
     try:
         with LocalClient(paths) as c:
             rows: list[dict[str, str]] = c.get("/v1/doctor/slack")["checks"]
-    except EcfError:
+    except ServiceUnavailableError:
         return []  # the service check already says it isn't answering
+    except EcfError as exc:  # answering, but the check failed: say so, never a silent OK
+        return [Check("slack", Level.FAIL, f"can't check Slack: {exc.detail}", "see ecf logs")]
     return [Check(r["name"], Level(r["level"]), r["detail"], r["fix"]) for r in rows]
 
 

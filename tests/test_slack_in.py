@@ -464,3 +464,29 @@ def test_a_refused_app_token_alerts_at_once_and_resolves_on_connect(
     assert rt.start() is True
     assert rt.status["connect_error"] is None
     assert n.sent[-1][0] == "[ecf-alert] Resolved: Slack Delivery Failed"
+
+
+def test_one_failing_housekeeping_step_doesnt_skip_the_others(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A member check failing every 30 s blocked alerts and digests (V1.2 review, 2026-09-30)."""
+    store = MemorySecretStore()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, FakeWeb())
+    assert rt.start()
+    ran: list[str] = []
+
+    def members(*_a: object) -> None:
+        raise SlackError("conversations.members", "not_in_channel")
+
+    def recorder(name: str) -> Callable[..., None]:
+        def record(*_a: object) -> None:
+            ran.append(name)
+
+        return record
+
+    monkeypatch.setattr(slack_runtime.daily, "check_members", members)
+    monkeypatch.setattr(slack_runtime.daily, "run", recorder("daily"))
+    monkeypatch.setattr(slack_runtime.digests, "run", recorder("digests"))
+    rt._periodic(conn)  # pyright: ignore[reportPrivateUsage]
+    assert ran == ["digests", "daily"]

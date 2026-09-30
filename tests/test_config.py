@@ -125,7 +125,7 @@ def test_dry_run_step_up_apply_audit_and_notice(conn: sqlite3.Connection, clock:
     with pytest.raises(StepupRequiredError) as ei:
         config.apply(conn, clock, n, DOC, dry_run=False, nonce=None)
     issued = stepup.issue(conn, clock, FakeStepper(), "config_apply", ei.value.extra["target"])
-    assert issued.prompt.startswith("ecf: apply config: org_domains: +acme-group.example;")
+    assert issued.prompt.startswith("ecf: apply config: forward_allow_list: +ap_lead;")  # riskiest
     stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
     r = config.apply(conn, clock, n, DOC, dry_run=False, nonce=issued.nonce_id)
     assert r.applied
@@ -260,3 +260,17 @@ def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small
     r = CliRunner().invoke(app, ["--install", "t", "config", "apply", str(cfg)], input="n\n")
     assert r.exit_code == 1, r.output  # declined at the prompt: no step-up, nothing applied
     assert "move_folders: +Receipts" in r.output
+
+
+def test_the_summary_puts_the_riskiest_change_first_and_counts_what_it_cuts() -> None:
+    changes = [{"section": "move_folders", "change": "+Receipts"},
+               {"section": "org_domains", "change": "+x" * 40},
+               {"section": "forward_allow_list", "change": "+payables"}]  # fmt: skip
+    full = config.summary(changes)
+    assert full.startswith("forward_allow_list: +payables; org_domains:")
+    assert full.endswith("move_folders: +Receipts")
+    cut = config.summary(changes, 60)
+    assert cut == "forward_allow_list: +payables; +2 more sections"
+    alone = config.summary([{"section": "rules", "change": "+r" * 100}, changes[0]], 50)
+    assert alone.startswith("rules: +r") and alone.endswith("…; +1 more section")
+    assert len(alone) <= 50

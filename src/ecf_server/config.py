@@ -278,9 +278,30 @@ def _shipped(name: str) -> dict[str, Any]:
     return cast("dict[str, Any]", load_yaml(text, source=name))
 
 
+# riskiest first, so a cut-off summary still names what matters most (V1.2 review, 2026-09-30)
+RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "templates",
+              "move_folders")  # fmt: skip
+
+
 def summary(changes: list[dict[str, str]], limit: int = 300) -> str:
-    text = "; ".join(f"{c['section']}: {c['change']}" for c in changes)
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    """The changes, riskiest first; whole sections that don't fit are counted, never dropped
+    silently."""
+    ordered = sorted(changes, key=lambda c: RISK_ORDER.index(c["section"]))
+    parts = [f"{c['section']}: {c['change']}" for c in ordered]
+    shown: list[str] = []
+    for i, part in enumerate(parts):
+        rest = len(parts) - i - 1
+        tail = f"; +{rest} more section{'s' if rest != 1 else ''}" if rest else ""
+        text = "; ".join([*shown, part])
+        if len(text) + len(tail) <= limit:
+            shown.append(part)
+            continue
+        if not shown:  # the riskiest alone is too long: cut it, and count the rest
+            shown.append(part[: max(limit - len(tail) - 1, 1)] + "…")
+            return "; ".join(shown) + tail
+        more = len(parts) - i
+        return "; ".join(shown) + f"; +{more} more section{'s' if more != 1 else ''}"
+    return "; ".join(shown)
 
 
 # ---------------------------------------------------------------------------- apply

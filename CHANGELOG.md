@@ -5,6 +5,16 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.2-slack-approvals (not yet tagged)
 
+- `ecf config apply` lists the riskiest changes first in the step-up dialog and Security Notice, and counts sections that didn't fit.
+- Records of old one-off Slack posts (digests, summaries, alerts) are now deleted with the rest of the history after `log_retention_days`.
+- The dead-man's switch is now disarmed only by `ecf service stop` or `ecf service uninstall`; a shutdown, logout or crash leaves it armed, and ecf posts "ecf is back" when it returns after the message fired (OD-222).
+- New option `ecf backfill <address> --stop`. `--act` asks to confirm (or `--yes`), and `ecf backfill` shows the last backfill's outcome and how many backfilled emails had a fraud signal.
+- Timer work that keeps failing now raises a System Error and shows in `ecf doctor`; one failing Slack task no longer stops the others.
+- `ecf slack set-tokens` now releases Slack posts held for a bad token and clears the Slack Delivery Failed alert. `ecf slack install` can be run again after an install stopped partway.
+- `ecf doctor` shows a failed Slack check or an unusable secret store as a FAIL line instead of stopping.
+- `ecf slack reauthorize` re-posts only "Needs you" and open cards, not old digests and summaries.
+- `ecf alerts test` says the Slack copy is queued rather than sent.
+- Step-up refuses a request with a made-up value before showing it in the Touch ID dialog.
 - `ecf approve <id>` now offers an approval that expired twice again, instead of refusing it (OD-223).
 - An answer from Slack waiting for step-up can no longer be rejected or approved as if it were an approval; ecf points to `ecf answer <id>`.
 - Closing a delayed send (resolve, Dismiss, or moved in the mail client) now cancels its countdown; it used to break the next timer tick.

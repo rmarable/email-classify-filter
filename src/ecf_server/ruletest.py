@@ -26,11 +26,12 @@ from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
 from ecf_server.facts import AddressInfo
 from ecf_server.message import parse
-from ecf_server.settings import MAX_MB, MB
 
 ADDRESS = AddressInfo("ap", "ap@acme.example", "standard")
 ORG_DOMAINS = ["acme.example"]
 MAX_CASES = 1000
+MAX_INDEX_BYTES = 4 * 1024 * 1024  # labels.jsonl
+MAX_CASE_BYTES = 16 * 1024 * 1024  # larger ones are parsed in a child in a check (OD-195)
 
 
 def _no_dns(name: str, rtype: str) -> Answer:
@@ -53,6 +54,8 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
     index = root / "labels.jsonl"
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root} (the synthetic set's folder)")
+    if index.stat().st_size > MAX_INDEX_BYTES:
+        raise InvalidInputError(f"labels.jsonl is over {MAX_INDEX_BYTES // 1024 // 1024} MB")
     cases: list[Case] = []
     missing: list[str] = []
     for n, line in enumerate(index.read_text("utf-8").splitlines(), 1):
@@ -119,7 +122,7 @@ def run(
     rows: list[dict[str, Any]] = []
     try:
         for case in cases:
-            if case.path.stat().st_size > MAX_MB * MB:
+            if case.path.stat().st_size > MAX_CASE_BYTES:  # skipped, named (V1.2 review)
                 missing.append(case.id)
                 continue
             found = scratch.facts(case.path.read_bytes()) | case.facts

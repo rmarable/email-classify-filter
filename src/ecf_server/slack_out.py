@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.ids import AddressId
+from ecf.status import OPEN
 from ecf_server import health, jobs
 from ecf_server._slack import SlackError, SlackNetworkError
 from ecf_server.chat import Button, Card, ChatSurface, Identity, RouteRef, ThreadRef
@@ -51,7 +52,7 @@ RATE_LIMITED = frozenset({"ratelimited", "rate_limited"})
 RATE_HOLD_S = 60
 PINNED = frozenset({"needs-you"})  # re-pinned when re-posted after a deletion in Slack
 ALERT = "slack_delivery_failed"
-FIX = "Fix: ecf slack set-tokens, then ecf slack reauthorize"
+FIX = "Fix: ecf slack set-tokens (ecf slack reauthorize only for missing_scope)"
 
 
 def enqueue_post(
@@ -269,10 +270,15 @@ def _forget(conn: sqlite3.Connection, key: str) -> None:
 
 
 def repost_all(conn: sqlite3.Connection, clock: Clock) -> int:
-    """Queue every recorded post again: each edits its card, or re-posts it if the message is
-    gone (`ecf slack reauthorize`). Thread replies follow their top post in the channel's order."""
+    """Queue the posts that still matter again: "Needs you" and the cards of open items. Each
+    edits its card, or re-posts it if the message is gone (`ecf slack reauthorize`). Old alerts,
+    digests and closed items are left alone: re-posting them brought back what you'd deleted
+    (V1.2 review, 2026-09-30)."""
     rows = conn.execute(
-        "SELECT post FROM slack_messages WHERE post != '{}' ORDER BY created_at, key"
+        "SELECT m.post FROM slack_messages m LEFT JOIN items i ON m.key = 'item:' || i.stable_id"
+        " WHERE m.post != '{}' AND (m.key = 'needs-you' OR (i.stable_id IS NOT NULL"
+        " AND i.status IN (SELECT value FROM json_each(?)))) ORDER BY m.created_at, m.key",
+        (json.dumps(sorted(OPEN)),),
     ).fetchall()
     for r in rows:
         p: dict[str, Any] = json.loads(r["post"])

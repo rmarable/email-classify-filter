@@ -94,6 +94,29 @@ def test_old_finished_jobs_and_used_nonces_go_too(
     assert issued.nonce_id not in _left(conn, "nonces", "nonce_id")
 
 
+def test_old_one_off_post_records_go_but_pinned_and_live_bursts_stay(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    live, gone = "a" * 64, "b" * 64
+    _item(conn, clock, live, {}, close=False)
+    old = to_ts(clock.now())
+    keys = ["digest:ap:1", "daily:2026-06-01", f"answer:{live}:1", "alert:x:1", "needs-you",
+            f"burst:ap:{live}", f"burst:ap:{gone}"]  # fmt: skip
+    with write_tx(conn):
+        for k in keys:
+            conn.execute("INSERT INTO slack_messages (key, channel, ts, created_at, updated_at)"
+                         " VALUES (?, 'C1', '1.0', ?, ?)", (k, old, old))  # fmt: skip
+    clock.advance(91 * DAY)
+    with write_tx(conn):
+        conn.execute("INSERT INTO slack_messages (key, channel, ts, created_at, updated_at)"
+                     " VALUES ('digest:ap:2', 'C1', '2.0', ?, ?)",
+                     (to_ts(clock.now()), to_ts(clock.now())))  # fmt: skip
+    assert retention.run(conn, clock)["posts"] == 5
+    assert _left(conn, "slack_messages", "key") == {
+        f"item:{live}", "needs-you", f"burst:ap:{live}", "digest:ap:2"}  # fmt: skip
+
+
 def test_setting_needs_step_up_and_lowering_it_sends_a_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

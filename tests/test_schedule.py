@@ -224,3 +224,30 @@ def test_a_due_time_set_during_the_check_is_kept(
     clock.advance(10)
     due = schedule.after_check(conn_ap, clock, CheckReport("ap", "ok", started), DESKTOP)
     assert due == asked
+
+
+def test_timer_work_that_keeps_failing_is_counted_shown_and_told_once(
+    conn_ap: sqlite3.Connection, db_path: Path, tmp_path: Path, clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """A tick whose work failed forever still looked fine in doctor (V1.2 review, 2026-09-30)."""
+    from ecf_server import approvals, service  # noqa: PLC0415
+    from ecf_server.notify import FakeNotifier  # noqa: PLC0415
+
+    svc = Service(Paths(install="t", root=tmp_path), clock)
+    svc.state.db_path, svc.state.notifier = db_path, FakeNotifier()
+
+    def locked(*_a: object) -> int:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(approvals, "expire", locked)
+    for _ in range(service.TICK_ALERT_AFTER + 2):
+        clock.advance(60)
+        svc.tick()
+    assert svc.state.tick_failures == service.TICK_ALERT_AFTER + 2
+    assert svc.state.tick_error == "OperationalError database is locked"
+    assert [t for t, _ in svc.state.notifier.sent] == ["[ecf-alert] System Error"]  # once
+    monkeypatch.undo()
+    clock.advance(60)
+    svc.tick()
+    assert svc.state.tick_failures == 0 and svc.state.tick_error is None

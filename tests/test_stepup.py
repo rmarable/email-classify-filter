@@ -21,6 +21,7 @@ from ecf.stepup import step_up, with_step_up
 from ecf_server import stepup
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock
+from ecf_server.db import write_tx
 from ecf_server.stepper import FakeStepper, PamStepper
 
 
@@ -227,3 +228,29 @@ def test_dialog_text_from_email_is_cleaned() -> None:
     assert shown.endswith("Approve: label (code ABCD)")
     assert plain(f"a{rlo}b{bell}c\nd") == "abc\nd"
     assert one_line("a  \n b" + "x" * 500, 10) == "a bxxxxxx…"
+
+
+@pytest.mark.parametrize(
+    ("purpose", "target"),
+    [
+        ("retention_set", {"days": "90 days\n\nApprove wire to acct 1234"}),
+        ("retention_set", {"days": 0}),
+        ("stage_set", {"address_id": "ap", "stage": "live now, approve everything"}),
+        ("sender_confirm", {"address_id": "ap", "sender": "x@a.example", "value": "trusted!"}),
+        ("sender_verified", {"address_id": "ap", "sender": "x@a.example", "value": "yes please"}),
+        ("slack_member", {"member": "U1\nApprove the wire"}),
+    ],
+)
+def test_made_up_values_never_reach_the_dialog(
+    conn: sqlite3.Connection, clock: FakeClock, purpose: str, target: dict[str, object]
+) -> None:
+    """A same-user process could put any text in an ecf-attributed dialog (V1.2 review)."""
+    from ecf_server import retention, senders, slack_admin, stages  # noqa: PLC0415
+
+    assert all((retention, senders, slack_admin, stages))  # importing registers the purposes
+
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+    with pytest.raises(InvalidInputError):
+        stepup.issue(conn, clock, FakeStepper(), purpose, target)

@@ -105,6 +105,9 @@ class ServiceState:
     started_at: str
     last_tick_at: str | None = None
     ticks: int = 0
+    tick_failures: int = 0  # consecutive ticks whose work failed (V1.2 review)
+    stopping_on_purpose: bool = False  # `ecf service stop|uninstall` said so (OD-222)
+    tick_error: str | None = None
     breaker: dict[str, Any] = field(default_factory=dict[str, Any])
     secret_store: dict[str, Any] = field(default_factory=dict[str, Any])
     pid: int = field(default_factory=os.getpid)
@@ -191,6 +194,8 @@ def create_app(state: ServiceState) -> Starlette:
                 "pid": state.pid,
                 "started_at": state.started_at,
                 "last_tick_at": state.last_tick_at,
+                "tick_failures": state.tick_failures,
+                "tick_error": state.tick_error,
                 "ticks": state.ticks,
                 "breaker": state.breaker,
                 "secret_store": state.secret_store,
@@ -577,7 +582,15 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
+    @allow(Caller.CLI)
+    def stopping(_request: Request) -> JSONResponse:
+        """The CLI is about to stop the service on purpose: disarm the dead-man's switch at the
+        stop (a shutdown or logout leaves it armed, OD-222)."""
+        state.stopping_on_purpose = True
+        return JSONResponse({"ok": True})
+
     return [
+        Route("/v1/service/stopping", stopping, methods=["POST"]),
         Route("/v1/digests", digest_now, methods=["POST"]),
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
@@ -631,7 +644,17 @@ def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
+    @allow(Caller.CLI)
+    def stop_backfill(request: Request) -> JSONResponse:
+        ref = _str(_body(request), "address_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(backfill.stop(conn, state.clock, ref))
+        finally:
+            conn.close()
+
     return [
+        Route("/v1/backfill/stop", stop_backfill, methods=["POST"]),
         Route("/v1/retention", show_retention, methods=["GET"]),
         Route("/v1/retention", set_retention, methods=["POST"]),
         Route("/v1/backfill", start_backfill, methods=["POST"]),

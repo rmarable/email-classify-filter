@@ -27,8 +27,9 @@ from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ecf_server import schedule, slack_admin
+from ecf_server import schedule, slack_admin, slack_out
 from ecf_server._slack import SlackError
+from ecf_server.chat import Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -94,6 +95,12 @@ def keep_armed(conn: sqlite3.Connection, clock: Clock, web: WebLike, *, computer
     old_at = slack_admin.setting(conn, POST_AT)
     if old_id and old_channel == channel and old_at and from_ts(old_at) - now >= step * RENEW:
         return False
+    if old_id and old_at and from_ts(old_at) <= now:  # it fired while ecf was down: say it's back
+        slack_out.enqueue_post(conn, clock, key=f"deadman-back:{to_ts(now)}",
+                               route=RouteRef(channel),
+                               card=Card("ecf is back", text=f"Checking again on {computer} since"
+                                         f" {now.strftime('%Y-%m-%d %H:%M UTC')}; it had been"
+                                         f" silent since before {old_at[:16]} UTC."))  # fmt: skip
     post_at = post_time(now, s)
     text = fallback(f"ecf hasn't checked in since {now.strftime('%Y-%m-%d %H:%M UTC')} "
                     f"({computer}). If the computer is on, run `ecf status` there.")  # fmt: skip
@@ -111,7 +118,8 @@ def keep_armed(conn: sqlite3.Connection, clock: Clock, web: WebLike, *, computer
 
 
 def disarm(conn: sqlite3.Connection, web: WebLike) -> None:
-    """A clean stop: delete the scheduled message."""
+    """`ecf service stop` or `uninstall`: delete the scheduled message. Not for a shutdown, logout
+    or crash, when silence is what it should report (operator decision 2026-09-30, OD-222)."""
     old_id, channel = slack_admin.setting(conn, ID), slack_admin.setting(conn, CHANNEL)
     if old_id and channel:
         _delete(web, channel, old_id)

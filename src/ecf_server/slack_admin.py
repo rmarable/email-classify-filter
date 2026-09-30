@@ -33,7 +33,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError, ServiceUnavailableError
-from ecf_server import slack_in, slack_out, stepup
+from ecf_server import health, slack_in, slack_out, stepup
 from ecf_server._slack import SlackError, SlackNetworkError
 from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, to_ts
@@ -143,8 +143,10 @@ def install(
     app_token: str,
     member: str,
 ) -> dict[str, Any]:
-    if identity(conn) is not None or store.get(BOT_SECRET):
+    if identity(conn) is not None:
         raise ConflictError("Slack is already installed; use `ecf slack set-tokens`")
+    # tokens stored without an install recorded are left from one that stopped halfway: the new
+    # ones, checked with Slack below, replace them (V1.2 review, 2026-09-30)
     _check_member(member)
     team_id, app_id, bot_user = check_tokens(make_web, bot_token, app_token)
     pending = _settings(conn, PENDING_APP).get(PENDING_APP)
@@ -247,6 +249,7 @@ def _confirmed(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
 @stepup.purpose("slack_member")
 def _describe_member(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     new = str(target.get("member", ""))
+    _check_member(new)  # validated before it reaches the dialog (V1.2 review, 2026-09-30)
     old = _settings(conn, MEMBER).get(MEMBER, "")
     prompt = f"ecf: accept Slack clicks from member {new} instead of {old or 'nobody'}"
     return stepup.Bound(stepup.digest("slack_member", new, old), prompt)
@@ -320,6 +323,10 @@ def set_tokens(
         _set(conn, TOKEN_FP, fp, now)
         _set(conn, BOT_USER, bot_user, now)
         _audit(conn, now, "slack.tokens_replaced", {"app_id": app_id, "team_id": team_id})
+        # posts held for the old token go now, not after their hold (V1.2 review, 2026-09-30)
+        conn.execute("UPDATE jobs SET visible_at = ? WHERE queue = 'slack_out'"
+                     " AND state = 'queued' AND visible_at > ?", (now, now))  # fmt: skip
+    health.resolve_alert(conn, clock, notifier, slack_out.ALERT, None)
     notice(conn, clock, notifier,
            "ecf's Slack tokens were replaced at this computer (`ecf slack set-tokens`). "
            "If this wasn't you, revoke them in the Slack app's settings.",

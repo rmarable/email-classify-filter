@@ -69,6 +69,7 @@ TICK_SECONDS = 60
 WORKER = "checks"
 WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
+TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
 ACTIONS_PER_TICK = 20
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
@@ -175,6 +176,7 @@ class Service:
         self.state.ticks += 1
         if self.state.db_path is None:
             return
+        ok = True
         try:
             conn = db.connect(self.state.db_path)
             try:
@@ -184,14 +186,31 @@ class Service:
             finally:
                 conn.close()
         except Exception as exc:  # a scheduling failure must never stop the timer
-            log.error("schedule.tick_failed", error_type=type(exc).__name__)
-        self._approvals(awake, woke=slept)
+            ok = self._tick_failed("schedule.tick_failed", exc)
+        if not self._approvals(awake, woke=slept):
+            ok = False
+        if ok:
+            self.state.tick_failures, self.state.tick_error = 0, None
 
-    def _approvals(self, awake: float, *, woke: bool) -> None:
+    def _tick_failed(self, event: str, exc: Exception) -> bool:
+        """Log (a SQLite error's own text is safe: no mail content) and count; after
+        TICK_ALERT_AFTER failing ticks in a row tell the desktop, once (V1.2 review: a tick that
+        kept failing looked fine in doctor)."""
+        detail = str(exc)[:200] if isinstance(exc, sqlite3.Error) else ""
+        log.error(event, error_type=type(exc).__name__, detail=detail)
+        self.state.tick_failures += 1
+        self.state.tick_error = f"{type(exc).__name__} {detail}".strip()
+        if self.state.tick_failures == TICK_ALERT_AFTER:
+            text = (f"ecf's timer work keeps failing ({self.state.tick_error}); approvals, delays"
+                    " and retention wait. Details: ecf logs")  # fmt: skip
+            self.state.notifier.notify(alerts.title("system_error"), text)
+        return False
+
+    def _approvals(self, awake: float, *, woke: bool) -> bool:
         """Expire approvals, count down delayed sends and run approved actions (§9.5; V1.2 step
         7b). V1.3 moves the runner into the checks worker, which holds the address lease."""
         if self.state.db_path is None:
-            return
+            return True
         try:
             conn = db.connect(self.state.db_path)
             try:
@@ -208,7 +227,8 @@ class Service:
             finally:
                 conn.close()
         except Exception as exc:  # never stops the timer; retried next tick
-            log.error("approvals.tick_failed", error_type=type(exc).__name__)
+            return self._tick_failed("approvals.tick_failed", exc)
+        return True
 
     def _final_flush(self) -> None:
         """Copy the last audit rows to the files before exiting."""
@@ -468,7 +488,8 @@ class Service:
                 self.stop.set()
         server.should_exit = True
         self._join(web, timer, worker, slack_thread)
-        slack.close(clean_stop=self.exit_code == EXIT_OK)
+        # only a stop you asked for disarms the dead-man's switch (OD-222)
+        slack.close(clean_stop=self.exit_code == EXIT_OK and self.state.stopping_on_purpose)
         self._final_flush()
         sock.close()
         with suppress(FileNotFoundError):

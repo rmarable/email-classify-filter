@@ -85,11 +85,26 @@ def _bound(conn: sqlite3.Connection, name: str, target: dict[str, Any], what: st
     a = addresses.get_address(conn, str(target.get("address_id", "")))
     email, _ = _sender(str(target.get("sender", "")))
     state = _state(_row(conn, a["address_id"], email))
-    value = target.get("value")
+    value = _checked(name, target.get("value"))
     return stepup.Bound(
         stepup.digest(name, a["address_id"], sender_hash(email), value, state),
         f"ecf: {what.format(value=value)} for {email} at {a['email']}",
     )
+
+
+def _checked(name: str, value: Any) -> Any:
+    """The value as the change itself would accept it, before it reaches the dialog (V1.2
+    review, 2026-09-30)."""
+    if name == "sender_confirm":
+        values = load_schema_v1().fields["category"].values or ()
+        if value not in values:
+            raise InvalidInputError(f"category is one of {', '.join(values)}")
+        return value
+    if name == "sender_reply_to":
+        return addresses.normalize_domain(str(value))
+    if value is not True:
+        raise InvalidInputError("only turning human-verified on needs step-up")
+    return value
 
 
 @stepup.purpose("sender_confirm")

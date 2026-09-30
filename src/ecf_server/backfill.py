@@ -37,6 +37,7 @@ from ecf_server.mail import MailSource
 from ecf_server.state_machine import TransitionContext
 
 KEY = "backfill.{}"
+LAST_KEY = "backfill.last.{}"  # the last outcome, for `ecf backfill` to show
 CHECK_TIMEOUT_S = 900  # as schedule.py's check jobs
 
 
@@ -63,9 +64,36 @@ def save(conn: sqlite3.Connection, clock: Clock, address_id: str, bf: Backfill) 
 def finish(
     conn: sqlite3.Connection, clock: Clock, address_id: str, bf: Backfill, outcome: str
 ) -> None:
+    last = {"since": bf.since, "act": bf.act, "outcome": outcome, "items": _count(conn, address_id),
+            "fraud": _count(conn, address_id, fraud=True), "at": to_ts(clock.now())}  # fmt: skip
     with write_tx(conn):
         conn.execute("DELETE FROM settings WHERE key = ?", (_key(address_id),))
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, 'service')"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at",
+            (LAST_KEY.format(address_id), json.dumps(last), last["at"]),
+        )
         _audit(conn, clock, address_id, "backfill.finished", bf.to_json() | {"outcome": outcome})
+
+
+def stop(conn: sqlite3.Connection, clock: Clock, ref: str) -> dict[str, Any]:
+    """`ecf backfill <address> --stop`: end it now; what was read stays (V1.2 review)."""
+    aid = addresses.get_address(conn, ref)["address_id"]
+    bf = load(conn, aid)
+    if bf is None:
+        raise ConflictError(f"no backfill of {aid} is running")
+    finish(conn, clock, aid, bf, "stopped")
+    return {"address_id": aid, "items": _count(conn, aid)}
+
+
+def _count(conn: sqlite3.Connection, address_id: str, *, fraud: bool = False) -> int:
+    """Backfilled items; with `fraud`, those a fraud trigger fired on, so a records-only backfill
+    can't quietly bury a hit (V1.2 review, 2026-09-30)."""
+    return int(conn.execute(
+        "SELECT count(*) FROM items WHERE address_id = ? AND json_extract(facts, '$.backfill') = 1"
+        " AND (NOT ? OR coalesce(json_array_length(facts, '$.triggers.fraud'), 0) > 0)",
+        (address_id, int(fraud))).fetchone()[0])  # fmt: skip
 
 
 def _audit(
@@ -114,18 +142,20 @@ def start(
 
 
 def status(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Each address's backfill: running, or the last one's outcome."""
     out: list[dict[str, Any]] = []
     for a in addresses.list_addresses(conn):
-        bf = load(conn, a["address_id"])
-        if bf is None:
+        aid = a["address_id"]
+        bf = load(conn, aid)
+        if bf is not None:
+            out.append({"address_id": aid, "since": bf.since, "act": bf.act,
+                        "outcome": "running", "items": _count(conn, aid),
+                        "fraud": _count(conn, aid, fraud=True)})  # fmt: skip
             continue
-        found = conn.execute(
-            "SELECT count(*) FROM items WHERE address_id = ? AND json_extract(facts,"
-            " '$.backfill') = 1",
-            (a["address_id"],),
-        ).fetchone()[0]
-        out.append({"address_id": a["address_id"], "since": bf.since, "act": bf.act,
-                    "items": found})  # fmt: skip
+        row = conn.execute("SELECT value FROM settings WHERE key = ?",
+                           (LAST_KEY.format(aid),)).fetchone()  # fmt: skip
+        if row is not None:
+            out.append({"address_id": aid} | json.loads(row[0]))
     return out
 
 

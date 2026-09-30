@@ -136,6 +136,10 @@ def _config_commands(
         all_cases: Annotated[bool, typer.Option("--all", help="List unchanged cases too.")] = False,
     ) -> None:
         """Run proposed rules on the synthetic set; show which outcomes change."""
+        if not (cases / "labels.jsonl").is_file():  # the default is a checkout's folder
+            raise typer.BadParameter(f"no labels.jsonl in {cases}: pass the synthetic set's"
+                                     " folder (tests/eval/synthetic in a checkout)",
+                                     param_hint="--cases")  # fmt: skip
         body = {"rules": file.read_text(encoding="utf-8"), "cases_dir": str(cases.resolve())}
         with LocalClient(paths()) as c:
             r = c.request("POST", "/v1/rules/test", body, timeout=300.0)

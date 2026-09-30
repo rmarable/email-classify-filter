@@ -56,8 +56,7 @@ def make_app(paths: Callable[[], Paths]) -> typer.Typer:
                                                 {"bot_token": bot, "app_token": app_token,
                                                  "stepup_nonce": n}),
                          echo=typer.echo)  # fmt: skip
-        typer.echo("Stored the new tokens; ecf reconnects to Slack now.")
-        typer.echo("Next, if cards failed while the token was revoked: ecf slack reauthorize")
+        typer.echo("Stored the new tokens; ecf reconnects to Slack now, and held posts go out.")
 
     @app.command("set-member")
     def set_member(
