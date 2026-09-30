@@ -40,6 +40,7 @@ from ecf_server import (
     health,
     jobs,
     needs_you,
+    retention,
     schedule,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
@@ -197,6 +198,8 @@ class Service:
                 approvals.expire(conn, self.clock)
                 answers.expire(conn, self.clock)
                 needs_you.mark_stale(conn, self.clock)
+                if retention.due(conn, self.clock):  # once a day (§6.5)
+                    retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 for _ in range(ACTIONS_PER_TICK):

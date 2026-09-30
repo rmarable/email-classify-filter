@@ -53,6 +53,7 @@ from ecf_server import (
     health,
     inbox,
     pause,
+    retention,
     ruletest,
     senders,
     settings,
@@ -525,7 +526,33 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(ruletest.run(state.clock, current, text, root))
 
+    @allow(Caller.CLI)
+    def show_retention(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            last = conn.execute("SELECT value FROM settings WHERE key = ?",
+                                (retention.LAST_RUN_KEY,)).fetchone()  # fmt: skip
+            return JSONResponse({"days": retention.days(conn),
+                                 "last_run": json.loads(last[0]) if last else None})  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def set_retention(request: Request) -> JSONResponse:
+        body = _body(request)
+        value, nonce = body.get("days"), _opt_str(body, "nonce_id")
+        if not isinstance(value, int):
+            raise InvalidInputError("days must be a whole number")
+        conn = state.connect()
+        try:
+            r = retention.set_days(conn, state.clock, state.notifier, value, nonce=nonce)
+        finally:
+            conn.close()
+        return JSONResponse(r)
+
     return [
+        Route("/v1/retention", show_retention, methods=["GET"]),
+        Route("/v1/retention", set_retention, methods=["POST"]),
         Route("/v1/config/apply", apply_config, methods=["POST"]),
         Route("/v1/rules/test", test_rules, methods=["POST"]),
     ]

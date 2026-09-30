@@ -129,7 +129,7 @@ ELSEWHERE = {
     "slack_member_id": "change it with `ecf slack set-member` (step-up)",
     "alerts.routes": "change it with `ecf alerts set`",
     "org_domains": "change it with `ecf config apply` (step-up)",
-    "log_retention_days": "change it with `ecf retention set` (V1.2 step 11)",
+    "log_retention_days": "change it with `ecf retention set` (step-up)",
     "install_role": "fixed when the install is created",
     "sensitivity": "change it with `ecf sensitivity set`",
     "stage": "change it with `ecf stage set`",

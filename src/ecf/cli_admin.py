@@ -229,3 +229,33 @@ def _config_and_sender_commands(app: typer.Typer, paths: Callable[[], Paths]) ->
     sender_app = typer.Typer(no_args_is_help=True, help="What ecf knows about a sender.")
     app.add_typer(sender_app, name="sender")
     _sender_commands(sender_app, paths)
+    retention_app = typer.Typer(no_args_is_help=True, help="How long finished items are kept.")
+    app.add_typer(retention_app, name="retention")
+    _retention_commands(retention_app, paths)
+
+
+def _retention_commands(retention_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    @retention_app.command("show")
+    def retention_show() -> None:
+        """How long finished items are kept, and when the daily job last ran."""
+        with LocalClient(paths()) as c:
+            r = c.get("/v1/retention")
+        typer.echo(
+            f"finished items are kept {r['days']} days; last run: {r['last_run'] or 'never'}"
+        )
+        typer.echo("never deleted: the audit log, fraud and regulator items, sender history")
+
+    @retention_app.command("set")
+    def retention_set(
+        days: Annotated[int, typer.Argument(help="1 to 3650 (default 90).")],
+    ) -> None:
+        """Keep finished items this many days. (step-up; lowering it sends a Security Notice)"""
+        with LocalClient(paths()) as c:
+            r = with_step_up(c, lambda n: c.request("POST", "/v1/retention",
+                                                    {"days": days, "nonce_id": n}),
+                             echo=typer.echo)  # fmt: skip
+        if not r["changed"]:
+            typer.echo(f"already {r['days']} days")
+        else:
+            typer.echo(f"finished items are kept {r['days']} days (was {r['was']}); applies at"
+                       " the next daily run")  # fmt: skip

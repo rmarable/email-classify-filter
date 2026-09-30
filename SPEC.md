@@ -408,6 +408,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 
 - Terminal items are deleted after `log_retention_days` (default 90, range 1-3650) by a daily local job in batches of 1,000. The audit log is never pruned, and neither are items that fired a fraud or regulator trigger (operator decision 2026-09-29, OD-217).
 - **Exempt from pruning** (operator decision 2026-09-27, OD-040): `senders`, `sent`, `threads`, `gate` and eval labels, so first-time-sender status and loop prevention survive.
+- **As built in V1.2** (step 11a, 2026-09-30; code: `ecf_server/retention.py`): the service runs the job once a day from its timer (the last run is kept as `retention.last_run`). It deletes terminal items whose last change is older than `log_retention_days`, with their excerpts, grants, delays, escalation rows and Slack card records, and keeps items that fired a fraud, weak fraud or regulator trigger or were quarantined (the weak signal is kept too, as a fraud signal). Finished and dead jobs and used or expired step-up nonces older than the same age go as well. Open items, the audit log (table and files) and the OD-040 tables are never touched. Each run is audited (`retention.run`, with counts). `ecf retention show` gives the setting and the last run; `ecf retention set <days>` (1-3650) needs step-up, is audited (`retention.changed`), applies at the next daily run, and when it lowers the value sends a Security Notice (history goes sooner; the delay is 0 in local mode, OD-074).
 - **Approval expiry** (operator decision 2026-09-26, OD-041): sends after `approval_ttl_days_send` (4 days, so a long weekend doesn't lapse them), everything else after `approval_ttl_days` (14); per address. Step-up requests expire with the same TTL. On expiry nothing executes and the grant is voided.
 - **Stale items:** open records are never auto-closed (except `resolved_by_mailbox`). After `stale_item_days` (30; operator decision 2026-09-26, OD-042) an open item gets `stale = true`, shown at the top of "Needs you" and `ecf inbox`, and listed in the daily summary until resolved; stale `held`, `new` and `awaiting_claude` items appear as one count line.
 - Retention decreases follow the announce flow (§9.6).
@@ -790,7 +791,7 @@ An **Answer** button opens a Slack modal; answers are authorized to you; first a
 | addresses | `address add|list|remove|retry`, `address set <address>` (`--app-password` (re-enter or rotate; operator decision 2026-09-27, OD-086), `--fetch-workday`, `--fetch-offhours`, `--business-hours`, `--max-sends-per-hour`, `--max-sends-per-day`, `--max-message-bytes`, `--max-scan-bytes-per-part` (minimum 1 MB each)), `stage status|set`, `sensitivity set`, `pause|resume <address>`, `outbound enable|disable|resume|report|snooze|dismiss` |
 | senders | `sender confirm <sender> --category <c>`, `sender set-reply-to <sender> <domain>`, `sender set-verified <sender>` |
 | settings | `settings show|set` (install defaults and per-address keys, incl. `slack_member_id`, `export_dir` and export keys, `--claude-model-override`, `claude_queue_timeout`, `approval_ttl_days(_send)`, `catch_up*`, `classifier_high_batch`, `resident`; `install_role` fixed at init), `config apply <file>`, `rules test <file>` |
-| data | `logs`, `export`, `import [--replace]`, `restore <bundle>`, `retention set`, `replay <eml-dir> [--via append|smtp]` (dev only; refuses production) |
+| data | `logs`, `export`, `import [--replace]`, `restore <bundle>`, `retention show|set`, `replay <eml-dir> [--via append|smtp]` (dev only; refuses production) |
 | eval | `eval run [--classifier] [--actor] [--fraud-only]`, `eval compare|label|new-case|build|show` |
 | integration | `slack install|status|set-tokens|set-member|reauthorize`, `alerts set|show|test`, `models status|install`, `claude` |
 
@@ -1246,7 +1247,8 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | POST | `/v1/slack/reauthorize` · `/refresh` | CLI | configuration token → `permissions_updated`; then queue an edit of every card |
 | GET · POST | `/v1/alerts` · POST `/v1/alerts/test` | CLI | GET → routes per class; POST `{class?, to, nonce_id?}` → routes (step-up); test → where it was sent |
 | POST | `/v1/export` · `/v1/import` · `/v1/restore` | CLI | `{path, passphrase?, replace?, nonce_id}` → manifest, preview, result |
-| POST | `/v1/retention` | CLI | `{days, nonce_id}` → setting |
+| GET | `/v1/retention` | CLI | → `{days, last_run}` (V1.2 step 11a) |
+| POST | `/v1/retention` | CLI | `{days, nonce_id}` → `{days, was, changed}` (V1.2 step 11a) |
 | GET | `/v1/stats` · `/v1/logs` | CLI | filters → metrics; audit events |
 | POST | `/v1/models/install` · GET `/v1/models` | CLI | → pull/verify/copy progress; pinned models and status |
 | POST · DELETE | `/v1/sessions`, `/v1/sessions/{id}` | CLI (`ecf claude`) | → `{profile_token, telemetry_port, telemetry_bearer}`; revoke |

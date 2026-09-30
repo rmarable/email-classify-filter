@@ -5,7 +5,7 @@ Every event is written to the `audit` table in the same transaction as the chang
 (the local form of the M1 `logs/` layout), in id order, and then advances a high-water mark in
 `settings`; a crash between the two re-copies at most the rows of that flush, which carry their
 row `id`, so a reader can drop the repeat. Folders are 0700, files 0600. Lines carry no email
-content, only what the events record (§15.2). The daily retention job (V1.2) prunes both.
+content, only what the events record (§15.2). Retention never prunes either (OD-217).
 """
 
 from __future__ import annotations
