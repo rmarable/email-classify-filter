@@ -1,0 +1,19 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id billing-vendor-overdue-query; Thu, 08 Oct 2026
+ 09:30:00 +0000
+From: Vendor A Billing <billing@vendor-a.example>
+To: ap@acme.example
+Subject: INV-4077 now 15 days overdue
+Date: Thu, 08 Oct 2026 09:30:00 +0000
+Message-ID: <billing-vendor-overdue-query.7eb491d63c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Our records show INV-4077 (1,180.00, due 23 September) is still open. Could y=
+ou let us know when
+we can expect payment, or whether there is a problem with the invoice?
+
+Vendor A Billing (555-0150)

@@ -1,0 +1,19 @@
+Received: from mail.prospect-l.example (mail.prospect-l.example [192.0.2.10])
+ by mx.example.net with ESMTPS id sales-demo-request; Sat, 10 Oct 2026
+ 09:00:00 +0000
+From: Prospect L <ops-lead@prospect-l.example>
+To: ap@acme.example
+Subject: Demo next week?
+Date: Sat, 10 Oct 2026 09:00:00 +0000
+Message-ID: <sales-demo-request.0a2483f90d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+A colleague recommended ACME. Could we book a 30-minute demo next Tuesday or =
+Wednesday
+afternoon? We are a team of about 12.
+
+Thanks

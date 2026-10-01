@@ -1,0 +1,20 @@
+Received: from mail.customer-f.example (mail.customer-f.example [192.0.2.10])
+ by mx.example.net with ESMTPS id remit-short-pay-question; Tue, 06 Oct 2026
+ 15:45:00 +0000
+From: Customer F Accounts <ap@customer-f.example>
+To: ap@acme.example
+Subject: Remittance for ACME-1120 (partial)
+Date: Tue, 06 Oct 2026 15:45:00 +0000
+Message-ID: <remit-short-pay-question.f3ec2f3a15@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+We paid 900.00 of ACME-1120 today. The remaining 100.00 is for the damaged it=
+em we reported
+last week. Can you confirm a credit note for that amount?
+
+Thanks,
+Customer F Accounts

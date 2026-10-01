@@ -1,0 +1,17 @@
+Received: from mail.payroll-service.example (mail.payroll-service.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id payconf-payroll-run; Thu, 01
+ Oct 2026 06:00:00 +0000
+From: Payroll Service <notices@payroll-service.example>
+To: ap@acme.example
+Subject: Payroll run complete for period ending 2026-09-30
+Date: Thu, 01 Oct 2026 06:00:00 +0000
+Message-ID: <payconf-payroll-run.85eece0876@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your payroll for the period ending 2026-09-30 was processed. 14 employees, to=
+tal net pay
+48,210.55. Funds will arrive on the scheduled pay date.
+
+No action is required. Questions: 555-0177.

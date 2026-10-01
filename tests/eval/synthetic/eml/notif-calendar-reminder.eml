@@ -1,0 +1,13 @@
+Received: from mail.calendar-service.example (mail.calendar-service.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id notif-calendar-reminder; Mon,
+ 12 Oct 2026 17:00:00 +0000
+From: Calendar <reminders@calendar-service.example>
+To: ap@acme.example
+Subject: Reminder: Quarterly review tomorrow at 10:00
+Date: Mon, 12 Oct 2026 17:00:00 +0000
+Message-ID: <notif-calendar-reminder.4e8a389e66@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Reminder: Quarterly review, tomorrow 10:00-11:00, Room 2.

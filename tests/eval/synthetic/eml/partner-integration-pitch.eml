@@ -1,0 +1,19 @@
+Received: from mail.partner-q.example (mail.partner-q.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id partner-integration-pitch; Sun, 11 Oct 2026
+ 10:00:00 +0000
+From: Partner Q Alliances <alliances@partner-q.example>
+To: ap@acme.example
+Subject: Integration partnership
+Date: Sun, 11 Oct 2026 10:00:00 +0000
+Message-ID: <partner-integration-pitch.2ecfdfc779@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello ACME team,
+
+We build scheduling software used by about 2,000 small businesses and think a=
+n integration with
+your product would help both our customers. Would you be open to a short call?
+
+Partner Q Alliances

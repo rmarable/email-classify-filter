@@ -1,0 +1,19 @@
+Received: from mail.customer-u.example (mail.customer-u.example [192.0.2.10])
+ by mx.example.net with ESMTPS id custreq-data-export; Tue, 13 Oct 2026
+ 11:00:00 +0000
+From: Customer U <privacy@customer-u.example>
+To: ap@acme.example
+Subject: Request for a copy of our account data
+Date: Tue, 13 Oct 2026 11:00:00 +0000
+Message-ID: <custreq-data-export.2078f6f028@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Please send us a full export of the data held for our account (Customer U) wi=
+thin 30 days, as
+our contract allows.
+
+Customer U

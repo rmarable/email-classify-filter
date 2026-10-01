@@ -1,0 +1,19 @@
+Received: from mail.customer-g.example (mail.customer-g.example [192.0.2.10])
+ by mx.example.net with ESMTPS id billing-double-charge; Fri, 02 Oct 2026
+ 13:05:00 +0000
+From: Customer G <owner@customer-g.example>
+To: ap@acme.example
+Subject: Charged twice for September?
+Date: Fri, 02 Oct 2026 13:05:00 +0000
+Message-ID: <billing-double-charge.e80436b024@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+My card statement shows two charges of 89.00 from ACME on 28 September. I onl=
+y placed one order.
+Could you check and refund the duplicate?
+
+Thanks

@@ -1,0 +1,14 @@
+Received: from mail.customer-t.example (mail.customer-t.example [192.0.2.10])
+ by mx.example.net with ESMTPS id other-holiday-greeting; Fri, 18 Dec 2026
+ 09:00:00 +0000
+From: Customer T <team@customer-t.example>
+To: ap@acme.example
+Subject: Season's greetings from Customer T
+Date: Fri, 18 Dec 2026 09:00:00 +0000
+Message-ID: <other-holiday-greeting.83eb4876b1@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thank you for a great year working together. Wishing everyone at ACME a restf=
+ul holiday season.

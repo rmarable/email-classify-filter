@@ -1,0 +1,15 @@
+Received: from mail.customer-n.example (mail.customer-n.example [192.0.2.10])
+ by mx.example.net with ESMTPS id bug-outage-urgent; Sat, 03 Oct 2026 02:15:00
+ +0000
+From: Customer N Operations <oncall@customer-n.example>
+To: ap@acme.example
+Subject: URGENT: service down for all our users
+Date: Sat, 03 Oct 2026 02:15:00 +0000
+Message-ID: <bug-outage-urgent.d98ba0a3bc@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Nobody on our side can log in since 02:00 UTC. All 300 users get a blank page=
+. This is blocking
+our operations. Please call 555-0188 as soon as possible.
