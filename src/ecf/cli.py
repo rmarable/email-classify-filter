@@ -238,6 +238,11 @@ def _model_line(m: dict[str, Any]) -> str:
         return f"{who} not ready: {m['detail']}"
     if m["status"] == "eval":
         return f"{who} an eval holds the model; {m['waiting']} waiting"
+    if m["status"] == "worker":
+        return f"{who} the service's own run is working on them; {m['waiting']} still waiting"
+    if m["status"] == "gave_up":
+        return (f"{who} stopped waiting after {m['minutes']} min; {m['waiting']} still waiting"
+                " (ecf status)")  # fmt: skip
     extra = {"budget": " (6-minute budget used)", "hot": " (paused: running hot)",
              "stopped": " (service stopping)"}.get(m["status"], "")  # fmt: skip
     return (f"{who} {m['done']} done, {m['failed']} failed, {m['waiting']} still waiting"
@@ -250,6 +255,8 @@ def _check_line(r: dict[str, Any]) -> str:
         return f"{who} first check: started from now (older mail: `ecf backfill`)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
+    if r["status"] == "waiting":
+        return f"{who} waiting for the scheduled check that holds this address"
 
     if r["error"]:
         return f"{who} {r['status'].replace('_', ' ')}: {r['error']}"

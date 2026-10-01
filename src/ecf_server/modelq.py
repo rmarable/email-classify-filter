@@ -38,7 +38,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from ecf_server import health, leases, models, ollama
-from ecf_server.clock import Clock, to_ts
+from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
@@ -432,16 +432,33 @@ CAFFEINATE = "/usr/bin/caffeinate"
 
 # ---------------------------------------------------------------------------- status (§5.3)
 
-ETA_SAMPLE = 50
+ETA_SAMPLE = 200  # recent successful calls looked at
+RUN_GAP = timedelta(minutes=10)  # longer than a heat pause: a gap this long ends a backlog run
+RUN_MIN = 5  # emails in the latest run before its pace is trusted
 
 
 def seconds_per_item(conn: sqlite3.Connection) -> float | None:
-    """The median wall time of recent successful model calls, from `model_calls`."""
-    rows = conn.execute("SELECT total_ns FROM model_calls WHERE outcome = 'ok' AND total_ns IS"
-                        " NOT NULL ORDER BY id DESC LIMIT ?", (ETA_SAMPLE,)).fetchall()  # fmt: skip
+    """Wall seconds per email for the backlog estimate (§5.3). When recent emails were
+    classified in one continuous run (gaps under `RUN_GAP`), that run's measured pace, which
+    includes the actor's calls, the work between calls and heat pauses (the step 12a shadow run
+    showed the per-call time alone underestimating fivefold). Otherwise the model time per email:
+    every role's call time over the emails classified."""
+    rows = conn.execute("SELECT ts, role, total_ns FROM model_calls WHERE outcome = 'ok' AND"
+                        " total_ns IS NOT NULL ORDER BY id DESC LIMIT ?",
+                        (ETA_SAMPLE,)).fetchall()  # fmt: skip
     if not rows:
         return None
-    return statistics.median(r[0] for r in rows) / 1e9
+    stamps = [from_ts(r["ts"]) for r in rows if r["role"] == "classifier"]  # newest first
+    run = stamps[:1]
+    for t in stamps[1:]:
+        if run[-1] - t > RUN_GAP:
+            break
+        run.append(t)
+    if len(run) >= RUN_MIN and run[0] > run[-1]:
+        return (run[0] - run[-1]).total_seconds() / (len(run) - 1)
+    emails = len(stamps)
+    total = sum(r["total_ns"] for r in rows) / 1e9
+    return total / emails if emails else statistics.median(r["total_ns"] for r in rows) / 1e9
 
 
 def status(conn: sqlite3.Connection, *, laptop: bool, on_ac: bool) -> dict[str, Any]:
