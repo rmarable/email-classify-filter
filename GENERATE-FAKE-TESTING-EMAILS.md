@@ -153,6 +153,17 @@ only while both hashes still match. `ecf eval label --status` counts them. Commi
 after labelling. Model-drafted cards (`author: claude` or `gemma`) stay pending until you confirm
 them.
 
+**Category of fraud and impersonation** (operator decision 2026-10-01): the category the email
+pretends to be when one fits (a bank or payment-detail change is `vendor_change_request`, a fake
+invoice is `invoice`, a refund scam is `billing_inquiry`); otherwise `spam_or_phishing`, the
+schema's "attempt to deceive" (gift cards, an executive's wire to a new payee, tax-form theft,
+sign-in codes, extortion). Never `other` for fraud. The fraud rules don't read the category, so
+this affects scoring and digest labels, not what ecf does.
+
+**Expected rules** come from the card's real facts and the starter rules, computed in the eval's
+order with its shared sender history, never guessed; a new card must not change an older card's
+facts.
+
 ## Not built yet
 
 These parts of the plan arrive with the milestones that need them:

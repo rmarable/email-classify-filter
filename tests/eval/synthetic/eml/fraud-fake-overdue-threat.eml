@@ -1,0 +1,17 @@
+Received: from mail.domain-services-billing.example
+ (mail.domain-services-billing.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id fraud-fake-overdue-threat; Sat, 17 Oct 2026 07:00:00 +0000
+From: Collections Dept <collections@domain-services-billing.example>
+To: ap@acme.example
+Subject: FINAL DEMAND - invoice 99-1207 overdue
+Date: Sat, 17 Oct 2026 07:00:00 +0000
+Message-ID: <fraud-fake-overdue-threat.01000b0c76@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Our invoice 99-1207 for domain protection services (720.00) is 60 days overdu=
+e. Unless paid
+within 24 hours the account goes to collections and legal action. Pay by card=
+ at
+https://domain-services-billing.example/pay.

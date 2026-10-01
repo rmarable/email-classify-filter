@@ -1,0 +1,15 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id fraud-w2-request; Sat, 17 Oct 2026 09:15:00
+ +0000
+From: ACME CEO <chief-exec@freemail.example>
+To: ap@acme.example
+Subject: Need W-2s
+Date: Sat, 17 Oct 2026 09:15:00 +0000
+Message-ID: <fraud-w2-request.225d7e6fbf@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Please send me the W-2 forms for all employees as one PDF today. I need them =
+for a meeting with
+the auditors. Send them to this address, my office email is having problems.

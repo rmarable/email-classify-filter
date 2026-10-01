@@ -1,0 +1,21 @@
+Received: from mail.vendor-a-invoices.example (mail.vendor-a-invoices.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id fraud-vendor-portal-switch;
+ Sun, 18 Oct 2026 10:00:00 +0000
+From: Vendor A Billing <billing@vendor-a-invoices.example>
+To: ap@acme.example
+Subject: Invoices now available only on our new portal
+Date: Sun, 18 Oct 2026 10:00:00 +0000
+Message-ID: <fraud-vendor-portal-switch.135c9ce516@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+From this month all invoices and payment details are on our new portal. Sign =
+in with your
+current email password at https://vendor-a-invoices.example/login to view inv=
+oice INV-4120 and
+the updated payment details.
+
+Vendor A Billing

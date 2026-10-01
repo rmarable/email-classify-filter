@@ -1,0 +1,14 @@
+Received: from mail.acme.test (mail.acme.test [192.0.2.10]) by mx.example.net
+ with ESMTPS id look-acme-test-it; Mon, 19 Oct 2026 08:00:00 +0000
+From: ACME IT <it@acme.test>
+To: ap@acme.example
+Subject: Your password expires today
+Date: Mon, 19 Oct 2026 08:00:00 +0000
+Message-ID: <look-acme-test-it.1f85bafcd7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your ACME password expires today. Keep your current password by confirming it=
+ on the staff
+portal at https://acme.test/keep-password before 17:00.

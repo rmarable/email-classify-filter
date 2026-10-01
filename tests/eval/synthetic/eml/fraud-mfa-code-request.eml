@@ -1,0 +1,21 @@
+Received: from mail.it-support-desk.example (mail.it-support-desk.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id fraud-mfa-code-request; Sun,
+ 18 Oct 2026 08:30:00 +0000
+From: ACME IT Helpdesk <helpdesk@it-support-desk.example>
+To: ap@acme.example
+Subject: Mailbox migration - verify your account
+Date: Sun, 18 Oct 2026 08:30:00 +0000
+Message-ID: <fraud-mfa-code-request.35bb4bb82b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We are migrating mailboxes tonight. You will receive a 6-digit sign-in code b=
+y text message in
+the next few minutes. Reply to this email with the code so we can confirm you=
+r account, or your
+mailbox will be locked.
+
+ACME IT Helpdesk

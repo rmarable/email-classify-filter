@@ -1,0 +1,15 @@
+Received: from mail.data-leak-notice.example (mail.data-leak-notice.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id fraud-crypto-extortion; Fri,
+ 16 Oct 2026 02:00:00 +0000
+From: Security Team <alerts@data-leak-notice.example>
+To: ap@acme.example
+Subject: We have your company's files
+Date: Fri, 16 Oct 2026 02:00:00 +0000
+Message-ID: <fraud-crypto-extortion.a771886a7e@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We copied your company's customer files. Pay 0.5 bitcoin within 48 hours or w=
+e publish them and
+inform your customers. Do not contact the police.
