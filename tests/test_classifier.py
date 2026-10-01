@@ -30,6 +30,14 @@ GOOD = {"category": "invoice", "priority": "medium", "requires_action": True,
         "sender_type": "vendor", "fraud_risk": "none"}  # fmt: skip
 
 
+def wire(classification: dict[str, Any]) -> str:
+    """What the model sends for a classification: its values as an array (OD-249)."""
+    return json.dumps([classification[f] for f in classifier.fields(SCHEMA)])
+
+
+REPLY = wire(GOOD)
+
+
 def _item(conn: sqlite3.Connection, clock: FakeClock, sid: str, text: str, aid: str = "ap") -> str:
     sid = sid.ljust(64, "0")
 
@@ -102,7 +110,7 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
 ) -> None:
     add_address(conn, clock, "ap")
     sid = _item(conn, clock, "i1", "Invoice 4471 for $4,200 is due Friday.")
-    fake = ChatOllama(json.dumps(GOOD))
+    fake = ChatOllama(REPLY)
     result = classifier.classify_item(conn, clock, fake.client(), _ready(), _row(conn, sid))
     assert result.outcome == "ok"
     row = _row(conn, sid)
@@ -115,7 +123,7 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
                                                 "schema": 1}  # fmt: skip
     assert row["batch_id"].startswith("single:")
     [body] = fake.bodies
-    assert body["model"] == PIN.ecf_tag and body["format"] == SCHEMA.json_schema()
+    assert body["model"] == PIN.ecf_tag and body["format"] == classifier.wire_schema(SCHEMA)
     assert body["messages"][0]["content"] == classifier.system_prompt(SCHEMA)
     assert "Invoice 4471" in body["messages"][1]["content"]
     assert "fraud_1" not in json.dumps(body)  # computed facts are never sent (§7.2)
@@ -123,8 +131,9 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
     assert [tuple(r) for r in calls] == [("classifier", "ok", "ap", "A", "shadow")]
 
 
-BAD = ["not json", json.dumps(GOOD | {"category": "lottery"}), json.dumps({"category": "invoice"}),
-       json.dumps(GOOD | {"extra": 1})]  # fmt: skip
+# not JSON, an unknown value, too short, too long, and the old object form
+BAD = ["not json", REPLY.replace('"invoice"', '"lottery"'), json.dumps(["invoice"]),
+       REPLY[:-1] + ", 1]", json.dumps(GOOD)]  # fmt: skip
 
 
 @pytest.mark.parametrize("reply", BAD)
@@ -148,7 +157,7 @@ def test_a_prompt_near_the_context_limit_counts_as_truncated(
 ) -> None:
     add_address(conn, clock, "ap")
     sid = _item(conn, clock, "i1", "text")
-    fake = ChatOllama(json.dumps(GOOD), prompt_tokens=4000)
+    fake = ChatOllama(REPLY, prompt_tokens=4000)
     assert classifier.classify_item(conn, clock, fake.client(), _ready(),
                                     _row(conn, sid)).outcome == "failed"  # fmt: skip
     assert conn.execute("SELECT outcome FROM model_calls").fetchone()[0] == "truncated"
@@ -169,7 +178,7 @@ def test_a_timeout_is_recorded_and_left_to_the_queue(
 def test_the_queue_runs_the_classifier(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add_address(conn, clock, "ap")
     sids = [_item(conn, clock, f"i{n}", f"mail {n}") for n in range(3)]
-    fake = ChatOllama(json.dumps(GOOD))
+    fake = ChatOllama(REPLY)
     report = modelq.run_round(conn, clock, FakeNotifier(), fake.client(), classifier.classify_item,
                               check_kw=check_kw())  # fmt: skip
     assert (report.status, report.done, report.waiting) == ("done", 3, 0)

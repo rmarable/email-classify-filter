@@ -262,6 +262,16 @@ def test_three_slow_calls_in_a_row_pause_for_heat() -> None:
     assert not t.record(_ok(15))  # the run starts again
 
 
+def test_one_heat_pause_per_backlog() -> None:
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(30))
+    assert [t.record(_ok(11)) for _ in range(3)] == [False, False, True]
+    assert not any(t.record(_ok(11)) for _ in range(9))  # still throttled: no second pause
+    t.drained()  # the queue emptied
+    assert [t.record(_ok(11)) for _ in range(3)] == [False, False, True]
+
+
 def test_a_normal_call_resets_the_run_and_failures_never_count() -> None:
     t = modelq.Throttle()
     for _ in range(5):
@@ -297,9 +307,8 @@ def test_a_hot_round_ends_and_waits_for_the_next_interval(
     report = _round(conn, clock, Slow(), throttle=t)
     assert report.status == "hot" and report.done == 3
     s = RoundSchedule(clock)
-    s.after(report, on_battery=False, offhours=timedelta(minutes=30),
-            interval=timedelta(minutes=10))  # fmt: skip
-    assert s.next_due == clock.now() + timedelta(minutes=10)
+    s.after(report, on_battery=False, offhours=timedelta(minutes=30))
+    assert s.next_due == clock.now() + modelq.HEAT_PAUSE == clock.now() + timedelta(minutes=3)
 
 
 def test_awake_holds_no_assertion_on_battery_or_off_macos() -> None:

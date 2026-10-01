@@ -161,6 +161,7 @@ def _decide(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: poli
             _add(p, Planned("escalate", None, "auto"))
             decide.apply(conn, clock, sid, p, source="actor")
             return
+        decide.record(conn, clock, sid, p, "actor")  # what the actor decided stays with the item
         _to_proposed(conn, clock, item)
         answers.ask(conn, clock, sid, got["reason"])
         return

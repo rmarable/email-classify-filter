@@ -116,7 +116,10 @@ def test_a_question_goes_to_you(conn: sqlite3.Connection, clock: FakeClock) -> N
     _act(conn, clock, sid, _reply("needs_clarification", "", "Which W-9 year do they need?"))
     row = item_row(conn, sid)
     assert row["status"] == "needs_clarification"
-    assert json.loads(row["proposal"])["question"] == "Which W-9 year do they need?"
+    proposal = json.loads(row["proposal"])
+    assert proposal["question"] == "Which W-9 year do they need?"
+    assert proposal["plan"]["actor"]["action"] == "needs_clarification"  # the decision is kept
+    assert row["decision_source"] == "actor"
 
 
 def test_a_question_on_a_high_risk_item_escalates_instead(

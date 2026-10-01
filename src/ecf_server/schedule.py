@@ -147,18 +147,6 @@ def interval_offhours(conn: sqlite3.Connection) -> timedelta:
     return timedelta(minutes=min(120, max(5, int(minutes))))
 
 
-def install_interval(conn: sqlite3.Connection, now: datetime) -> timedelta:
-    """The install's current check interval (business hours or not): model work paused for heat
-    waits this long (OD-029)."""
-    s = dict(DEFAULTS)
-    for row in conn.execute(
-        "SELECT key, value FROM settings WHERE key IN (SELECT value FROM json_each(?))",
-        (json.dumps(list(s)),),
-    ):
-        s[row["key"]] = json.loads(row["value"])
-    return interval(now, s)
-
-
 def after_check(
     conn: sqlite3.Connection, clock: Clock, report: CheckReport, power: Power
 ) -> datetime:

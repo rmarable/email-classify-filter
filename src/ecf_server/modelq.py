@@ -145,13 +145,20 @@ MIN_WINDOW = 5  # no judgement until this many normal calls are known
 
 class Throttle:
     """Heat (§5.2, OD-029 as amended by OD-243): generation speed of each normal call against a
-    rolling median of recent ones; three slow calls in a row pause model work until the next
-    interval. Timed-out, truncated or failed calls never enter the median, so a run of crafted
-    slow emails can't drag it down or trip the pause on its own."""
+    rolling median of recent ones; three slow calls in a row pause model work for `HEAT_PAUSE`,
+    at most once per backlog (OD-248): a fanless Mac stays throttled after a short pause, and
+    pausing again only slows the backlog (V1.3 load test). Timed-out, truncated or failed calls
+    never enter the median, so a run of crafted slow emails can't drag it down or trip the
+    pause on its own."""
 
     def __init__(self) -> None:
         self.speeds: deque[float] = deque(maxlen=WINDOW)
         self.slow_run = 0
+        self.paused = False  # this backlog has had its heat pause
+
+    def drained(self) -> None:
+        """Nothing waits any more: the next backlog may pause for heat again."""
+        self.paused = False
 
     def median(self) -> float | None:
         if len(self.speeds) < MIN_WINDOW:
@@ -170,7 +177,9 @@ class Throttle:
             self.slow_run += 1
             if self.slow_run >= SLOW_IN_A_ROW:
                 self.slow_run = 0
-                return True
+                if not self.paused:
+                    self.paused = True
+                    return True
             return False
         self.slow_run = 0
         self.speeds.append(tps)
@@ -235,6 +244,8 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
         models.check(conn, clock, notifier, client, **(check_kw or {}))  # opens the alert
     _resolve_quiet(conn, clock, notifier)
     r.report.waiting = sum(waiting(conn).values())
+    if r.report.waiting == 0:
+        r.throttle.drained()
     if r.report.waiting == 0 and not resident and not exclusive.held():
         try:
             client.unload(models_tag())
@@ -273,7 +284,7 @@ def _one(r: _Round, address_id: str) -> bool:
                 result = ItemResult("failed")
             _account(r.conn, r.clock, r.notifier, item, result, r.report)
             if r.throttle.record(result):
-                r.report.status = "hot"  # three slow calls in a row: pause until the next interval
+                r.report.status = "hot"  # three slow calls in a row: pause for HEAT_PAUSE
             r.report.per_address[address_id] = r.report.per_address.get(address_id, 0) + 1
             return True
         finally:
@@ -351,12 +362,13 @@ RoundRunner = Callable[[], RoundReport]
 
 RETRY = timedelta(seconds=60)  # not ready, or an eval holds the queue
 CATCH_UP = timedelta(seconds=30)  # §5.3: a round that ran out of budget continues soon
+HEAT_PAUSE = timedelta(minutes=3)  # OD-248: a fixed cool-down after heat, not a check interval
 
 
 class RoundSchedule:
     """When the next round may start (§5.2, §5.3). New mail wakes the worker; a round that used its
-    whole budget continues after `CATCH_UP` on AC power (or a desktop); on battery, rounds run at
-    most once per off-hours interval (OD-029)."""
+    whole budget continues after `CATCH_UP` on AC power (or a desktop); after heat, `HEAT_PAUSE`
+    (OD-248); on battery, rounds run at most once per off-hours interval (OD-029)."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
@@ -371,17 +383,14 @@ class RoundSchedule:
         *,
         on_battery: bool,
         offhours: timedelta,
-        interval: timedelta | None = None,
     ) -> None:
-        """`interval`: the current check interval, for a pause after heat (else off-hours)."""
-        interval = interval or offhours
         now = self.clock.now()
         if report.status in ("not_ready", "eval"):
             self.next_due = now + RETRY
         elif on_battery:
             self.next_due = now + offhours
         elif report.status == "hot":
-            self.next_due = now + interval
+            self.next_due = now + HEAT_PAUSE
         elif report.status == "budget":
             self.next_due = now + CATCH_UP
         else:

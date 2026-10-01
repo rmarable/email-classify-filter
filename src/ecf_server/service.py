@@ -397,10 +397,8 @@ class Service:
                                               throttle=self.throttle)  # fmt: skip
             finally:
                 client.close()
-            now_interval = schedule.install_interval(conn, self.clock.now())
             self.rounds.after(report, on_battery=on_battery,
-                              offhours=schedule.interval_offhours(conn),
-                              interval=now_interval)  # fmt: skip
+                              offhours=schedule.interval_offhours(conn))  # fmt: skip
             log.info("model.round", status=report.status, done=report.done, failed=report.failed,
                      waiting=report.waiting)  # fmt: skip
         finally:

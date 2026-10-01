@@ -112,6 +112,11 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     return Status.EXECUTING
 
 
+def record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan, source: str) -> None:
+    """Keep a plan with the item without moving it on (the actor's question, which goes to you)."""
+    _record(conn, clock, sid, p, [], source)
+
+
 def _record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan,
             mailbox: list[MailAction], source: str) -> None:  # fmt: skip
     doc: dict[str, Any] = {

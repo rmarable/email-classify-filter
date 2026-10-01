@@ -18,7 +18,7 @@ from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf_server import evalrun, modelq, policy, schedule
 from ecf_server.clock import FakeClock
-from tests.test_classifier import ChatOllama
+from tests.test_classifier import ChatOllama, wire
 from tests.test_models import check_kw
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
@@ -91,7 +91,7 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
 ) -> None:
     from ecf_server import db  # noqa: PLC0415
 
-    fake = ChatOllama(json.dumps(BEC))
+    fake = ChatOllama(wire(BEC))
     evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
                   evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
                   spawn=_inline, check_kw=check_kw())  # fmt: skip
@@ -114,7 +114,7 @@ def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
     from ecf_server import db  # noqa: PLC0415
 
     fooled = BEC | {"category": "marketing", "fraud_risk": "none", "payment_related": False}
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(fooled)).client,
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(wire(fooled)).client,
                   db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
                   battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
     result = evalrun.RUN.snapshot()["result"]

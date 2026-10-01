@@ -5,9 +5,12 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- When the local model asks you a question about an email, its decision is now kept in the email's record and audit log (it was missing).
+- The local classifier answers about 40% faster: it replies with a short list of values instead of named fields; what ecf stores and checks is unchanged (OD-249).
+- A heat pause now lasts 3 minutes and happens at most once per backlog; before, it lasted until the next check, and on a fanless Mac it kept recurring and stalled a backlog (OD-248).
 - New development command `ecf replay <eml-dir>`: appends .eml files into a test IMAP mailbox with fresh Message-IDs (OD-238); `--via smtp` isn't built.
 - New commands `ecf eval run`, `ecf eval status` and `ecf eval stop`: the synthetic set through the local model, scored for labels, rules and safety; results keep metrics only and are tied to the model's digest; on battery a run pauses at 15% (`--battery-floor`) and resumes on AC (OD-237).
-- New command `ecf eval label`: you confirm each synthetic case's expected labels; the confirmation is kept in `labels.jsonl` and undone when the case changes (OD-241). The synthetic set grows to 33 cases (25 new, mostly fraud, injection and regulator cases), pending your labels.
+- New command `ecf eval label`: you confirm each synthetic case's expected labels; the confirmation is kept in `labels.jsonl` and undone when the case changes (OD-241). The synthetic set grows to 33 cases (25 new, mostly fraud, injection and regulator cases), all confirmed.
 - New command `ecf watch`: runs ecf in the terminal instead of the background (Ctrl-C to stop), then restores the background service. `ecf check` now also runs the local model and reports it; `ecf status` shows the model's backlog with an estimate. During a backlog of more than 100 emails, approvals are listed on digests instead of one card each.
 - Review posts: once an hour ecf lists in each address's channel what its model said about recent mail, with Fix, Correct and "All others correct" (never for payment, fraud, regulator or unscanned mail, nor `high` addresses); `ecf stage status` shows review progress. New settings `review_sample_rate`, `escalations_per_hour` (now applied, fraud and regulator escalations exempt) and `label_folder`.
 - ecf can now carry out approved and automatic actions in the mailbox: label, flag, mark read, archive, move to an allowed folder and junk, re-checking the stage, pause, folders and the message itself just before acting; `label_folder` gets a copy of suspicious and regulatory mail; the digest's Undo takes back what ecf did, including moving mail back to the inbox.
