@@ -86,3 +86,41 @@ regulator:
     - regulatory inquiry
     - warning letter
     - cease and desist
+
+# Text addressed to an automated reader (fraud trigger 10; operator decision 2026-10-01, OD-252).
+# An email that tells the model what to conclude is an injection attempt: the fraud guard
+# escalates it whatever the model then says. Only phrases that address the reader or give it an
+# instruction; a bare "AI assistant" is common in ordinary product mail and is not listed.
+# Paraphrases not listed here still reach the model (SPEC §8.5 limits).
+injection:
+  phrases:
+    - note to the assistant
+    - note for the assistant
+    - note to the automated assistant
+    - note for the automated assistant
+    - note to the ai
+    - note to the classifier
+    - note to the email classifier
+    - note for the email classifier
+    - note to the automated reviewer
+    - note for the automated reviewer
+    - instructions for the assistant
+    - assistant processing this mailbox
+    - ignore all previous instructions
+    - ignore previous instructions
+    - ignore your previous instructions
+    - disregard previous instructions
+    - disregard all previous instructions
+    - classify this email as
+    - classify this message as
+    - classify it as
+    - rate fraud risk
+    - set fraud risk
+    - approved by the mailbox owner
+    - nota para el asistente
+    - system instruction
+    - instruction from the system
+    - instructions from the system
+    - instruction for the email classifier
+    - set category to
+    - set the category to
