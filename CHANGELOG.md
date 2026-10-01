@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- The single-token confidence experiment ended early: asking the local model one field at a time was 4-7 times slower than one JSON answer, so the classifier keeps its JSON reply (OD-258).
 - The synthetic set grows to 109 cases with a scam whose instruction to the model is paraphrased, so no trigger phrase catches it; six cards are relabelled where the model's reading of the category holds up; the directory-renewal scam no longer counts an `invoice` category as unsafe, since its instruction is now removed before the model reads it. All confirmed.
 - Roadmap: evaluating Ollama's MLX models on Apple silicon Macs (possibly faster, not yet measured) is now a planned later item; if adopted, ecf will pick the right model type for the Mac by itself (OD-257).
 - The local model no longer reads text that addresses it ("note to the classifier: ..."): ecf replaces that text, from the line it starts on to the end of its paragraph, with a line saying it removed it, and the email still escalates (OD-254). The classifier is also told to ignore what an email claims about itself (OD-255).
