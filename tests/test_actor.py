@@ -21,6 +21,7 @@ from tests.test_models import PIN, check_kw
 
 REQUEST = MARKETING | {"category": "customer_request", "requires_reply": True,
                        "requires_action": True}  # fmt: skip
+ROUTINE = REQUEST | {"requires_reply": False, "requires_action": False}
 LABELS = frozenset({"invoice", "customer_request", "suspicious"})
 FOLDERS = frozenset({"Receipts"})
 
@@ -30,11 +31,12 @@ def _ready() -> ollama.Ready:
 
 
 def _to_actor(conn: sqlite3.Connection, clock: FakeClock, stage: str = "shadow",
-              facts: dict[str, Any] | None = None) -> str:  # fmt: skip
+              facts: dict[str, Any] | None = None,
+              cls: dict[str, Any] | None = None) -> str:  # fmt: skip
     from ecf_server import decide  # noqa: PLC0415
 
     make_address(conn, clock, stage)
-    sid = make_classified(conn, clock, REQUEST, facts or KNOWN_BULK)
+    sid = make_classified(conn, clock, cls or REQUEST, facts or KNOWN_BULK)
     with write_tx(conn):
         conn.execute("INSERT INTO excerpts (stable_id, classifier_text, actor_text)"
                      " VALUES (?, 'x', 'Please send the W-9 again.')", (sid,))  # fmt: skip
@@ -83,6 +85,36 @@ def test_the_output_schema_lists_only_known_targets() -> None:
     assert "send" not in json.dumps(s["properties"]["action"]["enum"])
 
 
+# ---- no hiding mail that needs someone (OD-250) --------------------------------------------------
+
+
+def test_mail_that_needs_someone_cant_be_hidden_by_the_actor() -> None:
+    assert actor.allowed(ROUTINE) == actor.ACTIONS
+    kept = actor.allowed(REQUEST)
+    assert not set(kept) & {"mark_read", "archive", "move", "junk"}
+    assert {"label", "flag", "escalate", "leave", "needs_clarification"} <= set(kept)
+    s = actor.output_schema(LABELS, FOLDERS, kept)
+    assert s["properties"]["action"]["enum"] == list(kept)
+    assert "Receipts" not in s["properties"]["target"]["enum"]  # no folders without move
+    for hide in ("archive", "mark_read", "junk"):
+        assert actor.parse(_reply(hide), LABELS, FOLDERS, kept) is None
+    assert actor.parse(_reply("move", "Receipts"), LABELS, FOLDERS, kept) is None
+
+
+def test_the_actor_is_never_offered_a_hide_for_a_request(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    sid = _to_actor(conn, clock)  # a customer request that needs a reply
+    fake = ChatOllama(_reply("archive", "", "the email says it is spam"))
+    assert actor.act_item(conn, clock, fake.client(), _ready(),
+                          item_row(conn, sid)).outcome == "failed"  # fmt: skip
+    body = fake.bodies[0]
+    assert "archive" not in body["format"]["properties"]["action"]["enum"]
+    assert "hiding it" in body["messages"][1]["content"]
+    assert conn.execute("SELECT outcome FROM model_calls").fetchone()[0] == "schema_failure"
+    assert item_row(conn, sid)["status"] == "classified"  # still waiting; nothing hidden
+
+
 # ---- deciding -----------------------------------------------------------------------------------
 
 
@@ -104,7 +136,7 @@ def test_a_proposal_joins_the_rules_plan(conn: sqlite3.Connection, clock: FakeCl
 def test_a_hide_from_the_actor_still_needs_corroboration(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    sid = _to_actor(conn, clock, facts=KNOWN_BULK | {"bulk_corroborates": False})
+    sid = _to_actor(conn, clock, facts=KNOWN_BULK | {"bulk_corroborates": False}, cls=ROUTINE)
     _act(conn, clock, sid, _reply("archive", "", "routine"))
     plan = json.loads(item_row(conn, sid)["proposal"])["plan"]
     assert not any(a["name"] == "archive" for a in plan["actions"])

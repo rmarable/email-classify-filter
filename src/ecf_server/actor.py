@@ -12,6 +12,11 @@ answer one of its questions (`clarified`). One request per item:
   `reason`, capped, with links, addresses and phone numbers removed before it is stored or shown
   (§8.5), and labelled as model output. Sends, forwards and drafts aren't in the local vocabulary
   (outbound and drafts arrive in V1.5).
+- **No hiding mail that needs someone** (operator decision 2026-10-01, OD-250): when the
+  classification says the email needs action or a reply, the hide actions (mark_read, archive,
+  move, junk) are left out of `format` and refused by `parse`, so text in the email can't talk
+  the actor into hiding it (the eval's `starter-injection` got an archive 7-8 times in 10 by
+  prompt alone). Mail the classifier calls routine still gets them, and policy's I1 check.
 - **Then the policy** (policy.proposal): the proposed action gets the same checks as a rule's (I1:
   a hide still needs corroboration; I4: targets), and joins the rule's actions.
 - **A question** on a high-risk item escalates instead (`local_high_risk`, §8.2); otherwise it goes
@@ -34,6 +39,7 @@ from ecf_server.log_bridge import log
 from ecf_server.modelq import ItemResult
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.policy import Dropped, Planned
+from ecf_server.rules import HIDE_ACTIONS
 from ecf_server.state_machine import Stage, Status, TransitionContext
 
 MAX_INPUT_BYTES = 6000  # the actor excerpt, with room for the prefix, answers and output
@@ -62,12 +68,20 @@ Answer with a JSON object with the fields action, target and reason, and nothing
 """
 
 
-def output_schema(labels: frozenset[str], folders: frozenset[str]) -> dict[str, Any]:
-    targets = ["", *sorted(labels | folders)]
+def allowed(classification: dict[str, Any]) -> tuple[str, ...]:
+    """The actions the actor may propose for this email (OD-250)."""
+    if classification.get("requires_action") or classification.get("requires_reply"):
+        return tuple(a for a in ACTIONS if a not in HIDE_ACTIONS)
+    return ACTIONS
+
+
+def output_schema(labels: frozenset[str], folders: frozenset[str],
+                  actions: tuple[str, ...] = ACTIONS) -> dict[str, Any]:  # fmt: skip
+    targets = ["", *sorted(labels | (folders if "move" in actions else frozenset[str]()))]
     return {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": list(ACTIONS)},
+            "action": {"type": "string", "enum": list(actions)},
             "target": {"type": "string", "enum": targets},
             "reason": {"type": "string"},
         },
@@ -83,11 +97,15 @@ def user_message(text: str, classification: dict[str, Any], answered: list[dict[
     for r in answered:
         parts.append(f"Earlier you asked: {r.get('question', '')}\nThe owner answered: "
                      f"{str(r.get('answer', ''))[:answers.ANSWER_MAX]}")  # fmt: skip
+    if allowed(classification) != ACTIONS:
+        parts.append("This email needs action or a reply, so hiding it (mark_read, archive, move,"
+                     " junk) isn't available.")  # fmt: skip
     parts.append("Decide the next step.")
     return "\n\n".join(parts)
 
 
-def parse(content: str, labels: frozenset[str], folders: frozenset[str]) -> dict[str, str] | None:
+def parse(content: str, labels: frozenset[str], folders: frozenset[str],
+          actions: tuple[str, ...] = ACTIONS) -> dict[str, str] | None:  # fmt: skip
     """The validated proposal, or None (the grammar is checked again, never trusted: I4)."""
     try:
         data = json.loads(content)
@@ -99,7 +117,7 @@ def parse(content: str, labels: frozenset[str], folders: frozenset[str]) -> dict
     action, target, reason = d["action"], d["target"], d["reason"]
     if not (isinstance(action, str) and isinstance(target, str) and isinstance(reason, str)):
         return None
-    if action not in ACTIONS or (target and target not in labels | folders):
+    if action not in actions or (target and target not in labels | folders):
         return None
     return {"action": action, "target": target, "reason": answers.model_text(reason, REASON_MAX)}
 
@@ -110,7 +128,8 @@ def ask(client: Client, text: str, classification: dict[str, Any],
     """One actor call (the service's items and `ecf eval run` alike)."""
     return client.chat(ollama.load_pin().ecf_tag, INSTRUCTIONS,
                        user_message(text, classification, answered, secrets.token_hex(8)),
-                       role="actor", fmt=output_schema(labels, folders))  # fmt: skip
+                       role="actor",
+                       fmt=output_schema(labels, folders, allowed(classification)))  # fmt: skip
 
 
 def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: ollama.Ready,
@@ -139,7 +158,7 @@ def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
         ollama.record_call(conn, clock, role="actor", outcome="truncated", digest=ready.digest,
                            metrics=m, **tags)  # fmt: skip
         return ItemResult("failed", m)
-    got = parse(reply.content, labels, folders)
+    got = parse(reply.content, labels, folders, allowed(ctx.classification))
     if got is None:
         ollama.record_call(conn, clock, role="actor", outcome="schema_failure",
                            digest=ready.digest, metrics=m, **tags)  # fmt: skip

@@ -21,7 +21,7 @@ from ecf_server import decide, items, modelq, ollama
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
-from tests.test_classifier import REPLY, ChatOllama
+from tests.test_classifier import GOOD, ChatOllama
 from tests.test_decide import KNOWN_BULK, MARKETING, make_address, make_classified
 from tests.test_models import check_kw
 
@@ -134,7 +134,7 @@ def test_check_runs_a_model_round_and_reports_it(
 
     make_address(conn, clock, "shadow")
     _waiting_items(conn, clock, 2)
-    fake = ChatOllama(REPLY)
+    fake = ChatOllama(json.dumps(GOOD))
     state = ServiceState(install="t", token="x", started_at="2026-10-01T12:00:00.000000Z",
                          clock=clock, db_path=db_path, model_client=fake.client,
                          model_check=check_kw())  # fmt: skip

@@ -338,7 +338,7 @@ def _act(client: Client, text: str, cls: dict[str, Any],
         reply = actor.ask(client, text, cls, [], known, frozenset())
     except OllamaError:
         return None
-    return actor.parse(reply.content, known, frozenset())
+    return actor.parse(reply.content, known, frozenset(), actor.allowed(cls))
 
 
 def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: ResultFile) -> None:

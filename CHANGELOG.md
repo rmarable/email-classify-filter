@@ -5,8 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- The local model can no longer propose hiding (mark read, archive, move, junk) an email that needs action or a reply, whatever the email says (OD-250).
 - When the local model asks you a question about an email, its decision is now kept in the email's record and audit log (it was missing).
-- The local classifier answers about 40% faster: it replies with a short list of values instead of named fields; what ecf stores and checks is unchanged (OD-249).
+- The local classifier keeps its reply with named fields: a faster reply format was tried and dropped because the model's fraud risk became less stable (OD-249, OD-251).
 - A heat pause now lasts 3 minutes and happens at most once per backlog; before, it lasted until the next check, and on a fanless Mac it kept recurring and stalled a backlog (OD-248).
 - New development command `ecf replay <eml-dir>`: appends .eml files into a test IMAP mailbox with fresh Message-IDs (OD-238); `--via smtp` isn't built.
 - New commands `ecf eval run`, `ecf eval status` and `ecf eval stop`: the synthetic set through the local model, scored for labels, rules and safety; results keep metrics only and are tied to the model's digest; on battery a run pauses at 15% (`--battery-floor`) and resumes on AC (OD-237).
