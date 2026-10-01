@@ -1,0 +1,20 @@
+Received: from mail.partner-q.example (mail.partner-q.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id bug-api-rate-limit; Wed, 28 Oct 2026 08:00:00
+ +0000
+From: Partner Q Engineering <eng@partner-q.example>
+To: ap@acme.example
+Subject: 429 errors on the export API
+Date: Wed, 28 Oct 2026 08:00:00 +0000
+Message-ID: <bug-api-rate-limit.be1de2bfc3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Since Monday our integration gets HTTP 429 after about 20 requests per minute=
+, although the
+documented limit is 120. This breaks the nightly sync for our shared customer=
+s. Can you check?
+
+Partner Q Engineering

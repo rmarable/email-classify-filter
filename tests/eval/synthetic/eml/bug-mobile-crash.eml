@@ -1,0 +1,15 @@
+Received: from mail.customer-gg.example (mail.customer-gg.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id bug-mobile-crash; Tue, 27 Oct
+ 2026 16:00:00 +0000
+From: Customer GG <it@customer-gg.example>
+To: ap@acme.example
+Subject: App crashes on launch
+Date: Tue, 27 Oct 2026 16:00:00 +0000
+Message-ID: <bug-mobile-crash.fe75adf0f4@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Since the latest version the app closes right after the splash screen on two =
+of our phones.
+Is there a fix or a workaround?

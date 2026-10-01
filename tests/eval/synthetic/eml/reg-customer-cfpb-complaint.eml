@@ -1,0 +1,16 @@
+Received: from mail.customer-cc.example (mail.customer-cc.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id reg-customer-cfpb-complaint;
+ Fri, 23 Oct 2026 15:00:00 +0000
+From: Customer CC <owner@customer-cc.example>
+To: ap@acme.example
+Subject: Complaint filed
+Date: Fri, 23 Oct 2026 15:00:00 +0000
+Message-ID: <reg-customer-cfpb-complaint.312087b895@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+I have asked three times for my cancellation to be processed and was still ch=
+arged. I have now
+filed a complaint with the CFPB. Please process the refund and confirm in wri=
+ting.

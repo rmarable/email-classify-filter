@@ -1,0 +1,17 @@
+Received: from mail.distributor-nn.example (mail.distributor-nn.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id sales-reseller-volume; Sat, 31
+ Oct 2026 11:00:00 +0000
+From: Distributor NN <sales@distributor-nn.example>
+To: ap@acme.example
+Subject: Volume pricing for resale
+Date: Sat, 31 Oct 2026 11:00:00 +0000
+Message-ID: <sales-reseller-volume.ef245a81f1@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+We distribute software to about 300 small firms. What discount would you offe=
+r for 500 seats a
+year resold through us?

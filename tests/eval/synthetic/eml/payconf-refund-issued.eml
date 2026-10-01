@@ -1,0 +1,19 @@
+Received: from mail.vendor-b.example (mail.vendor-b.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id payconf-refund-issued; Thu, 29 Oct 2026
+ 10:00:00 +0000
+From: Vendor B Accounts <accounts@vendor-b.example>
+To: ap@acme.example
+Subject: Refund issued for order 6610
+Date: Thu, 29 Oct 2026 10:00:00 +0000
+Message-ID: <payconf-refund-issued.c2f68f3f80@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We issued a refund of 214.00 for the damaged items in order 6610. It should a=
+ppear on your card
+within 5 business days.
+
+Vendor B Accounts
