@@ -5,7 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
-- The synthetic set grows to 58 cases: 25 new ones cover payment confirmations, remittances, billing and sales questions, bug reports (one with an injection), partnerships, notifications, spam and other mail, pending your labels.
+- The synthetic set grows to 58 cases: 25 new ones cover payment confirmations, remittances, billing and sales questions, bug reports (one with an injection), partnerships, notifications, spam and other mail, all confirmed.
 - The local model can no longer propose hiding (mark read, archive, move, junk) an email that needs action or a reply, whatever the email says (OD-250).
 - When the local model asks you a question about an email, its decision is now kept in the email's record and audit log (it was missing).
 - The local classifier keeps its reply with named fields: a faster reply format was tried and dropped because the model's fraud risk became less stable (OD-249, OD-251).
