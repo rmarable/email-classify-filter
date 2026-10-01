@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- New command `ecf stats [--since 7d] [--address] [--preset]`: the local model's tokens (per email too), reading and writing speeds and load times, by model and role. The daily summary adds one line for the model's last 24 hours, and each eval run records the same figures, which `ecf eval compare` shows for both runs.
 - `ecf stage set <address> live` now works: it checks the go-live gate for the model ecf runs (reviewed count and accuracy, no missed fraud among your reviews, no unsafe model proposals on payment or fraud mail, and a safe synthetic-set run on the current set; OD-260, OD-261), asks for step-up, runs held emails up to 7 days old (with your fixes) and can mark older ones handled by hand. `--override --reason` waives only the review count and accuracy. `ecf stage status` shows each address's gate, ecf posts once when an address is ready, and a model change moves a live address back to assist.
 - Eval results now keep what the model answered for each case (schema values and the rule, never text), and `ecf eval label` shows where that differs from the expected values (`--results` picks the file) (OD-259).
 - `ecf eval label` now flags cases that need your judgement (a card's `review` note says what to decide) and `--show-flags` goes through only those; 22 of the 50 new cases are flagged.

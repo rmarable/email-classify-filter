@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 import typer
@@ -20,6 +20,7 @@ from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_models import make_models_app
 from ecf.cli_slack import make_app as make_slack_app
+from ecf.cli_stats import make_stats_command
 from ecf.client import LocalClient
 from ecf.doctor import Level, run_checks
 from ecf.errors import EcfError
@@ -76,6 +77,7 @@ app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
 make_admin_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
+make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
 
@@ -907,6 +909,10 @@ def eval_compare(a: Path, b: Path) -> None:
         f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    for name, run in (("A", ra), ("B", rb)):
+        line = _model_figures(run.summary)
+        if line:
+            typer.echo(f"{name}  model: {line}")
     fields = compare_fields(ra, rb)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
@@ -914,6 +920,19 @@ def eval_compare(a: Path, b: Path) -> None:
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+
+
+def _model_figures(summary: dict[str, object] | None) -> str | None:
+    """A result's tokens and speeds (stats.py's figures; absent in results before V1.3 step 9)."""
+    m = (summary or {}).get("model")
+    if not isinstance(m, dict):
+        return None
+    f = cast(dict[str, Any], m)
+    w, t = f["generation_tps"], f["seconds"]
+    per_email = "-" if f["tokens_per_email"] is None else f"{f['tokens_per_email']:.0f}"
+    return (f"{f['calls']} calls, about {per_email} tokens per email; writing"
+            f" {w['median']} tokens/s median (slowest 5% {w['slowest_5']}); {t['median']} s per"
+            f" call median, {t['p95']} s p95")  # fmt: skip
 
 
 def main() -> None:

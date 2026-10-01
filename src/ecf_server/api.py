@@ -17,6 +17,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -69,6 +70,7 @@ from ecf_server import (
     slack_doctor,
     slack_routes,
     stages,
+    stats,
     stepup,
 )
 from ecf_server.chat import FakeChat
@@ -737,9 +739,29 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def install_models(_request: Request) -> JSONResponse:
         return JSONResponse(models.start_install(state.connect, state.clock, state.model_client))
 
+    @allow(Caller.CLI)
+    def show_stats(request: Request) -> JSONResponse:
+        """SPEC §13.4 (V1.3 step 9): `ecf stats`."""
+        q = request.query_params
+        try:
+            hours = float(q.get("hours", "168"))
+        except ValueError as exc:
+            raise InvalidInputError("hours: a number") from exc
+        if not 0 < hours <= 24 * 366:
+            raise InvalidInputError("hours: more than 0, at most a year")
+        conn = state.connect()
+        try:
+            ref = q.get("address")
+            aid = addresses.get_address(conn, ref)["address_id"] if ref else None
+            since = state.clock.now() - timedelta(hours=hours)
+            return JSONResponse(stats.report(conn, since, address=aid, preset=q.get("preset")))
+        finally:
+            conn.close()
+
     return [
         Route("/v1/models", show_models, methods=["GET"]),
         Route("/v1/models/install", install_models, methods=["POST"]),
+        Route("/v1/stats", show_stats, methods=["GET"]),
     ]
 
 

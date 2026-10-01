@@ -58,6 +58,7 @@ from ecf_server import (
     slack_admin,
     slack_out,
     slack_routes,
+    stats,
     triggers,
 )
 from ecf_server.cards import Card
@@ -366,6 +367,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
     client = client_factory()
     scratch = ruletest._Scratch(clock)  # pyright: ignore[reportPrivateUsage]
     results: list[CaseResult] = []
+    calls: list[stats.Call] = []
     firsts: dict[str, dict[str, Any] | None] = {}
     try:
         ready = ollama.readiness(client, **check_kw)
@@ -378,7 +380,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
             raw = case.path.read_bytes()
             facts = scratch.facts(raw)
             text = parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
-            cls = _classify(client, text, schema) if opts.classifier else None
+            cls = _classify(client, text, schema, calls) if opts.classifier else None
             if i < DETERMINISM_CASES:
                 firsts[case.id] = cls
             plan = None
@@ -388,9 +390,8 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
                                      frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
                 if opts.actor and plan.to_actor:
-                    proposal = _act(
-                        client, parse(raw).excerpt(4000, triggers.redact_injection), cls, known
-                    )
+                    proposal = _act(client, parse(raw).excerpt(4000, triggers.redact_injection),
+                                    cls, known, calls)  # fmt: skip
                     if proposal is not None and proposal["action"] != "needs_clarification":
                         one = policy.proposal(ctx, plan, proposal["action"],
                                               proposal["target"] or None, known)  # fmt: skip
@@ -402,11 +403,12 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
         if opts.classifier and RUN.state == "running":
             for case in cases[:DETERMINISM_CASES]:
                 raw = case.path.read_bytes()
-                again = _classify(
-                    client, parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection), schema
-                )
+                again = _classify(client, parse(raw).excerpt(CLASSIFIER_CHARS,
+                                                             triggers.redact_injection),
+                                  schema, calls)  # fmt: skip
                 diffs += again != firsts.get(case.id)
-        summary = summarize(results, diffs)
+        summary: dict[str, object] = dict(summarize(results, diffs))
+        summary["model"] = stats.summarize(calls, emails=len(results) if opts.classifier else None)
         result = ResultFile(run_id=RUN.run_id, pair="gemma4-12b/local", set_version=version,
                             created_at=to_ts(clock.now()), cases=results, digest=ready.digest,
                             summary=summary)  # fmt: skip
@@ -421,23 +423,39 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
         conn.close()
 
 
-def _classify(client: Client, text: str, schema: Any) -> dict[str, Any] | None:
+def _classify(client: Client, text: str, schema: Any,
+              calls: list[stats.Call]) -> dict[str, Any] | None:  # fmt: skip
     try:
         reply = classifier.ask(client, text, schema)
     except OllamaError:
+        calls.append(_call(None))
         return None
     if classifier.truncated(reply):
+        calls.append(_call(None))
         return None
-    return classifier.parse(reply.content, schema)
+    out = classifier.parse(reply.content, schema)
+    calls.append(_call(reply.metrics if out is not None else None))
+    return out
 
 
-def _act(client: Client, text: str, cls: dict[str, Any],
-         known: frozenset[str]) -> dict[str, str] | None:  # fmt: skip
+def _act(client: Client, text: str, cls: dict[str, Any], known: frozenset[str],
+         calls: list[stats.Call]) -> dict[str, str] | None:  # fmt: skip
     try:
         reply = actor.ask(client, text, cls, [], known, frozenset())
     except OllamaError:
+        calls.append(_call(None))
         return None
-    return actor.parse(reply.content, known, frozenset(), actor.allowed(cls))
+    out = actor.parse(reply.content, known, frozenset(), actor.allowed(cls))
+    calls.append(_call(reply.metrics if out is not None else None))
+    return out
+
+
+def _call(m: ollama.Metrics | None) -> stats.Call:
+    """A model call for the run's figures (stats.py); None for one that failed."""
+    if m is None:
+        return stats.Call(False, None, None, None, None, None, None, None)
+    return stats.Call(True, m.prompt_tokens, m.cached_tokens, m.output_tokens, m.prompt_ns,
+                      m.eval_ns, m.load_ns, m.total_ns)  # fmt: skip
 
 
 def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: ResultFile) -> None:

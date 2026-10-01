@@ -114,7 +114,11 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     text = path.read_text()
     assert "bank has changed" not in text and "SYSTEM NOTE" not in text  # no message text (I5)
-    assert json.loads(text)["summary"]["determinism_diffs"] == 0
+    summary = json.loads(text)["summary"]
+    assert summary["determinism_diffs"] == 0
+    model = summary["model"]  # the run's own token and speed figures (step 9)
+    assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
+    assert model["generation_tps"]["median"] is not None
 
 
 def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
