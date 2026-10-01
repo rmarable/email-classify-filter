@@ -1,0 +1,13 @@
+Received: from mail.parcel-courier.example (mail.parcel-courier.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id notif-package-delivered; Tue,
+ 10 Nov 2026 13:00:00 +0000
+From: Courier Updates <updates@parcel-courier.example>
+To: ap@acme.example
+Subject: Delivered - parcel 4471-22
+Date: Tue, 10 Nov 2026 13:00:00 +0000
+Message-ID: <notif-package-delivered.f25932e134@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your parcel 4471-22 was delivered at 12:41 and left at reception.

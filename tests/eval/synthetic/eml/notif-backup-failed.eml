@@ -1,0 +1,15 @@
+Received: from mail.cloud-backup.example (mail.cloud-backup.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id notif-backup-failed; Wed, 11
+ Nov 2026 06:00:00 +0000
+From: Backup Service <alerts@cloud-backup.example>
+To: ap@acme.example
+Subject: Nightly backup failed
+Date: Wed, 11 Nov 2026 06:00:00 +0000
+Message-ID: <notif-backup-failed.1ee3f6ef29@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The nightly backup of the file server failed at 02:13 UTC (destination unreac=
+hable). The next
+attempt is tonight. Check the destination settings to avoid a second failure.

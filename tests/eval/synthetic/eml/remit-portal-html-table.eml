@@ -1,0 +1,32 @@
+Received: from mail.payables-hub.example (mail.payables-hub.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-portal-html-table; Thu,
+ 05 Nov 2026 16:00:00 +0000
+From: Payables Hub <no-reply@payables-hub.example>
+To: ap@acme.example
+Subject: Remittance advice from Customer AF
+Date: Thu, 05 Nov 2026 16:00:00 +0000
+Message-ID: <remit-portal-html-table.d19d9af931@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="=_ecf_remit-portal-html-table_0"
+
+--=_ecf_remit-portal-html-table_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Remittance advice from Customer AF. Payment of 3,050.00 for invoices INV-7840=
+ and INV-7843.
+
+--=_ecf_remit-portal-html-table_0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<p>Remittance advice from <b>Customer AF</b></p>
+<table><tr><th>Invoice</th><th>Amount</th></tr>
+<tr><td>INV-7840</td><td>2,000.00</td></tr>
+<tr><td>INV-7843</td><td>1,050.00</td></tr>
+<tr><td>Total</td><td>3,050.00</td></tr></table>
+<p>Payment date 5 November 2026.</p>
+
+--=_ecf_remit-portal-html-table_0--

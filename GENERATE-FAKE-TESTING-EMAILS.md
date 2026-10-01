@@ -75,6 +75,7 @@ Hello, please note our bank has changed...
 |---|---|
 | `id` | lowercase letters, digits and hyphens; the file and Message-ID are derived from it |
 | `title`, `threat`, `control`, `why`, `failure_looks_like` | what the case tests and what breaking it looks like; `control` names the design control, so a failure points at it |
+| `review` | optional: why the operator's judgement is needed on this card (a judgement call, or a safety expectation to confirm). `ecf eval label` shows it as a flag and `--show-flags` goes through only flagged cases. Not part of the expected values, so changing it never undoes a confirmation |
 | `author` | `hand` (written or signed off by the operator), `claude` or `gemma` (drafted by a model). Accuracy is reported per author to expose same-model bias |
 | `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to `ap@acme.example`; `date` to 2026-10-01 09:00 UTC) |
 | `message_id` | optional override; default `<id.hash@synthetic.acme.example>` |
@@ -149,7 +150,7 @@ A card's `expected` values count toward gates only after the operator confirms t
 the start of the body, the expected values) and asks yes, skip or quit; a yes writes `confirmed`
 (the built file's SHA-256, a SHA-256 of the expected values, and the date) into `labels.jsonl`.
 Editing the card's message or expected values undoes it, and `ecf eval build` keeps a confirmation
-only while both hashes still match. `ecf eval label --status` counts them. Commit `labels.jsonl`
+only while both hashes still match. `ecf eval label --status` counts them and the flagged ones; `ecf eval label --show-flags` goes through only the pending cases whose card has a `review` note. Each case also shows what the model returned where it differs from the expected values, from the newest result in the install's `evals` folder (`--results <file>` picks another, e.g. a dev service's). Commit `labels.jsonl`
 after labelling. Model-drafted cards (`author: claude` or `gemma`) stay pending until you confirm
 them.
 

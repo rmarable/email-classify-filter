@@ -16,7 +16,7 @@ from ecf.eval import metrics as m
 from ecf.eval.builder import COMMIT_LIMIT, build_all, build_bytes, message_id
 from ecf.eval.cards import load_cards, parse_card
 from ecf.eval.hygiene import scan_text
-from ecf.eval.results import CaseResult, ResultFile, compare, compare_fields
+from ecf.eval.results import CaseResult, ResultFile, compare, compare_fields, differences
 
 ROOT = Path(__file__).resolve().parent / "eval" / "synthetic"
 CARD = """---
@@ -241,6 +241,18 @@ def test_compare() -> None:
     assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior
     with pytest.raises(InvalidInputError):
         compare(a, ResultFile(run_id="x", pair="x", set_version="v2", created_at="t", cases=[]))
+
+
+def test_differences_name_what_the_model_returned() -> None:
+    expected = {"labels": {"category": "other", "fraud_risk": "none"}, "rule": "otherwise"}
+    got = {"category": "partnership", "fraud_risk": "none", "rule": "requires_reply",
+           "payment_related": False}  # fmt: skip
+    assert differences(expected, got) == ["category partnership (expected other)",
+                                          "rule requires_reply (expected otherwise)"]  # fmt: skip
+    assert differences({"labels": {"payment_related": False}}, {"payment_related": True}) == [
+        "payment_related true (expected false)"
+    ]
+    assert differences(expected, {}) == []  # an older result without values
 
 
 def test_compare_fields_holm() -> None:

@@ -1,0 +1,20 @@
+Received: from mail.institute-dd.example (mail.institute-dd.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id partner-university-research;
+ Thu, 05 Nov 2026 13:00:00 +0000
+From: Research Lab <lab@institute-dd.example>
+To: ap@acme.example
+Subject: Research collaboration on support response times
+Date: Thu, 05 Nov 2026 13:00:00 +0000
+Message-ID: <partner-university-research.0822a3a1fe@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear ACME,
+
+Our lab studies how support teams prioritise requests. We would like to propo=
+se a collaboration
+using aggregated, anonymised statistics from your product. Could we schedule =
+a call to discuss?
+
+Research Lab

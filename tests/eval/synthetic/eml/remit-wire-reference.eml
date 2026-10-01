@@ -1,0 +1,19 @@
+Received: from mail.customer-ad.example (mail.customer-ad.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-wire-reference; Wed, 04
+ Nov 2026 14:00:00 +0000
+From: Customer AD Treasury <treasury@customer-ad.example>
+To: ap@acme.example
+Subject: Wire sent - reference AD-55120
+Date: Wed, 04 Nov 2026 14:00:00 +0000
+Message-ID: <remit-wire-reference.4d0fb786e7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+We sent a wire transfer of 8,400.00 today for invoice INV-7820, reference AD-=
+55120. Please let
+us know if it does not show up by Friday.
+
+Customer AD Treasury

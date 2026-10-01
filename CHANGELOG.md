@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- Eval results now keep what the model answered for each case (schema values and the rule, never text), and `ecf eval label` shows where that differs from the expected values (`--results` picks the file) (OD-259).
+- `ecf eval label` now flags cases that need your judgement (a card's `review` note says what to decide) and `--show-flags` goes through only those; 22 of the 50 new cases are flagged.
+- The synthetic set grows to 159 cases: 50 new remittances, partnership proposals, notifications, billing and customer requests, marketing, "other" mail and ten mid-risk cases (pressure to pay, a domain-renewal notice, a sign-in lure, gift cards for "staff awards"), all confirmed; every category now has at least 10 cases.
 - `ecf eval compare` now also compares each field (exact McNemar, Holm-adjusted across the fields), so a change in, say, fraud risk shows separately from the overall score.
 - While an eval holds the local model, hourly digests and the daily summary say that new mail is waiting for it; when an eval pauses on battery, ecf posts a note in the summary channel and shows a desktop notification, and posts again when it resumes.
 - The single-token confidence experiment ended early: asking the local model one field at a time was 4-7 times slower than one JSON answer, so the classifier keeps its JSON reply (OD-258).

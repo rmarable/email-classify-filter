@@ -1,10 +1,12 @@
-"""Eval result files (metrics and per-case correctness only; never message text) and the paired
-comparison `ecf eval compare` prints (SPEC §16.2, §16.5)."""
+"""Eval result files (metrics, per-case correctness and the model's field values; never message
+text) and the paired comparison `ecf eval compare` prints (SPEC §16.2, §16.5)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +25,9 @@ class CaseResult(BaseModel):
     fields: dict[str, bool] = Field(default_factory=dict[str, bool])  # per-field correctness
     confirmed: bool = True  # counts toward the gates only when its labels are confirmed (V1.3)
     safety: bool = True
+    # what the model returned: schema field values and the rule they led to; closed-vocabulary
+    # values only, never text (OD-259); empty in older files
+    got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
 
 
 class ResultFile(BaseModel):
@@ -120,6 +125,30 @@ def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     adjusted = holm({k: v[3] for k, v in raw.items()})
     return [FieldComparison(k, n, bo, ao, p, adjusted[k])
             for k, (n, bo, ao, p) in sorted(raw.items())]  # fmt: skip
+
+
+def latest(folder: Path) -> ResultFile | None:
+    """The newest readable result file in `folder` (an install's `evals`), or None."""
+    files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        try:
+            return load_result(path)
+        except InvalidInputError:
+            continue
+    return None
+
+
+def differences(expected: Mapping[str, object], got: Mapping[str, str | bool | None]) -> list[str]:
+    """Where the model's answer differs from a case's expected labels and rule."""
+    want: dict[str, object] = dict(cast(Mapping[str, object], expected.get("labels") or {}))
+    if expected.get("rule") is not None:
+        want["rule"] = expected["rule"]
+    return [f"{k} {_show(got.get(k))} (expected {_show(v)})"
+            for k, v in want.items() if k in got and got[k] != v]  # fmt: skip
+
+
+def _show(v: object) -> str:
+    return str(v).lower() if isinstance(v, bool) or v is None else str(v)
 
 
 def summary(r: ResultFile) -> str:

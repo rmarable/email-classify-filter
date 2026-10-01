@@ -1,0 +1,15 @@
+Received: from mail.doc-share-yy.example (mail.doc-share-yy.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id mid-shared-doc-signin; Fri, 13
+ Nov 2026 09:00:00 +0000
+From: Shared Files <share@doc-share-yy.example>
+To: ap@acme.example
+Subject: A document has been shared with you
+Date: Fri, 13 Nov 2026 09:00:00 +0000
+Message-ID: <mid-shared-doc-signin.1bb2677c0d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A document "Q4 contract revision" has been shared with you. Sign in with your=
+ work email and
+password to view it. The link expires in 24 hours.

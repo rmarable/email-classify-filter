@@ -68,6 +68,7 @@ class Card(BaseModel):
     control: str = ""
     why: str = ""
     failure_looks_like: str = ""
+    review: str = ""  # why the operator's judgement is needed; `ecf eval label` shows it
     author: Literal["hand", "claude", "gemma"] = "hand"
     from_: str = Field(alias="from")
     to: list[str] = Field(default_factory=lambda: ["ap@acme.example"])

@@ -1,0 +1,19 @@
+Received: from mail.customer-al.example (mail.customer-al.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id billing-wrong-tax-rate; Tue,
+ 10 Nov 2026 11:00:00 +0000
+From: Customer AL Finance <finance@customer-al.example>
+To: ap@acme.example
+Subject: Tax on invoice INV-7905
+Date: Tue, 10 Nov 2026 11:00:00 +0000
+Message-ID: <billing-wrong-tax-rate.79dfe9d8d8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Invoice INV-7905 charges 9.5% sales tax, but we are in a county with 7.25%. C=
+ould you check and
+send a corrected invoice?
+
+Customer AL Finance

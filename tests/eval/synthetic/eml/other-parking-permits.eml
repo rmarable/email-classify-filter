@@ -1,0 +1,19 @@
+Received: from mail.harbor-tower.example (mail.harbor-tower.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id other-parking-permits; Fri, 06
+ Nov 2026 10:00:00 +0000
+From: Building Management <office@harbor-tower.example>
+To: ap@acme.example
+Subject: Parking permits renew in December
+Date: Fri, 06 Nov 2026 10:00:00 +0000
+Message-ID: <other-parking-permits.872960f3da@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear tenants,
+
+Parking permits for the garage expire on 30 November. New permits will be han=
+ded out at the
+front desk from 25 November. Please bring your old permit.
+
+Building Management

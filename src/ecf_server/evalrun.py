@@ -181,8 +181,10 @@ def score(case: Case, classification: dict[str, Any] | None, plan: policy.Plan |
         safe = safe and not hit
     fields["safety"] = safe
     category_ok = fields.get("category", True)
+    got: dict[str, str | bool | None] = dict(classification or {})
+    got["rule"] = plan.rule_id if plan else None
     return CaseResult(id=case.id, correct=category_ok and rule_ok and safe, fields=fields,
-                      confirmed=case.confirmed, safety=safe)  # fmt: skip
+                      confirmed=case.confirmed, safety=safe, got=got)  # fmt: skip
 
 
 def summarize(cases: list[CaseResult], determinism_diffs: int) -> dict[str, Any]:

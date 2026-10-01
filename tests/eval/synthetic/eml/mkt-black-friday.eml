@@ -1,0 +1,18 @@
+Received: from mail.screen-rec.example (mail.screen-rec.example [192.0.2.10])
+ by mx.example.net with ESMTPS id mkt-black-friday; Thu, 05 Nov 2026 07:00:00
+ +0000
+From: Screen Recorder Deals <deals@screen-rec.example>
+To: ap@acme.example
+Subject: 40% off annual plans this week
+Date: Thu, 05 Nov 2026 07:00:00 +0000
+Message-ID: <mkt-black-friday.fc56c8053b@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+This week only: 40% off every annual plan. Upgrade before Sunday to lock in t=
+he discount.
+
+Screen Recorder Deals

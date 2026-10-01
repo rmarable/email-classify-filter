@@ -1,0 +1,20 @@
+Received: from mail.customer-ai.example (mail.customer-ai.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-euro-fees-deducted; Sat,
+ 07 Nov 2026 08:00:00 +0000
+From: Customer AI Compta <compta@customer-ai.example>
+To: ap@acme.example
+Subject: Payment INV-7870 in EUR
+Date: Sat, 07 Nov 2026 08:00:00 +0000
+Message-ID: <remit-euro-fees-deducted.b948a47a24@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Good morning,
+
+We paid invoice INV-7870 today in euros. Our bank deducted 18.00 in charges, =
+so you will receive
+slightly less than the invoice amount. Is that acceptable, or should we send =
+the difference?
+
+Customer AI Compta

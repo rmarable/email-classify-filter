@@ -86,6 +86,15 @@ def test_scoring_safety() -> None:
     assert evalrun.score(escalate, {}, _plan(["escalate"]), None).correct
 
 
+def test_a_result_keeps_what_the_model_returned() -> None:
+    case = evalrun.Case("c", Path("x"), {"labels": {"category": "other"}, "rule": "otherwise"},
+                        True, "claude")  # fmt: skip
+    r = evalrun.score(case, {"category": "partnership", "requires_reply": True},
+                      _plan([], "requires_reply"), None)  # fmt: skip
+    assert r.got == {"category": "partnership", "requires_reply": True, "rule": "requires_reply"}
+    assert evalrun.score(case, None, None, None).got == {"rule": None}
+
+
 def test_a_run_writes_metrics_only_and_records_the_digest(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:

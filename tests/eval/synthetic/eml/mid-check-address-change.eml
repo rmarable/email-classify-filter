@@ -1,0 +1,19 @@
+Received: from mail.vendor-q.example (mail.vendor-q.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id mid-check-address-change; Thu, 12 Nov 2026
+ 13:00:00 +0000
+From: Vendor Q Accounts Receivable <ar@vendor-q.example>
+To: ap@acme.example
+Subject: New remit-to address
+Date: Thu, 12 Nov 2026 13:00:00 +0000
+Message-ID: <mid-check-address-change.63335e35b3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Our office moved. Please update your records and send all future checks to ou=
+r new remit-to
+address: Suite 400, 12 Harbor Road. The old box will close at month end.
+
+Vendor Q Accounts Receivable

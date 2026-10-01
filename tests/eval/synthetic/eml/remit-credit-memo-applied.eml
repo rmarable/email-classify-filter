@@ -1,0 +1,19 @@
+Received: from mail.customer-ag.example (mail.customer-ag.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-credit-memo-applied;
+ Fri, 06 Nov 2026 09:15:00 +0000
+From: Customer AG Payables <ap@customer-ag.example>
+To: ap@acme.example
+Subject: Payment for INV-7850 less credit memo CM-310
+Date: Fri, 06 Nov 2026 09:15:00 +0000
+Message-ID: <remit-credit-memo-applied.aed3468516@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Our payment today covers invoice INV-7850 (4,000.00) less credit memo CM-310 =
+(250.00), so the
+amount sent is 3,750.00.
+
+Customer AG Payables

@@ -1,0 +1,19 @@
+Received: from mail.harbor-hotel.example (mail.harbor-hotel.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id other-lost-laptop-bag; Wed, 04
+ Nov 2026 09:30:00 +0000
+From: Front Desk <frontdesk@harbor-hotel.example>
+To: ap@acme.example
+Subject: Item left behind after your event
+Date: Wed, 04 Nov 2026 09:30:00 +0000
+Message-ID: <other-lost-laptop-bag.1d183f57a1@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+After your team's event last Thursday, housekeeping found a black laptop bag =
+in the meeting room.
+Please reply to arrange pickup or shipping.
+
+Front Desk

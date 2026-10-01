@@ -747,9 +747,22 @@ def eval_label(
     status_only: Annotated[
         bool, typer.Option("--status", help="Only count what's confirmed.")
     ] = False,
+    show_flags: Annotated[
+        bool,
+        typer.Option("--show-flags", help="Only the pending cases flagged for your judgement."),
+    ] = False,
+    results: Annotated[
+        Path | None,
+        typer.Option(
+            "--results",
+            help="An eval result file to compare with (default: the"
+            " newest in this install's evals folder).",
+        ),
+    ] = None,
 ) -> None:
     """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
-    toward the gates; editing its card undoes the confirmation."""
+    toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
+    note are flagged: the note says what to judge."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
     from ecf.eval import labels  # noqa: PLC0415
@@ -757,12 +770,22 @@ def eval_label(
     from ecf.prompts import require_terminal  # noqa: PLC0415
 
     n = labels.counts(root)
+    cards = {c.id: c for c in load_cards(root / "cases")}
+    flagged = [r for r in labels.pending(root) if (c := cards.get(r["id"])) and c.review]
     typer.echo(f"{n['confirmed']} of {n['cases']} cases confirmed")
+    if flagged:
+        typer.echo(f"{len(flagged)} pending cases flagged for your judgement (--show-flags)")
     if status_only:
         return
     require_terminal()
-    cards = {c.id: c for c in load_cards(root / "cases")}
-    todo = [r for r in labels.pending(root) if case_id is None or r["id"] == case_id]
+    from ecf.eval.results import differences, latest, load_result  # noqa: PLC0415
+
+    run = load_result(results) if results else latest(_paths().data_dir / "evals")
+    got = {c.id: c.got for c in run.cases if c.got} if run else {}
+    if got and run:
+        typer.echo(f"model answers from eval {run.run_id[:8]} ({run.created_at[:10]})")
+    todo = [r for r in (flagged if show_flags else labels.pending(root))
+            if case_id is None or r["id"] == case_id]  # fmt: skip
     if case_id and not todo:
         typer.echo(f"{case_id}: nothing to confirm (unknown, or already confirmed)")
         return
@@ -772,11 +795,18 @@ def eval_label(
             continue
         typer.echo("")
         typer.echo(f"== {card.id} ({card.author}): {card.title}")
+        if card.review:
+            typer.echo(f"   FLAG, needs your judgement: {card.review}")
+            typer.echo("   y = you agree with the expected values below as written;"
+                       " n = you'd change them (it stays pending; say what to change)")  # fmt: skip
         typer.echo(f"   tests: {card.threat}; control: {card.control}")
         typer.echo(f"   from: {card.from_}   subject: {card.subject}")
         body = " ".join(card.body.split())
         typer.echo(f"   body: {body[:400]}{'...' if len(body) > 400 else ''}")
         typer.echo(f"   expected: {json.dumps(r['expected'], sort_keys=True)}")
+        if card.id in got:
+            diff = differences(r["expected"], got[card.id])
+            typer.echo("   model returned: " + ("; ".join(diff) if diff else "the expected values"))
         answer = typer.prompt("   Right? [y]es / [n]o, skip / [q]uit", default="n").strip().lower()
         if answer == "q":
             break

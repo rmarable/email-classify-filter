@@ -1,0 +1,19 @@
+Received: from mail.customer-ao.example (mail.customer-ao.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id custreq-add-seats; Tue, 10 Nov
+ 2026 10:00:00 +0000
+From: Customer AO IT <it@customer-ao.example>
+To: ap@acme.example
+Subject: Please add 5 users
+Date: Tue, 10 Nov 2026 10:00:00 +0000
+Message-ID: <custreq-add-seats.2204ac9fd7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+We hired five new agents. Please add five seats to our account; the names are=
+ in the admin
+console already as pending invites.
+
+Customer AO IT

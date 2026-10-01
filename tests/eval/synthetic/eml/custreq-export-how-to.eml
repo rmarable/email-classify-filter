@@ -1,0 +1,18 @@
+Received: from mail.customer-aq.example (mail.customer-aq.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id custreq-export-how-to; Thu, 12
+ Nov 2026 16:00:00 +0000
+From: Customer AQ Support Lead <lead@customer-aq.example>
+To: ap@acme.example
+Subject: How do I export tickets?
+Date: Thu, 12 Nov 2026 16:00:00 +0000
+Message-ID: <custreq-export-how-to.2aa48864bb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Is there a way to export last quarter's tickets to a spreadsheet? I couldn't =
+find the option.
+
+Customer AQ Support Lead
