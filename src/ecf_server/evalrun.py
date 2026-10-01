@@ -46,7 +46,17 @@ from ecf.eval.metrics import wilson
 from ecf.eval.results import CaseResult, ResultFile
 from ecf.ids import new_random_id
 from ecf.schema import load_schema_v1
-from ecf_server import actor, classifier, modelq, ollama, policy, rules, ruletest, schedule
+from ecf_server import (
+    actor,
+    classifier,
+    modelq,
+    ollama,
+    policy,
+    rules,
+    ruletest,
+    schedule,
+    triggers,
+)
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -282,7 +292,7 @@ def _run(  # noqa: PLR0913, PLR0917 - the run's collaborators and options
                 break
             raw = case.path.read_bytes()
             facts = scratch.facts(raw)
-            text = parse(raw).excerpt(CLASSIFIER_CHARS)
+            text = parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
             cls = _classify(client, text, schema) if opts.classifier else None
             if i < DETERMINISM_CASES:
                 firsts[case.id] = cls
@@ -293,7 +303,9 @@ def _run(  # noqa: PLR0913, PLR0917 - the run's collaborators and options
                                      frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
                 if opts.actor and plan.to_actor:
-                    proposal = _act(client, parse(raw).excerpt(4000), cls, known)
+                    proposal = _act(
+                        client, parse(raw).excerpt(4000, triggers.redact_injection), cls, known
+                    )
                     if proposal is not None and proposal["action"] != "needs_clarification":
                         one = policy.proposal(ctx, plan, proposal["action"],
                                               proposal["target"] or None, known)  # fmt: skip
@@ -305,7 +317,9 @@ def _run(  # noqa: PLR0913, PLR0917 - the run's collaborators and options
         if opts.classifier and RUN.state == "running":
             for case in cases[:DETERMINISM_CASES]:
                 raw = case.path.read_bytes()
-                again = _classify(client, parse(raw).excerpt(CLASSIFIER_CHARS), schema)
+                again = _classify(
+                    client, parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection), schema
+                )
                 diffs += again != firsts.get(case.id)
         summary = summarize(results, diffs)
         result = ResultFile(run_id=RUN.run_id, pair="gemma4-12b/local", set_version=version,

@@ -19,6 +19,7 @@ import hashlib
 import json
 import quopri
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from email import message_from_bytes, policy
 from email.errors import HeaderParseError
@@ -114,12 +115,15 @@ class ParsedMessage:
     def visible_text(self) -> str:
         return "\n\n".join(t.visible for t in self.texts if t.visible)
 
-    def excerpt(self, limit: int) -> str:
-        """Plain text preferred, else visible HTML text; cut at a word boundary."""
+    def excerpt(self, limit: int, redact: Callable[[str], str] | None = None) -> str:
+        """Plain text preferred, else visible HTML text; `redact` applied before the cut at a
+        word boundary."""
         body = [t for t in self.texts if not t.attachment and t.visible]
         plain = [t.visible for t in body if t.content_type == "text/plain"]
         html = [t.visible for t in body if t.content_type == "text/html"]
         text = (plain or html or [""])[0]
+        if redact is not None:
+            text = redact(text)
         if len(text) <= limit:
             return text
         cut = text[:limit]

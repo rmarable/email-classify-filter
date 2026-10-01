@@ -11,7 +11,7 @@ subject: "Please confirm our remittance address"
 date: 2026-10-20T09:00:00Z
 author: claude
 expected:
-  labels: {category: remittance, payment_related: true}
+  labels: {category: vendor_change_request, payment_related: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -82,6 +82,39 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
     return hits
 
 
+INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
+
+
+def _injected(text: str) -> bool:
+    cs, ci = fold(text), fold_ci(text)
+    return any(p.regex.search(cs if p.case_sensitive else ci) for p in _patterns()["injection"])
+
+
+def redact_injection(text: str) -> str:
+    """Model input without what fraud trigger 10 matched (OD-254): in each paragraph where a
+    phrase matched, the line where the first match starts and every line after it in that
+    paragraph are replaced by INJECTION_MARK, so the model never reads the instruction and keeps
+    the text before it. A phrase split across a blank line still fires the trigger but isn't
+    removed."""
+    out: list[str] = []
+    removed = False
+    for para in _PARAGRAPH_BREAK.split(text):
+        if not _injected(para):
+            out.append(para)
+            continue
+        removed = True
+        lines = para.split("\n")
+        end = next(k for k in range(len(lines)) if _injected("\n".join(lines[: k + 1])))
+        start = max(j for j in range(end + 1) if _injected("\n".join(lines[j : end + 1])))
+        kept = "\n".join(lines[:start]).rstrip()
+        if kept:
+            out.append(f"{kept}\n{INJECTION_MARK}")
+        elif not out or not out[-1].endswith(INJECTION_MARK):
+            out.append(INJECTION_MARK)
+    return "\n\n".join(out) if removed else text
+
+
 def texts_of(parsed: ParsedMessage) -> list[str]:
     """Everything triggers look at: both texts of every part, Subject, display name, filenames."""
     out = [parsed.subject, parsed.from_name]

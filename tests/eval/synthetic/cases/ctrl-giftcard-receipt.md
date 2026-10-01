@@ -11,7 +11,7 @@ date: 2026-10-20T15:00:00Z
 bulk: true
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, fraud_risk: none}
+  labels: {category: payment_confirmation, sender_type: automated, fraud_risk: none}
   rule: unverified_payment_sender
 ---
 Thank you for your order 30018.

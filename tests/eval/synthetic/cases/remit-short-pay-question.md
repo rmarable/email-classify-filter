@@ -10,7 +10,7 @@ subject: "Remittance for ACME-1120 (partial)"
 date: 2026-10-06T15:45:00Z
 author: claude
 expected:
-  labels: {category: remittance, payment_related: true, requires_reply: true, fraud_risk: none}
+  labels: {category: billing_inquiry, payment_related: true, requires_reply: true, fraud_risk: none}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---
