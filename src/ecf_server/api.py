@@ -52,6 +52,7 @@ from ecf_server import (
     db,
     digests,
     evalrun,
+    gate,
     health,
     inbox,
     initsetup,
@@ -529,8 +530,21 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         body, ref = _body(request), str(request.path_params["ref"])
         to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
         nonce = _opt_str(body, "nonce_id")
+        override, held = body.get("override") is True, _opt_str(body, "held") or "run"
         return _with_conn(lambda c: stages.set_stage(c, state.clock, ref, to, reason=reason,
-                                                     nonce=nonce))  # fmt: skip
+                                                     nonce=nonce, override=override,
+                                                     held=held))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def address_gate(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+
+        def get(c: sqlite3.Connection) -> dict[str, Any]:
+            aid = addresses.get_address(c, ref)["address_id"]
+            return {"gate": gate.compute(c, aid).as_json(),
+                    "held": stages.held_by_age(c, aid, state.clock.now())}  # fmt: skip
+
+        return _with_conn(get)
 
     @allow(Caller.CLI)
     def set_sensitivity(request: Request) -> JSONResponse:
@@ -556,6 +570,7 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/stages", stage_status, methods=["GET"]),
         Route("/v1/addresses/{ref}/stage", set_stage, methods=["POST"]),
+        Route("/v1/addresses/{ref}/gate", address_gate, methods=["GET"]),
         Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
         Route("/v1/settings", show_settings, methods=["GET"]),
         Route("/v1/settings", set_setting, methods=["POST"]),

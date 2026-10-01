@@ -119,7 +119,7 @@ def test_settings_reach_their_readers(conn: sqlite3.Connection, clock: FakeClock
 # ---- stages ---------------------------------------------------------------------------------
 
 
-def test_assist_needs_step_up_live_waits_and_going_back_is_instant(
+def test_assist_needs_step_up_live_needs_the_gate_and_going_back_is_instant(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     _setup(conn, clock)
@@ -132,7 +132,7 @@ def test_assist_needs_step_up_live_waits_and_going_back_is_instant(
                          nonce=issued.nonce_id)  # fmt: skip
     assert r == {"address_id": "ap", "stage": "assist", "changed": True}
     assert _posts(conn)[-1]["card"]["title"] == "Stage: assist (Labels only)"
-    with pytest.raises(PolicyDeniedError, match=r"V1\.3"):
+    with pytest.raises(PolicyDeniedError, match="go-live safety gates"):  # no synthetic result yet
         stages.set_stage(conn, clock, "ap", "live", nonce=None)
     clock.advance(3 * 86400)
     [s] = stages.status(conn, clock.now())

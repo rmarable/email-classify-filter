@@ -47,6 +47,7 @@ from ecf_server import (
     pipeline,
     retention,
     schedule,
+    stages,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
@@ -234,6 +235,7 @@ class Service:
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
+                stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)

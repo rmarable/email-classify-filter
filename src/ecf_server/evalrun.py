@@ -55,6 +55,7 @@ from ecf_server import (
     rules,
     ruletest,
     schedule,
+    slack_admin,
     slack_out,
     slack_routes,
     triggers,
@@ -73,6 +74,7 @@ RUNTIME_CAP_S = 8 * 3600
 DETERMINISM_CASES = 10
 MAX_CASE_BYTES = ruletest.MAX_CASE_BYTES
 HOLDER = "eval"
+EVAL_ROOT = "eval_root"  # setting: the synthetic set the last run used (the go-live gate)
 PAUSE_POLL_S = 30.0  # how often a paused run looks for AC power
 
 
@@ -124,6 +126,11 @@ class Case:
     author: str
 
 
+def set_version(root: Path) -> str:
+    """The set's version: a hash of its labels.jsonl (confirmations included)."""
+    return hashlib.sha256((root / "labels.jsonl").read_bytes()).hexdigest()[:16]
+
+
 def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
     """The cases, with each confirmation re-checked against the files (OD-241), and the set's
     version (a hash of labels.jsonl)."""
@@ -150,8 +157,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
         ):
             continue  # fmt: skip
         out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", ""))))
-    version = hashlib.sha256(index.read_bytes()).hexdigest()[:16]
-    return out, version
+    return out, set_version(root)
 
 
 # ---------------------------------------------------------------------------- scoring
@@ -229,6 +235,7 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         RUN.run_id, RUN.state, RUN.done, RUN.total = new_random_id(), "running", 0, len(cases)
         RUN.detail, RUN.result, RUN.started_at = "", None, to_ts(clock.now())
         RUN.stop.clear()
+    _remember_root(connect, clock, opts.root)
 
     def work() -> None:
         try:
@@ -243,6 +250,22 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
 
     (spawn or _thread)(work)
     return RUN.snapshot()
+
+
+def _remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root: Path) -> None:
+    """Where the set is, so the go-live gate can check a run is on its current version. Best
+    effort: without it the gate's synthetic check fails closed ("isn't where the last run found
+    it")."""
+    try:
+        conn = connect()
+        try:
+            with write_tx(conn):
+                slack_admin.put_setting(conn, EVAL_ROOT, str(root.resolve()), to_ts(clock.now()),
+                                        actor="service")  # fmt: skip
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        log.warning("eval.root_not_recorded", error_type=type(exc).__name__)
 
 
 def note(connect: Callable[[], sqlite3.Connection], clock: Clock, text: str) -> None:

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- `ecf stage set <address> live` now works: it checks the go-live gate for the model ecf runs (reviewed count and accuracy, no missed fraud among your reviews, no unsafe model proposals on payment or fraud mail, and a safe synthetic-set run on the current set; OD-260, OD-261), asks for step-up, runs held emails up to 7 days old (with your fixes) and can mark older ones handled by hand. `--override --reason` waives only the review count and accuracy. `ecf stage status` shows each address's gate, ecf posts once when an address is ready, and a model change moves a live address back to assist.
 - Eval results now keep what the model answered for each case (schema values and the rule, never text), and `ecf eval label` shows where that differs from the expected values (`--results` picks the file) (OD-259).
 - `ecf eval label` now flags cases that need your judgement (a card's `review` note says what to decide) and `--show-flags` goes through only those; 22 of the 50 new cases are flagged.
 - The synthetic set grows to 159 cases: 50 new remittances, partnership proposals, notifications, billing and customer requests, marketing, "other" mail and ten mid-risk cases (pressure to pay, a domain-renewal notice, a sign-in lure, gift cards for "staff awards"), all confirmed; every category now has at least 10 cases.

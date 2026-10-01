@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import ConflictError
-from ecf_server import decide, escalations, review, settings, slack_in, stages
+from ecf_server import decide, escalations, gate, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.slack_in import Click
@@ -152,8 +152,12 @@ def test_a_post_never_exceeds_slacks_button_limit(
 
 def test_stage_status_shows_review_progress(conn: sqlite3.Connection, morning: FakeClock) -> None:
     slack_setup(conn, morning)
-    [a] = _items(conn, morning, MARKETING)
+    [a, b] = _items(conn, morning, MARKETING, MARKETING)
+    with write_tx(conn):  # only reviews of emails classified by the model ecf runs now count
+        conn.execute("UPDATE items SET pinned_models = ? WHERE stable_id = ?",
+                     (json.dumps({"digest": gate.current_digest()}), a))  # fmt: skip
     review.record(conn, morning, a, actor="t")
+    review.record(conn, morning, b, actor="t")
     [row] = stages.status(conn, morning.now())
     assert (
         row["review"] == "1/100 reviewed, 100% accurate, 99 to go (1 one by one, 0 with All"
