@@ -662,9 +662,9 @@ rules:
 
 **Starter rules:**
 1. **Fraud guard:** `fraud_risk ∈ {medium, high}`, `category = vendor_change_request`, `sender_type = staff ∧ sender_origin = external`, `payment_related ∧ auth_result = fail`, or a fraud trigger (not the regulator trigger, not the weak first-time + payment case, which gets `label(suspicious)`, `flag` and a digest section) → `label(suspicious)`, `flag`, `escalate`. Stop: no actor, never hidden.
-1b. **Weak fraud signal** (operator decision 2026-09-27, OD-171): the `fraud_weak` trigger (a first-time sender with a payment keyword and no second signal, or a lone Reply-To mismatch on a payment item) → `label(suspicious)`, `flag`; no actor, never hidden; a digest section. Evaluated right after rule 1.
+2. **Regulatory** (category or regulator trigger) → label, flag, escalate. Evaluated right after rule 1, before 1b and 1a (operator decision 2026-10-01, OD-253): in the earlier order a regulator notice that mentioned money from an unsigned or first-time sender matched 1b or 1a first and was only labelled and flagged, never escalated (found by the V1.3 eval: `reg-customer-cfpb-complaint`, `payconf-state-tax-receipt`, `regulator-irs-notice-text`). Such mail now loses the `suspicious` or `unverified_sender` label but keeps the flag and gets the escalation.
+1b. **Weak fraud signal** (operator decision 2026-09-27, OD-171): the `fraud_weak` trigger (a first-time sender with a payment keyword and no second signal, or a lone Reply-To mismatch on a payment item) → `label(suspicious)`, `flag`; no actor, never hidden; a digest section. Evaluated right after rule 2 (OD-253).
 1a. **Unverified payment sender** (all addresses; operator decision 2026-09-26, OD-065): `payment_related ∧ auth_result = none` → `label(unverified_sender)`, `flag`; no actor, never hidden; a digest section, not a thread each; the email alert fires on `high` addresses only. A per-sender step-up "human-verified" setting (`ecf sender set-verified`) suppresses this rule's flag and email for that sender, leaving fraud triggers on.
-2. **Regulatory** (category or regulator trigger) → label, flag, escalate.
 3. **Bug report** → label; flag if `priority ≥ high`; escalate if urgent; continue to the actor if `requires_reply`.
 4. **Invoice** → label; flag if `deadline_mentioned`; leave; continue to the actor if `requires_reply`.
 5. **Payment confirmation / remittance** → label; continue to the actor if `requires_reply` (rules 3-5: operator decision 2026-09-26, OD-066; high-risk items still go to Opus or `local_high_risk`).
@@ -2156,6 +2156,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-250 | 2026-10-01 | (V1.3 step 8d eval) | SPEC §7.4c | The actor can't propose hiding (mark_read, archive, move, junk) an email the classifier says needs action or a reply: those actions are removed from its reply format and refused |
 | OD-251 | 2026-10-01 | (V1.3 step 8d stability test) | SPEC §7.4a | Reverts OD-249: the classifier keeps the object reply with named keys; the array reply gave a lower and less stable `fraud_risk` on fraud emails, crossing policy thresholds |
 | OD-252 | 2026-10-01 | (V1.3 step 8 eval) | SPEC §8.5 | Fraud trigger 10: text addressed to an automated reader (an injection attempt) escalates through rule 1, whatever the model says; phrase list in `keywords.yaml` |
+| OD-253 | 2026-10-01 | (V1.3 step 8 eval) | SPEC §8.6 | Starter rule 2 (regulatory) moves before 1b and 1a, so a regulator trigger always escalates even when the mail also mentions money |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

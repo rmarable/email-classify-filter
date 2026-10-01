@@ -14,6 +14,14 @@ rules:
     actor: none
     hide: never
 
+  - id: regulatory                       # 2: before 1b and 1a, so a regulator trigger always
+                                         # escalates (operator decision 2026-10-01, OD-253)
+    when:
+      or: [{field: category, eq: regulatory}, {trigger: regulator}]
+    then: [{label: regulatory}, flag, escalate]
+    actor: none
+    hide: never
+
   - id: fraud_weak                       # 1b: first-time + payment, no second signal; or a lone
     when: {trigger: fraud_weak}          # Reply-To mismatch on a payment item. Digest section.
     then: [{label: suspicious}, flag]
@@ -27,13 +35,6 @@ rules:
         - {fact: auth_result, eq: none}
         - not: {fact: sender_verified, eq: true}  # `ecf sender set-verified` (OD-065)
     then: [{label: unverified_sender}, flag]
-    actor: none
-    hide: never
-
-  - id: regulatory                       # 2
-    when:
-      or: [{field: category, eq: regulatory}, {trigger: regulator}]
-    then: [{label: regulatory}, flag, escalate]
     actor: none
     hide: never
 

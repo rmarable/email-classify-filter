@@ -88,8 +88,8 @@ def test_i2_a_pre_check_escalation_always_survives_classification(ctx: Context) 
     if t["fraud"] or ctx.facts["quarantined"]:
         assert ("escalate", None) in names and ("label", "suspicious") in names
         assert p.rule_id == "fraud_guard" and not p.to_actor
-    elif t["regulator"] and not t["fraud_weak"] and not t["unverified_payment"]:
-        assert ("escalate", None) in names or p.rule_id != "regulatory"
+    elif t["regulator"]:  # rule 2 comes before 1b and 1a (OD-253): it always escalates
+        assert ("escalate", None) in names and p.rule_id in ("fraud_guard", "regulatory")
     if t["fraud_weak"] or t["regulator"] or t["fraud"]:
         assert not p.hides
 
