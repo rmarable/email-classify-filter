@@ -38,6 +38,7 @@ FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
     "bulk_signal": None,
     "content_unscanned": None,
     "sender_verified": None,
+    "payment_keyword": None,  # a payment keyword in the text (§8.5; OD-262)
 }
 TRIGGERS = frozenset({"fraud", "fraud_weak", "regulator", "unverified_payment"})
 ADDRESS_ATTRS: dict[str, tuple[str, ...]] = {"sensitivity": ("standard", "high")}

@@ -7,7 +7,10 @@ rules:
       or:
         - {field: fraud_risk, in: [medium, high]}
         - {field: category, eq: vendor_change_request}
-        - and: [{field: sender_type, eq: staff}, {fact: sender_origin, eq: external}]
+        - and:                           # "staff" from outside, about money (OD-262)
+            - {field: sender_type, eq: staff}
+            - {fact: sender_origin, eq: external}
+            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
         - {trigger: fraud}
     then: [{label: suspicious}, flag, escalate]
@@ -23,7 +26,10 @@ rules:
     hide: never
 
   - id: fraud_weak                       # 1b: first-time + payment, no second signal; or a lone
-    when: {trigger: fraud_weak}          # Reply-To mismatch on a payment item. Digest section.
+    when:                                # Reply-To mismatch on a payment item; or "staff" from
+      or:                                # outside with no money (OD-262). Digest section.
+        - {trigger: fraud_weak}
+        - and: [{field: sender_type, eq: staff}, {fact: sender_origin, eq: external}]
     then: [{label: suspicious}, flag]
     actor: none
     hide: never

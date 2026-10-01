@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- An email the local model says is from a colleague but that comes from outside your organisation now escalates only when it's about money; otherwise it's flagged in the digest. In the shadow run a mailing-list email escalated as fraud this way (OD-262).
 - `ecf check --until-empty` now waits for a scheduled check or the service's own model run instead of stopping early, and waits out heat pauses; the backlog estimate in `ecf status` uses the pace actually measured, heat pauses included, so it no longer reads a few minutes for a quarter-hour catch-up.
 - Closing shadow run through the local model on the test mailbox: 56 real emails classified in shadow with no failures and nothing changed in the mailbox; heat pauses and memory behaved as designed. Three findings are open for decision (SPEC §21.3), chief among them false escalations when the model calls an outside sender "staff".
 - `ecf init` now offers to install the local model when a mailbox uses preset A or B (starting ecf's Ollama login item first, or saying how to install Ollama), and `ecf init status` shows whether the model is installed.
