@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from ecf.status import OPEN
 from ecf_server import (
     cards,
+    evalrun,
     inbox,
     modelq,
     models,
@@ -114,6 +115,9 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
     lines += _model_lines(conn)
+    held = evalrun.slack_line()
+    if held:
+        lines.append(held)
     since_model = models.waiting_since(conn)
     if since_model:
         n = sum(v[1] for v in per_addr.values())

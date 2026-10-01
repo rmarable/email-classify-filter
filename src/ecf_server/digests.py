@@ -31,6 +31,7 @@ from ecf_server import (
     cards,
     checks,
     digest_actions,
+    evalrun,
     jobs,
     mailbox_actions,
     pause,
@@ -133,6 +134,9 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
               " Anything waiting: ecf inbox" if now - since > GAP
               else f"{len(rows)} new message(s) since {when}.")  # fmt: skip
     text = [opener]
+    held = evalrun.slack_line()
+    if held:
+        text.append(held)
     for title, lines in (("Weak fraud signals (first-time sender asking for payment):", weak),
                          ("Payment email from unverified senders:", unverified)):  # fmt: skip
         if lines:

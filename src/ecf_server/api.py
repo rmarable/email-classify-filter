@@ -66,12 +66,11 @@ from ecf_server import (
     settings,
     slack_admin,
     slack_doctor,
-    slack_out,
     slack_routes,
     stages,
     stepup,
 )
-from ecf_server.chat import Card, FakeChat
+from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
@@ -673,9 +672,10 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             raise ServiceUnavailableError("the service has no database yet")
         run = evalrun.start(state.connect, state.clock, state.model_client,
                             state.db_path.parent, opts, power=state.power,
-                            check_kw=state.model_check)  # fmt: skip
-        _eval_note(state, f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
-                          " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
+                            check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
+        evalrun.note(state.connect, state.clock,
+                     f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
+                     " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
         power = state.power()
         on_battery = power.laptop and not power.on_ac
         pct = schedule.battery_percent() if on_battery else None
@@ -704,21 +704,6 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
     ]
-
-
-def _eval_note(state: ServiceState, text: str) -> None:
-    """A line in the summary channel (§16.2): best effort, never fails the request."""
-    try:
-        conn = state.connect()
-        try:
-            route = slack_routes.summary_route(conn)
-            if route is not None:
-                slack_out.enqueue_post(conn, state.clock, key=f"eval:{to_ts(state.clock.now())}",
-                                       route=route, card=Card("Eval", text=text))  # fmt: skip
-        finally:
-            conn.close()
-    except Exception as exc:  # the eval runs either way
-        log.warning("eval.note_failed", error_type=type(exc).__name__)
 
 
 def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:

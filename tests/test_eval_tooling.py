@@ -16,7 +16,7 @@ from ecf.eval import metrics as m
 from ecf.eval.builder import COMMIT_LIMIT, build_all, build_bytes, message_id
 from ecf.eval.cards import load_cards, parse_card
 from ecf.eval.hygiene import scan_text
-from ecf.eval.results import CaseResult, ResultFile, compare
+from ecf.eval.results import CaseResult, ResultFile, compare, compare_fields
 
 ROOT = Path(__file__).resolve().parent / "eval" / "synthetic"
 CARD = """---
@@ -218,6 +218,9 @@ def test_metrics_known_values() -> None:
         "b": {"a": 0, "b": 1},
     }
     assert m.ordinal_mae(["low", "high"], ["medium", "high"], ["low", "medium", "high"]) == 0.5
+    holm = m.holm({"a": 0.01, "b": 0.04, "c": 0.03, "d": 0.005})
+    assert holm == pytest.approx({"d": 0.02, "a": 0.03, "c": 0.06, "b": 0.06})
+    assert m.holm({}) == {}
 
 
 def _run(pair: str, correct: list[bool]) -> ResultFile:
@@ -238,6 +241,21 @@ def test_compare() -> None:
     assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior
     with pytest.raises(InvalidInputError):
         compare(a, ResultFile(run_id="x", pair="x", set_version="v2", created_at="t", cases=[]))
+
+
+def test_compare_fields_holm() -> None:
+    def run(pair: str, cat: list[bool], rule: list[bool]) -> ResultFile:
+        cases = [CaseResult(id=str(i), correct=c and r, fields={"category": c, "rule": r})
+                 for i, (c, r) in enumerate(zip(cat, rule, strict=True))]  # fmt: skip
+        return ResultFile(run_id=pair, pair=pair, set_version="v1", created_at="t", cases=cases)
+
+    a = run("A", [False] * 8 + [True] * 12, [True] * 20)
+    b = run("B", [True] * 20, [True] * 19 + [False])
+    by = {f.field: f for f in compare_fields(a, b)}
+    assert (by["category"].b_only, by["category"].a_only) == (8, 0)
+    assert by["category"].p_value == pytest.approx(2 / 256)
+    assert by["category"].p_holm == pytest.approx(4 / 256) and by["category"].significant
+    assert (by["rule"].a_only, by["rule"].p_holm) == (1, 1.0) and not by["rule"].significant
 
 
 # ---- CLI
@@ -272,3 +290,4 @@ def test_cli_new_case_show_compare(tmp_path: Path) -> None:
     fb.write_text(_run("B", [True, True, True]).model_dump_json())
     out = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
     assert out.exit_code == 0 and "McNemar" in out.output
+    assert "per field" not in out.output  # no per-field results in these files

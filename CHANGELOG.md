@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.3-local-models (not yet tagged)
 
+- `ecf eval compare` now also compares each field (exact McNemar, Holm-adjusted across the fields), so a change in, say, fraud risk shows separately from the overall score.
+- While an eval holds the local model, hourly digests and the daily summary say that new mail is waiting for it; when an eval pauses on battery, ecf posts a note in the summary channel and shows a desktop notification, and posts again when it resumes.
 - The single-token confidence experiment ended early: asking the local model one field at a time was 4-7 times slower than one JSON answer, so the classifier keeps its JSON reply (OD-258).
 - The synthetic set grows to 109 cases with a scam whose instruction to the model is paraphrased, so no trigger phrase catches it; six cards are relabelled where the model's reading of the category holds up; the directory-renewal scam no longer counts an `invoice` category as unsafe, since its instruction is now removed before the model reads it. All confirmed.
 - Roadmap: evaluating Ollama's MLX models on Apple silicon Macs (possibly faster, not yet measured) is now a planned later item; if adopted, ecf will pick the right model type for the Mac by itself (OD-257).

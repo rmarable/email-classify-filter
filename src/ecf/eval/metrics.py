@@ -60,3 +60,15 @@ def mcnemar_exact(b: int, c: int) -> float:
     k = min(b, c)
     tail = sum(math.comb(n, i) for i in range(k + 1)) / 2**n
     return min(1.0, 2 * tail)
+
+
+def holm(p_values: dict[str, float]) -> dict[str, float]:
+    """Holm step-down adjusted p-values (family-wise error); compare each with alpha."""
+    ordered = sorted(p_values.items(), key=lambda kv: kv[1])
+    m = len(ordered)
+    out: dict[str, float] = {}
+    running = 0.0
+    for i, (name, p) in enumerate(ordered):
+        running = max(running, min(1.0, (m - i) * p))
+        out[name] = running
+    return out

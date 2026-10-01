@@ -17,7 +17,7 @@ from ecf.errors import ConflictError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf_server import evalrun, modelq, policy, schedule
-from ecf_server.clock import FakeClock
+from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
 from tests.test_models import check_kw
 
@@ -124,7 +124,7 @@ def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
 
 
 def test_a_low_battery_pauses_and_releases_the_queue(
-    monkeypatch: pytest.MonkeyPatch, root: Path
+    monkeypatch: pytest.MonkeyPatch, root: Path, clock: FakeClock
 ) -> None:
     monkeypatch.setattr(evalrun, "PAUSE_POLL_S", 0.01)
     plugged = {"ac": False}
@@ -140,10 +140,29 @@ def test_a_low_battery_pauses_and_releases_the_queue(
             plugged["ac"] = True
         return 10
 
+    told: list[tuple[str, bool]] = []
+    lines: list[str | None] = []
+
+    def tell(text: str, desktop: bool) -> None:
+        told.append((text, desktop))
+        lines.append(evalrun.slack_line())
+
     opts = evalrun.Options(root, battery_floor=15)
-    assert evalrun._hold(opts, power, battery, started=evalrun.time.monotonic())  # pyright: ignore[reportPrivateUsage]
+    evalrun.RUN.set(run_id="abcdef1234", state="running", done=4, total=10)
+    assert evalrun._hold(opts, power, battery, started=evalrun.time.monotonic(), clock=clock,  # pyright: ignore[reportPrivateUsage]
+                         tell=tell)  # fmt: skip
     assert len(seen) >= 3 and not any(seen)  # released while paused
     assert modelq.EXCLUSIVE.held()  # held again once on AC
+    assert modelq.EXCLUSIVE.since == to_ts(clock.now())  # for the digest's line
+    assert told == [
+        ("Eval abcdef12 paused on battery (10%, floor 15%) after case 4 of 10: plug in to resume."
+         " Model checks for new mail run meanwhile.", True),
+        ("Eval abcdef12 resumed on AC power (4 of 10 cases done): model checks for new mail wait"
+         " until it ends.", False),
+    ]  # once each, however long the pause  # fmt: skip
+    assert lines[1] == ("Eval abcdef12 paused (battery 10%, at or below 15%: plug in to resume);"
+                        " model checks for new mail run meanwhile (ecf eval status)")  # fmt: skip
+    evalrun.RUN.set(state="idle")
     modelq.EXCLUSIVE.release()
 
 

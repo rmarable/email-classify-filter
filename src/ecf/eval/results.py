@@ -9,10 +9,11 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import mcnemar_exact, wilson
+from ecf.eval.metrics import holm, mcnemar_exact, wilson
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 NON_INFERIORITY_POINTS = 3.0
+HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
 class CaseResult(BaseModel):
@@ -83,6 +84,42 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
         diff_points=100 * diff,
         diff_ci=ci,
     )
+
+
+@dataclass(frozen=True)
+class FieldComparison:
+    field: str
+    n: int
+    b_only: int
+    a_only: int
+    p_value: float
+    p_holm: float
+
+    @property
+    def significant(self) -> bool:
+        return self.p_holm < HOLM_ALPHA
+
+
+def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
+    """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
+    §16.5, secondary). A field counts on a case only when both runs scored it there."""
+    bm = {c.id: c.fields for c in b.cases}
+    pairs: dict[str, list[tuple[bool, bool]]] = {}
+    for c in a.cases:
+        other = bm.get(c.id)
+        if other is None:
+            continue
+        for name, ok in c.fields.items():
+            if name in other:
+                pairs.setdefault(name, []).append((ok, other[name]))
+    raw: dict[str, tuple[int, int, int, float]] = {}
+    for name, ps in pairs.items():
+        a_only = sum(x and not y for x, y in ps)
+        b_only = sum(y and not x for x, y in ps)
+        raw[name] = (len(ps), b_only, a_only, mcnemar_exact(b_only, a_only))
+    adjusted = holm({k: v[3] for k, v in raw.items()})
+    return [FieldComparison(k, n, bo, ao, p, adjusted[k])
+            for k, (n, bo, ao, p) in sorted(raw.items())]  # fmt: skip
 
 
 def summary(r: ResultFile) -> str:

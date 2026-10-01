@@ -12,7 +12,7 @@ import pytest
 
 from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
-from ecf_server import checks, daily, db, digests, items, pause, slack_admin
+from ecf_server import checks, daily, db, digests, evalrun, items, modelq, pause, slack_admin
 from ecf_server._slack import Envelope
 from ecf_server.actions import MessageChangedError, Planned
 from ecf_server.chat import FakeChat, RouteRef
@@ -95,6 +95,27 @@ def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.
     assert [(b["action"], b["ref"]) for b in card["buttons"]] == [("undo", "b" * 64),
                                                                   ("pause", "ap")]  # fmt: skip
     assert card["note"].startswith("This acts on the email only.")
+
+
+def test_the_digest_and_daily_summary_say_an_eval_holds_the_model(
+    conn: sqlite3.Connection,
+) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    assert digests.run(conn, clock) == 0
+    clock.advance(3600)
+    _item(conn, clock, "d" * 64, {})
+    line = ("Model checks paused for an eval since 2026-10-01 14:00 UTC: new mail waits for the"
+            " local model; fraud checks continue (ecf eval status)")  # fmt: skip
+    assert modelq.EXCLUSIVE.acquire("eval", to_ts(clock.now()))
+    try:
+        assert digests.run(conn, clock) == 1
+        assert _posts(conn)[0]["card"]["text"].splitlines()[1] == line
+        assert line in daily.card(conn, clock.now(), "2026-10-01").text.splitlines()
+    finally:
+        modelq.EXCLUSIVE.release()
+    assert evalrun.slack_line() is None
+    assert "eval" not in daily.card(conn, clock.now(), "2026-10-01").text
 
 
 def test_no_idle_digests_and_none_outside_business_hours(conn: sqlite3.Connection) -> None:

@@ -863,8 +863,9 @@ def eval_stop() -> None:
 
 @eval_app.command("compare")
 def eval_compare(a: Path, b: Path) -> None:
-    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points)."""
-    from ecf.eval.results import compare, load_result, summary  # noqa: PLC0415
+    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
+    with Holm)."""
+    from ecf.eval.results import compare, compare_fields, load_result, summary  # noqa: PLC0415
 
     ra, rb = load_result(a), load_result(b)
     c = compare(ra, rb)
@@ -876,6 +877,13 @@ def eval_compare(a: Path, b: Path) -> None:
         f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    fields = compare_fields(ra, rb)
+    if fields:
+        typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
+        for f in fields:
+            mark = "  significant" if f.significant else ""
+            typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
+                       f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
 
 
 def main() -> None:

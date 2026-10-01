@@ -55,12 +55,16 @@ from ecf_server import (
     rules,
     ruletest,
     schedule,
+    slack_out,
+    slack_routes,
     triggers,
 )
+from ecf_server.cards import Card
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.message import CLASSIFIER_CHARS, parse
+from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.rules import HIDE_ACTIONS
 
@@ -212,7 +216,8 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
           power: Callable[[], schedule.Power] = schedule.host_power,
           battery: Callable[[], int | None] = schedule.battery_percent,
           spawn: Callable[[Callable[[], None]], None] | None = None,
-          check_kw: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+          check_kw: dict[str, Any] | None = None,
+          notifier: Notifier | None = None) -> dict[str, Any]:  # fmt: skip
     cases, version = load(opts.root, fraud_only=opts.fraud_only)
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
@@ -226,7 +231,7 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     def work() -> None:
         try:
             _run(connect, clock, client_factory, data_dir, opts, cases, version, power,
-                 battery, check_kw or {})  # fmt: skip
+                 battery, check_kw or {}, notifier or NullNotifier())  # fmt: skip
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("eval.failed", error_type=type(exc).__name__)
             RUN.set(state="failed", detail=type(exc).__name__)
@@ -236,6 +241,49 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
 
     (spawn or _thread)(work)
     return RUN.snapshot()
+
+
+def note(connect: Callable[[], sqlite3.Connection], clock: Clock, text: str) -> None:
+    """A line in the summary channel (§16.2): best effort, never fails the caller."""
+    try:
+        conn = connect()
+        try:
+            route = slack_routes.summary_route(conn)
+            if route is not None:
+                slack_out.enqueue_post(conn, clock, key=f"eval:{to_ts(clock.now())}",
+                                       route=route, card=Card("Eval", text=text))  # fmt: skip
+        finally:
+            conn.close()
+    except Exception as exc:  # the eval runs either way
+        log.warning("eval.note_failed", error_type=type(exc).__name__)
+
+
+def _teller(connect: Callable[[], sqlite3.Connection], clock: Clock,
+            notifier: Notifier) -> Callable[[str, bool], None]:  # fmt: skip
+    def tell(text: str, desktop: bool) -> None:
+        note(connect, clock, text)
+        if desktop:
+            try:
+                notifier.notify("[ecf] Eval paused", text)
+            except Exception as exc:  # a notification never stops the run
+                log.warning("eval.notify_failed", error_type=type(exc).__name__)
+
+    return tell
+
+
+def slack_line() -> str | None:
+    """The digest's and daily summary's line about a running eval (V1.3 step 8): it holds the
+    model, or it is paused on battery and has released it."""
+    snap = RUN.snapshot()
+    if snap["state"] == "paused":
+        return (f"Eval {snap['run_id'][:8]} paused ({snap['detail']}); model checks for new mail"
+                " run meanwhile (ecf eval status)")  # fmt: skip
+    ex = modelq.EXCLUSIVE
+    if not ex.held():
+        return None
+    at = f" since {ex.since[:16].replace('T', ' ')} UTC" if ex.since else ""
+    return (f"Model checks paused for an eval{at}: new mail waits for the local model; fraud"
+            " checks continue (ecf eval status)")  # fmt: skip
 
 
 def _thread(work: Callable[[], None]) -> None:
@@ -248,8 +296,11 @@ def stop() -> dict[str, Any]:
 
 
 def _hold(opts: Options, power: Callable[[], schedule.Power],
-          battery: Callable[[], int | None], started: float) -> bool:  # fmt: skip
-    """Wait while on battery below the floor, with the queue released; False to stop."""
+          battery: Callable[[], int | None], started: float, clock: Clock,
+          tell: Callable[[str, bool], None] = lambda _t, _d: None) -> bool:  # fmt: skip
+    """Wait while on battery below the floor, with the queue released; False to stop. `tell`
+    gets a line for the summary channel (and True for a desktop notification too) when the run
+    pauses and when it resumes (§16.2)."""
     while True:
         if RUN.stop.is_set() or time.monotonic() - started > RUNTIME_CAP_S:
             return False
@@ -258,24 +309,33 @@ def _hold(opts: Options, power: Callable[[], schedule.Power],
         low = p.laptop and not p.on_ac and pct is not None and pct <= opts.battery_floor
         if not low:
             if not modelq.EXCLUSIVE.held():
-                if not modelq.EXCLUSIVE.acquire(HOLDER):
+                if not modelq.EXCLUSIVE.acquire(HOLDER, to_ts(clock.now())):
                     time.sleep(1)
                     continue
+                if RUN.state == "paused":
+                    tell(f"Eval {RUN.run_id[:8]} resumed on AC power ({RUN.done} of"
+                         f" {RUN.total} cases done): model checks for new mail wait until it"
+                         " ends.", False)  # fmt: skip
                 RUN.set(state="running", detail="")
             return True
         if modelq.EXCLUSIVE.held() and modelq.EXCLUSIVE.holder == HOLDER:
             modelq.EXCLUSIVE.release()  # mail classification resumes meanwhile
+        if RUN.state != "paused":
+            tell(f"Eval {RUN.run_id[:8]} paused on battery ({pct}%, floor {opts.battery_floor}%)"
+                 f" after case {RUN.done} of {RUN.total}: plug in to resume. Model checks for new"
+                 " mail run meanwhile.", True)  # fmt: skip
         RUN.set(state="paused", detail=f"battery {pct}%, at or below {opts.battery_floor}%:"
                                        " plug in to resume")  # fmt: skip
         RUN.stop.wait(PAUSE_POLL_S)
 
 
-def _run(  # noqa: PLR0913, PLR0917 - the run's collaborators and options
+def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and options; one loop
     connect: Callable[[], sqlite3.Connection], clock: Clock,
          client_factory: Callable[[], Client], data_dir: Path, opts: Options, cases: list[Case],
          version: str, power: Callable[[], schedule.Power], battery: Callable[[], int | None],
-         check_kw: dict[str, Any]) -> None:  # fmt: skip
+         check_kw: dict[str, Any], notifier: Notifier) -> None:  # fmt: skip
     started = time.monotonic()
+    tell = _teller(connect, clock, notifier)
     schema = load_schema_v1()
     conn = connect()
     client = client_factory()
@@ -287,7 +347,7 @@ def _run(  # noqa: PLR0913, PLR0917 - the run's collaborators and options
         rules_now = rules.load_starter_rules(schema)
         known = policy.labels(schema, rules_now)
         for i, case in enumerate(cases):
-            if not _hold(opts, power, battery, started):
+            if not _hold(opts, power, battery, started, clock, tell):
                 RUN.set(state="stopped", detail=f"stopped after {i} of {len(cases)}")
                 break
             raw = case.path.read_bytes()

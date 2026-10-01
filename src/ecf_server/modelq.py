@@ -84,15 +84,16 @@ class Exclusive:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.holder: str | None = None
+        self.since: str | None = None  # when it was taken (timestamp), for the Slack line
 
-    def acquire(self, holder: str) -> bool:
+    def acquire(self, holder: str, since: str | None = None) -> bool:
         if not self._lock.acquire(blocking=False):
             return False
-        self.holder = holder
+        self.holder, self.since = holder, since
         return True
 
     def release(self) -> None:
-        self.holder = None
+        self.holder = self.since = None
         self._lock.release()
 
     def held(self) -> bool:
