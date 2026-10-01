@@ -4,8 +4,10 @@ Every step is skipped when the service reports it done, so running `init` again 
 setup step goes through the service (tokens, app passwords and org domains are stored by it), so
 the service unit is installed first when it isn't running: an unconfigured service idles
 (§10a). V1.2 steps: checklist, service, disk-encryption and secret-store checks, install role,
-Slack, first address (with org domains), then a final check that the unit is running. The model
-step arrives in V1.3; the email-alerts and export steps in V1.5 (OD-206).
+Slack, first address (with org domains), then a final check that the unit is running. V1.3 adds
+the model step: when an address uses preset A or B and the pinned model isn't ready, offer
+`ecf models install` (starting ecf's Ollama login item first). The email-alerts and export steps
+arrive in V1.5 (OD-206).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Annotated, Any
 import typer
 
 from ecf import doctor
+from ecf.cli_models import run_install
 from ecf.client import LocalClient
 from ecf.errors import EcfError
 from ecf.paths import Paths
@@ -31,7 +34,9 @@ CHECKLIST = """Have ready:
   - each mailbox's IMAP server and an app password for it
   - your organization's domains, and whether each mailbox is standard or high (finance)
   - whether this install is prod (your real mail) or test
-  - Ollama (presets A and B) arrives in V1.3; Claude Code (B and C) in V1.4"""
+  - for presets A and B, Ollama (macOS: brew install ollama && brew pin ollama mlx-c); ecf runs
+    it from its own login item and downloads the pinned model (about 8 GB)
+  - Claude Code (presets B and C) arrives in V1.4"""
 
 AddAddress = Callable[[LocalClient, str, str, str | None, str | None, str | None], Any]
 
@@ -52,7 +57,8 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             bool, typer.Option("--resume", help="Continue without the checklist.")
         ] = False,
     ) -> None:
-        """Set up ecf: service, Slack, first mailbox. Safe to run again; done steps are skipped."""
+        """Set up ecf: service, Slack, first mailbox, local model. Safe to run again; done steps
+        are skipped."""
         if ctx.invoked_subcommand is not None:
             return
         if mode != "local":
@@ -73,6 +79,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             _role(c, st)
             _slack(c, st)
             _first_address(c, add)
+            _models(c, p)
         _unit(p, manager)
         typer.echo("Done for now. `ecf init status` shows each step; `ecf doctor` checks it all.")
 
@@ -109,7 +116,10 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool) -> list[str]
             ", ".join(st["org_domains"]) or "set with the first address"),
         row("first address", bool(st["addresses"]),
             ", ".join(st["addresses"]) or "ecf address add"),
-        row("models", False, "arrives in V1.3"),
+        row("models", st["models"]["installed"] or not st["models"]["needed"],
+            "installed (ecf models status)" if st["models"]["installed"]
+            else "ecf models install" if st["models"]["needed"]
+            else "not needed: no address uses preset A or B"),
         row("export", False, "arrives in V1.5"),
     ]  # fmt: skip
 
@@ -198,6 +208,29 @@ def _first_address(c: LocalClient, add: AddAddress) -> None:
     email = typer.prompt("Mailbox address (e.g. ap@example.com)").strip()
     host = typer.prompt("Its IMAP server (port 993, TLS)").strip()
     add(c, email, host, None, None, None)
+
+
+def model_ready(c: LocalClient) -> bool:
+    return bool(c.get("/v1/models")["ready"])
+
+
+def _models(c: LocalClient, p: Paths) -> None:
+    if not c.get("/v1/init")["models"]["needed"]:
+        typer.echo("models: not needed yet (no address uses preset A or B)")
+        return
+    if model_ready(c):
+        typer.echo("models: installed and ready")
+        return
+    if not typer.confirm("Install the local model now? (about 8 GB to download)", default=True):
+        typer.echo("models: skipped; later: ecf models install")
+        return
+    try:
+        ok = run_install(c, p.root)
+    except EcfError as exc:  # e.g. Ollama isn't installed: the message says how
+        typer.echo(f"models: {exc.detail}; then: ecf models install")
+        return
+    if not ok:
+        typer.echo("models: not installed; try again with: ecf models install")
 
 
 def _unit(p: Paths, manager: ServiceManager) -> None:

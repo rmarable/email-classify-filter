@@ -13,12 +13,13 @@ import sqlite3
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf_server import addresses, slack_admin
+from ecf_server import addresses, models, slack_admin
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 
 ROLE_KEY = "install_role"
 ROLES = ("prod", "test")
+LOCAL_PRESETS = ("A", "B")  # the presets that run Ollama (§4); C's local fallback arrives in V1.4
 
 
 def role(conn: sqlite3.Connection) -> str | None:
@@ -57,4 +58,8 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "slack_pending_app": s["pending_app_id"],
         "org_domains": addresses.get_org_domains(conn),
         "addresses": [a["address_id"] for a in addresses.list_addresses(conn)],
+        "models": {
+            "needed": any(a["preset"] in LOCAL_PRESETS for a in addresses.list_addresses(conn)),
+            "installed": models.installed(conn),
+        },
     }

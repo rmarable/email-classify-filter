@@ -62,24 +62,33 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
         """Pull the pinned model into Ollama, check its digest and copy it to ecf's own name.
         Starts ecf's Ollama login item first when nothing else serves Ollama."""
         with LocalClient(paths()) as c:
-            _ensure_ollama(c, paths().root)
-            c.request("POST", "/v1/models/install", {})
-            last = ""
-            while True:
-                p: dict[str, Any] = c.get("/v1/models")["install"]
-                line = _progress(p)
-                if line != last:
-                    typer.echo(line)
-                    last = line
-                if p["state"] in ("done", "failed"):
-                    break
-                time.sleep(POLL_S)
-        if p["state"] == "failed":
-            typer.echo(f"install failed: {p['error']}", err=True)
+            ok = run_install(c, paths().root)
+        if not ok:
             raise typer.Exit(1)
-        typer.echo("installed; check it with: ecf models status")
 
     return models_app
+
+
+def run_install(c: LocalClient, root: Path) -> bool:
+    """`ecf models install` (also `ecf init`'s model step): start Ollama if needed, then pull,
+    check and copy the pinned model, printing progress. True when it's installed."""
+    _ensure_ollama(c, root)
+    c.request("POST", "/v1/models/install", {})
+    last = ""
+    while True:
+        p: dict[str, Any] = c.get("/v1/models")["install"]
+        line = _progress(p)
+        if line != last:
+            typer.echo(line)
+            last = line
+        if p["state"] in ("done", "failed"):
+            break
+        time.sleep(POLL_S)
+    if p["state"] == "failed":
+        typer.echo(f"install failed: {p['error']}", err=True)
+        return False
+    typer.echo("installed; check it with: ecf models status")
+    return True
 
 
 def _cause(c: LocalClient) -> str | None:
