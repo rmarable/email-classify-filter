@@ -276,6 +276,29 @@ def test_shadow_runs_come_after_all_other_local_work(
                             check_kw=check_kw()).done == 0  # fmt: skip
 
 
+def test_shadow_runs_keep_the_heat_backlog_open(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    _address(conn, clock, "C")
+    _on(conn, clock)
+    clock.advance(1)
+    _item(conn, clock, 1)
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(modelq.ItemResult("ok", ollama.Metrics(500, 0, 60, 1, int(2e9), 1, 1)))
+
+    def shadow(conn: sqlite3.Connection, clock: Any, client: Any, ready: Any,
+               item: sqlite3.Row) -> modelq.ItemResult:  # fmt: skip
+        return modelq.ItemResult("ok")  # stores nothing: its shadow run still waits
+
+    def work(conn: sqlite3.Connection, clock: Any, client: Any, ready: Any,
+             item: sqlite3.Row) -> modelq.ItemResult:  # fmt: skip
+        raise AssertionError("no local work waits")
+
+    fake = ChatOllama("")
+    modelq.run_round(conn, clock, FakeNotifier(), fake.client(), work, shadow=shadow,
+                     throttle=t, check_kw=check_kw())  # fmt: skip
+    assert modelq.shadow_waiting(conn) and t.median() == 30  # the backlog goes on (OD-306)
+
+
 # ---- its own gate -----------------------------------------------------------------------------
 
 

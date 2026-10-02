@@ -164,7 +164,8 @@ class Throttle:
     """Heat (§5.2, OD-029 as amended by OD-243): generation speed of each normal call against a
     rolling median of recent ones; three slow calls in a row pause model work for `HEAT_PAUSE`,
     at most once per backlog (OD-248): a fanless Mac stays throttled after a short pause, and
-    pausing again only slows the backlog (V1.3 load test). Timed-out, truncated or failed calls
+    pausing again only slows the backlog (V1.3 load test). The median restarts with each
+    backlog (OD-306). Timed-out, truncated or failed calls
     never enter the median, so a run of crafted slow emails can't drag it down or trip the
     pause on its own."""
 
@@ -183,8 +184,14 @@ class Throttle:
         self.on_ac = on_ac
 
     def drained(self) -> None:
-        """Nothing waits any more: the next backlog may pause for heat again."""
+        """Nothing waits any more: the next backlog may pause for heat again, and its median
+        starts from its own first calls (V1.4 step 12, OD-306). Slow calls never enter the
+        median, so within a backlog it keeps the speed the Mac started at; carried over, it
+        would judge every later backlog against that, and a Mac that settles at a slower
+        speed would pause each one."""
         self.paused = False
+        self.speeds.clear()
+        self.slow_run = 0
 
     def median(self) -> float | None:
         if len(self.speeds) < MIN_WINDOW:
@@ -309,9 +316,9 @@ def _round(  # noqa: PLR0913 - run_round's arguments
         health.open_alert(conn, clock, notifier, SERVER_ALERT, None, models.fault_text(b.err))
     _resolve_quiet(conn, clock, notifier)
     r.report.waiting = sum(waiting(conn).values())
-    if r.report.waiting == 0:
-        r.throttle.drained()
     idle = r.report.waiting == 0 and not (shadow and shadow_waiting(conn))
+    if idle:  # the fallback's shadow runs are model work too: the backlog ends with them
+        r.throttle.drained()
     if idle and not resident and not exclusive.held():
         try:
             client.unload(models_tag())
