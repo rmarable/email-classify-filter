@@ -56,7 +56,7 @@ def test_write_tx_rolls_back(conn: sqlite3.Connection) -> None:
     with pytest.raises(RuntimeError), db.write_tx(conn):
         conn.execute("INSERT INTO settings VALUES ('k', '1', 't', 'test')")
         raise RuntimeError("boom")
-    assert conn.execute("SELECT count(*) FROM settings").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM settings WHERE key = 'k'").fetchone()[0] == 0
     assert not conn.in_transaction
 
 
