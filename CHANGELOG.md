@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.4-claude (not yet tagged)
+## ms-v1.4-claude (2026-10-02)
 
 - Security: in `/ecf-review` and `/ecf-eval`, only ecf's own subagents can now read an email or submit a result. Each agent gets its own ecf tool server, which Claude Code gives to that agent only; the main session has no reading tool at all. Claude's work is accepted only when the subagent work around it ran on the pinned model, judged over the time from reading to submitting. This replaces the per-call model check, which refused real subagent work when several ran at once and could in principle have accepted the main session's (OD-307). The agents are now named `ecf-classifier`, `ecf-classifier-high`, `ecf-actor` and `ecf-actor-high`.
 - `ecf stats` counts the interactive Claude session's own requests as `main` (it reports them as `repl_main_thread`).
