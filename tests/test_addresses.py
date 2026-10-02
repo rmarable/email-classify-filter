@@ -25,7 +25,7 @@ from ecf.ids import AddressId, StableId
 from ecf.prompts import NO_TERMINAL, hidden
 from ecf.status import Status
 from ecf_server import addresses as ad
-from ecf_server import slack_admin, slack_routes, stepup
+from ecf_server import claude_queue, items, modelq, slack_admin, slack_routes, stepup
 from ecf_server.api import ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import FakeClock
@@ -35,6 +35,7 @@ from ecf_server.mail import MailSource
 from ecf_server.mail.fake import FakeMailSource
 from ecf_server.mail.imap import MailLoginRejectedError
 from ecf_server.secretstore.memory import MemorySecretStore
+from ecf_server.state_machine import TransitionContext
 from ecf_server.stepper import FakeStepper
 
 GOOD = "right-password"
@@ -184,6 +185,38 @@ def test_remove_then_add_again_revives_the_row(env: Env) -> None:
     again = add(env, req(sensitivity="standard", org_domains=None))
     assert again["sensitivity"] == "standard" and again["stage"] == "shadow"
     assert conn.execute("SELECT count(*) FROM addresses").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(("old", "new"), [("C", "A"), ("B", "A"), ("A", "C")])
+def test_a_preset_changes_only_with_nothing_left_waiting(env: Env, old: str, new: str) -> None:
+    """V1.4 step 1: removal resolves the queue under the old preset, so nothing is stranded at
+    `awaiting_claude` (no edge back to the local model) or at `new` for the wrong model."""
+    conn, clock, secrets, _mail = env
+    add(env, req(preset=old))
+    sid = StableId("a" * 64)
+    create_item(conn, clock, stable_id=sid, address_id=AddressId("ap"), content_hash="h")
+    if old == "C":
+        items.transition(conn, clock, sid, Status.AWAITING_CLAUDE, TransitionContext(),
+                         actor="service")  # fmt: skip
+    ad.remove_address(conn, clock, secrets, "ap", actor="os_user")
+    again = add(env, req(preset=new, org_domains=None))
+    assert again["preset"] == new
+    assert conn.execute("SELECT status FROM items").fetchone()[0] == Status.RESOLVED_MANUAL.value
+    assert modelq.waiting(conn) == {} and claude_queue.waiting(conn) == {}
+
+
+def test_adding_again_is_refused_while_items_are_open(env: Env) -> None:
+    conn, clock, _secrets, mail = env
+    add(env, req(preset="C"))
+    create_item(conn, clock, stable_id=StableId("a" * 64), address_id=AddressId("ap"),
+                content_hash="h")  # fmt: skip
+    with write_tx(conn):  # removed without resolving: never happens; the guard holds anyway
+        conn.execute("UPDATE addresses SET removed_at = 'now'")
+    logins = len(mail.logins)
+    with pytest.raises(ConflictError, match="open items"):
+        add(env, req(preset="A", org_domains=None))
+    assert len(mail.logins) == logins  # refused before logging in
+    assert conn.execute("SELECT preset FROM addresses").fetchone()[0] == "C"
 
 
 def test_remove_resolves_ordinary_open_items_without_step_up(env: Env) -> None:

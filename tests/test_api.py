@@ -31,7 +31,8 @@ def test_health_is_open() -> None:
 
 
 def test_status_needs_the_token() -> None:
-    for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": "secret-token"}):
+    for headers in ({"Authorization": "Bearer wrong"}, {"Authorization": "secret-token"},
+                    {"Authorization": "Bearer "}):  # fmt: skip
         r = get("/v1/status", headers)
         assert r.status_code == 401
         assert r.headers["content-type"].startswith(PROBLEM_CONTENT_TYPE)
@@ -40,6 +41,17 @@ def test_status_needs_the_token() -> None:
     assert r.status_code == 200
     assert body(r)["install"] == "t" and body(r)["api_version"] == 1
     assert body(r)["slack"] == {"installed": False}
+
+
+def test_no_token_is_observe_status_and_counts_only() -> None:
+    """V1.4 step 3 (operator decision 2026-10-02): no Authorization header at all is OBSERVE."""
+    assert get("/v1/status").status_code == 200
+    assert get("/v1/counts").status_code in (200, 503)  # no database in this app
+    for path in ("/v1/inbox", "/v1/settings", "/v1/models"):
+        r = get(path)
+        assert r.status_code == 401 and body(r)["code"] == "unauthorized", path
+    r = request("POST", "/v1/review-queue")
+    assert r.status_code == 401 and body(r)["code"] == "unauthorized"
 
 
 def test_unknown_route_is_problem_json() -> None:
@@ -63,6 +75,7 @@ def test_session_tokens() -> None:
     assert made.status_code == 201
     work, sid = body(made)["profile_token"], body(made)["session_id"]
     assert body(made)["profile"] == "work"
+    assert body(made)["waiting"] == 0 and body(made)["models"]["main_session"].startswith("claude-")
     assert request("GET", "/v1/status", work).status_code == 200  # WORK may read status
     refused = request("POST", "/v1/sessions", work)  # but can't mint more tokens
     assert refused.status_code == 403 and body(refused)["code"] == "forbidden_profile"

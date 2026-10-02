@@ -2,7 +2,11 @@
 
 Callers authenticate with a bearer token:
 - the CLI token (0600 file, rewritten at every service start): full CLI access;
-- a session profile token issued to `ecf claude` (WORK) and revoked when it exits.
+- a session profile token issued to `ecf claude` (WORK) and revoked when it exits, and with it the
+  session's agent token (AGENT: the claim routes only, used by the agent servers `ecf-mcp --role`,
+  which only ecf's subagents can call; OD-307);
+- no token at all: OBSERVE (status and counts only, no email text; V1.4 step 3, operator decision
+  2026-10-02). A wrong token is refused, and a route OBSERVE can't use answers `unauthorized`.
 Routes declare which callers they accept. Decision and settings routes never accept a session
 token (SPEC §10.4). `/v1/health` needs no token. Errors are RFC 9457 problem+json.
 """
@@ -17,7 +21,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -50,14 +54,22 @@ from ecf_server import (
     audit,
     backfill,
     checks,
+    claude_batch,
+    claude_eval,
+    claude_pins,
+    claude_queue,
+    claude_review,
+    claude_usage,
     config,
     db,
     digests,
     evalrun,
+    fallback,
     gate,
     health,
     inbox,
     initsetup,
+    model_watch,
     modelq,
     models,
     ollama,
@@ -73,6 +85,8 @@ from ecf_server import (
     stages,
     stats,
     stepup,
+    telemetry,
+    telemetry_app,
 )
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -80,6 +94,7 @@ from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
 from ecf_server.stepper import Stepper
+from ecf_server.telemetry import Telemetry
 
 API_VERSION = 1
 
@@ -87,6 +102,8 @@ API_VERSION = 1
 class Caller(StrEnum):
     CLI = "cli"
     WORK = "work"  # an `ecf claude` session
+    AGENT = "agent"  # its agent servers (OD-307)
+    OBSERVE = "observe"  # no token (`ecf-mcp` without ECF_PROFILE_TOKEN)
 
 
 @dataclass
@@ -95,6 +112,7 @@ class Session:
     token: str = field(repr=False)
     profile: Caller
     created_at: str
+    agent_token: str = field(default="", repr=False)
 
 
 @dataclass
@@ -132,12 +150,18 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
+    shadow_work: modelq.Work | None = field(default=None, repr=False)  # the fallback's (V1.4)
     # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
     throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
+    # Claude Code telemetry per `ecf claude` session, and how long a read or submission waits for
+    # its call's events (V1.4 step 6; logs are exported every second)
+    telemetry: Telemetry = field(default_factory=Telemetry, repr=False)
+    telemetry_wait_s: float = 2.0
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -153,14 +177,18 @@ class ServiceState:
         return self.secrets
 
     def caller_for(self, token: str) -> tuple[Caller, Session | None]:
+        if not token:
+            return Caller.OBSERVE, None
         # compare bytes: compare_digest raises on non-ASCII str (headers decode as latin-1)
         given = token.encode("utf-8", "surrogateescape")
-        if token and hmac.compare_digest(given, self.token.encode()):
+        if hmac.compare_digest(given, self.token.encode()):
             return Caller.CLI, None
         with self.lock:
             for s in self.sessions.values():
                 if hmac.compare_digest(given, s.token.encode()):
                     return s.profile, s
+                if s.agent_token and hmac.compare_digest(given, s.agent_token.encode()):
+                    return Caller.AGENT, s
         raise UnauthorizedError("missing or wrong token")
 
 
@@ -179,14 +207,13 @@ def create_app(state: ServiceState) -> Starlette:
     def allow(*callers: Caller) -> Callable[[Handler], Handler]:
         def deco(handler: Handler) -> Handler:
             def wrapper(request: Request) -> Response:
-                header = request.headers.get("authorization", "")
-                given = (
-                    header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
-                )
-                caller, _session = state.caller_for(given)
+                caller, session = state.caller_for(_bearer(request))
+                if caller is Caller.OBSERVE and caller not in callers:
+                    raise UnauthorizedError("missing or wrong token")
                 if caller not in callers:
                     raise ForbiddenProfileError(f"not available to a {caller} caller")
                 request.state.caller = caller
+                request.state.session = session
                 return handler(request)
 
             return wrapper
@@ -196,7 +223,7 @@ def create_app(state: ServiceState) -> Starlette:
     def health(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    @allow(Caller.CLI, Caller.WORK)
+    @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def status(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
@@ -216,20 +243,26 @@ def create_app(state: ServiceState) -> Starlette:
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
                 "model": _model_status(state),
+                "claude": _claude_status(state),
+                "fallback": _with_db(state, fallback.status, []),
+                "model_watch": _with_db(state, model_watch.status, None),
             }
         )
 
     @allow(Caller.CLI)
     def create_session(_request: Request) -> JSONResponse:
-        now = to_ts(state.clock.now())
-        s = Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
+        s = _new_session(state)
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
+        bearer = state.telemetry.open(s.session_id)
+        setup = _review_setup(state, s.session_id)
         return JSONResponse(
-            {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value},
+            {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value,
+             "agent_token": s.agent_token,
+             "telemetry_port": state.telemetry.port, "telemetry_bearer": bearer} | setup,
             status_code=201,
-        )
+        )  # fmt: skip
 
     @allow(Caller.CLI)
     def delete_session(request: Request) -> JSONResponse:
@@ -238,6 +271,7 @@ def create_app(state: ServiceState) -> Starlette:
             removed = state.sessions.pop(session_id, None)
         if removed is None:
             raise NotFoundError(f"no session {session_id[:8]}")
+        _end_session(state, session_id)
         log.info("session.revoked", session_id=session_id)
         return JSONResponse({"revoked": session_id})
 
@@ -296,7 +330,9 @@ def create_app(state: ServiceState) -> Starlette:
             *_data_routes(state, allow),
             *_setup_routes(state, allow),
             *_model_routes(state, allow),
+            *_watch_routes(state, allow),
             *_eval_routes(state, allow),
+            *_review_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -314,6 +350,95 @@ WORKER_POLL_S = 10.0  # while the service's own model rounds hold the waiting em
 def _wait(seconds: float) -> None:
     """Sleep inside a streaming response (Starlette runs the generator on a worker thread)."""
     time.sleep(seconds)
+
+
+def _bearer(request: Request) -> str:
+    """The bearer token; "" when there is no Authorization header at all (OBSERVE). A header
+    that isn't a bearer token is refused, never taken as OBSERVE."""
+    header = request.headers.get("authorization")
+    if header is None:
+        return ""
+    given = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+    if not given:
+        raise UnauthorizedError("missing or wrong token")
+    return given
+
+
+def _end_claims(state: ServiceState, session_id: str) -> None:
+    """A revoked session's review claims end with it (V1.4 step 3)."""
+    if state.db_path is None:
+        return
+    conn = state.connect()
+    try:
+        claude_review.release_session(conn, session_id)
+    finally:
+        conn.close()
+    claude_eval.release_session(session_id)
+
+
+def _new_session(state: ServiceState) -> Session:
+    """`ecf claude`'s session; refused while a pin is past its retirement date (§7.5; V1.4
+    step 10)."""
+    _with_db(state, lambda c: model_watch.refuse_retired(c, state.clock), None)
+    now = to_ts(state.clock.now())
+    return Session(
+        new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now, secrets.token_urlsafe(32)
+    )
+
+
+def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
+    """What `ecf claude` needs to start a session (V1.4 steps 5-6): the Claude pins in force, for
+    the plugin's agents and the main session, how many items wait for review, and the plan usage
+    after the last review; from step 7, the Claude eval waiting for `/ecf-eval`, if any, with the
+    `ecf-eval-*` agents to render for it."""
+    if state.db_path is None:
+        return {"models": claude_pins.load_lock(), "waiting": 0, "last_plan": None, "eval": None}
+    conn = state.connect()
+    try:
+        claude_usage.start_session(conn, state.clock, session_id)
+        setup = {"models": claude_pins.effective(conn),
+                 "waiting": sum(claude_queue.waiting(conn).values()),
+                 "last_plan": claude_usage.last_plan(conn)}  # fmt: skip
+    finally:
+        conn.close()
+    return setup | {"eval": claude_eval.session_info(state.connect, state.clock)}
+
+
+def _end_session(state: ServiceState, session_id: str) -> None:
+    """Held submissions are settled (unbound ones refused) before the claims end and the
+    session's usage is written (V1.4 step 6)."""
+    if state.db_path is not None:
+        telemetry_app.settle_bound(state, session_id, final=True)
+    tel = state.telemetry.close(session_id)
+    _end_claims(state, session_id)
+    if tel is not None and state.db_path is not None:
+        conn = state.connect()
+        try:
+            claude_usage.end_session(conn, state.clock, tel)
+        finally:
+            conn.close()
+
+
+def _claude_status(state: ServiceState) -> dict[str, Any]:
+    if state.db_path is None:
+        return {"last_review": None, "used": False, "pins": None}
+    conn = state.connect()
+    try:
+        used = claude_pins.in_use(conn)  # doctor's Claude checks fail only then (§13.2)
+        return {"last_review": claude_usage.last_review(conn), "used": used,
+                "pins": claude_pins.effective(conn) if used else None}  # fmt: skip
+    finally:
+        conn.close()
+
+
+def _with_db[T](state: ServiceState, fn: Callable[[sqlite3.Connection], T], empty: T) -> T:
+    if state.db_path is None:
+        return empty
+    conn = state.connect()
+    try:
+        return fn(conn)
+    finally:
+        conn.close()
 
 
 def _address_states(state: ServiceState) -> list[dict[str, Any]]:
@@ -432,7 +557,7 @@ def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
     try:
         r = modelq.run_round(conn, state.clock, state.notifier, client, work,
                              resident=modelq.resident(conn), check_kw=state.model_check,
-                             throttle=state.throttle)  # fmt: skip
+                             throttle=state.throttle, shadow=state.shadow_work)  # fmt: skip
         line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
                                 "waiting": r.waiting}  # fmt: skip
         if r.status == "not_ready":
@@ -511,7 +636,7 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
-    @allow(Caller.CLI, Caller.WORK)
+    @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def counts(request: Request) -> JSONResponse:
         aid = request.query_params.get("address_id")
         return _with_conn(lambda c: {"counts": inbox.counts(c, aid)})
@@ -613,6 +738,18 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_setting(request: Request) -> JSONResponse:
         body = _body(request)
         key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
+        if key == settings.FALLBACK_KEY:  # the local fallback: step-up to turn it on (V1.4)
+            if not aid:
+                raise InvalidInputError(f"{key} is per address: add --address")
+            nonce = _opt_str(body, "nonce_id")
+            return _with_conn(lambda c: fallback.set_timeout(c, state.clock, state.notifier, aid,
+                                                             value, nonce=nonce))  # fmt: skip
+        if key == settings.HIGH_BATCH_KEY:  # step-up to raise it (V1.4 step 9)
+            if not aid:
+                raise InvalidInputError(f"{key} is per address: add --address")
+            nonce = _opt_str(body, "nonce_id")
+            return _with_conn(lambda c: claude_batch.set_size(c, state.clock, state.notifier, aid,
+                                                              value, nonce=nonce))  # fmt: skip
         return _with_conn(lambda c: settings.set_value(c, state.clock, key, value, address=aid,
                                                        actor="os_user"))  # fmt: skip
 
@@ -716,8 +853,9 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`. CLI only in V1.3; MCP-W
-    arrives with `/ecf-eval` in V1.4."""
+    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
+    also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
+    `_review_routes`)."""
 
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
@@ -757,16 +895,187 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
         recent = [dict(r) | {"metrics": json.loads(r["metrics"])} for r in rows]
-        return JSONResponse({"current": run, "recent": recent})
+        claude = claude_eval.status(state.connect, state.clock)
+        return JSONResponse({"current": run, "recent": recent, "claude": claude})
 
     @allow(Caller.CLI)
     def stop_eval(_request: Request) -> JSONResponse:
-        return JSONResponse(evalrun.stop())
+        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] in ("running", "paused") else None
+        claude = claude_eval.stop(state.connect, state.clock)
+        if local is None and claude is None:
+            raise NotFoundError("no eval is running")
+        return JSONResponse({"local": local, "claude": claude})
+
+    @allow(Caller.CLI)
+    def start_claude_eval(request: Request) -> JSONResponse:
+        """`ecf eval run --claude` (OD-288): registers the run; `/ecf-eval` drives it."""
+        body = _body(request)
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+            raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
+        batch = body.get("batch", 1)
+        if isinstance(batch, bool) or not isinstance(batch, int):
+            raise InvalidInputError("batch must be a whole number")
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        opts = claude_eval.Options(
+            root, preset=_str(body, "preset"), sensitivity=_str(body, "sensitivity"),
+            fraud_only=body.get("fraud_only") is True,
+            classifier_model=_opt_str(body, "classifier_model"),
+            actor_model=_opt_str(body, "actor_model"), batch=batch)  # fmt: skip
+        return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
+                                              opts))  # fmt: skip
 
     return [
+        Route("/v1/eval/claude", start_claude_eval, methods=["POST"]),
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
+    ]
+
+
+def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims. The main session (WORK) claims;
+    only its agent servers (AGENT, naming their agent) read and submit (OD-307). POST throughout:
+    `review-queue` claims items, and claim tokens stay out of URLs."""
+
+    def _session(request: Request) -> str:
+        s: Session = request.state.session
+        return s.session_id
+
+    def _in_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> dict[str, Any]:
+        conn = state.connect()
+        try:
+            return fn(conn)
+        finally:
+            conn.close()
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        return JSONResponse(_in_conn(fn))
+
+    def _now() -> float:
+        return state.clock.now().timestamp()
+
+    def _submitted(sid: str, conn: sqlite3.Connection,
+                   got: dict[str, Any] | telemetry.Hold) -> dict[str, Any]:  # fmt: skip
+        """A valid submission waits briefly for telemetry to catch up with it; if it hasn't, it
+        stays held and is settled when it does, or judged on what came at session end
+        (OD-307)."""
+        if not isinstance(got, telemetry.Hold):
+            return got
+        got = replace(got, at=_now(), read_at=state.telemetry.read_at(
+            sid, got.kind, got.stable_id, got.fence))  # fmt: skip
+        seen = state.telemetry.judge(got, state.telemetry_wait_s)
+        if seen is None and state.telemetry.hold(got):
+            return {"accepted": True, "pending": True, "errors": []}
+        # bound, or the session ended while it waited (then it is refused as unbound)
+        return telemetry_app.settle_one(state, conn, got, seen)
+
+    @allow(Caller.WORK)
+    def review_queue(request: Request) -> JSONResponse:
+        body, sid = _body(request), _session(request)
+        limit = body.get("limit", claude_review.LIMIT_DEFAULT)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise InvalidInputError("limit must be a whole number")
+        address = _opt_str(body, "address_id")
+        stopped = state.telemetry.stopped(sid)
+        return _with_conn(lambda c: claude_review.review_queue(
+            c, state.clock, sid, address=address, limit=limit, stopped=stopped))  # fmt: skip
+
+    @allow(Caller.AGENT)
+    def message(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
+        kind = "eval" if claude_eval.owns(ref) else "review"
+        out = (claude_eval.get_message(state.clock, sid, ref, token, agent) if kind == "eval"
+               else _in_conn(lambda c: claude_review.get_message(
+                   c, state.clock, sid, ref, token, agent)))  # fmt: skip
+        state.telemetry.read(sid, kind, ref, int(token.partition(".")[0]), _now())
+        return JSONResponse(out)
+
+    @allow(Caller.AGENT)
+    def classification(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
+        got = body.get("classification")
+        if claude_eval.owns(ref):
+            return _with_conn(lambda c: _submitted(sid, c, claude_eval.record_classification(
+                state.clock, sid, ref, token, got, agent)))  # fmt: skip
+        return _with_conn(lambda c: _submitted(sid, c, claude_review.record_classification(
+            c, state.clock, sid, ref, token, got, agent)))  # fmt: skip
+
+    @allow(Caller.AGENT)
+    def proposal(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
+        if claude_eval.owns(ref):
+            return _with_conn(lambda c: _submitted(sid, c, claude_eval.propose_action(
+                state.clock, sid, ref, token, body, agent)))  # fmt: skip
+        return _with_conn(lambda c: _submitted(sid, c, claude_review.propose_action(
+            c, state.clock, sid, ref, token, body, agent)))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def eval_next(request: Request) -> JSONResponse:
+        """`/ecf-eval` (V1.4 step 7, OD-287): claims the next cases, as `review_queue` does."""
+        body, sid = _body(request), _session(request)
+        limit = body.get("limit", claude_review.LIMIT_DEFAULT)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise InvalidInputError("limit must be a whole number")
+        stopped = state.telemetry.stopped(sid)
+        return JSONResponse(claude_eval.eval_next(state.connect, state.clock, sid, limit=limit,
+                                                  stopped=stopped))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def eval_results(_request: Request) -> JSONResponse:
+        return JSONResponse(claude_eval.results())
+
+    @allow(Caller.WORK)
+    def statusline(request: Request) -> JSONResponse:
+        """The status-line script's plan usage (SPEC §13.4): numbers only."""
+        recorded = state.telemetry.plan(_session(request),
+                                        telemetry.parse_plan(_body(request)))  # fmt: skip
+        return JSONResponse({"recorded": recorded})
+
+    return [
+        Route("/v1/review-queue", review_queue, methods=["POST"]),
+        Route("/v1/claims/{ref}/message", message, methods=["POST"]),
+        Route("/v1/claims/{ref}/classification", classification, methods=["POST"]),
+        Route("/v1/claims/{ref}/proposal", proposal, methods=["POST"]),
+        Route("/v1/eval/next", eval_next, methods=["POST"]),
+        Route("/v1/eval/results", eval_results, methods=["POST"]),
+        Route("/v1/statusline", statusline, methods=["POST"]),
+    ]
+
+
+def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.6 (V1.4 step 10): the weekly model watch's key and a run now."""
+
+    @allow(Caller.CLI)
+    def api_key(request: Request) -> JSONResponse:
+        """SPEC §7.6 (V1.4 step 10): `ecf models api-key set|clear`; the service alone writes the
+        secret store."""
+        body = _body(request)
+        key = None if body.get("clear") is True else _token(body, "key")
+        conn = state.connect()
+        try:
+            r = model_watch.set_key(conn, state.clock, state.store(), key, state.watch_http)
+        finally:
+            conn.close()
+        log.info("models.api_key_cleared" if key is None else "models.api_key_set")
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def watch_now(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            model_watch.run_now(conn)
+            return JSONResponse(model_watch.status(conn))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/models/api-key", api_key, methods=["POST"]),
+        Route("/v1/models/watch", watch_now, methods=["POST"]),
     ]
 
 
@@ -777,9 +1086,24 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def show_models(_request: Request) -> JSONResponse:
         conn, client = state.connect(), state.model_client()
         try:
-            return JSONResponse(models.status(conn, client, **state.model_check))
+            return JSONResponse(
+                models.status(conn, client, **state.model_check)
+                | {"watch": model_watch.status(conn)}
+            )  # V1.4 step 10
         finally:
             client.close()
+            conn.close()
+
+    @allow(Caller.CLI)
+    def claude_override(request: Request) -> JSONResponse:
+        """SPEC §7.5 (V1.4 step 2): `ecf settings set claude_model_override` (step-up)."""
+        body = _body(request)
+        value, nonce = _str(body, "value"), _opt_str(body, "nonce_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(claude_pins.set_override(conn, state.clock, state.notifier, value,
+                                                         nonce=nonce))  # fmt: skip
+        finally:
             conn.close()
 
     @allow(Caller.CLI)
@@ -788,7 +1112,8 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
-        """SPEC §13.4 (V1.3 step 9): `ecf stats`."""
+        """SPEC §13.4 (V1.3 step 9): `ecf stats`; Claude's part (V1.4 step 6) isn't split by
+        address, so it comes only without `address` and for presets B and C."""
         q = request.query_params
         try:
             hours = float(q.get("hours", "168"))
@@ -801,13 +1126,18 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             ref = q.get("address")
             aid = addresses.get_address(conn, ref)["address_id"] if ref else None
             since = state.clock.now() - timedelta(hours=hours)
-            return JSONResponse(stats.report(conn, since, address=aid, preset=q.get("preset")))
+            preset = q.get("preset")
+            out = stats.report(conn, since, address=aid, preset=preset)
+            if aid is None and preset in (None, "B", "C"):
+                out["claude"] = claude_usage.report(conn, since)
+            return JSONResponse(out)
         finally:
             conn.close()
 
     return [
         Route("/v1/models", show_models, methods=["GET"]),
         Route("/v1/models/install", install_models, methods=["POST"]),
+        Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
 

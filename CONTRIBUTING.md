@@ -47,6 +47,7 @@ uv run pytest -m imap                           # the IMAP adapter against Dovec
 uv run pytest tests/test_state_machine.py::test_edges_match_spec   # one test
 uv run python scripts/check_licenses.py         # dependency license allow-list
 uv run python scripts/check_licenses.py --markdown   # regenerate the table below
+uv run python scripts/model_canary.py           # the weekly model canary (reads 3 public pages)
 uv build                                        # wheel + sdist
 ```
 
@@ -84,6 +85,10 @@ uv build                                        # wheel + sdist
 
 1. Work on a branch (or worktree), never directly on `main`.
 2. Run the checks above. Push: GitHub CI runs the Linux checks (free minutes; no macOS runners).
+   The `canary` workflow runs `scripts/model_canary.py` every Monday on `main` (start it by hand from
+   the Actions tab on another branch). When it fails, a pinned model's state or dates changed (record
+   them in `src/ecf_server/data/models.lock`'s `lifecycle` and release) or a page changed format (fix
+   the parser and refresh `tests/canary/`); SPEC §7.6.
 3. **macOS merge gate:** before any merge to `main`, run the full suite on a Mac
    (`uv run pytest`) and put the result in the merge commit message, e.g.
    `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`.
@@ -138,51 +143,70 @@ read, needs a reviewed entry in the script, checked at its locked version (reada
 wins). Development-only tools
 (pytest, ruff, pyright, import-linter, hypothesis) never ship and aren't listed.
 
-Runtime dependencies (generated 2026-09-28):
+Runtime dependencies (generated 2026-10-02):
 
 | Package | Version | License | Installed on |
 |---|---|---|---|
 | `annotated-doc` | 0.0.5 | MIT | all platforms |
 | `annotated-types` | 0.8.0 | MIT | all platforms |
 | `anyio` | 4.15.1 | MIT | all platforms |
+| `attrs` | 26.1.0 | MIT | all platforms |
 | `certifi` | 2026.7.22 | MPL-2.0 | all platforms |
 | `cffi` | 2.1.1 | MIT-0 | all platforms |
 | `charset-normalizer` | 3.5.1 | MIT | `[eval]` extra only |
 | `click` | 8.5.0 | BSD-3-Clause | all platforms |
 | `colorama` | 0.4.6 | BSD | Windows |
-| `cryptography` | 50.0.1 | Apache-2.0 OR BSD-3-Clause | Linux |
+| `cryptography` | 50.0.1 | Apache-2.0 OR BSD-3-Clause | all platforms |
 | `dkimpy` | 1.1.8 | Zlib | all platforms |
 | `dnspython` | 2.8.0 | ISC | all platforms |
 | `h11` | 0.16.0 | MIT | all platforms |
 | `httpcore` | 1.0.9 | BSD-3-Clause | all platforms |
+| `httpcore2` | 2.13.1 | BSD-3-Clause | all platforms |
 | `httpx` | 0.28.1 | BSD-3-Clause | all platforms |
+| `httpx2` | 2.13.1 | BSD-3-Clause | all platforms |
+| `httpx2-jsfetch` | 1.0 | BSD-3-Clause | WebAssembly (emscripten) |
 | `idna` | 3.20 | BSD-3-Clause | all platforms |
 | `imapclient` | 4.1.0 | BSD-3-Clause | all platforms |
 | `jaraco-classes` | 3.4.0 | MIT | all platforms |
 | `jaraco-context` | 6.1.2 | MIT | all platforms |
 | `jaraco-functools` | 4.6.0 | MIT | all platforms |
-| `jeepney` | 0.9.0 | MIT | Linux (via `keyring`) |
+| `jeepney` | 0.9.0 | MIT | Linux |
+| `jsonschema` | 4.26.0 | MIT | all platforms |
+| `jsonschema-specifications` | 2025.9.1 | MIT | all platforms |
 | `keyring` | 25.7.0 | MIT | all platforms |
 | `markdown-it-py` | 4.2.0 | MIT | all platforms |
+| `mcp` | 2.2.0 | MIT | all platforms |
+| `mcp-types` | 2.2.0 | MIT | all platforms |
 | `mdurl` | 0.1.2 | MIT | all platforms |
 | `more-itertools` | 11.1.0 | MIT | all platforms |
+| `opentelemetry-api` | 1.45.0 | Apache-2.0 | all platforms |
 | `pillow` | 12.3.0 | MIT-CMU | `[eval]` extra only |
 | `pycparser` | 3.0 | BSD-3-Clause | all platforms |
 | `pydantic` | 2.13.5 | MIT | all platforms |
 | `pydantic-core` | 2.46.5 | MIT | all platforms |
 | `pygments` | 2.21.0 | BSD-2-Clause | all platforms |
+| `pyjwt` | 2.15.1 | MIT | all platforms |
 | `pynacl` | 1.6.2 | Apache-2.0 | all platforms |
 | `pyobjc-core` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-cocoa` | 12.2.2 | MIT | macOS |
+| `pyobjc-framework-localauthentication` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-security` | 12.2.2 | MIT | macOS |
+| `python-multipart` | 0.0.32 | Apache-2.0 | all platforms |
+| `python-pam` | 2.1.0 | MIT | Linux |
+| `pywin32` | 312 | PSF-2.0 | Windows |
 | `pywin32-ctypes` | 0.2.3 | BSD-3-Clause | Windows |
+| `referencing` | 0.37.0 | MIT | all platforms |
 | `reportlab` | 5.0.1 | BSD | `[eval]` extra only |
 | `rich` | 15.0.0 | MIT | all platforms |
+| `rpds-py` | 2026.6.3 | MIT | all platforms |
 | `ruamel-yaml` | 0.19.1 | MIT | all platforms |
 | `secretstorage` | 3.5.0 | BSD-3-Clause | Linux |
 | `shellingham` | 1.5.4 | ISC | all platforms |
+| `slack-sdk` | 3.44.1 | MIT | all platforms |
+| `sse-starlette` | 3.5.0 | BSD-3-Clause | all platforms |
 | `starlette` | 1.7.0 | BSD-3-Clause | all platforms |
 | `structlog` | 26.1.0 | MIT OR Apache-2.0 | all platforms |
+| `truststore` | 0.10.4 | MIT | all platforms |
 | `typer` | 0.27.2 | MIT | all platforms |
 | `typing-extensions` | 4.16.0 | PSF-2.0 | all platforms |
 | `typing-inspection` | 0.4.4 | MIT | all platforms |

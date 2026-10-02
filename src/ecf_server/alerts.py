@@ -41,7 +41,11 @@ TITLES = {
     "local_model_unsafe": "System Error",
     "model_failures": "System Error",
     "local_model_server": "System Error",
+    "models_api": "System Error",  # the weekly model watch (V1.4 step 10)
+    "models_missing": "System Error",
+    "model_retirement": "Model Retirement Scheduled",
     "operator_input": "Operator Input Needed",
+    "claude_review": "Operator Input Needed: Claude review waiting",
     "security_notice": "Security Notice",
 }
 CLASS_OF = {
@@ -52,7 +56,11 @@ CLASS_OF = {
     "local_model_unsafe": "system",
     "model_failures": "system",
     "local_model_server": "system",
+    "models_api": "system",
+    "models_missing": "system",
+    "model_retirement": "system",
     "operator_input": "operator",
+    "claude_review": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",
     "security_notice": "security",

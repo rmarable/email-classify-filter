@@ -21,7 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ecf.errors import InvalidInputError
-from ecf_server import addresses, schedule
+from ecf_server import addresses, claude_batch, schedule
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 
@@ -134,6 +134,7 @@ _install = [
     Key("review_sample_rate", "install", _int(0, 100), 10),  # percent, after the gate count
     Key("ollama_log_max_mb", "install", _int(1, 1024), 10),  # rotate ollama.log above (OD-266)
     Key("ollama_log_rotate_days", "install", _int(1, 90), 7),  # ... or this often (OD-266)
+    Key("claude_review_reminder_hours", "install", _int(1, 168), 24),  # OD-115 (V1.4 step 9)
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),
@@ -151,15 +152,14 @@ ELSEWHERE = {
     "install_role": "fixed when the install is created",
     "sensitivity": "change it with `ecf sensitivity set`",
     "stage": "change it with `ecf stage set`",
-    "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
-    "classifier_high_batch": "arrives with Claude on demand in V1.4",
+    "claude_model_override": "set it with `ecf settings set claude_model_override <id>|none`"
+    " (step-up); `ecf models status` shows it",
     "export_schedule": "arrives with exports in V1.5",
     "export_dir": "arrives with exports in V1.5",
     "export_keep": "arrives with exports in V1.5",
     "max_sends_per_hour": "arrives with outbound in V1.5",
     "max_sends_per_day": "arrives with outbound in V1.5",
     "dns.doh_url": "not built yet",
-    "claude_review_reminder_hours": "arrives with Claude on demand in V1.4",
     "alerts.email.monitored_address": "arrives with email alerts in V1.5 (OD-206)",
     "alerts.email.destination_address": "arrives with email alerts in V1.5 (OD-206)",
     "outbound": "change it with `ecf outbound enable|disable`, which arrive in V1.5",
@@ -170,7 +170,17 @@ ELSEWHERE = {
 }
 
 
+FALLBACK_KEY = "claude_queue_timeout"  # per B or C address; set by fallback.set_timeout (step-up)
+HIGH_BATCH_KEY = "classifier_high_batch"  # per C address; claude_batch.set_size (step-up to raise)
+
+
 def key(name: str, address: str | None) -> Key:
+    if name == FALLBACK_KEY:
+        raise InvalidInputError(f"{name} is set with `ecf settings set {name} <hours>|off"
+                                " --address <address>` (step-up to turn it on)")  # fmt: skip
+    if name == HIGH_BATCH_KEY:
+        raise InvalidInputError(f"{name} is set with `ecf settings set {name} <1-5>"
+                                " --address <address>` (step-up to raise it)")  # fmt: skip
     if name in ELSEWHERE:
         raise InvalidInputError(f"{name}: {ELSEWHERE[name]}")
     k = KEYS.get(name)
@@ -204,6 +214,14 @@ def show(conn: sqlite3.Connection, address_id: str | None = None) -> list[dict[s
             continue
         out.append({"key": k.name, "value": get(conn, k.name, address_id),
                     "default": k.default, "restart": k.restart})  # fmt: skip
+    a = conn.execute("SELECT preset, fallback_enabled, claude_queue_timeout_h FROM addresses"
+                     " WHERE address_id = ?", (address_id or "",)).fetchone()  # fmt: skip
+    if a is not None and a["preset"] in ("B", "C"):  # the local fallback (fallback.py, V1.4)
+        on = a["claude_queue_timeout_h"] if a["fallback_enabled"] else "off"
+        out.append({"key": FALLBACK_KEY, "value": on, "default": "off", "restart": False})
+    if a is not None and a["preset"] == "C":  # Claude classifies (claude_batch.py, V1.4)
+        out.append({"key": HIGH_BATCH_KEY, "value": claude_batch.size(conn, str(address_id)),
+                    "default": claude_batch.DEFAULT, "restart": False})  # fmt: skip
     return out
 
 

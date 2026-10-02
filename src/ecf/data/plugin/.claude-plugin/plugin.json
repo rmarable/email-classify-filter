@@ -1,0 +1,5 @@
+{
+  "name": "ecf",
+  "version": "{{VERSION}}",
+  "description": "Review tools for email-classify-filter (ecf): /ecf-review and its subagents. Loaded only by `ecf claude`."
+}

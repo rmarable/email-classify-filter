@@ -1,5 +1,6 @@
 """`ecf models status|install` and `ecf models serve install|uninstall|status` (SPEC §7.5;
-V1.3 steps 1b, 1c; OD-246)."""
+V1.3 steps 1b, 1c; OD-246); `ecf models api-key set|clear` and `ecf models watch`, the weekly
+model watch (SPEC §7.6; V1.4 step 10)."""
 
 from __future__ import annotations
 
@@ -14,13 +15,16 @@ from ecf import ollama_unit
 from ecf.client import LocalClient
 from ecf.errors import ServiceUnavailableError
 from ecf.paths import Paths
+from ecf.prompts import hidden, require_terminal
 
 POLL_S = 2.0
 START_WAIT_S = 30.0
 
 
 def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
-    models_app = typer.Typer(no_args_is_help=True, help="The local model (Ollama).")
+    models_app = typer.Typer(
+        no_args_is_help=True, help="The local model (Ollama) and the pinned Claude models."
+    )
 
     @models_app.command("status")
     def status() -> None:
@@ -30,6 +34,8 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
         _print(st)
         if not st["ready"]:
             raise typer.Exit(1)
+
+    _watch_commands(models_app, paths)
 
     serve_app = typer.Typer(no_args_is_help=True, help="ecf's login item that runs Ollama.")
     models_app.add_typer(serve_app, name="serve")
@@ -143,8 +149,83 @@ def _print(st: dict[str, Any]) -> None:
             typer.echo(f"  {k}={v}")
     else:
         typer.echo(f"not ready: {st['fault']['text']}")
+    cl = st.get("claude")
+    if cl:  # V1.4 step 2: the Claude models presets B and C use
+        typer.echo("Claude pins (models.lock): " + ", ".join(
+            f"{r} {i}" for r, i in cl["effective"].items()))  # fmt: skip
+        for fam, i in sorted(cl["overrides"].items()):
+            typer.echo(f"  override: {fam} -> {i} (ecf settings set claude_model_override none"
+                       " clears it)")  # fmt: skip
+    for line in watch_lines(st.get("watch")):
+        typer.echo(line)
     if st["install"]["state"] not in ("idle",):
         typer.echo(
             f"last install: {_progress(st['install'])}"
             + (f" ({st['install']['error']})" if st["install"]["error"] else "")
         )
+
+
+def watch_lines(w: dict[str, Any] | None) -> list[str]:
+    """The weekly model watch, for `ecf models status` (SPEC §7.6; V1.4 step 10)."""
+    if not w:
+        return []
+    out: list[str] = []
+    for mid, e in sorted(w["lifecycle"].items()):
+        when = (f"retires {e['retires']}" if e["retires"] else
+                f"retirement not before {e['not_sooner_than']}")  # fmt: skip
+        out.append(f"  {mid}: {e['state']}, {when} (models.lock)")
+    nxt = str(w["next_at"])[:16].replace("T", " ") + " UTC" if w["next_at"] else "within a minute"
+    if not w["api_key"]:
+        out.append(f"model watch: no Models API key (optional: ecf models api-key set);"
+                   f" next run {nxt}")  # fmt: skip
+    else:
+        cl: dict[str, Any] = w.get("claude") or {}
+        if cl.get("error"):
+            out.append(f"model watch: Models API failed: {cl['error']}; next run {nxt}")
+        elif cl.get("checked_at"):
+            out.append(f"model watch: Models API read {str(cl['checked_at'])[:10]}"
+                       f" ({cl['listed']} models); next run {nxt}")  # fmt: skip
+            if cl.get("missing"):
+                out.append(f"  not listed: {', '.join(cl['missing'])}")
+            if cl.get("newer"):
+                out.append(f"  newer in a pinned family: {', '.join(sorted(cl['newer']))}")
+        else:
+            out.append(f"model watch: Models API not read yet; next run {nxt}")
+    ol: dict[str, Any] = w.get("ollama") or {}
+    if ol.get("error"):
+        out.append(f"  Ollama library: couldn't read the {ol.get('repo') or 'model'} tags page"
+                   f" ({ol['error']})")  # fmt: skip
+    elif ol.get("checked_at"):
+        out.append(f"  Ollama library: {len(ol['tags'])} {ol['repo']} tags,"
+                   f" read {str(ol['checked_at'])[:10]}")  # fmt: skip
+    return out
+
+
+def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    """`ecf models api-key set|clear` and `ecf models watch` (SPEC §7.6; V1.4 step 10)."""
+    key_app = typer.Typer(no_args_is_help=True, help="The optional Anthropic Models API key.")
+    models_app.add_typer(key_app, name="api-key")
+
+    @key_app.command("set")
+    def key_set() -> None:
+        """Store an API key so the weekly watch can read Anthropic's model list (optional)."""
+        require_terminal()
+        key = hidden("Anthropic API key, sk-ant-... (hidden): ")
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/models/api-key", {"key": key})
+        typer.echo(f"Stored; the Models API lists {r['listed']} models for it. The watch runs"
+                   " within a minute, then weekly (ecf models status).")  # fmt: skip
+
+    @key_app.command("clear")
+    def key_clear() -> None:
+        """Remove the Models API key; retirement notices then come with ecf releases."""
+        with LocalClient(paths()) as c:
+            c.request("POST", "/v1/models/api-key", {"clear": True})
+        typer.echo("Removed the Models API key.")
+
+    @models_app.command("watch")
+    def watch() -> None:
+        """Run the weekly model watch at the next tick (within a minute)."""
+        with LocalClient(paths()) as c:
+            c.request("POST", "/v1/models/watch", {})
+        typer.echo("The model watch runs within a minute; see ecf models status.")

@@ -363,7 +363,34 @@ def test_one_heat_pause_per_backlog() -> None:
     assert [t.record(_ok(11)) for _ in range(3)] == [False, False, True]
     assert not any(t.record(_ok(11)) for _ in range(9))  # still throttled: no second pause
     t.drained()  # the queue emptied
+    assert t.median() is None  # the next backlog judges against its own first calls (OD-306)
+    for _ in range(5):
+        t.record(_ok(30))
     assert [t.record(_ok(11)) for _ in range(3)] == [False, False, True]
+
+
+def test_a_backlog_on_a_settled_mac_is_not_judged_by_the_last_ones_cold_start() -> None:
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(27))  # cold
+    assert [t.record(_ok(11)) for _ in range(3)] == [False, False, True]
+    assert t.median() == pytest.approx(27)  # slow calls never entered it
+    t.drained()
+    assert not any(t.record(_ok(11)) for _ in range(20))  # settled, slower but normal
+    assert t.median() == pytest.approx(11)
+    assert [t.record(_ok(7)) for _ in range(3)] == [False, False, True]  # hotter still
+
+
+def test_a_round_that_leaves_nothing_waiting_ends_the_backlog(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", 2)
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(30))
+    assert _round(conn, clock, Work(), throttle=t).waiting == 0
+    assert t.median() is None
 
 
 def test_a_normal_call_resets_the_run_and_failures_never_count() -> None:

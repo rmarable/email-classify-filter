@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ecf.errors import ConflictError
-from ecf_server import health, ollama, slack_admin
+from ecf_server import claude_pins, health, ollama, slack_admin
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import Notifier
@@ -160,6 +160,7 @@ def status(conn: sqlite3.Connection, client: Client, **kw: Any) -> dict[str, Any
         "pin": {"tag": pin.tag, "digest": pin.digest, "ecf_tag": pin.ecf_tag},
         "installed_at": _setting(conn, INSTALLED_KEY),
         "install": INSTALLS.snapshot(),
+        "claude": claude_pins.show(conn),  # V1.4 step 2
     }
     try:
         ready = ollama.readiness(client, pin, **kw)

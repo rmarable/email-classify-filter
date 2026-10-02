@@ -1,6 +1,7 @@
 """`ecf-server local`: the local service process (SPEC §11.1).
 
-Threads: main (signals, watchdog, shutdown), uvicorn on the Unix socket, and the timer tick.
+Threads: main (signals, watchdog, shutdown), uvicorn on the Unix socket, the telemetry receiver
+(uvicorn on a loopback port, V1.4 step 6), and the timer tick.
 The socket is created by ecf (umask 077, 0600, in a 0700 directory) because uvicorn's own setup
 would make it 0666. A single-instance lock guards the data directory.
 """
@@ -35,12 +36,16 @@ from ecf_server import (
     audit,
     breaker,
     checks,
+    claude_queue,
+    claude_review,
     daily,
     db,
     decide,
+    fallback,
     health,
     jobs,
     mailbox_actions,
+    model_watch,
     modelq,
     models,
     needs_you,
@@ -49,6 +54,7 @@ from ecf_server import (
     retention,
     schedule,
     stages,
+    telemetry_app,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
@@ -137,10 +143,12 @@ def write_token(paths: Paths) -> str:
 
 
 def _clear_stale(conn: sqlite3.Connection) -> None:
-    """One process in v1: at start every lease and claimed job belongs to a dead process."""
+    """One process in v1: at start every lease, claimed job and review claim belongs to a dead
+    process."""
     with db.write_tx(conn):
         conn.execute("DELETE FROM leases")
     jobs.release_claims(conn)
+    claude_review.release_all(conn)  # `/ecf-review` sessions die with the process
 
 
 class Service:
@@ -237,9 +245,15 @@ class Service:
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
+                claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it
+                fallback.tick(conn, self.clock)  # the local fallback's own gate (V1.4 step 8)
+                fallback.hand_off(conn, self.clock)  # items that waited too long for Claude
+                claude_review.remind(conn, self.clock, self.state.notifier)  # OD-115 (step 9)
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)
+                model_watch.retirement_tick(conn, self.clock, self.state.notifier)  # §7.6
+                self._model_watch(conn)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
@@ -248,6 +262,22 @@ class Service:
         except Exception as exc:  # never stops the timer; retried next tick
             return self._tick_failed("approvals.tick_failed", exc)
         return True
+
+    def _fallback_reminder(self) -> None:
+        """`ecf watch` (a terminal): name B and C addresses with the local fallback off (§4.3)."""
+        if self.state.db_path is None or not sys.stderr.isatty():
+            return
+        conn = db.connect(self.state.db_path)
+        try:
+            off = fallback.reminders(conn)
+        finally:
+            conn.close()
+        if off:
+            sys.stderr.write(
+                f"ecf-server: the local fallback is off for {', '.join(off)}: their mail waits for"
+                " /ecf-review however long it takes (ecf settings set claude_queue_timeout <hours>"
+                " --address <address>)\n"
+            )
 
     def _ollama_log(self, conn: sqlite3.Connection) -> None:
         """Rotate the Ollama login item's log, at most once an hour's look (OD-266)."""
@@ -258,6 +288,13 @@ class Service:
             return
         self._ollama_log_at = now
         ollama_log.check(conn, self.clock, self.paths.root)
+
+    def _model_watch(self, conn: sqlite3.Connection) -> None:
+        """The weekly model watch, in its own thread so the timer never waits on the network
+        (SPEC §7.6; V1.4 step 10)."""
+        if model_watch.due(conn, self.clock):
+            model_watch.start(self.state.connect, self.clock, self.state.notifier,
+                              self.state.secrets, self.state.watch_http)  # fmt: skip
 
     def _model_check(self, conn: sqlite3.Connection) -> None:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from
@@ -403,7 +440,8 @@ class Service:
             return
         conn = db.connect(self.state.db_path)
         try:
-            if not modelq.waiting(conn):
+            if not modelq.waiting(conn) and not (self.state.shadow_work
+                                                 and modelq.shadow_waiting(conn)):  # fmt: skip
                 return
             power = self.scheduler.power()
             on_battery = power.laptop and not power.on_ac
@@ -414,7 +452,8 @@ class Service:
                     report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
                                               resident=modelq.resident(conn),
                                               check_kw=self.state.model_check, stop=self.stop,
-                                              throttle=self.throttle)  # fmt: skip
+                                              throttle=self.throttle,
+                                              shadow=self.state.shadow_work)  # fmt: skip
             finally:
                 client.close()
             self.rounds.after(report, on_battery=on_battery,
@@ -499,6 +538,7 @@ class Service:
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
             self.state.model_work = pipeline.work
+            self.state.shadow_work = pipeline.shadow
         return applied
 
     def _api_server(self) -> uvicorn.Server:
@@ -511,6 +551,15 @@ class Service:
                 access_log=False,
             )
         )
+
+    def _receiver(self) -> tuple[uvicorn.Server, threading.Thread, socket.socket]:
+        """The telemetry receiver: loopback TCP, its own app and server (SPEC §11.5; V1.4)."""
+        tsock = telemetry_app.bind()
+        self.state.telemetry.port = int(tsock.getsockname()[1])
+        receiver = telemetry_app.server(self.state)
+        thread = threading.Thread(target=receiver.run, kwargs={"sockets": [tsock]},
+                                  name="telemetry", daemon=True)  # fmt: skip
+        return receiver, thread, tsock
 
     def _slack_runtime(self) -> tuple[SlackRuntime, threading.Thread]:
         slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store,
@@ -535,6 +584,17 @@ class Service:
         if slack.is_alive():  # never started in dev mode
             slack.join(STOP_TIMEOUT)
 
+    def _wait_for_stop(self) -> None:
+        """The main thread: until a signal or the watchdog stops the service."""
+        while not self.stop.wait(1.0):
+            if self._signalled is not None:
+                log.info("service.signal", signal=signal.Signals(self._signalled).name)
+                self.stop.set()
+            elif self.watchdog_expired():
+                log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
+                self.exit_code = EXIT_CRASH
+                self.stop.set()
+
     def _run_locked(self) -> int:
         st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
         self.state.breaker = {"recent_crashes": len(st.crashes), "tripped": st.tripped}
@@ -550,6 +610,7 @@ class Service:
         if sys.platform == "darwin" and not self.dev:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
         applied = self._open_state()
+        self._fallback_reminder()
         if st.crashed_before:
             self._report_restart(len(st.crashes))
         self.state.token = write_token(self.paths)
@@ -558,6 +619,7 @@ class Service:
         web = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
+        receiver, tel, tsock = self._receiver()
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
         worker, model_worker = self._workers()
         slack, slack_thread = self._slack_runtime()
@@ -566,6 +628,7 @@ class Service:
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
+        tel.start()
         timer.start()
         worker.start()
         model_worker.start()
@@ -573,16 +636,12 @@ class Service:
             slack_thread.start()
         self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
-        while not self.stop.wait(1.0):
-            if self._signalled is not None:
-                log.info("service.signal", signal=signal.Signals(self._signalled).name)
-                self.stop.set()
-            elif self.watchdog_expired():
-                log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
-                self.exit_code = EXIT_CRASH
-                self.stop.set()
+        self._wait_for_stop()
         server.should_exit = True
+        receiver.should_exit = True
         self._join(web, timer, worker, slack_thread)
+        tel.join(STOP_TIMEOUT)
+        tsock.close()
         # only a stop you asked for disarms the dead-man's switch (OD-222)
         slack.close(clean_stop=self.exit_code == EXIT_OK and self.state.stopping_on_purpose)
         self._final_flush()

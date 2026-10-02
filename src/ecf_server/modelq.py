@@ -58,6 +58,7 @@ ITEM_LEASE_S = 2 * int(ollama.TIMEOUT_S) + 60  # a call and its retry, with a ma
 FAILED_ALERT = "model_failures"  # System Error; resolved when the hour is quiet again
 SERVER_ALERT = "local_model_server"  # System Error; Ollama can't run the model now, until a call
 # succeeds
+FALLBACK_BACK = frozenset({"awaiting_claude", "clarified"})
 
 Outcome = Literal["ok", "failed", "skipped"]
 
@@ -112,11 +113,17 @@ class Exclusive:
 EXCLUSIVE = Exclusive()
 
 
-# what waits for the local model: new mail for the classifier, and the actor's items (a rule
-# continued to it, or you answered its question)
-WAITING = ("i.model_failed = 0 AND (i.status = 'new' OR i.status = 'clarified'"
-           " OR (i.status = 'classified' AND i.decision_source = 'rule'"
-           " AND json_extract(i.proposal, '$.plan.to_actor') = 1))")  # fmt: skip
+# what waits for the local model: new mail for the classifier (presets A and B; C's waits for
+# Claude), and the actor's items in preset A (a rule continued to it, or you answered its
+# question; in B the actor is Claude, V1.4 step 1); in B and C, items the local fallback took
+# (`fallback_at`, V1.4 step 8): from the Claude queue, and then for the local actor
+_PRESET = "(SELECT preset FROM addresses WHERE address_id = i.address_id)"
+_TO_ACTOR = ("(i.status = 'classified' AND i.decision_source = 'rule'"
+             " AND json_extract(i.proposal, '$.plan.to_actor') = 1)")  # fmt: skip
+WAITING = (f"i.model_failed = 0 AND ((i.status = 'new' AND {_PRESET} IN ('A', 'B'))"
+           f" OR ({_PRESET} = 'A' AND (i.status = 'clarified' OR {_TO_ACTOR}))"
+           " OR (i.fallback_at IS NOT NULL AND (i.status IN ('awaiting_claude', 'clarified')"
+           f" OR {_TO_ACTOR})))")  # fmt: skip
 
 
 def waiting(conn: sqlite3.Connection) -> dict[str, int]:
@@ -157,7 +164,8 @@ class Throttle:
     """Heat (§5.2, OD-029 as amended by OD-243): generation speed of each normal call against a
     rolling median of recent ones; three slow calls in a row pause model work for `HEAT_PAUSE`,
     at most once per backlog (OD-248): a fanless Mac stays throttled after a short pause, and
-    pausing again only slows the backlog (V1.3 load test). Timed-out, truncated or failed calls
+    pausing again only slows the backlog (V1.3 load test). The median restarts with each
+    backlog (OD-306). Timed-out, truncated or failed calls
     never enter the median, so a run of crafted slow emails can't drag it down or trip the
     pause on its own."""
 
@@ -176,8 +184,14 @@ class Throttle:
         self.on_ac = on_ac
 
     def drained(self) -> None:
-        """Nothing waits any more: the next backlog may pause for heat again."""
+        """Nothing waits any more: the next backlog may pause for heat again, and its median
+        starts from its own first calls (V1.4 step 12, OD-306). Slow calls never enter the
+        median, so within a backlog it keeps the speed the Mac started at; carried over, it
+        would judge every later backlog against that, and a Mac that settles at a slower
+        speed would pause each one."""
         self.paused = False
+        self.speeds.clear()
+        self.slow_run = 0
 
     def median(self) -> float | None:
         if len(self.speeds) < MIN_WINDOW:
@@ -229,6 +243,7 @@ class _Round:
     holder: str = field(default_factory=_holder)
     tried: set[str] = field(default_factory=set[str])  # each item at most once per round
     throttle: Throttle = field(default_factory=Throttle)
+    shadow: Work | None = None  # the local fallback's shadow runs (V1.4 step 8)
 
 
 def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
@@ -244,7 +259,9 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
     check_kw: dict[str, Any] | None = None,
     stop: threading.Event | None = None,
     throttle: Throttle | None = None,
+    shadow: Work | None = None,
 ) -> RoundReport:
+    """`shadow`: the local fallback's shadow runs, taken only when nothing else waits."""
     if exclusive.held():
         return RoundReport("eval", waiting=sum(waiting(conn).values()))
     with _sole_round() as mine:
@@ -262,6 +279,7 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
             check_kw=check_kw,
             stop=stop,
             throttle=throttle,
+            shadow=shadow,
         )
 
 
@@ -281,13 +299,13 @@ def _sole_round() -> Generator[bool]:
 def _round(  # noqa: PLR0913 - run_round's arguments
     conn: sqlite3.Connection, clock: Clock, notifier: Notifier, client: Client, work: Work, *,
     resident: bool, budget_s: float, exclusive: Exclusive, check_kw: dict[str, Any] | None,
-    stop: threading.Event | None, throttle: Throttle | None,
+    stop: threading.Event | None, throttle: Throttle | None, shadow: Work | None,
 ) -> RoundReport:  # fmt: skip
     ready = models.check(conn, clock, notifier, client, **(check_kw or {}))
     if ready is None:
         return RoundReport("not_ready", waiting=sum(waiting(conn).values()))
     r = _Round(conn, clock, notifier, client, ready, work, RoundReport("done"),
-               throttle=throttle or Throttle())  # fmt: skip
+               throttle=throttle or Throttle(), shadow=shadow)  # fmt: skip
     try:
         _passes(r, budget_s, stop)
     except _Stop:
@@ -298,9 +316,10 @@ def _round(  # noqa: PLR0913 - run_round's arguments
         health.open_alert(conn, clock, notifier, SERVER_ALERT, None, models.fault_text(b.err))
     _resolve_quiet(conn, clock, notifier)
     r.report.waiting = sum(waiting(conn).values())
-    if r.report.waiting == 0:
+    idle = r.report.waiting == 0 and not (shadow and shadow_waiting(conn))
+    if idle:  # the fallback's shadow runs are model work too: the backlog ends with them
         r.throttle.drained()
-    if r.report.waiting == 0 and not resident and not exclusive.held():
+    if idle and not resident and not exclusive.held():
         try:
             client.unload(models_tag())
             r.report.unloaded = True
@@ -310,30 +329,50 @@ def _round(  # noqa: PLR0913 - run_round's arguments
 
 
 def _passes(r: _Round, budget_s: float, stop: threading.Event | None) -> None:
-    """Round-robin passes over the addresses until nothing is worked on or the round ends."""
+    """Round-robin passes over the addresses until nothing is worked on or the round ends; then,
+    when nothing else waits, the local fallback's shadow runs (lowest priority, V1.4 step 8)."""
     started = r.clock.monotonic()
+    shadow = False
     while r.report.status == "done":
         progressed = False
-        for address_id in waiting(r.conn):
+        pending = shadow_waiting(r.conn) if shadow else list(waiting(r.conn))
+        for address_id in pending:
             if r.clock.monotonic() - started >= budget_s:
                 r.report.status = "budget"
                 break
             if stop is not None and stop.is_set():  # the service is stopping
                 r.report.status = "stopped"
                 break
-            progressed = _one(r, address_id) or progressed
+            progressed = _one(r, address_id, shadow=shadow) or progressed
             if r.report.status != "done":  # heat: stop now, not after every address
                 break
-        if not progressed:
-            break
+        if shadow and waiting(r.conn):
+            shadow = False  # new mail came in meanwhile: it goes first
+        elif not progressed:
+            if shadow or r.shadow is None or waiting(r.conn):
+                break
+            shadow = True
+
+
+def shadow_waiting(conn: sqlite3.Connection) -> list[str]:
+    """Addresses with local-fallback shadow runs waiting."""
+    from ecf_server import fallback  # noqa: PLC0415 - fallback imports this module
+
+    return fallback.shadow_addresses(conn)
+
+
+def _next_shadow(conn: sqlite3.Connection, address_id: str, tried: set[str]) -> sqlite3.Row | None:
+    from ecf_server import fallback  # noqa: PLC0415 - fallback imports this module
+
+    return fallback.next_shadow(conn, address_id, tried)
 
 
 def models_tag() -> str:
     return ollama.load_pin().ecf_tag
 
 
-def _one(r: _Round, address_id: str) -> bool:
-    """Work on the address's oldest untried item; True if an item was worked on."""
+def _one(r: _Round, address_id: str, *, shadow: bool = False) -> bool:
+    """Work on the address's oldest untried item (or shadow run); True if one was worked on."""
     lock = leases.local_lock(address_id)
     if not lock.acquire(blocking=False):
         r.report.busy += 1
@@ -344,12 +383,13 @@ def _one(r: _Round, address_id: str) -> bool:
             r.report.busy += 1
             return False
         try:
-            item = _next_item(r.conn, address_id, r.tried)
+            work = r.shadow if shadow and r.shadow is not None else r.work
+            item = (_next_shadow if shadow else _next_item)(r.conn, address_id, r.tried)
             if item is None:
                 return False
             r.tried.add(item["stable_id"])
             try:
-                result = r.work(r.conn, r.clock, r.client, r.ready, item)
+                result = work(r.conn, r.clock, r.client, r.ready, item)
             except ollama.OllamaError as e:
                 log.warning("model.item_error", address_id=address_id, cause=e.cause)
                 if e.cause == "server":
@@ -357,7 +397,11 @@ def _one(r: _Round, address_id: str) -> bool:
                 if e.cause not in ("timeout", "http"):
                     raise _Stop from e  # the server itself: no attempt counts against the item
                 result = ItemResult("failed")
-            _account(r.conn, r.clock, r.notifier, item, result, r.report)
+            if shadow:  # a shadow run changes nothing on the item; a failure is kept as such
+                r.report.done += result.outcome == "ok"
+                r.report.failed += result.outcome == "failed"
+            else:
+                _account(r.conn, r.clock, r.notifier, item, result, r.report)
             if r.throttle.record(result):
                 r.report.status = "hot"  # three slow calls in a row: pause for HEAT_PAUSE
             r.report.per_address[address_id] = r.report.per_address.get(address_id, 0) + 1
@@ -390,11 +434,17 @@ def _account(
     now = to_ts(clock.now())
     attempts = int(item["model_attempts"]) + 1
     failed = attempts >= MAX_ATTEMPTS
+    # the local fallback gave up on an item still in the Claude queue: it goes back to Claude
+    # (`model_failed` keeps the fallback from taking it again until `ecf item requeue`)
+    back = failed and bool(item["fallback_at"]) and item["status"] in FALLBACK_BACK
+    # attempts count at awaiting_claude too: an item the local fallback took (V1.4)
     with write_tx(conn):
         conn.execute(
             "UPDATE items SET model_attempts = ?, model_failed = ?, model_failed_at = ?,"
-            " updated_at = ? WHERE stable_id = ? AND status IN ('new', 'classified', 'clarified')",
-            (attempts, int(failed), now if failed else None, now, item["stable_id"]),
+            " updated_at = ?, fallback_at = CASE WHEN ? THEN NULL ELSE fallback_at END"
+            " WHERE stable_id = ?"
+            " AND status IN ('new', 'classified', 'clarified', 'awaiting_claude')",
+            (attempts, int(failed), now if failed else None, now, back, item["stable_id"]),
         )
         if failed:
             conn.execute(
@@ -406,7 +456,7 @@ def _account(
     if failed:
         report.marked_failed += 1
         _maybe_alert(conn, clock, notifier)
-        if item["status"] != "new":
+        if item["status"] != "new" and not back:
             _without_actor(conn, clock, item["stable_id"])
 
 
@@ -457,7 +507,8 @@ def retry(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str) -> bo
         done = conn.execute(
             "UPDATE items SET model_failed = 0, model_attempts = 0, model_failed_at = NULL,"
             " updated_at = ? WHERE stable_id = ? AND model_failed = 1"
-            " AND status IN ('new', 'classified', 'clarified')", (now, sid)).rowcount  # fmt: skip
+            " AND status IN ('new', 'classified', 'clarified', 'awaiting_claude')",
+            (now, sid)).rowcount  # fmt: skip
         if done:
             conn.execute(
                 "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome)"
@@ -474,7 +525,7 @@ def retry_all(conn: sqlite3.Connection, clock: Clock, *, actor: str) -> int:
 def failed_items(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in conn.execute(
         "SELECT stable_id FROM items WHERE model_failed = 1"
-        " AND status IN ('new', 'classified', 'clarified')"
+        " AND status IN ('new', 'classified', 'clarified', 'awaiting_claude')"
         " ORDER BY model_failed_at")]  # fmt: skip
 
 

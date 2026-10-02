@@ -5,8 +5,10 @@ the summary channel. V1.2 says: what's waiting on you per address, open items, s
 10), approvals that expired twice (listed only here, §6.2), escalations in the last 24 hours,
 emails not fully scanned in the last 24 hours, paused addresses, and who else is in ecf's channels.
 From V1.3: items waiting for the local model and how that changed since the last summary, and hours
-on battery since then (§10.1; V1.3 step 2b). Lines for backups and newer models arrive with those
-features (V1.4-V1.5).
+on battery since then (§10.1; V1.3 step 2b). From V1.4 step 6: Claude's usage in the last 24 hours;
+from step 9, items waiting for `/ecf-review` per address, and those waiting longer than
+`claude_review_reminder_hours`; from step 10, newer Claude models and Ollama tags the weekly model
+watch found since the last summary (each once). Lines for backups arrive with them (V1.5).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -25,8 +27,11 @@ from zoneinfo import ZoneInfo
 from ecf.status import OPEN
 from ecf_server import (
     cards,
+    claude_queue,
+    claude_usage,
     evalrun,
     inbox,
+    model_watch,
     modelq,
     models,
     pause,
@@ -78,6 +83,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> bool:
         slack_admin.put_setting(conn, LAST, today, now, actor="service")
         slack_admin.put_setting(conn, BATTERY, "0", now, actor="service")
         slack_admin.put_setting(conn, BACKLOG, str(_model_backlog(conn)), now, actor="service")
+        model_watch.mark_reported(conn, now)
     return True
 
 
@@ -85,8 +91,10 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     since = to_ts(now - DAY)
     waiting = inbox.inbox(conn)
     per_addr: dict[str, list[int]] = {}
+    queue = claude_queue.waiting(conn)
     open_ = json.dumps(sorted(OPEN))
-    model = ("new", "awaiting_claude", "classified")  # waiting for a model, not for you
+    model = ("new", "classified")  # waiting for the local model, not for you
+    claude = ("awaiting_claude", "clarified")  # waiting for /ecf-review (B and C; V1.4 step 9)
     for (aid,) in conn.execute(
         "SELECT address_id FROM addresses WHERE removed_at IS NULL ORDER BY address_id"
     ):
@@ -101,7 +109,9 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         n_model = _count(conn, "SELECT count(*) FROM items WHERE address_id = ? AND status IN"
                          " (SELECT value FROM json_each(?))", aid, json.dumps(model))  # fmt: skip
         n_model -= sum(1 for i in mine if i["status"] in model)  # escalated ones wait on you
-        per_addr[aid] = [len(mine), n_model, n_open - len(mine) - n_model, esc, unscanned]
+        n_claude = queue.get(aid, 0) - sum(1 for i in mine if i["status"] in claude)
+        per_addr[aid] = [len(mine), n_model, n_claude,
+                         n_open - len(mine) - n_model - n_claude, esc, unscanned]  # fmt: skip
     fields = tuple((aid, _counts(*n)) for aid, n in per_addr.items())
     lines: list[str] = []
     stale = [i for i in waiting if i["stale"]]
@@ -116,9 +126,17 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
     lines += _model_lines(conn)
-    usage = stats.daily_line(conn, now - DAY)
-    if usage:
-        lines.append(usage)
+    late = claude_queue.overdue(conn, now)
+    if late:
+        oldest = min(o.oldest for o in late)[:16].replace("T", " ")
+        each = ", ".join(f"{o.address_id} {o.count}" for o in late)
+        lines.append(f"Waiting for /ecf-review more than {claude_queue.reminder_hours(conn)} h:"
+                     f" {sum(o.count for o in late)} ({each}; the oldest since {oldest} UTC)."
+                     " Run `ecf claude` and type /ecf-review.")  # fmt: skip
+    for usage in (stats.daily_line(conn, now - DAY), claude_usage.daily_line(conn, now - DAY)):
+        if usage:
+            lines.append(usage)
+    lines += model_watch.daily_lines(conn)
     held = evalrun.slack_line()
     if held:
         lines.append(held)
@@ -167,12 +185,15 @@ def _model_lines(conn: sqlite3.Connection) -> list[str]:
     return out
 
 
-def _counts(waiting: int, model: int, other: int, escalated: int, unscanned: int) -> str:
+def _counts(waiting: int, model: int, claude: int, other: int, escalated: int,
+            unscanned: int) -> str:  # fmt: skip
     """Waiting on you apart from mail waiting for the classifier ("40 open" mixed them, V1.2
-    shadow run, 2026-09-30)."""
+    shadow run, 2026-09-30) or for `/ecf-review` (V1.4)."""
     parts = [f"{waiting} waiting on you"]
     if model:
         parts.append(f"{model} waiting for the classifier (V1.3)")
+    if claude:
+        parts.append(f"{claude} waiting for /ecf-review")
     if other:
         parts.append(f"{other} in progress")
     return (f"{', '.join(parts)}; last 24 h: {escalated} escalated,"

@@ -1,0 +1,13 @@
+{
+  "_comment": "The pinned Claude models (SPEC §7.5, OD-014, OD-273) and their lifecycle (SPEC §7.6, OD-299). IDs, states and dates verified 2026-10-02 on platform.claude.com (models overview, model deprecations). Only an ecf release changes this file; `ecf settings set claude_model_override` replaces one family's pin until then. The weekly CI canary (scripts/model_canary.py) fails when the deprecations page differs from `lifecycle`.",
+  "main_session": "claude-haiku-4-5-20251001",
+  "classifier": "claude-haiku-4-5-20251001",
+  "classifier_high": "claude-sonnet-5-5",
+  "actor": "claude-sonnet-5-5",
+  "actor_high": "claude-opus-5-5",
+  "lifecycle": {
+    "claude-haiku-4-5-20251001": {"state": "Active", "not_sooner_than": "2026-10-15"},
+    "claude-sonnet-5-5": {"state": "Active", "not_sooner_than": "2027-09-28"},
+    "claude-opus-5-5": {"state": "Active", "not_sooner_than": "2027-09-22"}
+  }
+}

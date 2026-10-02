@@ -31,7 +31,8 @@ def test_start_serve_stop(home: Path) -> None:
             assert stat.S_IMODE(path.stat().st_mode) == mode, path
         with uds_client(p) as c:
             assert c.get("/v1/health").json() == {"ok": True}
-            assert c.get("/v1/status").status_code == 401
+            assert c.get("/v1/status").status_code == 200  # no token: OBSERVE (OD-280)
+            assert c.get("/v1/inbox").status_code == 401
             time.sleep(0.6)
             s = c.get("/v1/status", headers={"Authorization": f"Bearer {p.token.read_text()}"})
             assert s.status_code == 200 and s.json()["ticks"] >= 1

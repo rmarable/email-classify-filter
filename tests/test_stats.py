@@ -158,3 +158,31 @@ def test_eval_compare_prints_each_runs_figures(tmp_path: Path) -> None:
         " (slowest 5% 30.0); 5.0 s per call median, 5.0 s p95"
     ) in out.output
     assert json.loads(run("c", figures).read_text())["summary"]["model"]["calls"] == 2
+
+
+def test_eval_compare_prints_a_claude_runs_figures(tmp_path: Path) -> None:
+    """V1.4 step 7 (OD-290): a Claude eval's models, requests and plan usage."""
+    claude = {"preset": "C", "sensitivity": "high", "pinned": False, "batch": 5,
+              "models": {"classifier_high": "claude-opus-5-5"}, "source_run": None,
+              "sessions": 1,
+              "all": {"calls": 4, "input_tokens": 3000, "output_tokens": 200,
+                      "seconds": {"median": 2.5, "p95": 4.0}},
+              "groups": [{"model": "claude-opus-5-5", "source": "agent", "calls": 3,
+                          "input_tokens": 2800, "output_tokens": 150}],
+              "plan": {"five_hour_start": 10.0, "five_hour_end": 14.0,
+                       "seven_day_start": 40.0, "seven_day_end": 41.0}}  # fmt: skip
+    paths: list[Path] = []
+    for name in ("a", "b"):
+        r = ResultFile(run_id=name, pair="claude/claude", set_version="v", created_at="t",
+                       cases=[CaseResult(id="c", correct=True), CaseResult(id="d", correct=False)],
+                       summary={"claude": claude} if name == "b" else None)  # fmt: skip
+        paths.append(tmp_path / f"{name}.json")
+        paths[-1].write_text(r.model_dump_json())
+    out = CliRunner().invoke(app, ["eval", "compare", *map(str, paths)])
+    assert out.exit_code == 0, out.output
+    assert "A  Claude" not in out.output
+    assert ("B  Claude: preset C, high, comparison (classifier_high claude-opus-5-5), batch 5"
+            in out.output)  # fmt: skip
+    assert "B  Claude: 4 requests, 3000 tokens in and 200 out, about 1600 per case" in out.output
+    assert "B    claude-opus-5-5 (agent): 3 requests, 2950 tokens" in out.output
+    assert "B  plan usage: 5-hour 10.0% -> 14.0%, 7-day 40.0% -> 41.0%" in out.output

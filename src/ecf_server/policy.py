@@ -21,9 +21,10 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   known label name (lowercase letters, digits and underscores, so it is a safe IMAP keyword) and a
   move target must be in `move_folders` (checked again at execution, step 5).
 - **Modes:** each surviving action is `auto` or `approve`. On `standard` the action policy decides
-  hide actions (default auto, §8.3); on `high` hide actions need approval. High-risk items on the
-  local pair follow `local_high_risk` (§8.2, OD-056): label, flag, escalate and leave are automatic;
-  hide actions need approval; sends are rejected; drafts need approval.
+  hide actions (default auto, §8.3); on `high` hide actions need approval, and so do hides decided
+  in a Claude batch that held a risky or still unclassified item (§5.6, V1.4 step 3). High-risk
+  items on the local pair follow `local_high_risk` (§8.2, OD-056): label, flag, escalate and leave
+  are automatic; hide actions need approval; sends are rejected; drafts need approval.
 """
 
 from __future__ import annotations
@@ -83,6 +84,7 @@ class Context:
     action_policy: dict[str, str]  # standard column for hide actions: auto | approve
     move_folders: frozenset[str]
     confirmed_category: str | None = None  # a person's category for this sender
+    batch_risky: bool = False  # a model batch with a risky or unclassified item (§5.6)
 
 
 def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
@@ -208,7 +210,7 @@ def _mode(ctx: Context, name: str, high_risk: bool) -> Mode:
     if name in SAFE:
         return "auto"
     if name in HIDE_ACTIONS:
-        if high_risk or ctx.sensitivity == "high":
+        if high_risk or ctx.sensitivity == "high" or ctx.batch_risky:
             return "approve"
         return "auto" if ctx.action_policy.get(name, "auto") == "auto" else "approve"
     return "approve"

@@ -117,12 +117,51 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                 typer.echo(f"ecf sent {value} a DM; clicks stay with the old ID until it's"
                            " confirmed.")  # fmt: skip
                 return
+            if key in STEP_UP_KEYS:  # step-up (§7.5; §4.3)
+                return STEP_UP_KEYS[key](c, value, address)
             r = c.request("POST", "/v1/settings",
                           {"key": key, "value": value, "address_id": address})  # fmt: skip
         where = f" for {r['address_id']}" if r["address_id"] else ""
         after = " (takes effect when the service restarts: ecf service restart)" if r["restart"] \
             else ""  # fmt: skip
         typer.echo(f"{r['key']} = {r['value']}{where}{after}")
+
+
+def _fallback_timeout(c: LocalClient, value: str, address: str | None) -> None:
+    body = {"key": "claude_queue_timeout", "value": value, "address_id": address}
+    r = with_step_up(c, lambda n: c.request("POST", "/v1/settings", body | {"nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo(f"claude_queue_timeout = {r['value']} for {r['address_id']}")
+    if r["value"] != "off":
+        typer.echo("The local model runs in shadow on this address's mail until the fallback's"
+                   " own gate passes (ecf doctor shows it); only then does mail that waits longer"
+                   " go to it.")  # fmt: skip
+
+
+def _high_batch(c: LocalClient, value: str, address: str | None) -> None:
+    body = {"key": "classifier_high_batch", "value": value, "address_id": address}
+    r = with_step_up(c, lambda n: c.request("POST", "/v1/settings", body | {"nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo(f"classifier_high_batch = {r['value']} for {r['address_id']}")
+
+
+def _claude_override(c: LocalClient, value: str, address: str | None) -> None:
+    if address:
+        raise typer.BadParameter("claude_model_override is for the whole install")
+    o = with_step_up(c, lambda n: c.request("POST", "/v1/models/claude-override",
+                                            {"value": value, "nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo("Claude models now: " + ", ".join(f"{r} {i}" for r, i in o["effective"].items()))
+    if o["affected"]:
+        typer.echo("their go-live gate starts again (live ones go back to assist): "
+                   + ", ".join(o["affected"]))  # fmt: skip
+
+
+STEP_UP_KEYS: dict[str, Callable[[LocalClient, str, str | None], None]] = {
+    "claude_model_override": _claude_override,  # and a Security Notice (§7.5)
+    "claude_queue_timeout": _fallback_timeout,  # to turn it on (§4.3; V1.4 step 8)
+    "classifier_high_batch": _high_batch,  # to raise it (§7.5; V1.4 step 9)
+}
 
 
 def _config_commands(

@@ -54,6 +54,9 @@ OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, licen
     # 2026-09-28) are the zlib text and the BSD-3-Clause text respectively.
     "dkimpy": ("1.1.8", "Zlib", "dist-info licenses/LICENSE, 2026-09-28"),
     "imapclient": ("4.1.0", "BSD-3-Clause", "dist-info licenses/COPYING, 2026-09-28"),
+    # Via mcp 2.2.0 (V1.4), never installed on macOS or Linux; PyPI metadata, 2026-10-02
+    "httpx2-jsfetch": ("1.0", "BSD-3-Clause", "PyPI License-Expression (emscripten only)"),
+    "pywin32": ("312", "PSF-2.0", "PyPI License 'PSF' and PSF classifier (Windows only)"),
 }
 
 CLASSIFIER_MAP = {
@@ -112,7 +115,12 @@ def markdown_table() -> str:
     core = {n for n, _, _ in runtime_packages(extras=False)}
     for name, version, marker in runtime_packages():
         where = "all platforms" if name in core else "`[eval]` extra only"
-        for plat, label in (("darwin", "macOS"), ("linux", "Linux"), ("win32", "Windows")):
+        for plat, label in (
+            ("darwin", "macOS"),
+            ("linux", "Linux"),
+            ("win32", "Windows"),
+            ("emscripten", "WebAssembly (emscripten)"),
+        ):
             if f"sys_platform == '{plat}'" in marker:
                 where = label
         rows.append(f"| `{name}` | {version} | {license_of(name, version)} | {where} |")

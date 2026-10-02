@@ -17,6 +17,19 @@ STREAM_READ_S = 900.0  # a streamed check may run for minutes between lines (§1
 NOT_RUNNING = "service not running: `ecf service start` or `ecf watch`"
 
 
+def parse_reply(r: httpx.Response) -> Any:
+    """The JSON body of a success; a problem+json reply raised as its EcfError."""
+    if r.is_success:
+        return r.json()
+    try:
+        body: Any = r.json()
+    except ValueError as exc:
+        raise InternalError(f"unexpected reply ({r.status_code})") from exc
+    if isinstance(body, dict):
+        raise EcfError.from_problem(cast(dict[str, Any], body))
+    raise InternalError(f"unexpected reply ({r.status_code})")
+
+
 class LocalClient:
     def __init__(self, paths: Paths, *, timeout: float = TIMEOUT_S) -> None:
         self.paths = paths
@@ -60,15 +73,7 @@ class LocalClient:
             raise ServiceUnavailableError("the service didn't answer in time") from exc
         except httpx.TransportError as exc:
             raise ServiceUnavailableError(NOT_RUNNING) from exc
-        if r.is_success:
-            return r.json()
-        try:
-            body: Any = r.json()
-        except ValueError as exc:
-            raise InternalError(f"unexpected reply ({r.status_code})") from exc
-        if isinstance(body, dict):
-            raise EcfError.from_problem(cast(dict[str, Any], body))
-        raise InternalError(f"unexpected reply ({r.status_code})")
+        return parse_reply(r)
 
     def get(self, path: str, *, auth: bool = True) -> Any:
         return self.request("GET", path, auth=auth)

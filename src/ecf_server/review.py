@@ -32,8 +32,8 @@ from ecf.errors import ConflictError, InvalidInputError
 from ecf.schema import load_schema_v1
 from ecf_server import (
     cards,
+    claude_pins,
     digests,
-    ollama,
     schedule,
     slack_admin,
     slack_in,
@@ -88,7 +88,7 @@ def reviewed(
                         (address_id,)).fetchall()  # fmt: skip
     out = {"reviewed": 0, "category_ok": 0, "individual": 0, "bulk": 0}
     for r in rows:
-        if digest is not None and json.loads(r["pinned_models"] or "{}").get("digest") != digest:
+        if digest is not None and claude_pins.item_key(r["pinned_models"]) != digest:
             continue
         rv: dict[str, Any] = json.loads(r["review"])
         out["reviewed"] += 1
@@ -127,9 +127,9 @@ def pending(conn: sqlite3.Connection, now: datetime, aid: str) -> list[sqlite3.R
     """Emails to put in the next review post; marks the ones the sample leaves out."""
     sens = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
                         (aid,)).fetchone()["sensitivity"]  # fmt: skip
-    # every email until the gate's count is reached for the pinned model (the gate counts per
-    # digest, so a model change starts the count again)
-    full = reviewed(conn, aid, ollama.load_pin().digest)["reviewed"] < GATE_COUNT[sens]
+    # every email until the gate's count is reached for the pinned models (the gate counts per
+    # pin key, so a model change starts the count again)
+    full = reviewed(conn, aid, claude_pins.address_key(conn, aid))["reviewed"] < GATE_COUNT[sens]
     rate = _sample_rate(conn)
     rows = conn.execute("SELECT * FROM items WHERE address_id = ? AND classification IS NOT NULL"
                         " AND review IS NULL AND status != 'classified'"

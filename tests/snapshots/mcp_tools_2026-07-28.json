@@ -1,0 +1,106 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "ecf status"
+      },
+      "description": "Per address: stage, whether it is paused, open items, items waiting for review and the last mail check. No email content.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "status",
+      "title": "ecf status"
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Item counts"
+      },
+      "description": "How many items are in each status, for all addresses or one. No email content.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "address_id": {
+            "description": "Only this address (its ecf address ID).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "counts",
+      "title": "Item counts"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Claim items to review"
+      },
+      "description": "Claims up to `limit` waiting items for this session and returns, for each, its id, address, need (classify or act), the agent to hand it to, a claim token (valid 15 minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the ids and claim tokens in the agent's prompt; only that agent can read the message. `results` reports how earlier claims ended. `more` is true when more items are waiting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "address_id": {
+            "description": "Only this address (its ecf address ID).",
+            "type": "string"
+          },
+          "limit": {
+            "default": 10,
+            "description": "At most this many items (1-50).",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "review_queue",
+      "title": "Claim items to review"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Claim eval cases"
+      },
+      "description": "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: give all items with the same spawn to one Agent spawn, passing only the ids and claim tokens; never read a case yourself. `results` reports how earlier claims ended; `done` is true when the eval has ended.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 10,
+            "description": "At most this many cases (1-50).",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "eval_next",
+      "title": "Claim eval cases"
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Eval progress and results"
+      },
+      "description": "The registered eval's progress and, once it has ended, its metrics: counts and rates only, no case content.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "eval_results",
+      "title": "Eval progress and results"
+    }
+  ]
+}
