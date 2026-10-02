@@ -175,6 +175,45 @@
       },
       "name": "propose_action",
       "title": "Propose an action"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Claim eval cases"
+      },
+      "description": "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: give all items with the same spawn to one Agent spawn, passing only the ids and claim tokens; never read a case yourself. `results` reports how earlier claims ended; `done` is true when the eval has ended.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 10,
+            "description": "At most this many cases (1-50).",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "eval_next",
+      "title": "Claim eval cases"
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Eval progress and results"
+      },
+      "description": "The registered eval's progress and, once it has ended, its metrics: counts and rates only, no case content.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "eval_results",
+      "title": "Eval progress and results"
     }
   ]
 }

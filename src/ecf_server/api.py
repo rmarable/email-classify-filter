@@ -52,6 +52,7 @@ from ecf_server import (
     audit,
     backfill,
     checks,
+    claude_eval,
     claude_pins,
     claude_queue,
     claude_review,
@@ -358,22 +359,25 @@ def _end_claims(state: ServiceState, session_id: str) -> None:
         claude_review.release_session(conn, session_id)
     finally:
         conn.close()
+    claude_eval.release_session(session_id)
 
 
 def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
     """What `ecf claude` needs to start a session (V1.4 steps 5-6): the Claude pins in force, for
     the plugin's agents and the main session, how many items wait for review, and the plan usage
-    after the last review."""
+    after the last review; from step 7, the Claude eval waiting for `/ecf-eval`, if any, with the
+    `ecf:eval-*` agents to render for it."""
     if state.db_path is None:
-        return {"models": claude_pins.load_lock(), "waiting": 0, "last_plan": None}
+        return {"models": claude_pins.load_lock(), "waiting": 0, "last_plan": None, "eval": None}
     conn = state.connect()
     try:
         claude_usage.start_session(conn, state.clock, session_id)
-        return {"models": claude_pins.effective(conn),
-                "waiting": sum(claude_queue.waiting(conn).values()),
-                "last_plan": claude_usage.last_plan(conn)}  # fmt: skip
+        setup = {"models": claude_pins.effective(conn),
+                 "waiting": sum(claude_queue.waiting(conn).values()),
+                 "last_plan": claude_usage.last_plan(conn)}  # fmt: skip
     finally:
         conn.close()
+    return setup | {"eval": claude_eval.session_info(state.connect, state.clock)}
 
 
 def _end_session(state: ServiceState, session_id: str) -> None:
@@ -801,8 +805,9 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`. CLI only in V1.3; MCP-W
-    arrives with `/ecf-eval` in V1.4."""
+    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
+    also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
+    `_review_routes`)."""
 
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
@@ -842,13 +847,39 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
         recent = [dict(r) | {"metrics": json.loads(r["metrics"])} for r in rows]
-        return JSONResponse({"current": run, "recent": recent})
+        claude = claude_eval.status(state.connect, state.clock)
+        return JSONResponse({"current": run, "recent": recent, "claude": claude})
 
     @allow(Caller.CLI)
     def stop_eval(_request: Request) -> JSONResponse:
-        return JSONResponse(evalrun.stop())
+        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] in ("running", "paused") else None
+        claude = claude_eval.stop(state.connect, state.clock)
+        if local is None and claude is None:
+            raise NotFoundError("no eval is running")
+        return JSONResponse({"local": local, "claude": claude})
+
+    @allow(Caller.CLI)
+    def start_claude_eval(request: Request) -> JSONResponse:
+        """`ecf eval run --claude` (OD-288): registers the run; `/ecf-eval` drives it."""
+        body = _body(request)
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+            raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
+        batch = body.get("batch", 1)
+        if isinstance(batch, bool) or not isinstance(batch, int):
+            raise InvalidInputError("batch must be a whole number")
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        opts = claude_eval.Options(
+            root, preset=_str(body, "preset"), sensitivity=_str(body, "sensitivity"),
+            fraud_only=body.get("fraud_only") is True,
+            classifier_model=_opt_str(body, "classifier_model"),
+            actor_model=_opt_str(body, "actor_model"), batch=batch)  # fmt: skip
+        return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
+                                              opts))  # fmt: skip
 
     return [
+        Route("/v1/eval/claude", start_claude_eval, methods=["POST"]),
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
@@ -883,7 +914,7 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if seen is None and state.telemetry.hold(got):
             return {"accepted": True, "pending": True, "errors": []}
         # bound, or the session ended while it waited (then it is refused as unbound)
-        return claude_review.settle(conn, state.clock, state.notifier, state.telemetry, got, seen)
+        return telemetry_app.settle_one(state, conn, got, seen)
 
     @allow(Caller.WORK)
     def review_queue(request: Request) -> JSONResponse:
@@ -906,6 +937,8 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 return None
             return state.telemetry.seen(sid, call, state.telemetry_wait_s)
 
+        if claude_eval.owns(ref):
+            return JSONResponse(claude_eval.get_message(state.clock, sid, ref, token, seen))
         return _with_conn(lambda c: claude_review.get_message(c, state.clock, sid, ref, token,
                                                               seen))  # fmt: skip
 
@@ -914,6 +947,9 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
         token = _str(body, "claim_token")
         got, call = body.get("classification"), _call_id(body)
+        if claude_eval.owns(ref):
+            return _with_conn(lambda c: _submitted(sid, c, claude_eval.record_classification(
+                state.clock, sid, ref, token, got, call)))  # fmt: skip
         return _with_conn(lambda c: _submitted(sid, c, claude_review.record_classification(
             c, state.clock, sid, ref, token, got, call)))  # fmt: skip
 
@@ -921,8 +957,26 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def proposal(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
         token = _str(body, "claim_token")
+        if claude_eval.owns(ref):
+            return _with_conn(lambda c: _submitted(sid, c, claude_eval.propose_action(
+                state.clock, sid, ref, token, body, _call_id(body))))  # fmt: skip
         return _with_conn(lambda c: _submitted(sid, c, claude_review.propose_action(
             c, state.clock, sid, ref, token, body, _call_id(body))))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def eval_next(request: Request) -> JSONResponse:
+        """`/ecf-eval` (V1.4 step 7, OD-287): claims the next cases, as `review_queue` does."""
+        body, sid = _body(request), _session(request)
+        limit = body.get("limit", claude_review.LIMIT_DEFAULT)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise InvalidInputError("limit must be a whole number")
+        stopped = state.telemetry.stopped(sid)
+        return JSONResponse(claude_eval.eval_next(state.connect, state.clock, sid, limit=limit,
+                                                  stopped=stopped))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def eval_results(_request: Request) -> JSONResponse:
+        return JSONResponse(claude_eval.results())
 
     @allow(Caller.WORK)
     def statusline(request: Request) -> JSONResponse:
@@ -936,6 +990,8 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/claims/{ref}/message", message, methods=["POST"]),
         Route("/v1/claims/{ref}/classification", classification, methods=["POST"]),
         Route("/v1/claims/{ref}/proposal", proposal, methods=["POST"]),
+        Route("/v1/eval/next", eval_next, methods=["POST"]),
+        Route("/v1/eval/results", eval_results, methods=["POST"]),
         Route("/v1/statusline", statusline, methods=["POST"]),
     ]
 

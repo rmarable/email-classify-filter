@@ -88,7 +88,8 @@ def state(conn: sqlite3.Connection, db_path: Path) -> ServiceState:  # conn: mig
 def test_names_texts_and_hints() -> None:
     names = [t.name for t in mcp_server.TOOLS]
     assert names == ["status", "counts", "review_queue", "get_message",
-                     "record_classification", "propose_action"]  # fmt: skip
+                     "record_classification", "propose_action", "eval_next",
+                     "eval_results"]  # fmt: skip
     texts = [mcp_server.INSTRUCTIONS]
     for t in mcp_server.TOOLS:
         assert mcp_server.TOOL_NAME.fullmatch(t.name)

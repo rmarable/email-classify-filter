@@ -23,7 +23,7 @@ from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
 from ecf.client import LocalClient
 from ecf.doctor import Level, run_checks
-from ecf.errors import EcfError
+from ecf.errors import EcfError, InvalidInputError
 from ecf.ids import SLUG_PATTERN
 from ecf.log import configure_logging
 from ecf.paths import Paths, paths_for
@@ -852,7 +852,7 @@ def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
 
 
 @eval_app.command("run")
-def eval_run(
+def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     root: RootOpt = EVAL_ROOT,
     classifier: Annotated[bool, typer.Option("--classifier/--no-classifier")] = True,
     actor: Annotated[bool, typer.Option("--actor/--no-actor")] = True,
@@ -862,10 +862,33 @@ def eval_run(
     battery_floor: Annotated[
         int, typer.Option("--battery-floor", help="Pause at this battery percent (OD-237).")
     ] = 15,
+    claude: Annotated[
+        bool, typer.Option("--claude", help="Register a run for /ecf-eval in `ecf claude`.")
+    ] = False,
+    preset: Annotated[str, typer.Option("--preset", help="With --claude: B or C.")] = "C",
+    sensitivity: Annotated[
+        str, typer.Option("--sensitivity", help="With --claude: standard or high.")
+    ] = "standard",
+    classifier_model: Annotated[
+        str | None, typer.Option("--classifier-model", help="With --claude: compare this model.")
+    ] = None,
+    actor_model: Annotated[
+        str | None, typer.Option("--actor-model", help="With --claude: compare this model.")
+    ] = None,
+    batch: Annotated[
+        int, typer.Option("--batch", help="With --claude: items per -high spawn (1-5).")
+    ] = 1,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
-    (OD-230)."""
+    (OD-230). With --claude, register a run for Claude instead: open `ecf claude` and type
+    /ecf-eval (it uses your Claude plan)."""
+    if claude:
+        if not (classifier and actor):
+            raise InvalidInputError("--no-classifier and --no-actor are for the local model")
+        _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
+                     actor_model, batch)  # fmt: skip
+        return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
@@ -877,12 +900,40 @@ def eval_run(
                    " resumes on AC power.")  # fmt: skip
 
 
+def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
+                 classifier_model: str | None, actor_model: str | None,
+                 batch: int) -> None:  # fmt: skip
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/claude", {
+            "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
+            "fraud_only": fraud_only, "classifier_model": classifier_model,
+            "actor_model": actor_model, "batch": batch})  # fmt: skip
+    models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
+    use = ("the pinned models: counts for the go-live gate" if r["pinned"]
+           else "other models: for comparison only")  # fmt: skip
+    typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
+               f" {r['preset']}, {r['sensitivity']}; {use} ({models}).")  # fmt: skip
+    typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
+               " type /ecf-eval; it uses your Claude plan. The run expires in 24 hours;"
+               " `ecf eval stop` ends it.")  # fmt: skip
+    if not fraud_only:
+        typer.echo("For a first run, `--fraud-only` uses less of the plan.")
+
+
 @eval_app.command("status")
 def eval_status() -> None:
     """The running eval's progress and the latest results."""
     with LocalClient(_paths()) as c:
         st = c.get("/v1/eval/runs")
     cur = st["current"]
+    cl: dict[str, Any] | None = st.get("claude")
+    if cl is not None:
+        typer.echo(f"Claude eval {cl['run_id'][:8]} (preset {cl['preset']}, {cl['sensitivity']},"
+                   f" {'pinned models' if cl['pinned'] else 'comparison'}): {cl['state']},"
+                   f" {cl['done']}/{cl['total']} cases scored"
+                   + (f", {cl['prepared']}/{cl['total']} prepared"
+                      if cl["state"] == "preparing" else "")
+                   + (f" ({cl['detail']})" if cl["detail"] else ""))  # fmt: skip
     if cur["state"] != "idle":
         typer.echo(f"eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
@@ -893,7 +944,7 @@ def eval_status() -> None:
                    f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
                    f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
                    + _run_caveat(m))  # fmt: skip
-    if cur["state"] == "idle" and not st["recent"]:
+    if cur["state"] == "idle" and cl is None and not st["recent"]:
         typer.echo("no eval has run yet: ecf eval run")
 
 
@@ -912,7 +963,13 @@ def eval_stop() -> None:
     """Stop the running eval after its current case."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs/stop", {})
-    typer.echo(f"stopping eval {r['run_id'][:8]} after its current case")
+    if r.get("local"):
+        typer.echo(f"stopping eval {r['local']['run_id'][:8]} after its current case")
+    if r.get("claude"):
+        cl = r["claude"]
+        saved = ", result saved" if cl["done"] else ", nothing to save"
+        typer.echo(f"Claude eval {cl['run_id'][:8]} stopped: {cl['done']} of {cl['total']}"
+                   f" cases scored{saved}")  # fmt: skip
 
 
 @eval_app.command("compare")
@@ -935,6 +992,8 @@ def eval_compare(a: Path, b: Path) -> None:
         line = _model_figures(run.summary)
         if line:
             typer.echo(f"{name}  model: {line}")
+        for line in _claude_figures(run.summary, len(run.cases)):
+            typer.echo(f"{name}  {line}")
     fields = compare_fields(ra, rb)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
@@ -955,6 +1014,36 @@ def _model_figures(summary: dict[str, object] | None) -> str | None:
     return (f"{f['calls']} calls, about {per_email} tokens per email; writing"
             f" {w['median']} tokens/s median (slowest 5% {w['slowest_5']}); {t['median']} s per"
             f" call median, {t['p95']} s p95")  # fmt: skip
+
+
+def _claude_figures(summary: dict[str, object] | None, cases: int) -> list[str]:
+    """A Claude eval's models, requests and plan usage (V1.4 step 7; absent in other runs)."""
+    m = (summary or {}).get("claude")
+    if not isinstance(m, dict):
+        return []
+    f = cast(dict[str, Any], m)
+    models = ", ".join(f"{k} {v}" for k, v in f["models"].items())
+    kind = "pinned" if f["pinned"] else "comparison"
+    out = [f"Claude: preset {f['preset']}, {f['sensitivity']}, {kind} ({models}),"
+           f" batch {f['batch']}" + (f", classifications from run {str(f['source_run'])[:8]}"
+                                     if f.get("source_run") else "")]  # fmt: skip
+    a = f["all"]
+    tokens = a["input_tokens"] + a["output_tokens"]
+    per = f", about {tokens / cases:.0f} per case" if cases else ""
+    out.append(f"Claude: {a['calls']} requests, {a['input_tokens']} tokens in and"
+               f" {a['output_tokens']} out{per}; {a['seconds']['median']} s per request"
+               " median")  # fmt: skip
+    for g in f["groups"]:
+        out.append(f"  {g['model']} ({g['source']}): {g['calls']} requests,"
+                   f" {g['input_tokens'] + g['output_tokens']} tokens")  # fmt: skip
+    p = f.get("plan")
+    if isinstance(p, dict):
+        plan = cast(dict[str, Any], p)
+        out.append("plan usage: " + ", ".join(
+            f"{label} {plan[f'{k}_start']}% -> {plan[f'{k}_end']}%"
+            for k, label in (("five_hour", "5-hour"), ("seven_day", "7-day"))
+            if plan.get(f"{k}_end") is not None))  # fmt: skip
+    return out
 
 
 def main() -> None:

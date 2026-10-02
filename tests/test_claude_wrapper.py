@@ -70,8 +70,9 @@ def test_settings_document() -> None:
     assert d["statusLine"] == {"type": "command", "command": "status-cmd"}
     assert d["permissions"]["defaultMode"] == "dontAsk"
     assert d["permissions"]["allow"] == [
-        "mcp__ecf__review_queue", "Agent", "mcp__ecf__get_message",
-        "mcp__ecf__record_classification", "mcp__ecf__propose_action"]  # fmt: skip
+        "mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results", "Agent",
+        "mcp__ecf__get_message", "mcp__ecf__record_classification",
+        "mcp__ecf__propose_action"]  # fmt: skip
     for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
                  "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
@@ -104,6 +105,35 @@ def test_plugin_rendered_with_pins(tmp_path: Path) -> None:
         submit = "record_classification" if name.startswith("classifier") else "propose_action"
         assert tools == {"mcp__ecf__get_message", f"mcp__ecf__{submit}"}
         assert tools <= set(cw.SUBAGENT_TOOLS)
+
+
+def test_eval_skill_always_and_eval_agents_only_for_a_comparison(tmp_path: Path) -> None:
+    """V1.4 step 7 (OD-288): `/ecf-eval` ships always; the `eval-*` agents only when the service
+    names them, each on the run's model, from the same templates."""
+    dest = tmp_path / "plugin"
+    cw.render_plugin(dest, MODELS)
+    skill = (dest / "skills" / "ecf-eval" / "SKILL.md").read_text()
+    assert _frontmatter(skill)["name"] == "ecf-eval"
+    assert _frontmatter(skill)["disable-model-invocation"] == "true"
+    assert not list((dest / "agents").glob("eval-*"))
+    cw.render_plugin(dest, MODELS, {"eval-classifier": "claude-opus-y",
+                                    "eval-actor": "claude-opus-y"})  # fmt: skip
+    assert sorted(p.name for p in (dest / "agents").glob("eval-*")) == [
+        "eval-actor.md", "eval-classifier.md"]  # fmt: skip
+    fm = _frontmatter((dest / "agents" / "eval-classifier.md").read_text())
+    assert fm["name"] == "eval-classifier" and fm["model"] == "claude-opus-y"
+    body = (dest / "agents" / "eval-classifier.md").read_text().split("---\n", 2)[2]
+    assert body == (dest / "agents" / "classifier.md").read_text().split("---\n", 2)[2]
+
+
+def test_eval_agents_match_the_service() -> None:
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    for name, (_t, role, _d) in cw.EVAL_AGENTS.items():
+        assert claude_eval.agent_name(role, pinned=False) == f"ecf:{name}"
+        assert claude_eval.role_of(f"ecf:{name}") == role
+    for name, (_t, role, _d) in cw.AGENTS.items():
+        assert claude_eval.agent_name(role, pinned=True) == f"ecf:{name}"
 
 
 def test_agents_match_the_service() -> None:

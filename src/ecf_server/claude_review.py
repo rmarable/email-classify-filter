@@ -294,15 +294,23 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
     claim = _claimed(conn, clock, session_id, sid, token, "classify")
     if tool_use_id is None:
         raise InvalidInputError(NO_CALL_ID)
+    result, errors = check_classification(classification)
+    if result is None:
+        return _invalid(conn, clock, claim, errors)
+    return _hold(conn, claim, session_id, tool_use_id, {"classification": result})
+
+
+def check_classification(classification: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    """The classification checked against the schema, or the errors: each names the field and the
+    kind of problem, never the submitted value (`/ecf-review` and `/ecf-eval` alike)."""
     try:
-        result = load_schema_v1().validate(classification).model_dump(mode="json")
+        return load_schema_v1().validate(classification).model_dump(mode="json"), []
     except ValidationError as e:
         errors = [f"{'.'.join(str(x) for x in err['loc']) or 'classification'}: "
                   f"{_PROBLEMS.get(err['type'], err['type'])}" for err in e.errors()]  # fmt: skip
-        return _invalid(conn, clock, claim, errors[:20])
+        return None, errors[:20]
     except (ValueError, TypeError):
-        return _invalid(conn, clock, claim, ["classification must be a JSON object"])
-    return _hold(conn, claim, session_id, tool_use_id, {"classification": result})
+        return None, ["classification must be a JSON object"]
 
 
 def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, token: str,
@@ -328,10 +336,16 @@ def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
                       proposal: dict[str, Any]) -> str | None:  # fmt: skip
     ctx, _p = decide.plan_for(conn, item)
     labels = policy.labels(load_schema_v1(), ctx.rules)
+    return check_proposal(proposal, labels, ctx.move_folders, actor.allowed(ctx.classification))
+
+
+def check_proposal(proposal: dict[str, Any], labels: frozenset[str], folders: frozenset[str],
+                   allowed: tuple[str, ...]) -> str | None:  # fmt: skip
+    """Why a proposal is refused, or None: the local actor's checks (`actor.problem`, OD-250) and
+    a question only, and always, with needs_clarification (`/ecf-review` and `/ecf-eval`)."""
     action, target, reason = proposal["action"], proposal["target"] or "", proposal["reason"]
     question = proposal["question"]
-    why = actor.problem(action, target, reason, labels, ctx.move_folders,
-                        actor.allowed(ctx.classification))  # fmt: skip
+    why = actor.problem(action, target, reason, labels, folders, allowed)
     if why is None and action == "needs_clarification":
         if not isinstance(question, str) or not question.strip():
             why = "needs_clarification needs the question to ask"

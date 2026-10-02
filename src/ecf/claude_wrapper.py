@@ -45,7 +45,9 @@ SUBAGENT_TOOLS = [
     "mcp__ecf__record_classification",
     "mcp__ecf__propose_action",
 ]
-ALLOWED_TOOLS = ["mcp__ecf__review_queue", "Agent", *SUBAGENT_TOOLS]
+# the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
+ALLOWED_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results",
+                 "Agent", *SUBAGENT_TOOLS]  # fmt: skip
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
 BUILTIN_AGENTS = ("general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide")
 DENIED_TOOLS = [
@@ -66,6 +68,11 @@ AGENTS = {
     "actor": ("actor", "actor", "Proposes one next step for each ecf review item it is given."),
     "actor-high": ("actor", "actor_high", "Proposes one next step for one high-risk ecf item."),
 }  # fmt: skip
+SKILLS = ("ecf-review", "ecf-eval")
+# A comparison eval on other models (OD-288) gets these, rendered from the same templates.
+EVAL_AGENTS = {f"eval-{name}": (template, role, f"For /ecf-eval only: {description[0].lower()}"
+                                                f"{description[1:]}")
+               for name, (template, role, description) in AGENTS.items()}  # fmt: skip
 # Only these variables are passed from the user's environment (plus LC_*); everything else,
 # e.g. ANTHROPIC_* (API keys, base URLs), provider switches and OTEL exporters, is dropped.
 ENV_ALLOW = frozenset(
@@ -182,20 +189,27 @@ def _write(path: Path, text: str) -> None:
     path.chmod(0o600)
 
 
-def render_plugin(dest: Path, models: dict[str, str]) -> None:
-    """Write the plugin from the wheel's templates, each agent on its pinned model."""
+def render_plugin(dest: Path, models: dict[str, str],
+                  eval_models: dict[str, str] | None = None) -> None:  # fmt: skip
+    """Write the plugin from the wheel's templates, each agent on its pinned model; with
+    `eval_models` (agent name -> model, from the service), the `eval-*` agents of a comparison
+    eval too."""
     src = resources.files("ecf.data").joinpath("plugin")
     if dest.exists():
         shutil.rmtree(dest)
-    for sub in (".claude-plugin", "skills/ecf-review", "agents"):
+    for sub in (".claude-plugin", *(f"skills/{k}" for k in SKILLS), "agents"):
         (dest / sub).mkdir(mode=0o700, parents=True)
     manifest = src.joinpath(".claude-plugin", "plugin.json").read_text(encoding="utf-8")
     _write(dest / ".claude-plugin" / "plugin.json", manifest.replace("{{VERSION}}", __version__))
-    skill = src.joinpath("skills", "ecf-review", "SKILL.md").read_text(encoding="utf-8")
-    _write(dest / "skills" / "ecf-review" / "SKILL.md", skill)
-    for name, (template, role, description) in AGENTS.items():
+    for k in SKILLS:
+        skill = src.joinpath("skills", k, "SKILL.md").read_text(encoding="utf-8")
+        _write(dest / "skills" / k / "SKILL.md", skill)
+    agents = [(n, t, models[r], d) for n, (t, r, d) in AGENTS.items()]
+    agents += [(n, t, (eval_models or {})[n], d) for n, (t, _r, d) in EVAL_AGENTS.items()
+               if n in (eval_models or {})]  # fmt: skip
+    for name, template, model, description in agents:
         text = src.joinpath("agents", f"{template}.md").read_text(encoding="utf-8")
-        for key, value in (("NAME", name), ("DESCRIPTION", description), ("MODEL", models[role])):
+        for key, value in (("NAME", name), ("DESCRIPTION", description), ("MODEL", model)):
             text = text.replace("{{" + key + "}}", value)
         _write(dest / "agents" / f"{name}.md", text)
 
@@ -219,7 +233,8 @@ def mark_ready(lay: Layout) -> None:
     _write(lay.state, json.dumps(state, indent=2) + "\n")
 
 
-def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str]) -> None:
+def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str],
+                 eval_models: dict[str, str] | None = None) -> None:  # fmt: skip
     for d in (lay.config_dir, lay.work_dir):
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
         d.chmod(0o700)
@@ -227,7 +242,7 @@ def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str
             (lay.mcp_config, mcp_doc(ecf_mcp, socket)))  # fmt: skip
     for path, doc in docs:
         _write(path, json.dumps(doc, indent=2) + "\n")
-    render_plugin(lay.plugin_dir, models)
+    render_plugin(lay.plugin_dir, models, eval_models)
     mark_ready(lay)
 
 
@@ -331,13 +346,18 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
     with LocalClient(paths) as c:
         session: dict[str, Any] = c.request("POST", "/v1/sessions")
     try:
-        write_config(lay, ecf_mcp, paths.socket.absolute(), session["models"])
+        ev: dict[str, Any] | None = session.get("eval")
+        write_config(lay, ecf_mcp, paths.socket.absolute(), session["models"],
+                     ev["agents"] if ev else None)  # fmt: skip
     except BaseException:
         with LocalClient(paths) as c:
             c.request("DELETE", f"/v1/sessions/{session['session_id']}")
         raise
     waiting = int(session.get("waiting", 0))
     echo(f"ecf claude: {waiting} item(s) waiting for review; type /ecf-review to start.")
+    if ev:
+        echo(f"Eval {str(ev['run_id'])[:8]} is registered ({ev['left']} of {ev['total']} cases"
+             " left); type /ecf-eval to run it.")  # fmt: skip
     if line := plan_line(session.get("last_plan")):
         echo(line)
     args = [claude, "--strict-mcp-config", "--mcp-config", str(lay.mcp_config),

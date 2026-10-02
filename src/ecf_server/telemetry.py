@@ -17,7 +17,8 @@ This assumes that request belongs to the same agent: `/ecf-review` runs one agen
 a time (all on one model), so parallel spawns of that agent share the model. Unverified with
 parallel spawns, confirm in V1.4 step 13; a wrong binding refuses work (it can't widen access).
 
-Submissions waiting for their binding (`Hold`) are kept here too, and settled by `claude_review`.
+Submissions waiting for their binding (`Hold`) are kept here too, and settled by `claude_review`
+(or `claude_eval` for `/ecf-eval`).
 """
 
 from __future__ import annotations
@@ -83,6 +84,7 @@ class Hold:
     need: str
     agent: str
     payload: dict[str, Any]
+    kind: str = "review"  # review (`/ecf-review`, claude_review) | eval (`/ecf-eval`, claude_eval)
 
 
 @dataclass

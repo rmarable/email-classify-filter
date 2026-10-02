@@ -5,13 +5,15 @@ socket. Each `ecf claude` session has its own bearer token (`OTEL_EXPORTER_OTLP_
 
 Logs carry what ecf keeps (`telemetry.parse_logs`); metrics are accepted and dropped, since the
 per-request log events carry the same figures. After each logs export, the session's held
-submissions that telemetry now binds are settled (`claude_review.settle`).
+submissions that telemetry now binds are settled (`claude_review.settle`, or `claude_eval.settle`
+for `/ecf-eval`'s).
 """
 
 from __future__ import annotations
 
 import json
 import socket
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
@@ -20,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ecf_server import claude_review, claude_usage, telemetry
+from ecf_server import claude_eval, claude_review, claude_usage, telemetry
 from ecf_server.log_bridge import log
 
 if TYPE_CHECKING:
@@ -45,11 +47,20 @@ def settle_bound(state: ServiceState, session_id: str, *, final: bool = False) -
     try:
         for hold, seen in pending:
             try:
-                claude_review.settle(conn, state.clock, state.notifier, tel, hold, seen)
+                settle_one(state, conn, hold, seen)
             except Exception as exc:  # e.g. the item moved on while held: its outcome says so
                 log.warning("telemetry.settle_failed", error_type=type(exc).__name__)
     finally:
         conn.close()
+
+
+def settle_one(state: ServiceState, conn: sqlite3.Connection, hold: telemetry.Hold,
+               seen: telemetry.Seen | None) -> dict[str, Any]:  # fmt: skip
+    """Settle one held submission, `/ecf-review`'s or `/ecf-eval`'s."""
+    if hold.kind == "eval":
+        return claude_eval.settle(state.connect, state.clock, state.notifier, state.telemetry,
+                                  hold, seen)  # fmt: skip
+    return claude_review.settle(conn, state.clock, state.notifier, state.telemetry, hold, seen)
 
 
 def create_receiver(state: ServiceState) -> Starlette:

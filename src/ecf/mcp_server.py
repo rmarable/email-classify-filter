@@ -9,6 +9,10 @@ once a call is 100 s old; `anyio.fail_after(115)` is a backstop. A call stopped 
 answers "more pending" rather than an error. Email-derived fields come back from the service
 inside its untrusted-data wrapper (`untrusted_email` plus `notice`), passed through unchanged.
 
+`/ecf-eval` (V1.4 step 7, OD-287): `eval_next` claims cases of the registered eval as
+`review_queue` claims items, and the subagents read and submit them through the same tools;
+`eval_results` returns metrics only.
+
 Model check (V1.4 step 6; OD-268, OD-274): Claude Code puts the call's tool-use ID in
 `_meta.claudecode/toolUseId` (tested 2026-10-02); reads and submissions pass it to the service as
 `tool_use_id`, which matches it to the telemetry of the API request that made the call.
@@ -205,6 +209,17 @@ async def _propose_action(svc: Service, args: dict[str, Any], started: float,
                                                body))  # fmt: skip
 
 
+async def _eval_next(svc: Service, args: dict[str, Any], started: float,
+                     _call: str | None) -> dict[str, Any]:  # fmt: skip
+    body: dict[str, Any] = {"limit": args["limit"]} if "limit" in args else {}
+    return cast(dict[str, Any], await svc.call("POST", "/v1/eval/next", started, body))
+
+
+async def _eval_results(svc: Service, _args: dict[str, Any], started: float,
+                        _call: str | None) -> dict[str, Any]:  # fmt: skip
+    return cast(dict[str, Any], await svc.call("POST", "/v1/eval/results", started, {}))
+
+
 # fmt: off
 TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
@@ -263,6 +278,23 @@ TOOLS: tuple[ToolDef, ...] = (
                       "description": "Only with needs_clarification: the question to ask."}},
         ("id", "claim_token", "action", "reason"),
         read_only=False, work_only=True, handler=_propose_action,
+    ),
+    ToolDef(
+        "eval_next", "Claim eval cases",
+        "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and "
+        "returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: "
+        "give all items with the same spawn to one Agent spawn, passing only the ids and claim "
+        "tokens; never read a case yourself. `results` reports how earlier claims ended; `done` "
+        "is true when the eval has ended.",
+        {"limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
+                   "description": "At most this many cases (1-50)."}},
+        (), read_only=False, work_only=True, handler=_eval_next,
+    ),
+    ToolDef(
+        "eval_results", "Eval progress and results",
+        "The registered eval's progress and, once it has ended, its metrics: counts and rates "
+        "only, no case content.",
+        {}, (), read_only=True, work_only=True, handler=_eval_results,
     ),
 )
 # fmt: on

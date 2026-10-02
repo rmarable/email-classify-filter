@@ -123,6 +123,34 @@ def report(conn: sqlite3.Connection, since: datetime) -> dict[str, Any]:
     }
 
 
+def run_report(conn: sqlite3.Connection, sessions: list[str], since: datetime) -> dict[str, Any]:
+    """A Claude eval run's figures (V1.4 step 7): its sessions' requests since it started, by
+    model and source, and the plan usage at the sessions' first and last readings (ended
+    sessions only: a live one has none recorded yet)."""
+    if not sessions:
+        return {"groups": [], "all": _figures([]), "plan": None}
+    marks = ", ".join("?" * len(sessions))
+    calls = f"SELECT * FROM claude_calls WHERE ts >= ? AND session_id IN ({marks})"  # noqa: S608 - placeholders only
+    rows = conn.execute(calls + " ORDER BY model, source", (to_ts(since), *sessions)).fetchall()
+    groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    for r in rows:
+        groups.setdefault((r["model"], r["source"]), []).append(r)
+    plans = (
+        "SELECT five_hour_start, seven_day_start, five_hour_end, seven_day_end FROM"  # noqa: S608 - placeholders only
+        f" claude_sessions WHERE session_id IN ({marks}) AND ended_at IS NOT NULL"
+    )
+    readings = conn.execute(plans + " ORDER BY started_at", tuple(sessions)).fetchall()
+    plan = None
+    if readings:
+        first, last = readings[0], readings[-1]
+        plan = {"five_hour_start": first["five_hour_start"],
+                "seven_day_start": first["seven_day_start"],
+                "five_hour_end": last["five_hour_end"],
+                "seven_day_end": last["seven_day_end"]}  # fmt: skip
+    return {"groups": [{"model": m, "source": s} | _figures(rs) for (m, s), rs in groups.items()],
+            "all": _figures(rows), "plan": plan}  # fmt: skip
+
+
 def _figures(rows: list[sqlite3.Row]) -> dict[str, Any]:
     secs = [r["duration_ms"] / 1000 for r in rows if r["duration_ms"] is not None]
     costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
