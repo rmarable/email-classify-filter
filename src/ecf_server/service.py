@@ -53,6 +53,7 @@ from ecf_server import (
     pipeline,
     retention,
     schedule,
+    send,
     stages,
     telemetry_app,
 )
@@ -184,6 +185,7 @@ class Service:
         self.rounds = modelq.RoundSchedule(self.clock)
         # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
         self.in_check = mailbox_actions.run_in_check
+        self.settle_sends = send.settle_in_check  # settles open sends in each check (V1.5)
         self._ollama_log_at: float | None = None  # monotonic time of the last look (OD-266)
         self.throttle = self.state.throttle  # speeds across rounds, `ecf check`'s too (OD-243)
 

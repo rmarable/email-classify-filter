@@ -112,7 +112,7 @@ def _check(raw: bytes, message_id: str) -> Built:
     return Built(raw, message_id, parse(raw).content_hash)
 
 
-def build_reply(
+def build_reply(  # noqa: PLR0913 - keyword-only parts of one message
     *,
     from_addr: str,
     to_addr: str,
@@ -122,9 +122,11 @@ def build_reply(
     references: str | None,
     install_header: str,
     date: datetime,
+    message_id: str | None = None,
 ) -> Built:
-    """A template reply to the sender (`Re:`), threaded under the original."""
-    mid = new_message_id(from_addr.rpartition("@")[2])
+    """A template reply to the sender (`Re:`), threaded under the original. `message_id`: the
+    one already recorded for this grant (send.message_id_for), so every attempt uses the same."""
+    mid = message_id or new_message_id(from_addr.rpartition("@")[2])
     m = EmailMessage(policy=_POLICY)
     _headers(m, from_addr=from_addr, to_addr=to_addr, subject=prefixed("Re:", subject),
              date=date, message_id=mid)  # fmt: skip
@@ -144,9 +146,10 @@ def build_draft(
     in_reply_to: str | None,
     references: str | None,
     date: datetime,
+    message_id: str | None = None,
 ) -> Built:
     """A draft reply saved to Drafts for you to edit and send; no ecf headers."""
-    mid = new_message_id(from_addr.rpartition("@")[2])
+    mid = message_id or new_message_id(from_addr.rpartition("@")[2])
     m = EmailMessage(policy=_POLICY)
     _headers(m, from_addr=from_addr, to_addr=to_addr, subject=prefixed("Re:", subject),
              date=date, message_id=mid)  # fmt: skip
@@ -173,9 +176,10 @@ def build_forward(
     cover: str,
     install_header: str,
     date: datetime,
+    message_id: str | None = None,
 ) -> Built:
     """An internal forward: a short cover note and the original attached unmodified."""
-    mid = new_message_id(from_addr.rpartition("@")[2])
+    mid = message_id or new_message_id(from_addr.rpartition("@")[2])
     boundary = f"ecf-{secrets.token_hex(16)}"
     if boundary.encode() in original:
         raise InvalidInputError("the original contains the boundary; try again")
