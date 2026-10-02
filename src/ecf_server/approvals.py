@@ -598,7 +598,7 @@ def _card(
     base = cards.item_card(item, mention=member)
     verb = describe(actions)
     fields = (("Action", verb), *base.fields)
-    card = Card(title or f"Approve? {verb}", fields=fields,
+    card = Card(title or f"Approve? {verb}", fields=fields, text=_draft_text(actions),
                 buttons=(Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),
                          Button(REJECT, "Reject", grant_id),
                          Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])),
@@ -606,6 +606,15 @@ def _card(
                 mention=member)  # fmt: skip
     slack_out.enqueue_post(conn, clock, key=f"item:{item['stable_id']}", route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
+
+
+def _draft_text(actions: list[Planned]) -> str:
+    """A proposed draft in full, labelled as model output, links not clickable (OD-317)."""
+    draft = next((a for a in actions if a.name == "draft_reply" and a.payload), None)
+    if draft is None or draft.payload is None:
+        return ""
+    return ("Draft written by ecf's model (it can be wrong; it is saved, never sent):\n"
+            + cards.defang(str(draft.payload.get("text") or "")))  # fmt: skip
 
 
 CARDS_PER_TICK = 20

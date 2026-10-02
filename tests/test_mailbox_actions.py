@@ -138,7 +138,9 @@ def test_a_folder_that_stopped_being_allowed_refuses(
                                       {"INBOX": frozenset()})  # fmt: skip
     assert no_junk == "the mailbox has no folder marked \\Junk"
     drafts = mailbox_actions.refusal(conn, item_row(conn, sid), [Planned("draft_reply")], {})
-    assert drafts == "drafts and sends arrive in V1.5"
+    assert drafts == "the mailbox has no folder marked \\Drafts"
+    sends = mailbox_actions.refusal(conn, item_row(conn, sid), [Planned("reply_template")], {})
+    assert sends == "sends are carried out from a later V1.5 step"
 
 
 def test_a_lost_lease_writes_nothing_and_retries(

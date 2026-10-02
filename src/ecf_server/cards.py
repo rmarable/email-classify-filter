@@ -10,11 +10,23 @@ through Show excerpt, visible to you alone (OD-214). Every string here may come 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
 from ecf_server.chat import Button, Card
 from ecf_server.precheck import payment_or_fraud
+
+URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]{1,20}://|www\.)\S+")
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def defang(text: str) -> str:
+    """Model text shown in full but not clickable (a draft on its approval card, OD-317): links
+    and addresses keep their wording with their separators bracketed."""
+    t = URL.sub(lambda m: m.group(0).replace("://", "[:]//").replace(".", "[.]"), text)
+    return EMAIL.sub(lambda m: m.group(0).replace("@", "[at]").replace(".", "[.]"), t)
+
 
 PAYMENT_NOTE = "This acts on the email only. ecf never pays anything."
 SHORT_ID = 8

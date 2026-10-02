@@ -45,8 +45,7 @@ QUESTION_MAX = 300
 ANSWER_MAX = 2000
 ANSWER_TTL = approvals.TTL_OTHER
 MODEL_LABEL = "Question from ecf's model (it can be wrong)"
-_URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]{1,20}://|www\.)\S+")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL, _EMAIL = cards.URL, cards.EMAIL
 _PHONE = re.compile(r"\+?\d[\d ().-]{6,}\d")
 
 
