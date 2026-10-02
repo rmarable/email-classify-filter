@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import ecf
 from ecf import claude_wrapper as cw
 from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
@@ -29,14 +30,72 @@ def fake_claude(bin_dir: Path, record: Path, version: str = "2.1.281") -> None:
     f.chmod(0o755)
 
 
+MODELS = {"main_session": "claude-haiku-x", "classifier": "claude-haiku-x",
+          "classifier_high": "claude-sonnet-x", "actor": "claude-sonnet-x",
+          "actor_high": "claude-opus-x"}  # fmt: skip
+
+
 def test_settings_document() -> None:
-    d = cw.settings_doc()
-    assert d["cleanupPeriodDays"] == 1
+    d = cw.settings_doc("claude-haiku-x")
+    assert d["cleanupPeriodDays"] == 1 and d["model"] == "claude-haiku-x"
     assert d["permissions"]["defaultMode"] == "dontAsk"
-    assert d["permissions"]["allow"] == ["mcp__ecf__review_queue", "Agent"]
-    for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write"):
+    assert d["permissions"]["allow"] == [
+        "mcp__ecf__review_queue", "Agent", "mcp__ecf__get_message",
+        "mcp__ecf__record_classification", "mcp__ecf__propose_action"]  # fmt: skip
+    for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
+                 "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
     assert "hooks" not in d
+
+
+def _frontmatter(text: str) -> dict[str, str]:
+    head = text.split("---\n")[1]
+    return dict(line.split(": ", 1) for line in head.strip().splitlines())
+
+
+def test_plugin_rendered_with_pins(tmp_path: Path) -> None:
+    dest = tmp_path / "plugin"
+    (dest / "stale.md").parent.mkdir()
+    (dest / "stale.md").write_text("old")
+    cw.render_plugin(dest, MODELS)
+    assert not (dest / "stale.md").exists()
+    manifest = json.loads((dest / ".claude-plugin" / "plugin.json").read_text())
+    assert manifest["name"] == "ecf" and manifest["version"] == ecf.__version__
+    skill = (dest / "skills" / "ecf-review" / "SKILL.md").read_text()
+    assert _frontmatter(skill)["name"] == "ecf-review"
+    want = {"classifier": "claude-haiku-x", "classifier-high": "claude-sonnet-x",
+            "actor": "claude-sonnet-x", "actor-high": "claude-opus-x"}  # fmt: skip
+    for name, model in want.items():
+        text = (dest / "agents" / f"{name}.md").read_text()
+        fm = _frontmatter(text)
+        assert fm["name"] == name and fm["model"] == model
+        assert "{{" not in text
+        tools = {t.strip() for t in fm["tools"].split(",")}
+        submit = "record_classification" if name.startswith("classifier") else "propose_action"
+        assert tools == {"mcp__ecf__get_message", f"mcp__ecf__{submit}"}
+        assert tools <= set(cw.SUBAGENT_TOOLS)
+
+
+def test_agents_match_the_service() -> None:
+    """The service names these agents (claude_review.ROLE); the plugin must define each."""
+    from ecf_server import claude_review  # noqa: PLC0415
+
+    assert {f"ecf:{n}": r for n, (_t, r, _d) in cw.AGENTS.items()} == claude_review.ROLE
+
+
+def test_mark_ready_keeps_other_keys(tmp_path: Path) -> None:
+    lay = cw.layout(Paths("t", tmp_path))
+    lay.config_dir.mkdir(parents=True)
+    lay.work_dir.mkdir(parents=True)
+    lay.state.write_text(json.dumps({"userID": "u", "projects": {"/other": {"a": 1}}}))
+    cw.mark_ready(lay)
+    doc = json.loads(lay.state.read_text())
+    assert doc["userID"] == "u" and doc["hasCompletedOnboarding"] is True
+    assert doc["projects"]["/other"] == {"a": 1}
+    assert doc["projects"][str(lay.work_dir.resolve())]["hasTrustDialogAccepted"] is True
+    lay.state.write_text("not json")
+    cw.mark_ready(lay)
+    assert json.loads(lay.state.read_text())["hasCompletedOnboarding"] is True
 
 
 def test_mcp_document() -> None:
@@ -48,10 +107,10 @@ def test_mcp_document() -> None:
 
 def test_config_is_private(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
-    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))
+    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
     for d in (lay.config_dir, lay.work_dir):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700
-    for f in (lay.settings, lay.mcp_config):
+    for f in (lay.settings, lay.mcp_config, lay.state, lay.plugin_dir / "agents" / "actor.md"):
         assert stat.S_IMODE(f.stat().st_mode) == 0o600
     assert json.loads(lay.settings.read_text())["permissions"]["defaultMode"] == "dontAsk"
 
@@ -82,10 +141,13 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
     fake_claude(tmp_path / "bin", record)
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
     assert (Path(sys.executable).parent / "ecf-mcp").exists()
-    assert cw.run(running, ["--model", "x"]) == 0
+    said: list[str] = []
+    assert cw.run(running, ["--model", "x"], echo=said.append) == 0
+    assert said == ["ecf claude: 0 item(s) waiting for review; type /ecf-review to start."]
     rec = dict(line.split("=", 1) for line in record.read_text().splitlines())
     lay = cw.layout(running)
     assert rec["ARGS"].startswith("--strict-mcp-config --mcp-config ")
+    assert f"--plugin-dir {lay.plugin_dir} " in rec["ARGS"]
     assert rec["ARGS"].endswith("--model x")
     assert rec["CFG"] == str(lay.config_dir) and rec["PROMPTS"] == "0"
     assert Path(rec["PWD"]).resolve() == lay.work_dir.resolve()
@@ -134,17 +196,18 @@ def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyP
     ):
         assert gone not in env
     assert env["HTTPS_PROXY"] == "http://corp-proxy.example:8080" and "PATH" in env
-    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "0"
+    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "0" and env["DISABLE_AUTOUPDATER"] == "1"
 
 
 def test_purge_keeps_only_login_and_config(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
-    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))
+    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
     for name in (".credentials.json", ".claude.json", "history.jsonl"):
         (lay.config_dir / name).write_text("{}")
     for d in ("projects/p", "debug", "file-history", "plugins/ecf"):
         (lay.config_dir / d).mkdir(parents=True)
-    assert cw.purge_transcripts(lay) == 4  # history.jsonl, projects, debug, file-history
+    # history.jsonl, projects, debug, file-history, and ecf-plugin (rendered again at each start)
+    assert cw.purge_transcripts(lay) == 5
     assert sorted(p.name for p in lay.config_dir.iterdir()) == sorted(cw.KEEP)
 
 

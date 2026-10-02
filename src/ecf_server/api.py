@@ -53,6 +53,7 @@ from ecf_server import (
     backfill,
     checks,
     claude_pins,
+    claude_queue,
     claude_review,
     config,
     db,
@@ -232,10 +233,12 @@ def create_app(state: ServiceState) -> Starlette:
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
+        models, waiting = _review_setup(state)
         return JSONResponse(
-            {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value},
+            {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value,
+             "models": models, "waiting": waiting},
             status_code=201,
-        )
+        )  # fmt: skip
 
     @allow(Caller.CLI)
     def delete_session(request: Request) -> JSONResponse:
@@ -343,6 +346,18 @@ def _end_claims(state: ServiceState, session_id: str) -> None:
     conn = state.connect()
     try:
         claude_review.release_session(conn, session_id)
+    finally:
+        conn.close()
+
+
+def _review_setup(state: ServiceState) -> tuple[dict[str, str], int]:
+    """What `ecf claude` needs to start a session (V1.4 step 5): the Claude pins in force, for
+    the plugin's agents and the main session, and how many items wait for review."""
+    if state.db_path is None:
+        return claude_pins.load_lock(), 0
+    conn = state.connect()
+    try:
+        return claude_pins.effective(conn), sum(claude_queue.waiting(conn).values())
     finally:
         conn.close()
 

@@ -75,6 +75,7 @@ def test_session_tokens() -> None:
     assert made.status_code == 201
     work, sid = body(made)["profile_token"], body(made)["session_id"]
     assert body(made)["profile"] == "work"
+    assert body(made)["waiting"] == 0 and body(made)["models"]["main_session"].startswith("claude-")
     assert request("GET", "/v1/status", work).status_code == 200  # WORK may read status
     refused = request("POST", "/v1/sessions", work)  # but can't mint more tokens
     assert refused.status_code == 403 and body(refused)["code"] == "forbidden_profile"
