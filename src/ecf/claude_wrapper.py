@@ -1,7 +1,7 @@
 """`ecf claude`: open Claude Code in ecf's own configuration for `/ecf-review` (SPEC §10.3).
 
-V1.0 builds the plumbing; the review tools behind `ecf-mcp` arrive in V1.4. Facts this relies
-on were checked against code.claude.com on 2026-09-27: CLAUDE_CONFIG_DIR relocates settings,
+V1.0 built the plumbing; the review tools behind `ecf-mcp` arrived in V1.4 (step 4). Facts this
+relies on were checked against code.claude.com on 2026-09-27: CLAUDE_CONFIG_DIR relocates settings,
 transcripts and credentials (so a separate login is needed); permissions.defaultMode "dontAsk"
 denies anything not pre-approved; `--strict-mcp-config` ignores every other MCP source.
 """
@@ -96,23 +96,25 @@ def settings_doc() -> dict[str, Any]:
     }
 
 
-def mcp_doc(ecf_mcp: Path) -> dict[str, Any]:
+def mcp_doc(ecf_mcp: Path, socket: Path) -> dict[str, Any]:
+    """`ECF_SOCKET` names the install's socket: `ECF_HOME` and `--install` don't reach the MCP
+    server, since the session's environment is allow-listed."""
     return {
         "mcpServers": {
             "ecf": {
                 "command": str(ecf_mcp),
                 "args": ["--stdio"],
-                "env": {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}"},
+                "env": {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}", "ECF_SOCKET": str(socket)},
             }
         }
     }
 
 
-def write_config(lay: Layout, ecf_mcp: Path) -> None:
+def write_config(lay: Layout, ecf_mcp: Path, socket: Path) -> None:
     for d in (lay.config_dir, lay.work_dir):
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
         d.chmod(0o700)
-    for path, doc in ((lay.settings, settings_doc()), (lay.mcp_config, mcp_doc(ecf_mcp))):
+    for path, doc in ((lay.settings, settings_doc()), (lay.mcp_config, mcp_doc(ecf_mcp, socket))):
         path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         path.chmod(0o600)
 
@@ -197,7 +199,7 @@ def run(paths: Paths, extra_args: list[str]) -> int:
     claude = find_claude()
     lay = layout(paths)
     purge_transcripts(lay)  # a crashed earlier session may have left some behind
-    write_config(lay, ecf_mcp_path())
+    write_config(lay, ecf_mcp_path(), paths.socket.absolute())
     with LocalClient(paths) as c:
         session: dict[str, Any] = c.request("POST", "/v1/sessions")
     args = [claude, "--strict-mcp-config", "--mcp-config", str(lay.mcp_config), *extra_args]

@@ -40,14 +40,15 @@ def test_settings_document() -> None:
 
 
 def test_mcp_document() -> None:
-    d = cw.mcp_doc(Path("/abs/ecf-mcp"))["mcpServers"]["ecf"]
+    d = cw.mcp_doc(Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))["mcpServers"]["ecf"]
     assert d["command"] == "/abs/ecf-mcp" and d["args"] == ["--stdio"]
-    assert d["env"] == {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}"}
+    assert d["env"] == {"ECF_PROFILE_TOKEN": "${ECF_PROFILE_TOKEN}",
+                        "ECF_SOCKET": "/data/t/run/ecf.sock"}  # fmt: skip
 
 
 def test_config_is_private(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
-    cw.write_config(lay, Path("/abs/ecf-mcp"))
+    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))
     for d in (lay.config_dir, lay.work_dir):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700
     for f in (lay.settings, lay.mcp_config):
@@ -138,7 +139,7 @@ def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_purge_keeps_only_login_and_config(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
-    cw.write_config(lay, Path("/abs/ecf-mcp"))
+    cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))
     for name in (".credentials.json", ".claude.json", "history.jsonl"):
         (lay.config_dir / name).write_text("{}")
     for d in ("projects/p", "debug", "file-history", "plugins/ecf"):
