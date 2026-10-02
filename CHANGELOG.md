@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.4-claude (not yet tagged)
 
+- Contributor rule: while working, run only the affected tests; run the full suite once before each commit; CI checks each push (operator decision 2026-10-02, CLAUDE.md).
 - Addresses using preset B or C now hold their mail for Claude: in C every email waits for `/ecf-review` once ecf's own checks have run; in B the local model classifies and the email waits for `/ecf-review` when it needs the actor; answered questions on B and C wait for it too (OD-269). `/ecf-review` itself arrives later in V1.4.
 - Decisions for Claude on demand (presets B and C), recorded after checking Claude Code itself: the review queue hands out claims; work Claude submits counts only once telemetry shows it came from a pinned model; the main review session can't read email text, can't start Claude Code's built-in agents and doesn't auto-update Claude Code; the plugin ships inside the ecf package; reasons are capped at 300 characters; pinned models are Haiku 4.5, Sonnet 5.5 and Opus 5.5 (OD-267 to OD-276).
 
