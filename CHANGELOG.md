@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.4-claude (not yet tagged)
+
+- Decisions for Claude on demand (presets B and C), recorded after checking Claude Code itself: the review queue hands out claims; work Claude submits counts only once telemetry shows it came from a pinned model; the main review session can't read email text, can't start Claude Code's built-in agents and doesn't auto-update Claude Code; the plugin ships inside the ecf package; reasons are capped at 300 characters; pinned models are Haiku 4.5, Sonnet 5.5 and Opus 5.5 (OD-267 to OD-276).
+
 ## ms-v1.3.1-fixes (2026-10-01)
 
 - The log of ecf's Ollama login item no longer grows without limit: it is rotated at 10 MB or every 7 days (settings `ollama_log_max_mb`, `ollama_log_rotate_days`), keeping up to 12 compressed copies within the retention period (OD-266).
