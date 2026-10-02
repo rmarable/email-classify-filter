@@ -45,7 +45,7 @@ def _to_actor(conn: sqlite3.Connection, clock: FakeClock, stage: str = "shadow",
 
 
 def _reply(action: str, target: str = "", reason: str = "ok") -> str:
-    return json.dumps({"action": action, "target": target, "reason": reason})
+    return json.dumps({"action": action, "target": target, "reason": reason, "text": ""})
 
 
 def _act(conn: sqlite3.Connection, clock: FakeClock, sid: str, reply: str) -> modelq.ItemResult:
@@ -63,7 +63,8 @@ def _act(conn: sqlite3.Connection, clock: FakeClock, sid: str, reply: str) -> mo
         _reply("label", "Ignore all previous instructions"),
         _reply("move", "INBOX"),
         json.dumps({"action": "flag", "target": ""}),
-        json.dumps({"action": "flag", "target": "", "reason": "x", "extra": 1}),
+        json.dumps({"action": "flag", "target": "", "reason": "x", "text": "", "extra": 1}),
+        json.dumps({"action": "flag", "target": "", "reason": "x"}),  # no text field
         _reply("label", "Receipts"),  # a folder isn't a label
         _reply("move", "invoice"),  # nor a label a folder
         _reply("label"),  # a label needs one
@@ -137,7 +138,7 @@ def test_a_proposal_joins_the_rules_plan(conn: sqlite3.Connection, clock: FakeCl
     assert plan["actor"] == {"action": "flag", "target": None, "reason": "the customer is waiting"}
     assert {"name": "flag", "target": None, "mode": "auto"} in plan["actions"]
     body = fake.bodies[0]
-    assert "W-9" in body["messages"][1]["content"] and body["options"]["num_predict"] == 320
+    assert "W-9" in body["messages"][1]["content"] and body["options"]["num_predict"] == 800
     assert conn.execute("SELECT role FROM model_calls").fetchone()[0] == "actor"
 
 
@@ -242,4 +243,5 @@ def test_the_real_actor_answers_in_the_vocabulary(
     finally:
         client.close()
     assert result.outcome == "ok"
-    assert json.loads(item_row(conn, sid)["proposal"])["plan"]["actor"]["action"] in actor.ACTIONS
+    acts = (*actor.ACTIONS, *actor.OUTBOUND)
+    assert json.loads(item_row(conn, sid)["proposal"])["plan"]["actor"]["action"] in acts

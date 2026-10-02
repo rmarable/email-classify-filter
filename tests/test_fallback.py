@@ -62,7 +62,9 @@ def _ready() -> ollama.Ready:
 
 
 def _act(action: str, target: str = "") -> str:
-    return json.dumps({"action": action, "target": target, "reason": "the model's reason"})
+    return json.dumps(
+        {"action": action, "target": target, "reason": "the model's reason", "text": ""}
+    )
 
 
 def _address(conn: sqlite3.Connection, clock: FakeClock, preset: str,

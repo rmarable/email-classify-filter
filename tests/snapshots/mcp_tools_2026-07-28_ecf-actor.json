@@ -36,7 +36,7 @@
         "readOnlyHint": false,
         "title": "Propose an action"
       },
-      "description": "Propose one action for a claimed item, from the actions get_message allowed. ecf's rules and policy decide what happens; the person approves in team chat. Use needs_clarification with a `question` to ask the person something. Returns accepted, or the errors to fix (3 tries per claim).",
+      "description": "Propose one action for a claimed item, from the actions get_message allowed. ecf's rules and policy decide what happens; the person approves in team chat. Use needs_clarification with a `question` to ask the person something, and draft_reply with the reply in `text` (a draft is never sent). Returns accepted, or the errors to fix (3 tries per claim).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -63,7 +63,12 @@
             "type": "string"
           },
           "target": {
-            "description": "The label or folder, for label or move.",
+            "description": "The label or folder for label or move, the template id for reply_template, the colleague's id for forward_internal.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Only with draft_reply: the reply, plain text, 4,000 characters at most; it commits to no payment, bank detail, price or date.",
+            "maxLength": 4000,
             "type": "string"
           }
         },

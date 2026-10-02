@@ -41,7 +41,8 @@ BASE_URL = f"http://{HOST}:{PORT}"
 TIMEOUT_S = 120.0  # §15.4: 120 s, one retry
 PULL_TIMEOUT_S = 3600.0
 NUM_CTX = 4096
-NUM_PREDICT = {"classifier": 160, "actor": 320, "probe": 8}  # measured outputs: ~60 tokens
+NUM_PREDICT = {"classifier": 160, "actor": 800, "probe": 8}  # measured outputs: ~60 tokens; the
+# actor's draft replies (V1.5, at most 1,500 characters asked) need room
 OPTIONS: dict[str, Any] = {"num_ctx": NUM_CTX, "temperature": 0}
 KEEP_ALIVE = "5m"
 _ERROR_CHARS = 80

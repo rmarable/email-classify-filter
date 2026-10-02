@@ -578,7 +578,7 @@ def record_classification(clock: Clock, session_id: str, ref: str, token: str,
 def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: dict[str, Any],
                    agent: str) -> dict[str, Any] | Hold:  # fmt: skip
     run, w = _claimed(clock, session_id, ref, token, agent, "act")
-    proposal = {k: body.get(k) for k in ("action", "target", "reason", "question")}
+    proposal = {k: body.get(k) for k in ("action", "target", "reason", "question", "text")}
     with run.lock:
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
                                            actor.allowed(_cls(w)))  # fmt: skip
