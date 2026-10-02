@@ -119,6 +119,31 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
     return Gate(address_id, sens, digest, checks, n, ok, misses, unsafe)
 
 
+def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any, ...]:
+    """A cheap fingerprint of everything `compute` reads for this address and digest: while it
+    is unchanged, the gate's result is too (the tick skips recomputing it)."""
+    items = conn.execute(
+        "SELECT count(*), max(updated_at) FROM items WHERE address_id = ?"
+        " AND json_extract(pinned_models, '$.digest') = ?",
+        (address_id, digest)).fetchone()  # fmt: skip
+    addr = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
+                        (address_id,)).fetchone()  # fmt: skip
+    cfg = conn.execute("SELECT max(updated_at) FROM settings WHERE key LIKE 'config.%'"
+                       " OR key = 'org_domains'").fetchone()  # fmt: skip
+    senders = conn.execute("SELECT max(confirmed_at) FROM senders WHERE address_id = ?",
+                           (address_id,)).fetchone()  # fmt: skip
+    run = conn.execute("SELECT max(created_at) FROM eval_runs WHERE digest = ?",
+                       (digest,)).fetchone()  # fmt: skip
+    root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
+    try:
+        st = (Path(root) / "labels.jsonl").stat() if root else None
+        labels = (st.st_size, st.st_mtime_ns) if st else None
+    except OSError:
+        labels = None
+    return (digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0], senders[0],
+            run[0], root, labels)  # fmt: skip
+
+
 def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
     """OD-069: Fixes whose corrected labels reach a fraud or regulatory rule the model's didn't."""
     labels = policy.labels(load_schema_v1(), config.current_rules(conn))

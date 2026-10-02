@@ -3,6 +3,11 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## ms-v1.3.1-fixes (not yet tagged)
+
+- The log of ecf's Ollama login item no longer grows without limit: it is rotated at 10 MB or every 7 days (settings `ollama_log_max_mb`, `ollama_log_rotate_days`), keeping up to 12 compressed copies within the retention period (OD-266).
+- The service no longer re-checks each address's go-live gate every minute: only until "Ready for live" has been posted for the current model, and only when something the gate depends on (reviews, proposals, config, eval runs, the synthetic set) has changed.
+
 ## ms-v1.3-local-models (2026-10-01)
 
 - Two decision records: the three presets with Gemma 4 12B on Ollama as the local model (ADR 0005), and the go-live gate bound to the pinned model (ADR 0006).

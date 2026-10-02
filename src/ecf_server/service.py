@@ -44,6 +44,7 @@ from ecf_server import (
     modelq,
     models,
     needs_you,
+    ollama_log,
     pipeline,
     retention,
     schedule,
@@ -170,6 +171,7 @@ class Service:
         self.rounds = modelq.RoundSchedule(self.clock)
         # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
         self.in_check = mailbox_actions.run_in_check
+        self._ollama_log_at: float | None = None  # monotonic time of the last look (OD-266)
         self.throttle = self.state.throttle  # speeds across rounds, `ecf check`'s too (OD-243)
 
     # -- threads -------------------------------------------------------------------------------
@@ -237,6 +239,7 @@ class Service:
                 decide.sweep(conn, self.clock)
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
+                self._ollama_log(conn)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
@@ -245,6 +248,16 @@ class Service:
         except Exception as exc:  # never stops the timer; retried next tick
             return self._tick_failed("approvals.tick_failed", exc)
         return True
+
+    def _ollama_log(self, conn: sqlite3.Connection) -> None:
+        """Rotate the Ollama login item's log, at most once an hour's look (OD-266)."""
+        now = self.clock.monotonic()
+        if self._ollama_log_at is not None and now - self._ollama_log_at < (
+            ollama_log.CHECK_EVERY.total_seconds()
+        ):
+            return
+        self._ollama_log_at = now
+        ollama_log.check(conn, self.clock, self.paths.root)
 
     def _model_check(self, conn: sqlite3.Connection) -> None:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from

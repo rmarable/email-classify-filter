@@ -218,10 +218,10 @@ def _line(r: sqlite3.Row) -> str:
 
 def _set_review(conn: sqlite3.Connection, now: datetime, sid: str, review: dict[str, Any],
                 correction: dict[str, Any] | None = None) -> None:  # fmt: skip
-    with write_tx(conn):
-        conn.execute("UPDATE items SET review = ?, human_correction = coalesce(?, human_correction)"
-                     " WHERE stable_id = ?",
-                     (json.dumps(review, sort_keys=True),
+    with write_tx(conn):  # updated_at too: the gate's tick looks for changed items (stages.tick)
+        conn.execute("UPDATE items SET review = ?, updated_at = ?,"
+                     " human_correction = coalesce(?, human_correction) WHERE stable_id = ?",
+                     (json.dumps(review, sort_keys=True), to_ts(now),
                       json.dumps(correction, sort_keys=True) if correction else None,
                       sid))  # fmt: skip
 
