@@ -29,7 +29,7 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import CompiledSchema, load_schema_v1
-from ecf_server import decide, items, ollama
+from ecf_server import claude_pins, decide, items, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -151,7 +151,14 @@ def _store(
     model: str,
     digest: str,
 ) -> None:
-    pinned = {"classifier": model, "digest": digest, "schema": 1}
+    aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
+                       (stable_id,)).fetchone()["address_id"]  # fmt: skip
+    pinned = {
+        "classifier": model,
+        "digest": digest,
+        "schema": 1,
+        "pin_key": claude_pins.address_key(conn, aid),
+    }  # the gate's key (V1.4 step 2)
     with write_tx(conn):
         conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?"

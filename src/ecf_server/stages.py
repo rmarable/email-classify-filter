@@ -12,7 +12,8 @@
   fixed them (OD-157; the rule's actions, the actor isn't asked again); older ones stay held unless
   you resolve them as handled by hand (`resolve_older`, or `resolve_all` for every held email).
 - **Each tick** (`tick`): an address that newly meets its gate gets one "ready for live" post; a
-  `live` address whose model digest changed goes back to `assist` until the gate passes again.
+  `live` address whose pinned models changed (the Ollama digest, a Claude pin or its override;
+  V1.4 step 2) goes back to `assist` until the gate passes again.
   The tick computes a gate only when it can still post: not for an address already announced for
   this digest, and not while the gate's inputs (`gate.inputs`) are unchanged since the last
   tick, since computing it re-plans every email you fixed.
@@ -34,6 +35,7 @@ from ecf.ids import StableId
 from ecf.schema import load_schema_v1
 from ecf_server import (
     addresses,
+    claude_pins,
     decide,
     gate,
     items,
@@ -86,7 +88,8 @@ def status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
             "sensitivity": a["sensitivity"],
             "paused": pause.is_paused(conn, aid),
             "held": held,
-            "review": review.progress(conn, aid, a["sensitivity"], gate.current_digest())["text"],
+            "review": review.progress(conn, aid, a["sensitivity"],
+                                      claude_pins.address_key(conn, aid))["text"],
             "gate": gate.compute(conn, aid).text(),
         })  # fmt: skip
     return out
@@ -257,18 +260,19 @@ SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the gate inputs last compute
 
 
 def tick(conn: sqlite3.Connection, clock: Clock) -> None:
-    """Announce a newly met gate once; drop `live` to `assist` when the model changed (§9.3)."""
-    digest = gate.current_digest()
+    """Announce a newly met gate once; drop `live` to `assist` when a pinned model changed
+    (§9.3): the Ollama digest, a `models.lock` ID or a Claude model override."""
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
+        digest = claude_pins.address_key(conn, aid)
         row = gate.stored(conn, aid)
         if a["stage"] == "live":
-            if row is None or row["ollama_digest"] != digest:
+            if row is None or gate.stored_key(row) != digest:
                 set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
-                          reason="the local model changed; back to assist until its gate"
+                          reason="a pinned model changed; back to assist until its gate"
                                  " passes (§9.3)")  # fmt: skip
             continue
-        if row is not None and row["passed_at"] is not None and row["ollama_digest"] == digest:
+        if row is not None and row["passed_at"] is not None and gate.stored_key(row) == digest:
             continue  # announced for this model already (`stage set live` computes afresh)
         seen = gate.inputs(conn, aid, digest)
         if SEEN.get(aid) == seen:

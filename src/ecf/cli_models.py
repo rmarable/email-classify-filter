@@ -143,6 +143,13 @@ def _print(st: dict[str, Any]) -> None:
             typer.echo(f"  {k}={v}")
     else:
         typer.echo(f"not ready: {st['fault']['text']}")
+    cl = st.get("claude")
+    if cl:  # V1.4 step 2: the Claude models presets B and C use
+        typer.echo("Claude pins (models.lock): " + ", ".join(
+            f"{r} {i}" for r, i in cl["effective"].items()))  # fmt: skip
+        for fam, i in sorted(cl["overrides"].items()):
+            typer.echo(f"  override: {fam} -> {i} (ecf settings set claude_model_override none"
+                       " clears it)")  # fmt: skip
     if st["install"]["state"] not in ("idle",):
         typer.echo(
             f"last install: {_progress(st['install'])}"

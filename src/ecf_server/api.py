@@ -50,6 +50,7 @@ from ecf_server import (
     audit,
     backfill,
     checks,
+    claude_pins,
     config,
     db,
     digests,
@@ -783,6 +784,18 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
+    def claude_override(request: Request) -> JSONResponse:
+        """SPEC §7.5 (V1.4 step 2): `ecf settings set claude_model_override` (step-up)."""
+        body = _body(request)
+        value, nonce = _str(body, "value"), _opt_str(body, "nonce_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(claude_pins.set_override(conn, state.clock, state.notifier, value,
+                                                         nonce=nonce))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
     def install_models(_request: Request) -> JSONResponse:
         return JSONResponse(models.start_install(state.connect, state.clock, state.model_client))
 
@@ -808,6 +821,7 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/models", show_models, methods=["GET"]),
         Route("/v1/models/install", install_models, methods=["POST"]),
+        Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
 

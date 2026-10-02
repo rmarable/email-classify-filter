@@ -117,12 +117,26 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                 typer.echo(f"ecf sent {value} a DM; clicks stay with the old ID until it's"
                            " confirmed.")  # fmt: skip
                 return
+            if key == "claude_model_override":  # step-up and a Security Notice (§7.5)
+                return _claude_override(c, value, address)
             r = c.request("POST", "/v1/settings",
                           {"key": key, "value": value, "address_id": address})  # fmt: skip
         where = f" for {r['address_id']}" if r["address_id"] else ""
         after = " (takes effect when the service restarts: ecf service restart)" if r["restart"] \
             else ""  # fmt: skip
         typer.echo(f"{r['key']} = {r['value']}{where}{after}")
+
+
+def _claude_override(c: LocalClient, value: str, address: str | None) -> None:
+    if address:
+        raise typer.BadParameter("claude_model_override is for the whole install")
+    o = with_step_up(c, lambda n: c.request("POST", "/v1/models/claude-override",
+                                            {"value": value, "nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo("Claude models now: " + ", ".join(f"{r} {i}" for r, i in o["effective"].items()))
+    if o["affected"]:
+        typer.echo("their go-live gate starts again (live ones go back to assist): "
+                   + ", ".join(o["affected"]))  # fmt: skip
 
 
 def _config_commands(

@@ -112,7 +112,7 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
     assert json.loads(row["classification"]) == GOOD
     assert json.loads(row["pinned_models"]) == {"classifier": PIN.ecf_tag, "digest": PIN.digest,
-                                                "schema": 1}  # fmt: skip
+                                                "schema": 1, "pin_key": PIN.digest}  # fmt: skip
     assert row["batch_id"].startswith("single:")
     [body] = fake.bodies
     assert body["model"] == PIN.ecf_tag and body["format"] == SCHEMA.json_schema()

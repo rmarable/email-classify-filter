@@ -12,7 +12,7 @@ import pytest
 
 from ecf import cli_admin
 from ecf.errors import InvalidInputError, PolicyDeniedError, StepupRequiredError
-from ecf_server import decide, evalrun, gate, review, slack_admin, stages, stepup
+from ecf_server import claude_pins, decide, evalrun, gate, review, slack_admin, stages, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
@@ -236,10 +236,14 @@ def test_the_tick_announces_once_and_drops_live_when_the_model_changes(
     ready = [p for p in _posts(conn) if p["card"]["title"] == "Ready for live"]
     assert len(ready) == 1 and "ecf stage set ap live" in ready[0]["card"]["text"]
     _live(conn, clock)
-    monkeypatch.setattr(gate, "current_digest", lambda: "sha256:" + "f" * 64)
+
+    def changed(conn: sqlite3.Connection, aid: str) -> str:
+        return "sha256:" + "f" * 64
+
+    monkeypatch.setattr(claude_pins, "address_key", changed)
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
-    assert "the local model changed" in _posts(conn)[-1]["card"]["text"]
+    assert "a pinned model changed" in _posts(conn)[-1]["card"]["text"]
 
 
 def test_the_tick_computes_a_gate_only_when_its_inputs_change(

@@ -151,6 +151,8 @@ ELSEWHERE = {
     "install_role": "fixed when the install is created",
     "sensitivity": "change it with `ecf sensitivity set`",
     "stage": "change it with `ecf stage set`",
+    "claude_model_override": "set it with `ecf settings set claude_model_override <id>|none`"
+    " (step-up); `ecf models status` shows it",
     "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
     "classifier_high_batch": "arrives with Claude on demand in V1.4",
     "export_schedule": "arrives with exports in V1.5",

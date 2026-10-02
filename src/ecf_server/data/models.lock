@@ -1,0 +1,8 @@
+{
+  "_comment": "The pinned Claude models (SPEC §7.5, OD-014, OD-273). IDs and retirement dates verified 2026-10-02 on platform.claude.com (models overview, deprecations). Only an ecf release changes this file; `ecf settings set claude_model_override` replaces one family's pin until then.",
+  "main_session": "claude-haiku-4-5-20251001",
+  "classifier": "claude-haiku-4-5-20251001",
+  "classifier_high": "claude-sonnet-5-5",
+  "actor": "claude-sonnet-5-5",
+  "actor_high": "claude-opus-5-5"
+}
