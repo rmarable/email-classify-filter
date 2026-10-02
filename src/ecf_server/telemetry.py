@@ -1,23 +1,31 @@
 """Claude Code telemetry for `ecf claude` sessions (SPEC §7.5, §11.5, §13.4; V1.4 step 6).
 
 Each session gets a bearer token for the loopback OTLP/JSON receiver (`telemetry_app`). From the
-log events the receiver keeps only numbers, model IDs and fixed codes, in memory per session:
+log events the receiver keeps only numbers, model IDs, times and fixed codes, in memory per
+session:
 
-- **API requests** (`api_request`): model, `query_source`, input/output/cache tokens, duration and,
-  when present, `cost_usd` (an API-equivalent figure); each also becomes a `claude_calls` row.
-- **Tool calls**: the event sequence at which each `tool_use_id` first appears.
+- **API requests** (`api_request`): model, `query_source`, input/output/cache tokens, duration,
+  end time and, when present, `cost_usd` (an API-equivalent figure); each also becomes a
+  `claude_calls` row.
+- **Model swaps** (`subagent_completed` with `model_swapped`): the subagent's run and the model it
+  ended on.
 
 Everything else (user email, account and organization IDs, prompt and tool fields, which arrive
 redacted anyway) is dropped on arrival (§12.4).
 
-**Binding** (operator decision 2026-10-02, OD-268; mechanism tested 2026-10-02, §21.2): an MCP call
-carries `_meta.claudecode/toolUseId`, equal to the telemetry `tool_use_id`; the API request just
-before that tool event (by `event.sequence`) made the call, and gives its model and query source.
-This assumes that request belongs to the same agent: `/ecf-review` runs one agent type's spawns at
-a time (all on one model), so parallel spawns of that agent share the model. Unverified with
-parallel spawns, confirm in V1.4 step 13; a wrong binding refuses work (it can't widen access).
+**Model check** (operator decision 2026-10-02, OD-307, replacing OD-268's per-call binding): the
+reading and submitting tools exist only on the agent servers, which Claude Code gives to ecf's
+subagents and never to the main session (tested 2026-10-02, §21.2), so every read and submission
+comes from a subagent. What telemetry still has to show is the model. Telemetry can't tie a tool
+call to its API request (tool events carry no agent or request ID, and a tool starts before its
+request's event is logged; step 13, 2026-10-02), so a submission is judged by its window: from the
+claim's read to the submission, every subagent request that overlaps it (and every swapped
+subagent run) must be on the role's pinned model. `/ecf-review` runs one agent type's spawns at a
+time, so parallel spawns in the window share one model; work that overlaps another model is
+refused, never accepted. A submission waits until telemetry has caught up with it: a subagent
+request or swap that ends at or after it.
 
-Submissions waiting for their binding (`Hold`) are kept here too, and settled by `claude_review`
+Submissions waiting for their judgement (`Hold`) are kept here too, and settled by `claude_review`
 (or `claude_eval` for `/ecf-eval`).
 """
 
@@ -29,30 +37,26 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, cast
 
-SUBAGENT = "agent:custom"  # query_source of a plugin agent (tested 2026-10-02)
+SUBAGENT = "agent:custom"  # query_source of an ecf agent (tested 2026-10-02)
+SLACK_S = 0.5  # timestamps from Claude Code and the service's clock, same computer
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/\[\]-]{0,99}$")
 _SOURCE = re.compile(r"^[A-Za-z][A-Za-z0-9._:-]{0,63}$")
-_TOOL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _RESETS = re.compile(r"^[0-9A-Za-z:.+_-]{1,40}$")
-
-
-def valid_tool_use_id(v: object) -> str | None:
-    return v if isinstance(v, str) and _TOOL_ID.match(v) else None
 
 
 @dataclass(frozen=True)
 class Seen:
-    """What telemetry says about one tool call: the model and query source of its request."""
+    """What telemetry says about a submission's window: the model(s) of its subagent requests."""
 
     model: str
-    source: str
 
 
 @dataclass(frozen=True)
 class ApiCall:
-    seq: int | None
+    end: float | None  # when the request ended (epoch seconds), from `event.timestamp`
     model: str
     source: str
     input_tokens: int | None = None
@@ -61,6 +65,19 @@ class ApiCall:
     cache_creation_tokens: int | None = None
     duration_ms: int | None = None
     cost_usd: float | None = None
+
+    @property
+    def start(self) -> float | None:
+        return None if self.end is None else self.end - (self.duration_ms or 0) / 1000
+
+
+@dataclass(frozen=True)
+class Swap:
+    """A subagent run that ended on another model than it started on."""
+
+    start: float
+    end: float
+    model: str
 
 
 @dataclass(frozen=True)
@@ -75,16 +92,17 @@ class Plan:
 
 @dataclass(frozen=True)
 class Hold:
-    """A checked submission waiting for telemetry to bind its call to a model."""
+    """A checked submission waiting for telemetry to show the model of its window."""
 
     session_id: str
-    tool_use_id: str
     stable_id: str
     fence: int
     need: str
     agent: str
     payload: dict[str, Any]
     kind: str = "review"  # review (`/ecf-review`, claude_review) | eval (`/ecf-eval`, claude_eval)
+    at: float = 0.0  # when it was submitted (epoch seconds; set by the API)
+    read_at: float | None = None  # when its claim was read, if it was
 
 
 @dataclass
@@ -92,7 +110,11 @@ class Tel:
     session_id: str
     bearer_hash: str
     requests: list[ApiCall] = field(default_factory=list[ApiCall])
-    tools: dict[str, int] = field(default_factory=dict[str, int])
+    swaps: list[Swap] = field(default_factory=list[Swap])
+    # (kind, ref, fence) -> when the claim was first read
+    reads: dict[tuple[str, str, int], float] = field(
+        default_factory=dict[tuple[str, str, int], float]
+    )
     holds: list[Hold] = field(default_factory=list[Hold])
     first_plan: Plan | None = None
     last_plan: Plan | None = None
@@ -137,30 +159,42 @@ class Telemetry:
         with self._cond:
             return self._sessions.get(session_id)
 
-    def add(self, session_id: str, calls: list[ApiCall], tools: dict[str, int]) -> None:
+    def add(self, session_id: str, calls: list[ApiCall], swaps: list[Swap]) -> None:
         with self._cond:
             t = self._sessions.get(session_id)
             if t is None:
                 return
             t.requests.extend(calls)
-            for tid, seq in tools.items():
-                t.tools[tid] = min(seq, t.tools.get(tid, seq))
+            t.swaps.extend(swaps)
             self._cond.notify_all()
 
-    def seen(self, session_id: str, tool_use_id: str, wait_s: float = 0.0) -> Seen | None:
-        """The model and source behind a tool call, waiting up to `wait_s` for its events."""
+    def read(self, session_id: str, kind: str, ref: str, fence: int, at: float) -> None:
+        """A claim was read (its window starts at the first read)."""
+        with self._cond:
+            t = self._sessions.get(session_id)
+            if t is not None:
+                t.reads.setdefault((kind, ref, fence), at)
+
+    def read_at(self, session_id: str, kind: str, ref: str, fence: int) -> float | None:
+        with self._cond:
+            t = self._sessions.get(session_id)
+            return t.reads.get((kind, ref, fence)) if t else None
+
+    def judge(self, h: Hold, wait_s: float = 0.0) -> Seen | None:
+        """The model of a submission's window, waiting up to `wait_s` for telemetry to catch up;
+        None while it hasn't."""
         deadline = time.monotonic() + wait_s
         with self._cond:
             while True:
-                t = self._sessions.get(session_id)
-                found = _bind(t, tool_use_id) if t else None
+                t = self._sessions.get(h.session_id)
+                found = _judge(t, h) if t else None
                 left = deadline - time.monotonic()
                 if found is not None or t is None or left <= 0:
                     return found
                 self._cond.wait(left)
 
     def hold(self, h: Hold) -> bool:
-        """Keep a submission until its binding comes; False when the session has ended."""
+        """Keep a submission until telemetry catches up; False when the session has ended."""
         with self._cond:
             t = self._sessions.get(h.session_id)
             if t is not None:
@@ -168,25 +202,26 @@ class Telemetry:
             return t is not None
 
     def take_bound(self, session_id: str) -> list[tuple[Hold, Seen]]:
-        """The session's holds that telemetry now binds, removed from the waiting list."""
+        """The session's holds that telemetry can now judge, removed from the waiting list."""
         with self._cond:
             t = self._sessions.get(session_id)
             if t is None:
                 return []
             out: list[tuple[Hold, Seen]] = []
             for h in list(t.holds):
-                s = _bind(t, h.tool_use_id)
+                s = _judge(t, h)
                 if s is not None:
                     t.holds.remove(h)
                     out.append((h, s))
             return out
 
     def take_all(self, session_id: str) -> list[tuple[Hold, Seen | None]]:
+        """At session end: every hold, judged on what arrived (None: nothing in its window)."""
         with self._cond:
             t = self._sessions.get(session_id)
             if t is None:
                 return []
-            out = [(h, _bind(t, h.tool_use_id)) for h in t.holds]
+            out = [(h, _judge(t, h, final=True)) for h in t.holds]
             t.holds.clear()
             return out
 
@@ -230,15 +265,31 @@ def refusal_line(n: int, model: str | None, expected: str | None) -> str:
     return f"{n} refused (model {model or 'unknown'}, expected {expected or 'unknown'})"
 
 
-def _bind(t: Tel, tool_use_id: str) -> Seen | None:
-    seq = t.tools.get(tool_use_id)
-    if seq is None:
+def _judge(t: Tel, h: Hold, *, final: bool = False) -> Seen | None:
+    """The models of the subagent work overlapping [read_at, at], once telemetry has caught up
+    (or at session end); None when it hasn't, or nothing overlaps."""
+    spans = [
+        (c.start, c.end, c.model)
+        for c in t.requests
+        if c.source == SUBAGENT and c.end is not None and c.start is not None
+    ]
+    spans += [(s.start, s.end, s.model) for s in t.swaps]
+    if not final and not any(end >= h.at for _s, end, _m in spans):
         return None
-    before = [r for r in t.requests if r.seq is not None and r.seq < seq]
-    if not before:
+    begin = h.at if h.read_at is None else min(h.read_at, h.at)
+    models = sorted({m for start, end, m in spans
+                     if start <= h.at + SLACK_S and end >= begin - SLACK_S})  # fmt: skip
+    return Seen(" + ".join(models)) if models else None
+
+
+def _when(v: Any) -> float | None:
+    """`event.timestamp` (ISO 8601, UTC) as epoch seconds."""
+    if not isinstance(v, str) or len(v) > 40:
         return None
-    r = max(before, key=lambda c: c.seq or 0)
-    return Seen(r.model, r.source)
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------- OTLP/JSON
@@ -295,10 +346,10 @@ def _list(d: Any, key: str) -> list[Any]:
     return cast(list[Any], v) if isinstance(v, list) else []
 
 
-def parse_logs(body: Any) -> tuple[list[ApiCall], dict[str, int]]:
-    """API requests and tool-call sequences from an OTLP/JSON logs export; the rest is dropped."""
+def parse_logs(body: Any) -> tuple[list[ApiCall], list[Swap]]:
+    """API requests and model swaps from an OTLP/JSON logs export; the rest is dropped."""
     calls: list[ApiCall] = []
-    tools: dict[str, int] = {}
+    swaps: list[Swap] = []
     for rl in _list(body, "resourceLogs"):
         for sl in _list(rl, "scopeLogs"):
             for rec in _list(sl, "logRecords"):
@@ -308,15 +359,18 @@ def parse_logs(body: Any) -> tuple[list[ApiCall], dict[str, int]]:
                 a = _attrs(r.get("attributes"))
                 name = a.get("event.name") or _value(r.get("body"))
                 name = name.removeprefix("claude_code.") if isinstance(name, str) else ""
-                seq = _int(a.get("event.sequence"))
-                tid = valid_tool_use_id(a.get("tool_use_id"))
-                if tid is not None and seq is not None:
-                    tools[tid] = min(seq, tools.get(tid, seq))
+                end = _when(a.get("event.timestamp"))
+                model, source = a.get("model"), a.get("query_source")
+                if name == "subagent_completed" and a.get("model_swapped") in (True, "true"):
+                    final = a.get("final_model")
+                    if end is not None:
+                        swaps.append(Swap(end - (_int(a.get("duration_ms")) or 0) / 1000, end,
+                                          final if isinstance(final, str) and _MODEL.match(final)
+                                          else "unknown"))  # fmt: skip
                 if name != "api_request":
                     continue
-                model, source = a.get("model"), a.get("query_source")
                 calls.append(ApiCall(
-                    seq,
+                    end,
                     model if isinstance(model, str) and _MODEL.match(model) else "unknown",
                     source if isinstance(source, str) and _SOURCE.match(source) else "unknown",
                     _int(a.get("input_tokens")),
@@ -326,7 +380,7 @@ def parse_logs(body: Any) -> tuple[list[ApiCall], dict[str, int]]:
                     _int(a.get("duration_ms")),
                     _float(a.get("cost_usd")),
                 ))  # fmt: skip
-    return calls, tools
+    return calls, swaps
 
 
 def parse_plan(body: dict[str, Any]) -> Plan:

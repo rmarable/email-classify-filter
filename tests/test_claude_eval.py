@@ -9,6 +9,7 @@ import json
 import shutil
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -76,15 +77,11 @@ def model_for(agent: str) -> str:
     return run.models[claude_eval.role_of(agent)]
 
 
-def as_agent(agent: str) -> Callable[[], Seen]:
-    return lambda: Seen(model_for(agent), SUBAGENT)
-
-
 def settled(db_path: Path, clock: FakeClock, got: dict[str, Any] | Hold,
             seen: Seen | None = None, tel: Telemetry | None = None) -> dict[str, Any]:  # fmt: skip
     if not isinstance(got, Hold):
         return got
-    seen = seen or Seen(model_for(got.agent), SUBAGENT)
+    seen = seen or Seen(model_for(got.agent))
     return claude_eval.settle(connector(db_path), clock, NullNotifier(), tel or Telemetry(), got,
                               seen)  # fmt: skip
 
@@ -93,13 +90,14 @@ def answer(db_path: Path, clock: FakeClock, item: dict[str, Any], session: str,
            classify: dict[str, Any], action: str = "flag") -> dict[str, Any]:  # fmt: skip
     """What a well-behaved agent does with one claimed case."""
     ref, token = item["id"], item["claim_token"]
-    claude_eval.get_message(clock, session, ref, token, as_agent(item["agent"]))
+    agent = item["agent"]
+    claude_eval.get_message(clock, session, ref, token, agent)
     if item["need"] == "classify":
-        got = claude_eval.record_classification(clock, session, ref, token, classify, "toolu_x")
+        got = claude_eval.record_classification(clock, session, ref, token, classify, agent)
     else:
         got = claude_eval.propose_action(clock, session, ref, token,
                                          {"action": action, "reason": "needs a look"},
-                                         "toolu_x")  # fmt: skip
+                                         agent)  # fmt: skip
     return settled(db_path, clock, got)
 
 
@@ -140,8 +138,8 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     needs = [i["need"] for i in handed]
     # 3 classifications, the control case's actor step, then 3 determinism re-classifications
     assert needs.count("classify") == 6 and needs.count("act") == 1
-    assert {i["agent"] for i in handed if i["need"] == "classify"} == {"ecf:classifier"}
-    assert {i["agent"] for i in handed if i["need"] == "act"} <= {"ecf:actor", "ecf:actor-high"}
+    assert {i["agent"] for i in handed if i["need"] == "classify"} == {"ecf-classifier"}
+    assert {i["agent"] for i in handed if i["need"] == "act"} <= {"ecf-actor", "ecf-actor-high"}
     run = claude_eval.current()
     assert run is not None and run.state == "done" and run.diffs == 0
     row = conn.execute("SELECT * FROM eval_runs").fetchone()
@@ -168,9 +166,9 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
     out = [q]
     for item in q["items"]:
         assert len(item["id"]) == 32 and int(item["id"], 16) >= 0
-        assert item["spawn"] == "classifier" and item["need"] == "classify"
+        assert item["spawn"] == "ecf-classifier" and item["need"] == "classify"
         out.append(claude_eval.get_message(clock, S1, item["id"], item["claim_token"],
-                                           as_agent(item["agent"])))  # fmt: skip
+                                           item["agent"]))  # fmt: skip
     text = json.dumps(out)
     for case_id in CASES:
         assert case_id not in text
@@ -181,12 +179,15 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
     assert set(msg["untrusted_email"]) == {"from", "subject", "date", "text", "attachments_meta"}
 
 
-def test_only_a_plugin_agent_reads_a_case(db_path: Path, clock: FakeClock, root: Path) -> None:
+def test_only_the_named_agent_reads_or_submits_a_case(db_path: Path, clock: FakeClock,
+                                                       root: Path) -> None:  # fmt: skip
     start(db_path, clock, root)
     item = claude_eval.eval_next(connector(db_path), clock, S1)["items"][0]
-    for seen in (lambda: None, lambda: Seen("claude-haiku-4-5-20251001", "main")):
-        with pytest.raises(ForbiddenProfileError):
-            claude_eval.get_message(clock, S1, item["id"], item["claim_token"], seen)
+    with pytest.raises(ForbiddenProfileError):
+        claude_eval.get_message(clock, S1, item["id"], item["claim_token"], "ecf-actor")
+    with pytest.raises(ForbiddenProfileError):
+        claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
+                                          "ecf-classifier-high")  # fmt: skip
 
 
 def test_the_model_check_refuses_another_model_and_stops_the_session(
@@ -195,10 +196,10 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     start(db_path, clock, root)
     item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
     got = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
-                                            "toolu_x")  # fmt: skip
+                                            item["agent"])  # fmt: skip
     tel = Telemetry()
     tel.open(S1)
-    out = settled(db_path, clock, got, Seen("claude-opus-5-5", SUBAGENT), tel)
+    out = settled(db_path, clock, got, Seen("claude-opus-5-5"), tel)
     assert out["accepted"] is False and "claude-opus-5-5" in out["errors"][0]
     stopped = tel.stopped(S1)
     assert stopped is not None
@@ -216,7 +217,7 @@ def test_three_invalid_tries_score_the_case_as_a_failure(
     start(db_path, clock, root)
     item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
     tries = [claude_eval.record_classification(clock, S1, item["id"], item["claim_token"],
-                                               {"category": "tax"}, "toolu_x")
+                                               {"category": "tax"}, item["agent"])
              for _ in range(3)]  # fmt: skip
     assert [cast(dict[str, Any], t)["tries_left"] for t in tries] == [2, 1, 0]
     assert all("tax" not in json.dumps(t) for t in tries)  # errors never quote the value
@@ -237,7 +238,8 @@ def test_claims_expire_and_are_fenced(db_path: Path, clock: FakeClock, root: Pat
     new = next(i for i in q["items"] if i["id"] == old["id"])
     assert new["claim_token"].split(".")[0] == "2"
     with pytest.raises(ConflictError):
-        claude_eval.record_classification(clock, S1, old["id"], old["claim_token"], BEC, "t")
+        claude_eval.record_classification(clock, S1, old["id"], old["claim_token"], BEC,
+                                          old["agent"])  # fmt: skip
     assert claude_eval.eval_next(connector(db_path), clock, S1)["results"] == [
         {"id": old["id"], "outcome": "claim_expired"}]  # fmt: skip
 
@@ -258,9 +260,9 @@ def test_a_comparison_run_uses_the_eval_agents_and_never_counts_for_the_gate(
     r = start(db_path, clock, root, classifier_model="claude-opus-5-5")
     assert r["pinned"] is False and r["models"]["classifier"] == "claude-opus-5-5"
     info = claude_eval.session_info(connector(db_path), clock)
-    assert info is not None and info["agents"]["eval-classifier"] == "claude-opus-5-5"
+    assert info is not None and info["agents"]["ecf-eval-classifier"] == "claude-opus-5-5"
     items = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
-    assert {i["agent"] for i in items} == {"ecf:eval-classifier"}
+    assert {i["agent"] for i in items} == {"ecf-eval-classifier"}
     claude_eval.release_session(S1)
     drain(db_path, clock, lambda _c: BEC)
     row = conn.execute("SELECT digest FROM eval_runs").fetchone()
@@ -282,9 +284,9 @@ def test_high_runs_one_case_per_spawn_unless_batched(
 ) -> None:
     start(db_path, clock, root, sensitivity="high", batch=2)
     items = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
-    assert {i["agent"] for i in items} == {"ecf:classifier-high"}
-    assert [i["spawn"] for i in items] == ["classifier-high-1", "classifier-high-1",
-                                           "classifier-high-2"]  # fmt: skip
+    assert {i["agent"] for i in items} == {"ecf-classifier-high"}
+    assert [i["spawn"] for i in items] == ["ecf-classifier-high-1", "ecf-classifier-high-1",
+                                           "ecf-classifier-high-2"]  # fmt: skip
 
 
 def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path,
@@ -382,18 +384,20 @@ def test_the_routes_and_their_profiles(
             sess = (await h.post("/v1/sessions", headers=cli)).json()
             out["session"] = sess
             work = {"Authorization": f"Bearer {sess['profile_token']}"}
+            agent = {"Authorization": f"Bearer {sess['agent_token']}"}
             out["cli_next"] = (await h.post("/v1/eval/next", json={}, headers=cli)).status_code
             q = (await h.post("/v1/eval/next", json={"limit": 1}, headers=work)).json()
             item = q["items"][0]
             model = claude_pins.effective(conn)["classifier"]
-            state.telemetry.add(sess["session_id"], [ApiCall(1, model, SUBAGENT)],
-                                {"toolu_r": 2, "toolu_s": 3})  # fmt: skip
-            ref, tok = item["id"], item["claim_token"]
-            out["message"] = (await h.post(f"/v1/claims/{ref}/message", headers=work, json={
-                "claim_token": tok, "tool_use_id": "toolu_r"})).json()  # fmt: skip
-            out["submit"] = (await h.post(f"/v1/claims/{ref}/classification", headers=work,
+            state.telemetry.add(sess["session_id"], [ApiCall(clock.now().timestamp() + 1, model,
+                                                             SUBAGENT, duration_ms=3000)],
+                                [])  # fmt: skip
+            ref, tok, name = item["id"], item["claim_token"], item["agent"]
+            out["message"] = (await h.post(f"/v1/claims/{ref}/message", headers=agent, json={
+                "claim_token": tok, "agent": name})).json()  # fmt: skip
+            out["submit"] = (await h.post(f"/v1/claims/{ref}/classification", headers=agent,
                                           json={"claim_token": tok, "classification": BEC,
-                                                "tool_use_id": "toolu_s"})).json()  # fmt: skip
+                                                "agent": name})).json()  # fmt: skip
             out["status"] = (await h.get("/v1/eval/runs", headers=cli)).json()
             out["results"] = (await h.post("/v1/eval/results", headers=work, json={})).json()
             out["stop"] = (await h.post("/v1/eval/runs/stop", headers=cli, json={})).json()
@@ -414,7 +418,7 @@ def test_the_routes_and_their_profiles(
 def test_a_held_submission_settles_when_telemetry_arrives_or_is_refused_at_session_end(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    """Held like `/ecf-review`'s (OD-268), and settled by the same paths, by kind."""
+    """Held like `/ecf-review`'s (OD-307), and settled by the same paths, by kind."""
     from ecf_server import api, telemetry_app  # noqa: PLC0415
 
     state = ServiceState(install="t", token="cli-token", started_at="2026-10-02T09:00:00Z",
@@ -424,13 +428,17 @@ def test_a_held_submission_settles_when_telemetry_arrives_or_is_refused_at_sessi
     bearer = state.telemetry.open(S1)
     assert bearer
     items = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)["items"]
-    holds = [claude_eval.record_classification(clock, S1, i["id"], i["claim_token"], BEC,
-                                               f"toolu_{n}")
-             for n, i in enumerate(items)]  # fmt: skip
-    for h in holds:
-        assert isinstance(h, Hold) and h.kind == "eval" and state.telemetry.hold(h)
+    now = clock.now().timestamp()
+    holds: list[Hold] = []
+    for n, i in enumerate(items):  # submitted a minute apart
+        h = claude_eval.record_classification(clock, S1, i["id"], i["claim_token"], BEC,
+                                              i["agent"])  # fmt: skip
+        assert isinstance(h, Hold) and h.kind == "eval"
+        holds.append(replace(h, at=now + 60 * n))
+        assert state.telemetry.hold(holds[-1])
     model = claude_pins.effective(conn)["classifier"]
-    state.telemetry.add(S1, [ApiCall(1, model, SUBAGENT)], {"toolu_0": 2})  # only the first
+    state.telemetry.add(S1, [ApiCall(now + 1, model, SUBAGENT, duration_ms=3000)],
+                        [])  # only the first's window, and caught up with it only  # fmt: skip
     telemetry_app.settle_bound(state, S1)
     run = claude_eval.current()
     assert run is not None
@@ -438,7 +446,7 @@ def test_a_held_submission_settles_when_telemetry_arrives_or_is_refused_at_sessi
     assert first.classification == BEC and first.claim == "free"
     assert second.claim == "held"
     api._end_session(state, S1)  # pyright: ignore[reportPrivateUsage]
-    assert second.claim == "free" and second.classification is None  # refused as unbound
+    assert second.claim == "free" and second.classification is None  # nothing in its window
 
 
 def test_eval_next_through_ecf_mcp(db_path: Path, clock: FakeClock, root: Path) -> None:

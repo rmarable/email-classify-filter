@@ -3,7 +3,7 @@
 `ecf claude` shows at start.
 
 From telemetry (exact per request and per model): calls, input, output and cache tokens and
-duration, by model and source (`main` for the main session, `agent` for ecf's plugin agents, else
+duration, by model and source (`main` for the main session, `agent` for ecf's agents, else
 the raw `query_source`); `cost_usd` when Claude Code sends it, shown only as an API-equivalent
 figure. Per email it is approximate: a session's tokens over the items it submitted work for. Plan
 usage (status line, Pro and Max only) is recorded at a session's first and last reading. Both
@@ -23,7 +23,7 @@ from ecf_server.telemetry import ApiCall, Tel
 
 
 def source_of(query_source: str) -> str:
-    if query_source in ("main", "sdk"):
+    if query_source in ("main", "sdk", "repl_main_thread"):  # repl_main_thread: interactive
         return "main"
     if query_source == "agent:custom":
         return "agent"

@@ -18,7 +18,10 @@ FAKE_CLAUDE = """#!/bin/sh
 if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; exit 0; fi
 mkdir -p "$CLAUDE_CONFIG_DIR/projects/p"
 echo '{{"x":1}}' > "$CLAUDE_CONFIG_DIR/projects/p/s.jsonl"
-{{ echo "ARGS=$*"; echo "TOKEN=$ECF_PROFILE_TOKEN"; echo "CFG=$CLAUDE_CONFIG_DIR";
+"{python}" -c 'import json, sys; json.dump(sys.argv[2:], open(sys.argv[1], "w"))' \\
+  "{record}.args" "$@"
+{{ echo "TOKEN=$ECF_PROFILE_TOKEN"; echo "AGENT_TOKEN=$ECF_AGENT_TOKEN";
+   echo "CFG=$CLAUDE_CONFIG_DIR";
    echo "PROMPTS=$OTEL_LOG_USER_PROMPTS"; echo "PWD=$(pwd)";
    echo "TELEMETRY=$CLAUDE_CODE_ENABLE_TELEMETRY"; echo "OTLP=$OTEL_EXPORTER_OTLP_ENDPOINT";
    echo "PROTOCOL=$OTEL_EXPORTER_OTLP_PROTOCOL"; }} > "{record}"
@@ -69,10 +72,13 @@ def test_settings_document() -> None:
     assert d["cleanupPeriodDays"] == 1 and d["model"] == "claude-haiku-x"
     assert d["statusLine"] == {"type": "command", "command": "status-cmd"}
     assert d["permissions"]["defaultMode"] == "dontAsk"
-    assert d["permissions"]["allow"] == [
-        "mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results", "Agent",
-        "mcp__ecf__get_message", "mcp__ecf__record_classification",
-        "mcp__ecf__propose_action"]  # fmt: skip
+    allow = d["permissions"]["allow"]
+    assert allow[:4] == ["mcp__ecf__review_queue", "mcp__ecf__eval_next",
+                         "mcp__ecf__eval_results", "Agent"]  # fmt: skip
+    assert "mcp__ecf-actor-high__propose_action" in allow  # each agent's own server (OD-307)
+    assert "mcp__ecf-eval-classifier__record_classification" in allow
+    assert not any(t.startswith("mcp__ecf__") and t.endswith(("get_message", "propose_action"))
+                   for t in allow)  # fmt: skip
     for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
                  "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
@@ -84,63 +90,72 @@ def _frontmatter(text: str) -> dict[str, str]:
     return dict(line.split(": ", 1) for line in head.strip().splitlines())
 
 
-def test_plugin_rendered_with_pins(tmp_path: Path) -> None:
+def test_plugin_has_only_the_skills(tmp_path: Path) -> None:
     dest = tmp_path / "plugin"
     (dest / "stale.md").parent.mkdir()
     (dest / "stale.md").write_text("old")
-    cw.render_plugin(dest, MODELS)
-    assert not (dest / "stale.md").exists()
+    cw.render_plugin(dest)
+    assert not (dest / "stale.md").exists() and not (dest / "agents").exists()
     manifest = json.loads((dest / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == "ecf" and manifest["version"] == ecf.__version__
     skill = (dest / "skills" / "ecf-review" / "SKILL.md").read_text()
     assert _frontmatter(skill)["name"] == "ecf-review"
-    want = {"classifier": "claude-haiku-x", "classifier-high": "claude-sonnet-x",
-            "actor": "claude-sonnet-x", "actor-high": "claude-opus-x"}  # fmt: skip
-    for name, model in want.items():
-        text = (dest / "agents" / f"{name}.md").read_text()
-        fm = _frontmatter(text)
-        assert fm["name"] == name and fm["model"] == model
-        assert "{{" not in text
-        tools = {t.strip() for t in fm["tools"].split(",")}
-        submit = "record_classification" if name.startswith("classifier") else "propose_action"
-        assert tools == {"mcp__ecf__get_message", f"mcp__ecf__{submit}"}
-        assert tools <= set(cw.SUBAGENT_TOOLS)
-
-
-def test_eval_skill_always_and_eval_agents_only_for_a_comparison(tmp_path: Path) -> None:
-    """V1.4 step 7 (OD-288): `/ecf-eval` ships always; the `eval-*` agents only when the service
-    names them, each on the run's model, from the same templates."""
-    dest = tmp_path / "plugin"
-    cw.render_plugin(dest, MODELS)
     skill = (dest / "skills" / "ecf-eval" / "SKILL.md").read_text()
     assert _frontmatter(skill)["name"] == "ecf-eval"
     assert _frontmatter(skill)["disable-model-invocation"] == "true"
-    assert not list((dest / "agents").glob("eval-*"))
-    cw.render_plugin(dest, MODELS, {"eval-classifier": "claude-opus-y",
-                                    "eval-actor": "claude-opus-y"})  # fmt: skip
-    assert sorted(p.name for p in (dest / "agents").glob("eval-*")) == [
-        "eval-actor.md", "eval-classifier.md"]  # fmt: skip
-    fm = _frontmatter((dest / "agents" / "eval-classifier.md").read_text())
-    assert fm["name"] == "eval-classifier" and fm["model"] == "claude-opus-y"
-    body = (dest / "agents" / "eval-classifier.md").read_text().split("---\n", 2)[2]
-    assert body == (dest / "agents" / "classifier.md").read_text().split("---\n", 2)[2]
+
+
+def test_agents_each_have_their_pin_and_their_own_server() -> None:
+    """OD-307: `--agents`, each agent on its pin with its own `ecf-mcp --agent` server."""
+    doc = cw.agents_doc(Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
+    want = {"ecf-classifier": "claude-haiku-x", "ecf-classifier-high": "claude-sonnet-x",
+            "ecf-actor": "claude-sonnet-x", "ecf-actor-high": "claude-opus-x"}  # fmt: skip
+    assert {n: a["model"] for n, a in doc.items()} == want
+    for name, a in doc.items():
+        submit = "record_classification" if "classifier" in name else "propose_action"
+        assert a["tools"] == [f"mcp__{name}__get_message", f"mcp__{name}__{submit}"]
+        assert "{{" not in a["prompt"] and f"`mcp__{name}__get_message`" in a["prompt"]
+        assert "mcp__ecf__" not in a["prompt"]
+        assert a["mcpServers"] == [{name: {
+            "type": "stdio", "command": "/abs/ecf-mcp",
+            "args": ["--stdio", "--agent", name, "--socket", "/data/t/run/ecf.sock"]}}]  # fmt: skip
+        assert "env" not in a["mcpServers"][0][name]  # the token comes from the environment
+        assert set(a["tools"]) <= set(cw.ALLOWED_TOOLS)
+
+
+def test_eval_agents_only_for_a_comparison() -> None:
+    """V1.4 step 7 (OD-288): the `ecf-eval-*` agents only when the service names them, each on
+    the run's model, from the same templates."""
+    sock, mcp = Path("/s.sock"), Path("/m")
+    assert not [n for n in cw.agents_doc(mcp, sock, MODELS) if "eval" in n]
+    doc = cw.agents_doc(mcp, sock, MODELS, {"ecf-eval-classifier": "claude-opus-y",
+                                            "ecf-eval-actor": "claude-opus-y"})  # fmt: skip
+    assert sorted(n for n in doc if "eval" in n) == ["ecf-eval-actor", "ecf-eval-classifier"]
+    ev = doc["ecf-eval-classifier"]
+    assert ev["model"] == "claude-opus-y"
+    assert ev["prompt"] == doc["ecf-classifier"]["prompt"].replace(
+        "ecf-classifier", "ecf-eval-classifier"
+    )
 
 
 def test_eval_agents_match_the_service() -> None:
     from ecf_server import claude_eval  # noqa: PLC0415
 
     for name, (_t, role, _d) in cw.EVAL_AGENTS.items():
-        assert claude_eval.agent_name(role, pinned=False) == f"ecf:{name}"
-        assert claude_eval.role_of(f"ecf:{name}") == role
+        assert claude_eval.agent_name(role, pinned=False) == name
+        assert claude_eval.role_of(name) == role
     for name, (_t, role, _d) in cw.AGENTS.items():
-        assert claude_eval.agent_name(role, pinned=True) == f"ecf:{name}"
+        assert claude_eval.agent_name(role, pinned=True) == name
 
 
-def test_agents_match_the_service() -> None:
-    """The service names these agents (claude_review.ROLE); the plugin must define each."""
+def test_agents_match_the_service_and_ecf_mcp() -> None:
+    """The service names these agents (claude_review.ROLE); `ecf claude` must define each, and
+    `ecf-mcp --agent` must take each name."""
+    from ecf import mcp_server  # noqa: PLC0415
     from ecf_server import claude_review  # noqa: PLC0415
 
-    assert {f"ecf:{n}": r for n, (_t, r, _d) in cw.AGENTS.items()} == claude_review.ROLE
+    assert {n: r for n, (_t, r, _d) in cw.AGENTS.items()} == claude_review.ROLE
+    assert all(mcp_server.AGENT_NAME.match(n) for n in (*cw.AGENTS, *cw.EVAL_AGENTS))
 
 
 def test_mark_ready_keeps_other_keys(tmp_path: Path) -> None:
@@ -170,7 +185,8 @@ def test_config_is_private(tmp_path: Path) -> None:
     cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
     for d in (lay.config_dir, lay.work_dir):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700
-    for f in (lay.settings, lay.mcp_config, lay.state, lay.plugin_dir / "agents" / "actor.md"):
+    skill = lay.plugin_dir / "skills" / "ecf-review" / "SKILL.md"
+    for f in (lay.settings, lay.mcp_config, lay.state, skill):
         assert stat.S_IMODE(f.stat().st_mode) == 0o600
     assert json.loads(lay.settings.read_text())["permissions"]["defaultMode"] == "dontAsk"
 
@@ -190,13 +206,14 @@ def test_version_floor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_privacy_gates_forced_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTEL_LOG_USER_PROMPTS", "1")
     monkeypatch.setenv("OTEL_LOG_RAW_API_BODIES", "1")
-    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", cw.telemetry_env(4318, "b"))
+    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", "atok",
+                         cw.telemetry_env(4318, "b"))  # fmt: skip
     assert env["OTEL_LOG_USER_PROMPTS"] == "0" and env["OTEL_LOG_RAW_API_BODIES"] == "0"
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
     assert env["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Bearer b"
     assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/json"
-    assert env["ECF_PROFILE_TOKEN"] == "tok"
+    assert env["ECF_PROFILE_TOKEN"] == "tok" and env["ECF_AGENT_TOKEN"] == "atok"
     assert env["CLAUDE_CONFIG_DIR"].endswith("claude-config")
 
 
@@ -214,16 +231,22 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
     # the status line reached the service and printed; the export was accepted
     assert Path(f"{record}.status").read_text().strip() == "ecf review · 5h 12% · 7d 95% 200"
     lay = cw.layout(running)
-    assert rec["ARGS"].startswith("--strict-mcp-config --mcp-config ")
-    assert f"--plugin-dir {lay.plugin_dir} " in rec["ARGS"]
-    assert rec["ARGS"].endswith("--model x")
+    args: list[str] = json.loads(Path(f"{record}.args").read_text())
+    assert args[:3] == ["--strict-mcp-config", "--mcp-config", str(lay.mcp_config)]
+    assert args[3:5] == ["--plugin-dir", str(lay.plugin_dir)] and args[5] == "--agents"
+    agents = json.loads(args[6])
+    assert sorted(agents) == sorted(cw.AGENTS)  # no eval waiting: no ecf-eval-* agents
+    sock = agents["ecf-actor"]["mcpServers"][0]["ecf-actor"]["args"][-1]
+    assert sock == str(running.socket.absolute())
+    assert args[7:] == ["--model", "x"]
     assert rec["CFG"] == str(lay.config_dir) and rec["PROMPTS"] == "0"
     assert Path(rec["PWD"]).resolve() == lay.work_dir.resolve()
-    token = rec["TOKEN"]
-    assert token
-    with uds_client(running) as c:  # the session token was revoked on exit
-        r = c.get("/v1/status", headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code == 401
+    token, agent_token = rec["TOKEN"], rec["AGENT_TOKEN"]
+    assert token and agent_token and token != agent_token
+    with uds_client(running) as c:  # both session tokens were revoked on exit
+        for t in (token, agent_token):
+            r = c.get("/v1/status", headers={"Authorization": f"Bearer {t}"})
+            assert r.status_code == 401
     assert not (lay.config_dir / "projects").exists()  # transcripts purged
     db = sqlite3.connect(running.db)
     try:
@@ -269,7 +292,7 @@ def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example")
     monkeypatch.setenv("HTTPS_PROXY", "http://corp-proxy.example:8080")
-    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", {})
+    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", "atok", {})
     for gone in (
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",

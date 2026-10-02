@@ -1,7 +1,7 @@
 """The telemetry receiver and the Claude model check (V1.4 step 6; SPEC §7.5, §11.5, §13.4;
-OD-268, OD-274): what the receiver keeps, binding a tool call to its model, held submissions,
-refusals, plan usage from the status line, and Claude's figures in stats, the daily summary,
-retention and doctor."""
+OD-307): what the receiver keeps, judging a submission's window, the agent token and agent names,
+held submissions, refusals, plan usage from the status line, and Claude's figures in stats, the
+daily summary, retention and doctor."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from ecf_server import claude_pins, claude_usage, retention, telemetry, telemetr
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
-from ecf_server.telemetry import SUBAGENT, ApiCall, Telemetry
+from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Swap, Telemetry
 from tests.test_claude_review import REQUEST, add, waiting_item
 
 HAIKU = "claude-haiku-4-5-20251001"
@@ -52,54 +52,98 @@ def logs(*records: dict[str, Any]) -> dict[str, Any]:
                               "scopeLogs": [{"logRecords": list(records)}]}]}  # fmt: skip
 
 
-def api_request(
-    seq: int, model: str = HAIKU, source: str = SUBAGENT, **more: Any
-) -> dict[str, Any]:
-    return record(event__name="claude_code.api_request", event__sequence=seq, model=model,
-                  query_source=source, user__email="someone@example.com", **more)  # fmt: skip
+NOW = FakeClock().now()
 
 
-def tool_event(seq: int, tool_use_id: str) -> dict[str, Any]:
-    return record(event__name="tool_decision", event__sequence=seq, tool_use_id=tool_use_id,
-                  tool_name="mcp_tool")  # fmt: skip
+def iso(offset_s: float = 0.0) -> str:
+    """An `event.timestamp` this many seconds after FakeClock's start."""
+    return (NOW + timedelta(seconds=offset_s)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-# ---- parsing and binding -------------------------------------------------------------------
+def api_request(end_s: float = 1.0, model: str = HAIKU, source: str = SUBAGENT,
+                duration_ms: int = 3000, **more: Any) -> dict[str, Any]:  # fmt: skip
+    """An API request ending `end_s` seconds after FakeClock's start."""
+    return record(event__name="claude_code.api_request", event__timestamp=iso(end_s), model=model,
+                  query_source=source, duration_ms=duration_ms,
+                  user__email="someone@example.com", **more)  # fmt: skip
 
 
-def test_only_numbers_models_and_codes_are_kept() -> None:
-    body = logs(api_request(3, input_tokens=1200, output_tokens=80, cache_read_tokens=900,
+def at(offset_s: float) -> float:
+    return NOW.timestamp() + offset_s
+
+
+def hold(at_s: float, read_s: float | None = None) -> Hold:
+    return Hold("s1", "item", 1, "act", "ecf-actor", {}, at=at(at_s),
+                read_at=None if read_s is None else at(read_s))  # fmt: skip
+
+
+# ---- parsing and judging -------------------------------------------------------------------
+
+
+def test_only_numbers_models_times_and_codes_are_kept() -> None:
+    body = logs(api_request(1, input_tokens=1200, output_tokens=80, cache_read_tokens=900,
                             duration_ms=2100, cost_usd=0.0123, prompt="<REDACTED>"),
-                tool_event(4, "toolu_A"), tool_event(9, "toolu_A"),
+                record(event__name="tool_decision", tool_use_id="toolu_A", tool_name="mcp_tool"),
+                record(event__name="subagent_completed", event__timestamp=iso(9), duration_ms=4000,
+                       model_swapped=True, final_model="claude-sonnet-5-5"),
+                record(event__name="subagent_completed", event__timestamp=iso(9),
+                       model_swapped=False, final_model=HAIKU),
                 record(event__name="api_request", model="evil model\nname", query_source=7),
                 {"attributes": "not a list"})  # fmt: skip
-    calls, tools = telemetry.parse_logs(body)
-    assert calls[0] == ApiCall(3, HAIKU, SUBAGENT, 1200, 80, 900, None, 2100, 0.0123)
-    assert calls[1].model == "unknown" and calls[1].source == "unknown" and calls[1].seq is None
-    assert tools == {"toolu_A": 4}  # the first event of the call
-    assert "someone@example.com" not in repr((calls, tools))
-    assert telemetry.parse_logs({"resourceLogs": "x"}) == ([], {})
+    calls, swaps = telemetry.parse_logs(body)
+    assert calls[0] == ApiCall(at(1), HAIKU, SUBAGENT, 1200, 80, 900, None, 2100, 0.0123)
+    assert calls[0].start == pytest.approx(at(1) - 2.1)
+    assert calls[1].model == "unknown" and calls[1].source == "unknown" and calls[1].end is None
+    assert swaps == [Swap(at(5), at(9), "claude-sonnet-5-5")]  # only the swapped run
+    assert "someone@example.com" not in repr((calls, swaps))
+    assert telemetry.parse_logs({"resourceLogs": "x"}) == ([], [])
 
 
-def test_a_call_binds_to_the_request_just_before_it() -> None:
+def test_a_submission_is_judged_by_the_subagent_work_in_its_window() -> None:
     tel = Telemetry()
     tel.open("s1")
-    tel.add("s1", [ApiCall(1, "claude-sonnet-5-5", "main"), ApiCall(5, HAIKU, SUBAGENT)],
-            {"toolu_A": 6, "toolu_B": 3, "toolu_C": 0})  # fmt: skip
-    assert tel.seen("s1", "toolu_A") == telemetry.Seen(HAIKU, SUBAGENT)
-    assert tel.seen("s1", "toolu_B") == telemetry.Seen("claude-sonnet-5-5", "main")
-    assert tel.seen("s1", "toolu_C") is None  # nothing before it
-    assert tel.seen("s1", "toolu_unknown") is None and tel.seen("s2", "toolu_A") is None
+    sub = [ApiCall(at(-5), HAIKU, SUBAGENT, duration_ms=2000)]  # ended before the read
+    tel.add("s1", [*sub, ApiCall(at(-1), "claude-opus-5-5", "repl_main_thread")], [])
+    assert tel.judge(hold(0, -10)) is None  # telemetry hasn't caught up with the submission
+    tel.add("s1", [ApiCall(at(0.4), HAIKU, SUBAGENT, duration_ms=3000)], [])
+    assert tel.judge(hold(0, -10)) == Seen(HAIKU)  # the main session's request doesn't count
+    assert tel.judge(hold(0, -2)) == Seen(HAIKU)  # only the request overlapping the window
+    tel.add("s1", [ApiCall(at(1), "claude-sonnet-5-5", SUBAGENT, duration_ms=1500)], [])
+    assert tel.judge(hold(0, -10)) == Seen(f"{HAIKU} + claude-sonnet-5-5")  # never accepted
+    assert tel.judge(hold(0, -10)) != Seen(HAIKU)
+    assert tel.judge(Hold("s2", "x", 1, "act", "ecf-actor", {}, at=at(0))) is None
 
 
-def test_seen_waits_for_the_events_to_arrive() -> None:
+def test_a_swapped_subagent_run_counts_in_the_window() -> None:
     tel = Telemetry()
     tel.open("s1")
-    later = threading.Timer(0.1, lambda: tel.add("s1", [ApiCall(1, HAIKU, SUBAGENT)],
-                                                 {"toolu_A": 2}))  # fmt: skip
+    tel.add(
+        "s1",
+        [ApiCall(at(1), HAIKU, SUBAGENT, duration_ms=3000)],
+        [Swap(at(-3), at(2), "claude-sonnet-5-5")],
+    )
+    assert tel.judge(hold(0, -1)) == Seen(f"{HAIKU} + claude-sonnet-5-5")
+
+
+def test_at_session_end_a_hold_is_judged_on_what_came() -> None:
+    tel = Telemetry()
+    tel.open("s1")
+    early, empty = hold(0, -2), hold(30, 29)
+    tel.add("s1", [ApiCall(at(-0.5), HAIKU, SUBAGENT)], [])  # overlaps, but hasn't caught up
+    assert tel.hold(early) and tel.hold(empty)
+    assert tel.take_bound("s1") == []
+    assert tel.take_all("s1") == [(early, Seen(HAIKU)), (empty, None)]
+
+
+def test_judge_waits_for_the_events_to_arrive() -> None:
+    tel = Telemetry()
+    tel.open("s1")
+    later = threading.Timer(
+        0.1, lambda: tel.add("s1", [ApiCall(at(1), HAIKU, SUBAGENT, duration_ms=3000)], [])
+    )
     later.start()
     started = time.monotonic()
-    assert tel.seen("s1", "toolu_A", wait_s=5) == telemetry.Seen(HAIKU, SUBAGENT)
+    assert tel.judge(hold(0), wait_s=5) == Seen(HAIKU)
     assert time.monotonic() - started < 4
     later.join()
 
@@ -156,7 +200,7 @@ def test_the_receiver_takes_only_a_sessions_json(conn: sqlite3.Connection,
     made = api(state, "POST", "/v1/sessions").json()
     bearer = made["telemetry_bearer"]
     assert bearer != made["profile_token"]
-    body = logs(api_request(1, source="main", input_tokens=10, output_tokens=2))
+    body = logs(api_request(source="main", input_tokens=10, output_tokens=2))
     assert export(state, "wrong", body).status_code == 401
     assert export(state, made["profile_token"], body).status_code == 401  # not the API token
     assert export(state, bearer, body, content_type="application/x-protobuf").status_code == 415
@@ -176,34 +220,40 @@ def claim(state: ServiceState, work: str) -> dict[str, Any]:
     return items[0]
 
 
-def classify(state: ServiceState, work: str, item: dict[str, Any], call: str) -> dict[str, Any]:
+def classify(state: ServiceState, agent_token: str, item: dict[str, Any],
+             agent: str | None = None) -> dict[str, Any]:  # fmt: skip
     out: dict[str, Any] = api(state, "POST", f"/v1/claims/{item['id']}/classification",
                               {"claim_token": item["claim_token"], "classification": REQUEST,
-                               "tool_use_id": call}, work).json()  # fmt: skip
+                               "agent": agent or item["agent"]}, agent_token).json()  # fmt: skip
     return out
 
 
 @pytest.fixture
-def review(conn: sqlite3.Connection, state: ServiceState) -> tuple[str, str, str, str]:
-    """A C address with one waiting item and a session: (item id, session, WORK token, bearer)."""
+def review(conn: sqlite3.Connection, state: ServiceState) -> tuple[str, str, str, str, str]:
+    """A C address with one waiting item and a session: (item id, session, WORK token, bearer,
+    agent token)."""
     clock = state.clock
     assert isinstance(clock, FakeClock)
     add(conn, clock, "c", "C")
     sid = waiting_item(conn, clock, "c")
     made = api(state, "POST", "/v1/sessions").json()
-    return sid, made["session_id"], made["profile_token"], made["telemetry_bearer"]
+    return (sid, made["session_id"], made["profile_token"], made["telemetry_bearer"],
+            made["agent_token"])  # fmt: skip
 
 
-def test_a_submission_is_held_until_telemetry_binds_it(
-    conn: sqlite3.Connection, state: ServiceState, review: tuple[str, str, str, str]
+Review = tuple[str, str, str, str, str]
+
+
+def test_a_submission_is_held_until_telemetry_catches_up(
+    conn: sqlite3.Connection, state: ServiceState, review: Review
 ) -> None:
-    sid, session, work, bearer = review
+    sid, session, work, bearer, agent = review
     item = claim(state, work)
-    assert classify(state, work, item, "toolu_1") == {"accepted": True, "pending": True,
-                                                      "errors": []}  # fmt: skip
+    assert item["agent"] == "ecf-classifier"
+    assert classify(state, agent, item) == {"accepted": True, "pending": True, "errors": []}
     assert conn.execute("SELECT state FROM claims").fetchone()[0] == "held"
     assert api(state, "POST", "/v1/review-queue", {}, work).json()["items"] == []  # not again
-    export(state, bearer, logs(api_request(1), tool_event(2, "toolu_1")))
+    export(state, bearer, logs(api_request(1)))
     row = conn.execute("SELECT status, pinned_models FROM items").fetchone()
     assert (
         row["status"] == "awaiting_claude"
@@ -218,14 +268,13 @@ def test_a_submission_is_held_until_telemetry_binds_it(
     assert tuple(done) == (1, 1, 0)
 
 
-def test_a_call_from_another_model_is_refused_and_stops_the_review(
-    conn: sqlite3.Connection, state: ServiceState, review: tuple[str, str, str, str]
+def test_work_on_another_model_is_refused_and_stops_the_review(
+    conn: sqlite3.Connection, state: ServiceState, review: Review
 ) -> None:
-    sid, session, work, bearer = review
-    export(state, bearer, logs(api_request(1, model="claude-opus-5-5"),
-                               tool_event(2, "toolu_1")))  # fmt: skip
+    sid, session, work, bearer, agent = review
+    export(state, bearer, logs(api_request(1, model="claude-opus-5-5")))
     item = claim(state, work)
-    got = classify(state, work, item, "toolu_1")
+    got = classify(state, agent, item)
     assert got["accepted"] is False and "claude-opus-5-5" in got["errors"][0]
     assert conn.execute("SELECT status, classification FROM items").fetchone()[1] is None
     notifier = state.notifier
@@ -245,24 +294,30 @@ def test_a_call_from_another_model_is_refused_and_stops_the_review(
     assert json.loads(refused)["model_check"] == "model"
 
 
-def test_the_main_session_gets_no_message_text(
-    conn: sqlite3.Connection, state: ServiceState, review: tuple[str, str, str, str]
+def test_only_the_named_agents_server_reads_and_submits(
+    conn: sqlite3.Connection, state: ServiceState, review: Review
 ) -> None:
-    sid, _session, work, bearer = review
-    export(state, bearer, logs(api_request(1, source="main"), tool_event(2, "toolu_1")))
+    sid, _session, work, _bearer, agent = review
     item = claim(state, work)
-    r = api(state, "POST", f"/v1/claims/{sid}/message",
-            {"claim_token": item["claim_token"], "tool_use_id": "toolu_1"}, work)  # fmt: skip
-    assert r.status_code == 403 and "W-9" not in r.text  # OD-274
-    got = classify(state, work, item, "toolu_1")  # nor may it submit
-    assert got["accepted"] is False and "main session" in got["errors"][0]
+    body = {"claim_token": item["claim_token"], "agent": item["agent"]}
+    r = api(state, "POST", f"/v1/claims/{sid}/message", body, work)  # the main session's token
+    assert r.status_code == 403 and "W-9" not in r.text  # OD-307
+    assert classify(state, work, item)["code"] == "forbidden_profile"  # nor may it submit
+    r = api(state, "POST", f"/v1/claims/{sid}/message", body | {"agent": "ecf-actor"}, agent)
+    assert r.status_code == 403 and "is for ecf-classifier" in r.json()["detail"]
+    assert api(state, "POST", "/v1/review-queue", {}, agent).status_code == 403  # nor claim
+    r = api(state, "POST", f"/v1/claims/{sid}/message", {"claim_token": item["claim_token"]},
+            agent)  # fmt: skip
+    assert r.status_code == 400 and "agent" in r.json()["detail"]
+    r = api(state, "POST", f"/v1/claims/{sid}/message", body, agent)
+    assert r.status_code == 200 and r.json()["need"] == "classify"
 
 
-def test_unbound_work_is_refused_when_the_session_ends(
-    conn: sqlite3.Connection, state: ServiceState, review: tuple[str, str, str, str]
+def test_work_with_nothing_in_its_window_is_refused_when_the_session_ends(
+    conn: sqlite3.Connection, state: ServiceState, review: Review
 ) -> None:
-    sid, session, work, _bearer = review
-    assert classify(state, work, claim(state, work), "toolu_9")["pending"] is True
+    sid, session, work, _bearer, agent = review
+    assert classify(state, agent, claim(state, work))["pending"] is True
     assert api(state, "DELETE", f"/v1/sessions/{session}").status_code == 200
     assert conn.execute("SELECT state, outcome FROM claims").fetchone()[:] == (
         "released",
@@ -276,34 +331,23 @@ def test_unbound_work_is_refused_when_the_session_ends(
     assert last["refused"] == 1 and last["refused_model"].startswith("none")
 
 
-def test_a_submission_without_a_call_id_is_refused(
-    state: ServiceState, review: tuple[str, str, str, str]
-) -> None:
-    _sid, _session, work, _bearer = review
-    item = claim(state, work)
-    r = api(state, "POST", f"/v1/claims/{item['id']}/classification",
-            {"claim_token": item["claim_token"], "classification": REQUEST}, work)  # fmt: skip
-    assert r.status_code == 400 and "tool call ID" in r.json()["detail"]
-
-
 # ---- plan usage, stats, daily, retention -----------------------------------------------------
 
 
 def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
-                                review: tuple[str, str, str, str]) -> None:  # fmt: skip
-    _sid, session, work, bearer = review
+                                review: Review) -> None:  # fmt: skip
+    _sid, session, work, bearer, agent = review
     assert api(state, "POST", "/v1/statusline", {"five_hour": 10, "seven_day": 90}, "cli-token"
                ).json()["code"] == "forbidden_profile"  # fmt: skip
     for five, seven in ((10, 90), (14.5, 95)):
         reading = {"five_hour": five, "seven_day": seven, "seven_day_resets_at": 1790500000}
         r = api(state, "POST", "/v1/statusline", reading, work)
         assert r.json() == {"recorded": True}
-    export(state, bearer, logs(api_request(1, source="main", input_tokens=100, output_tokens=10,
+    export(state, bearer, logs(api_request(-1, source="main", input_tokens=100, output_tokens=10,
                                            duration_ms=1000),
-                               api_request(3, input_tokens=2000, output_tokens=50,
-                                           duration_ms=3000, cost_usd=0.01),
-                               tool_event(4, "toolu_1")))  # fmt: skip
-    classify(state, work, claim(state, work), "toolu_1")
+                               api_request(1, input_tokens=2000, output_tokens=50,
+                                           duration_ms=3000, cost_usd=0.01)))  # fmt: skip
+    classify(state, agent, claim(state, work))
     api(state, "DELETE", f"/v1/sessions/{session}")
     row = conn.execute("SELECT five_hour_start, five_hour_end, seven_day_start, seven_day_end,"
                        " seven_day_resets FROM claude_sessions").fetchone()  # fmt: skip
@@ -324,9 +368,15 @@ def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
     assert claude_usage.daily_line(conn, clock.now() + timedelta(days=1)) is None
 
 
+def test_the_main_session_is_main_in_every_mode() -> None:
+    """`sdk` in print mode, `repl_main_thread` interactive (seen in the step 13 run)."""
+    assert {claude_usage.source_of(q) for q in ("main", "sdk", "repl_main_thread")} == {"main"}
+    assert claude_usage.source_of(SUBAGENT) == "agent"
+
+
 def test_retention_prunes_claude_usage(conn: sqlite3.Connection, clock: FakeClock) -> None:
     claude_usage.start_session(conn, clock, "old")
-    claude_usage.record_calls(conn, clock, "old", [ApiCall(1, HAIKU, SUBAGENT, 5, 1)])
+    claude_usage.record_calls(conn, clock, "old", [ApiCall(at(1), HAIKU, SUBAGENT, 5, 1)])
     clock.advance(400 * 86400)
     counts = retention.run(conn, clock)
     assert counts["claude_calls"] == 1 and counts["claude_sessions"] == 1

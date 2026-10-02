@@ -10,10 +10,11 @@ decisions 2026-10-02, OD-287 to OD-292).
   items, under a random reference (never the case ID, whose name gives the answer away), and the
   subagents read and submit through `get_message`, `record_classification` and `propose_action`,
   as in `/ecf-review`. Claims, fencing, the 3 invalid tries and the telemetry model check are the
-  same; the main session never sees case text (OD-274), and no gold label leaves the service.
-- **Models** (OD-288): a run on the pins in force uses the production agents (`ecf:classifier`,
+  same; only an agent server reads or submits, so the main session never sees case text (OD-307),
+  and no gold label leaves the service.
+- **Models** (OD-288): a run on the pins in force uses the production agents (`ecf-classifier`,
   ...) and is keyed by the preset's pin key, so it counts for the go-live gate (§9.3). A run with
-  other models gets the `ecf:eval-*` agents (the same prompts, rendered by `ecf claude` on the
+  other models gets the `ecf-eval-*` agents (the same prompts, rendered by `ecf claude` on the
   run's models), is keyed `eval-...`, and is for comparison only.
 - **Preset B** (OD-289) takes Gemma's classification of each case from the latest complete
   `ecf eval run` on the pinned digest and the current set: Gemma isn't run again, and the actor
@@ -178,11 +179,11 @@ def _hash(token: str) -> str:
 
 
 def agent_name(role: str, pinned: bool) -> str:
-    return f"ecf:{'' if pinned else 'eval-'}{role.replace('_', '-')}"
+    return f"ecf-{'' if pinned else 'eval-'}{role.replace('_', '-')}"
 
 
 def role_of(agent: str) -> str:
-    return agent.removeprefix("ecf:").removeprefix("eval-").replace("-", "_")
+    return agent.removeprefix("ecf-").removeprefix("eval-").replace("-", "_")
 
 
 def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str], bool, str]:
@@ -209,10 +210,10 @@ def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str],
 
 
 def agents_for(run: Run) -> dict[str, str]:
-    """The `ecf:eval-*` agents `ecf claude` renders for a comparison run: name -> model."""
+    """The `ecf-eval-*` agents `ecf claude` renders for a comparison run: name -> model."""
     if run.pinned:
         return {}
-    return {agent_name(r, False).removeprefix("ecf:"): run.models[r] for r in ROLES}
+    return {agent_name(r, False): run.models[r] for r in ROLES}
 
 
 # ---------------------------------------------------------------------------- registering
@@ -439,7 +440,7 @@ def _check_expiry(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
 
 
 def session_info(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dict[str, Any] | None:
-    """What `ecf claude` needs at start: the waiting run and any `ecf:eval-*` agents to render."""
+    """What `ecf claude` needs at start: the waiting run and any `ecf-eval-*` agents to render."""
     run = current()
     if run is None:
         return None
@@ -509,9 +510,9 @@ def _spawns(run: Run, items: list[dict[str, Any]]) -> None:
         if agent.endswith("-high"):
             k = n.get(agent, 0)
             n[agent] = k + 1
-            it["spawn"] = f"{agent.removeprefix('ecf:')}-{k // run.opts.batch + 1}"
+            it["spawn"] = f"{agent}-{k // run.opts.batch + 1}"
         else:
-            it["spawn"] = agent.removeprefix("ecf:")
+            it["spawn"] = agent
 
 
 def _outcome(run: Run, w: Work, outcome: str) -> None:
@@ -524,12 +525,14 @@ def owns(ref: str) -> bool:
     return run is not None and any(w.ref == ref for w in run.works)
 
 
-def _claimed(clock: Clock, session_id: str, ref: str, token: str,
+def _claimed(clock: Clock, session_id: str, ref: str, token: str, agent: str,
              need: str | None = None) -> tuple[Run, Work]:  # fmt: skip
     run = current()
     w = run.by_ref.get(ref) if run is not None else None
     if run is None or w is None:
         raise NotFoundError("no claim on that item")
+    if w.agent != agent:
+        raise ForbiddenProfileError(f"that claim is for {w.agent}, not {agent}")
     fence = token.partition(".")[0]
     if not (w.session == session_id and fence == str(w.fence)
             and hmac.compare_digest(_hash(token), w.token_hash)):  # fmt: skip
@@ -543,15 +546,10 @@ def _claimed(clock: Clock, session_id: str, ref: str, token: str,
 
 
 def get_message(clock: Clock, session_id: str, ref: str, token: str,
-                seen: Callable[[], Seen | None]) -> dict[str, Any]:  # fmt: skip
-    """As `/ecf-review`'s: only a plugin agent gets the text (OD-274); no facts, no labels."""
-    run, w = _claimed(clock, session_id, ref, token)
-    s = seen()
-    if s is None or s.source != telemetry.SUBAGENT:
-        log.warning("claude_eval.read_refused", run_id=run.run_id[:8],
-                    read="unbound" if s is None else "not_subagent")  # fmt: skip
-        raise ForbiddenProfileError("get_message answers only an ecf agent, called from the"
-                                    " agent the service named")  # fmt: skip
+                agent: str) -> dict[str, Any]:  # fmt: skip
+    """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts, no
+    labels."""
+    run, w = _claimed(clock, session_id, ref, token, agent)
     with run.lock:
         text = w.cls_text if w.need == "classify" else w.act_text
         out: dict[str, Any] = {"id": ref, "need": w.need,
@@ -568,30 +566,25 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
 
 
 def record_classification(clock: Clock, session_id: str, ref: str, token: str,
-                          classification: Any,
-                          tool_use_id: str | None) -> dict[str, Any] | Hold:  # fmt: skip
-    run, w = _claimed(clock, session_id, ref, token, "classify")
-    if tool_use_id is None:
-        raise InvalidInputError(claude_review.NO_CALL_ID)
+                          classification: Any, agent: str) -> dict[str, Any] | Hold:  # fmt: skip
+    run, w = _claimed(clock, session_id, ref, token, agent, "classify")
     result, errors = claude_review.check_classification(classification)
     with run.lock:
         if result is None:
             return _invalid(run, w, errors)
-        return _hold(run, w, session_id, tool_use_id, {"classification": result})
+        return _hold(run, w, session_id, {"classification": result})
 
 
 def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: dict[str, Any],
-                   tool_use_id: str | None) -> dict[str, Any] | Hold:  # fmt: skip
-    run, w = _claimed(clock, session_id, ref, token, "act")
-    if tool_use_id is None:
-        raise InvalidInputError(claude_review.NO_CALL_ID)
+                   agent: str) -> dict[str, Any] | Hold:  # fmt: skip
+    run, w = _claimed(clock, session_id, ref, token, agent, "act")
     proposal = {k: body.get(k) for k in ("action", "target", "reason", "question")}
     with run.lock:
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
                                            actor.allowed(_cls(w)))  # fmt: skip
         if why is not None:
             return _invalid(run, w, [why])
-        return _hold(run, w, session_id, tool_use_id, {"proposal": proposal})
+        return _hold(run, w, session_id, {"proposal": proposal})
 
 
 def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
@@ -613,16 +606,15 @@ def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
             "tries_left": 0 if ended else claude_review.INVALID_MAX - w.invalid}  # fmt: skip
 
 
-def _hold(run: Run, w: Work, session_id: str, tool_use_id: str,
-          payload: dict[str, Any]) -> Hold:  # fmt: skip
+def _hold(run: Run, w: Work, session_id: str, payload: dict[str, Any]) -> Hold:
     w.claim = "held"
-    return Hold(session_id, tool_use_id, w.ref, w.fence, w.need, w.agent, payload, kind="eval")
+    return Hold(session_id, w.ref, w.fence, w.need, w.agent, payload, kind="eval")
 
 
 def settle(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: Notifier,
            tel: Telemetry, hold: Hold, seen: Seen | None) -> dict[str, Any]:  # fmt: skip
-    """Apply a held submission when its call came from a plugin agent on the run's model for its
-    role; refuse it otherwise (as `/ecf-review`, OD-268)."""
+    """Apply a held submission when the subagent work in its window was all on the run's model
+    for its role; refuse it otherwise (as `/ecf-review`, OD-307)."""
     run = current()
     ended = {"accepted": False, "errors": ["that claim has ended"], "tries_left": 0}
     if run is None:
@@ -632,7 +624,7 @@ def settle(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: No
         if w is None or w.claim != "held" or w.fence != hold.fence or not run.open:
             return ended
         expected = run.models[role_of(hold.agent)]
-        if seen is None or seen.source != telemetry.SUBAGENT or seen.model != expected:
+        if seen is None or seen.model != expected:
             return _refuse(connect, clock, notifier, tel, run, w, seen, expected)
         _outcome(run, w, "recorded")
         w.claim, w.session = "free", None
@@ -655,9 +647,7 @@ def _refuse(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: N
             expected: str) -> dict[str, Any]:  # fmt: skip
     session_id = w.session or ""
     if seen is None:
-        model, why = "none (no telemetry for the call)", "unbound"
-    elif seen.source != telemetry.SUBAGENT:
-        model, why = f"{seen.model} in the main session", "not_subagent"
+        model, why = "none (no subagent telemetry for the submission)", "unbound"
     else:
         model, why = seen.model, "model"
     _outcome(run, w, "model_refused")

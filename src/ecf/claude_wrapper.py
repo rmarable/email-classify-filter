@@ -7,15 +7,18 @@ login is needed); permissions.defaultMode "dontAsk" denies anything not pre-appr
 `--strict-mcp-config` ignores every other MCP source. `--plugin-dir` (loads a plugin for one
 session) is from `claude --help` of 2.1.287.
 
-The plugin is rendered from the wheel's templates at each start (operator decision 2026-10-02,
-OD-283): each agent's `model:` is the pin in force (models.lock plus any override, from the
-service), so the plugin always matches both the package and the pins. Unverified, confirm in
-V1.4: that `model:` takes a full model ID, and the `/ecf-review` name of a plugin skill.
+The plugin (the `/ecf-review` and `/ecf-eval` skills) is rendered from the wheel's templates at
+each start (operator decision 2026-10-02, OD-283). The agents are passed with `--agents`
+(operator decision 2026-10-02, OD-307): each on the pin in force for its role (models.lock plus
+any override, from the service), each with its own `ecf-mcp --agent <name>` server, which
+Claude Code starts for that agent only; a plugin agent's `mcpServers` is ignored (tested
+2026-10-02 with Claude Code 2.1.287), so the agents can't live in the plugin. The main session's
+`ecf` server has no reading or submitting tools.
 
 Telemetry (V1.4 step 6; SPEC §11.5, §13.4): logs and metrics go only to the service's loopback
-receiver, OTLP over HTTP with JSON, with the session's own bearer token; logs every second, so the
-model check binds a call within about 2 s. The status line runs `ecf.statusline`, which sends the
-service only the plan-usage numbers.
+receiver, OTLP over HTTP with JSON, with the session's own bearer token; logs every second, so a
+submission's model check usually settles within about 2 s. The status line runs
+`ecf.statusline`, which sends the service only the plan-usage numbers.
 """
 
 from __future__ import annotations
@@ -39,15 +42,8 @@ from ecf.errors import EcfError, InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
 
 MIN_CLAUDE = (2, 1, 242)
-# Under dontAsk a subagent's tools must also be allowed here (tested 2026-10-02, SPEC §21.2).
-SUBAGENT_TOOLS = [
-    "mcp__ecf__get_message",
-    "mcp__ecf__record_classification",
-    "mcp__ecf__propose_action",
-]
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
-ALLOWED_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results",
-                 "Agent", *SUBAGENT_TOOLS]  # fmt: skip
+MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results", "Agent"]
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
 BUILTIN_AGENTS = ("general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide")
 DENIED_TOOLS = [
@@ -59,20 +55,32 @@ DENIED_TOOLS = [
     "NotebookEdit",
     *(f"Agent({a})" for a in BUILTIN_AGENTS),
 ]
-# Plugin agent -> (template, role in models.lock, description).
+# Agent name -> (template, role in models.lock, description).
 AGENTS = {
-    "classifier": ("classifier", "classifier",
-                   "Classifies ecf review items it is given by id and claim token."),
-    "classifier-high": ("classifier", "classifier_high",
-                        "Classifies one ecf review item from a high-sensitivity address."),
-    "actor": ("actor", "actor", "Proposes one next step for each ecf review item it is given."),
-    "actor-high": ("actor", "actor_high", "Proposes one next step for one high-risk ecf item."),
+    "ecf-classifier": ("classifier", "classifier",
+                       "Classifies ecf review items it is given by id and claim token."),
+    "ecf-classifier-high": ("classifier", "classifier_high",
+                            "Classifies one ecf review item from a high-sensitivity address."),
+    "ecf-actor": ("actor", "actor",
+                  "Proposes one next step for each ecf review item it is given."),
+    "ecf-actor-high": ("actor", "actor_high",
+                       "Proposes one next step for one high-risk ecf item."),
 }  # fmt: skip
 SKILLS = ("ecf-review", "ecf-eval")
 # A comparison eval on other models (OD-288) gets these, rendered from the same templates.
-EVAL_AGENTS = {f"eval-{name}": (template, role, f"For /ecf-eval only: {description[0].lower()}"
-                                                f"{description[1:]}")
+EVAL_AGENTS = {name.replace("ecf-", "ecf-eval-", 1):
+               (template, role, f"For /ecf-eval only: {description[0].lower()}{description[1:]}")
                for name, (template, role, description) in AGENTS.items()}  # fmt: skip
+
+
+def agent_tools(name: str) -> list[str]:
+    """An agent's tools, on its own server; under dontAsk they must also be allowed in the
+    settings (tested 2026-10-02, SPEC §21.2)."""
+    submit = "record_classification" if "classifier" in name else "propose_action"
+    return [f"mcp__{name}__get_message", f"mcp__{name}__{submit}"]
+
+
+ALLOWED_TOOLS = [*MAIN_TOOLS, *(t for n in (*AGENTS, *EVAL_AGENTS) for t in agent_tools(n))]
 # Only these variables are passed from the user's environment (plus LC_*); everything else,
 # e.g. ANTHROPIC_* (API keys, base URLs), provider switches and OTEL exporters, is dropped.
 ENV_ALLOW = frozenset(
@@ -189,29 +197,38 @@ def _write(path: Path, text: str) -> None:
     path.chmod(0o600)
 
 
-def render_plugin(dest: Path, models: dict[str, str],
-                  eval_models: dict[str, str] | None = None) -> None:  # fmt: skip
-    """Write the plugin from the wheel's templates, each agent on its pinned model; with
-    `eval_models` (agent name -> model, from the service), the `eval-*` agents of a comparison
-    eval too."""
+def render_plugin(dest: Path) -> None:
+    """Write the plugin (the skills) from the wheel's templates."""
     src = resources.files("ecf.data").joinpath("plugin")
     if dest.exists():
         shutil.rmtree(dest)
-    for sub in (".claude-plugin", *(f"skills/{k}" for k in SKILLS), "agents"):
+    for sub in (".claude-plugin", *(f"skills/{k}" for k in SKILLS)):
         (dest / sub).mkdir(mode=0o700, parents=True)
     manifest = src.joinpath(".claude-plugin", "plugin.json").read_text(encoding="utf-8")
     _write(dest / ".claude-plugin" / "plugin.json", manifest.replace("{{VERSION}}", __version__))
     for k in SKILLS:
         skill = src.joinpath("skills", k, "SKILL.md").read_text(encoding="utf-8")
         _write(dest / "skills" / k / "SKILL.md", skill)
+
+
+def agents_doc(ecf_mcp: Path, socket: Path, models: dict[str, str],
+               eval_models: dict[str, str] | None = None) -> dict[str, Any]:  # fmt: skip
+    """The `--agents` definitions, each on its pinned model with its own agent server; with
+    `eval_models` (agent name -> model, from the service), the `ecf-eval-*` agents of a
+    comparison eval too. The token reaches the server through the session's environment."""
+    src = resources.files("ecf.data").joinpath("plugin")
     agents = [(n, t, models[r], d) for n, (t, r, d) in AGENTS.items()]
     agents += [(n, t, (eval_models or {})[n], d) for n, (t, _r, d) in EVAL_AGENTS.items()
                if n in (eval_models or {})]  # fmt: skip
+    doc: dict[str, Any] = {}
     for name, template, model, description in agents:
-        text = src.joinpath("agents", f"{template}.md").read_text(encoding="utf-8")
-        for key, value in (("NAME", name), ("DESCRIPTION", description), ("MODEL", model)):
-            text = text.replace("{{" + key + "}}", value)
-        _write(dest / "agents" / f"{name}.md", text)
+        prompt = src.joinpath("agents", f"{template}.md").read_text(encoding="utf-8")
+        server = {"type": "stdio", "command": str(ecf_mcp),
+                  "args": ["--stdio", "--agent", name, "--socket", str(socket)]}  # fmt: skip
+        doc[name] = {"description": description, "prompt": prompt.replace("{{NAME}}", name),
+                     "tools": agent_tools(name), "model": model,
+                     "mcpServers": [{name: server}]}  # fmt: skip
+    return doc
 
 
 def mark_ready(lay: Layout) -> None:
@@ -233,8 +250,7 @@ def mark_ready(lay: Layout) -> None:
     _write(lay.state, json.dumps(state, indent=2) + "\n")
 
 
-def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str],
-                 eval_models: dict[str, str] | None = None) -> None:  # fmt: skip
+def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str]) -> None:
     for d in (lay.config_dir, lay.work_dir):
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
         d.chmod(0o700)
@@ -242,7 +258,7 @@ def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str
             (lay.mcp_config, mcp_doc(ecf_mcp, socket)))  # fmt: skip
     for path, doc in docs:
         _write(path, json.dumps(doc, indent=2) + "\n")
-    render_plugin(lay.plugin_dir, models, eval_models)
+    render_plugin(lay.plugin_dir)
     mark_ready(lay)
 
 
@@ -304,10 +320,12 @@ def base_env(lay: Layout) -> dict[str, str]:
     return env
 
 
-def session_env(lay: Layout, token: str, telemetry: dict[str, str]) -> dict[str, str]:
+def session_env(lay: Layout, token: str, agent_token: str,
+                telemetry: dict[str, str]) -> dict[str, str]:  # fmt: skip
     env = base_env(lay)
     env.update(telemetry)
     env["ECF_PROFILE_TOKEN"] = token
+    env["ECF_AGENT_TOKEN"] = agent_token  # the agent servers inherit it (OD-307)
     return env
 
 
@@ -351,10 +369,11 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
     purge_transcripts(lay)  # a crashed earlier session may have left some behind
     with LocalClient(paths) as c:
         session: dict[str, Any] = c.request("POST", "/v1/sessions")
+    socket = paths.socket.absolute()
     try:
         ev: dict[str, Any] | None = session.get("eval")
-        write_config(lay, ecf_mcp, paths.socket.absolute(), session["models"],
-                     ev["agents"] if ev else None)  # fmt: skip
+        write_config(lay, ecf_mcp, socket, session["models"])
+        agents = agents_doc(ecf_mcp, socket, session["models"], ev["agents"] if ev else None)
     except BaseException:
         with LocalClient(paths) as c:
             c.request("DELETE", f"/v1/sessions/{session['session_id']}")
@@ -367,11 +386,12 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
     if line := plan_line(session.get("last_plan")):
         echo(line)
     args = [claude, "--strict-mcp-config", "--mcp-config", str(lay.mcp_config),
-            "--plugin-dir", str(lay.plugin_dir), *extra_args]  # fmt: skip
+            "--plugin-dir", str(lay.plugin_dir), "--agents", json.dumps(agents),
+            *extra_args]  # fmt: skip
     port = session.get("telemetry_port")
     if not isinstance(port, int):
         raise ServiceUnavailableError("the service's telemetry receiver isn't listening")
-    env = session_env(lay, session["profile_token"],
+    env = session_env(lay, session["profile_token"], session["agent_token"],
                       telemetry_env(port, session["telemetry_bearer"]))  # fmt: skip
     try:
         return subprocess.run(args, cwd=lay.work_dir, env=env, check=False).returncode  # noqa: S603

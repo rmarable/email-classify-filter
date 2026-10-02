@@ -4,6 +4,13 @@ A thin client: each tool is one or two requests to the service over its socket, 
 claims, checks every submission and enforces the profile (WORK with `ECF_PROFILE_TOKEN`, else
 OBSERVE). Without a token only the OBSERVE tools are listed. No approval or admin tools.
 
+Two kinds of server (operator decision 2026-10-02, OD-307): the **main** server (the session's
+MCP config) lists `status`, `counts`, `review_queue`, `eval_next` and `eval_results`; an **agent
+server** (`--agent <name>`, declared inside that agent's definition, so Claude Code gives it to
+that subagent only, tested 2026-10-02) lists `get_message` and the agent's one submission tool
+(`record_classification` for a classifier, `propose_action` for an actor), authenticates with the
+session's agent token (`ECF_AGENT_TOKEN`) and names its agent in every call.
+
 Deadlines (OD-088): each request times out after 10 s (the enforcing limit); no new request starts
 once a call is 100 s old; `anyio.fail_after(115)` is a backstop. A call stopped by either deadline
 answers "more pending" rather than an error. Email-derived fields come back from the service
@@ -12,10 +19,6 @@ inside its untrusted-data wrapper (`untrusted_email` plus `notice`), passed thro
 `/ecf-eval` (V1.4 step 7, OD-287): `eval_next` claims cases of the registered eval as
 `review_queue` claims items, and the subagents read and submit them through the same tools;
 `eval_results` returns metrics only.
-
-Model check (V1.4 step 6; OD-268, OD-274): Claude Code puts the call's tool-use ID in
-`_meta.claudecode/toolUseId` (tested 2026-10-02); reads and submissions pass it to the service as
-`tool_use_id`, which matches it to the telemetry of the API request that made the call.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ DEADLINE_S = 115.0  # SPEC §10.4 (OD-088): the backstop
 LAST_START_S = 100.0  # no new service request after this
 REQUEST_S = TIMEOUT_S  # 10 s per request, the enforcing limit
 TOOL_NAME = re.compile(r"^[a-z_]{1,64}$")
+AGENT_NAME = re.compile(r"^ecf-(eval-)?(classifier|actor)(-high)?$")
 LIMIT_MAX = 50
 MORE_PENDING = "ecf took too long to answer this call; call the tool again to carry on"
 NO_SESSION = "this tool works only in a session opened by `ecf claude`"
@@ -58,11 +62,13 @@ class _Late(Exception):
 
 
 class Service:
-    """The service over its socket (async), with the session's profile token, if any."""
+    """The service over its socket (async), with the session's profile token, if any; an agent
+    server has the agent token and its agent's name."""
 
     def __init__(self, http: httpx.AsyncClient, token: str,
-                 clock: Callable[[], float] = time.monotonic) -> None:  # fmt: skip
-        self.http, self.token, self.clock = http, token, clock
+                 clock: Callable[[], float] = time.monotonic,
+                 agent: str | None = None) -> None:  # fmt: skip
+        self.http, self.token, self.clock, self.agent = http, token, clock, agent
 
     async def call(self, method: str, path: str, started: float, body: Any = None) -> Any:
         if self.clock() - started >= LAST_START_S:
@@ -78,8 +84,7 @@ class Service:
         return parse_reply(r)
 
 
-Handler = Callable[[Service, dict[str, Any], float, str | None], Awaitable[dict[str, Any]]]
-TOOL_USE_ID = "claudecode/toolUseId"
+Handler = Callable[[Service, dict[str, Any], float], Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,7 @@ class ToolDef:
     read_only: bool
     work_only: bool
     handler: Handler
+    agent_tool: bool = False  # on agent servers only (OD-307)
 
     def tool(self) -> types.Tool:
         schema: dict[str, Any] = {"type": "object", "properties": self.properties,
@@ -138,9 +144,7 @@ ADDRESS = {"type": "string", "description": "Only this address (its ecf address 
 # ---------------------------------------------------------------------------- handlers
 
 
-async def _status(
-    svc: Service, _args: dict[str, Any], started: float, _call: str | None
-) -> dict[str, Any]:
+async def _status(svc: Service, _args: dict[str, Any], started: float) -> dict[str, Any]:
     st = await svc.call("GET", "/v1/status", started)
     counts: dict[str, dict[str, int]] = (await svc.call("GET", "/v1/counts", started))["counts"]
     out: list[dict[str, Any]] = []
@@ -157,9 +161,7 @@ async def _status(
     return {"addresses": out}
 
 
-async def _counts(
-    svc: Service, args: dict[str, Any], started: float, _call: str | None
-) -> dict[str, Any]:
+async def _counts(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
     aid = _opt_str(args, "address_id")
     path = f"/v1/counts?address_id={quote(aid, safe='')}" if aid else "/v1/counts"
     counts: dict[str, dict[str, int]] = (await svc.call("GET", path, started))["counts"]
@@ -170,9 +172,7 @@ async def _counts(
     return {"by_status": dict(sorted(by.items()))}
 
 
-async def _review_queue(
-    svc: Service, args: dict[str, Any], started: float, _call: str | None
-) -> dict[str, Any]:
+async def _review_queue(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
     body: dict[str, Any] = {}
     if (aid := _opt_str(args, "address_id")) is not None:
         body["address_id"] = aid
@@ -181,27 +181,25 @@ async def _review_queue(
     return cast(dict[str, Any], await svc.call("POST", "/v1/review-queue", started, body))
 
 
-async def _get_message(svc: Service, args: dict[str, Any], started: float,
-                       call: str | None) -> dict[str, Any]:  # fmt: skip
-    body = {"claim_token": _str(args, "claim_token"), "tool_use_id": call}
+def _claim_body(svc: Service, args: dict[str, Any]) -> dict[str, Any]:
+    return {"claim_token": _str(args, "claim_token"), "agent": svc.agent}
+
+
+async def _get_message(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
+    body = _claim_body(svc, args)
     return cast(dict[str, Any], await svc.call("POST", _claim_path(args, "message"), started,
                                                body))  # fmt: skip
 
 
-async def _record_classification(svc: Service, args: dict[str, Any], started: float,
-                                 call: str | None) -> dict[str, Any]:  # fmt: skip
-    body = {
-        "claim_token": _str(args, "claim_token"),
-        "classification": args.get("classification"),
-        "tool_use_id": call,
-    }
+async def _record_classification(svc: Service, args: dict[str, Any],
+                                 started: float) -> dict[str, Any]:  # fmt: skip
+    body = _claim_body(svc, args) | {"classification": args.get("classification")}
     return cast(dict[str, Any], await svc.call("POST", _claim_path(args, "classification"),
                                                started, body))  # fmt: skip
 
 
-async def _propose_action(svc: Service, args: dict[str, Any], started: float,
-                          call: str | None) -> dict[str, Any]:  # fmt: skip
-    body: dict[str, Any] = {"claim_token": _str(args, "claim_token"), "tool_use_id": call}
+async def _propose_action(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
+    body = _claim_body(svc, args)
     for key in ("action", "target", "reason", "question"):
         if key in args:
             body[key] = args[key]
@@ -209,14 +207,12 @@ async def _propose_action(svc: Service, args: dict[str, Any], started: float,
                                                body))  # fmt: skip
 
 
-async def _eval_next(svc: Service, args: dict[str, Any], started: float,
-                     _call: str | None) -> dict[str, Any]:  # fmt: skip
+async def _eval_next(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
     body: dict[str, Any] = {"limit": args["limit"]} if "limit" in args else {}
     return cast(dict[str, Any], await svc.call("POST", "/v1/eval/next", started, body))
 
 
-async def _eval_results(svc: Service, _args: dict[str, Any], started: float,
-                        _call: str | None) -> dict[str, Any]:  # fmt: skip
+async def _eval_results(svc: Service, _args: dict[str, Any], started: float) -> dict[str, Any]:
     return cast(dict[str, Any], await svc.call("POST", "/v1/eval/results", started, {}))
 
 
@@ -238,7 +234,7 @@ TOOLS: tuple[ToolDef, ...] = (
         "Claims up to `limit` waiting items for this session and returns, for each, its id, "
         "address, need (classify or act), the agent to hand it to, a claim token (valid 15 "
         "minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the "
-        "ids and claim tokens in the agent's prompt; never read the message yourself. "
+        "ids and claim tokens in the agent's prompt; only that agent can read the message. "
         "`results` reports how earlier claims ended. `more` is true when more items are "
         "waiting.",
         {"address_id": ADDRESS,
@@ -253,7 +249,7 @@ TOOLS: tuple[ToolDef, ...] = (
         "classification, the actions, labels and folders you may choose and the person's "
         "earlier answers.",
         {"id": ID, "claim_token": CLAIM}, ("id", "claim_token"),
-        read_only=True, work_only=True, handler=_get_message,
+        read_only=True, work_only=True, handler=_get_message, agent_tool=True,
     ),
     ToolDef(
         "record_classification", "Record a classification",
@@ -262,7 +258,7 @@ TOOLS: tuple[ToolDef, ...] = (
         {"id": ID, "claim_token": CLAIM,
          "classification": {"type": "object", "description": "The classification (schema v1)."}},
         ("id", "claim_token", "classification"),
-        read_only=False, work_only=True, handler=_record_classification,
+        read_only=False, work_only=True, handler=_record_classification, agent_tool=True,
     ),
     ToolDef(
         "propose_action", "Propose an action",
@@ -278,7 +274,7 @@ TOOLS: tuple[ToolDef, ...] = (
          "question": {"type": "string",
                       "description": "Only with needs_clarification: the question to ask."}},
         ("id", "claim_token", "action", "reason"),
-        read_only=False, work_only=True, handler=_propose_action,
+        read_only=False, work_only=True, handler=_propose_action, agent_tool=True,
     ),
     ToolDef(
         "eval_next", "Claim eval cases",
@@ -302,6 +298,14 @@ TOOLS: tuple[ToolDef, ...] = (
 BY_NAME = {t.name: t for t in TOOLS}
 
 
+def tools_for(agent: str | None) -> tuple[ToolDef, ...]:
+    """The main server's tools, or an agent server's: `get_message` and its submission tool."""
+    if agent is None:
+        return tuple(t for t in TOOLS if not t.agent_tool)
+    submit = "record_classification" if "classifier" in agent else "propose_action"
+    return (BY_NAME["get_message"], BY_NAME[submit])
+
+
 def _result(data: dict[str, Any]) -> types.CallToolResult:
     text = json.dumps(data, ensure_ascii=False)
     return types.CallToolResult(content=[types.TextContent(text=text)], structured_content=data)
@@ -312,10 +316,9 @@ def _error(err: EcfError) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(text=text)], is_error=True)
 
 
-async def call_tool(svc: Service, name: str, args: dict[str, Any],
-                    tool_use_id: str | None = None) -> types.CallToolResult:  # fmt: skip
+async def call_tool(svc: Service, name: str, args: dict[str, Any]) -> types.CallToolResult:
     """One tool call under the deadlines; every failure is an `isError` result."""
-    t = BY_NAME.get(name)
+    t = {d.name: d for d in tools_for(svc.agent)}.get(name)
     if t is None:
         return _error(InvalidInputError(f"no tool {name!r}"))
     if t.work_only and not svc.token:
@@ -323,7 +326,7 @@ async def call_tool(svc: Service, name: str, args: dict[str, Any],
     started = svc.clock()
     try:
         with anyio.fail_after(DEADLINE_S):
-            return _result(await t.handler(svc, args, started, tool_use_id))
+            return _result(await t.handler(svc, args, started))
     except (TimeoutError, _Late):
         return _result({"more_pending": True, "notice": MORE_PENDING})
     except EcfError as e:
@@ -331,7 +334,7 @@ async def call_tool(svc: Service, name: str, args: dict[str, Any],
 
 
 def build(svc: Service) -> Server[Any]:
-    tools = [t.tool() for t in TOOLS if svc.token or not t.work_only]
+    tools = [t.tool() for t in tools_for(svc.agent) if svc.token or not t.work_only]
 
     async def list_tools(
         _ctx: ServerRequestContext[Any], _params: types.PaginatedRequestParams | None
@@ -341,10 +344,7 @@ def build(svc: Service) -> Server[Any]:
     async def on_call(
         _ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
     ) -> types.CallToolResult:
-        meta: Any = params.meta
-        call: Any = cast(dict[str, Any], meta).get(TOOL_USE_ID) if isinstance(meta, dict) else None
-        return await call_tool(svc, params.name, dict(params.arguments or {}),
-                               call if isinstance(call, str) else None)  # fmt: skip
+        return await call_tool(svc, params.name, dict(params.arguments or {}))
 
     return Server("ecf", version=__version__, instructions=INSTRUCTIONS,
                   on_list_tools=list_tools, on_call_tool=on_call)  # fmt: skip

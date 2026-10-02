@@ -86,34 +86,36 @@ def token_for(q: dict[str, Any], sid: str) -> str:
     return next(i["claim_token"] for i in q["items"] if i["id"] == sid)
 
 
-# Telemetry stands in for these helpers: a plugin agent on its pinned model (V1.4 step 6).
-AGENT_CALL = Seen("claude-haiku-4-5-20251001", SUBAGENT)
+def agent_of(conn: sqlite3.Connection, sid: str) -> str:
+    """The agent the service named for the item's claim: its agent server calls as that agent."""
+    row = conn.execute("SELECT agent FROM claims WHERE stable_id = ?", (sid,)).fetchone()
+    return str(row[0]) if row else "ecf-classifier"
 
 
 def read_msg(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
              token: str) -> dict[str, Any]:  # fmt: skip
-    return claude_review.get_message(conn, clock, session, sid, token, lambda: AGENT_CALL)
+    return claude_review.get_message(conn, clock, session, sid, token, agent_of(conn, sid))
 
 
 def settled(conn: sqlite3.Connection, clock: FakeClock,
             got: dict[str, Any] | Hold) -> dict[str, Any]:  # fmt: skip
+    """Telemetry stands in here: the window's subagent work on the role's pinned model."""
     if not isinstance(got, Hold):
         return got
     pin = claude_pins.effective(conn)[claude_review.ROLE[got.agent]]
-    return claude_review.settle(conn, clock, NullNotifier(), Telemetry(), got,
-                                Seen(pin, SUBAGENT))  # fmt: skip
+    return claude_review.settle(conn, clock, NullNotifier(), Telemetry(), got, Seen(pin))
 
 
 def submit_classification(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
                           token: str, c: Any) -> dict[str, Any]:  # fmt: skip
     return settled(conn, clock, claude_review.record_classification(
-        conn, clock, session, sid, token, c, "toolu_test"))  # fmt: skip
+        conn, clock, session, sid, token, c, agent_of(conn, sid)))  # fmt: skip
 
 
 def submit_proposal(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
                     token: str, body: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
     return settled(conn, clock, claude_review.propose_action(
-        conn, clock, session, sid, token, body, "toolu_test"))  # fmt: skip
+        conn, clock, session, sid, token, body, agent_of(conn, sid)))  # fmt: skip
 
 
 # ---- claiming --------------------------------------------------------------------------------
@@ -133,8 +135,8 @@ def test_the_queue_claims_waiting_items_and_names_their_agent(
                       facts=KNOWN_BULK | {"sender_seen_before": False})  # fmt: skip
     q = queue(conn, clock)
     got = {i["id"]: (i["need"], i["agent"]) for i in q["items"]}
-    assert got == {c1: ("classify", "ecf:classifier"), h1: ("classify", "ecf:classifier-high"),
-                   b1: ("act", "ecf:actor"), b2: ("act", "ecf:actor-high")}  # fmt: skip
+    assert got == {c1: ("classify", "ecf-classifier"), h1: ("classify", "ecf-classifier-high"),
+                   b1: ("act", "ecf-actor"), b2: ("act", "ecf-actor-high")}  # fmt: skip
     assert [i["id"] for i in q["items"]] == [c1, h1, b1, b2]  # oldest first
     assert q["more"] is False and q["results"] == []
     assert all(i["claim_token"].startswith("1.") for i in q["items"])
@@ -249,7 +251,7 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     r = row(conn, sid)
     assert r["status"] == "awaiting_claude"  # the rule continues to the actor (OD-269)
     pinned = json.loads(r["pinned_models"])
-    assert pinned["classifier"].startswith("claude-haiku-") and pinned["agent"] == "ecf:classifier"
+    assert pinned["classifier"].startswith("claude-haiku-") and pinned["agent"] == "ecf-classifier"
     with pytest.raises(ConflictError):  # one submission per claim
         submit_classification(conn, clock, S1, sid, tok, REQUEST)
     q = queue(conn, clock)
@@ -299,7 +301,7 @@ def test_a_claude_proposal_is_checked_like_the_local_actors(
     assert r["status"] == "observed" and r["decision_source"] == "actor"  # shadow
     a = json.loads(r["proposal"])["plan"]["actor"]
     assert a["action"] == "flag" and a["target"] is None  # flag takes no target
-    assert a["agent"] == "ecf:actor" and a["model"].startswith("claude-sonnet-")
+    assert a["agent"] == "ecf-actor" and a["model"].startswith("claude-sonnet-")
     assert "evil.example" not in a["reason"] and "555" not in a["reason"]
     assert len(a["reason"]) <= 300  # OD-270
     assert queue(conn, clock)["results"] == [{"id": sid, "outcome": "observed"}]
@@ -312,7 +314,7 @@ def test_a_question_from_claude_goes_to_you_even_on_a_high_risk_item(
     sid = waiting_item(conn, clock, "b", classification=REQUEST,
                        facts=KNOWN_BULK | {"sender_seen_before": False})  # fmt: skip
     q = queue(conn, clock)
-    assert q["items"][0]["agent"] == "ecf:actor-high"
+    assert q["items"][0]["agent"] == "ecf-actor-high"
     tok = token_for(q, sid)
     no_q = submit_proposal(conn, clock, S1, sid, tok,
                                         {"action": "needs_clarification", "target": "",
@@ -391,7 +393,7 @@ def call(state: ServiceState, path: str, body: Any, token: str) -> httpx.Respons
     return anyio.run(go)
 
 
-def test_the_routes_take_only_a_work_session(conn: sqlite3.Connection, db_path: Path) -> None:
+def test_the_routes_take_only_a_session(conn: sqlite3.Connection, db_path: Path) -> None:
     clock = FakeClock()
     add(conn, clock, "c", "C")
     sid = waiting_item(conn, clock, "c")
@@ -400,27 +402,27 @@ def test_the_routes_take_only_a_work_session(conn: sqlite3.Connection, db_path: 
     made = call(state, "/v1/sessions", None, "cli-token").json()
     assert made["waiting"] == 1  # what `ecf claude` prints, and the pins its plugin uses
     assert made["models"] == claude_pins.effective(conn)
-    work = made["profile_token"]
+    work, agent = made["profile_token"], made["agent_token"]
     refused = call(state, "/v1/review-queue", {}, "cli-token")
     assert refused.status_code == 403 and refused.json()["code"] == "forbidden_profile"
     q = call(state, "/v1/review-queue", {"limit": 5}, work).json()
-    tok = q["items"][0]["claim_token"]
+    tok, name = q["items"][0]["claim_token"], q["items"][0]["agent"]
     state.telemetry_wait_s = 0
-    state.telemetry.add(made["session_id"], [ApiCall(1, AGENT_CALL.model, SUBAGENT)],
-                        {"toolu_1": 2})  # fmt: skip
-    unbound = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok}, work)
-    assert unbound.status_code == 403  # no tool-use ID: telemetry can't vouch for the caller
-    m = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok, "tool_use_id": "toolu_1"},
-             work)  # fmt: skip
+    state.telemetry.add(made["session_id"], [ApiCall(clock.now().timestamp() + 1,
+                                                     claude_pins.effective(conn)["classifier"],
+                                                     SUBAGENT, duration_ms=3000)], [])  # fmt: skip
+    main = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok, "agent": name}, work)
+    assert main.status_code == 403  # the main session's token: no message text (OD-307)
+    m = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok, "agent": name}, agent)
     assert m.status_code == 200 and m.json()["untrusted_email"]["subject"] == "W-9 please"
-    stale = call(state, f"/v1/claims/{sid}/message", {"claim_token": "9.x"}, work)
+    stale = call(state, f"/v1/claims/{sid}/message", {"claim_token": "9.x", "agent": name}, agent)
     assert stale.status_code == 409 and stale.json()["code"] == "conflict"
     r = call(state, f"/v1/claims/{sid}/classification",
-             {"claim_token": tok, "classification": REQUEST, "tool_use_id": "toolu_1"},
-             work)  # fmt: skip
+             {"claim_token": tok, "classification": REQUEST, "agent": name}, agent)  # fmt: skip
     assert r.json() == {"accepted": True, "errors": []}
-    for path in ("/v1/items/resolve", "/v1/settings", "/v1/approvals/pending"):
-        assert call(state, path, {}, work).json()["code"] == "forbidden_profile"  # no decisions
+    for token in (work, agent):
+        for path in ("/v1/items/resolve", "/v1/settings", "/v1/approvals/pending"):
+            assert call(state, path, {}, token).json()["code"] == "forbidden_profile"
     gone = state.sessions[made["session_id"]]
     assert gone.profile.value == "work"
 

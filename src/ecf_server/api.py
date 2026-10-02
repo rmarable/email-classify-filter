@@ -2,7 +2,9 @@
 
 Callers authenticate with a bearer token:
 - the CLI token (0600 file, rewritten at every service start): full CLI access;
-- a session profile token issued to `ecf claude` (WORK) and revoked when it exits;
+- a session profile token issued to `ecf claude` (WORK) and revoked when it exits, and with it the
+  session's agent token (AGENT: the claim routes only, used by the agent servers `ecf-mcp --role`,
+  which only ecf's subagents can call; OD-307);
 - no token at all: OBSERVE (status and counts only, no email text; V1.4 step 3, operator decision
   2026-10-02). A wrong token is refused, and a route OBSERVE can't use answers `unauthorized`.
 Routes declare which callers they accept. Decision and settings routes never accept a session
@@ -19,7 +21,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -100,6 +102,7 @@ API_VERSION = 1
 class Caller(StrEnum):
     CLI = "cli"
     WORK = "work"  # an `ecf claude` session
+    AGENT = "agent"  # its agent servers (OD-307)
     OBSERVE = "observe"  # no token (`ecf-mcp` without ECF_PROFILE_TOKEN)
 
 
@@ -109,6 +112,7 @@ class Session:
     token: str = field(repr=False)
     profile: Caller
     created_at: str
+    agent_token: str = field(default="", repr=False)
 
 
 @dataclass
@@ -183,6 +187,8 @@ class ServiceState:
             for s in self.sessions.values():
                 if hmac.compare_digest(given, s.token.encode()):
                     return s.profile, s
+                if s.agent_token and hmac.compare_digest(given, s.agent_token.encode()):
+                    return Caller.AGENT, s
         raise UnauthorizedError("missing or wrong token")
 
 
@@ -253,6 +259,7 @@ def create_app(state: ServiceState) -> Starlette:
         setup = _review_setup(state, s.session_id)
         return JSONResponse(
             {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value,
+             "agent_token": s.agent_token,
              "telemetry_port": state.telemetry.port, "telemetry_bearer": bearer} | setup,
             status_code=201,
         )  # fmt: skip
@@ -374,14 +381,16 @@ def _new_session(state: ServiceState) -> Session:
     step 10)."""
     _with_db(state, lambda c: model_watch.refuse_retired(c, state.clock), None)
     now = to_ts(state.clock.now())
-    return Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
+    return Session(
+        new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now, secrets.token_urlsafe(32)
+    )
 
 
 def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
     """What `ecf claude` needs to start a session (V1.4 steps 5-6): the Claude pins in force, for
     the plugin's agents and the main session, how many items wait for review, and the plan usage
     after the last review; from step 7, the Claude eval waiting for `/ecf-eval`, if any, with the
-    `ecf:eval-*` agents to render for it."""
+    `ecf-eval-*` agents to render for it."""
     if state.db_path is None:
         return {"models": claude_pins.load_lock(), "waiting": 0, "last_plan": None, "eval": None}
     conn = state.connect()
@@ -926,30 +935,37 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims; a WORK session only. POST
-    throughout: `review-queue` claims items, and claim tokens stay out of URLs."""
+    """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims. The main session (WORK) claims;
+    only its agent servers (AGENT, naming their agent) read and submit (OD-307). POST throughout:
+    `review-queue` claims items, and claim tokens stay out of URLs."""
 
     def _session(request: Request) -> str:
         s: Session = request.state.session
         return s.session_id
 
-    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+    def _in_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> dict[str, Any]:
         conn = state.connect()
         try:
-            return JSONResponse(fn(conn))
+            return fn(conn)
         finally:
             conn.close()
 
-    def _call_id(body: dict[str, Any]) -> str | None:
-        return telemetry.valid_tool_use_id(body.get("tool_use_id"))
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        return JSONResponse(_in_conn(fn))
+
+    def _now() -> float:
+        return state.clock.now().timestamp()
 
     def _submitted(sid: str, conn: sqlite3.Connection,
                    got: dict[str, Any] | telemetry.Hold) -> dict[str, Any]:  # fmt: skip
-        """A valid submission waits briefly for its call's telemetry; if it hasn't come, it
-        stays held and is settled when it arrives, or refused at session end (OD-268)."""
+        """A valid submission waits briefly for telemetry to catch up with it; if it hasn't, it
+        stays held and is settled when it does, or judged on what came at session end
+        (OD-307)."""
         if not isinstance(got, telemetry.Hold):
             return got
-        seen = state.telemetry.seen(sid, got.tool_use_id, state.telemetry_wait_s)
+        got = replace(got, at=_now(), read_at=state.telemetry.read_at(
+            sid, got.kind, got.stable_id, got.fence))  # fmt: skip
+        seen = state.telemetry.judge(got, state.telemetry_wait_s)
         if seen is None and state.telemetry.hold(got):
             return {"accepted": True, "pending": True, "errors": []}
         # bound, or the session ended while it waited (then it is refused as unbound)
@@ -966,41 +982,37 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(lambda c: claude_review.review_queue(
             c, state.clock, sid, address=address, limit=limit, stopped=stopped))  # fmt: skip
 
-    @allow(Caller.WORK)
+    @allow(Caller.AGENT)
     def message(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
-        token, call = _str(body, "claim_token"), _call_id(body)
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
+        kind = "eval" if claude_eval.owns(ref) else "review"
+        out = (claude_eval.get_message(state.clock, sid, ref, token, agent) if kind == "eval"
+               else _in_conn(lambda c: claude_review.get_message(
+                   c, state.clock, sid, ref, token, agent)))  # fmt: skip
+        state.telemetry.read(sid, kind, ref, int(token.partition(".")[0]), _now())
+        return JSONResponse(out)
 
-        def seen() -> telemetry.Seen | None:
-            if call is None:
-                return None
-            return state.telemetry.seen(sid, call, state.telemetry_wait_s)
-
-        if claude_eval.owns(ref):
-            return JSONResponse(claude_eval.get_message(state.clock, sid, ref, token, seen))
-        return _with_conn(lambda c: claude_review.get_message(c, state.clock, sid, ref, token,
-                                                              seen))  # fmt: skip
-
-    @allow(Caller.WORK)
+    @allow(Caller.AGENT)
     def classification(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
-        token = _str(body, "claim_token")
-        got, call = body.get("classification"), _call_id(body)
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
+        got = body.get("classification")
         if claude_eval.owns(ref):
             return _with_conn(lambda c: _submitted(sid, c, claude_eval.record_classification(
-                state.clock, sid, ref, token, got, call)))  # fmt: skip
+                state.clock, sid, ref, token, got, agent)))  # fmt: skip
         return _with_conn(lambda c: _submitted(sid, c, claude_review.record_classification(
-            c, state.clock, sid, ref, token, got, call)))  # fmt: skip
+            c, state.clock, sid, ref, token, got, agent)))  # fmt: skip
 
-    @allow(Caller.WORK)
+    @allow(Caller.AGENT)
     def proposal(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
-        token = _str(body, "claim_token")
+        token, agent = _str(body, "claim_token"), _str(body, "agent")
         if claude_eval.owns(ref):
             return _with_conn(lambda c: _submitted(sid, c, claude_eval.propose_action(
-                state.clock, sid, ref, token, body, _call_id(body))))  # fmt: skip
+                state.clock, sid, ref, token, body, agent)))  # fmt: skip
         return _with_conn(lambda c: _submitted(sid, c, claude_review.propose_action(
-            c, state.clock, sid, ref, token, body, _call_id(body))))  # fmt: skip
+            c, state.clock, sid, ref, token, body, agent)))  # fmt: skip
 
     @allow(Caller.WORK)
     def eval_next(request: Request) -> JSONResponse:

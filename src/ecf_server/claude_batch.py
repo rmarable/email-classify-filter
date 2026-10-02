@@ -1,5 +1,5 @@
 """`classifier_high_batch` (SPEC §7.5, §14.2; OD-052; V1.4 step 9): how many emails one
-`ecf:classifier-high` spawn takes on a preset C address (the only preset where Claude classifies).
+`ecf-classifier-high` spawn takes on a preset C address (the only preset where Claude classifies).
 
 - **Range** 1-5, default 1. Above 1, the spawn reads its emails one after another in one context:
   it saves plan usage, and lets one email's text reach the next one's classification (cross-item

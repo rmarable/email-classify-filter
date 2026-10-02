@@ -5,8 +5,8 @@ socket. Each `ecf claude` session has its own bearer token (`OTEL_EXPORTER_OTLP_
 
 Logs carry what ecf keeps (`telemetry.parse_logs`); metrics are accepted and dropped, since the
 per-request log events carry the same figures. After each logs export, the session's held
-submissions that telemetry now binds are settled (`claude_review.settle`, or `claude_eval.settle`
-for `/ecf-eval`'s).
+submissions that telemetry can now judge are settled (`claude_review.settle`, or
+`claude_eval.settle` for `/ecf-eval`'s).
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ def _reply(status: int, message: str = "") -> JSONResponse:
 
 
 def settle_bound(state: ServiceState, session_id: str, *, final: bool = False) -> None:
-    """Settle the session's holds that telemetry binds; at session end (`final`) the rest are
-    refused as unbound. One failure doesn't stop the others."""
+    """Settle the session's holds that telemetry can judge; at session end (`final`) the rest are
+    judged on what arrived, and refused when nothing did. One failure doesn't stop the others."""
     tel = state.telemetry
     pending = (tel.take_all(session_id) if final
                else [(h, s) for h, s in tel.take_bound(session_id)])  # fmt: skip
@@ -88,8 +88,8 @@ def create_receiver(state: ServiceState) -> Starlette:
         doc = _json(request, body)
         if doc is None:
             return _reply(415, "OTLP/HTTP with a JSON body only")
-        calls, tools = telemetry.parse_logs(doc)
-        state.telemetry.add(session_id, calls, tools)
+        calls, swaps = telemetry.parse_logs(doc)
+        state.telemetry.add(session_id, calls, swaps)
         if calls and state.db_path is not None:
             conn = state.connect()
             try:
