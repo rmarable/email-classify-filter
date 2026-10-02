@@ -8,6 +8,10 @@ Deadlines (OD-088): each request times out after 10 s (the enforcing limit); no 
 once a call is 100 s old; `anyio.fail_after(115)` is a backstop. A call stopped by either deadline
 answers "more pending" rather than an error. Email-derived fields come back from the service
 inside its untrusted-data wrapper (`untrusted_email` plus `notice`), passed through unchanged.
+
+Model check (V1.4 step 6; OD-268, OD-274): Claude Code puts the call's tool-use ID in
+`_meta.claudecode/toolUseId` (tested 2026-10-02); reads and submissions pass it to the service as
+`tool_use_id`, which matches it to the telemetry of the API request that made the call.
 """
 
 from __future__ import annotations
@@ -70,7 +74,8 @@ class Service:
         return parse_reply(r)
 
 
-Handler = Callable[[Service, dict[str, Any], float], Awaitable[dict[str, Any]]]
+Handler = Callable[[Service, dict[str, Any], float, str | None], Awaitable[dict[str, Any]]]
+TOOL_USE_ID = "claudecode/toolUseId"
 
 
 @dataclass(frozen=True)
@@ -129,7 +134,9 @@ ADDRESS = {"type": "string", "description": "Only this address (its ecf address 
 # ---------------------------------------------------------------------------- handlers
 
 
-async def _status(svc: Service, _args: dict[str, Any], started: float) -> dict[str, Any]:
+async def _status(
+    svc: Service, _args: dict[str, Any], started: float, _call: str | None
+) -> dict[str, Any]:
     st = await svc.call("GET", "/v1/status", started)
     counts: dict[str, dict[str, int]] = (await svc.call("GET", "/v1/counts", started))["counts"]
     out: list[dict[str, Any]] = []
@@ -146,7 +153,9 @@ async def _status(svc: Service, _args: dict[str, Any], started: float) -> dict[s
     return {"addresses": out}
 
 
-async def _counts(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
+async def _counts(
+    svc: Service, args: dict[str, Any], started: float, _call: str | None
+) -> dict[str, Any]:
     aid = _opt_str(args, "address_id")
     path = f"/v1/counts?address_id={quote(aid, safe='')}" if aid else "/v1/counts"
     counts: dict[str, dict[str, int]] = (await svc.call("GET", path, started))["counts"]
@@ -157,7 +166,9 @@ async def _counts(svc: Service, args: dict[str, Any], started: float) -> dict[st
     return {"by_status": dict(sorted(by.items()))}
 
 
-async def _review_queue(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
+async def _review_queue(
+    svc: Service, args: dict[str, Any], started: float, _call: str | None
+) -> dict[str, Any]:
     body: dict[str, Any] = {}
     if (aid := _opt_str(args, "address_id")) is not None:
         body["address_id"] = aid
@@ -166,21 +177,27 @@ async def _review_queue(svc: Service, args: dict[str, Any], started: float) -> d
     return cast(dict[str, Any], await svc.call("POST", "/v1/review-queue", started, body))
 
 
-async def _get_message(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
-    body = {"claim_token": _str(args, "claim_token")}
+async def _get_message(svc: Service, args: dict[str, Any], started: float,
+                       call: str | None) -> dict[str, Any]:  # fmt: skip
+    body = {"claim_token": _str(args, "claim_token"), "tool_use_id": call}
     return cast(dict[str, Any], await svc.call("POST", _claim_path(args, "message"), started,
                                                body))  # fmt: skip
 
 
-async def _record_classification(svc: Service, args: dict[str, Any],
-                                 started: float) -> dict[str, Any]:  # fmt: skip
-    body = {"claim_token": _str(args, "claim_token"), "classification": args.get("classification")}
+async def _record_classification(svc: Service, args: dict[str, Any], started: float,
+                                 call: str | None) -> dict[str, Any]:  # fmt: skip
+    body = {
+        "claim_token": _str(args, "claim_token"),
+        "classification": args.get("classification"),
+        "tool_use_id": call,
+    }
     return cast(dict[str, Any], await svc.call("POST", _claim_path(args, "classification"),
                                                started, body))  # fmt: skip
 
 
-async def _propose_action(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
-    body: dict[str, Any] = {"claim_token": _str(args, "claim_token")}
+async def _propose_action(svc: Service, args: dict[str, Any], started: float,
+                          call: str | None) -> dict[str, Any]:  # fmt: skip
+    body: dict[str, Any] = {"claim_token": _str(args, "claim_token"), "tool_use_id": call}
     for key in ("action", "target", "reason", "question"):
         if key in args:
             body[key] = args[key]
@@ -262,7 +279,8 @@ def _error(err: EcfError) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(text=text)], is_error=True)
 
 
-async def call_tool(svc: Service, name: str, args: dict[str, Any]) -> types.CallToolResult:
+async def call_tool(svc: Service, name: str, args: dict[str, Any],
+                    tool_use_id: str | None = None) -> types.CallToolResult:  # fmt: skip
     """One tool call under the deadlines; every failure is an `isError` result."""
     t = BY_NAME.get(name)
     if t is None:
@@ -272,7 +290,7 @@ async def call_tool(svc: Service, name: str, args: dict[str, Any]) -> types.Call
     started = svc.clock()
     try:
         with anyio.fail_after(DEADLINE_S):
-            return _result(await t.handler(svc, args, started))
+            return _result(await t.handler(svc, args, started, tool_use_id))
     except (TimeoutError, _Late):
         return _result({"more_pending": True, "notice": MORE_PENDING})
     except EcfError as e:
@@ -290,7 +308,10 @@ def build(svc: Service) -> Server[Any]:
     async def on_call(
         _ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
     ) -> types.CallToolResult:
-        return await call_tool(svc, params.name, dict(params.arguments or {}))
+        meta: Any = params.meta
+        call: Any = cast(dict[str, Any], meta).get(TOOL_USE_ID) if isinstance(meta, dict) else None
+        return await call_tool(svc, params.name, dict(params.arguments or {}),
+                               call if isinstance(call, str) else None)  # fmt: skip
 
     return Server("ecf", version=__version__, instructions=INSTRUCTIONS,
                   on_list_tools=list_tools, on_call_tool=on_call)  # fmt: skip

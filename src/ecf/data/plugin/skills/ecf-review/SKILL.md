@@ -17,9 +17,12 @@ Repeat until done:
      items from this round.
    - `ecf:classifier-high` and `ecf:actor-high`: one spawn per item.
    The prompt holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing
-   else. You may start the spawns of one round in parallel.
-4. Wait for every spawn of the round to finish, then go back to step 1. Don't use what a
-   subagent says: outcomes come only from `results` in the next `review_queue` call.
+   else. Hand out one agent type at a time: the spawns of the same `agent` may run in
+   parallel, but wait for them all to finish before starting another agent's spawns.
+4. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
+   says: outcomes come only from `results` in the next `review_queue` call.
+
+If `review_queue` returns `stopped`, stop at once and tell the person that line as it is.
 
 At the end, tell the person, in two or three lines: how many items were handed out, and the
 outcomes from `results` counted by outcome. Quote nothing else.

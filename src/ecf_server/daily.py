@@ -5,8 +5,8 @@ the summary channel. V1.2 says: what's waiting on you per address, open items, s
 10), approvals that expired twice (listed only here, §6.2), escalations in the last 24 hours,
 emails not fully scanned in the last 24 hours, paused addresses, and who else is in ecf's channels.
 From V1.3: items waiting for the local model and how that changed since the last summary, and hours
-on battery since then (§10.1; V1.3 step 2b). Lines for backups and newer models arrive with those
-features (V1.4-V1.5).
+on battery since then (§10.1; V1.3 step 2b). From V1.4 step 6: Claude's usage in the last 24 hours.
+Lines for backups and newer models arrive with those features (V1.4-V1.5).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from ecf.status import OPEN
 from ecf_server import (
     cards,
+    claude_usage,
     evalrun,
     inbox,
     modelq,
@@ -116,9 +117,9 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
     lines += _model_lines(conn)
-    usage = stats.daily_line(conn, now - DAY)
-    if usage:
-        lines.append(usage)
+    for usage in (stats.daily_line(conn, now - DAY), claude_usage.daily_line(conn, now - DAY)):
+        if usage:
+            lines.append(usage)
     held = evalrun.slack_line()
     if held:
         lines.append(held)

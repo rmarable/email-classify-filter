@@ -25,9 +25,13 @@
   item waits for the next round. A question from Claude goes to you on any item (`local_high_risk`
   is the local pair's policy, §8.2).
 
-Not yet: the telemetry model check (submissions held until telemetry binds them to a pinned
-model, OD-268) and the subagent-only `get_message` (OD-274) arrive with the telemetry receiver
-(V1.4 step 6).
+**Model check** (V1.4 step 6; OD-268, OD-274): every read and submission names its MCP call
+(`tool_use_id`), which telemetry binds to the API request that made it (`telemetry`).
+`get_message` answers only a call bound to a plugin agent (`query_source` `agent:custom`). A valid
+submission is held (claim state `held`; the item can't be claimed again) until the binding shows
+a plugin agent on the pinned model of its role (or the override); then it applies, else it is
+refused (`model_refused`), and so is anything still unbound when the session ends. A refusal
+counts once per session for a System Error, and `/ecf-review` claims nothing more that session.
 """
 
 from __future__ import annotations
@@ -37,19 +41,32 @@ import hmac
 import json
 import secrets
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import ValidationError
 
-from ecf.errors import ConflictError, InvalidInputError, NotFoundError
+from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import new_random_id
 from ecf.schema import load_schema_v1
-from ecf_server import actor, addresses, answers, classifier, claude_pins, decide, policy
+from ecf_server import (
+    actor,
+    addresses,
+    alerts,
+    answers,
+    classifier,
+    claude_pins,
+    decide,
+    policy,
+    telemetry,
+)
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
+from ecf_server.notify import Notifier
 from ecf_server.state_machine import Status
+from ecf_server.telemetry import Hold, Seen, Telemetry
 
 CLAIM_TTL = timedelta(minutes=15)
 LIMIT_DEFAULT = 10
@@ -69,8 +86,10 @@ _WAITING = (
     " WHERE a.removed_at IS NULL AND a.paused = 0 AND a.preset IN ('B', 'C')"
     " AND i.status IN ('awaiting_claude', 'clarified')"
     " AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.stable_id = i.stable_id"
-    " AND c.state = 'claimed' AND c.expires_at > ?)"
+    " AND (c.state = 'held' OR (c.state = 'claimed' AND c.expires_at > ?)))"
 )
+NO_CALL_ID = ("this call carries no tool call ID, so ecf can't check which model made it; use"
+              " the ecf-mcp that `ecf claude` starts")  # fmt: skip
 
 
 def _hash(token: str) -> str:
@@ -101,11 +120,15 @@ def review_queue(
     *,
     address: str | None = None,
     limit: int = LIMIT_DEFAULT,
+    stopped: str | None = None,
 ) -> dict[str, Any]:
+    """`stopped`: the model check refused work this session, so nothing more is claimed."""
     if not 1 <= limit <= LIMIT_MAX:
         raise InvalidInputError(f"limit must be between 1 and {LIMIT_MAX}")
     aid = addresses.get_address(conn, address)["address_id"] if address else None
     results = _results(conn, clock, session_id)
+    if stopped is not None:
+        return {"items": [], "more": False, "results": results, "stopped": stopped}
     now = clock.now()
     sql, args = _WAITING, [to_ts(now)]
     if aid is not None:
@@ -177,14 +200,14 @@ def release_session(conn: sqlite3.Connection, session_id: str) -> int:
     """The session ended (`ecf claude` exited): its claims end with it."""
     with write_tx(conn):
         cur = conn.execute("UPDATE claims SET state = 'released' WHERE session_id = ?"
-                           " AND state = 'claimed'", (session_id,))  # fmt: skip
+                           " AND state IN ('claimed', 'held')", (session_id,))  # fmt: skip
     return cur.rowcount
 
 
 def release_all(conn: sqlite3.Connection) -> None:
     """At service start: sessions live in memory, so every claim belongs to an ended one."""
     with write_tx(conn):
-        conn.execute("UPDATE claims SET state = 'released' WHERE state = 'claimed'")
+        conn.execute("UPDATE claims SET state = 'released' WHERE state IN ('claimed', 'held')")
 
 
 def _claimed(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, token: str,
@@ -213,10 +236,19 @@ def _item(conn: sqlite3.Connection, sid: str) -> sqlite3.Row:
 # ---------------------------------------------------------------------------- reading
 
 
-def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str,
-                token: str) -> dict[str, Any]:  # fmt: skip
+def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, token: str,
+                seen: Callable[[], Seen | None]) -> dict[str, Any]:  # fmt: skip
+    """`seen` waits briefly for telemetry on this call: only a plugin agent gets the text."""
     claim = _claimed(conn, clock, session_id, sid, token)
     item = _item(conn, sid)
+    s = seen()
+    if s is None or s.source != telemetry.SUBAGENT:
+        why = "unbound" if s is None else "not_subagent"
+        _audit(conn, clock, item, "claude.refused", session_id,
+               {"need": claim["need"], "agent": claim["agent"], "read": why},
+               outcome="denied")  # fmt: skip
+        raise ForbiddenProfileError("get_message answers only an ecf agent, called from the"
+                                    " agent the service named")  # fmt: skip
     col = "classifier_text" if claim["need"] == "classify" else "actor_text"
     ex = conn.execute(f"SELECT {col} FROM excerpts WHERE stable_id = ?", (sid,)).fetchone()  # noqa: S608 - fixed column names
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
@@ -256,8 +288,12 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
 
 
 def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str,
-                          token: str, classification: Any) -> dict[str, Any]:  # fmt: skip
+                          token: str, classification: Any,
+                          tool_use_id: str | None) -> dict[str, Any] | Hold:  # fmt: skip
+    """Check the classification; a valid one is held until telemetry binds its call."""
     claim = _claimed(conn, clock, session_id, sid, token, "classify")
+    if tool_use_id is None:
+        raise InvalidInputError(NO_CALL_ID)
     try:
         result = load_schema_v1().validate(classification).model_dump(mode="json")
     except ValidationError as e:
@@ -266,29 +302,34 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
         return _invalid(conn, clock, claim, errors[:20])
     except (ValueError, TypeError):
         return _invalid(conn, clock, claim, ["classification must be a JSON object"])
-    _done(conn, claim)
-    model = claude_pins.effective(conn)[ROLE[claim["agent"]]]
-    try:
-        classifier.store(conn, clock, sid, result, {"classifier": model, "agent": claim["agent"]},
-                         expected=Status.AWAITING_CLAUDE, batch_id=claim["batch_id"],
-                         actor=f"mcp:{session_id[:8]}")  # fmt: skip
-    finally:
-        _outcome(conn, clock, claim, session_id)
-    return {"accepted": True, "errors": []}
+    return _hold(conn, claim, session_id, tool_use_id, {"classification": result})
 
 
 def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, token: str,
-                   body: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+                   body: dict[str, Any],
+                   tool_use_id: str | None) -> dict[str, Any] | Hold:  # fmt: skip
+    """Check the proposal; a valid one is held until telemetry binds its call."""
     claim = _claimed(conn, clock, session_id, sid, token, "act")
+    if tool_use_id is None:
+        raise InvalidInputError(NO_CALL_ID)
     item = _item(conn, sid)
     if item["status"] not in (Status.AWAITING_CLAUDE, Status.CLARIFIED):
         _done(conn, claim)
         _outcome(conn, clock, claim, session_id)
         raise ConflictError(f"the item moved on (now {item['status']})")
-    ctx, p = decide.plan_for(conn, item)
+    proposal = {k: body.get(k) for k in ("action", "target", "reason", "question")}
+    why = _proposal_problem(conn, item, proposal)
+    if why is not None:
+        return _invalid(conn, clock, claim, [why])
+    return _hold(conn, claim, session_id, tool_use_id, {"proposal": proposal})
+
+
+def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
+                      proposal: dict[str, Any]) -> str | None:  # fmt: skip
+    ctx, _p = decide.plan_for(conn, item)
     labels = policy.labels(load_schema_v1(), ctx.rules)
-    action, target, reason = body.get("action"), body.get("target") or "", body.get("reason")
-    question = body.get("question")
+    action, target, reason = proposal["action"], proposal["target"] or "", proposal["reason"]
+    question = proposal["question"]
     why = actor.problem(action, target, reason, labels, ctx.move_folders,
                         actor.allowed(ctx.classification))  # fmt: skip
     if why is None and action == "needs_clarification":
@@ -296,23 +337,106 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
             why = "needs_clarification needs the question to ask"
     elif why is None and question is not None:
         why = "a question goes only with needs_clarification"
-    if why is not None:
-        return _invalid(conn, clock, claim, [why])
+    return why
+
+
+def _hold(conn: sqlite3.Connection, claim: sqlite3.Row, session_id: str, tool_use_id: str,
+          payload: dict[str, Any]) -> Hold:  # fmt: skip
+    """End the claim's tries, fenced: a second submission under it is refused."""
+    with write_tx(conn):
+        cur = conn.execute(
+            "UPDATE claims SET state = 'held' WHERE stable_id = ? AND fence = ?"
+            " AND state = 'claimed'",
+            (claim["stable_id"], claim["fence"]),
+        )
+    if cur.rowcount != 1:
+        raise ConflictError("that claim has ended")
+    return Hold(session_id, tool_use_id, str(claim["stable_id"]), int(claim["fence"]),
+                str(claim["need"]), str(claim["agent"]), payload)  # fmt: skip
+
+
+# ---------------------------------------------------------------------------- settling
+
+
+def settle(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Telemetry, hold: Hold,
+           seen: Seen | None) -> dict[str, Any]:  # fmt: skip
+    """Apply a held submission when its call came from a plugin agent on the pinned model of its
+    role; refuse it otherwise, and when `seen` is None (unbound at session end)."""
+    claim = conn.execute("SELECT * FROM claims WHERE stable_id = ? AND fence = ? AND"
+                         " state = 'held'", (hold.stable_id, hold.fence)).fetchone()  # fmt: skip
+    if claim is None:  # released meanwhile (the session ended or the service restarted)
+        return {"accepted": False, "errors": ["that claim has ended"], "tries_left": 0}
+    expected = claude_pins.effective(conn)[ROLE[hold.agent]]
+    if seen is None or seen.source != telemetry.SUBAGENT or seen.model != expected:
+        return _refuse(conn, clock, notifier, tel, claim, seen, expected)
+    with write_tx(conn):
+        conn.execute("UPDATE claims SET state = 'done' WHERE stable_id = ? AND fence = ?",
+                     (hold.stable_id, hold.fence))  # fmt: skip
+    item = _item(conn, hold.stable_id)
+    try:
+        if hold.need == "classify":
+            classifier.store(conn, clock, hold.stable_id, hold.payload["classification"],
+                             {"classifier": seen.model, "agent": hold.agent},
+                             expected=Status.AWAITING_CLAUDE, batch_id=claim["batch_id"],
+                             actor=f"mcp:{hold.session_id[:8]}")  # fmt: skip
+        else:
+            _apply_proposal(conn, clock, item, hold, seen.model)
+    finally:
+        _outcome(conn, clock, claim, hold.session_id)
+    tel.submitted(hold.session_id, hold.stable_id)
+    return {"accepted": True, "errors": []}
+
+
+def _apply_proposal(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, hold: Hold,
+                    model: str) -> None:  # fmt: skip
+    if item["status"] not in (Status.AWAITING_CLAUDE, Status.CLARIFIED):
+        return  # moved on while held (resolved by hand): the outcome reports its status
+    proposal = hold.payload["proposal"]
+    if _proposal_problem(conn, item, proposal) is not None:
+        return  # the rules changed while it was held; the item waits for the next round
+    ctx, p = decide.plan_for(conn, item)
+    labels = policy.labels(load_schema_v1(), ctx.rules)
+    action = proposal["action"]
     got = {
         "action": str(action),
-        "target": str(target) if action in ("label", "move") else "",
-        "reason": answers.model_text(str(reason), actor.REASON_MAX),
-        "model": claude_pins.effective(conn)[ROLE[claim["agent"]]],
-        "agent": claim["agent"],
+        "target": str(proposal["target"] or "") if action in ("label", "move") else "",
+        "reason": answers.model_text(str(proposal["reason"]), actor.REASON_MAX),
+        "model": model,
+        "agent": hold.agent,
     }
-    if isinstance(question, str):
-        got["question"] = question  # cleaned and capped by answers.ask
-    _done(conn, claim)
-    try:
-        actor.decide_one(conn, clock, item, ctx, p, got, labels, local=False)
-    finally:
-        _outcome(conn, clock, claim, session_id)
-    return {"accepted": True, "errors": []}
+    if isinstance(proposal["question"], str):
+        got["question"] = proposal["question"]  # cleaned and capped by answers.ask
+    actor.decide_one(conn, clock, item, ctx, p, got, labels, local=False)
+
+
+def _refuse(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Telemetry,
+            claim: sqlite3.Row, seen: Seen | None, expected: str) -> dict[str, Any]:  # fmt: skip
+    session_id = str(claim["session_id"])
+    if seen is None:
+        model, why = "none (no telemetry for the call)", "unbound"
+    elif seen.source != telemetry.SUBAGENT:
+        model, why = f"{seen.model} in the main session", "not_subagent"
+    else:
+        model, why = seen.model, "model"
+    with write_tx(conn):
+        conn.execute("UPDATE claims SET state = 'released', outcome = 'model_refused',"
+                     " reported = 0 WHERE stable_id = ? AND fence = ?",
+                     (claim["stable_id"], claim["fence"]))  # fmt: skip
+    _audit(conn, clock, _item(conn, claim["stable_id"]), "claude.refused", session_id,
+           {"need": claim["need"], "agent": claim["agent"], "model_check": why,
+            "model": seen.model if seen else None, "expected": expected},
+           outcome="denied")  # fmt: skip
+    log.warning("claude.model_refused", session_id=session_id[:8], check=why)
+    if tel.refused(session_id, model, expected):
+        alerts.event(conn, clock, notifier, "system_error",
+                     "Claude work refused by the model check: "
+                     f"{telemetry.refusal_line(1, model, expected)}. /ecf-review stopped for"
+                     " this session; see ecf doctor.")  # fmt: skip
+    return {
+        "accepted": False,
+        "tries_left": 0,
+        "errors": [f"refused: the call came from {model}; this agent's model is {expected}"],
+    }
 
 
 def _done(conn: sqlite3.Connection, claim: sqlite3.Row) -> None:

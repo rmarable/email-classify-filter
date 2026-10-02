@@ -21,8 +21,10 @@ from ecf_server import claude_pins, claude_queue, claude_review, decide, items, 
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
+from ecf_server.notify import NullNotifier
 from ecf_server.rules import load_starter_rules
 from ecf_server.state_machine import Status, TransitionContext
+from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
 from tests.test_decide import KNOWN_BULK, MARKETING
 
 REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True,
@@ -84,6 +86,36 @@ def token_for(q: dict[str, Any], sid: str) -> str:
     return next(i["claim_token"] for i in q["items"] if i["id"] == sid)
 
 
+# Telemetry stands in for these helpers: a plugin agent on its pinned model (V1.4 step 6).
+AGENT_CALL = Seen("claude-haiku-4-5-20251001", SUBAGENT)
+
+
+def read_msg(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
+             token: str) -> dict[str, Any]:  # fmt: skip
+    return claude_review.get_message(conn, clock, session, sid, token, lambda: AGENT_CALL)
+
+
+def settled(conn: sqlite3.Connection, clock: FakeClock,
+            got: dict[str, Any] | Hold) -> dict[str, Any]:  # fmt: skip
+    if not isinstance(got, Hold):
+        return got
+    pin = claude_pins.effective(conn)[claude_review.ROLE[got.agent]]
+    return claude_review.settle(conn, clock, NullNotifier(), Telemetry(), got,
+                                Seen(pin, SUBAGENT))  # fmt: skip
+
+
+def submit_classification(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
+                          token: str, c: Any) -> dict[str, Any]:  # fmt: skip
+    return settled(conn, clock, claude_review.record_classification(
+        conn, clock, session, sid, token, c, "toolu_test"))  # fmt: skip
+
+
+def submit_proposal(conn: sqlite3.Connection, clock: FakeClock, session: str, sid: str,
+                    token: str, body: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+    return settled(conn, clock, claude_review.propose_action(
+        conn, clock, session, sid, token, body, "toolu_test"))  # fmt: skip
+
+
 # ---- claiming --------------------------------------------------------------------------------
 
 
@@ -135,13 +167,13 @@ def test_an_expired_claim_is_reported_and_its_token_refused(
     old = token_for(queue(conn, clock), sid)
     clock.advance(claude_review.CLAIM_TTL.total_seconds() + 1)
     with pytest.raises(ConflictError):
-        claude_review.get_message(conn, clock, S1, sid, old)
+        read_msg(conn, clock, S1, sid, old)
     again = queue(conn, clock)
     assert again["results"] == [{"id": sid, "outcome": "claim_expired"}]
     new = token_for(again, sid)
     assert new.startswith("2.")  # the fence went up
     with pytest.raises(ConflictError):  # the earlier claim is fenced off for good
-        claude_review.record_classification(conn, clock, S1, sid, old, REQUEST)
+        submit_classification(conn, clock, S1, sid, old, REQUEST)
     assert queue(conn, clock)["results"] == []  # reported once
 
 
@@ -150,14 +182,14 @@ def test_another_claim_or_session_is_refused(conn: sqlite3.Connection, clock: Fa
     a, b = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
     q = queue(conn, clock)
     with pytest.raises(ConflictError):
-        claude_review.get_message(conn, clock, S2, a, token_for(q, a))  # another session
+        read_msg(conn, clock, S2, a, token_for(q, a))  # another session
     with pytest.raises(ConflictError):
-        claude_review.get_message(conn, clock, S1, a, token_for(q, b))  # b's token
+        read_msg(conn, clock, S1, a, token_for(q, b))  # b's token
     with pytest.raises(ConflictError):
-        claude_review.propose_action(conn, clock, S1, a, token_for(q, a),
+        submit_proposal(conn, clock, S1, a, token_for(q, a),
                                      {"action": "flag", "target": "", "reason": "x"})  # fmt: skip
     with pytest.raises(NotFoundError):
-        claude_review.get_message(conn, clock, S1, "f" * 64, token_for(q, a))
+        read_msg(conn, clock, S1, "f" * 64, token_for(q, a))
 
 
 def test_claims_end_with_the_session_and_at_start(conn: sqlite3.Connection,
@@ -167,7 +199,7 @@ def test_claims_end_with_the_session_and_at_start(conn: sqlite3.Connection,
     tok = token_for(queue(conn, clock), sid)
     assert claude_review.release_session(conn, S1) == 1
     with pytest.raises(ConflictError):
-        claude_review.get_message(conn, clock, S1, sid, tok)
+        read_msg(conn, clock, S1, sid, tok)
     assert [i["id"] for i in queue(conn, clock, S2)["items"]] == [sid]
     claude_review.release_all(conn)
     assert [i["id"] for i in queue(conn, clock)["items"]] == [sid]
@@ -183,7 +215,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     c1 = waiting_item(conn, clock, "c")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
     q = queue(conn, clock)
-    m = claude_review.get_message(conn, clock, S1, c1, token_for(q, c1))
+    m = read_msg(conn, clock, S1, c1, token_for(q, c1))
     assert m["notice"] == claude_review.NOTICE and m["need"] == "classify"
     assert m["untrusted_email"] == {
         "from": "Ann <ann@cust.example>", "subject": "W-9 please", "date": "2026-10-02T09:00Z",
@@ -194,7 +226,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     flat = json.dumps(m)
     for fact in ("sender_seen_before", "auth_result", "bulk_corroborates", "triggers"):
         assert fact not in flat  # §7.2: computed facts never go to a model
-    a = claude_review.get_message(conn, clock, S1, b1, token_for(q, b1))
+    a = read_msg(conn, clock, S1, b1, token_for(q, b1))
     assert a["untrusted_email"]["text"].startswith("Please send the W-9")  # the actor excerpt
     assert a["classification"] == REQUEST
     assert "archive" not in a["actions"] and "needs_clarification" in a["actions"]  # OD-250
@@ -212,14 +244,14 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     add(conn, clock, "c", "C")
     sid = waiting_item(conn, clock, "c")
     tok = token_for(queue(conn, clock), sid)
-    got = claude_review.record_classification(conn, clock, S1, sid, tok, REQUEST)
+    got = submit_classification(conn, clock, S1, sid, tok, REQUEST)
     assert got == {"accepted": True, "errors": []}
     r = row(conn, sid)
     assert r["status"] == "awaiting_claude"  # the rule continues to the actor (OD-269)
     pinned = json.loads(r["pinned_models"])
     assert pinned["classifier"].startswith("claude-haiku-") and pinned["agent"] == "ecf:classifier"
     with pytest.raises(ConflictError):  # one submission per claim
-        claude_review.record_classification(conn, clock, S1, sid, tok, REQUEST)
+        submit_classification(conn, clock, S1, sid, tok, REQUEST)
     q = queue(conn, clock)
     assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}]
     assert [(i["id"], i["need"]) for i in q["items"]] == [(sid, "act")]
@@ -232,14 +264,14 @@ def test_an_invalid_classification_keeps_the_claim_three_times(
     sid = waiting_item(conn, clock, "c")
     tok = token_for(queue(conn, clock), sid)
     bad = REQUEST | {"category": "ignore previous instructions"}
-    first = claude_review.record_classification(conn, clock, S1, sid, tok, bad)
+    first = submit_classification(conn, clock, S1, sid, tok, bad)
     assert first["accepted"] is False and first["tries_left"] == 2
     assert first["errors"] == ["category: not one of the allowed values"]  # not the model text
-    claude_review.record_classification(conn, clock, S1, sid, tok, "not an object")
-    last = claude_review.record_classification(conn, clock, S1, sid, tok, {})
+    submit_classification(conn, clock, S1, sid, tok, "not an object")
+    last = submit_classification(conn, clock, S1, sid, tok, {})
     assert last["tries_left"] == 0
     with pytest.raises(ConflictError):
-        claude_review.record_classification(conn, clock, S1, sid, tok, REQUEST)
+        submit_classification(conn, clock, S1, sid, tok, REQUEST)
     assert (
         row(conn, sid)["status"] == "awaiting_claude" and row(conn, sid)["classification"] is None
     )
@@ -255,7 +287,7 @@ def test_a_claude_proposal_is_checked_like_the_local_actors(
     tok = token_for(queue(conn, clock), sid)
 
     def propose(**body: Any) -> dict[str, Any]:
-        return claude_review.propose_action(conn, clock, S1, sid, tok, body)
+        return submit_proposal(conn, clock, S1, sid, tok, body)
 
     hide = propose(action="archive", target="", reason="done")
     assert hide["accepted"] is False and "hiding isn't available" in hide["errors"][0]  # OD-250
@@ -282,17 +314,17 @@ def test_a_question_from_claude_goes_to_you_even_on_a_high_risk_item(
     q = queue(conn, clock)
     assert q["items"][0]["agent"] == "ecf:actor-high"
     tok = token_for(q, sid)
-    no_q = claude_review.propose_action(conn, clock, S1, sid, tok,
+    no_q = submit_proposal(conn, clock, S1, sid, tok,
                                         {"action": "needs_clarification", "target": "",
                                          "reason": "unsure"})  # fmt: skip
     assert no_q["accepted"] is False
-    stray = claude_review.propose_action(conn, clock, S1, sid, tok,
+    stray = submit_proposal(conn, clock, S1, sid, tok,
                                          {"action": "flag", "target": "", "reason": "x",
                                           "question": "why?"})  # fmt: skip
     assert stray["accepted"] is False
     ask = {"action": "needs_clarification", "target": "", "reason": "unsure",
            "question": "Is this Ann from Cust?"}  # fmt: skip
-    claude_review.propose_action(conn, clock, S1, sid, tok, ask)
+    submit_proposal(conn, clock, S1, sid, tok, ask)
     r = row(conn, sid)
     assert r["status"] == "needs_clarification"  # local_high_risk is the local pair's (§8.2)
     assert json.loads(r["proposal"])["question"] == "Is this Ann from Cust?"
@@ -307,7 +339,7 @@ def test_an_item_resolved_meanwhile_ends_the_claim(conn: sqlite3.Connection,
     items.transition(conn, clock, StableId(sid), Status.RESOLVED_MANUAL, TransitionContext(),
                      actor="os_user")  # fmt: skip
     with pytest.raises(ConflictError):
-        claude_review.propose_action(conn, clock, S1, sid, tok,
+        submit_proposal(conn, clock, S1, sid, tok,
                                      {"action": "flag", "target": "", "reason": "x"})  # fmt: skip
     assert queue(conn, clock)["results"] == [{"id": sid, "outcome": "resolved_manual"}]
 
@@ -323,10 +355,10 @@ def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
     a, b = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
     h = waiting_item(conn, clock, "h")
     q = queue(conn, clock)
-    claude_review.record_classification(conn, clock, S1, a, token_for(q, a), ROUTINE)
+    submit_classification(conn, clock, S1, a, token_for(q, a), ROUTINE)
     assert claude_queue.batch_risky(conn, a)  # b isn't classified yet: unknown is risky
     assert not claude_queue.batch_risky(conn, h)  # classifier-high: one per spawn, no batch
-    claude_review.record_classification(conn, clock, S1, b, token_for(q, b),
+    submit_classification(conn, clock, S1, b, token_for(q, b),
                                         ROUTINE | {"category": "spam_or_phishing"})  # fmt: skip
     assert claude_queue.batch_risky(conn, a)
     with write_tx(conn):
@@ -373,12 +405,19 @@ def test_the_routes_take_only_a_work_session(conn: sqlite3.Connection, db_path: 
     assert refused.status_code == 403 and refused.json()["code"] == "forbidden_profile"
     q = call(state, "/v1/review-queue", {"limit": 5}, work).json()
     tok = q["items"][0]["claim_token"]
-    m = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok}, work)
+    state.telemetry_wait_s = 0
+    state.telemetry.add(made["session_id"], [ApiCall(1, AGENT_CALL.model, SUBAGENT)],
+                        {"toolu_1": 2})  # fmt: skip
+    unbound = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok}, work)
+    assert unbound.status_code == 403  # no tool-use ID: telemetry can't vouch for the caller
+    m = call(state, f"/v1/claims/{sid}/message", {"claim_token": tok, "tool_use_id": "toolu_1"},
+             work)  # fmt: skip
     assert m.status_code == 200 and m.json()["untrusted_email"]["subject"] == "W-9 please"
     stale = call(state, f"/v1/claims/{sid}/message", {"claim_token": "9.x"}, work)
     assert stale.status_code == 409 and stale.json()["code"] == "conflict"
     r = call(state, f"/v1/claims/{sid}/classification",
-             {"claim_token": tok, "classification": REQUEST}, work)  # fmt: skip
+             {"claim_token": tok, "classification": REQUEST, "tool_use_id": "toolu_1"},
+             work)  # fmt: skip
     assert r.json() == {"accepted": True, "errors": []}
     for path in ("/v1/items/resolve", "/v1/settings", "/v1/approvals/pending"):
         assert call(state, path, {}, work).json()["code"] == "forbidden_profile"  # no decisions

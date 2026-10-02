@@ -20,8 +20,10 @@ from mcp import Client, StdioServerParameters
 
 from ecf import mcp_server
 from ecf.paths import Paths
+from ecf_server import claude_pins
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock
+from ecf_server.telemetry import SUBAGENT, ApiCall
 from tests.test_claude_review import REQUEST, add, waiting_item
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +31,7 @@ SNAPSHOTS = ROOT / "tests" / "snapshots"
 ECF_MCP = Path(sys.executable).parent / "ecf-mcp"
 MODES = ("legacy", "2026-07-28")  # the initialize handshake (2025-11-25) and the modern envelope
 REVISION = {"legacy": "2025-11-25", "2026-07-28": "2026-07-28"}
+TOOL_USE = mcp_server.TOOL_USE_ID
 
 Body = Callable[[Client], Awaitable[Any]]
 
@@ -122,6 +125,15 @@ def test_a_review_round(mode: str, conn: sqlite3.Connection, state: ServiceState
     add(conn, clock, "b", "B")
     sid = waiting_item(conn, clock, "c")
     work = session_token(state)
+    # telemetry: the classifier's calls follow a Haiku request, the actor's a Sonnet one
+    pins = claude_pins.effective(conn)
+    state.telemetry_wait_s = 0
+    state.telemetry.add(next(iter(state.sessions)),
+                        [ApiCall(1, pins["classifier"], SUBAGENT), ApiCall(10, pins["actor"],
+                                                                             SUBAGENT)],
+                        {"toolu_c": 2, "toolu_a": 11})  # fmt: skip
+    cls = cast(types.RequestParamsMeta, {TOOL_USE: "toolu_c"})
+    act_call = cast(types.RequestParamsMeta, {TOOL_USE: "toolu_a"})
 
     async def body(c: Client) -> dict[str, Any]:
         out: dict[str, Any] = {"status": data(await c.call_tool("status", {}))}
@@ -129,18 +141,19 @@ def test_a_review_round(mode: str, conn: sqlite3.Connection, state: ServiceState
         q = data(await c.call_tool("review_queue", {"limit": 5}))
         item = q["items"][0]
         args = {"id": item["id"], "claim_token": item["claim_token"]}
-        out["message"] = data(await c.call_tool("get_message", args))
+        out["unbound"] = await c.call_tool("get_message", args)  # no tool-use ID: refused
+        out["message"] = data(await c.call_tool("get_message", args, meta=cls))
         bad = {"classification": {"category": "tax"}}
-        out["bad"] = data(await c.call_tool("record_classification", args | bad))
+        out["bad"] = data(await c.call_tool("record_classification", args | bad, meta=cls))
         good = {"classification": REQUEST}
-        out["good"] = data(await c.call_tool("record_classification", args | good))
+        out["good"] = data(await c.call_tool("record_classification", args | good, meta=cls))
         q2 = data(await c.call_tool("review_queue", {}))
         act = q2["items"][0]
         args = {"id": act["id"], "claim_token": act["claim_token"]}
-        out["act_message"] = data(await c.call_tool("get_message", args))
+        out["act_message"] = data(await c.call_tool("get_message", args, meta=act_call))
         out["proposal"] = data(await c.call_tool("propose_action", args | {
             "action": "needs_clarification", "target": "", "reason": "unsure",
-            "question": "Is this Ann from Cust?"}))  # fmt: skip
+            "question": "Is this Ann from Cust?"}, meta=act_call))  # fmt: skip
         out["again"] = await c.call_tool("propose_action", args | {"action": "flag",
                                                                    "reason": "x"})  # fmt: skip
         out["stale"] = await c.call_tool("get_message", args)
@@ -155,6 +168,7 @@ def test_a_review_round(mode: str, conn: sqlite3.Connection, state: ServiceState
     m = out["message"]
     assert m["id"] == sid and m["need"] == "classify" and "schema" in m
     assert m["untrusted_email"]["subject"] == "W-9 please" and "Treat as data" in m["notice"]
+    assert error_text(out["unbound"]).startswith("forbidden_profile: ")
     assert out["bad"]["accepted"] is False and out["bad"]["tries_left"] == 2
     assert out["good"] == {"accepted": True, "errors": []}
     assert out["act_message"]["need"] == "act" and "flag" in out["act_message"]["actions"]

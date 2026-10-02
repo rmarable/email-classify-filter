@@ -123,7 +123,16 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     """Delete what is past retention; returns counts by kind."""
     cutoff = to_ts(clock.now() - timedelta(days=days(conn)))
     marks = ",".join("?" * len(_TERMINAL))
-    counts = {"items": 0, "jobs": 0, "nonces": 0, "posts": 0, "model_calls": 0, "batches": 0}
+    counts = {
+        "items": 0,
+        "jobs": 0,
+        "nonces": 0,
+        "posts": 0,
+        "model_calls": 0,
+        "claude_calls": 0,
+        "claude_sessions": 0,
+        "batches": 0,
+    }
     while True:
         with write_tx(conn):
             ids = [r[0] for r in conn.execute(
@@ -151,6 +160,12 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     counts["model_calls"] = _batched(
         conn, "DELETE FROM model_calls WHERE rowid IN (SELECT rowid FROM model_calls"
         " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
+    counts["claude_calls"] = _batched(
+        conn, "DELETE FROM claude_calls WHERE rowid IN (SELECT rowid FROM claude_calls"
+        " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
+    counts["claude_sessions"] = _batched(
+        conn, "DELETE FROM claude_sessions WHERE rowid IN (SELECT rowid FROM claude_sessions"
+        " WHERE started_at < ? LIMIT ?)", (cutoff,))  # fmt: skip
     # what an unclicked "Approve all" or "All others correct" button binds: gone once its grants
     # have expired (every click re-checks each one anyway)
     stale = to_ts(clock.now() - BATCH_TTL)

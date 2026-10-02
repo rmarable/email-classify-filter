@@ -1,6 +1,7 @@
 """`ecf-server local`: the local service process (SPEC §11.1).
 
-Threads: main (signals, watchdog, shutdown), uvicorn on the Unix socket, and the timer tick.
+Threads: main (signals, watchdog, shutdown), uvicorn on the Unix socket, the telemetry receiver
+(uvicorn on a loopback port, V1.4 step 6), and the timer tick.
 The socket is created by ecf (umask 077, 0600, in a 0700 directory) because uvicorn's own setup
 would make it 0666. A single-instance lock guards the data directory.
 """
@@ -51,6 +52,7 @@ from ecf_server import (
     retention,
     schedule,
     stages,
+    telemetry_app,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
@@ -517,6 +519,15 @@ class Service:
             )
         )
 
+    def _receiver(self) -> tuple[uvicorn.Server, threading.Thread, socket.socket]:
+        """The telemetry receiver: loopback TCP, its own app and server (SPEC §11.5; V1.4)."""
+        tsock = telemetry_app.bind()
+        self.state.telemetry.port = int(tsock.getsockname()[1])
+        receiver = telemetry_app.server(self.state)
+        thread = threading.Thread(target=receiver.run, kwargs={"sockets": [tsock]},
+                                  name="telemetry", daemon=True)  # fmt: skip
+        return receiver, thread, tsock
+
     def _slack_runtime(self) -> tuple[SlackRuntime, threading.Thread]:
         slack = SlackRuntime(self.clock, self.state.notifier, self.state.connect, self.state.store,
                              install=self.paths.install)  # fmt: skip
@@ -539,6 +550,17 @@ class Service:
         worker.join(STOP_TIMEOUT)
         if slack.is_alive():  # never started in dev mode
             slack.join(STOP_TIMEOUT)
+
+    def _wait_for_stop(self) -> None:
+        """The main thread: until a signal or the watchdog stops the service."""
+        while not self.stop.wait(1.0):
+            if self._signalled is not None:
+                log.info("service.signal", signal=signal.Signals(self._signalled).name)
+                self.stop.set()
+            elif self.watchdog_expired():
+                log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
+                self.exit_code = EXIT_CRASH
+                self.stop.set()
 
     def _run_locked(self) -> int:
         st = breaker.on_start(self.paths.crash_state, self.paths.running_marker, self.clock.now())
@@ -563,6 +585,7 @@ class Service:
         web = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
+        receiver, tel, tsock = self._receiver()
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
         worker, model_worker = self._workers()
         slack, slack_thread = self._slack_runtime()
@@ -571,6 +594,7 @@ class Service:
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
         web.start()
+        tel.start()
         timer.start()
         worker.start()
         model_worker.start()
@@ -578,16 +602,12 @@ class Service:
             slack_thread.start()
         self.work.set()  # check anything already due at start
         log.info("service.started", install=self.paths.install, migrations=applied)
-        while not self.stop.wait(1.0):
-            if self._signalled is not None:
-                log.info("service.signal", signal=signal.Signals(self._signalled).name)
-                self.stop.set()
-            elif self.watchdog_expired():
-                log.error("service.watchdog", seconds=self.opts.watchdog_seconds)
-                self.exit_code = EXIT_CRASH
-                self.stop.set()
+        self._wait_for_stop()
         server.should_exit = True
+        receiver.should_exit = True
         self._join(web, timer, worker, slack_thread)
+        tel.join(STOP_TIMEOUT)
+        tsock.close()
         # only a stop you asked for disarms the dead-man's switch (OD-222)
         slack.close(clean_stop=self.exit_code == EXIT_OK and self.state.stopping_on_purpose)
         self._final_flush()

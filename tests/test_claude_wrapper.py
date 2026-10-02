@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import stat
 import sys
 from pathlib import Path
@@ -18,15 +19,43 @@ if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; exit 0; fi
 mkdir -p "$CLAUDE_CONFIG_DIR/projects/p"
 echo '{{"x":1}}' > "$CLAUDE_CONFIG_DIR/projects/p/s.jsonl"
 {{ echo "ARGS=$*"; echo "TOKEN=$ECF_PROFILE_TOKEN"; echo "CFG=$CLAUDE_CONFIG_DIR";
-   echo "PROMPTS=$OTEL_LOG_USER_PROMPTS"; echo "PWD=$(pwd)"; }} > "{record}"
+   echo "PROMPTS=$OTEL_LOG_USER_PROMPTS"; echo "PWD=$(pwd)";
+   echo "TELEMETRY=$CLAUDE_CODE_ENABLE_TELEMETRY"; echo "OTLP=$OTEL_EXPORTER_OTLP_ENDPOINT";
+   echo "PROTOCOL=$OTEL_EXPORTER_OTLP_PROTOCOL"; }} > "{record}"
+"{python}" "{session}" > "{record}.status"
 exit 0
+"""
+# What the fake session does: one telemetry export to the receiver, and the status line once.
+FAKE_SESSION = """
+import json, os, subprocess, urllib.request
+cfg = os.environ["CLAUDE_CONFIG_DIR"]
+cmd = json.load(open(os.path.join(cfg, "settings.json")))["statusLine"]["command"]
+limits = {"five_hour": {"used_percentage": 12.5, "resets_at": 1790000000},
+          "seven_day": {"used_percentage": 95, "resets_at": 1790500000}}
+line = subprocess.run(cmd, shell=True, input=json.dumps({"session_id": "s", "rate_limits": limits}),
+                      capture_output=True, text=True).stdout
+attrs = [{"key": "event.name", "value": {"stringValue": "api_request"}},
+         {"key": "event.sequence", "value": {"intValue": "1"}},
+         {"key": "model", "value": {"stringValue": "claude-haiku-4-5-20251001"}},
+         {"key": "query_source", "value": {"stringValue": "main"}},
+         {"key": "input_tokens", "value": {"intValue": "1200"}},
+         {"key": "user.email", "value": {"stringValue": "someone@example.com"}}]
+body = {"resourceLogs": [{"scopeLogs": [{"logRecords": [{"attributes": attrs}]}]}]}
+auth = os.environ["OTEL_EXPORTER_OTLP_HEADERS"].split("=", 1)[1]
+req = urllib.request.Request(os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] + "/v1/logs",
+                             data=json.dumps(body).encode(),
+                             headers={"Content-Type": "application/json", "Authorization": auth})
+print(line.strip(), urllib.request.urlopen(req, timeout=10).status)
 """
 
 
 def fake_claude(bin_dir: Path, record: Path, version: str = "2.1.281") -> None:
     bin_dir.mkdir(exist_ok=True)
+    session = bin_dir / "fake_session.py"
+    session.write_text(FAKE_SESSION)
     f = bin_dir / "claude"
-    f.write_text(FAKE_CLAUDE.format(version=version, record=record))
+    f.write_text(FAKE_CLAUDE.format(version=version, record=record, python=sys.executable,
+                                    session=session))  # fmt: skip
     f.chmod(0o755)
 
 
@@ -36,8 +65,9 @@ MODELS = {"main_session": "claude-haiku-x", "classifier": "claude-haiku-x",
 
 
 def test_settings_document() -> None:
-    d = cw.settings_doc("claude-haiku-x")
+    d = cw.settings_doc("claude-haiku-x", "status-cmd")
     assert d["cleanupPeriodDays"] == 1 and d["model"] == "claude-haiku-x"
+    assert d["statusLine"] == {"type": "command", "command": "status-cmd"}
     assert d["permissions"]["defaultMode"] == "dontAsk"
     assert d["permissions"]["allow"] == [
         "mcp__ecf__review_queue", "Agent", "mcp__ecf__get_message",
@@ -130,8 +160,12 @@ def test_version_floor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_privacy_gates_forced_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTEL_LOG_USER_PROMPTS", "1")
     monkeypatch.setenv("OTEL_LOG_RAW_API_BODIES", "1")
-    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok")
+    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", cw.telemetry_env(4318, "b"))
     assert env["OTEL_LOG_USER_PROMPTS"] == "0" and env["OTEL_LOG_RAW_API_BODIES"] == "0"
+    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
+    assert env["OTEL_EXPORTER_OTLP_HEADERS"] == "Authorization=Bearer b"
+    assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/json"
     assert env["ECF_PROFILE_TOKEN"] == "tok"
     assert env["CLAUDE_CONFIG_DIR"].endswith("claude-config")
 
@@ -145,6 +179,10 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
     assert cw.run(running, ["--model", "x"], echo=said.append) == 0
     assert said == ["ecf claude: 0 item(s) waiting for review; type /ecf-review to start."]
     rec = dict(line.split("=", 1) for line in record.read_text().splitlines())
+    assert rec["TELEMETRY"] == "1" and rec["PROTOCOL"] == "http/json"
+    assert rec["OTLP"].startswith("http://127.0.0.1:")
+    # the status line reached the service and printed; the export was accepted
+    assert Path(f"{record}.status").read_text().strip() == "ecf review · 5h 12% · 7d 95% 200"
     lay = cw.layout(running)
     assert rec["ARGS"].startswith("--strict-mcp-config --mcp-config ")
     assert f"--plugin-dir {lay.plugin_dir} " in rec["ARGS"]
@@ -157,6 +195,20 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
         r = c.get("/v1/status", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 401
     assert not (lay.config_dir / "projects").exists()  # transcripts purged
+    db = sqlite3.connect(running.db)
+    try:
+        calls = db.execute("SELECT model, source, input_tokens FROM claude_calls").fetchall()
+        plan = db.execute("SELECT five_hour_end, seven_day_end, ended_at IS NOT NULL"
+                          " FROM claude_sessions").fetchall()  # fmt: skip
+    finally:
+        db.close()
+    assert calls == [("claude-haiku-4-5-20251001", "main", 1200)]
+    assert plan == [(12.5, 95.0, 1)]
+    said.clear()
+    assert cw.run(running, [], echo=said.append) == 0  # the next session shows the plan usage
+    assert said[1].startswith("Plan used after the last review (") and said[1].endswith(
+        "UTC): 5-hour 12%, 7-day 95%"
+    )
 
 
 @pytest.mark.parametrize("args", [[], ["--model", "x"], ["--model=x", "--verbose"]])
@@ -187,7 +239,7 @@ def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.example")
     monkeypatch.setenv("HTTPS_PROXY", "http://corp-proxy.example:8080")
-    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok")
+    env = cw.session_env(cw.layout(Paths("t", tmp_path)), "tok", {})
     for gone in (
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",

@@ -11,6 +11,11 @@ The plugin is rendered from the wheel's templates at each start (operator decisi
 OD-283): each agent's `model:` is the pin in force (models.lock plus any override, from the
 service), so the plugin always matches both the package and the pins. Unverified, confirm in
 V1.4: that `model:` takes a full model ID, and the `/ecf-review` name of a plugin skill.
+
+Telemetry (V1.4 step 6; SPEC §11.5, §13.4): logs and metrics go only to the service's loopback
+receiver, OTLP over HTTP with JSON, with the session's own bearer token; logs every second, so the
+model check binds a call within about 2 s. The status line runs `ecf.statusline`, which sends the
+service only the plan-usage numbers.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -95,7 +101,7 @@ PASSTHROUGH_FLAGS = frozenset({"--verbose"})
 KEEP = frozenset({"settings.json", "ecf-mcp.json", ".credentials.json", ".claude.json", "plugins"})
 # Forced in the process environment so a value in the user's shell can't change them.
 PRIVACY_ENV = {
-    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",  # on in V1.4, exported only to the local receiver
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",  # on only with the receiver's settings (telemetry_env)
     "OTEL_LOG_USER_PROMPTS": "0",
     "OTEL_LOG_ASSISTANT_RESPONSES": "0",
     "OTEL_LOG_TOOL_DETAILS": "0",
@@ -106,6 +112,26 @@ PRIVACY_ENV = {
     "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "180000",
     "DISABLE_AUTOUPDATER": "1",  # OD-276: updates come from normal use, not ecf's sessions
 }
+
+
+LOGS_INTERVAL_MS = "1000"  # as in the 2026-10-02 test; the model check waits about 2 s
+
+
+def telemetry_env(port: int, bearer: str) -> dict[str, str]:
+    """Claude Code telemetry to the service's receiver only (the user's OTEL_* never pass)."""
+    return {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{port}",
+        "OTEL_EXPORTER_OTLP_HEADERS": f"Authorization=Bearer {bearer}",
+        "OTEL_LOGS_EXPORT_INTERVAL": LOGS_INTERVAL_MS,
+    }
+
+
+def statusline_command(socket: Path) -> str:
+    return shlex.join([sys.executable, "-m", "ecf.statusline", str(socket)])
 
 
 @dataclass(frozen=True)
@@ -124,10 +150,11 @@ def layout(paths: Paths) -> Layout:
                   cfg / "ecf-mcp.json", cfg / "ecf-plugin", cfg / ".claude.json")  # fmt: skip
 
 
-def settings_doc(main_model: str) -> dict[str, Any]:
+def settings_doc(main_model: str, statusline: str) -> dict[str, Any]:
     return {
         "cleanupPeriodDays": 1,
         "model": main_model,
+        "statusLine": {"type": "command", "command": statusline},
         "permissions": {
             "defaultMode": "dontAsk",
             "allow": ALLOWED_TOOLS,
@@ -196,7 +223,7 @@ def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str
     for d in (lay.config_dir, lay.work_dir):
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
         d.chmod(0o700)
-    docs = ((lay.settings, settings_doc(models["main_session"])),
+    docs = ((lay.settings, settings_doc(models["main_session"], statusline_command(socket))),
             (lay.mcp_config, mcp_doc(ecf_mcp, socket)))  # fmt: skip
     for path, doc in docs:
         _write(path, json.dumps(doc, indent=2) + "\n")
@@ -254,12 +281,28 @@ def check_args(args: list[str]) -> list[str]:
     return args
 
 
-def session_env(lay: Layout, token: str) -> dict[str, str]:
+def session_env(lay: Layout, token: str, telemetry: dict[str, str]) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith("LC_")}
     env.update(PRIVACY_ENV)
+    env.update(telemetry)
     env["CLAUDE_CONFIG_DIR"] = str(lay.config_dir)
     env["ECF_PROFILE_TOKEN"] = token
     return env
+
+
+def plan_line(p: Any) -> str | None:
+    """The plan usage after the last review (status line; Pro and Max plans only)."""
+    if not isinstance(p, dict):
+        return None
+    d = cast(dict[str, Any], p)
+    windows = (("five_hour", "5-hour"), ("seven_day", "7-day"))
+    parts = [f"{label} {d[k]:.0f}%" for k, label in windows if isinstance(d.get(k), int | float)]
+    if not parts:
+        return None
+    return (
+        f"Plan used after the last review ({str(d.get('at'))[:16].replace('T', ' ')} UTC): "
+        + ", ".join(parts)
+    )
 
 
 def purge_transcripts(lay: Layout) -> int:
@@ -295,9 +338,15 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
         raise
     waiting = int(session.get("waiting", 0))
     echo(f"ecf claude: {waiting} item(s) waiting for review; type /ecf-review to start.")
+    if line := plan_line(session.get("last_plan")):
+        echo(line)
     args = [claude, "--strict-mcp-config", "--mcp-config", str(lay.mcp_config),
             "--plugin-dir", str(lay.plugin_dir), *extra_args]  # fmt: skip
-    env = session_env(lay, session["profile_token"])
+    port = session.get("telemetry_port")
+    if not isinstance(port, int):
+        raise ServiceUnavailableError("the service's telemetry receiver isn't listening")
+    env = session_env(lay, session["profile_token"],
+                      telemetry_env(port, session["telemetry_bearer"]))  # fmt: skip
     try:
         return subprocess.run(args, cwd=lay.work_dir, env=env, check=False).returncode  # noqa: S603
     finally:

@@ -55,6 +55,7 @@ from ecf_server import (
     claude_pins,
     claude_queue,
     claude_review,
+    claude_usage,
     config,
     db,
     digests,
@@ -78,6 +79,8 @@ from ecf_server import (
     stages,
     stats,
     stepup,
+    telemetry,
+    telemetry_app,
 )
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
@@ -85,6 +88,7 @@ from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
 from ecf_server.stepper import Stepper
+from ecf_server.telemetry import Telemetry
 
 API_VERSION = 1
 
@@ -144,6 +148,10 @@ class ServiceState:
     # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
     throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
+    # Claude Code telemetry per `ecf claude` session, and how long a read or submission waits for
+    # its call's events (V1.4 step 6; logs are exported every second)
+    telemetry: Telemetry = field(default_factory=Telemetry, repr=False)
+    telemetry_wait_s: float = 2.0
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -223,6 +231,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
                 "model": _model_status(state),
+                "claude": _claude_status(state),
             }
         )
 
@@ -233,10 +242,11 @@ def create_app(state: ServiceState) -> Starlette:
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
-        models, waiting = _review_setup(state)
+        bearer = state.telemetry.open(s.session_id)
+        setup = _review_setup(state, s.session_id)
         return JSONResponse(
             {"session_id": s.session_id, "profile_token": s.token, "profile": s.profile.value,
-             "models": models, "waiting": waiting},
+             "telemetry_port": state.telemetry.port, "telemetry_bearer": bearer} | setup,
             status_code=201,
         )  # fmt: skip
 
@@ -247,7 +257,7 @@ def create_app(state: ServiceState) -> Starlette:
             removed = state.sessions.pop(session_id, None)
         if removed is None:
             raise NotFoundError(f"no session {session_id[:8]}")
-        _end_claims(state, session_id)
+        _end_session(state, session_id)
         log.info("session.revoked", session_id=session_id)
         return JSONResponse({"revoked": session_id})
 
@@ -350,14 +360,43 @@ def _end_claims(state: ServiceState, session_id: str) -> None:
         conn.close()
 
 
-def _review_setup(state: ServiceState) -> tuple[dict[str, str], int]:
-    """What `ecf claude` needs to start a session (V1.4 step 5): the Claude pins in force, for
-    the plugin's agents and the main session, and how many items wait for review."""
+def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
+    """What `ecf claude` needs to start a session (V1.4 steps 5-6): the Claude pins in force, for
+    the plugin's agents and the main session, how many items wait for review, and the plan usage
+    after the last review."""
     if state.db_path is None:
-        return claude_pins.load_lock(), 0
+        return {"models": claude_pins.load_lock(), "waiting": 0, "last_plan": None}
     conn = state.connect()
     try:
-        return claude_pins.effective(conn), sum(claude_queue.waiting(conn).values())
+        claude_usage.start_session(conn, state.clock, session_id)
+        return {"models": claude_pins.effective(conn),
+                "waiting": sum(claude_queue.waiting(conn).values()),
+                "last_plan": claude_usage.last_plan(conn)}  # fmt: skip
+    finally:
+        conn.close()
+
+
+def _end_session(state: ServiceState, session_id: str) -> None:
+    """Held submissions are settled (unbound ones refused) before the claims end and the
+    session's usage is written (V1.4 step 6)."""
+    if state.db_path is not None:
+        telemetry_app.settle_bound(state, session_id, final=True)
+    tel = state.telemetry.close(session_id)
+    _end_claims(state, session_id)
+    if tel is not None and state.db_path is not None:
+        conn = state.connect()
+        try:
+            claude_usage.end_session(conn, state.clock, tel)
+        finally:
+            conn.close()
+
+
+def _claude_status(state: ServiceState) -> dict[str, Any]:
+    if state.db_path is None:
+        return {"last_review": None}
+    conn = state.connect()
+    try:
+        return {"last_review": claude_usage.last_review(conn)}
     finally:
         conn.close()
 
@@ -831,6 +870,21 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
+    def _call_id(body: dict[str, Any]) -> str | None:
+        return telemetry.valid_tool_use_id(body.get("tool_use_id"))
+
+    def _submitted(sid: str, conn: sqlite3.Connection,
+                   got: dict[str, Any] | telemetry.Hold) -> dict[str, Any]:  # fmt: skip
+        """A valid submission waits briefly for its call's telemetry; if it hasn't come, it
+        stays held and is settled when it arrives, or refused at session end (OD-268)."""
+        if not isinstance(got, telemetry.Hold):
+            return got
+        seen = state.telemetry.seen(sid, got.tool_use_id, state.telemetry_wait_s)
+        if seen is None and state.telemetry.hold(got):
+            return {"accepted": True, "pending": True, "errors": []}
+        # bound, or the session ended while it waited (then it is refused as unbound)
+        return claude_review.settle(conn, state.clock, state.notifier, state.telemetry, got, seen)
+
     @allow(Caller.WORK)
     def review_queue(request: Request) -> JSONResponse:
         body, sid = _body(request), _session(request)
@@ -838,34 +892,51 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise InvalidInputError("limit must be a whole number")
         address = _opt_str(body, "address_id")
+        stopped = state.telemetry.stopped(sid)
         return _with_conn(lambda c: claude_review.review_queue(
-            c, state.clock, sid, address=address, limit=limit))  # fmt: skip
+            c, state.clock, sid, address=address, limit=limit, stopped=stopped))  # fmt: skip
 
     @allow(Caller.WORK)
     def message(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
-        token = _str(body, "claim_token")
-        return _with_conn(lambda c: claude_review.get_message(c, state.clock, sid, ref, token))
+        token, call = _str(body, "claim_token"), _call_id(body)
+
+        def seen() -> telemetry.Seen | None:
+            if call is None:
+                return None
+            return state.telemetry.seen(sid, call, state.telemetry_wait_s)
+
+        return _with_conn(lambda c: claude_review.get_message(c, state.clock, sid, ref, token,
+                                                              seen))  # fmt: skip
 
     @allow(Caller.WORK)
     def classification(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
         token = _str(body, "claim_token")
-        return _with_conn(lambda c: claude_review.record_classification(
-            c, state.clock, sid, ref, token, body.get("classification")))  # fmt: skip
+        got, call = body.get("classification"), _call_id(body)
+        return _with_conn(lambda c: _submitted(sid, c, claude_review.record_classification(
+            c, state.clock, sid, ref, token, got, call)))  # fmt: skip
 
     @allow(Caller.WORK)
     def proposal(request: Request) -> JSONResponse:
         body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
         token = _str(body, "claim_token")
-        return _with_conn(lambda c: claude_review.propose_action(
-            c, state.clock, sid, ref, token, body))  # fmt: skip
+        return _with_conn(lambda c: _submitted(sid, c, claude_review.propose_action(
+            c, state.clock, sid, ref, token, body, _call_id(body))))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def statusline(request: Request) -> JSONResponse:
+        """The status-line script's plan usage (SPEC §13.4): numbers only."""
+        recorded = state.telemetry.plan(_session(request),
+                                        telemetry.parse_plan(_body(request)))  # fmt: skip
+        return JSONResponse({"recorded": recorded})
 
     return [
         Route("/v1/review-queue", review_queue, methods=["POST"]),
         Route("/v1/claims/{ref}/message", message, methods=["POST"]),
         Route("/v1/claims/{ref}/classification", classification, methods=["POST"]),
         Route("/v1/claims/{ref}/proposal", proposal, methods=["POST"]),
+        Route("/v1/statusline", statusline, methods=["POST"]),
     ]
 
 
@@ -899,7 +970,8 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
-        """SPEC §13.4 (V1.3 step 9): `ecf stats`."""
+        """SPEC §13.4 (V1.3 step 9): `ecf stats`; Claude's part (V1.4 step 6) isn't split by
+        address, so it comes only without `address` and for presets B and C."""
         q = request.query_params
         try:
             hours = float(q.get("hours", "168"))
@@ -912,7 +984,11 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             ref = q.get("address")
             aid = addresses.get_address(conn, ref)["address_id"] if ref else None
             since = state.clock.now() - timedelta(hours=hours)
-            return JSONResponse(stats.report(conn, since, address=aid, preset=q.get("preset")))
+            preset = q.get("preset")
+            out = stats.report(conn, since, address=aid, preset=preset)
+            if aid is None and preset in (None, "B", "C"):
+                out["claude"] = claude_usage.report(conn, since)
+            return JSONResponse(out)
         finally:
             conn.close()
 

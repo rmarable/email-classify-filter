@@ -189,7 +189,25 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
     else:
         out.append(Check("secret store", Level.OK, ss["backend"]))
     out += judge_addresses(st)
+    out += judge_claude(st)
     return out
+
+
+def judge_claude(st: dict[str, Any]) -> list[Check]:
+    """The Claude model check of the last `ecf claude` session (SPEC §7.5; V1.4 step 6)."""
+    claude: dict[str, Any] = st.get("claude") or {}
+    last: dict[str, Any] | None = claude.get("last_review")
+    if not last:
+        return []
+    when = str(last["ended_at"])[:16].replace("T", " ")
+    if last.get("refused"):
+        return [Check("claude model check", Level.WARN,
+                      f"{last['refused']} refused in the review of {when} UTC (model"
+                      f" {last.get('refused_model') or 'unknown'}, expected"
+                      f" {last.get('expected_model') or 'unknown'})",
+                      "ecf models status; check claude_model_override and Claude Code's model"
+                      " settings")]  # fmt: skip
+    return [Check("claude model check", Level.OK, f"no refusals in the review of {when} UTC")]
 
 
 def judge_addresses(st: dict[str, Any]) -> list[Check]:
