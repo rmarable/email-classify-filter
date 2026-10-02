@@ -9,7 +9,8 @@ Runs on items just created by a fetch, before any model. Each trigger that fired
 - unverified payment  -> label(unverified_sender), flag, and a digest section (rule 1a)
 
 The decision is stored on the item (`prechecked`, and `facts.precheck`) and audited. Items stay at
-`new` (§5.4: no status change); the model check picks them up later. In shadow, nothing is done to
+`new` (§5.4: no status change); the model check picks them up later, except in preset C, where
+they go on to `awaiting_claude` (V1.4 step 1). In shadow, nothing is done to
 the mailbox; outside shadow, label and flag run under a grant (actions.py). Pause never stops the
 pre-check (§5.4). Each escalation is queued in `escalations`, and the Slack thread posts it
 (`escalations.py`, V1.2); V1.1 recorded them only as pending.
@@ -22,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from ecf_server import actions
+from ecf_server import actions, claude_queue
 from ecf_server.actions import Planned
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -161,6 +162,7 @@ def run(
             except actions.MessageChangedError as exc:
                 o.skipped = exc.detail
         _record(conn, clock, item, facts, stage, o)
+        claude_queue.route_new(conn, clock, sid)  # preset C: every email waits for Claude
         out.append(o)
     return out
 

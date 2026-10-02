@@ -5,8 +5,9 @@ After the classifier stores a classification, `apply` plans (policy.py) and move
 - **Escalations** queue at once in every stage, as the pre-check's do (a model-driven fraud guard
   escalates the same way); the Slack thread posts them. An item the pre-check already escalated
   isn't queued twice.
-- **To the actor:** when the rule continues to the actor, the item waits at `classified` for it
-  (V1.3 step 4c); `apply` is called again with the actor's proposal.
+- **To the actor:** when the rule continues to the actor, the item waits at `classified` for the
+  local actor (preset A, V1.3 step 4c) or at `awaiting_claude` for `/ecf-review` (B and C, V1.4
+  step 1); `apply` is called again with the actor's proposal.
 - **shadow:** `classified → proposed → observed`; the plan is kept for review (V1.3 step 6a).
 - **assist:** when every mailbox action is safe (label, flag), `proposed → executing` under an
   automatic grant; otherwise the whole plan is `held` until the address goes live.
@@ -30,7 +31,7 @@ from typing import Any
 
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.schema import load_schema_v1
-from ecf_server import approvals, config, items, jobs, modelq, policy
+from ecf_server import approvals, claude_queue, config, items, jobs, modelq, policy
 from ecf_server.actions import Planned as MailAction
 from ecf_server.actions import action_hash
 from ecf_server.clock import Clock, to_ts
@@ -90,8 +91,8 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     mailbox = [MailAction(a.name, a.target) for a in p.actions if a.name in MAILBOX]
     needs_person = any(a.mode == "approve" for a in p.actions if a.name in MAILBOX)
     _record(conn, clock, sid, p, mailbox, source)
-    if p.to_actor and source == "rule":
-        return Status.CLASSIFIED  # the actor decides next (step 4c)
+    if p.to_actor and source == "rule":  # the actor decides next: local (4c) or Claude (V1.4)
+        return claude_queue.to_actor(conn, clock, sid)
     ctx = TransitionContext(stage=stage)
     if item["status"] != Status.PROPOSED:  # from classified, or clarified after an answer
         items.transition(conn, clock, StableId(sid), Status.PROPOSED, ctx, actor="service")

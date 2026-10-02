@@ -351,6 +351,10 @@ def _refuse_duplicates(conn: sqlite3.Connection, address_id: str, email: str) ->
                 f"{row['email']} already uses id {row['address_id']!r}"
                 + (" (removed; add it again with that id)" if row["removed_at"] else "")
             )
+        # a preset changes only by removing and adding again, and removal resolves every open
+        # item first: none may wait for a model (or Claude) under the old preset (V1.4 step 1)
+        if _open_items(conn, address_id):
+            raise ConflictError(f"{address_id!r} still has open items; remove it again first")
 
 
 def _set(conn: sqlite3.Connection, key: str, value: Any, now: str, actor: str) -> None:

@@ -112,11 +112,14 @@ class Exclusive:
 EXCLUSIVE = Exclusive()
 
 
-# what waits for the local model: new mail for the classifier, and the actor's items (a rule
-# continued to it, or you answered its question)
-WAITING = ("i.model_failed = 0 AND (i.status = 'new' OR i.status = 'clarified'"
+# what waits for the local model: new mail for the classifier (presets A and B; C's waits for
+# Claude), and the actor's items in preset A (a rule continued to it, or you answered its
+# question; in B the actor is Claude, V1.4 step 1)
+_PRESET = "(SELECT preset FROM addresses WHERE address_id = i.address_id)"
+WAITING = (f"i.model_failed = 0 AND ((i.status = 'new' AND {_PRESET} IN ('A', 'B'))"
+           f" OR ({_PRESET} = 'A' AND (i.status = 'clarified'"
            " OR (i.status = 'classified' AND i.decision_source = 'rule'"
-           " AND json_extract(i.proposal, '$.plan.to_actor') = 1))")  # fmt: skip
+           " AND json_extract(i.proposal, '$.plan.to_actor') = 1))))")  # fmt: skip
 
 
 def waiting(conn: sqlite3.Connection) -> dict[str, int]:

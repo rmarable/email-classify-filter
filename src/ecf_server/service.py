@@ -35,6 +35,7 @@ from ecf_server import (
     audit,
     breaker,
     checks,
+    claude_queue,
     daily,
     db,
     decide,
@@ -237,6 +238,7 @@ class Service:
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
+                claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)
