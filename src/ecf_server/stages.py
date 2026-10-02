@@ -238,7 +238,8 @@ def _held_plan(conn: sqlite3.Connection, item: sqlite3.Row) -> policy.Plan:
     planned: list[dict[str, Any]] = doc.get("actions") or []
     return policy.Plan(
         str(doc.get("rule", "")),
-        actions=[policy.Planned(str(a["name"]), a.get("target"), a["mode"]) for a in planned],
+        actions=[policy.Planned(str(a["name"]), a.get("target"), a["mode"], a.get("payload"))
+                 for a in planned],
         high_risk=bool(doc.get("high_risk")),
         payment_or_fraud=bool(doc.get("payment_or_fraud")),
         actor=doc.get("actor"),

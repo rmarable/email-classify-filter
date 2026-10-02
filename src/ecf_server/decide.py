@@ -31,7 +31,7 @@ from typing import Any
 
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.schema import load_schema_v1
-from ecf_server import approvals, claude_queue, config, items, jobs, modelq, policy
+from ecf_server import approvals, claude_queue, config, items, jobs, modelq, outbound_plan, policy
 from ecf_server.actions import Planned as MailAction
 from ecf_server.actions import action_hash
 from ecf_server.clock import Clock, to_ts
@@ -40,7 +40,8 @@ from ecf_server.log_bridge import log
 from ecf_server.policy import Context, Plan
 from ecf_server.state_machine import Stage, Status, TransitionContext
 
-MAILBOX = frozenset({"label", "flag", "mark_read", "archive", "move", "junk", "draft_reply"})
+MAILBOX = frozenset({"label", "flag", "mark_read", "archive", "move", "junk", "draft_reply",
+                     "reply_template", "forward_internal"})  # fmt: skip
 ASSIST_SAFE = frozenset({"label", "flag"})
 AUTO_GRANT_TTL_S = 3600
 EXECUTE_ATTEMPTS = 3
@@ -50,8 +51,8 @@ BACKLOG_BATCH = modelq.BACKLOG_BATCH  # §5.3: above this, approvals go to diges
 def context(conn: sqlite3.Connection, item: sqlite3.Row,
             classification: dict[str, Any] | None = None) -> Context:  # fmt: skip
     """`classification`: another than the item's (the local fallback's shadow run, V1.4)."""
-    addr = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
-                        (item["address_id"],)).fetchone()  # fmt: skip
+    addr = conn.execute("SELECT sensitivity, outbound, preset FROM addresses"
+                        " WHERE address_id = ?", (item["address_id"],)).fetchone()  # fmt: skip
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
     cfg = config.current(conn)
     policy_doc: dict[str, Any] = cfg["action_policy"] or {}
@@ -75,6 +76,10 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
         move_folders=frozenset(cfg["move_folders"] or []),
         confirmed_category=confirmed,
         batch_risky=claude_queue.batch_risky(conn, item["stable_id"]),
+        outbound=bool(addr["outbound"]) if addr else False,
+        local_pair=addr is None or addr["preset"] == "A" or bool(item["fallback_at"]),
+        templates=frozenset(outbound_plan.enabled_templates(conn)),
+        forwards=frozenset(outbound_plan.forward_entries(conn)),
     )
 
 
@@ -93,7 +98,7 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
                                (item["address_id"],)).fetchone()["stage"])  # fmt: skip
     if any(a.name == "escalate" for a in p.actions):
         _escalate(conn, clock, item)
-    mailbox = [MailAction(a.name, a.target) for a in p.actions if a.name in MAILBOX]
+    mailbox = [MailAction(a.name, a.target, a.payload) for a in p.actions if a.name in MAILBOX]
     needs_person = any(a.mode == "approve" for a in p.actions if a.name in MAILBOX)
     _record(conn, clock, sid, p, mailbox, source)
     if p.to_actor and source == "rule":  # the actor decides next: local (4c) or Claude (V1.4)
@@ -129,7 +134,11 @@ def _record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan,
         "actions": [a.to_json() for a in mailbox],
         "plan": {
             "rule": p.rule_id,
-            "actions": [{"name": a.name, "target": a.target, "mode": a.mode} for a in p.actions],
+            "actions": [
+                {"name": a.name, "target": a.target, "mode": a.mode}
+                | ({"payload": a.payload} if a.payload is not None else {})
+                for a in p.actions
+            ],
             "dropped": [{"name": d.name, "target": d.target, "why": d.why} for d in p.dropped],
             "to_actor": p.to_actor,
             "high_risk": p.high_risk,
@@ -144,9 +153,9 @@ def _record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan,
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute(
-            "UPDATE items SET proposal = ?, decision_source = ?, updated_at = ?"
-            " WHERE stable_id = ?",
-            (json.dumps(doc, sort_keys=True), source, now, sid),
+            "UPDATE items SET proposal = ?, decision_source = ?, updated_at = ?,"
+            " suppressed_action = coalesce(?, suppressed_action) WHERE stable_id = ?",
+            (json.dumps(doc, sort_keys=True), source, now, p.suppressed, sid),
         )
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"

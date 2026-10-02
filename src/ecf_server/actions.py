@@ -15,9 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from ecf.errors import ConflictError, GrantInvalidError
 from ecf.ids import new_grant_id
@@ -32,11 +32,23 @@ HEADER_LIMIT = 256 * 1024
 
 @dataclass(frozen=True)
 class Planned:
-    name: str  # label | flag | escalate
+    name: str  # label | flag | escalate, and the mailbox actions (§8.3)
     target: str | None = None
+    # a draft's or send's recipient and text (outbound_plan.resolve; V1.5, OD-317); in the grant's
+    # action hash, and left out of the JSON when absent so earlier grants keep their hash
+    payload: dict[str, Any] | None = field(default=None, compare=False, hash=False)
 
     def to_json(self) -> dict[str, Any]:
-        return {"name": self.name, "target": self.target}
+        out: dict[str, Any] = {"name": self.name, "target": self.target}
+        if self.payload is not None:
+            out["payload"] = self.payload
+        return out
+
+    @classmethod
+    def from_json(cls, d: dict[str, Any]) -> Planned:
+        raw: Any = d.get("payload")
+        payload = cast("dict[str, Any]", raw) if isinstance(raw, dict) else None
+        return cls(str(d["name"]), d.get("target"), payload)
 
 
 def keyword(install: str, label: str) -> str:

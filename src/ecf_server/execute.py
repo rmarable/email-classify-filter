@@ -49,7 +49,7 @@ def run_once(  # noqa: PLR0911 - one return per outcome
         jobs.hold(conn, clock, job.job_id, WORKER, PAUSED_RECHECK_S, "paused")
         return True
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
-    actions = [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]
+    actions = [Planned.from_json(a) for a in p.get("actions", [])]
     try:
         _consume(conn, clock, grant_id, action_hash(sid, item["content_hash"], actions))
     except GrantInvalidError as exc:

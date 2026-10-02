@@ -78,8 +78,11 @@ class Grant:
 
 
 def describe(actions: list[Planned]) -> str:
+    """What the actions do, naming a draft's or send's recipient (§9.5, §9.6)."""
+
     def one(a: Planned) -> str:
         t = a.target or ""
+        to = str((a.payload or {}).get("to") or "")
         return {
             "label": f"label {t}",
             "flag": "flag",
@@ -87,9 +90,9 @@ def describe(actions: list[Planned]) -> str:
             "archive": "archive email",
             "move": f"move to {t}",
             "junk": "move to Junk",
-            "draft_reply": "save a draft reply",
-            "reply_template": f"send template '{t}'",
-            "forward_internal": f"forward to {t}",
+            "draft_reply": f"save a draft reply to {to}" if to else "save a draft reply",
+            "reply_template": f"send template '{t}' to {to}" if to else f"send template '{t}'",
+            "forward_internal": f"forward to {to or t}",
         }.get(a.name, a.name)
 
     return " and ".join(one(a) for a in actions)
@@ -114,7 +117,7 @@ def is_send(actions: list[Planned]) -> bool:
 
 def _actions(item: sqlite3.Row) -> list[Planned]:
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
-    return [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]
+    return [Planned.from_json(a) for a in p.get("actions", [])]
 
 
 def queued_answer(item: sqlite3.Row) -> bool:

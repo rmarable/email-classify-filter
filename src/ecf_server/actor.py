@@ -32,7 +32,7 @@ from typing import Any
 
 from ecf.ids import StableId
 from ecf.schema import load_schema_v1
-from ecf_server import answers, decide, items, ollama, policy
+from ecf_server import answers, decide, items, ollama, outbound_plan, policy
 from ecf_server.classifier import fit
 from ecf_server.clock import Clock
 from ecf_server.log_bridge import log
@@ -215,6 +215,12 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
         answers.ask(conn, clock, sid, got.get("question") or got["reason"])
         return
     one = policy.proposal(ctx, p, got["action"], got["target"] or None, labels)
+    if isinstance(one, Planned) and one.name in outbound_plan.OUTBOUND:
+        try:  # the recipient and text the approval will cover (OD-317)
+            payload = outbound_plan.resolve(conn, item, one.name, one.target, got.get("text"))
+            one = Planned(one.name, one.target, one.mode, payload)
+        except outbound_plan.Unresolved as exc:
+            one = Dropped(one.name, one.target, str(exc.detail))
     if isinstance(one, Dropped):
         p.dropped.append(one)
     else:
