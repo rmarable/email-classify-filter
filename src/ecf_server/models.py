@@ -12,6 +12,10 @@
   while it fails (I6).
 - The check runs each tick once models have been installed on this install (before that there is
   nothing to watch), and before each model round from V1.3 step 2.
+- **After an ecf upgrade** ecf's copy has a new name (`ecf/gemma4-12b:<release>`). When it's
+  missing but Ollama still holds the pinned tag with the pinned digest, the check copies it again
+  by itself (audited) instead of stopping model work until `ecf models install`; an install
+  removes ecf's copies for other releases.
 """
 
 from __future__ import annotations
@@ -55,6 +59,7 @@ def fault_summary(e: OllamaError) -> str:
         "logs_requests": "Ollama is set to write every request, email text included, to disk",
         "timeout": "Ollama doesn't answer in time",
         "http": "Ollama returned an error",
+        "server": "Ollama can't run the local model now",
     }[e.cause]
     detail = f" ({e.detail})" if e.detail else ""
     return f"{what}{detail}."
@@ -66,7 +71,12 @@ def check(
     """Readiness, keeping the alert in step: None (and an open alert) when model work must not
     run."""
     try:
-        ready = ollama.readiness(client, **kw)
+        try:
+            ready = ollama.readiness(client, **kw)
+        except OllamaError as e:
+            if e.cause != "model_missing" or not installed(conn) or not recopy(conn, clock, client):
+                raise
+            ready = ollama.readiness(client, **kw)
     except OllamaError as e:
         kind, other = (LOUD, ALERT) if e.cause in LOUD_CAUSES else (ALERT, LOUD)
         health.resolve_alert(conn, clock, notifier, other, None)
@@ -75,6 +85,55 @@ def check(
     for kind in (ALERT, LOUD):
         health.resolve_alert(conn, clock, notifier, kind, None)
     return ready
+
+
+def recopy(conn: sqlite3.Connection, clock: Clock, client: Client) -> bool:
+    """Copy the pinned tag to this release's ecf name when Ollama still holds it unchanged (after
+    an ecf upgrade); True if it did. Never pulls."""
+    pin = ollama.load_pin()
+    try:
+        if client.digests().get(pin.tag) != pin.digest:
+            return False
+        client.copy(pin.tag, pin.ecf_tag)
+        if client.digests().get(pin.ecf_tag) != pin.digest:
+            return False
+    except OllamaError:
+        return False
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+            " VALUES (?, NULL, 'models.installed', 'service', 'ok',"
+            " json_object('tag', ?, 'digest', ?, 'copied_after_upgrade', 1))",
+            (now, pin.ecf_tag, pin.digest),
+        )
+    return True
+
+
+def prune(client: Client) -> list[str]:
+    """Remove ecf's copies for other releases (best effort); the names removed."""
+    pin = ollama.load_pin()
+    gone: list[str] = []
+    for name in client.digests():
+        if name.startswith(f"{pin.ecf_name}:") and name != pin.ecf_tag:
+            try:
+                client.delete(name)
+                gone.append(name)
+            except OllamaError:
+                continue
+    return gone
+
+
+def needed(conn: sqlite3.Connection) -> bool:
+    """Some address uses a preset that runs Ollama (A or B, §4)."""
+    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL AND preset IN"
+                        " ('A', 'B') LIMIT 1").fetchone() is not None  # fmt: skip
+
+
+def quiet(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
+    """No address uses the local model any more: its alerts no longer apply."""
+    for kind in (ALERT, LOUD):
+        health.resolve_alert(conn, clock, notifier, kind, None)
 
 
 def installed(conn: sqlite3.Connection) -> bool:
@@ -203,6 +262,7 @@ def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Pr
     client.copy(pin.tag, pin.ecf_tag)
     if client.digests().get(pin.ecf_tag) != pin.digest:
         raise OllamaError("digest_mismatch", f"{pin.ecf_tag} after the copy")
+    prune(client)
     now = to_ts(clock.now())
     with write_tx(conn):
         slack_admin.put_setting(conn, INSTALLED_KEY, now, now, actor="os_user")
@@ -212,4 +272,7 @@ def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Pr
             " json_object('tag', ?, 'digest', ?))",
             (now, pin.ecf_tag, pin.digest),
         )
+    from ecf_server import modelq  # noqa: PLC0415 - modelq imports this module
+
+    modelq.retry_all(conn, clock, actor="os_user")  # what it gave up on gets another try
     progress.set(state="done", status="installed", ended_at=now)

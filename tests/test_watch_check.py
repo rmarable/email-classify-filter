@@ -99,6 +99,19 @@ def test_watch_waits_for_the_lock_and_gives_up(paths: Paths) -> None:
     watch.wait_for_lock(paths, timeout_s=0.3)  # released: returns at once
 
 
+def test_watch_restarts_the_unit_when_the_service_wont_let_go(
+    paths: Paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stuck(_paths: Paths) -> None:
+        raise ConflictError("the service didn't stop within 60 s; try again")
+
+    monkeypatch.setattr(watch, "wait_for_lock", stuck)
+    m = FakeManager(running=True)
+    with pytest.raises(ConflictError):
+        watch.run(paths, m, server=Path("/usr/bin/true"))
+    assert m.calls == ["stop", "start"] and m.running
+
+
 def test_a_marker_left_behind_is_reported(paths: Paths) -> None:
     paths.run_dir.mkdir(parents=True)
     watch.marker_path(paths).write_text(json.dumps(
@@ -176,6 +189,33 @@ def test_a_large_backlog_batches_approvals_on_digests(
         "SELECT payload FROM jobs WHERE queue = 'slack_out'")]  # fmt: skip
     approval_cards = [p for p in posts if p["card"]["title"].startswith("Approve?")]
     assert bool(approval_cards) is carded
+
+
+def test_cards_held_back_during_a_backlog_are_posted_once_it_drops(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    from ecf_server import approvals  # noqa: PLC0415
+    from tests.test_digests_daily import slack_setup  # noqa: PLC0415
+
+    slack_setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET stage = 'live'")
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.action_policy', ?, 't', 't')",
+                     (json.dumps({"standard": {"archive": "approve"}}),))  # fmt: skip
+    _waiting_items(conn, clock, decide.BACKLOG_BATCH + 1)
+    sid = make_classified(conn, clock, MARKETING, KNOWN_BULK, sid="ff")
+    assert decide.apply(conn, clock, sid) is Status.AWAITING_APPROVAL
+
+    def cards() -> int:
+        return sum(json.loads(r[0])["card"]["title"].startswith("Approve?") for r in conn.execute(
+            "SELECT payload FROM jobs WHERE queue = 'slack_out'"))  # fmt: skip
+
+    assert approvals.post_held_cards(conn, clock) == 0 and cards() == 0  # still a backlog
+    with write_tx(conn):
+        conn.execute("UPDATE items SET model_failed = 1 WHERE status = 'new'")  # none waits
+    assert approvals.post_held_cards(conn, clock) == 1 and cards() == 1
+    assert approvals.post_held_cards(conn, clock) == 0  # once
 
 
 # ---- step 12a fixes: --until-empty waits; the estimate uses the measured pace -----------------
@@ -282,10 +322,21 @@ def test_the_estimate_uses_the_measured_pace_of_a_backlog_run(
     for _ in range(6):  # a backlog: one email every 16 s, a heat pause inside the run
         ollama.record_call(conn, clock, role="classifier", outcome="ok", digest="d", metrics=m)
         clock.advance(16 if _ != 2 else 180)
-    assert modelq.seconds_per_item(conn) == pytest.approx((16 * 4 + 180) / 5)
+    # the heat pause counts, up to 10 x the 4 s of model time per email
+    assert modelq.seconds_per_item(conn) == pytest.approx((16 * 4 + 40) / 5)
     clock.advance(3600)  # then mail one at a time: the run is long over
     for role in ("classifier", "actor", "classifier"):
         ollama.record_call(conn, clock, role=role, outcome="ok", digest="d", metrics=m)
         clock.advance(3600)
     # the latest run is too short, so model time per email: 9 calls x 4 s over 8 emails
     assert modelq.seconds_per_item(conn) == pytest.approx(9 * 4 / 8)
+
+
+def test_mail_trickling_in_isnt_taken_for_a_slow_backlog(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    m = ollama.Metrics(800, 500, 70, 1, 1, 1, 4_000_000_000)
+    for _ in range(8):  # one email every 5 minutes: each is classified as it arrives
+        ollama.record_call(conn, clock, role="classifier", outcome="ok", digest="d", metrics=m)
+        clock.advance(300)
+    assert modelq.seconds_per_item(conn) == pytest.approx(40)  # not 300

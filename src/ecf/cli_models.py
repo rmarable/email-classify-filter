@@ -12,6 +12,7 @@ import typer
 
 from ecf import ollama_unit
 from ecf.client import LocalClient
+from ecf.errors import ServiceUnavailableError
 from ecf.paths import Paths
 
 POLL_S = 2.0
@@ -54,6 +55,8 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
         st = ollama_unit.manager_for(paths().root).status()
         typer.echo(f"installed: {'yes' if st.installed else 'no'}; running:"
                    f" {'yes' if st.running else 'no'}")  # fmt: skip
+        if st.detail.startswith("its program"):
+            typer.echo(st.detail, err=True)
         if not st.running:
             raise typer.Exit(1)
 
@@ -83,11 +86,18 @@ def run_install(c: LocalClient, root: Path) -> bool:
             last = line
         if p["state"] in ("done", "failed"):
             break
+        if p["state"] == "idle":  # the install's progress lives in the service's memory
+            raise ServiceUnavailableError("the service restarted during the install: run"
+                                          " `ecf models install` again")  # fmt: skip
         time.sleep(POLL_S)
     if p["state"] == "failed":
         typer.echo(f"install failed: {p['error']}", err=True)
         return False
-    typer.echo("installed; check it with: ecf models status")
+    st: dict[str, Any] = c.get("/v1/models")
+    if not st["ready"]:  # installed, but something else stops model work (e.g. the listener)
+        typer.echo(f"installed, but not ready: {st['fault']['text']}", err=True)
+        return False
+    typer.echo("installed and ready; check it any time with: ecf models status")
     return True
 
 
@@ -106,8 +116,8 @@ def _ensure_ollama(c: LocalClient, root: Path) -> None:
         deadline = time.monotonic() + START_WAIT_S
         while _cause(c) == "not_running":
             if time.monotonic() > deadline:
-                typer.echo("Ollama didn't start; see ecf models serve status", err=True)
-                raise typer.Exit(1)
+                raise ServiceUnavailableError(f"Ollama didn't start within {START_WAIT_S:.0f} s;"
+                                              " see `ecf models serve status`")  # fmt: skip
             time.sleep(1)
     elif not unit.status().running:
         typer.echo("note: Ollama is running outside ecf's login item, so ecf can't set its"

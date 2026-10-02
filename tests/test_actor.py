@@ -64,10 +64,18 @@ def _act(conn: sqlite3.Connection, clock: FakeClock, sid: str, reply: str) -> mo
         _reply("move", "INBOX"),
         json.dumps({"action": "flag", "target": ""}),
         json.dumps({"action": "flag", "target": "", "reason": "x", "extra": 1}),
+        _reply("label", "Receipts"),  # a folder isn't a label
+        _reply("move", "invoice"),  # nor a label a folder
+        _reply("label"),  # a label needs one
     ],
 )
 def test_anything_outside_the_vocabulary_is_refused(content: str) -> None:
     assert actor.parse(content, LABELS, FOLDERS) is None
+
+
+def test_a_target_on_an_action_that_takes_none_is_dropped() -> None:
+    got = actor.parse(_reply("flag", "invoice"), LABELS, FOLDERS)
+    assert got is not None and (got["action"], got["target"]) == ("flag", "")
 
 
 def test_the_reason_is_cleaned_and_capped() -> None:
@@ -198,6 +206,23 @@ def test_the_queue_waits_for_actor_items_and_dispatches_them(
                               pipeline.work, check_kw=check_kw())  # fmt: skip
     assert report.done == 1 and modelq.waiting(conn) == {}
     assert item_row(conn, sid)["status"] == "observed"
+
+
+def test_when_the_actor_gives_up_the_rules_plan_goes_ahead_without_it(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    sid = _to_actor(conn, clock)
+    garbage = ChatOllama("garbage").client
+    report = modelq.run_round(conn, clock, FakeNotifier(), garbage(), pipeline.work,
+                              check_kw=check_kw())  # fmt: skip
+    assert report.failed == 1 and report.marked_failed == 0
+    report = modelq.run_round(conn, clock, FakeNotifier(), garbage(), pipeline.work,
+                              check_kw=check_kw())  # fmt: skip
+    assert report.marked_failed == 1 and modelq.waiting(conn) == {}
+    row = item_row(conn, sid)
+    assert (row["status"], row["model_failed"], row["decision_source"]) == ("observed", 0, "rule")
+    assert row["model_failed_at"] is not None  # still counts toward the hour's System Error
+    assert json.loads(row["proposal"])["plan"]["to_actor"] is False
 
 
 @pytest.mark.macos

@@ -28,6 +28,7 @@ class CaseResult(BaseModel):
     # what the model returned: schema field values and the rule they led to; closed-vocabulary
     # values only, never text (OD-259); empty in older files
     got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
+    fraud: bool = False  # expects fraud_guard/fraud_weak or an escalation; False in older files
 
 
 class ResultFile(BaseModel):

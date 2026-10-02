@@ -17,11 +17,13 @@ rule and the commit rules are in `CLAUDE.md`.
 - For local-model work (V1.3 on), Ollama. On macOS use the Homebrew formula and pin it with its
   dependency, so it changes only when you choose (OD-232):
   `brew install ollama && brew pin ollama mlx-c`; `brew list --pinned` shows both. Don't run
-  `brew services start ollama`: its service turns on flash attention and a q8 KV cache, which may
-  change model output (unverified; measured in V1.3). Avoid the Ollama app (cask `ollama-app` or the ollama.com download): it
+  `brew services start ollama`: its service turns on flash attention and a q8 KV cache, which gave
+  the same answers on 8 cards but was slower on every one and used 9.4 GB (measured 2026-09-30 on
+  the development Mac, SPEC §21.2). Avoid the Ollama app (cask `ollama-app` or the ollama.com download): it
   may update itself even when pinned, and has a setting that exposes Ollama on the network. To
   upgrade on purpose: `brew unpin ollama mlx-c && brew upgrade ollama && brew pin ollama mlx-c`,
-  then rerun the eval. Start Ollama with `uv run ecf models serve install` (ecf's login item with
+  then `uv run ecf models serve install` (so the login item points at the new version; `ecf
+  doctor` says when it doesn't) and rerun the eval. Start Ollama with `uv run ecf models serve install` (ecf's login item with
   ecf's settings, OD-246); `ecf models install` does it for you when nothing serves Ollama yet. The
   macOS tests expect port 11434 free or served by that login item, and one of them runs the
   starter cards through the real model, so run `uv run ecf models install` once first. A dev service

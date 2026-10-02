@@ -208,7 +208,7 @@ def undo_item(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sql
         if moved is not None:
             _move_back(src, item, str(moved["folder"]))
             undone.append(f"{moved['name']} back to INBOX")
-        uid = _inbox_uid(src, item)
+        uid = _inbox_uid(src, item, moved=moved is not None)
         for r in record:
             if lost():
                 raise LeaseLostError("the check lost its lease")
@@ -246,12 +246,24 @@ def _move_back(src: MailSource, item: sqlite3.Row, folder: str) -> None:
     src.move_back(folder, found[0])
 
 
-def _inbox_uid(src: MailSource, item: sqlite3.Row) -> int:
-    if item["message_id"]:
-        found = src.find_message_id(item["message_id"])
-        if len(found) == 1:
-            return found[0]
-    return int(json.loads(item["locator"])["uid"])
+def _inbox_uid(src: MailSource, item: sqlite3.Row, *, moved: bool) -> int:
+    """The email's UID in INBOX, checked by content hash: by Message-ID (a sender can reuse one,
+    so every match is checked and exactly one must be this email), else, when it never moved,
+    its stored UID. Raises MessageChangedError otherwise."""
+    candidates = src.find_message_id(item["message_id"]) if item["message_id"] else []
+    if not candidates and not moved:  # the stored UID is still valid only if it never moved
+        candidates = [int(json.loads(item["locator"])["uid"])]
+    mine = [uid for uid in candidates if _is_this_email(src.fetch(uid), item)]
+    if len(mine) != 1:
+        raise mail_actions.MessageChangedError(
+            f"{len(mine)} messages in INBOX are this email: undo the rest by hand"
+        )
+    return mine[0]
+
+
+def _is_this_email(raw: bytes | None, item: sqlite3.Row) -> bool:
+    return raw is not None and parse(raw, max_scan_bytes=10 * 1024 * 1024).content_hash == item[
+        "content_hash"]  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- in the check

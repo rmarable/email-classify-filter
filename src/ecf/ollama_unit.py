@@ -43,7 +43,18 @@ def ollama_path() -> Path:
         raise ServiceUnavailableError(
             "Ollama isn't installed (macOS: `brew install ollama && brew pin ollama mlx-c`)"
         )
-    return Path(found).resolve()
+    # not resolved: Homebrew's /opt/homebrew/bin/ollama links into a versioned Cellar folder that
+    # an upgrade deletes, so the login item keeps the link
+    return Path(found).absolute()
+
+
+def program_gone(program: str | None) -> str:
+    """The status detail when the login item's program no longer exists (Ollama upgraded or
+    removed since the item was written); empty when it's there."""
+    if program is None or Path(program).exists():
+        return ""
+    return (f"its program {program} is gone (Ollama upgraded or removed?): run `ecf models serve"
+            " install` again")  # fmt: skip
 
 
 def environment(home: Path) -> dict[str, str]:
@@ -117,13 +128,23 @@ class LaunchdOllama:
             self._launchctl("bootout", self._target)
         self.unit_path.unlink(missing_ok=True)
 
+    def program(self) -> str | None:
+        try:
+            plist = plistlib.loads(self.unit_path.read_bytes())
+        except (OSError, plistlib.InvalidFileException, ValueError):
+            return None
+        args = plist.get("ProgramArguments") or [None]
+        return str(args[0]) if args[0] else None
+
     def status(self) -> UnitStatus:
         installed = self.unit_path.exists()
+        gone = program_gone(self.program()) if installed else ""
         out = self._runner(["launchctl", "print", self._target])
         if out.returncode != 0:
-            return UnitStatus(installed, False, detail="not loaded")
+            return UnitStatus(installed, False, detail=gone or "not loaded")
         running = any(line.strip() == "state = running" for line in out.stdout.splitlines())
-        return UnitStatus(installed, running, detail="running" if running else "loaded")
+        return UnitStatus(installed, running,
+                          detail=gone or ("running" if running else "loaded"))  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- systemd (Linux)
@@ -186,10 +207,22 @@ class SystemdOllama:
         self.unit_path.unlink(missing_ok=True)
         self._systemctl("daemon-reload")
 
+    def program(self) -> str | None:
+        try:
+            text = self.unit_path.read_text()
+        except OSError:
+            return None
+        for line in text.splitlines():
+            if line.startswith("ExecStart="):
+                return line.removeprefix("ExecStart=").split('"')[1] if '"' in line else None
+        return None
+
     def status(self) -> UnitStatus:
         out = self._runner(["systemctl", "--user", "show", SYSTEMD_UNIT, "-p", "ActiveState"])
         active = "ActiveState=active" in out.stdout
-        return UnitStatus(self.unit_path.exists(), active, detail="running" if active else "")
+        installed = self.unit_path.exists()
+        gone = program_gone(self.program()) if installed else ""
+        return UnitStatus(installed, active, detail=gone or ("running" if active else ""))
 
 
 def manager_for(root: Path) -> LaunchdOllama | SystemdOllama:

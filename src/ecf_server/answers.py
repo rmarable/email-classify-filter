@@ -1,6 +1,6 @@
 """Clarifications (SPEC §9.9, §6.2; V1.2 step 7c).
 
-Built in V1.2 and exercised with fake questions: the actor that asks them arrives in V1.3.
+Built in V1.2 with fake questions; the local actor asks them since V1.3 (`actor.py`).
 
 - `ask`: the actor's question moves the item to `needs_clarification` and posts a card with an
   Answer button. The question is model output: links, email addresses and phone numbers are
@@ -30,7 +30,7 @@ from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
-from ecf_server.precheck import payment_or_fraud
+from ecf_server.precheck import item_payment_or_fraud
 from ecf_server.slack_in import Click
 from ecf_server.slack_render import clean
 from ecf_server.state_machine import (
@@ -136,7 +136,7 @@ def answer(
     text = text.strip()
     if len(text) > ANSWER_MAX:
         raise InvalidInputError(f"an answer is at most {ANSWER_MAX} characters")
-    risky = payment_or_fraud(json.loads(item["facts"] or "{}"))
+    risky = item_payment_or_fraud(item)
     ctx = TransitionContext(origin=Origin.ANSWER, payment_or_fraud=risky,
                             clarification_rounds=item["clarification_rounds"])  # fmt: skip
     if risky and actor.startswith("slack:"):

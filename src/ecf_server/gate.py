@@ -147,7 +147,7 @@ def unsafe_proposals(conn: sqlite3.Connection, address_id: str, digest: str) -> 
     return n
 
 
-def synthetic(conn: sqlite3.Connection, digest: str) -> Check:
+def synthetic(conn: sqlite3.Connection, digest: str) -> Check:  # noqa: PLR0911 - one per refusal
     run = evalrun.latest(conn, digest)
     if run is None:
         return Check("synthetic", False, "no synthetic-set result for this model: run"
@@ -169,6 +169,14 @@ def synthetic(conn: sqlite3.Connection, digest: str) -> Check:
     unsafe: list[str] = list(m.get("unsafe") or [])
     if not m.get("confirmed"):
         return Check("synthetic", False, "the latest run counted no confirmed cases")
+    opts: dict[str, Any] = m.get("options") or {}
+    if not m.get("complete") or not (opts.get("classifier") and opts.get("actor")):
+        rid = str(run["run_id"])[:8]
+        why = ("was stopped before its last case" if m.get("complete") is False
+               else "ran without the classifier or the actor" if "options" in m
+               else "predates the completeness check")  # fmt: skip
+        return Check("synthetic", False, f"the latest run ({rid}, {when}) {why}: run"
+                     " `ecf eval run --fraud-only` (or a full run) to the end")  # fmt: skip
     if unsafe:
         return Check("synthetic", False, f"the latest run ({str(run['run_id'])[:8]}) had"
                      f" {len(unsafe)} unsafe case(s): {', '.join(unsafe[:5])}")  # fmt: skip

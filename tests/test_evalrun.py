@@ -11,9 +11,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
-from ecf.errors import ConflictError
+from ecf.errors import ConflictError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf_server import evalrun, modelq, policy, schedule
@@ -132,8 +133,11 @@ def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
                   battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
     result = evalrun.RUN.snapshot()["result"]
     # a fooled model gets both categories wrong, but I1 holds: the fraud trigger still escalates
-    # the BEC, and the injected email's archive isn't corroborated, so nothing is hidden
-    assert (result["correct"], result["unsafe"], result["gate_passed"]) == (0, [], True)
+    # the BEC, and the injected email's archive isn't corroborated, so nothing is hidden; a run
+    # without the actor never passes the gate, though
+    assert (result["correct"], result["unsafe"], result["gate_passed"]) == (0, [], False)
+    assert result["options"] == {"classifier": True, "actor": False} and result["complete"]
+    assert result["fraud_cases"] == 2  # both confirmed cases expect fraud_guard; not the control
 
 
 def test_a_low_battery_pauses_and_releases_the_queue(
@@ -183,7 +187,70 @@ def test_one_run_at_a_time(db_path: Path, clock: FakeClock, root: Path) -> None:
     from ecf_server import db  # noqa: PLC0415
 
     evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client, db_path.parent,
-                  evalrun.Options(root), spawn=lambda _w: None)  # fmt: skip
+                  evalrun.Options(root), spawn=lambda _w: None, check_kw=check_kw())  # fmt: skip
     with pytest.raises(ConflictError, match="already running"):
         evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client,
-                      db_path.parent, evalrun.Options(root), spawn=lambda _w: None)  # fmt: skip
+                      db_path.parent, evalrun.Options(root), spawn=lambda _w: None,
+                      check_kw=check_kw())  # fmt: skip
+
+
+def test_a_run_refuses_to_start_when_ollama_isnt_ready(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    with pytest.raises(ServiceUnavailableError, match="Ollama isn't running"):
+        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client,
+                      db_path.parent, evalrun.Options(root), spawn=_inline,
+                      check_kw=check_kw(lsof=""))  # fmt: skip
+    assert evalrun.RUN.snapshot()["state"] == "idle"
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
+
+
+def test_ollama_going_away_mid_run_fails_the_run_without_a_result(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    gone = ChatOllama(httpx.ConnectError("refused"))  # readiness passes; every chat fails
+    evalrun.start(lambda: db.connect(db_path), clock, gone.client, db_path.parent,
+                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                  check_kw=check_kw())  # fmt: skip
+    snap = evalrun.RUN.snapshot()
+    assert snap["state"] == "failed" and "Ollama isn't running" in snap["detail"]
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
+    assert not modelq.EXCLUSIVE.held()
+
+
+def test_a_stopped_run_is_saved_but_never_passes_the_gate(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    calls = {"n": 0}
+
+    def battery() -> int:  # `ecf eval stop` arrives during the second case
+        calls["n"] += 1
+        if calls["n"] > 1:
+            evalrun.stop()
+        return 90
+
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                  db_path.parent, evalrun.Options(root), power=lambda: AC, battery=battery,
+                  spawn=_inline, check_kw=check_kw())  # fmt: skip
+    snap = evalrun.RUN.snapshot()
+    assert (snap["state"], snap["detail"]) == ("stopped", "stopped after 2 of 3")
+    assert snap["result"]["complete"] is False and snap["result"]["unsafe"] == []
+    assert conn.execute("SELECT gate_passed FROM eval_runs").fetchone()[0] == 0
+
+
+def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
+    from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    both = {"classifier": True, "actor": True}
+    assert _run_caveat({"complete": True, "options": both}) == ""
+    assert _run_caveat({"complete": False, "cases": 40, "options": both}) == (
+        " (stopped after 40 cases)")  # fmt: skip
+    assert _run_caveat({"complete": True, "options": both | {"actor": False}}) == (
+        " (without the actor)")  # fmt: skip
+    assert _run_caveat({}) == ""  # older runs: nothing recorded

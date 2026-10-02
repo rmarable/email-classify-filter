@@ -89,7 +89,12 @@ def run(paths: Paths, manager: ServiceManager, *, server: Path | None = None) ->
     if was_running:
         manager.stop()
     paths.run_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    wait_for_lock(paths)
+    try:
+        wait_for_lock(paths)
+    except ConflictError:
+        if was_running:  # don't leave the background service down
+            manager.start()
+        raise
     marker_path(paths).write_text(json.dumps({
         "pid": os.getpid(), "restore_unit": was_running,
         "started_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}))  # fmt: skip

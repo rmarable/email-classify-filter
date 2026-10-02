@@ -197,7 +197,8 @@ def check(
     ] = False,
 ) -> None:
     """Check mail now: fetch, verify senders, run the fraud and regulator checks, then the local
-    model on what waits for it. Exit 3 when a check failed or the local model isn't ready."""
+    model on what waits for it. Exit 3 when a check failed, the local model isn't ready, or
+    --until-empty gave up."""
     body: dict[str, object] = {"until_empty": until_empty}
     if address:
         body["address_id"] = address
@@ -208,7 +209,7 @@ def check(
                 break
             if "model" in r:
                 m = r["model"]
-                failed |= m["status"] == "not_ready"
+                failed |= m["status"] in ("not_ready", "gave_up")
                 typer.echo(_model_line(m))
                 continue
             failed |= r["status"] in CHECK_FAILED
@@ -232,14 +233,17 @@ def _model_backlog(m: dict[str, Any]) -> str:
 
 def _model_line(m: dict[str, Any]) -> str:
     who = f"{'local model':<16}"
+    waiting = {
+        "eval": "an eval holds the model; {w} waiting",
+        "busy": "the service's own run is using the model; {w} waiting",
+        "worker": "the service's own run is working on them; {w} still waiting",
+    }.get(m["status"])
+    if waiting:
+        return f"{who} " + waiting.format(w=m["waiting"])
     if m["status"] == "off":
         return f"{who} {m['detail']}"
     if m["status"] == "not_ready":
         return f"{who} not ready: {m['detail']}"
-    if m["status"] == "eval":
-        return f"{who} an eval holds the model; {m['waiting']} waiting"
-    if m["status"] == "worker":
-        return f"{who} the service's own run is working on them; {m['waiting']} still waiting"
     if m["status"] == "gave_up":
         return (f"{who} stopped waiting after {m['minutes']} min; {m['waiting']} still waiting"
                 " (ecf status)")  # fmt: skip
@@ -437,7 +441,7 @@ def service_start() -> None:
     typer.echo("started")
 
 
-@app.command("replay")
+@app.command("replay", hidden=True)  # development only
 def replay_command(
     folder: Annotated[Path, typer.Argument(help="A folder of .eml files.")],
     host: Annotated[str, typer.Option("--host", help="The test IMAP server.")],
@@ -861,7 +865,8 @@ def eval_run(
     ] = 15,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
-    full run takes hours on a laptop: run it overnight on AC power (OD-230)."""
+    full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
+    (OD-230)."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
@@ -887,9 +892,20 @@ def eval_status() -> None:
         typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
                    f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
                    f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
-                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}")  # fmt: skip
+                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
+                   + _run_caveat(m))  # fmt: skip
     if cur["state"] == "idle" and not st["recent"]:
         typer.echo("no eval has run yet: ecf eval run")
+
+
+def _run_caveat(m: dict[str, Any]) -> str:
+    """Why a run can't pass the go-live gate whatever its score (§9.3)."""
+    opts: dict[str, Any] = m.get("options") or {}
+    if m.get("complete") is False:
+        return f" (stopped after {m.get('cases')} cases)"
+    if opts and not (opts.get("classifier") and opts.get("actor")):
+        return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
+    return ""
 
 
 @eval_app.command("stop")

@@ -20,6 +20,7 @@ PREVIEW = 20
 def item_line(i: dict[str, Any]) -> str:
     stale = " STALE" if i["stale"] else ""
     flag = " [payment/fraud]" if i["payment_or_fraud"] else ""
+    flag += " [model failed: ecf item requeue]" if i.get("model_failed") else ""
     return plain(f"{i['short_id']}  {i['address_id']:<14} {i['status']:<18}{stale}{flag}  "
                  f"{i['sender'][:40]}: {i['subject'][:60]}")  # fmt: skip
 
@@ -95,11 +96,13 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
 
     @item_app.command("requeue")
     def requeue(item: Annotated[str, typer.Argument(help="Item ID.")]) -> None:
-        """Run a failed or stuck action again. (step-up for sends)"""
+        """Run a failed or stuck action again, or give an email the local model gave up on back
+        to it. (step-up for sends)"""
         with LocalClient(paths()) as c:
-            with_step_up(c, lambda n: c.request("POST", f"/v1/items/{item}/requeue",
-                                                {"nonce_id": n}), echo=typer.echo)  # fmt: skip
-        typer.echo("queued to run again")
+            r = with_step_up(c, lambda n: c.request("POST", f"/v1/items/{item}/requeue",
+                                                    {"nonce_id": n}), echo=typer.echo)  # fmt: skip
+        typer.echo("given back to the local model (ecf status shows what waits for it)"
+                   if r.get("model") == "retry" else "queued to run again")  # fmt: skip
 
     _decision_commands(app, paths)
     return item_app

@@ -37,6 +37,7 @@ LAST_RUN_KEY = "retention.last_run"
 DEFAULT_DAYS = 90
 MIN_DAYS, MAX_DAYS = 1, 3650
 BATCH = 1000
+BATCH_TTL = timedelta(days=14)  # approvals' own TTL (approvals.TTL_OTHER)
 EVERY = timedelta(days=1)
 _TERMINAL = tuple(sorted(s.value for s in TERMINAL))
 # a fraud, weak fraud or regulator trigger fired, or the message was quarantined (OD-217)
@@ -122,7 +123,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     """Delete what is past retention; returns counts by kind."""
     cutoff = to_ts(clock.now() - timedelta(days=days(conn)))
     marks = ",".join("?" * len(_TERMINAL))
-    counts = {"items": 0, "jobs": 0, "nonces": 0, "posts": 0, "model_calls": 0}
+    counts = {"items": 0, "jobs": 0, "nonces": 0, "posts": 0, "model_calls": 0, "batches": 0}
     while True:
         with write_tx(conn):
             ids = [r[0] for r in conn.execute(
@@ -150,6 +151,13 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     counts["model_calls"] = _batched(
         conn, "DELETE FROM model_calls WHERE rowid IN (SELECT rowid FROM model_calls"
         " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
+    # what an unclicked "Approve all" or "All others correct" button binds: gone once its grants
+    # have expired (every click re-checks each one anyway)
+    stale = to_ts(clock.now() - BATCH_TTL)
+    counts["batches"] = _batched(
+        conn, "DELETE FROM settings WHERE rowid IN (SELECT rowid FROM settings WHERE (key LIKE"
+        " 'digest_batch:%' OR key LIKE 'review_batch:%') AND updated_at < ? LIMIT ?)",
+        (stale,))  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
         _put(conn, LAST_RUN_KEY, now, now, "service")

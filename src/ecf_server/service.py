@@ -170,7 +170,7 @@ class Service:
         self.rounds = modelq.RoundSchedule(self.clock)
         # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
         self.in_check = mailbox_actions.run_in_check
-        self.throttle = modelq.Throttle()  # generation speeds across rounds (heat, OD-029/OD-243)
+        self.throttle = self.state.throttle  # speeds across rounds, `ecf check`'s too (OD-243)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -235,6 +235,7 @@ class Service:
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
+                approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
@@ -249,6 +250,9 @@ class Service:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from
         step 2 the model queue also checks before each round."""
         if not models.installed(conn):
+            return
+        if not models.needed(conn):  # no address uses preset A or B: nothing to watch
+            models.quiet(conn, self.clock, self.state.notifier)
             return
         client = self.state.model_client()
         try:
@@ -390,6 +394,7 @@ class Service:
                 return
             power = self.scheduler.power()
             on_battery = power.laptop and not power.on_ac
+            self.throttle.power(not on_battery)
             client = self.state.model_client()
             try:
                 with modelq.awake(on_ac=not on_battery):

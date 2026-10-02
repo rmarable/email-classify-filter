@@ -212,6 +212,25 @@ def test_undo_refuses_when_the_message_id_is_ambiguous(
     assert item_row(conn, sid)["status"] == "undo_failed"
 
 
+def test_undo_never_touches_another_message_with_the_same_message_id(
+    conn: sqlite3.Connection, clock: FakeClock, fake: FakeMailSource
+) -> None:
+    _address(conn, clock)
+    notification = MARKETING | {"category": "notification", "sender_type": "automated"}
+    sid = _mail_item(conn, clock, fake, 0, notification, KNOWN_BULK, fake.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, fake)  # archived, labelled, read
+    fake.deliver(message(0).replace(b"Plain body 0", b"Other body 0"))  # reuses the Message-ID
+    [other] = fake.uids_after(0)
+    fake.set_seen(other, True)
+    done = mailbox_actions.undo_item(conn, clock, fake, item_row(conn, sid), install=INSTALL,
+                                     lost=lambda: False)  # fmt: skip
+    assert done == ["archive back to INBOX", "label notification", "mark_read"]
+    [back] = [u for u in fake.uids_after(0) if u != other]
+    assert fake.flags([back])[back] == frozenset()
+    assert fake.flags([other])[other] == frozenset({"\\Seen"})  # left alone
+
+
 def test_the_digest_undo_button_queues_it_for_the_next_check(
     conn: sqlite3.Connection, clock: FakeClock, fake: FakeMailSource
 ) -> None:
@@ -225,6 +244,27 @@ def test_the_digest_undo_button_queues_it_for_the_next_check(
     assert json.loads(item_row(conn, sid)["proposal"])["undo"] == "queued"
     assert digests.run_model_undos(conn, clock, fake, "ap", INSTALL, lambda: False) == 1
     assert item_row(conn, sid)["status"] == "undone" and fake.uids_after(0) != []
+
+
+def test_an_undo_that_hits_a_mail_error_is_recorded_not_left_queued(
+    conn: sqlite3.Connection, clock: FakeClock, fake: FakeMailSource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    from ecf_server.slack_in import HANDLERS, Click  # noqa: PLC0415
+
+    _address(conn, clock)
+    sid = _mail_item(conn, clock, fake, 0, MARKETING, KNOWN_BULK, fake.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, fake)
+    HANDLERS[digests.UNDO](conn, clock, Click("button", digests.UNDO, sid, "CAP", "U0ME1"))
+
+    def dropped(*_a: object) -> list[int]:
+        raise ConnectionResetError("connection reset")
+
+    monkeypatch.setattr(fake, "find_in", dropped)
+    assert digests.run_model_undos(conn, clock, fake, "ap", INSTALL, lambda: False) == 1
+    row = item_row(conn, sid)
+    assert row["status"] == "undo_failed" and json.loads(row["proposal"])["undo"] == "failed"
 
 
 def test_jobs_run_only_in_their_own_address_check(

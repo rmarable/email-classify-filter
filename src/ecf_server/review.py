@@ -30,7 +30,16 @@ from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.schema import load_schema_v1
-from ecf_server import cards, digests, schedule, slack_admin, slack_in, slack_out, slack_routes
+from ecf_server import (
+    cards,
+    digests,
+    ollama,
+    schedule,
+    slack_admin,
+    slack_in,
+    slack_out,
+    slack_routes,
+)
 from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -118,7 +127,9 @@ def pending(conn: sqlite3.Connection, now: datetime, aid: str) -> list[sqlite3.R
     """Emails to put in the next review post; marks the ones the sample leaves out."""
     sens = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
                         (aid,)).fetchone()["sensitivity"]  # fmt: skip
-    full = reviewed(conn, aid)["reviewed"] < GATE_COUNT[sens]
+    # every email until the gate's count is reached for the pinned model (the gate counts per
+    # digest, so a model change starts the count again)
+    full = reviewed(conn, aid, ollama.load_pin().digest)["reviewed"] < GATE_COUNT[sens]
     rate = _sample_rate(conn)
     rows = conn.execute("SELECT * FROM items WHERE address_id = ? AND classification IS NOT NULL"
                         " AND review IS NULL AND status != 'classified'"

@@ -41,8 +41,10 @@ def root(tmp_path: Path) -> Path:
 
 
 def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,
-          unsafe: list[str] | None = None, version: str | None = None) -> None:  # fmt: skip
-    metrics = {"confirmed": 150, "unsafe": unsafe or [], "fraud_cases": 60}
+          unsafe: list[str] | None = None, version: str | None = None,
+          complete: bool = True, actor: bool = True) -> None:  # fmt: skip
+    metrics = {"confirmed": 150, "unsafe": unsafe or [], "fraud_cases": 60, "complete": complete,
+               "options": {"classifier": True, "actor": actor}}  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at,"
@@ -128,6 +130,8 @@ def test_an_override_waives_only_the_count_and_accuracy(
                                    " ORDER BY id DESC").fetchone()[0])  # fmt: skip
     assert data["override"] is True and data["reason"] == "small mailbox, watched closely"
     assert "went live by override" in _posts(conn)[-1]["card"]["text"]
+    row = gate.stored(conn, "ap")  # the model is recorded, but the gate wasn't passed
+    assert row is not None and row["ollama_digest"] == DIGEST and row["passed_at"] is None
 
 
 def test_the_synthetic_run_must_be_safe_and_on_the_current_set(
@@ -144,6 +148,25 @@ def test_the_synthetic_run_must_be_safe_and_on_the_current_set(
     assert gate.synthetic(conn, DIGEST).ok
     (root / "labels.jsonl").write_text('{"id": "y"}\n')  # a card changed since
     assert not gate.synthetic(conn, DIGEST).ok
+
+
+def test_only_a_complete_run_with_both_models_passes_the_synthetic_check(
+    conn: sqlite3.Connection, clock: FakeClock, root: Path
+) -> None:
+    make_address(conn, clock, "assist")
+    _eval(conn, clock, root, complete=False)  # `ecf eval stop`, or the runtime cap
+    assert "was stopped before its last case" in gate.synthetic(conn, DIGEST).detail
+    clock.advance(60)
+    _eval(conn, clock, root, actor=False)  # the actor's injection obedience never tested
+    assert "ran without the classifier or the actor" in gate.synthetic(conn, DIGEST).detail
+    clock.advance(60)
+    with write_tx(conn):  # a run saved before V1.3 step 12b: no completeness recorded
+        conn.execute("UPDATE eval_runs SET metrics = json_remove(metrics, '$.complete',"
+                     " '$.options')")  # fmt: skip
+    assert "predates the completeness check" in gate.synthetic(conn, DIGEST).detail
+    clock.advance(60)
+    _eval(conn, clock, root)
+    assert gate.synthetic(conn, DIGEST).ok
 
 
 def test_fraud_misses_and_unsafe_proposals_count(conn: sqlite3.Connection,

@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -56,18 +55,27 @@ Cause = Literal[
     "logs_requests",  # OLLAMA_DEBUG_LOG_REQUESTS is set: request bodies are written to disk
     "timeout",
     "http",
+    "server",  # Ollama answers but can't run the model now (out of memory, its runner stopped)
 ]
 FIX: dict[str, str] = {
-    "not_running": "start Ollama",
+    "not_running": "run `ecf models serve install` (ecf's login item for Ollama), or start the"
+    " Ollama you run yourself",
     "model_missing": "run `ecf models install`",
     "digest_mismatch": "run `ecf models install` to restore the pinned model",
     "not_loopback": "make Ollama listen on 127.0.0.1 only (unset OLLAMA_HOST, turn off network"
     " exposure)",
-    "unconfirmed": "check that `lsof` (macOS) or `ss` (Linux) works and that Ollama runs as you",
+    "unconfirmed": "check that `lsof` (macOS) or `ss` (Linux) works and that Ollama runs as you"
+    " (on Linux, Ollama's installer adds a system service that runs as another user: disable it"
+    " and run `ecf models serve install`)",
     "logs_requests": "unset OLLAMA_DEBUG_LOG_REQUESTS and restart Ollama",
     "timeout": "check that Ollama isn't overloaded",
-    "http": "see `ecf doctor`",
+    "http": "if it repeats, see Ollama's log (ollama/ollama.log in ecf's data folder)",
+    "server": "close other large apps (the model needs about 9 GB free), then wait: ecf retries"
+    " each minute",
 }
+# Ollama's wording for "can't run the model now" (unverified, confirm in V1.6): an HTTP 5xx
+# whose error names memory or the runner
+_SERVER_FAULT = re.compile(r"memory|runner", re.IGNORECASE)
 
 
 class OllamaError(Exception):
@@ -115,6 +123,9 @@ class Listener:
     pid: int | None
 
 
+LSOF = "/usr/sbin/lsof"
+SS = ("/usr/sbin/ss", "/usr/bin/ss", "/sbin/ss", "/bin/ss")
+
 # run a command and return its stdout; raises OSError or CalledProcessError
 Runner = Callable[[list[str]], str]
 
@@ -127,10 +138,10 @@ def find_listener(run: Runner = _run, platform: str = sys.platform) -> Listener 
     """Who listens on the port; None when nobody does. Raises OllamaError("unconfirmed") when the
     check itself can't run (OD-242)."""
     if platform == "darwin":
-        tool = shutil.which("lsof") or "/usr/sbin/lsof"
+        tool = LSOF
         cmd = [tool, "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-Fpn"]
-    else:
-        tool = shutil.which("ss") or "/usr/sbin/ss"
+    else:  # fixed paths, never PATH: this check looks for a misconfigured server
+        tool = next((p for p in SS if os.path.exists(p)), SS[0])
         cmd = [tool, "-ltnpH", f"sport = :{PORT}"]
     try:
         out = run(cmd)
@@ -264,7 +275,10 @@ class Client:
             if r.status_code == 404:
                 raise OllamaError("model_missing", _error_field(r))
             if r.is_error:
-                raise OllamaError("http", f"HTTP {r.status_code} {_error_field(r)}".strip())
+                err = _error_field(r)
+                cause: Cause = ("server" if r.status_code >= 500 and _SERVER_FAULT.search(err)
+                                else "http")  # fmt: skip
+                raise OllamaError(cause, f"HTTP {r.status_code} {err}".strip())
             if not r.content.strip():  # copy and delete reply 200 with no body
                 return {}
             return cast("dict[str, Any]", r.json())

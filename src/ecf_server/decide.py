@@ -43,7 +43,7 @@ MAILBOX = frozenset({"label", "flag", "mark_read", "archive", "move", "junk", "d
 ASSIST_SAFE = frozenset({"label", "flag"})
 AUTO_GRANT_TTL_S = 3600
 EXECUTE_ATTEMPTS = 3
-BACKLOG_BATCH = 100  # §5.3: above this, approvals go to digests in batches, not one card each
+BACKLOG_BATCH = modelq.BACKLOG_BATCH  # §5.3: above this, approvals go to digests, not cards
 
 
 def context(conn: sqlite3.Connection, item: sqlite3.Row) -> Context:
@@ -182,13 +182,21 @@ def _run(conn: sqlite3.Connection, clock: Clock, sid: str, mailbox: list[MailAct
     jobs.make_due(conn, clock, item["address_id"])
 
 
+STRANDED_AFTER = timedelta(minutes=2)  # longer than any apply in progress takes
+
+
 def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
-    """Apply the policy to classified items that have none yet (a crash between classifying and
-    deciding, or an error while deciding); each tick. Returns how many were applied."""
+    """Apply the policy again to classified items it didn't move on: none applied yet (a crash
+    between classifying and deciding), or a plan recorded and then an error before the item moved
+    (`_record` runs first). Items waiting for the actor are left to it. Each tick; returns how many
+    were applied."""
+    before = to_ts(clock.now() - STRANDED_AFTER)
     rows = conn.execute(
-        "SELECT stable_id FROM items WHERE status = 'classified'"
-        " AND proposal IS NULL ORDER BY updated_at LIMIT ?",
-        (limit,),
+        "SELECT stable_id FROM items WHERE status = 'classified' AND (proposal IS NULL"
+        " OR (updated_at < ? AND model_failed = 0 AND NOT (decision_source = 'rule'"
+        " AND json_extract(proposal, '$.plan.to_actor') = 1)))"
+        " ORDER BY updated_at LIMIT ?",
+        (before, limit),
     ).fetchall()
     done = 0
     for (sid,) in rows:

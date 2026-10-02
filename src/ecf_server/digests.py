@@ -248,6 +248,11 @@ def run_model_undos(conn: sqlite3.Connection, clock: Clock, src: MailSource, add
             result, text = "done", f"Undone for {item['stable_id'][:8]}: {', '.join(done)}."
         except (MessageChangedError, mailbox_actions.LeaseLostError) as exc:
             result, text = "failed", f"Couldn't undo {item['stable_id'][:8]}: {exc.detail}"
+        except Exception as exc:  # e.g. the connection dropped: the item still records it
+            log.warning("undo.failed", stable_id=item["stable_id"][:8],
+                        error_type=type(exc).__name__)  # fmt: skip
+            result, text = "failed", (f"Couldn't undo {item['stable_id'][:8]}"
+                                      f" ({type(exc).__name__}); undo it by hand")  # fmt: skip
         row = conn.execute("SELECT proposal FROM items WHERE stable_id = ?",
                            (item["stable_id"],)).fetchone()  # fmt: skip
         doc: dict[str, Any] = json.loads(row["proposal"] or "{}")

@@ -4,7 +4,7 @@ ecf watches business mailboxes (for example `billing@` or `accounts-payable@`) o
 
 ## Status
 
-Milestone V1.0 (foundations) is done; V1.1 (reading mail) is next. **Not usable yet:** it doesn't read mail. The full README, with install and usage instructions, arrives in milestone V1.5.
+Milestones V1.0 (foundations), V1.1 (reading mail and fraud checks) and V1.2 (Slack and approvals) are done; V1.3 (the local model) is being finished. **Not ready for anyone else to use yet:** milestone tags record internal progress, not releases. The full README, with install and usage instructions, arrives in milestone V1.5.
 
 ## Where things are
 

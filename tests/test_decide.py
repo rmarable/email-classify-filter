@@ -154,3 +154,36 @@ def test_the_sweep_decides_classified_items_left_without_a_plan(
     assert decide.sweep(conn, clock) == 1
     assert item_row(conn, sid)["status"] in ("observed", "executing")
     assert decide.sweep(conn, clock) == 0
+
+
+def test_the_sweep_moves_on_an_item_whose_plan_was_recorded_before_an_error(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_address(conn, clock, "shadow")
+    sid = make_classified(conn, clock, MARKETING, KNOWN_BULK)
+    real = decide.items.transition
+
+    def busy(*_a: Any, **_k: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(decide.items, "transition", busy)
+    with pytest.raises(sqlite3.OperationalError):
+        decide.apply(conn, clock, sid)
+    monkeypatch.setattr(decide.items, "transition", real)
+    assert item_row(conn, sid)["status"] == "classified" and item_row(conn, sid)["proposal"]
+    assert decide.sweep(conn, clock) == 0  # it may still be in progress
+    clock.advance(decide.STRANDED_AFTER.total_seconds() + 1)
+    assert decide.sweep(conn, clock) == 1
+    assert item_row(conn, sid)["status"] == "observed"
+
+
+def test_the_sweep_leaves_items_waiting_for_the_actor(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    make_address(conn, clock, "shadow")
+    request = MARKETING | {"category": "customer_request", "requires_reply": True,
+                           "requires_action": True}  # fmt: skip
+    sid = make_classified(conn, clock, request, KNOWN_BULK)
+    assert decide.apply(conn, clock, sid).value == "classified"  # the actor decides next
+    clock.advance(3600)
+    assert decide.sweep(conn, clock) == 0

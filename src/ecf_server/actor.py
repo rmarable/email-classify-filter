@@ -119,6 +119,10 @@ def parse(content: str, labels: frozenset[str], folders: frozenset[str],
         return None
     if action not in actions or (target and target not in labels | folders):
         return None
+    if (action == "label" and target not in labels) or (action == "move" and target not in folders):
+        return None  # each takes its own kind of target
+    if action not in ("label", "move"):
+        target = ""  # the others take none; a target given anyway is dropped, never passed on
     return {"action": action, "target": target, "reason": answers.model_text(reason, REASON_MAX)}
 
 

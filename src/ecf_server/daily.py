@@ -122,12 +122,6 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     held = evalrun.slack_line()
     if held:
         lines.append(held)
-    since_model = models.waiting_since(conn)
-    if since_model:
-        n = sum(v[1] for v in per_addr.values())
-        at = since_model[:16].replace("T", " ")
-        lines.append(f"{n} items waiting for the local model since {at} UTC"
-                     " (see ecf models status)")  # fmt: skip
     paused = pause.paused_addresses(conn)
     if paused:
         lines.append(f"Paused: {', '.join(paused)} (fraud checks continue)")
@@ -160,9 +154,12 @@ def _model_backlog(conn: sqlite3.Connection) -> int:
 def _model_lines(conn: sqlite3.Connection) -> list[str]:
     out: list[str] = []
     now, was = _model_backlog(conn), slack_admin.setting(conn, BACKLOG)
-    if now or was not in ("", "0"):
+    since = models.waiting_since(conn)  # the model can't be used: say since when, on one line
+    if now or was not in ("", "0") or since:
         change = f" ({now - int(was):+d} since the last summary)" if was else ""
-        out.append(f"Waiting for the local model: {now}{change}")
+        stuck = (f"; it can't be used since {since[:16].replace('T', ' ')} UTC (see ecf models"
+                 " status)" if since else "")  # fmt: skip
+        out.append(f"Waiting for the local model: {now}{change}{stuck}")
     hours = float(slack_admin.setting(conn, BATTERY) or 0) / 3600
     if hours >= 0.1:
         out.append(f"On battery {hours:.1f} h since the last summary (model work slows on battery;"

@@ -36,6 +36,7 @@ TITLES = {
     "local_model": "System Error",  # the local model can't be used (V1.3)
     "local_model_unsafe": "System Error",  # ... and ecf can't confirm it's safe (OD-242, OD-245)
     "model_failures": "System Error",  # many items the model gave up on (OD-236)
+    "local_model_server": "System Error",  # Ollama can't run the model now (out of memory)
 }
 Resolver = Callable[[str], bool]
 

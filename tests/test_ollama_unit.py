@@ -80,6 +80,35 @@ def test_systemd_install_enables_and_restarts(tmp_path: Path) -> None:
     assert [c[2] for c in run.calls] == ["daemon-reload", "enable", "restart"]
 
 
+def test_the_login_item_keeps_homebrews_link_and_says_when_its_program_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cellar = tmp_path / "Cellar" / "ollama" / "0.35.0" / "bin" / "ollama"
+    cellar.parent.mkdir(parents=True)
+    cellar.write_text("")
+    link = tmp_path / "bin" / "ollama"
+    link.parent.mkdir()
+    link.symlink_to(cellar)
+
+    def which(_name: str) -> str:
+        return str(link)
+
+    monkeypatch.setattr(ollama_unit.shutil, "which", which)
+    assert ollama_unit.ollama_path() == link  # not the versioned Cellar path an upgrade removes
+    run = FakeRunner()
+    unit = LaunchdOllama(tmp_path / "root", runner=run, ollama=cellar, agents_dir=tmp_path / "la",
+                         home=tmp_path)  # fmt: skip
+    unit.install()
+    assert unit.program() == str(cellar) and unit.status().detail == "running"
+    cellar.unlink()  # `brew upgrade ollama` removed the old version
+    assert unit.status().detail.startswith(f"its program {cellar} is gone")
+    systemd = SystemdOllama(tmp_path, runner=run, ollama=cellar, units_dir=tmp_path / "u",
+                            home=tmp_path)  # fmt: skip
+    systemd.install()
+    assert systemd.program() == str(cellar)
+    assert "ecf models serve install" in systemd.status().detail
+
+
 def _assert_ecfs_settings() -> None:
     from ecf_server import ollama  # noqa: PLC0415
 

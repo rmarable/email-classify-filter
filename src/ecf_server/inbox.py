@@ -25,7 +25,7 @@ from ecf.status import OPEN, Status
 from ecf_server import cards, escalations, items, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
-from ecf_server.precheck import payment_or_fraud
+from ecf_server.precheck import item_payment_or_fraud
 from ecf_server.state_machine import TransitionContext
 
 MIN_PREFIX = 8
@@ -111,7 +111,7 @@ def summary(r: sqlite3.Row) -> dict[str, Any]:
         "sender": cards.sender_line(r, facts),
         "subject": cards.subject_line(r),
         "why": why,
-        "payment_or_fraud": payment_or_fraud(facts),
+        "payment_or_fraud": item_payment_or_fraud(r),
         "model_failed": bool(r["model_failed"]),
     }
 
@@ -157,7 +157,7 @@ def _describe_resolve(conn: sqlite3.Connection, target: dict[str, Any]) -> stepu
     """Bound to the exact items and their current statuses."""
     sids = sorted(str(s) for s in target.get("ids", []))
     rows = [find(conn, s) for s in sids]
-    risky = sum(1 for r in rows if payment_or_fraud(json.loads(r["facts"] or "{}")))
+    risky = sum(1 for r in rows if item_payment_or_fraud(r))
     if len(rows) == 1:
         s = summary(rows[0])
         what = (f'the email from {s["sender"][:60]}, "{s["subject"][:60]}" on {s["address_id"]},'
@@ -195,13 +195,13 @@ def resolve(
     rows = _chosen(conn, clock, select.refs, select.older_than_days, select.address_id)
     if not rows or dry_run:
         return [r["stable_id"] for r in rows]
-    risky = any(payment_or_fraud(json.loads(r["facts"] or "{}")) for r in rows)
+    risky = any(item_payment_or_fraud(r) for r in rows)
     if risky:
         stepup.consume(conn, clock, "item_resolve",
                        {"ids": sorted(r["stable_id"] for r in rows)}, nonce)  # fmt: skip
     done: list[str] = []
     for r in rows:
-        pf = payment_or_fraud(json.loads(r["facts"] or "{}"))
+        pf = item_payment_or_fraud(r)
         ctx = TransitionContext(payment_or_fraud=pf, stepup_verified=risky)
         items.transition(conn, clock, StableId(r["stable_id"]), Status.RESOLVED_MANUAL, ctx,
                          actor=actor, expected=Status(r["status"]))  # fmt: skip

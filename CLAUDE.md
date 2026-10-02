@@ -59,7 +59,7 @@ uv build                                  # wheel + sdist
 
 **Shell on macOS:** use `gsed` for GNU sed syntax (the built-in BSD sed rejects `\|` alternation and needs `-i ''`); for multi-line or exact replacements prefer the Edit tool or a short Python script.
 
-**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
+**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; the Ollama tests need Ollama installed and the pinned model (`uv run ecf models install`), see CONTRIBUTING; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
 
 ## Hard constraints
 

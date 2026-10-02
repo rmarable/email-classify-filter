@@ -143,7 +143,7 @@ def set_stage(  # noqa: PLR0913 - the change, then who asked and how
     with write_tx(conn):
         conn.execute("UPDATE addresses SET stage = ? WHERE address_id = ?", (to, aid))
         if g is not None:
-            gate.record(conn, g, clock.now(), passed=True)
+            gate.record(conn, g, clock.now(), passed=g.met)  # an override is not a pass
         conn.execute(
             "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
             " VALUES (?, ?, 'stage.changed', ?, 'ok', ?)",

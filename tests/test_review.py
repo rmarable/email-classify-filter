@@ -139,6 +139,25 @@ def test_after_the_gate_count_only_a_sample_is_asked(
     assert json.loads(item_row(conn, a)["review"]) == {"verdict": "not_sampled"}
 
 
+def test_reviews_of_an_older_model_dont_end_full_review_for_the_new_one(
+    conn: sqlite3.Connection, morning: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slack_setup(conn, morning)
+    monkeypatch.setitem(review.GATE_COUNT, "standard", 1)
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                     " VALUES ('review_sample_rate', '0', 't', 't')")  # fmt: skip
+    old, new = _items(conn, morning, MARKETING, MARKETING)
+    with write_tx(conn):  # reviewed, but classified by a model since replaced
+        conn.execute(
+            'UPDATE items SET review = \'{"verdict": "correct"}\','
+            ' pinned_models = \'{"digest": "0ld"}\' WHERE stable_id = ?',
+            (old,),
+        )
+    assert review.run(conn, morning) == 1  # still asked: the new model has no reviews yet
+    assert json.loads(item_row(conn, new)["review"])["verdict"] == "asked"  # not "not_sampled"
+
+
 def test_a_post_never_exceeds_slacks_button_limit(
     conn: sqlite3.Connection, morning: FakeClock
 ) -> None:

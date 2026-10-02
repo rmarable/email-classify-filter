@@ -10,10 +10,15 @@ backlog on one address can't starve the others.
   rounds then wait, and the pre-check continues.
 - **Per item** the address's in-process lock and its lease are taken, as a check does, so the
   pre-check skips an address while the model works on it (§5.4). A paused address is skipped.
-- **Attempts** (OD-236): an item is tried at most once per round and `MAX_ATTEMPTS` times in all;
-  then it is marked `model_failed`, stays at `new`, and shows in "Needs you". `FAILED_ALERT_AFTER`
-  such items in an hour raise a System Error. A fault of the server itself (not running, missing,
-  changed) ends the round without counting an attempt.
+- **Attempts** (OD-236): an item is tried at most once per round and `MAX_ATTEMPTS` times in a row
+  (a success resets the count, so a classifier timeout and a later actor timeout aren't added
+  up); then it is marked `model_failed`. New mail stays at `new` and shows in "Needs you" marked
+  so; mail the actor failed on goes ahead on its rule's plan without the actor. `FAILED_ALERT_AFTER`
+  such items in an hour raise a System Error. `ecf item requeue` (or `ecf models install`, for
+  all of them) gives them back to the model. A fault of the server itself (not running, missing,
+  changed) ends the round without counting an attempt; so does Ollama saying it can't run the
+  model now (out of memory, its runner stopped), which opens its own System Error until a call
+  succeeds again.
 - **Unloading:** when a round leaves nothing waiting, the model is unloaded (`keep_alive: 0`) unless
   `resident` is on or an eval holds the queue.
 
@@ -22,6 +27,7 @@ What a round does with an item is the `Work` it is given: the classifier from V1
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sqlite3
@@ -45,10 +51,13 @@ from ecf_server.notify import Notifier
 from ecf_server.ollama import Client, Metrics
 
 ROUND_BUDGET_S = 360.0  # OD-028: one global 6-minute budget per round
+BACKLOG_BATCH = 100  # §5.3: above this many waiting, approvals go to digests, not one card each
 MAX_ATTEMPTS = 2  # OD-236, like the crash quarantine
 FAILED_ALERT_AFTER = 5  # model_failed items in an hour before a System Error (OD-236)
 ITEM_LEASE_S = 2 * int(ollama.TIMEOUT_S) + 60  # a call and its retry, with a margin
 FAILED_ALERT = "model_failures"  # System Error; resolved when the hour is quiet again
+SERVER_ALERT = "local_model_server"  # System Error; Ollama can't run the model now, until a call
+# succeeds
 
 Outcome = Literal["ok", "failed", "skipped"]
 
@@ -68,7 +77,7 @@ class Work(Protocol):
 
 @dataclass
 class RoundReport:
-    status: str  # done | budget | hot | not_ready | eval | stopped
+    status: str  # done | budget | hot | not_ready | eval | busy | stopped (server: not_ready)
     done: int = 0
     failed: int = 0
     marked_failed: int = 0
@@ -156,6 +165,15 @@ class Throttle:
         self.speeds: deque[float] = deque(maxlen=WINDOW)
         self.slow_run = 0
         self.paused = False  # this backlog has had its heat pause
+        self.on_ac: bool | None = None
+
+    def power(self, on_ac: bool) -> None:
+        """A change of power source starts the median again: on battery generation runs at
+        about a third of the AC speed (§21.2), which is not heat."""
+        if self.on_ac is not None and on_ac != self.on_ac:
+            self.speeds.clear()
+            self.slow_run = 0
+        self.on_ac = on_ac
 
     def drained(self) -> None:
         """Nothing waits any more: the next backlog may pause for heat again."""
@@ -191,6 +209,14 @@ class _Stop(Exception):
     pass
 
 
+class _Busy(Exception):
+    """Ollama answers but can't run the model now (`server`): no attempt counts."""
+
+    def __init__(self, err: ollama.OllamaError) -> None:
+        super().__init__(err.cause)
+        self.err = err
+
+
 @dataclass
 class _Round:
     conn: sqlite3.Connection
@@ -221,28 +247,55 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
 ) -> RoundReport:
     if exclusive.held():
         return RoundReport("eval", waiting=sum(waiting(conn).values()))
+    with _sole_round() as mine:
+        if not mine:  # the worker's round, or `ecf check`'s: Ollama runs one at a time
+            return RoundReport("busy", waiting=sum(waiting(conn).values()))
+        return _round(
+            conn,
+            clock,
+            notifier,
+            client,
+            work,
+            resident=resident,
+            budget_s=budget_s,
+            exclusive=exclusive,
+            check_kw=check_kw,
+            stop=stop,
+            throttle=throttle,
+        )
+
+
+ROUND_LOCK = threading.Lock()  # one round at a time; an eval waits for a running one to end
+
+
+@contextmanager
+def _sole_round() -> Generator[bool]:
+    mine = ROUND_LOCK.acquire(blocking=False)
+    try:
+        yield mine
+    finally:
+        if mine:
+            ROUND_LOCK.release()
+
+
+def _round(  # noqa: PLR0913 - run_round's arguments
+    conn: sqlite3.Connection, clock: Clock, notifier: Notifier, client: Client, work: Work, *,
+    resident: bool, budget_s: float, exclusive: Exclusive, check_kw: dict[str, Any] | None,
+    stop: threading.Event | None, throttle: Throttle | None,
+) -> RoundReport:  # fmt: skip
     ready = models.check(conn, clock, notifier, client, **(check_kw or {}))
     if ready is None:
         return RoundReport("not_ready", waiting=sum(waiting(conn).values()))
-    started = clock.monotonic()
     r = _Round(conn, clock, notifier, client, ready, work, RoundReport("done"),
                throttle=throttle or Throttle())  # fmt: skip
     try:
-        while r.report.status == "done":
-            progressed = False
-            for address_id in waiting(conn):
-                if clock.monotonic() - started >= budget_s:
-                    r.report.status = "budget"
-                    break
-                if stop is not None and stop.is_set():  # the service is stopping
-                    r.report.status = "stopped"
-                    break
-                progressed = _one(r, address_id) or progressed
-            if not progressed:
-                break
+        _passes(r, budget_s, stop)
     except _Stop:
         r.report.status = "not_ready"
         models.check(conn, clock, notifier, client, **(check_kw or {}))  # opens the alert
+    except _Busy as b:
+        r.report.status = "not_ready"
+        health.open_alert(conn, clock, notifier, SERVER_ALERT, None, models.fault_text(b.err))
     _resolve_quiet(conn, clock, notifier)
     r.report.waiting = sum(waiting(conn).values())
     if r.report.waiting == 0:
@@ -254,6 +307,25 @@ def run_round(  # noqa: PLR0913 - keyword-only options after the collaborators
         except ollama.OllamaError as e:
             log.warning("model.unload_failed", cause=e.cause)
     return r.report
+
+
+def _passes(r: _Round, budget_s: float, stop: threading.Event | None) -> None:
+    """Round-robin passes over the addresses until nothing is worked on or the round ends."""
+    started = r.clock.monotonic()
+    while r.report.status == "done":
+        progressed = False
+        for address_id in waiting(r.conn):
+            if r.clock.monotonic() - started >= budget_s:
+                r.report.status = "budget"
+                break
+            if stop is not None and stop.is_set():  # the service is stopping
+                r.report.status = "stopped"
+                break
+            progressed = _one(r, address_id) or progressed
+            if r.report.status != "done":  # heat: stop now, not after every address
+                break
+        if not progressed:
+            break
 
 
 def models_tag() -> str:
@@ -280,6 +352,8 @@ def _one(r: _Round, address_id: str) -> bool:
                 result = r.work(r.conn, r.clock, r.client, r.ready, item)
             except ollama.OllamaError as e:
                 log.warning("model.item_error", address_id=address_id, cause=e.cause)
+                if e.cause == "server":
+                    raise _Busy(e) from e  # Ollama can't run the model now: not this item
                 if e.cause not in ("timeout", "http"):
                     raise _Stop from e  # the server itself: no attempt counts against the item
                 result = ItemResult("failed")
@@ -304,6 +378,11 @@ def _account(
 ) -> None:
     if result.outcome == "ok":
         report.done += 1
+        health.resolve_alert(conn, clock, notifier, SERVER_ALERT, None)
+        if int(item["model_attempts"]):  # attempts count in a row (a later role starts afresh)
+            with write_tx(conn):
+                conn.execute("UPDATE items SET model_attempts = 0 WHERE stable_id = ?",
+                             (item["stable_id"],))  # fmt: skip
         return
     if result.outcome == "skipped":
         return
@@ -327,13 +406,15 @@ def _account(
     if failed:
         report.marked_failed += 1
         _maybe_alert(conn, clock, notifier)
+        if item["status"] != "new":
+            _without_actor(conn, clock, item["stable_id"])
 
 
 def _maybe_alert(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
     since = to_ts(clock.now() - timedelta(hours=1))
-    n = conn.execute(
-        "SELECT count(*) FROM items WHERE model_failed = 1 AND model_failed_at >= ?", (since,)
-    ).fetchone()[0]
+    n = conn.execute("SELECT count(*) FROM items WHERE model_failed_at >= ?", (since,)).fetchone()[
+        0
+    ]
     if n >= FAILED_ALERT_AFTER:
         health.open_alert(conn, clock, notifier, FAILED_ALERT, None,
                           f"the local model failed on {n} items in the last hour; they wait in"
@@ -342,11 +423,52 @@ def _maybe_alert(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> 
 
 def _resolve_quiet(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
     since = to_ts(clock.now() - timedelta(hours=1))
-    n = conn.execute(
-        "SELECT count(*) FROM items WHERE model_failed = 1 AND model_failed_at >= ?", (since,)
-    ).fetchone()[0]
+    n = conn.execute("SELECT count(*) FROM items WHERE model_failed_at >= ?", (since,)).fetchone()[
+        0
+    ]
     if n < FAILED_ALERT_AFTER:
         health.resolve_alert(conn, clock, notifier, FAILED_ALERT, None)
+
+
+def _without_actor(conn: sqlite3.Connection, clock: Clock, sid: str) -> None:
+    """The actor gave up on a classified (or answered) item: its rule's own plan goes ahead
+    without the actor, so the rule's labels, flags and escalations aren't lost. The plan is
+    re-made from the item (an answered question's actor turn is dropped)."""
+    from ecf_server import decide  # noqa: PLC0415 - decide imports this module
+
+    item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
+    if item is None or item["status"] not in ("classified", "clarified"):
+        return
+    try:
+        _ctx, p = decide.plan_for(conn, item)
+        p.to_actor = False
+        decide.apply(conn, clock, sid, p, source="rule")
+        with write_tx(conn):  # no longer stuck; model_failed_at keeps it in the hour's count
+            conn.execute("UPDATE items SET model_failed = 0 WHERE stable_id = ?", (sid,))
+    except Exception as exc:  # it stays in Needs you, marked
+        log.error("model.without_actor_failed", stable_id=sid[:8], error_type=type(exc).__name__)
+
+
+def retry(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str) -> bool:
+    """Give an item the model gave up on back to it (`ecf item requeue`); False if it isn't
+    one."""
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        done = conn.execute(
+            "UPDATE items SET model_failed = 0, model_attempts = 0, model_failed_at = NULL,"
+            " updated_at = ? WHERE stable_id = ? AND model_failed = 1"
+            " AND status IN ('new', 'classified', 'clarified')", (now, sid)).rowcount  # fmt: skip
+        if done:
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome)"
+                " SELECT ?, address_id, stable_id, 'model.item_retried', ?, 'ok' FROM items"
+                " WHERE stable_id = ?", (now, actor, sid))  # fmt: skip
+    return bool(done)
+
+
+def retry_all(conn: sqlite3.Connection, clock: Clock, *, actor: str) -> int:
+    """Every item the model gave up on, back to it (after `ecf models install`)."""
+    return sum(retry(conn, clock, sid, actor=actor) for sid in failed_items(conn))
 
 
 def failed_items(conn: sqlite3.Connection) -> list[str]:
@@ -386,7 +508,7 @@ class RoundSchedule:
         offhours: timedelta,
     ) -> None:
         now = self.clock.now()
-        if report.status in ("not_ready", "eval"):
+        if report.status in ("not_ready", "eval", "busy"):
             self.next_due = now + RETRY
         elif on_battery:
             self.next_due = now + offhours
@@ -435,6 +557,10 @@ CAFFEINATE = "/usr/bin/caffeinate"
 ETA_SAMPLE = 200  # recent successful calls looked at
 RUN_GAP = timedelta(minutes=10)  # longer than a heat pause: a gap this long ends a backlog run
 RUN_MIN = 5  # emails in the latest run before its pace is trusted
+# a gap in a run counts at most this many times the model time per email: a backlog's gaps are
+# 3-4 times it (the actor and the work between calls, step 12a), mail arriving every few
+# minutes is 50 or more times it
+GAP_CAP = 10
 
 
 def seconds_per_item(conn: sqlite3.Connection) -> float | None:
@@ -442,23 +568,27 @@ def seconds_per_item(conn: sqlite3.Connection) -> float | None:
     classified in one continuous run (gaps under `RUN_GAP`), that run's measured pace, which
     includes the actor's calls, the work between calls and heat pauses (the step 12a shadow run
     showed the per-call time alone underestimating fivefold). Otherwise the model time per email:
-    every role's call time over the emails classified."""
+    every role's call time over the emails classified. Each gap in a run counts at most
+    `GAP_CAP` times the model time per email, so mail trickling in every few minutes (no backlog)
+    isn't taken for slow work."""
     rows = conn.execute("SELECT ts, role, total_ns FROM model_calls WHERE outcome = 'ok' AND"
                         " total_ns IS NOT NULL ORDER BY id DESC LIMIT ?",
                         (ETA_SAMPLE,)).fetchall()  # fmt: skip
     if not rows:
         return None
     stamps = [from_ts(r["ts"]) for r in rows if r["role"] == "classifier"]  # newest first
+    emails = len(stamps)
+    total = sum(r["total_ns"] for r in rows) / 1e9
+    model = total / emails if emails else statistics.median(r["total_ns"] for r in rows) / 1e9
     run = stamps[:1]
     for t in stamps[1:]:
         if run[-1] - t > RUN_GAP:
             break
         run.append(t)
     if len(run) >= RUN_MIN and run[0] > run[-1]:
-        return (run[0] - run[-1]).total_seconds() / (len(run) - 1)
-    emails = len(stamps)
-    total = sum(r["total_ns"] for r in rows) / 1e9
-    return total / emails if emails else statistics.median(r["total_ns"] for r in rows) / 1e9
+        gaps = [(a - b).total_seconds() for a, b in itertools.pairwise(run)]
+        return sum(min(g, GAP_CAP * model) for g in gaps) / len(gaps)
+    return model
 
 
 def status(conn: sqlite3.Connection, *, laptop: bool, on_ac: bool) -> dict[str, Any]:

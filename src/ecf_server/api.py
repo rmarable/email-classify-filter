@@ -135,6 +135,8 @@ class ServiceState:
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
+    # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
+    throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
 
     def connect(self) -> sqlite3.Connection:
@@ -425,10 +427,12 @@ def _model_lines(state: ServiceState, until_empty: bool,
 
 def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
     conn, client = state.connect(), state.model_client()
+    power = state.power()
+    state.throttle.power(not (power.laptop and not power.on_ac))
     try:
         r = modelq.run_round(conn, state.clock, state.notifier, client, work,
-                             resident=modelq.resident(conn),
-                             check_kw=state.model_check)  # fmt: skip
+                             resident=modelq.resident(conn), check_kw=state.model_check,
+                             throttle=state.throttle)  # fmt: skip
         line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
                                 "waiting": r.waiting}  # fmt: skip
         if r.status == "not_ready":
@@ -722,7 +726,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if not root.is_absolute() or not (root / "labels.jsonl").is_file():
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
-        if not isinstance(floor, int) or not 0 <= floor <= 100:
+        if isinstance(floor, bool) or not isinstance(floor, int) or not 0 <= floor <= 100:
             raise InvalidInputError("battery_floor: a percent from 0 to 100")
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
                                actor=body.get("actor") is not False,

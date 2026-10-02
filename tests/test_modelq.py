@@ -12,12 +12,13 @@ import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from ecf.ids import AddressId, StableId
-from ecf_server import inbox, items, leases, modelq, ollama
+from ecf_server import inbox, items, leases, modelq, ollama, schedule
 from ecf_server.clock import Clock, FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.modelq import ItemResult, RoundSchedule
@@ -153,6 +154,16 @@ def test_failures_count_once_per_round_then_mark_model_failed(
     assert work.seen == ["ap-00", "ap-00"]
 
 
+def test_a_success_resets_the_attempts(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", 1)
+    _round(conn, clock, Work(outcome="failed"))
+    assert conn.execute("SELECT model_attempts FROM items").fetchone()[0] == 1
+    _round(conn, clock, Work())  # classified: the actor, if any, starts with a clean count
+    assert tuple(conn.execute("SELECT status, model_attempts FROM items").fetchone()) == (
+        "classified", 0)  # fmt: skip
+
+
 def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -180,6 +191,89 @@ def test_a_server_fault_mid_round_stops_without_counting_an_attempt(
     report = _round(conn, clock, work)
     assert report.status == "not_ready" and work.seen == ["ap-00"]
     assert conn.execute("SELECT max(model_attempts) FROM items").fetchone()[0] == 0
+
+
+def test_ollama_out_of_memory_counts_no_attempt_and_alerts_until_a_call_succeeds(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", 3)
+    n = FakeNotifier()
+    busy = OllamaError("server", "HTTP 500 model requires more system memory")
+    for _ in range(3):  # however many rounds: no item is marked failed for it
+        report = _round(conn, clock, Work(raise_=busy), notifier=n)
+        assert report.status == "not_ready"
+    assert conn.execute("SELECT max(model_attempts) FROM items").fetchone()[0] == 0
+    assert [r[0] for r in conn.execute("SELECT kind FROM alerts WHERE resolved_at IS NULL")] == [
+        "local_model_server"]  # fmt: skip
+    assert len(n.sent) == 1 and "can't run the local model now" in n.sent[0][1]
+    _round(conn, clock, Work(), notifier=n)
+    assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
+
+
+def test_ollamas_memory_and_runner_errors_are_server_faults() -> None:
+    import httpx  # noqa: PLC0415
+
+    def client(status: int, error: str) -> Client:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, json={"error": error})
+
+        return Client(httpx.MockTransport(handler))
+
+    for status, error, cause in (
+        (500, "model requires more system memory (9.1 GiB) than is available", "server"),
+        (500, "llama runner process has terminated: signal: killed", "server"),
+        (500, "something else", "http"),
+        (400, "invalid memory option", "http"),
+    ):
+        with pytest.raises(OllamaError) as e:
+            client(status, error).version()
+        assert e.value.cause == cause
+
+
+def test_requeue_gives_an_item_back_to_the_model(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    from ecf_server import approvals  # noqa: PLC0415
+
+    add_address(conn, clock, "ap")
+    sid = "ab12cd34".ljust(64, "0")  # `ecf item requeue` takes a hex ID
+    items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
+                      content_hash="h", facts="{}", subject="s", sender="a@b.example")  # fmt: skip
+    for _ in range(modelq.MAX_ATTEMPTS):
+        _round(conn, clock, Work(outcome="failed"))
+    assert modelq.waiting(conn) == {} and inbox.inbox(conn)[0]["model_failed"] is True
+    r = approvals.requeue(conn, clock, sid[:12], actor="os_user", nonce=None)
+    assert r["model"] == "retry"
+    row = conn.execute("SELECT model_failed, model_attempts, model_failed_at FROM items").fetchone()
+    assert tuple(row) == (0, 0, None) and modelq.waiting(conn) == {"ap": 1}
+    assert conn.execute("SELECT count(*) FROM audit WHERE event = 'model.item_retried'"
+                        ).fetchone()[0] == 1  # fmt: skip
+    for _ in range(modelq.MAX_ATTEMPTS):
+        _round(conn, clock, Work(outcome="failed"))
+    assert modelq.retry_all(conn, clock, actor="os_user") == 1  # what `ecf models install` does
+
+
+def test_a_hot_round_stops_before_the_next_address(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    for aid in ("ap", "hr", "it"):
+        add_address(conn, clock, aid)
+        _items(conn, clock, aid, 2)
+    t = modelq.Throttle()
+    for _ in range(5):
+        t.record(_ok(30))
+    for _ in range(2):
+        t.record(_ok(10))  # two slow calls already: the next one is the third in a row
+
+    class Slow(Work):
+        def __call__(self, *a: Any) -> ItemResult:
+            super().__call__(*a)
+            return _ok(10)
+
+    work = Slow()
+    report = _round(conn, clock, work, throttle=t)
+    assert report.status == "hot" and work.seen == ["ap-00"]
 
 
 def test_a_timeout_counts_as_an_attempt(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -285,6 +379,16 @@ def test_a_normal_call_resets_the_run_and_failures_never_count() -> None:
     assert t.median() == 30
 
 
+def test_unplugging_starts_the_median_again() -> None:
+    t = modelq.Throttle()
+    t.power(True)
+    for _ in range(5):
+        t.record(_ok(30))
+    t.power(False)  # on battery: about a third of the speed, which isn't heat
+    assert t.median() is None
+    assert not any(t.record(_ok(10)) for _ in range(8))
+
+
 def test_no_judgement_before_enough_calls() -> None:
     t = modelq.Throttle()
     assert not any(t.record(_ok(1)) for _ in range(4))
@@ -335,3 +439,43 @@ def test_awake_holds_prevent_user_idle_system_sleep_on_ac() -> None:
             time.sleep(0.1)
         assert ours()
     assert not ours()
+
+
+def test_one_round_at_a_time_and_an_eval_waits_for_a_running_one(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    from ecf_server import evalrun  # noqa: PLC0415
+
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", 1)
+    modelq.ROUND_LOCK.acquire()  # the worker's round is running
+    try:
+        report = _round(conn, clock, Work())
+        assert (report.status, report.waiting) == ("busy", 1)
+        s = RoundSchedule(clock)
+        s.after(report, on_battery=False, offhours=timedelta(minutes=30))
+        assert s.next_due == clock.now() + modelq.RETRY
+        held = threading.Event()
+
+        def eval_takes_the_queue() -> None:
+            opts = evalrun.Options(root=Path("/x"))
+            evalrun._hold(opts, lambda: schedule.Power(laptop=False, on_ac=True),  # pyright: ignore[reportPrivateUsage]
+                          lambda: None, time.monotonic(), clock)  # fmt: skip
+            held.set()
+
+        t = threading.Thread(target=eval_takes_the_queue)
+        t.start()
+        assert not held.wait(0.2)  # it holds EXCLUSIVE, but waits for the round to end
+        assert modelq.EXCLUSIVE.held()
+    finally:
+        modelq.ROUND_LOCK.release()
+    assert held.wait(5)
+    t.join()
+    modelq.EXCLUSIVE.release()
+
+
+def test_check_says_when_the_services_round_holds_the_model() -> None:
+    from ecf.cli import _model_line  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    assert _model_line({"status": "busy", "waiting": 4}).endswith(
+        "the service's own run is using the model; 4 waiting")  # fmt: skip

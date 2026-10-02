@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from ecf import __version__
+from ecf import __version__, ollama_unit
 from ecf.client import LocalClient
 from ecf.errors import EcfError, ServiceUnavailableError
 from ecf.paths import Paths
@@ -242,7 +242,24 @@ def check_org_domains(paths: Paths) -> Check:
 
 
 def check_models(paths: Paths) -> list[Check]:
-    """The local model, checked by the service (V1.3 step 1b; SPEC §7.5, §13.2)."""
+    """The local model, checked by the service (V1.3 step 1b; SPEC §7.5, §13.2), and ecf's login
+    item for Ollama, whose program an Ollama upgrade can remove."""
+    return check_ollama_unit(paths) + _service_models(paths)
+
+
+def check_ollama_unit(paths: Paths) -> list[Check]:
+    try:
+        unit = ollama_unit.manager_for(paths.root)
+    except ServiceUnavailableError:
+        return []
+    gone = ollama_unit.program_gone(unit.program()) if unit.unit_path.exists() else ""
+    if not gone:
+        return []
+    return [Check("ollama login item", Level.FAIL, f"ecf's login item for Ollama: {gone}",
+                  "ecf models serve install")]  # fmt: skip
+
+
+def _service_models(paths: Paths) -> list[Check]:
     try:
         with LocalClient(paths) as c:
             st: dict[str, Any] = c.get("/v1/models")

@@ -70,6 +70,9 @@ class FakeOllama:
             body = json.loads(req.content)
             self.models[body["destination"]] = self.models[body["source"]]
             return httpx.Response(200)
+        if path == "/api/delete":
+            self.models.pop(json.loads(req.content)["model"], None)
+            return httpx.Response(200)
         return httpx.Response(404, json={"error": "not found"})
 
     def client(self) -> Client:
@@ -106,7 +109,8 @@ def test_ollama_not_running_opens_one_system_error_then_resolves(
     assert _open(conn) == ["local_model"]
     assert n.sent == [("[ecf-alert] System Error",
                        "Ollama isn't running (nothing listens on port 11434). Model work is"
-                       " stopped until it's fixed: start Ollama.")]  # fmt: skip
+                       " stopped until it's fixed: run `ecf models serve install` (ecf's login"
+                      " item for Ollama), or start the Ollama you run yourself.")]  # fmt: skip
     assert models.check(conn, clock, n, FakeOllama().client(), **check_kw()) is not None
     assert _open(conn) == []
     assert n.sent[-1][0] == "[ecf-alert] Resolved: System Error"
@@ -180,6 +184,35 @@ def test_install_pulls_checks_and_copies(
     assert models.installed(conn)
     [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.installed'").fetchall()
     assert json.loads(row[0]) == {"tag": PIN.ecf_tag, "digest": PIN.digest}
+
+
+def test_install_removes_ecfs_copies_for_other_releases(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    fake = FakeOllama(installed=False)
+    fake.models[f"{PIN.ecf_name}:0.0.1"] = PIN.digest  # an earlier release's copy
+    fake.models["other/model:1"] = "d" * 64  # not ecf's
+    models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline)
+    assert set(fake.models) == {PIN.tag, PIN.ecf_tag, "other/model:1"}
+
+
+def test_after_an_upgrade_the_check_copies_the_pinned_model_again(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    fake = FakeOllama(installed=False)  # this release's ecf name isn't there yet
+    n = FakeNotifier()
+    assert models.check(conn, clock, n, fake.client(), **check_kw()) is None  # never installed
+    with write_tx(conn):
+        slack_admin.put_setting(conn, models.INSTALLED_KEY, "t", "t", actor="test")
+    assert models.check(conn, clock, n, fake.client(), **check_kw()) is not None
+    assert fake.models[PIN.ecf_tag] == PIN.digest and _open(conn) == []
+    [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.installed'").fetchall()
+    assert json.loads(row[0])["copied_after_upgrade"] == 1
+    moved = FakeOllama(installed=False, upstream="c" * 64)  # the upstream tag moved: no copy
+    assert models.check(conn, clock, n, moved.client(), **check_kw()) is None
+    assert PIN.ecf_tag not in moved.models
 
 
 def test_install_refuses_a_moved_upstream_tag(
@@ -277,7 +310,9 @@ def test_the_daily_summary_says_items_wait_for_the_local_model(
 ) -> None:
     models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **check_kw())
     card = daily.card(conn, clock.now(), "2026-10-01")
-    assert "items waiting for the local model since" in card.text
+    [line] = [x for x in card.text.splitlines() if "local model" in x]  # one line, not two
+    assert line.startswith("Waiting for the local model: 0; it can't be used since ")
+    assert line.endswith(" UTC (see ecf models status)")
 
 
 def test_install_wide_alerts_stay_listed_after_an_address_is_removed(
@@ -292,3 +327,22 @@ def test_install_wide_alerts_stay_listed_after_an_address_is_removed(
                      (now, now))  # fmt: skip
     models.check(conn, clock, FakeNotifier(), FakeOllama(installed=False).client(), **check_kw())
     assert [a["kind"] for a in health.open_alerts(conn)] == ["local_model"]
+
+
+def test_the_check_is_needed_only_while_an_address_uses_the_local_model(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    assert not models.needed(conn)
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
+                     (to_ts(clock.now()),))  # fmt: skip
+    assert not models.needed(conn)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET preset = 'A'")
+    assert models.needed(conn)
+    n = FakeNotifier()
+    models.check(conn, clock, n, FakeOllama(installed=False).client(), **check_kw())
+    assert _open(conn) == ["local_model"]
+    models.quiet(conn, clock, n)  # e.g. every address moved to preset C
+    assert _open(conn) == []
