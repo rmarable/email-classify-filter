@@ -45,6 +45,7 @@ dev = [
     "import-linter>=2.0",
     "hypothesis>=6.100",
     "testcontainers>=4.8",
+    "aiosmtpd>=1.4.6",
 ]
 
 [build-system]

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.5-outbound-ops (not yet tagged)
 
+- Each address now has an SMTP server for sending (nothing sends yet): `ecf address add` takes `--smtp-host` and `--smtp-port` (465 or 587), defaulting to the IMAP host with `imap.` replaced by `smtp.` on port 465, and checks the login without sending; a failed check is a warning. `ecf address set <address> --smtp-host <host>` changes it with step-up and a Security Notice, since the app password goes to that server. Only TLS connections are used (OD-324).
 - Decisions for outbound and operations, after a four-reviewer review of the V1.5 plan: the model may write draft replies (shown in full before you approve); a send whose outcome is unknown is never sent again; forwards attach the original unchanged; alert emails carry no email content; one template reply per thread and per sender a week; changing the SMTP host needs step-up; backups export selected tables (never the raw database), encrypted with age and signed, from one backup key; each install gets a permanent ID and a restore counter so a second running copy is noticed; `ecf upgrade` rolls back without running anything twice; Time Machine is not a backup (OD-308 to OD-332).
 - Roadmap: two planned later items to try to make the local model faster, both to be measured before any decision: shorter key names in the classifier's output, and running all classifier calls before the actor calls in a round.
 

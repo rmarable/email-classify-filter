@@ -101,8 +101,9 @@ uv build                                        # wheel + sdist
 
 - **Dev:** `uv run ecf-server dev` runs a throwaway service (a `/tmp` folder, a fake clock you move
   with `POST /v1/dev/clock?advance=<seconds>`, a fake chat, secrets in memory only). It prints the
-  `ECF_SOCKET=...` line that points the CLI at it. The mail containers (Dovecot, Postfix +
-  OpenDMARC) join in V1.1.
+  `ECF_SOCKET=...` line that points the CLI at it. The IMAP tests use a Dovecot container (V1.1);
+  the SMTP tests use an in-process server, `aiosmtpd`, so no mail container is needed for them
+  (OD-308).
 - **Test install:** a real local install with `--install test` on a test Slack workspace and a
   test mailbox that receives only synthetic mail (from V1.2).
 - **Prod:** your real install; it only ever receives tagged releases.

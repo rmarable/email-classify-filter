@@ -263,6 +263,17 @@ class ImapSource:
         conn = self._other(folder, readonly=False)
         self._relocate(conn, uid, INBOX)
 
+    def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
+        conn = self._connect()
+        self._call(lambda: conn.append(folder, raw, list(flags)))
+
+    def delete_in(self, folder: str, uid: int) -> None:
+        conn = self._other(folder, readonly=False)
+        if "UIDPLUS" not in self._call(conn.capabilities):
+            raise MailUnavailableError(f"{self._host} lacks UIDPLUS: can't delete just one message")
+        self._call(lambda: conn.add_flags([uid], ["\\Deleted"]))
+        self._call(lambda: conn.uid_expunge([uid]))
+
     def _relocate(self, conn: lib.Conn, uid: int, folder: str) -> None:
         """MOVE when the server has it; else COPY, mark deleted and UID EXPUNGE just this UID
         (UIDPLUS). Without either, refuse: a plain EXPUNGE could remove other deleted mail."""

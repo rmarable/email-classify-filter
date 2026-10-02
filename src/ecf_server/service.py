@@ -62,6 +62,7 @@ from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.imap import ImapSource
+from ecf_server.mail.smtp import Sender, SmtpSender
 from ecf_server.notify import Notifier, NullNotifier, host_notifier
 from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
@@ -95,6 +96,10 @@ class Options:
 
 def imap_factory(host: str, user: str, password: Callable[[], str]) -> MailSource:
     return ImapSource(host, user, password)
+
+
+def smtp_factory(host: str, port: int, user: str, password: Callable[[], str]) -> Sender:
+    return SmtpSender(host, port, user, password)
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -534,6 +539,7 @@ class Service:
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
+        self.state.sender_factory = smtp_factory
         # the local classifier (V1.3 step 3); a dev service runs it only when asked, so tests that
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":

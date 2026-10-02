@@ -91,6 +91,7 @@ from ecf_server import (
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.mail.smtp import SenderFactory
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
 from ecf_server.stepper import Stepper
@@ -145,6 +146,7 @@ class ServiceState:
     db_path: Path | None = None
     secrets: SecretStore | None = field(default=None, repr=False)
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
+    sender_factory: SenderFactory | None = field(default=None, repr=False)  # SMTP (V1.5)
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
     stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
@@ -1552,11 +1554,19 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
             app_password=_str(body, "app_password"),
             address_id=_str(body, "address_id") if body.get("address_id") is not None else None,
             org_domains=_str_list(org) if org is not None else None,
+            smtp_host=_str(body, "smtp_host") if body.get("smtp_host") is not None else None,
+            smtp_port=_port(body.get("smtp_port")),
         )
         conn = state.connect()
         try:
             a = addresses.add_address(
-                conn, state.clock, state.store(), _factory(), req, actor="os_user"
+                conn,
+                state.clock,
+                state.store(),
+                _factory(),
+                req,
+                actor="os_user",
+                sender_factory=state.sender_factory,
             )
         finally:
             conn.close()
@@ -1568,9 +1578,11 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_address(request: Request) -> JSONResponse:
         ref = str(request.path_params["ref"])
         body = _body(request)
-        unknown = set(body) - {"app_password"}
+        unknown = set(body) - {"app_password", "smtp_host", "smtp_port", "stepup_nonce"}
         if unknown:
             raise InvalidInputError(f"can't set {', '.join(sorted(unknown))} here yet")
+        if "smtp_host" in body:
+            return JSONResponse(_set_smtp(state, ref, body))
         conn = state.connect()
         try:
             a = addresses.set_app_password(
@@ -1581,6 +1593,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 ref,
                 _str(body, "app_password"),
                 actor="os_user",
+                sender_factory=state.sender_factory,
             )
         finally:
             conn.close()
@@ -1653,6 +1666,44 @@ def _body(request: Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise InvalidInputError("request body must be a JSON object")
     return cast(dict[str, Any], data)
+
+
+def _set_smtp(state: ServiceState, ref: str, body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf address set --smtp-host` (step-up, Security Notice; OD-324)."""
+    if "app_password" in body:
+        raise InvalidInputError("set the app password and the SMTP server separately")
+    nonce = body.get("stepup_nonce")
+    conn = state.connect()
+    try:
+        return addresses.set_smtp(
+            conn,
+            state.clock,
+            lambda text: _notice(state, conn, text),
+            state.store(),
+            state.sender_factory,
+            ref,
+            _str(body, "smtp_host"),
+            _port(body.get("smtp_port")) or 465,
+            actor="os_user",
+            nonce=nonce if isinstance(nonce, str) else None,
+        )
+    finally:
+        conn.close()
+
+
+def _port(v: Any) -> int | None:
+    if v is None:
+        return None
+    if not isinstance(v, int) or isinstance(v, bool):
+        raise InvalidInputError("smtp_port must be a number")
+    return v
+
+
+def _notice(state: ServiceState, conn: sqlite3.Connection, text: str) -> None:
+    """A Security Notice to the desktop, your DM and the summary channel (§13.3)."""
+    ident = slack_admin.identity(conn)
+    slack_admin.notice(conn, state.clock, state.notifier, text,
+                       dms=[ident.member] if ident and ident.member else [])  # fmt: skip
 
 
 def _str(body: dict[str, Any], key: str) -> str:

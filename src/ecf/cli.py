@@ -548,12 +548,21 @@ def address_add(
     address_id: Annotated[
         str | None, typer.Option("--id", help="Short name (default: from the local part).")
     ] = None,
+    smtp_host: Annotated[
+        str | None,
+        typer.Option("--smtp-host", help="SMTP server for sending (default: imap. → smtp.)."),
+    ] = None,
+    smtp_port: Annotated[
+        int | None, typer.Option("--smtp-port", help="465 (TLS, default) or 587 (STARTTLS).")
+    ] = None,
 ) -> None:
-    """Add a mailbox: checks the app password by logging in, then stores it in the OS secret
-    store. It starts in shadow (watch only) with outbound off. Needs a real terminal."""
+    """Add a mailbox: checks the app password by logging in (IMAP, and SMTP without sending),
+    then stores it in the OS secret store. It starts in shadow (watch only) with outbound off.
+    Needs a real terminal."""
     require_terminal()
     with LocalClient(_paths()) as c:
-        add_address(c, email, imap_host, sensitivity, preset, address_id)
+        add_address(c, email, imap_host, sensitivity, preset, address_id,
+                    smtp_host=smtp_host, smtp_port=smtp_port)  # fmt: skip
 
 
 PRESET_NOTES = {
@@ -572,6 +581,9 @@ def add_address(
     sensitivity: str | None,
     preset: str | None,
     address_id: str | None,
+    *,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
 ) -> dict[str, Any]:
     """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
     current = c.get("/v1/addresses")
@@ -590,6 +602,10 @@ def add_address(
     }
     if address_id:
         body["address_id"] = address_id
+    if smtp_host:
+        body["smtp_host"] = smtp_host
+    if smtp_port is not None:
+        body["smtp_port"] = smtp_port
     if not current["org_domains"]:
         domain = email.rsplit("@", 1)[-1].lower()
         typer.echo(
@@ -635,6 +651,10 @@ def _echo_probe(a: dict[str, Any]) -> None:
         f"keywords {'yes' if p['custom_keywords'] else 'no'}; "
         f"size limit {_size_note(size, p.get('max_size_source'))}"
     )
+    smtp = p.get("smtp")
+    if smtp and smtp.get("ok"):
+        limit = f", size limit {_mb(smtp['size'])}" if smtp.get("size") else ""
+        typer.echo(f"smtp: {smtp['host']}:{smtp['port']} login ok (nothing sent){limit}")
     for w in p["warnings"]:
         typer.echo(f"  note: {w}")
 
@@ -662,10 +682,29 @@ def address_set(
     app_password: Annotated[
         bool, typer.Option("--app-password", help="Enter a new app password (hidden prompt).")
     ] = False,
+    smtp_host: Annotated[
+        str | None,
+        typer.Option("--smtp-host", help="Send through this SMTP server instead (step-up)."),
+    ] = None,
+    smtp_port: Annotated[
+        int, typer.Option("--smtp-port", help="465 (TLS) or 587 (STARTTLS), with --smtp-host.")
+    ] = 465,
 ) -> None:
-    """Change a mailbox's settings. Now: `--app-password` (re-enter or rotate)."""
+    """Change a mailbox's settings: `--app-password` (re-enter or rotate), or `--smtp-host`
+    (the server the app password is sent to; step-up and a Security Notice). (step-up)"""
+    if app_password and smtp_host:
+        raise typer.BadParameter("set --app-password and --smtp-host separately")
+    if smtp_host:
+        with LocalClient(_paths()) as c:
+            body: dict[str, object] = {"smtp_host": smtp_host, "smtp_port": smtp_port}
+            path = f"/v1/addresses/{address}"
+            a = with_step_up(c, lambda n: c.request("POST", path, body | {"stepup_nonce": n}),
+                             echo=typer.echo)  # fmt: skip
+        typer.echo(f"{a['email']} now sends through {a['smtp_host']}:{a['smtp_port']}")
+        _echo_probe(a)
+        return
     if not app_password:
-        raise typer.BadParameter("nothing to set; use --app-password")
+        raise typer.BadParameter("nothing to set; use --app-password or --smtp-host")
     require_terminal()
     with LocalClient(_paths()) as c:
         pw = hidden(f"New app password for {address} (hidden): ")

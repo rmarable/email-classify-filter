@@ -189,3 +189,16 @@ class MailSourceContract:
         src.copy(uid, folder)
         assert src.existing([uid]) == {uid}
         assert len(src.find_in(folder, "<contract-0@synthetic.acme.example>")) == 1
+
+    def test_append_then_delete_in_a_folder(self, harness: Harness) -> None:
+        src = harness.source
+        folder = self._archive(harness)
+        raw = message(7)
+        src.append(folder, raw, ["\\Draft", "\\Seen"])
+        [there] = src.find_in(folder, "<contract-7@synthetic.acme.example>")
+        assert src.fetch_in(folder, there) == raw
+        assert src.uids_after(0) == []  # nothing arrived in INBOX
+        src.append(folder, message(8))
+        src.delete_in(folder, there)
+        assert src.find_in(folder, "<contract-7@synthetic.acme.example>") == []
+        assert len(src.find_in(folder, "<contract-8@synthetic.acme.example>")) == 1  # untouched
