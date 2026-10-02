@@ -236,10 +236,11 @@ TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
         "review_queue", "Claim items to review",
         "Claims up to `limit` waiting items for this session and returns, for each, its id, "
-        "address, need (classify or act), the agent to hand it to and a claim token (valid 15 "
-        "minutes). Pass the id and claim token in the agent's prompt; never read the message "
-        "yourself. `results` reports how earlier claims ended. `more` is true when more items "
-        "are waiting.",
+        "address, need (classify or act), the agent to hand it to, a claim token (valid 15 "
+        "minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the "
+        "ids and claim tokens in the agent's prompt; never read the message yourself. "
+        "`results` reports how earlier claims ended. `more` is true when more items are "
+        "waiting.",
         {"address_id": ADDRESS,
          "limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
                    "description": "At most this many items (1-50)."}},

@@ -37,7 +37,9 @@ TITLES = {
     "local_model_unsafe": "System Error",  # ... and ecf can't confirm it's safe (OD-242, OD-245)
     "model_failures": "System Error",  # many items the model gave up on (OD-236)
     "local_model_server": "System Error",  # Ollama can't run the model now (out of memory)
+    "claude_review": "Operator Input Needed: Claude review waiting",  # V1.4 step 9 (OD-115)
 }
+NOT_CHECKS = frozenset({"claude_review"})  # a mail check doesn't resolve these
 Resolver = Callable[[str], bool]
 
 
@@ -72,7 +74,7 @@ def after_check(
     failures = row["login_failures"] if row else 0
     if report.status in ("ok", "first_run", "reset_recovered"):
         since, failures = None, 0
-        for kind in TITLES:
+        for kind in [k for k in TITLES if k not in NOT_CHECKS]:
             resolve_alert(conn, clock, notifier, kind, aid)
     elif report.status == "login_rejected":
         failures += 1

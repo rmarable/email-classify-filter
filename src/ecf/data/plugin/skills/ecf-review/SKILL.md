@@ -11,14 +11,11 @@ Repeat until done:
 
 1. Call `mcp__ecf__review_queue` (no arguments needed).
 2. If `items` is empty, stop and go to the end.
-3. Group the items by `agent`. Hand them out with the Agent tool, using the item's `agent`
-   value exactly as the subagent type:
-   - `ecf:classifier` and `ecf:actor`: one spawn per agent per round, with all of that agent's
-     items from this round.
-   - `ecf:classifier-high` and `ecf:actor-high`: one spawn per item.
-   The prompt holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing
-   else. Hand out one agent type at a time: the spawns of the same `agent` may run in
-   parallel, but wait for them all to finish before starting another agent's spawns.
+3. Group the items by `spawn`. Give each group to one spawn of the Agent tool, using the
+   group's `agent` value exactly as the subagent type. The prompt holds only one line per item,
+   `id=<id> claim_token=<claim_token>`, and nothing else. Hand out one agent type at a time:
+   the spawns of the same `agent` may run in parallel, but wait for them all to finish before
+   starting another agent's spawns.
 4. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
    says: outcomes come only from `results` in the next `review_queue` call.
 

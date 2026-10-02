@@ -138,6 +138,13 @@ def _fallback_timeout(c: LocalClient, value: str, address: str | None) -> None:
                    " go to it.")  # fmt: skip
 
 
+def _high_batch(c: LocalClient, value: str, address: str | None) -> None:
+    body = {"key": "classifier_high_batch", "value": value, "address_id": address}
+    r = with_step_up(c, lambda n: c.request("POST", "/v1/settings", body | {"nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    typer.echo(f"classifier_high_batch = {r['value']} for {r['address_id']}")
+
+
 def _claude_override(c: LocalClient, value: str, address: str | None) -> None:
     if address:
         raise typer.BadParameter("claude_model_override is for the whole install")
@@ -153,6 +160,7 @@ def _claude_override(c: LocalClient, value: str, address: str | None) -> None:
 STEP_UP_KEYS: dict[str, Callable[[LocalClient, str, str | None], None]] = {
     "claude_model_override": _claude_override,  # and a Security Notice (§7.5)
     "claude_queue_timeout": _fallback_timeout,  # to turn it on (§4.3; V1.4 step 8)
+    "classifier_high_batch": _high_batch,  # to raise it (§7.5; V1.4 step 9)
 }
 
 

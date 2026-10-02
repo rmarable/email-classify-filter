@@ -15,6 +15,9 @@ Records-only backfilled mail (`ecf backfill` without --act) is closed as `observ
 queued. `sweep` runs each tick for items a crash left between the pre-check (or the rule) and
 this queue.
 
+`overdue` (V1.4 step 9): items that have waited longer than `claude_review_reminder_hours` (24;
+OD-115), for the reminder (claude_review.remind) and the daily summary.
+
 `batch_risky` is the cross-item hide guard (§5.6) for Claude's batches (claude_review.py, step 3).
 """
 
@@ -22,7 +25,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError
@@ -34,6 +38,7 @@ from ecf_server.state_machine import Status, TransitionContext
 
 CLAUDE_PRESETS = frozenset({"B", "C"})  # the actor is Claude
 CLAUDE_CLASSIFIES = frozenset({"C"})  # the classifier is Claude too
+REMIND_DEFAULT_H = 24  # claude_review_reminder_hours (§14.1)
 
 
 def preset(conn: sqlite3.Connection, address_id: str) -> str:
@@ -99,16 +104,45 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
     return moved
 
 
+_WAITING = (
+    " FROM items i JOIN addresses a USING (address_id)"
+    " WHERE a.removed_at IS NULL AND i.fallback_at IS NULL AND (i.status = 'awaiting_claude'"
+    " OR (i.status = 'clarified' AND a.preset IN ('B', 'C')))"
+)
+
+
 def waiting(conn: sqlite3.Connection) -> dict[str, int]:
     """Items waiting for `/ecf-review`, per address: at `awaiting_claude`, and answered
     questions on B and C addresses."""
-    rows = conn.execute(
-        "SELECT i.address_id, count(*) FROM items i JOIN addresses a USING (address_id)"
-        " WHERE a.removed_at IS NULL AND i.fallback_at IS NULL AND (i.status = 'awaiting_claude'"
-        " OR (i.status = 'clarified' AND a.preset IN ('B', 'C')))"
-        " GROUP BY i.address_id ORDER BY i.address_id"
-    ).fetchall()
+    rows = conn.execute("SELECT i.address_id, count(*)" + _WAITING
+                        + " GROUP BY i.address_id ORDER BY i.address_id").fetchall()  # fmt: skip
     return {r[0]: r[1] for r in rows}
+
+
+@dataclass(frozen=True)
+class Overdue:
+    """Items that have waited for `/ecf-review` longer than `claude_review_reminder_hours`."""
+
+    address_id: str
+    count: int
+    oldest: str  # claude_since of the oldest, UTC
+
+
+def reminder_hours(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT value FROM settings WHERE key = 'claude_review_reminder_hours'"
+                       ).fetchone()  # fmt: skip
+    return int(json.loads(row[0])) if row else REMIND_DEFAULT_H
+
+
+def overdue(conn: sqlite3.Connection, now: datetime) -> list[Overdue]:
+    """Per address, items waiting for `/ecf-review` longer than the reminder hours (since they
+    entered the queue, `items.claude_since`)."""
+    before = to_ts(now - timedelta(hours=reminder_hours(conn)))
+    rows = conn.execute(
+        "SELECT i.address_id, count(*), min(i.claude_since)" + _WAITING
+        + " AND i.claude_since < ? GROUP BY i.address_id ORDER BY i.address_id", (before,)
+    ).fetchall()  # fmt: skip
+    return [Overdue(r[0], r[1], r[2]) for r in rows]
 
 
 def batch_risky(conn: sqlite3.Connection, sid: str) -> bool:

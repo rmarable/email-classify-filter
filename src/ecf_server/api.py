@@ -52,6 +52,7 @@ from ecf_server import (
     audit,
     backfill,
     checks,
+    claude_batch,
     claude_eval,
     claude_pins,
     claude_queue,
@@ -721,6 +722,12 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
             nonce = _opt_str(body, "nonce_id")
             return _with_conn(lambda c: fallback.set_timeout(c, state.clock, state.notifier, aid,
                                                              value, nonce=nonce))  # fmt: skip
+        if key == settings.HIGH_BATCH_KEY:  # step-up to raise it (V1.4 step 9)
+            if not aid:
+                raise InvalidInputError(f"{key} is per address: add --address")
+            nonce = _opt_str(body, "nonce_id")
+            return _with_conn(lambda c: claude_batch.set_size(c, state.clock, state.notifier, aid,
+                                                              value, nonce=nonce))  # fmt: skip
         return _with_conn(lambda c: settings.set_value(c, state.clock, key, value, address=aid,
                                                        actor="os_user"))  # fmt: skip
 
