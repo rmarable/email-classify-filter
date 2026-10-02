@@ -95,6 +95,12 @@ def effective(conn: sqlite3.Connection) -> dict[str, str]:
     return {r: over.get(family(i) or "", i) for r, i in load_lock().items()}
 
 
+def in_use(conn: sqlite3.Connection) -> bool:
+    """Whether any address uses Claude (preset B or C)."""
+    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL AND preset IN"
+                        " ('B', 'C') LIMIT 1").fetchone() is not None  # fmt: skip
+
+
 def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
     eff = effective(conn)
     out = {r: eff[r] for r in GATE_ROLES[preset]}

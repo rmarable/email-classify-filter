@@ -231,20 +231,28 @@ def judge_model_watch(st: dict[str, Any], today: date) -> list[Check]:
 
 
 def judge_claude(st: dict[str, Any]) -> list[Check]:
-    """The Claude model check of the last `ecf claude` session (SPEC §7.5; V1.4 step 6)."""
+    """The pinned Claude IDs (V1.4 step 11) and the model check of the last `ecf claude`
+    session (SPEC §7.5; V1.4 step 6)."""
     claude: dict[str, Any] = st.get("claude") or {}
+    out: list[Check] = []
+    if pins := claude.get("pins"):  # only while an address uses B or C
+        by_id: dict[str, list[str]] = {}
+        for role, mid in pins.items():
+            by_id.setdefault(mid, []).append(role)
+        text = "; ".join(f"{m} ({', '.join(r)})" for m, r in by_id.items())
+        out.append(Check("claude pins", Level.OK, text))
     last: dict[str, Any] | None = claude.get("last_review")
     if not last:
-        return []
+        return out
     when = str(last["ended_at"])[:16].replace("T", " ")
     if last.get("refused"):
-        return [Check("claude model check", Level.WARN,
-                      f"{last['refused']} refused in the review of {when} UTC (model"
-                      f" {last.get('refused_model') or 'unknown'}, expected"
-                      f" {last.get('expected_model') or 'unknown'})",
-                      "ecf models status; check claude_model_override and Claude Code's model"
-                      " settings")]  # fmt: skip
-    return [Check("claude model check", Level.OK, f"no refusals in the review of {when} UTC")]
+        return [*out, Check("claude model check", Level.WARN,
+                            f"{last['refused']} refused in the review of {when} UTC (model"
+                            f" {last.get('refused_model') or 'unknown'}, expected"
+                            f" {last.get('expected_model') or 'unknown'})",
+                            "ecf models status; check claude_model_override and Claude Code's"
+                            " model settings")]  # fmt: skip
+    return [*out, Check("claude model check", Level.OK, f"no refusals in the review of {when} UTC")]
 
 
 def judge_fallback(st: dict[str, Any]) -> list[Check]:
@@ -475,27 +483,76 @@ def check_disk_encryption(run: Run = _run) -> Check:
     )
 
 
-def check_claude() -> Check:
-    from ecf.claude_wrapper import MIN_CLAUDE, claude_version  # noqa: PLC0415
+def claude_used(paths: Paths) -> bool | None:
+    """Whether any address uses preset B or C; None when the service doesn't answer."""
+    try:
+        with LocalClient(paths) as c:
+            st: dict[str, Any] = c.get("/v1/status")
+    except EcfError:
+        return None
+    claude: dict[str, Any] = st.get("claude") or {}
+    return bool(claude.get("used"))
 
+
+def check_claude(paths: Paths, used: bool | None) -> list[Check]:
+    """Claude Code, ecf's own Claude login, and the installed ecf-mcp and plugin (SPEC §13.2;
+    V1.4 step 11). A problem fails doctor once an address uses preset B or C, else warns."""
+    from ecf import claude_setup  # noqa: PLC0415
+    from ecf.claude_wrapper import MIN_CLAUDE, claude_version, layout  # noqa: PLC0415
+
+    bad = Level.FAIL if used else Level.WARN
+    out = _check_mcp_and_plugin(bad)
     claude = shutil.which("claude")
     need = _v(MIN_CLAUDE)
     if claude is None:
-        return Check(
-            "claude code",
-            Level.WARN,
-            "not installed (only presets B and C need it)",
-            f"install Claude Code {need}+ to use `ecf claude`",
-        )
+        return [Check("claude code", bad,
+                      "not installed" + ("" if used else " (only presets B and C need it)"),
+                      f"install Claude Code {need}+ to use `ecf claude`"), *out]  # fmt: skip
     found = claude_version(claude)
     if found is None or found < MIN_CLAUDE:
-        return Check(
-            "claude code",
-            Level.WARN,
-            f"version {_v(found) if found else 'unknown'}",
-            f"update Claude Code to {need}+",
-        )
-    return Check("claude code", Level.OK, _v(found))
+        return [Check("claude code", bad, f"version {_v(found) if found else 'unknown'}",
+                      f"update Claude Code to {need}+"), *out]  # fmt: skip
+    out.insert(0, Check("claude code", Level.OK, _v(found)))
+    if used:
+        login = claude_setup.auth_status(claude, layout(paths))
+        if login is None:
+            out.append(Check("claude login", Level.WARN, "Claude Code didn't say (claude auth"
+                             " status)", "ecf claude --login"))  # fmt: skip
+        else:
+            out.append(Check("claude login", Level.OK if login.logged_in else Level.FAIL,
+                             f"ecf's own: {login.describe()}",
+                             "" if login.logged_in else "ecf claude --login"))  # fmt: skip
+    return out
+
+
+def _check_mcp_and_plugin(bad: Level) -> list[Check]:
+    from ecf import claude_setup  # noqa: PLC0415
+    from ecf.claude_wrapper import ecf_mcp_path  # noqa: PLC0415
+
+    dist = claude_setup.installed()
+    if dist is None:
+        return [Check("ecf package", bad, f"{claude_setup.DIST} isn't installed as a package",
+                      "reinstall ecf")]  # fmt: skip
+    reinstall = "reinstall ecf (uv tool install --reinstall, or uv sync in a checkout)"
+    try:
+        mcp = ecf_mcp_path()
+    except EcfError as exc:
+        out = [Check("ecf-mcp", bad, exc.detail, reinstall)]
+    else:
+        problem = claude_setup.mcp_problem(dist, mcp)
+        out = [Check("ecf-mcp", bad if problem else Level.OK,
+                     f"{mcp}: {problem}" if problem else f"{mcp} matches the install",
+                     reinstall if problem else "")]  # fmt: skip
+    problems = claude_setup.plugin_problems(dist)
+    if problems:
+        out.append(Check("claude plugin", bad, "; ".join(problems), reinstall))
+    elif claude_setup.editable(dist):
+        out.append(Check("claude plugin", Level.OK, f"version {__version__}; editable install:"
+                         " templates read from the source tree, not checked"))  # fmt: skip
+    else:
+        out.append(Check("claude plugin", Level.OK,
+                         f"version {__version__}; templates match the install"))  # fmt: skip
+    return out
 
 
 def run_checks(
@@ -515,7 +572,7 @@ def run_checks(
     checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))
-    checks.append(check_claude())
+    checks += check_claude(paths, claude_used(paths))
     if sys.platform.startswith("linux"):
         checks.append(Check("platform", Level.WARN, "Linux support is unverified until V1.6"))
     return checks

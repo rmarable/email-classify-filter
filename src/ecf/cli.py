@@ -388,14 +388,23 @@ def _log_line(e: dict[str, Any]) -> str:
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def claude(ctx: typer.Context) -> None:
+def claude(
+    ctx: typer.Context,
+    login: Annotated[
+        bool, typer.Option("--login", help="Log in to Claude in ecf's configuration, then stop.")
+    ] = False,
+) -> None:
     """Open Claude Code in ecf's own configuration, with the ecf plugin; type /ecf-review there.
 
-    Needs its own Claude login (it uses a separate configuration folder). Extra arguments are
-    passed to `claude`.
+    Needs its own Claude login (it uses a separate configuration folder): `ecf claude --login`.
+    Extra arguments are passed to `claude`.
     """
-    from ecf import claude_wrapper  # noqa: PLC0415
+    from ecf import claude_setup, claude_wrapper  # noqa: PLC0415
 
+    if login:
+        if ctx.args:
+            raise typer.BadParameter("--login takes no other arguments", param_hint="--login")
+        raise typer.Exit(claude_setup.run_login(_paths(), echo=typer.echo))
     raise typer.Exit(claude_wrapper.run(_paths(), list(ctx.args), echo=typer.echo))
 
 

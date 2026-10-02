@@ -7,8 +7,10 @@ the service unit is installed first when it isn't running: an unconfigured servi
 Slack, first address (with org domains), then a final check that the unit is running. V1.3 adds
 the model step: when an address uses preset A or B and the pinned model isn't ready, offer
 `ecf models install` (starting ecf's Ollama login item first). V1.4 adds C with the local fallback
-on to "uses the local model", and a reminder for each B or C address whose fallback is off
-(§4.3). The email-alerts and export steps arrive in V1.5 (OD-206).
+on to "uses the local model", a reminder for each B or C address whose fallback is off
+(§4.3), and (step 11) Claude Code and the separate Claude login `ecf claude` needs, offered once
+an address uses B or C (`ecf claude --login`). The email-alerts and export steps arrive in V1.5
+(OD-206).
 """
 
 from __future__ import annotations
@@ -19,7 +21,9 @@ from typing import Annotated, Any
 
 import typer
 
-from ecf import doctor
+from ecf import claude_setup, doctor
+from ecf.claude_setup import Login
+from ecf.claude_wrapper import find_claude, layout
 from ecf.cli_models import run_install
 from ecf.client import LocalClient
 from ecf.errors import EcfError
@@ -83,6 +87,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             _first_address(c, add)
             _models(c, p)
             _fallback(c)
+            _claude(p, bool(c.get("/v1/init").get("claude_needed")))
         _unit(p, manager)
         typer.echo("Done for now. `ecf init status` shows each step; `ecf doctor` checks it all.")
 
@@ -97,11 +102,13 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
         except EcfError as exc:
             typer.echo(f"service       not answering ({exc.detail}): ecf init --mode local")
             raise typer.Exit(3) from None
-        for line in describe(st, installed=unit.installed, running=unit.running):
+        login = claude_login(p) if st.get("claude_needed") else None
+        for line in describe(st, installed=unit.installed, running=unit.running, login=login):
             typer.echo(line)
 
 
-def describe(st: dict[str, Any], *, installed: bool, running: bool) -> list[str]:
+def describe(st: dict[str, Any], *, installed: bool, running: bool,
+             login: Login | None = None) -> list[str]:  # fmt: skip
     def row(name: str, done: bool, text: str) -> str:
         return f"{name:<14}{'done' if done else 'to do':<7}{text}"
 
@@ -126,6 +133,10 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool) -> list[str]
         row("fallback", not st.get("fallback_off"),
             "off for " + ", ".join(st["fallback_off"]) + ": " + FALLBACK_HINT
             if st.get("fallback_off") else "on, or no address uses preset B or C"),
+        row("claude", not st.get("claude_needed") or bool(login and login.logged_in),
+            "not needed: no address uses preset B or C" if not st.get("claude_needed")
+            else f"ecf's own configuration is {login.describe()}" if login and login.logged_in
+            else "ecf claude --login (needs Claude Code; ecf doctor checks it)"),
         row("export", False, "arrives in V1.5"),
     ]  # fmt: skip
 
@@ -249,6 +260,35 @@ def _fallback(c: LocalClient) -> None:
     if off:
         typer.echo(f"local fallback: off for {', '.join(off)}, so their mail waits for /ecf-review"
                    f" however long it takes; to turn it on: {FALLBACK_HINT}")  # fmt: skip
+
+
+def claude_login(p: Paths) -> Login | None:
+    """ecf's own Claude login; None when Claude Code is missing or too old, or didn't say."""
+    try:
+        claude = find_claude()
+    except EcfError:
+        return None
+    return claude_setup.auth_status(claude, layout(p))
+
+
+def _claude(p: Paths, needed: bool) -> None:
+    if not needed:
+        typer.echo("claude: not needed yet (no address uses preset B or C)")
+        return
+    try:
+        claude = find_claude()
+    except EcfError as exc:
+        typer.echo(f"claude: {exc.detail}; install or update it, then: ecf claude --login")
+        return
+    login = claude_setup.auth_status(claude, layout(p))
+    if login is not None and login.logged_in:
+        typer.echo(f"claude: ecf's own configuration is {login.describe()}")
+        return
+    if not typer.confirm("Log in to Claude for `ecf claude` now? (its own login, separate from"
+                         " your usual Claude Code)", default=True):  # fmt: skip
+        typer.echo("claude: skipped; later: ecf claude --login")
+        return
+    claude_setup.run_login(p, echo=typer.echo)
 
 
 def _unit(p: Paths, manager: ServiceManager) -> None:

@@ -36,7 +36,7 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
                   "models": {"needed": False, "installed": False},
-                  "fallback_off": []}  # fmt: skip
+                  "fallback_off": [], "claude_needed": False}  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
@@ -46,6 +46,7 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
         conn.execute("UPDATE addresses SET preset = 'C'")
     st = initsetup.status(conn)
     assert st["models"]["needed"] is False and st["fallback_off"] == ["ap"]
+    assert st["claude_needed"] is True
     with write_tx(conn):  # ... and needs it with the fallback on (V1.4 step 8)
         conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4")
     st = initsetup.status(conn)
@@ -75,6 +76,15 @@ def test_describe() -> None:
     )
     st["models"] = {"needed": True, "installed": True}
     assert "installed (ecf models status)" in cli_init.describe(st, installed=True, running=True)[5]
+    assert lines[7] == "claude        done   not needed: no address uses preset B or C"
+    st["claude_needed"] = True
+    assert cli_init.describe(st, installed=True, running=True)[7] == (
+        "claude        to do  ecf claude --login (needs Claude Code; ecf doctor checks it)"
+    )
+    login = cli_init.Login(True, "claude.ai", "max")
+    assert cli_init.describe(st, installed=True, running=True, login=login)[7] == (
+        "claude        done   ecf's own configuration is logged in (claude.ai, max)"
+    )
 
 
 def _write(paths: Paths, sql: str, *args: Any) -> None:
@@ -233,3 +243,43 @@ def test_a_missing_ollama_is_explained_and_init_goes_on(
     assert "models: Ollama isn't installed (macOS: `brew install ollama && brew pin ollama" \
         " mlx-c`); then: ecf models install" in r.output  # fmt: skip
     assert "service unit: installed and running" in r.output  # the last step still ran
+
+
+def test_init_offers_the_claude_login_once_an_address_uses_b_or_c(
+    running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quiet.s = UnitStatus(installed=True, running=True)
+    _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                    " VALUES ('ap', 'ap@acme.example', 'standard', 'B', 'now')")  # fmt: skip
+    _write(running, "INSERT INTO settings (key, value, updated_at, updated_by)"
+                    " VALUES ('install_role', '\"test\"', 'now', 'os_user')")  # fmt: skip
+    state = {"logged_in": False}
+    logins: list[str] = []
+    monkeypatch.setattr(cli_init, "find_claude", lambda: "/bin/claude")
+
+    def auth_status(_c: str, _l: object) -> cli_init.Login:
+        return cli_init.Login(state["logged_in"], "claude.ai", "max")
+
+    monkeypatch.setattr(cli_init.claude_setup, "auth_status", auth_status)
+
+    def run_login(_p: Paths, echo: Any) -> int:
+        logins.append("login")
+        state["logged_in"] = True
+        return 0
+
+    monkeypatch.setattr(cli_init.claude_setup, "run_login", run_login)
+    app = _app(running, [])
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\nn\n")  # Slack, model, login
+    assert r.exit_code == 0, r.output
+    assert "Log in to Claude for `ecf claude` now?" in r.output
+    assert "claude: skipped; later: ecf claude --login" in r.output and logins == []
+    r = CliRunner().invoke(app, ["init", "status"])
+    assert "claude        to do  ecf claude --login" in r.output
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\ny\n")
+    assert r.exit_code == 0, r.output
+    assert logins == ["login"]
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # nothing to ask now
+    assert "claude: ecf's own configuration is logged in (claude.ai, max)" in r.output
+    assert logins == ["login"]
+    r = CliRunner().invoke(app, ["init", "status"])
+    assert "claude        done   ecf's own configuration is logged in" in r.output

@@ -236,9 +236,11 @@ def test_a_call_from_another_model_is_refused_and_stops_the_review(
     assert q["stopped"] == f"1 refused (model claude-opus-5-5, expected {HAIKU})"
     api(state, "DELETE", f"/v1/sessions/{session}")
     st = api(state, "GET", "/v1/status").json()
-    checks = doctor.judge_claude(st)
-    assert checks[0].level is Level.WARN and "1 refused" in checks[0].detail
-    assert "expected claude-haiku" in checks[0].detail
+    checks = {c.name: c for c in doctor.judge_claude(st)}
+    check = checks["claude model check"]
+    assert check.level is Level.WARN and "1 refused" in check.detail
+    assert "expected claude-haiku" in check.detail
+    assert checks["claude pins"].level is Level.OK  # an address uses B or C (step 11)
     refused = conn.execute("SELECT data FROM audit WHERE event = 'claude.refused'").fetchone()[0]
     assert json.loads(refused)["model_check"] == "model"
 

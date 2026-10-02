@@ -296,11 +296,17 @@ def check_args(args: list[str]) -> list[str]:
     return args
 
 
-def session_env(lay: Layout, token: str, telemetry: dict[str, str]) -> dict[str, str]:
+def base_env(lay: Layout) -> dict[str, str]:
+    """The allow-listed environment in ecf's config: for sessions, and `claude auth`."""
     env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith("LC_")}
     env.update(PRIVACY_ENV)
-    env.update(telemetry)
     env["CLAUDE_CONFIG_DIR"] = str(lay.config_dir)
+    return env
+
+
+def session_env(lay: Layout, token: str, telemetry: dict[str, str]) -> dict[str, str]:
+    env = base_env(lay)
+    env.update(telemetry)
     env["ECF_PROFILE_TOKEN"] = token
     return env
 

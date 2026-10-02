@@ -93,11 +93,6 @@ def _audit(conn: sqlite3.Connection, now: str, event: str, data: dict[str, Any],
     )
 
 
-def _claude_used(conn: sqlite3.Connection) -> bool:
-    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL AND preset IN"
-                        " ('B', 'C') LIMIT 1").fetchone() is not None  # fmt: skip
-
-
 # ---------------------------------------------------------------------------- retirement
 
 
@@ -138,7 +133,7 @@ def retirement_text(r: dict[str, Any], today: date) -> str:
 def retirement_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int:
     """Announce each retiring pin when first seen, then 30 and 7 days before (§7.6); only while
     an address uses Claude. Returns how many alerts went."""
-    if not _claude_used(conn):
+    if not claude_pins.in_use(conn):
         return 0
     today, now = _today(clock), to_ts(clock.now())
     sent: dict[str, list[str]] = _get(conn, RETIRE) or {}
@@ -420,7 +415,7 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
     life = {m: e for m, e in claude_pins.lifecycle().items() if m in pinned}
     return {
         "next_at": _get(conn, NEXT),
-        "claude_used": _claude_used(conn),
+        "claude_used": claude_pins.in_use(conn),
         "api_key": bool(_get(conn, "model_watch.api_key_set")),
         "claude": _get(conn, CLAUDE),
         "ollama": _get(conn, OLLAMA) if models.needed(conn) else None,

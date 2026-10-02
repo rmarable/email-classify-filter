@@ -13,7 +13,7 @@ import sqlite3
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf_server import addresses, fallback, models, slack_admin
+from ecf_server import addresses, claude_pins, fallback, models, slack_admin
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 
@@ -64,4 +64,5 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
             "installed": models.installed(conn),
         },
         "fallback_off": fallback.reminders(conn),  # B and C addresses with it off (§4.3)
+        "claude_needed": claude_pins.in_use(conn),  # init offers ecf's Claude login (V1.4 step 11)
     }

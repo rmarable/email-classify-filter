@@ -412,10 +412,12 @@ def _end_session(state: ServiceState, session_id: str) -> None:
 
 def _claude_status(state: ServiceState) -> dict[str, Any]:
     if state.db_path is None:
-        return {"last_review": None}
+        return {"last_review": None, "used": False, "pins": None}
     conn = state.connect()
     try:
-        return {"last_review": claude_usage.last_review(conn)}
+        used = claude_pins.in_use(conn)  # doctor's Claude checks fail only then (§13.2)
+        return {"last_review": claude_usage.last_review(conn), "used": used,
+                "pins": claude_pins.effective(conn) if used else None}  # fmt: skip
     finally:
         conn.close()
 
