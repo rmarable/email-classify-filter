@@ -548,10 +548,11 @@ def address_add(
 
 
 PRESET_NOTES = {
-    "B": "Preset B: Claude acts only when you run /ecf-review (V1.4). The local fallback for items"
-    " waiting on Claude (claude_queue_timeout) is off.",
-    "C": "Preset C: every message waits for /ecf-review (V1.4) and uses your Claude plan. The"
-    " local fallback (claude_queue_timeout) is off.",
+    "B": "Preset B: Claude acts only when you run /ecf-review. The local fallback for items"
+    " waiting on Claude is off: ecf settings set claude_queue_timeout <hours> --address <id>.",
+    "C": "Preset C: every message waits for /ecf-review and uses your Claude plan. The local"
+    " fallback is off: ecf settings set claude_queue_timeout <hours> --address <id> (it needs"
+    " Ollama).",
 }
 
 

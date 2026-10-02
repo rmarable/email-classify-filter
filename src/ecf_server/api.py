@@ -61,6 +61,7 @@ from ecf_server import (
     db,
     digests,
     evalrun,
+    fallback,
     gate,
     health,
     inbox,
@@ -146,6 +147,7 @@ class ServiceState:
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
+    shadow_work: modelq.Work | None = field(default=None, repr=False)  # the fallback's (V1.4)
     # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
     throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
@@ -233,6 +235,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "slack": dict(state.slack),
                 "model": _model_status(state),
                 "claude": _claude_status(state),
+                "fallback": _with_db(state, fallback.status, []),
             }
         )
 
@@ -405,6 +408,16 @@ def _claude_status(state: ServiceState) -> dict[str, Any]:
         conn.close()
 
 
+def _with_db[T](state: ServiceState, fn: Callable[[sqlite3.Connection], T], empty: T) -> T:
+    if state.db_path is None:
+        return empty
+    conn = state.connect()
+    try:
+        return fn(conn)
+    finally:
+        conn.close()
+
+
 def _address_states(state: ServiceState) -> list[dict[str, Any]]:
     if state.db_path is None:
         return []
@@ -521,7 +534,7 @@ def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
     try:
         r = modelq.run_round(conn, state.clock, state.notifier, client, work,
                              resident=modelq.resident(conn), check_kw=state.model_check,
-                             throttle=state.throttle)  # fmt: skip
+                             throttle=state.throttle, shadow=state.shadow_work)  # fmt: skip
         line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
                                 "waiting": r.waiting}  # fmt: skip
         if r.status == "not_ready":
@@ -702,6 +715,12 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_setting(request: Request) -> JSONResponse:
         body = _body(request)
         key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
+        if key == settings.FALLBACK_KEY:  # the local fallback: step-up to turn it on (V1.4)
+            if not aid:
+                raise InvalidInputError(f"{key} is per address: add --address")
+            nonce = _opt_str(body, "nonce_id")
+            return _with_conn(lambda c: fallback.set_timeout(c, state.clock, state.notifier, aid,
+                                                             value, nonce=nonce))  # fmt: skip
         return _with_conn(lambda c: settings.set_value(c, state.clock, key, value, address=aid,
                                                        actor="os_user"))  # fmt: skip
 

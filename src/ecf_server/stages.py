@@ -159,7 +159,7 @@ def set_stage(  # noqa: PLR0913 - the change, then who asked and how
     text = _stage_text(frm, to, reason)
     if g is not None:
         text += _live_text(g, data["override"], released)
-    _post(conn, clock, aid, f"Stage: {to} ({LABELS[to]})", text)
+    post(conn, clock, aid, f"Stage: {to} ({LABELS[to]})", text)
     return {"address_id": aid, "stage": to, "changed": True} | ({"held": released} if g else {})
 
 
@@ -282,7 +282,7 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
         if g.met:
             with write_tx(conn):
                 gate.record(conn, g, clock.now(), passed=True)
-            _post(conn, clock, aid, "Ready for live",
+            post(conn, clock, aid, "Ready for live",
                   f"{a['email']} meets its go-live gate ({g.reviewed} reviewed). When you're ready:"
                   f" ecf stage set {aid} live")  # fmt: skip
 
@@ -343,11 +343,11 @@ def set_sensitivity(
         notice = text + " High-sensitivity checks no longer apply."
         slack_admin.notice(conn, clock, notifier, notice,
                            dms=[ident.member] if ident and ident.member else [])  # fmt: skip
-    _post(conn, clock, aid, f"Sensitivity: {to}", text)
+    post(conn, clock, aid, f"Sensitivity: {to}", text)
     return {"address_id": aid, "sensitivity": to, "changed": True}
 
 
-def _post(conn: sqlite3.Connection, clock: Clock, aid: str, title: str, text: str) -> None:
+def post(conn: sqlite3.Connection, clock: Clock, aid: str, title: str, text: str) -> None:
     route = slack_routes.route_for(conn, aid)
     if route is not None:
         slack_out.enqueue_post(conn, clock, key=f"address:{aid}:{to_ts(clock.now())}:{title}",

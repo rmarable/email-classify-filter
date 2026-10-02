@@ -190,12 +190,21 @@ def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
 
 
 def unsafe_proposals(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
+    """The pinned actors' proposals; the local fallback's count toward its own gate (V1.4)."""
     n = 0
     for item in _items(conn, address_id, digest):
         plan: dict[str, Any] = json.loads(item["proposal"] or "{}").get("plan") or {}
-        proposed: dict[str, Any] = plan.get("actor") or {}
-        n += bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
+        n += unsafe(plan)
     return n
+
+
+def unsafe(plan: dict[str, Any], *, fallback: bool = False) -> bool:
+    """A hide or a send proposed on a payment or fraud email, by the pinned actor (or, with
+    `fallback`, by the local fallback's)."""
+    proposed: dict[str, Any] = plan.get("actor") or {}
+    if bool(proposed.get("fallback")) != fallback:
+        return False
+    return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
 def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per refusal
@@ -242,10 +251,12 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
                  f" ({when}, {m.get('confirmed')} confirmed cases)")  # fmt: skip
 
 
-def record(conn: sqlite3.Connection, g: Gate, now: datetime, *, passed: bool) -> None:
+def record(conn: sqlite3.Connection, g: Gate, now: datetime, *, passed: bool,
+           pair: str | None = None) -> None:  # fmt: skip
     """The `gate` row for this address and pair (inside the caller's transaction): the latest
     figures, and when the gate was first met for these pins. Preset A keeps only the digest (as
-    before V1.4); B and C also keep their pins in `pinned_ids`."""
+    before V1.4); B and C also keep their pins in `pinned_ids`. `pair`: another pair's row (the
+    local fallback's, V1.4 step 8)."""
     pins = dict(g.pins)
     ids = json.dumps(pins, sort_keys=True) if g.preset != "A" else None
     conn.execute(
@@ -258,8 +269,8 @@ def record(conn: sqlite3.Connection, g: Gate, now: datetime, *, passed: bool) ->
         "     IS coalesce(excluded.pinned_ids, excluded.ollama_digest)"
         "   THEN coalesce(gate.passed_at, excluded.passed_at) ELSE excluded.passed_at END,"
         " pinned_ids = excluded.pinned_ids, ollama_digest = excluded.ollama_digest",
-        (g.address_id, pair_key(g.preset), g.reviewed, g.correct, g.fraud_misses, g.unsafe, ids,
-         pins.get("digest"), to_ts(now) if passed else None),
+        (g.address_id, pair or pair_key(g.preset), g.reviewed, g.correct, g.fraud_misses,
+         g.unsafe, ids, pins.get("digest"), to_ts(now) if passed else None),
     )  # fmt: skip
 
 

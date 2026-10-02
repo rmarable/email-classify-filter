@@ -41,6 +41,7 @@ from ecf_server import (
     daily,
     db,
     decide,
+    fallback,
     health,
     jobs,
     mailbox_actions,
@@ -244,6 +245,8 @@ class Service:
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
                 claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it
+                fallback.tick(conn, self.clock)  # the local fallback's own gate (V1.4 step 8)
+                fallback.hand_off(conn, self.clock)  # items that waited too long for Claude
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)
@@ -255,6 +258,22 @@ class Service:
         except Exception as exc:  # never stops the timer; retried next tick
             return self._tick_failed("approvals.tick_failed", exc)
         return True
+
+    def _fallback_reminder(self) -> None:
+        """`ecf watch` (a terminal): name B and C addresses with the local fallback off (§4.3)."""
+        if self.state.db_path is None or not sys.stderr.isatty():
+            return
+        conn = db.connect(self.state.db_path)
+        try:
+            off = fallback.reminders(conn)
+        finally:
+            conn.close()
+        if off:
+            sys.stderr.write(
+                f"ecf-server: the local fallback is off for {', '.join(off)}: their mail waits for"
+                " /ecf-review however long it takes (ecf settings set claude_queue_timeout <hours>"
+                " --address <address>)\n"
+            )
 
     def _ollama_log(self, conn: sqlite3.Connection) -> None:
         """Rotate the Ollama login item's log, at most once an hour's look (OD-266)."""
@@ -410,7 +429,8 @@ class Service:
             return
         conn = db.connect(self.state.db_path)
         try:
-            if not modelq.waiting(conn):
+            if not modelq.waiting(conn) and not (self.state.shadow_work
+                                                 and modelq.shadow_waiting(conn)):  # fmt: skip
                 return
             power = self.scheduler.power()
             on_battery = power.laptop and not power.on_ac
@@ -421,7 +441,8 @@ class Service:
                     report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
                                               resident=modelq.resident(conn),
                                               check_kw=self.state.model_check, stop=self.stop,
-                                              throttle=self.throttle)  # fmt: skip
+                                              throttle=self.throttle,
+                                              shadow=self.state.shadow_work)  # fmt: skip
             finally:
                 client.close()
             self.rounds.after(report, on_battery=on_battery,
@@ -506,6 +527,7 @@ class Service:
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
             self.state.model_work = pipeline.work
+            self.state.shadow_work = pipeline.shadow
         return applied
 
     def _api_server(self) -> uvicorn.Server:
@@ -577,6 +599,7 @@ class Service:
         if sys.platform == "darwin" and not self.dev:
             set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
         applied = self._open_state()
+        self._fallback_reminder()
         if st.crashed_before:
             self._report_restart(len(st.crashes))
         self.state.token = write_token(self.paths)

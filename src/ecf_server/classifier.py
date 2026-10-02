@@ -108,8 +108,11 @@ def classify_item(
     item: sqlite3.Row,
     *,
     schema: CompiledSchema | None = None,
+    expected: Status = Status.NEW,
+    pins: dict[str, Any] | None = None,
 ) -> ItemResult:
-    """The model queue's `Work` for preset A (V1.3 step 3)."""
+    """The model queue's `Work` for preset A (V1.3 step 3); also a C item the local fallback
+    took at `awaiting_claude` (`expected`, with `pins` naming its key; V1.4 step 8)."""
     schema = schema or load_schema_v1()
     pin = ollama.load_pin()
     addr = conn.execute("SELECT preset, stage FROM addresses WHERE address_id = ?",
@@ -139,8 +142,9 @@ def classify_item(
         return ItemResult("failed", m)
     ollama.record_call(conn, clock, role="classifier", outcome="ok", digest=ready.digest,
                        metrics=m, **tags)  # fmt: skip
-    store(conn, clock, item["stable_id"], result, {"classifier": pin.ecf_tag,
-                                                   "digest": ready.digest})  # fmt: skip
+    store(conn, clock, item["stable_id"], result,
+          {"classifier": pin.ecf_tag, "digest": ready.digest} | (pins or {}),
+          expected=expected)  # fmt: skip
     return ItemResult("ok", m)
 
 
@@ -159,10 +163,10 @@ def store(
     local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
-    pinned = models | {
+    pinned = {
         "schema": 1,
         "pin_key": claude_pins.address_key(conn, aid),
-    }  # the gate's key (V1.4 step 2)
+    } | models  # the gate's key (V1.4 step 2), unless the caller names one (the fallback)
     with write_tx(conn):
         conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?"

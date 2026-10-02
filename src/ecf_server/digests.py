@@ -113,7 +113,12 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
         " ORDER BY created_at, stable_id",
         (aid, to_ts(since), to_ts(now)),
     ).fetchall()
-    if not rows:
+    handed = conn.execute(  # the local fallback took these from the Claude queue (§4.3, V1.4)
+        "SELECT i.* FROM audit a JOIN items i USING (stable_id) WHERE a.address_id = ?"
+        " AND a.event = 'fallback.handed_off' AND a.ts > ? AND a.ts <= ? ORDER BY a.ts",
+        (aid, to_ts(since), to_ts(now)),
+    ).fetchall()
+    if not rows and not handed:
         return None
     weak: list[str] = []
     unverified: list[str] = []
@@ -137,8 +142,11 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     held = evalrun.slack_line()
     if held:
         text.append(held)
+    fell = [_line(r, json.loads(r["facts"] or "{}")) for r in handed]
     for title, lines in (("Weak fraud signals (first-time sender asking for payment):", weak),
-                         ("Payment email from unverified senders:", unverified)):  # fmt: skip
+                         ("Payment email from unverified senders:", unverified),
+                         ("Waited too long for /ecf-review; the local model decides them"
+                          " (local_high_risk):", fell)):  # fmt: skip
         if lines:
             text += ["", title, *lines[:SECTION_MAX]]
             if len(lines) > SECTION_MAX:

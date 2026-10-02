@@ -203,6 +203,8 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
     p.to_actor = False
     p.actor = {"action": got["action"], "target": got["target"] or None, "reason": got["reason"],
                **{k: got[k] for k in ("model", "agent") if k in got}}  # fmt: skip
+    if local and item["fallback_at"]:  # the local fallback's, not the pinned actor's (V1.4)
+        p.actor["fallback"] = True
     if got["action"] == "needs_clarification":
         if local and p.high_risk:  # local_high_risk: a question on a risky item goes to a person
             _add(p, Planned("escalate", None, "auto"))

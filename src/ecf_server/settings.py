@@ -153,7 +153,6 @@ ELSEWHERE = {
     "stage": "change it with `ecf stage set`",
     "claude_model_override": "set it with `ecf settings set claude_model_override <id>|none`"
     " (step-up); `ecf models status` shows it",
-    "claude_queue_timeout": "arrives with presets B and C in V1.4 (OD-227)",
     "classifier_high_batch": "arrives with Claude on demand in V1.4",
     "export_schedule": "arrives with exports in V1.5",
     "export_dir": "arrives with exports in V1.5",
@@ -172,7 +171,13 @@ ELSEWHERE = {
 }
 
 
+FALLBACK_KEY = "claude_queue_timeout"  # per B or C address; set by fallback.set_timeout (step-up)
+
+
 def key(name: str, address: str | None) -> Key:
+    if name == FALLBACK_KEY:
+        raise InvalidInputError(f"{name} is set with `ecf settings set {name} <hours>|off"
+                                " --address <address>` (step-up to turn it on)")  # fmt: skip
     if name in ELSEWHERE:
         raise InvalidInputError(f"{name}: {ELSEWHERE[name]}")
     k = KEYS.get(name)
@@ -206,6 +211,11 @@ def show(conn: sqlite3.Connection, address_id: str | None = None) -> list[dict[s
             continue
         out.append({"key": k.name, "value": get(conn, k.name, address_id),
                     "default": k.default, "restart": k.restart})  # fmt: skip
+    a = conn.execute("SELECT preset, fallback_enabled, claude_queue_timeout_h FROM addresses"
+                     " WHERE address_id = ?", (address_id or "",)).fetchone()  # fmt: skip
+    if a is not None and a["preset"] in ("B", "C"):  # the local fallback (fallback.py, V1.4)
+        on = a["claude_queue_timeout_h"] if a["fallback_enabled"] else "off"
+        out.append({"key": FALLBACK_KEY, "value": on, "default": "off", "restart": False})
     return out
 
 

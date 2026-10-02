@@ -84,7 +84,7 @@ SINGLE = frozenset({"ecf:classifier-high", "ecf:actor-high"})  # one item per sp
 _WAITING = (
     "SELECT i.* FROM items i JOIN addresses a USING (address_id)"
     " WHERE a.removed_at IS NULL AND a.paused = 0 AND a.preset IN ('B', 'C')"
-    " AND i.status IN ('awaiting_claude', 'clarified')"
+    " AND i.status IN ('awaiting_claude', 'clarified') AND i.fallback_at IS NULL"
     " AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.stable_id = i.stable_id"
     " AND (c.state = 'held' OR (c.state = 'claimed' AND c.expires_at > ?)))"
 )

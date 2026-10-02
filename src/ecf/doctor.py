@@ -190,6 +190,7 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
         out.append(Check("secret store", Level.OK, ss["backend"]))
     out += judge_addresses(st)
     out += judge_claude(st)
+    out += judge_fallback(st)
     return out
 
 
@@ -208,6 +209,26 @@ def judge_claude(st: dict[str, Any]) -> list[Check]:
                       "ecf models status; check claude_model_override and Claude Code's model"
                       " settings")]  # fmt: skip
     return [Check("claude model check", Level.OK, f"no refusals in the review of {when} UTC")]
+
+
+def judge_fallback(st: dict[str, Any]) -> list[Check]:
+    """The local fallback of each B and C address (SPEC §4.3; V1.4 step 8): a reminder when it
+    is off; its own gate while it runs in shadow."""
+    out: list[Check] = []
+    rows: list[dict[str, Any]] = st.get("fallback") or []
+    for f in rows:
+        name = f"fallback {f['address_id']}"
+        if f["hours"] is None:
+            out.append(Check(name, Level.WARN, "off: mail waits for /ecf-review however long it"
+                             " takes", "ecf settings set claude_queue_timeout <hours> --address"
+                             f" {f['address_id']}"))  # fmt: skip
+        elif f["gate_passed"]:
+            out.append(Check(name, Level.OK, f"after {f['hours']} h; its gate is met"
+                             f" ({f['handed_off']} handed to the local model)"))  # fmt: skip
+        else:
+            out.append(Check(name, Level.WARN, f"after {f['hours']} h, once its own gate is met;"
+                             f" running in shadow meanwhile. Gate {f['gate']}"))  # fmt: skip
+    return out
 
 
 def judge_addresses(st: dict[str, Any]) -> list[Check]:

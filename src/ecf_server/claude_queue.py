@@ -54,11 +54,12 @@ def route_new(conn: sqlite3.Connection, clock: Clock, sid: str) -> bool:
 
 
 def to_actor(conn: sqlite3.Connection, clock: Clock, sid: str) -> Status:
-    """A classified item whose rule continues to the actor: the local actor (A) or the Claude
-    queue (B, C). Returns its status."""
-    item = conn.execute("SELECT address_id FROM items WHERE stable_id = ?", (sid,)).fetchone()
-    if preset(conn, item["address_id"]) not in CLAUDE_PRESETS:
-        return Status.CLASSIFIED  # the local actor decides next (V1.3 step 4c)
+    """A classified item whose rule continues to the actor: the local actor (A, or an item the
+    local fallback took, V1.4 step 8) or the Claude queue (B, C). Returns its status."""
+    item = conn.execute("SELECT address_id, fallback_at FROM items WHERE stable_id = ?",
+                        (sid,)).fetchone()  # fmt: skip
+    if preset(conn, item["address_id"]) not in CLAUDE_PRESETS or item["fallback_at"]:
+        return Status.CLASSIFIED  # the local actor decides next (V1.3 step 4c; the fallback)
     _move(conn, clock, sid, Status.CLASSIFIED)
     return Status.AWAITING_CLAUDE
 
@@ -80,7 +81,8 @@ _SWEEP = (
     " WHERE a.removed_at IS NULL AND i.updated_at < ? AND ("
     "(i.status = 'new' AND a.preset = 'C' AND i.prechecked = 1 AND i.model_failed = 0"
     " AND coalesce(json_extract(i.facts, '$.precheck.stage'), '') <> 'backfill')"
-    " OR (i.status = 'classified' AND a.preset IN ('B', 'C') AND i.decision_source = 'rule'"
+    " OR (i.status = 'classified' AND a.preset IN ('B', 'C') AND i.fallback_at IS NULL"
+    " AND i.decision_source = 'rule'"
     " AND json_extract(i.proposal, '$.plan.to_actor') = 1))"
     " ORDER BY i.updated_at LIMIT ?"
 )
@@ -102,7 +104,7 @@ def waiting(conn: sqlite3.Connection) -> dict[str, int]:
     questions on B and C addresses."""
     rows = conn.execute(
         "SELECT i.address_id, count(*) FROM items i JOIN addresses a USING (address_id)"
-        " WHERE a.removed_at IS NULL AND (i.status = 'awaiting_claude'"
+        " WHERE a.removed_at IS NULL AND i.fallback_at IS NULL AND (i.status = 'awaiting_claude'"
         " OR (i.status = 'clarified' AND a.preset IN ('B', 'C')))"
         " GROUP BY i.address_id ORDER BY i.address_id"
     ).fetchall()

@@ -6,8 +6,9 @@ the service unit is installed first when it isn't running: an unconfigured servi
 (§10a). V1.2 steps: checklist, service, disk-encryption and secret-store checks, install role,
 Slack, first address (with org domains), then a final check that the unit is running. V1.3 adds
 the model step: when an address uses preset A or B and the pinned model isn't ready, offer
-`ecf models install` (starting ecf's Ollama login item first). The email-alerts and export steps
-arrive in V1.5 (OD-206).
+`ecf models install` (starting ecf's Ollama login item first). V1.4 adds C with the local fallback
+on to "uses the local model", and a reminder for each B or C address whose fallback is off
+(§4.3). The email-alerts and export steps arrive in V1.5 (OD-206).
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ CHECKLIST = """Have ready:
   - whether this install is prod (your real mail) or test
   - for presets A and B, Ollama (macOS: brew install ollama && brew pin ollama mlx-c); ecf runs
     it from its own login item and downloads the pinned model (about 8 GB)
-  - Claude Code (presets B and C) arrives in V1.4"""
+  - for presets B and C, Claude Code and a separate Claude login for `ecf claude`; Ollama too
+    for C if you'll turn on the local fallback (claude_queue_timeout)"""
 
 AddAddress = Callable[[LocalClient, str, str, str | None, str | None, str | None], Any]
 
@@ -80,6 +82,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             _slack(c, st)
             _first_address(c, add)
             _models(c, p)
+            _fallback(c)
         _unit(p, manager)
         typer.echo("Done for now. `ecf init status` shows each step; `ecf doctor` checks it all.")
 
@@ -119,7 +122,10 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool) -> list[str]
         row("models", st["models"]["installed"] or not st["models"]["needed"],
             "installed (ecf models status)" if st["models"]["installed"]
             else "ecf models install" if st["models"]["needed"]
-            else "not needed: no address uses preset A or B"),
+            else "not needed: no address uses preset A or B (or C with the local fallback)"),
+        row("fallback", not st.get("fallback_off"),
+            "off for " + ", ".join(st["fallback_off"]) + ": " + FALLBACK_HINT
+            if st.get("fallback_off") else "on, or no address uses preset B or C"),
         row("export", False, "arrives in V1.5"),
     ]  # fmt: skip
 
@@ -216,7 +222,8 @@ def model_ready(c: LocalClient) -> bool:
 
 def _models(c: LocalClient, p: Paths) -> None:
     if not c.get("/v1/init")["models"]["needed"]:
-        typer.echo("models: not needed yet (no address uses preset A or B)")
+        typer.echo("models: not needed yet (no address uses preset A or B, or C with the local"
+                   " fallback)")  # fmt: skip
         return
     if model_ready(c):
         typer.echo("models: installed and ready")
@@ -231,6 +238,17 @@ def _models(c: LocalClient, p: Paths) -> None:
         return
     if not ok:
         typer.echo("models: not installed; try again with: ecf models install")
+
+
+FALLBACK_HINT = "ecf settings set claude_queue_timeout <hours> --address <address>"
+
+
+def _fallback(c: LocalClient) -> None:
+    """A reminder for B and C addresses whose local fallback is off (§4.3); nothing to ask."""
+    off: list[str] = c.get("/v1/init").get("fallback_off") or []
+    if off:
+        typer.echo(f"local fallback: off for {', '.join(off)}, so their mail waits for /ecf-review"
+                   f" however long it takes; to turn it on: {FALLBACK_HINT}")  # fmt: skip
 
 
 def _unit(p: Paths, manager: ServiceManager) -> None:

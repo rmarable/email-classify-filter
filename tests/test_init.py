@@ -35,15 +35,21 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     st = initsetup.status(conn)
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
-                  "models": {"needed": False, "installed": False}}  # fmt: skip
+                  "models": {"needed": False, "installed": False},
+                  "fallback_off": []}  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
     st = initsetup.status(conn)
     assert st["addresses"] == ["ap"] and st["models"] == {"needed": True, "installed": False}
-    with write_tx(conn):  # preset C runs no local model (its fallback arrives in V1.4)
+    with write_tx(conn):  # preset C runs no local model while its fallback is off
         conn.execute("UPDATE addresses SET preset = 'C'")
-    assert initsetup.status(conn)["models"]["needed"] is False
+    st = initsetup.status(conn)
+    assert st["models"]["needed"] is False and st["fallback_off"] == ["ap"]
+    with write_tx(conn):  # ... and needs it with the fallback on (V1.4 step 8)
+        conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4")
+    st = initsetup.status(conn)
+    assert st["models"]["needed"] is True and st["fallback_off"] == []
 
 
 def test_describe() -> None:
@@ -54,7 +60,15 @@ def test_describe() -> None:
     assert lines[0].split()[:2] == ["service", "done"]
     assert "click Confirm" in lines[2] and "to do" in lines[2]
     assert lines[3].endswith("acme.example") and "ecf address add" in lines[4]
-    assert lines[5] == "models        done   not needed: no address uses preset A or B"
+    assert lines[5] == (
+        "models        done   not needed: no address uses preset A or B (or C"
+        " with the local fallback)"
+    )
+    assert lines[6] == "fallback      done   on, or no address uses preset B or C"
+    st["fallback_off"] = ["ap"]
+    assert cli_init.describe(st, installed=True, running=True)[6].startswith(
+        "fallback      to do  off for ap: ecf settings set claude_queue_timeout"
+    )
     st["models"] = {"needed": True, "installed": False}
     assert cli_init.describe(st, installed=True, running=True)[5] == (
         "models        to do  ecf models install"

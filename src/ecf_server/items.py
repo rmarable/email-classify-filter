@@ -20,6 +20,8 @@ from ecf_server.clock import Clock, to_ts
 from ecf_server.db import items_writer, write_tx
 from ecf_server.state_machine import Origin, TransitionContext, check_transition
 
+WAITS_FOR_CLAUDE = frozenset({Status.AWAITING_CLAUDE, Status.CLARIFIED})
+
 
 def create_item(
     conn: sqlite3.Connection,
@@ -100,11 +102,14 @@ def transition(
         counts = to is Status.EXPIRED and ctx.origin is Origin.APPROVAL
         expiries = row["expiry_count"] + (1 if counts else 0)
         with items_writer("transition"):
+            # claude_since: when it started waiting for Claude (the fallback's timeout, V1.4)
             cur = conn.execute(
                 "UPDATE items SET status = ?, updated_at = ?, clarification_rounds = ?, "
-                "expiry_count = ? WHERE stable_id = ? AND status = ?",
-                (to.value, now, rounds, expiries, stable_id, frm.value),
-            )
+                "expiry_count = ?, claude_since = CASE WHEN ? THEN ? ELSE claude_since END"
+                " WHERE stable_id = ? AND status = ?",
+                (to.value, now, rounds, expiries, to in WAITS_FOR_CLAUDE, now, stable_id,
+                 frm.value),
+            )  # fmt: skip
         if cur.rowcount != 1:
             raise ConflictError("item changed concurrently")
         if to in TERMINAL:  # closed however it happened: nothing may run from it any more

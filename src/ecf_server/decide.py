@@ -47,7 +47,9 @@ EXECUTE_ATTEMPTS = 3
 BACKLOG_BATCH = modelq.BACKLOG_BATCH  # §5.3: above this, approvals go to digests, not cards
 
 
-def context(conn: sqlite3.Connection, item: sqlite3.Row) -> Context:
+def context(conn: sqlite3.Connection, item: sqlite3.Row,
+            classification: dict[str, Any] | None = None) -> Context:  # fmt: skip
+    """`classification`: another than the item's (the local fallback's shadow run, V1.4)."""
     addr = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
                         (item["address_id"],)).fetchone()  # fmt: skip
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
@@ -63,7 +65,9 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row) -> Context:
         r = row.fetchone()  # fmt: skip
         confirmed = r["confirmed_category"] if r else None
     return Context(
-        classification=json.loads(item["classification"]),
+        classification=classification
+        if classification is not None
+        else json.loads(item["classification"]),
         facts=facts,
         sensitivity=addr["sensitivity"] if addr else "high",
         rules=config.current_rules(conn),
