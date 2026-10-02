@@ -81,6 +81,14 @@ def stop(proc: subprocess.Popen[bytes], timeout: float = 30) -> int:
         return proc.wait(10)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_gate_inputs() -> None:
+    """The stage tick remembers each address's gate inputs in-process; tests start clean."""
+    from ecf_server import stages  # noqa: PLC0415
+
+    stages.SEEN.clear()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def no_leaked_services() -> Iterator[None]:
     yield

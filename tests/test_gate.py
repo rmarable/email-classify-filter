@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ import pytest
 
 from ecf import cli_admin
 from ecf.errors import InvalidInputError, PolicyDeniedError, StepupRequiredError
-from ecf_server import decide, evalrun, gate, slack_admin, stages, stepup
+from ecf_server import decide, evalrun, gate, review, slack_admin, stages, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
@@ -239,6 +240,50 @@ def test_the_tick_announces_once_and_drops_live_when_the_model_changes(
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
     assert "the local model changed" in _posts(conn)[-1]["card"]["text"]
+
+
+def test_the_tick_computes_a_gate_only_when_its_inputs_change(
+    conn: sqlite3.Connection, clock: FakeClock, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_address(conn, clock, "assist")
+    _reviewed(conn, clock, 99)
+    _eval(conn, clock, root)
+    computed: list[str] = []
+    real = gate.compute
+
+    def counting(c: sqlite3.Connection, aid: str) -> gate.Gate:
+        computed.append(aid)
+        return real(c, aid)
+
+    monkeypatch.setattr(gate, "compute", counting)
+    stages.tick(conn, clock)
+    stages.tick(conn, clock)
+    assert computed == ["ap"]  # nothing changed: not computed again
+    _reviewed(conn, clock, 1, prefix="z")  # the 100th review
+    with write_tx(conn):  # as review.record does
+        conn.execute("UPDATE items SET updated_at = ? WHERE stable_id LIKE 'z%'",
+                     (to_ts(clock.now() + timedelta(seconds=1)),))  # fmt: skip
+    stages.tick(conn, clock)
+    assert computed == ["ap", "ap"]
+    assert [p["card"]["title"] for p in _posts(conn)].count("Ready for live") == 1
+    clock.advance(3600)
+    _reviewed(conn, clock, 1, prefix="y")
+    with write_tx(conn):
+        conn.execute("UPDATE items SET updated_at = ? WHERE stable_id LIKE 'y%'",
+                     (to_ts(clock.now()),))  # fmt: skip
+    stages.tick(conn, clock)
+    assert computed == ["ap", "ap"]  # announced for this model: never computed again
+
+
+def test_recording_a_review_marks_the_email_changed(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    make_address(conn, clock, "assist")
+    sid = make_classified(conn, clock, CUSTOMER, KNOWN_BULK)
+    before = conn.execute("SELECT updated_at FROM items").fetchone()[0]
+    clock.advance(60)
+    review._set_review(conn, clock.now(), sid, {"verdict": "correct"})  # pyright: ignore[reportPrivateUsage]
+    assert conn.execute("SELECT updated_at FROM items").fetchone()[0] > before
 
 
 # ---- the CLI's screens ------------------------------------------------------------------------

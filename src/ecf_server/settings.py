@@ -132,6 +132,8 @@ _install = [
     Key("max_per_check", "install", _int(1, 30), 6),  # minutes of IMAP and rules work (OD-228)
     Key("resident", "install", _bool, False),  # keep the local model loaded (§5.2)
     Key("review_sample_rate", "install", _int(0, 100), 10),  # percent, after the gate count
+    Key("ollama_log_max_mb", "install", _int(1, 1024), 10),  # rotate ollama.log above (OD-266)
+    Key("ollama_log_rotate_days", "install", _int(1, 90), 7),  # ... or this often (OD-266)
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),

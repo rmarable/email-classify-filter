@@ -13,6 +13,9 @@
   you resolve them as handled by hand (`resolve_older`, or `resolve_all` for every held email).
 - **Each tick** (`tick`): an address that newly meets its gate gets one "ready for live" post; a
   `live` address whose model digest changed goes back to `assist` until the gate passes again.
+  The tick computes a gate only when it can still post: not for an address already announced for
+  this digest, and not while the gate's inputs (`gate.inputs`) are unchanged since the last
+  tick, since computing it re-plans every email you fixed.
 - **Sensitivity** (`standard`, `high`): upgrading is instant; downgrading needs step-up and a
   reason, and sends a Security Notice (§9.4, §13.3). `sensitivity_downgrade_delay_minutes` is 0 in
   local mode (OD-070), so there is no waiting window.
@@ -250,6 +253,9 @@ def _live_text(g: gate.Gate, overriding: bool, released: dict[str, int]) -> str:
     return out
 
 
+SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the gate inputs last computed (this process)
+
+
 def tick(conn: sqlite3.Connection, clock: Clock) -> None:
     """Announce a newly met gate once; drop `live` to `assist` when the model changed (§9.3)."""
     digest = gate.current_digest()
@@ -262,8 +268,14 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
                           reason="the local model changed; back to assist until its gate"
                                  " passes (§9.3)")  # fmt: skip
             continue
+        if row is not None and row["passed_at"] is not None and row["ollama_digest"] == digest:
+            continue  # announced for this model already (`stage set live` computes afresh)
+        seen = gate.inputs(conn, aid, digest)
+        if SEEN.get(aid) == seen:
+            continue
         g = gate.compute(conn, aid)
-        if g.met and (row is None or row["passed_at"] is None or row["ollama_digest"] != digest):
+        SEEN[aid] = seen  # after computing: an error is retried next tick
+        if g.met:
             with write_tx(conn):
                 gate.record(conn, g, clock.now(), passed=True)
             _post(conn, clock, aid, "Ready for live",
