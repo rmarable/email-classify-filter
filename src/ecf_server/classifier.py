@@ -139,41 +139,46 @@ def classify_item(
         return ItemResult("failed", m)
     ollama.record_call(conn, clock, role="classifier", outcome="ok", digest=ready.digest,
                        metrics=m, **tags)  # fmt: skip
-    _store(conn, clock, item["stable_id"], result, pin.ecf_tag, ready.digest)
+    store(conn, clock, item["stable_id"], result, {"classifier": pin.ecf_tag,
+                                                   "digest": ready.digest})  # fmt: skip
     return ItemResult("ok", m)
 
 
-def _store(
+def store(
     conn: sqlite3.Connection,
     clock: Clock,
     stable_id: str,
     classification: dict[str, Any],
-    model: str,
-    digest: str,
+    models: dict[str, str],
+    *,
+    expected: Status = Status.NEW,
+    batch_id: str | None = None,
+    actor: str = "classifier",
 ) -> None:
+    """Record a classification and move the item to `classified`, then apply the policy (the
+    local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
-    pinned = {
-        "classifier": model,
-        "digest": digest,
+    pinned = models | {
         "schema": 1,
         "pin_key": claude_pins.address_key(conn, aid),
     }  # the gate's key (V1.4 step 2)
     with write_tx(conn):
         conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?"
-            " WHERE stable_id = ? AND status = 'new'",
+            " WHERE stable_id = ? AND status = ?",
             (
                 json.dumps(classification, sort_keys=True),
                 json.dumps(pinned, sort_keys=True),
-                f"single:{stable_id[:16]}",
+                batch_id or f"single:{stable_id[:16]}",
                 to_ts(clock.now()),
                 stable_id,
+                expected.value,
             ),
         )
     try:
         items.transition(conn, clock, StableId(stable_id), Status.CLASSIFIED, TransitionContext(),
-                         actor="classifier", expected=Status.NEW)  # fmt: skip
+                         actor=actor, expected=expected)  # fmt: skip
     except ConflictError:
         log.info("classifier.item_moved_on", stable_id=stable_id[:8])  # resolved meanwhile
         return

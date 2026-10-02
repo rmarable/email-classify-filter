@@ -2,7 +2,9 @@
 
 Callers authenticate with a bearer token:
 - the CLI token (0600 file, rewritten at every service start): full CLI access;
-- a session profile token issued to `ecf claude` (WORK) and revoked when it exits.
+- a session profile token issued to `ecf claude` (WORK) and revoked when it exits;
+- no token at all: OBSERVE (status and counts only, no email text; V1.4 step 3, operator decision
+  2026-10-02). A wrong token is refused, and a route OBSERVE can't use answers `unauthorized`.
 Routes declare which callers they accept. Decision and settings routes never accept a session
 token (SPEC §10.4). `/v1/health` needs no token. Errors are RFC 9457 problem+json.
 """
@@ -51,6 +53,7 @@ from ecf_server import (
     backfill,
     checks,
     claude_pins,
+    claude_review,
     config,
     db,
     digests,
@@ -88,6 +91,7 @@ API_VERSION = 1
 class Caller(StrEnum):
     CLI = "cli"
     WORK = "work"  # an `ecf claude` session
+    OBSERVE = "observe"  # no token (`ecf-mcp` without ECF_PROFILE_TOKEN)
 
 
 @dataclass
@@ -154,9 +158,11 @@ class ServiceState:
         return self.secrets
 
     def caller_for(self, token: str) -> tuple[Caller, Session | None]:
+        if not token:
+            return Caller.OBSERVE, None
         # compare bytes: compare_digest raises on non-ASCII str (headers decode as latin-1)
         given = token.encode("utf-8", "surrogateescape")
-        if token and hmac.compare_digest(given, self.token.encode()):
+        if hmac.compare_digest(given, self.token.encode()):
             return Caller.CLI, None
         with self.lock:
             for s in self.sessions.values():
@@ -180,14 +186,13 @@ def create_app(state: ServiceState) -> Starlette:
     def allow(*callers: Caller) -> Callable[[Handler], Handler]:
         def deco(handler: Handler) -> Handler:
             def wrapper(request: Request) -> Response:
-                header = request.headers.get("authorization", "")
-                given = (
-                    header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
-                )
-                caller, _session = state.caller_for(given)
+                caller, session = state.caller_for(_bearer(request))
+                if caller is Caller.OBSERVE and caller not in callers:
+                    raise UnauthorizedError("missing or wrong token")
                 if caller not in callers:
                     raise ForbiddenProfileError(f"not available to a {caller} caller")
                 request.state.caller = caller
+                request.state.session = session
                 return handler(request)
 
             return wrapper
@@ -197,7 +202,7 @@ def create_app(state: ServiceState) -> Starlette:
     def health(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    @allow(Caller.CLI, Caller.WORK)
+    @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def status(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
@@ -239,6 +244,7 @@ def create_app(state: ServiceState) -> Starlette:
             removed = state.sessions.pop(session_id, None)
         if removed is None:
             raise NotFoundError(f"no session {session_id[:8]}")
+        _end_claims(state, session_id)
         log.info("session.revoked", session_id=session_id)
         return JSONResponse({"revoked": session_id})
 
@@ -298,6 +304,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_setup_routes(state, allow),
             *_model_routes(state, allow),
             *_eval_routes(state, allow),
+            *_review_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -315,6 +322,29 @@ WORKER_POLL_S = 10.0  # while the service's own model rounds hold the waiting em
 def _wait(seconds: float) -> None:
     """Sleep inside a streaming response (Starlette runs the generator on a worker thread)."""
     time.sleep(seconds)
+
+
+def _bearer(request: Request) -> str:
+    """The bearer token; "" when there is no Authorization header at all (OBSERVE). A header
+    that isn't a bearer token is refused, never taken as OBSERVE."""
+    header = request.headers.get("authorization")
+    if header is None:
+        return ""
+    given = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+    if not given:
+        raise UnauthorizedError("missing or wrong token")
+    return given
+
+
+def _end_claims(state: ServiceState, session_id: str) -> None:
+    """A revoked session's review claims end with it (V1.4 step 3)."""
+    if state.db_path is None:
+        return
+    conn = state.connect()
+    try:
+        claude_review.release_session(conn, session_id)
+    finally:
+        conn.close()
 
 
 def _address_states(state: ServiceState) -> list[dict[str, Any]]:
@@ -512,7 +542,7 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
-    @allow(Caller.CLI, Caller.WORK)
+    @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def counts(request: Request) -> JSONResponse:
         aid = request.query_params.get("address_id")
         return _with_conn(lambda c: {"counts": inbox.counts(c, aid)})
@@ -768,6 +798,59 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
+    ]
+
+
+def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims; a WORK session only. POST
+    throughout: `review-queue` claims items, and claim tokens stay out of URLs."""
+
+    def _session(request: Request) -> str:
+        s: Session = request.state.session
+        return s.session_id
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    @allow(Caller.WORK)
+    def review_queue(request: Request) -> JSONResponse:
+        body, sid = _body(request), _session(request)
+        limit = body.get("limit", claude_review.LIMIT_DEFAULT)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise InvalidInputError("limit must be a whole number")
+        address = _opt_str(body, "address_id")
+        return _with_conn(lambda c: claude_review.review_queue(
+            c, state.clock, sid, address=address, limit=limit))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def message(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token = _str(body, "claim_token")
+        return _with_conn(lambda c: claude_review.get_message(c, state.clock, sid, ref, token))
+
+    @allow(Caller.WORK)
+    def classification(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token = _str(body, "claim_token")
+        return _with_conn(lambda c: claude_review.record_classification(
+            c, state.clock, sid, ref, token, body.get("classification")))  # fmt: skip
+
+    @allow(Caller.WORK)
+    def proposal(request: Request) -> JSONResponse:
+        body, sid, ref = _body(request), _session(request), str(request.path_params["ref"])
+        token = _str(body, "claim_token")
+        return _with_conn(lambda c: claude_review.propose_action(
+            c, state.clock, sid, ref, token, body))  # fmt: skip
+
+    return [
+        Route("/v1/review-queue", review_queue, methods=["POST"]),
+        Route("/v1/claims/{ref}/message", message, methods=["POST"]),
+        Route("/v1/claims/{ref}/classification", classification, methods=["POST"]),
+        Route("/v1/claims/{ref}/proposal", proposal, methods=["POST"]),
     ]
 
 

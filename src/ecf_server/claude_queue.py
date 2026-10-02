@@ -14,16 +14,20 @@ An answered question (`clarified`) on a B or C address waits for Claude too; it 
 Records-only backfilled mail (`ecf backfill` without --act) is closed as `observed` and never
 queued. `sweep` runs each tick for items a crash left between the pre-check (or the rule) and
 this queue.
+
+`batch_risky` is the cross-item hide guard (§5.6) for Claude's batches (claude_review.py, step 3).
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import timedelta
+from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf_server import items
+from ecf_server import items, policy
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.state_machine import Status, TransitionContext
@@ -103,3 +107,27 @@ def waiting(conn: sqlite3.Connection) -> dict[str, int]:
         " GROUP BY i.address_id ORDER BY i.address_id"
     ).fetchall()
     return {r[0]: r[1] for r in rows}
+
+
+def batch_risky(conn: sqlite3.Connection, sid: str) -> bool:
+    """§5.6 for Claude batches: True when any batch this item was claimed in held an item with a
+    fraud signal, `spam_or_phishing` or `fraud_risk` of low or more, or one not yet classified
+    (unknown counts as risky; operator decision 2026-10-02). Items the local model classified, one
+    per request, are in no batch."""
+    rows = conn.execute(
+        "SELECT i.classification, i.facts FROM claim_batches b"
+        " JOIN claim_batches m ON m.batch_id = b.batch_id JOIN items i ON i.stable_id = m.stable_id"
+        " WHERE b.stable_id = ?",
+        (sid,),
+    ).fetchall()
+    for r in rows:
+        if r["classification"] is None:
+            return True
+        c: dict[str, Any] = json.loads(r["classification"])
+        f: dict[str, Any] = json.loads(r["facts"] or "{}")
+        t: dict[str, Any] = f.get("triggers") or {}
+        if (c.get("category") == "spam_or_phishing" or c.get("fraud_risk") in policy.FRAUD_RISKY
+                or t.get("fraud") or t.get("fraud_weak") or t.get("lookalikes")
+                or f.get("quarantined")):  # fmt: skip
+            return True
+    return False

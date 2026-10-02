@@ -36,6 +36,7 @@ from ecf_server import (
     breaker,
     checks,
     claude_queue,
+    claude_review,
     daily,
     db,
     decide,
@@ -138,10 +139,12 @@ def write_token(paths: Paths) -> str:
 
 
 def _clear_stale(conn: sqlite3.Connection) -> None:
-    """One process in v1: at start every lease and claimed job belongs to a dead process."""
+    """One process in v1: at start every lease, claimed job and review claim belongs to a dead
+    process."""
     with db.write_tx(conn):
         conn.execute("DELETE FROM leases")
     jobs.release_claims(conn)
+    claude_review.release_all(conn)  # `/ecf-review` sessions die with the process
 
 
 class Service:

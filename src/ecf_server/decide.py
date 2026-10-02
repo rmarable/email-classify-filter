@@ -70,6 +70,7 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row) -> Context:
         action_policy=standard,
         move_folders=frozenset(cfg["move_folders"] or []),
         confirmed_category=confirmed,
+        batch_risky=claude_queue.batch_risky(conn, item["stable_id"]),
     )
 
 

@@ -114,16 +114,35 @@ def parse(content: str, labels: frozenset[str], folders: frozenset[str],
     if not isinstance(data, dict) or set(data) != {"action", "target", "reason"}:  # pyright: ignore[reportUnknownArgumentType]
         return None
     d: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
-    action, target, reason = d["action"], d["target"], d["reason"]
+    return (
+        None
+        if problem(d["action"], d["target"], d["reason"], labels, folders, actions)
+        else {
+            "action": d["action"],
+            "target": d["target"] if d["action"] in ("label", "move") else "",
+            "reason": answers.model_text(d["reason"], REASON_MAX),
+        }
+    )
+
+
+def problem(action: Any, target: Any, reason: Any, labels: frozenset[str],
+            folders: frozenset[str], actions: tuple[str, ...] = ACTIONS) -> str | None:  # fmt: skip
+    """Why a proposal is refused, or None (the local actor's reply and Claude's `propose_action`
+    alike). The message names no model text. A target on an action that takes none is dropped by
+    the caller, never passed on."""
     if not (isinstance(action, str) and isinstance(target, str) and isinstance(reason, str)):
-        return None
-    if action not in actions or (target and target not in labels | folders):
-        return None
-    if (action == "label" and target not in labels) or (action == "move" and target not in folders):
-        return None  # each takes its own kind of target
-    if action not in ("label", "move"):
-        target = ""  # the others take none; a target given anyway is dropped, never passed on
-    return {"action": action, "target": target, "reason": answers.model_text(reason, REASON_MAX)}
+        return "action, target and reason must be text"
+    if action not in actions:
+        return ("action isn't one of " + ", ".join(actions)
+                + (" (hiding isn't available: the email needs action or a reply)"
+                   if actions != ACTIONS else ""))  # fmt: skip
+    if target and target not in labels | folders:
+        return "target isn't a known label or move folder"
+    if action == "label" and target not in labels:
+        return "label needs a known label name as target"
+    if action == "move" and target not in folders:
+        return "move needs a folder from move_folders as target"
+    return None
 
 
 def ask(client: Client, text: str, classification: dict[str, Any],
@@ -170,23 +189,28 @@ def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
         return ItemResult("failed", m)
     ollama.record_call(conn, clock, role="actor", outcome="ok", digest=ready.digest, metrics=m,
                        **tags)  # fmt: skip
-    _decide(conn, clock, item, ctx, p, got, labels)
+    decide_one(conn, clock, item, ctx, p, got, labels)
     return ItemResult("ok", m)
 
 
-def _decide(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: policy.Context,
-            p: policy.Plan, got: dict[str, str], labels: frozenset[str]) -> None:  # fmt: skip
+def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: policy.Context,
+            p: policy.Plan, got: dict[str, str], labels: frozenset[str], *,
+            local: bool = True) -> None:  # fmt: skip
+    """Apply one proposal: the local actor's, or Claude's (`local=False`, V1.4 step 3: `got` may
+    also carry `question`, `model` and `agent`; a question goes to you on any item, since
+    `local_high_risk` is the local pair's policy, §8.2)."""
     sid = item["stable_id"]
     p.to_actor = False
-    p.actor = {"action": got["action"], "target": got["target"] or None, "reason": got["reason"]}
+    p.actor = {"action": got["action"], "target": got["target"] or None, "reason": got["reason"],
+               **{k: got[k] for k in ("model", "agent") if k in got}}  # fmt: skip
     if got["action"] == "needs_clarification":
-        if p.high_risk:  # local_high_risk: a question on a risky item goes to a person now
+        if local and p.high_risk:  # local_high_risk: a question on a risky item goes to a person
             _add(p, Planned("escalate", None, "auto"))
             decide.apply(conn, clock, sid, p, source="actor")
             return
         decide.record(conn, clock, sid, p, "actor")  # what the actor decided stays with the item
         _to_proposed(conn, clock, item)
-        answers.ask(conn, clock, sid, got["reason"])
+        answers.ask(conn, clock, sid, got.get("question") or got["reason"])
         return
     one = policy.proposal(ctx, p, got["action"], got["target"] or None, labels)
     if isinstance(one, Dropped):
