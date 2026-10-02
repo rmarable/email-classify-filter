@@ -1,0 +1,13 @@
+Received: from mail.customer-s.example (mail.customer-s.example [192.0.2.10])
+ by mx.example.net with ESMTPS id other-wrong-recipient; Sat, 10 Oct 2026
+ 19:00:00 +0000
+From: Person S <s@customer-s.example>
+To: ap@acme.example
+Subject: Dinner on Saturday
+Date: Sat, 10 Oct 2026 19:00:00 +0000
+Message-ID: <other-wrong-recipient.1b38332343@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi, looking forward to Saturday. We will bring dessert. See you at 7.

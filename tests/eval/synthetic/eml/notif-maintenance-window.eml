@@ -1,0 +1,15 @@
+Received: from mail.email-host.example (mail.email-host.example [192.0.2.10])
+ by mx.example.net with ESMTPS id notif-maintenance-window; Thu, 12 Nov 2026
+ 15:00:00 +0000
+From: Status Updates <status@email-host.example>
+To: ap@acme.example
+Subject: Scheduled maintenance on 20 November
+Date: Thu, 12 Nov 2026 15:00:00 +0000
+Message-ID: <notif-maintenance-window.3e492b5c6b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Scheduled maintenance: 20 November 2026, 01:00-03:00 UTC. Mail may be delayed=
+ by up to 15
+minutes during this window. No action is required.

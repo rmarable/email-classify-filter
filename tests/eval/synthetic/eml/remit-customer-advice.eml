@@ -1,0 +1,23 @@
+Received: from mail.customer-e.example (mail.customer-e.example [192.0.2.10])
+ by mx.example.net with ESMTPS id remit-customer-advice; Tue, 06 Oct 2026
+ 10:00:00 +0000
+From: Customer E Payables <payables@customer-e.example>
+To: ap@acme.example
+Subject: Remittance advice - payment 88412
+Date: Tue, 06 Oct 2026 10:00:00 +0000
+Message-ID: <remit-customer-advice.019fc2f87b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Payment 88412 was sent today by ACH for the following invoices:
+
+ACME-1102  2,000.00
+ACME-1107    450.00
+ACME-1113    125.50
+
+Total 2,575.50. Please apply accordingly.
+
+Customer E Payables

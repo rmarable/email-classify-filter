@@ -48,6 +48,10 @@ CONTENT_KEYS = frozenset(
         "answer",
         "reason",
         "question",
+        "prompt",
+        "output",
+        "completion",
+        "messages",
         "password",
         "app_password",
         "token",
@@ -61,7 +65,6 @@ CONTENT_KEYS = frozenset(
         "value",
         "values",
         "message",
-        "messages",
         "attachments",
         "credentials",
     }
@@ -73,7 +76,8 @@ _SLACK_TOKEN = re.compile(r"\b(?:xox[a-z]?(?:\.xox[a-z])?|xapp)-[A-Za-z0-9-]{6,}
 TOKEN_REDACTED = "[token redacted]"  # noqa: S105 - the placeholder, not a secret
 MAX_DEPTH = 6
 # Libraries whose DEBUG output includes payloads or request bodies: never below WARNING.
-QUIET_LIBRARIES = ("slack_sdk", "slack_bolt", "websocket", "urllib3", "aiohttp", "imapclient")
+QUIET_LIBRARIES = ("slack_sdk", "slack_bolt", "websocket", "urllib3", "aiohttp", "imapclient",
+                   "httpx", "httpcore")  # fmt: skip
 LOG_ROTATE_BYTES = 50 * 1024 * 1024  # OD-160
 LOG_ROTATE_COUNT = 10
 

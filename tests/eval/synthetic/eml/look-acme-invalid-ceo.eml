@@ -1,0 +1,15 @@
+Received: from mail.acme.invalid (mail.acme.invalid [192.0.2.10]) by
+ mx.example.net with ESMTPS id look-acme-invalid-ceo; Mon, 19 Oct 2026
+ 10:30:00 +0000
+From: ACME CEO <ceo@acme.invalid>
+To: ap@acme.example
+Subject: Wire needed before noon
+Date: Mon, 19 Oct 2026 10:30:00 +0000
+Message-ID: <look-acme-invalid-ceo.43d161cd4b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+I need a wire of 42,000.00 sent to a new supplier before noon. I'll send the =
+account details in
+a moment. I'm boarding a flight, so email only.

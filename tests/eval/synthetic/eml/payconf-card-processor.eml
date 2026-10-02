@@ -1,0 +1,18 @@
+Received: from mail.payments-processor.example
+ (mail.payments-processor.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id payconf-card-processor; Mon, 05 Oct 2026 08:10:00 +0000
+From: Payments <receipts@payments-processor.example>
+To: ap@acme.example
+Subject: Payment received: order 7731
+Date: Mon, 05 Oct 2026 08:10:00 +0000
+Message-ID: <payconf-card-processor.e8b957ca1a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A payment of 1,240.00 USD from Customer C for order 7731 was received and wil=
+l settle to your
+account in 2 business days.
+
+Reference: PAY-7731-A
+This is an automated message.

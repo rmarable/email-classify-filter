@@ -1,0 +1,15 @@
+Received: from mail.state-tax-payments.example
+ (mail.state-tax-payments.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id payconf-state-tax-receipt; Tue, 20 Oct 2026 18:00:00 +0000
+From: Tax Payments <receipts@state-tax-payments.example>
+To: ap@acme.example
+Subject: Payment confirmation - sales tax return
+Date: Tue, 20 Oct 2026 18:00:00 +0000
+Message-ID: <payconf-state-tax-receipt.d763c18829@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The department of revenue received your sales tax payment of 3,212.40 for Sep=
+tember.
+Confirmation number 7780012. Keep this email for your records.

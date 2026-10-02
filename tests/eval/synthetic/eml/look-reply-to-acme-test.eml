@@ -1,0 +1,20 @@
+Received: from mail.customer-e.example (mail.customer-e.example [192.0.2.10])
+ by mx.example.net with ESMTPS id look-reply-to-acme-test; Tue, 20 Oct 2026
+ 09:00:00 +0000
+From: Customer E Payables <payables@customer-e.example>
+To: ap@acme.example
+Reply-To: payables@acme.test
+Subject: Please confirm our remittance address
+Date: Tue, 20 Oct 2026 09:00:00 +0000
+Message-ID: <look-reply-to-acme-test.f1d5ff17ad@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Before our next payment run, please reply to confirm the bank account we shou=
+ld pay ACME
+invoices into.
+
+Customer E Payables

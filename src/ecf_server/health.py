@@ -33,6 +33,10 @@ TITLES = {
     "login_rejected": "Mailbox Login Rejected",
     "slack_delivery_failed": "Slack Delivery Failed",
     "slack_connection": "Slack Delivery Failed",  # clicks can't arrive (V1.2 review)
+    "local_model": "System Error",  # the local model can't be used (V1.3)
+    "local_model_unsafe": "System Error",  # ... and ecf can't confirm it's safe (OD-242, OD-245)
+    "model_failures": "System Error",  # many items the model gave up on (OD-236)
+    "local_model_server": "System Error",  # Ollama can't run the model now (out of memory)
 }
 Resolver = Callable[[str], bool]
 
@@ -112,7 +116,8 @@ def login_backoff(conn: sqlite3.Connection, address_id: str) -> bool:
 def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT kind, address_id, detail, opened_at FROM alerts WHERE resolved_at IS NULL"
-        " AND address_id NOT IN (SELECT address_id FROM addresses WHERE removed_at IS NOT NULL)"
+        " AND (address_id IS NULL OR address_id NOT IN"
+        " (SELECT address_id FROM addresses WHERE removed_at IS NOT NULL))"
         " ORDER BY opened_at"
     ).fetchall()
     return [dict(r) | {"title": TITLES.get(r["kind"], r["kind"])} for r in rows]

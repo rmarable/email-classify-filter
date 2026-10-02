@@ -1,0 +1,72 @@
+"""`ecf stats` (SPEC §13.4; V1.3 step 9): the local model's tokens, speeds and load times."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from typing import Annotated, Any
+from urllib.parse import urlencode
+
+import typer
+
+from ecf.client import LocalClient
+from ecf.paths import Paths
+
+_SINCE = re.compile(r"^(\d+(?:\.\d+)?)([hd])$")
+
+
+def hours_of(since: str) -> float:
+    """`24h`, `7d`, `1.5d` → hours."""
+    m = _SINCE.match(since.strip().lower())
+    if not m:
+        raise typer.BadParameter("a number of hours or days, like 24h or 7d", param_hint="--since")
+    return float(m.group(1)) * (24 if m.group(2) == "d" else 1)
+
+
+def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    @app.command("stats")
+    def stats(
+        since: Annotated[str, typer.Option("--since", help="How far back: 24h, 7d, ...")] = "7d",
+        address: Annotated[str | None, typer.Option("--address", help="One address.")] = None,
+        preset: Annotated[str | None, typer.Option("--preset", help="A, B or C.")] = None,
+    ) -> None:
+        """The local model's tokens, speeds and load times, by model and role."""
+        params: dict[str, Any] = {"hours": hours_of(since)}
+        if address:
+            params["address"] = address
+        if preset:
+            params["preset"] = preset
+        with LocalClient(paths()) as c:
+            r: dict[str, Any] = c.get("/v1/stats?" + urlencode(params))
+        show(r)
+
+
+def show(r: dict[str, Any]) -> None:
+    typer.echo(f"since {r['since'][:16].replace('T', ' ')} UTC")
+    if not r["all"]["calls"]:
+        typer.echo("the local model wasn't used in this period")
+        return
+    for g in r["groups"]:
+        typer.echo(f"\n{g['role']} (model {str(g['model'])[:19]})")
+        _figures(g)
+    typer.echo("\nall roles")
+    _figures(r["all"])
+
+
+def _figures(g: dict[str, Any]) -> None:
+    failed = f", {g['failed']} failed" if g["failed"] else ""
+    typer.echo(f"  calls: {g['calls']}{failed}")
+    per_email = _n(g["tokens_per_email"], 0)
+    typer.echo(f"  tokens: {g['input_tokens']} in ({g['cached_tokens']} cached),"
+               f" {g['output_tokens']} out; about {per_email} per email")  # fmt: skip
+    p, w = g["prompt_tps"], g["generation_tps"]
+    typer.echo(f"  reading: {_n(p['median'])} tokens/s median, slowest 5% {_n(p['slowest_5'])}")
+    typer.echo(f"  writing: {_n(w['median'])} tokens/s median, slowest 5% {_n(w['slowest_5'])}")
+    s, ld = g["seconds"], g["load_seconds"]
+    typer.echo(f"  time per call: {_n(s['median'], 2)} s median, {_n(s['p95'], 2)} s p95")
+    typer.echo(f"  model load: {_n(ld['median'], 2)} s median, {_n(ld['p95'], 2)} s p95,"
+               f" {ld['cold_starts']} cold start(s)")  # fmt: skip
+
+
+def _n(v: float | None, digits: int = 1) -> str:
+    return "-" if v is None else f"{v:.{digits}f}"

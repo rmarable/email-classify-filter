@@ -1,0 +1,15 @@
+Received: from mail.business-bank.example (mail.business-bank.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id payconf-bank-wire-sent; Wed,
+ 28 Oct 2026 13:00:00 +0000
+From: Bank Alerts <alerts@business-bank.example>
+To: ap@acme.example
+Subject: Outgoing wire sent - reference W-55821
+Date: Wed, 28 Oct 2026 13:00:00 +0000
+Message-ID: <payconf-bank-wire-sent.754422db83@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your outgoing wire of 12,400.00 to Vendor D was sent today. Reference W-55821=
+. If you did not
+authorize this payment, call the number on the back of your card.

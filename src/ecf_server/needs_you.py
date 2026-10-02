@@ -18,6 +18,7 @@ import json
 import platform
 import sqlite3
 from datetime import datetime, timedelta
+from typing import Any
 
 from ecf.status import OPEN, Status
 from ecf_server import cards, inbox, pause, slack_admin, slack_out, slack_routes
@@ -46,6 +47,13 @@ LABELS = {
 }
 
 
+def _label(i: dict[str, Any]) -> str:
+    if i.get("model_failed"):  # OD-236: the local model gave up on it
+        return "the local model gave up (ecf item requeue)"
+    status = str(i["status"])
+    return LABELS.get(status, status)
+
+
 def host() -> str:
     return platform.node().split(".")[0] or "this computer"
 
@@ -56,7 +64,7 @@ def card(conn: sqlite3.Connection, *, computer: str, last_connected: datetime) -
     listed = [i for i in waiting if i not in stale_bulk]
     lines = [
         f"{'STALE ' if i['stale'] else ''}{i['short_id']} {i['address_id']}: "
-        f"{LABELS.get(i['status'], i['status'])}: {cards.short_sender(i['sender'])}: "
+        f"{_label(i)}: {cards.short_sender(i['sender'])}: "
         f"{i['subject'][:60]}"
         for i in listed[:TOP]
     ]

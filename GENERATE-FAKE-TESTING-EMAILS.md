@@ -75,6 +75,7 @@ Hello, please note our bank has changed...
 |---|---|
 | `id` | lowercase letters, digits and hyphens; the file and Message-ID are derived from it |
 | `title`, `threat`, `control`, `why`, `failure_looks_like` | what the case tests and what breaking it looks like; `control` names the design control, so a failure points at it |
+| `review` | optional: why the operator's judgement is needed on this card (a judgement call, or a safety expectation to confirm). `ecf eval label` shows it as a flag and `--show-flags` goes through only flagged cases. Not part of the expected values, so changing it never undoes a confirmation |
 | `author` | `hand` (written or signed off by the operator), `claude` or `gemma` (drafted by a model). Accuracy is reported per author to expose same-model bias |
 | `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to `ap@acme.example`; `date` to 2026-10-01 09:00 UTC) |
 | `message_id` | optional override; default `<id.hash@synthetic.acme.example>` |
@@ -144,9 +145,25 @@ detected automatically; review catches them.
 
 ## Labels and review
 
-A card's `expected` values count toward gates only after the operator confirms them. Model-drafted
-cards (`author: claude` or `gemma`) stay pending until reviewed. The eight starter cards committed
-in V1.0 are Claude drafts pending review.
+A card's `expected` values count toward gates only after the operator confirms them with
+`ecf eval label` (V1.3; OD-229, OD-241). It shows each pending case (what it tests, the headers,
+the start of the body, the expected values) and asks yes, skip or quit; a yes writes `confirmed`
+(the built file's SHA-256, a SHA-256 of the expected values, and the date) into `labels.jsonl`.
+Editing the card's message or expected values undoes it, and `ecf eval build` keeps a confirmation
+only while both hashes still match. `ecf eval label --status` counts them and the flagged ones; `ecf eval label --show-flags` goes through only the pending cases whose card has a `review` note. Each case also shows what the model returned where it differs from the expected values, from the newest result in the install's `evals` folder (`--results <file>` picks another, e.g. a dev service's). Commit `labels.jsonl`
+after labelling. Model-drafted cards (`author: claude` or `gemma`) stay pending until you confirm
+them.
+
+**Category of fraud and impersonation** (operator decision 2026-10-01): the category the email
+pretends to be when one fits (a bank or payment-detail change is `vendor_change_request`, a fake
+invoice is `invoice`, a refund scam is `billing_inquiry`); otherwise `spam_or_phishing`, the
+schema's "attempt to deceive" (gift cards, an executive's wire to a new payee, tax-form theft,
+sign-in codes, extortion). Never `other` for fraud. The fraud rules don't read the category, so
+this affects scoring and digest labels, not what ecf does.
+
+**Expected rules** come from the card's real facts and the starter rules, computed in the eval's
+order with its shared sender history, never guessed; a new card must not change an older card's
+facts.
 
 ## Not built yet
 
@@ -157,9 +174,9 @@ These parts of the plan arrive with the milestones that need them:
   fraud-guard cases), with pairwise fill. Built as the set grows toward 150-200 cases.
 - **Drafting:** the maintainer skill `/ecf-eval-gen` (Claude, interactive) and local Gemma drafts
   (V1.3).
-- **`ecf eval label`:** the operator confirms each label (V1.3).
-- **Replay:** `ecf replay` into Dovecot (`--via append`) and through Postfix + OpenDMARC
-  (`--via smtp`), with test senders signed by OpenDKIM (V1.1).
+- **Replay through Postfix + OpenDMARC** (`ecf replay --via smtp`), with test senders signed by
+  OpenDKIM. `ecf replay --via append` (IMAP APPEND into a test mailbox, fresh Message-IDs) is built
+  (V1.3).
 - **gitleaks** as an extra secret scan in pre-commit.
 
 ## Maintenance

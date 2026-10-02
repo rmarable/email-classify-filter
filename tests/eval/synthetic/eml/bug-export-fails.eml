@@ -1,0 +1,19 @@
+Received: from mail.customer-m.example (mail.customer-m.example [192.0.2.10])
+ by mx.example.net with ESMTPS id bug-export-fails; Sat, 03 Oct 2026 14:00:00
+ +0000
+From: Customer M Support <it@customer-m.example>
+To: ap@acme.example
+Subject: CSV export fails with an error
+Date: Sat, 03 Oct 2026 14:00:00 +0000
+Message-ID: <bug-export-fails.967c765a22@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Since yesterday the CSV export stops at 50% with "export failed (code 17)". W=
+e tried two
+browsers. Can you look into it?
+
+Customer M Support

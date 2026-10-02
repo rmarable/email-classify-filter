@@ -1,0 +1,15 @@
+Received: from mail.customer-hh.example (mail.customer-hh.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id payconf-customer-says-paid;
+ Fri, 30 Oct 2026 14:00:00 +0000
+From: Customer HH <accounts@customer-hh.example>
+To: ap@acme.example
+Subject: Paid ACME-1201 yesterday
+Date: Fri, 30 Oct 2026 14:00:00 +0000
+Message-ID: <payconf-customer-says-paid.7274989587@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi, we paid invoice ACME-1201 (930.00) yesterday by card through your portal.=
+ Can you confirm
+you received it? Our system still shows it as pending.

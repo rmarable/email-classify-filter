@@ -1,0 +1,19 @@
+Received: from mail.customer-ae.example (mail.customer-ae.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-installment-plan; Thu,
+ 05 Nov 2026 10:00:00 +0000
+From: Customer AE Finance <finance@customer-ae.example>
+To: ap@acme.example
+Subject: Installment 1 of 3 paid
+Date: Thu, 05 Nov 2026 10:00:00 +0000
+Message-ID: <remit-installment-plan.4de438b0d9@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+As agreed last month, we paid the first of three installments, 1,500.00, agai=
+nst invoice
+INV-7698 today. Could you confirm the remaining balance on your side?
+
+Customer AE Finance

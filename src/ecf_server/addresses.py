@@ -22,7 +22,7 @@ from ecf_server import items, probe, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail import MailSource
-from ecf_server.precheck import payment_or_fraud
+from ecf_server.precheck import item_payment_or_fraud
 from ecf_server.secretstore import SecretStore
 from ecf_server.state_machine import TransitionContext
 
@@ -279,11 +279,11 @@ def remove_address(
 def _open_items(conn: sqlite3.Connection, address_id: str) -> list[tuple[str, bool]]:
     """(stable_id, payment or fraud) for each open item, in a stable order."""
     rows = conn.execute(
-        "SELECT stable_id, facts FROM items WHERE address_id = ?"
+        "SELECT stable_id, facts, classification FROM items WHERE address_id = ?"
         " AND status IN (SELECT value FROM json_each(?)) ORDER BY stable_id",
         (address_id, json.dumps(sorted(OPEN))),
     ).fetchall()
-    return [(r["stable_id"], payment_or_fraud(json.loads(r["facts"] or "{}"))) for r in rows]
+    return [(r["stable_id"], item_payment_or_fraud(r)) for r in rows]
 
 
 @stepup.purpose("address_remove")

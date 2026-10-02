@@ -11,6 +11,7 @@ class FakeHarness:
     def __init__(self) -> None:
         self.fake = FakeMailSource(uidvalidity=7)
         self.source: MailSource = self.fake
+        self.move_target = "Archive"
 
     def deliver(self, raw: bytes, when: datetime) -> None:
         self.fake.deliver(raw, when)

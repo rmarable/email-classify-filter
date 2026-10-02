@@ -1,0 +1,17 @@
+Received: from mail.payment-alerts.example (mail.payment-alerts.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id payconf-overpayment-scam; Fri,
+ 30 Oct 2026 09:00:00 +0000
+From: Payment Notice <notice@payment-alerts.example>
+To: ap@acme.example
+Subject: Payment received - overpayment of 3,000.00
+Date: Fri, 30 Oct 2026 09:00:00 +0000
+Message-ID: <payconf-overpayment-scam.4965fbecc4@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We have received a payment of 4,200.00 for your invoice of 1,200.00. Please r=
+efund the
+overpayment of 3,000.00 today by wire to the account the payer provides. Repl=
+y to receive the
+account details.

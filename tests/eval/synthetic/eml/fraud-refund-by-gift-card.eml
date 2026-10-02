@@ -1,0 +1,20 @@
+Received: from mail.customer-aa.example (mail.customer-aa.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id fraud-refund-by-gift-card;
+ Sat, 17 Oct 2026 13:00:00 +0000
+From: Customer AA <buyer@customer-aa.example>
+To: ap@acme.example
+Subject: Overpaid my invoice - refund please
+Date: Sat, 17 Oct 2026 13:00:00 +0000
+Message-ID: <fraud-refund-by-gift-card.fd80ff1acf@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+I paid invoice ACME-1188 twice by mistake (2 x 1,500.00). Our bank takes week=
+s for transfers,
+so please refund the 1,500.00 as gift cards instead and email me the codes to=
+day.
+
+Thanks

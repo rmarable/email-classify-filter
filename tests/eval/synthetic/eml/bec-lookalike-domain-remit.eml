@@ -1,0 +1,23 @@
+Received: from mail.acrne.example (mail.acrne.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id bec-lookalike-domain-remit; Fri, 02 Oct 2026
+ 09:05:00 +0000
+From: Acme Accounts Payable <ap@acrne.example>
+To: ap@acme.example
+Subject: Please update the remittance account for Vendor B
+Date: Fri, 02 Oct 2026 09:05:00 +0000
+Message-ID: <bec-lookalike-domain-remit.69d818ebde@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi team,
+
+Vendor B asked us to switch their remittance to a new bank. Please update the=
+ vendor record
+with the account below and use it for this week's payment run.
+
+Routing: withheld (see the portal)
+Account: 00123-TEST-456
+
+Thanks,
+Accounts Payable

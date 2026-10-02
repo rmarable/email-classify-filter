@@ -1,0 +1,15 @@
+Received: from mail.file-drive.example (mail.file-drive.example [192.0.2.10])
+ by mx.example.net with ESMTPS id notif-storage-quota; Wed, 11 Nov 2026
+ 09:00:00 +0000
+From: Drive Storage <no-reply@file-drive.example>
+To: ap@acme.example
+Subject: Storage almost full
+Date: Wed, 11 Nov 2026 09:00:00 +0000
+Message-ID: <notif-storage-quota.1f605c26fb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your team's storage is 90% full. When it is full, new files can't be uploaded=
+. Remove old files
+or change your plan in the admin console.

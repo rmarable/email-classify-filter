@@ -1,0 +1,21 @@
+Received: from mail.accounting-firm.example (mail.accounting-firm.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id reg-state-tax-audit; Thu, 22
+ Oct 2026 11:00:00 +0000
+From: Outside Accountant <partner@accounting-firm.example>
+To: ap@acme.example
+Subject: Sales tax audit notice from the department of revenue
+Date: Thu, 22 Oct 2026 11:00:00 +0000
+Message-ID: <reg-state-tax-audit.944e2f3e0a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+ACME received a sales and use tax audit notice from the state department of r=
+evenue covering
+2023-2025. They want the initial records by 20 November. I can handle the res=
+ponse; please send
+the sales ledgers when you can.
+
+Outside Accountant

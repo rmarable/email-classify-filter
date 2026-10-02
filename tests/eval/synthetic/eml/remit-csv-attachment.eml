@@ -1,0 +1,30 @@
+Received: from mail.customer-ah.example (mail.customer-ah.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-csv-attachment; Fri, 06
+ Nov 2026 11:00:00 +0000
+From: Customer AH Accounts <accounts@customer-ah.example>
+To: ap@acme.example
+Subject: November payment run - remittance attached
+Date: Fri, 06 Nov 2026 11:00:00 +0000
+Message-ID: <remit-csv-attachment.c487694c49@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_ecf_remit-csv-attachment_0"
+
+--=_ecf_remit-csv-attachment_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Please find attached the remittance for our November payment run.
+
+Customer AH Accounts
+
+--=_ecf_remit-csv-attachment_0
+Content-Type: text/csv
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="remittance-nov.csv"
+MIME-Version: 1.0
+
+aW52b2ljZSxhbW91bnQKSU5WLTc4NjAsOTAwLjAwCklOVi03ODYxLDQ1MC4wMAo=
+
+--=_ecf_remit-csv-attachment_0--

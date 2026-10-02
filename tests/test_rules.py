@@ -35,7 +35,8 @@ def names(d: Any) -> list[tuple[str, str | None]]:
         {"fraud_risk": "medium"},
         {"fraud_risk": "high"},
         {"category": "vendor_change_request"},
-        {"sender_type": "staff"},
+        {"sender_type": "staff", "payment_related": True},  # "staff" from outside, about money
+        {"sender_type": "staff", "_facts": {"payment_keyword": True}},
         {"payment_related": True, "_facts": {"auth_result": "fail"}},
         {"_triggers": {"fraud"}},
     ],
@@ -51,6 +52,13 @@ def test_fraud_guard(case: dict[str, Any]) -> None:
 
 def test_staff_internal_is_not_fraud() -> None:
     assert run(facts={"sender_origin": "internal"}, sender_type="staff").rule_id == "otherwise"
+
+
+def test_staff_from_outside_without_money_is_only_flagged() -> None:
+    """OD-262 (V1.3 step 12a): a list email the model called "staff" escalated as fraud."""
+    d = run(sender_type="staff")
+    assert d.rule_id == "fraud_weak"
+    assert names(d) == [("label", "suspicious"), ("flag", None)] and d.hide is Hide.NEVER
 
 
 def test_fraud_weak() -> None:

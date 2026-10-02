@@ -37,6 +37,7 @@ from ecf_server import (
     inbox,
     items,
     jobs,
+    modelq,
     pause,
     slack_in,
     slack_out,
@@ -49,7 +50,7 @@ from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier, NullNotifier
-from ecf_server.precheck import payment_or_fraud
+from ecf_server.precheck import item_payment_or_fraud
 from ecf_server.state_machine import Origin, Stage, TransitionContext, check_transition
 
 SENDS = frozenset({"forward_internal", "reply_template"})
@@ -134,7 +135,13 @@ def _facts(item: sqlite3.Row) -> dict[str, Any]:
 
 
 def request(
-    conn: sqlite3.Connection, clock: Clock, sid: str, actions: list[Planned], *, member: str = ""
+    conn: sqlite3.Connection,
+    clock: Clock,
+    sid: str,
+    actions: list[Planned],
+    *,
+    member: str = "",
+    card: bool = True,
 ) -> str:
     """A proposed item needs a person: record the proposal, issue its grant and post its card.
     Returns the grant ID. (Called by the rules from V1.3; by tests in V1.2.)"""
@@ -147,14 +154,16 @@ def request(
         raise ConflictError(f"this email is {item['status']}, not proposed",
                             current=str(item["status"]))  # fmt: skip
     check_transition(Status.PROPOSED, Status.AWAITING_APPROVAL, ctx)
+    kept: dict[str, Any] = json.loads(item["proposal"] or "{}")  # the plan's reasons stay (V1.3)
+    doc = kept | {"actions": [a.to_json() for a in actions]}
     with write_tx(conn):
         conn.execute("UPDATE items SET proposal = ?, updated_at = ? WHERE stable_id = ?",
-                     (json.dumps({"actions": [a.to_json() for a in actions]}),
-                      to_ts(clock.now()), sid))  # fmt: skip
+                     (json.dumps(doc), to_ts(clock.now()), sid))  # fmt: skip
     items.transition(conn, clock, StableId(sid), Status.AWAITING_APPROVAL, ctx, actor="service",
                      expected=Status.PROPOSED)  # fmt: skip
     grant_id = _issue(conn, clock, _item(conn, sid), actions)
-    _card(conn, clock, _item(conn, sid), grant_id, member=member)
+    if card:  # during a large backlog they're listed on digests instead (§5.3; V1.3 step 7)
+        _card(conn, clock, _item(conn, sid), grant_id, member=member)
     return grant_id
 
 
@@ -308,6 +317,7 @@ def _start(conn: sqlite3.Connection, clock: Clock, sid: StableId, grant_id: str)
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
                  {"stable_id": sid, "grant_id": grant_id}, timeout_s=120,
                  max_attempts=EXECUTE_ATTEMPTS)  # fmt: skip
+    jobs.make_due(conn, clock, item["address_id"])
     _edit(conn, clock, item, f"Approved: {describe(_actions(item))} (running)", [])
 
 
@@ -481,10 +491,13 @@ def _describe_requeue(conn: sqlite3.Connection, target: dict[str, Any]) -> stepu
 def requeue(
     conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str, nonce: str | None
 ) -> dict[str, Any]:
-    """Run a failed or stuck action again under a new grant (§6.2); a send needs step-up again."""
+    """Run a failed or stuck action again under a new grant (§6.2); a send needs step-up again.
+    An email the local model gave up on (OD-236) goes back to the model instead."""
     item = inbox.find(conn, ref)
     sid = StableId(item["stable_id"])
     status = Status(item["status"])
+    if item["model_failed"] and modelq.retry(conn, clock, sid, actor=actor):
+        return {"stable_id": sid, "status": str(status), "model": "retry"}
     if status is Status.EXECUTING:
         busy = conn.execute(
             "SELECT 1 FROM jobs WHERE queue = 'actions' AND state IN ('queued', 'claimed')"
@@ -519,6 +532,7 @@ def requeue(
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
                  {"stable_id": sid, "grant_id": grant_id}, timeout_s=120,
                  max_attempts=EXECUTE_ATTEMPTS)  # fmt: skip
+    jobs.make_due(conn, clock, item["address_id"])
     _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
     return {"status": Status.EXECUTING.value}
 
@@ -585,10 +599,35 @@ def _card(
                 buttons=(Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),
                          Button(REJECT, "Reject", grant_id),
                          Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])),
-                note=cards.PAYMENT_NOTE if payment_or_fraud(_facts(item)) else "",
+                note=cards.PAYMENT_NOTE if item_payment_or_fraud(item) else "",
                 mention=member)  # fmt: skip
     slack_out.enqueue_post(conn, clock, key=f"item:{item['stable_id']}", route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
+
+
+CARDS_PER_TICK = 20
+
+
+def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_PER_TICK) -> int:
+    """Once the backlog is back under `BACKLOG_BATCH`, post the cards that approvals requested
+    during it didn't get (§5.3): the digest's "Approve all" lists only the reversible ones, so
+    the rest would otherwise reach Slack only when they expire. Each tick, a few at a time;
+    returns how many were posted."""
+    if sum(modelq.waiting(conn).values()) > modelq.BACKLOG_BATCH:
+        return 0
+    rows = conn.execute(
+        "SELECT i.*, g.grant_id FROM items i JOIN grants g USING (stable_id)"
+        " WHERE i.status = 'awaiting_approval' AND g.status = 'issued'"
+        " ORDER BY i.updated_at, i.stable_id").fetchall()  # fmt: skip
+    posted = 0
+    for row in rows:
+        if posted >= limit:
+            break
+        if has_card(conn, f"item:{row['stable_id']}"):
+            continue
+        _card(conn, clock, _item(conn, row["stable_id"]), row["grant_id"])
+        posted += 1
+    return posted
 
 
 def _edit(

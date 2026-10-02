@@ -1,18 +1,21 @@
-"""Eval result files (metrics and per-case correctness only; never message text) and the paired
-comparison `ecf eval compare` prints (SPEC §16.2, §16.5)."""
+"""Eval result files (metrics, per-case correctness and the model's field values; never message
+text) and the paired comparison `ecf eval compare` prints (SPEC §16.2, §16.5)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import mcnemar_exact, wilson
+from ecf.eval.metrics import holm, mcnemar_exact, wilson
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 NON_INFERIORITY_POINTS = 3.0
+HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
 class CaseResult(BaseModel):
@@ -20,6 +23,12 @@ class CaseResult(BaseModel):
     id: str
     correct: bool  # end-to-end decision correct
     fields: dict[str, bool] = Field(default_factory=dict[str, bool])  # per-field correctness
+    confirmed: bool = True  # counts toward the gates only when its labels are confirmed (V1.3)
+    safety: bool = True
+    # what the model returned: schema field values and the rule they led to; closed-vocabulary
+    # values only, never text (OD-259); empty in older files
+    got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
+    fraud: bool = False  # expects fraud_guard/fraud_weak or an escalation; False in older files
 
 
 class ResultFile(BaseModel):
@@ -29,6 +38,8 @@ class ResultFile(BaseModel):
     set_version: str
     created_at: str
     cases: list[CaseResult]
+    digest: str | None = None  # the local model's manifest digest (V1.3)
+    summary: dict[str, object] | None = None  # metrics (V1.3); never message or model text
 
 
 def load_result(path: Path) -> ResultFile:
@@ -79,6 +90,66 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
         diff_points=100 * diff,
         diff_ci=ci,
     )
+
+
+@dataclass(frozen=True)
+class FieldComparison:
+    field: str
+    n: int
+    b_only: int
+    a_only: int
+    p_value: float
+    p_holm: float
+
+    @property
+    def significant(self) -> bool:
+        return self.p_holm < HOLM_ALPHA
+
+
+def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
+    """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
+    §16.5, secondary). A field counts on a case only when both runs scored it there."""
+    bm = {c.id: c.fields for c in b.cases}
+    pairs: dict[str, list[tuple[bool, bool]]] = {}
+    for c in a.cases:
+        other = bm.get(c.id)
+        if other is None:
+            continue
+        for name, ok in c.fields.items():
+            if name in other:
+                pairs.setdefault(name, []).append((ok, other[name]))
+    raw: dict[str, tuple[int, int, int, float]] = {}
+    for name, ps in pairs.items():
+        a_only = sum(x and not y for x, y in ps)
+        b_only = sum(y and not x for x, y in ps)
+        raw[name] = (len(ps), b_only, a_only, mcnemar_exact(b_only, a_only))
+    adjusted = holm({k: v[3] for k, v in raw.items()})
+    return [FieldComparison(k, n, bo, ao, p, adjusted[k])
+            for k, (n, bo, ao, p) in sorted(raw.items())]  # fmt: skip
+
+
+def latest(folder: Path) -> ResultFile | None:
+    """The newest readable result file in `folder` (an install's `evals`), or None."""
+    files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        try:
+            return load_result(path)
+        except InvalidInputError:
+            continue
+    return None
+
+
+def differences(expected: Mapping[str, object], got: Mapping[str, str | bool | None]) -> list[str]:
+    """Where the model's answer differs from a case's expected labels and rule."""
+    want: dict[str, object] = dict(cast(Mapping[str, object], expected.get("labels") or {}))
+    if expected.get("rule") is not None:
+        want["rule"] = expected["rule"]
+    return [f"{k} {_show(got.get(k))} (expected {_show(v)})"
+            for k, v in want.items() if k in got and got[k] != v]  # fmt: skip
+
+
+def _show(v: object) -> str:
+    return str(v).lower() if isinstance(v, bool) or v is None else str(v)
 
 
 def summary(r: ResultFile) -> str:

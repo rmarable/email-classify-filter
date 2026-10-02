@@ -18,6 +18,7 @@ The tick only decides and enqueues `fetch` jobs; a worker thread runs them (serv
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -83,6 +84,22 @@ def host_power() -> Power:
         return Power(False, True)
 
 
+def battery_percent() -> int | None:
+    """The battery's charge in percent, or None (no battery, or unknown)."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["/usr/bin/pmset", "-g", "batt"], capture_output=True, text=True,
+                                 timeout=5, check=False).stdout  # fmt: skip
+            m = re.search(r"(\d{1,3})%", out)
+            return int(m.group(1)) if m else None
+        for p in Path("/sys/class/power_supply").glob("*"):
+            if _read(p / "type") == "Battery" and _read(p / "capacity").isdigit():
+                return int(_read(p / "capacity"))
+    except OSError:
+        return None
+    return None
+
+
 def _read(p: Path) -> str:
     try:
         return p.read_text().strip()
@@ -118,6 +135,15 @@ def in_business_hours(now: datetime, bh: dict[str, Any]) -> bool:
 def interval(now: datetime, s: dict[str, Any]) -> timedelta:
     workday = in_business_hours(now, s["business_hours"])
     minutes = s["mail_fetch_interval_workday" if workday else "mail_fetch_interval_offhours"]
+    return timedelta(minutes=min(120, max(5, int(minutes))))
+
+
+def interval_offhours(conn: sqlite3.Connection) -> timedelta:
+    """The install's off-hours interval: model rounds on battery run at most this often (OD-029)."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'mail_fetch_interval_offhours'"
+    ).fetchone()
+    minutes = json.loads(row["value"]) if row else DEFAULTS["mail_fetch_interval_offhours"]
     return timedelta(minutes=min(120, max(5, int(minutes))))
 
 

@@ -1,0 +1,14 @@
+Received: from mail.sender.example (mail.sender.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id look-display-name-address; Mon, 19 Oct 2026
+ 11:30:00 +0000
+From: accounts@acme.example <billing@notify-mailer.example>
+To: ap@acme.example
+Subject: Payment approval needed
+Date: Mon, 19 Oct 2026 11:30:00 +0000
+Message-ID: <look-display-name-address.b8144a81cc@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Please approve the attached supplier payment of 8,450.00 today. Reply APPROVE=
+D to release it.

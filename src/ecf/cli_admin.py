@@ -33,24 +33,46 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
             paused = ", PAUSED" if r["paused"] else ""
             typer.echo(f"{r['address_id']:<16} {r['stage']:<7} ({r['label']}) for {r['days']} "
                        f"day(s), {r['sensitivity']}{paused}; held: {r['held']}")  # fmt: skip
-        if rows:
-            typer.echo(f"live: {rows[0]['gate']}")
-        else:
+            if r.get("review"):
+                typer.echo(f"{'':<16} review: {r['review']}")
+            if r["stage"] != "live":
+                typer.echo(f"{'':<16} go-live gate: {r['gate']}")
+        if not rows:
             typer.echo("no addresses yet")
 
     @stage_app.command("set")
     def stage_set(
         address: Annotated[str, typer.Argument(help="Address id or email.")],
-        stage: Annotated[str, typer.Argument(help="shadow or assist (live arrives in V1.3).")],
+        stage: Annotated[str, typer.Argument(help="shadow, assist or live.")],
         reason: Annotated[str, typer.Option("--reason", help="Why (kept in the audit log).")] = "",
+        override: Annotated[
+            bool,
+            typer.Option(
+                "--override",
+                help="Go live although the review count or accuracy falls"
+                " short (needs --reason; never waives the safety gates).",
+            ),
+        ] = False,
+        held: Annotated[
+            str,
+            typer.Option(
+                "--held",
+                help="Going live: run (held emails up to 7 days old run, older"
+                " stay held), resolve-older or resolve-all (mark them handled by hand).",
+            ),
+        ] = "run",
     ) -> None:
-        """Change an address's stage. (step-up to move forward; going back is instant)"""
-        body = {"value": stage, "reason": reason}
+        """Change an address's stage. (step-up to move forward; going back is instant; live needs
+        the go-live gate)"""
+        body: dict[str, Any] = {"value": stage, "reason": reason, "override": override,
+                                "held": held.replace("-", "_")}  # fmt: skip
         with LocalClient(paths()) as c:
+            if stage == "live":
+                _show_gate(c.get(f"/v1/addresses/{address}/gate"), body["held"])
             r = with_step_up(c, lambda n: c.request("POST", f"/v1/addresses/{address}/stage",
                                                     body | {"nonce_id": n}),
                              echo=typer.echo)  # fmt: skip
-        typer.echo(f"{r['address_id']}: {r['stage']}" + ("" if r["changed"] else " (unchanged)"))
+        _show_stage_result(r)
 
     @sens_app.command("set")
     def sensitivity_set(
@@ -275,3 +297,30 @@ def _retention_commands(retention_app: typer.Typer, paths: Callable[[], Paths]) 
         else:
             typer.echo(f"finished items are kept {r['days']} days (was {r['was']}); applies at"
                        " the next daily run")  # fmt: skip
+
+
+def _show_gate(r: dict[str, Any], held: str) -> None:
+    g = r["gate"]
+    typer.echo("go-live gate: " + ("met" if g["met"] else "NOT met"))
+    for chk in g["checks"]:
+        mark = "ok  " if chk["ok"] else ("SHORT" if chk["waivable"] else "FAIL")
+        typer.echo(f"  {mark} {chk['detail']}")
+    if not g["safety_met"] and any(
+        ch["name"] == "synthetic" and not ch["ok"] for ch in g["checks"]
+    ):
+        typer.echo("  run the synthetic set for this model: ecf eval run --fraud-only")
+    recent, older = r["held"]["recent"], r["held"]["older"]
+    if recent or older:
+        typer.echo(f"held emails: {recent} up to 7 days old run when the address goes live;"
+                   f" {older} older")  # fmt: skip
+        if older and held == "run":
+            typer.echo("  older ones stay held: add --held resolve-older to mark them handled"
+                       " by hand, or --held resolve-all for every held email")  # fmt: skip
+
+
+def _show_stage_result(r: dict[str, Any]) -> None:
+    typer.echo(f"{r['address_id']}: {r['stage']}" + ("" if r["changed"] else " (unchanged)"))
+    if r.get("held"):
+        h = r["held"]
+        typer.echo(f"held emails: {h['ran']} ran, {h['resolved']} marked handled by hand,"
+                   f" {h['still_held']} still held, {h['failed']} failed")  # fmt: skip

@@ -1,0 +1,19 @@
+Received: from mail.sec-researcher.example (mail.sec-researcher.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id bug-security-vuln-report; Mon,
+ 26 Oct 2026 10:00:00 +0000
+From: Independent Researcher <research@sec-researcher.example>
+To: ap@acme.example
+Subject: Security issue in your login form
+Date: Mon, 26 Oct 2026 10:00:00 +0000
+Message-ID: <bug-security-vuln-report.b995b507da@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+I found a stored cross-site scripting issue in the profile name field of your=
+ web app. I have
+not shared it publicly. I can send details to a security contact. I follow a =
+90-day disclosure
+policy.

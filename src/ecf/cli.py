@@ -9,16 +9,18 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__
+from ecf import __version__, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
+from ecf.cli_models import make_models_app
 from ecf.cli_slack import make_app as make_slack_app
+from ecf.cli_stats import make_stats_command
 from ecf.client import LocalClient
 from ecf.doctor import Level, run_checks
 from ecf.errors import EcfError
@@ -74,6 +76,8 @@ def _paths() -> Paths:
 app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
 make_admin_commands(app, _paths)
+app.add_typer(make_models_app(_paths), name="models")
+make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
 
@@ -125,6 +129,11 @@ def status() -> None:
     paths = _paths()
     unit = manager_for(paths).status()
     typer.echo(f"install:   {paths.install}")
+    m = watch.marker(paths)
+    if m:
+        typer.echo(f"watch:     `ecf watch` took over at {m['started_at']}"
+                   + ("" if m["alive"] else "; it ended without restoring the background"
+                      " service: ecf service start"))  # fmt: skip
     typer.echo(
         f"unit:      {'installed' if unit.installed else 'not installed'}, "
         f"{'running' if unit.running else 'not running'}"
@@ -148,6 +157,9 @@ def status() -> None:
     else:
         state = "connected" if sl.get("connected") else "NOT connected"
         typer.echo(f"slack:     {state}; last connected {sl.get('last_connected_at') or 'never'}")
+    m = st.get("model")
+    if m:
+        typer.echo(f"model:     {_model_backlog(m)}")
     for a in st.get("addresses", []):
         last = a["last_finished_at"] or "never checked"
         line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"
@@ -184,8 +196,9 @@ def check(
         bool, typer.Option("--until-empty", help="Keep checking while mail is waiting.")
     ] = False,
 ) -> None:
-    """Check mail now: fetch, verify senders, run the fraud and regulator checks. Model checks
-    arrive in V1.3; until then this is the model-free pre-check."""
+    """Check mail now: fetch, verify senders, run the fraud and regulator checks, then the local
+    model on what waits for it. Exit 3 when a check failed, the local model isn't ready, or
+    --until-empty gave up."""
     body: dict[str, object] = {"until_empty": until_empty}
     if address:
         body["address_id"] = address
@@ -194,10 +207,50 @@ def check(
         for r in c.stream("POST", "/v1/checks", body):
             if r.get("done"):
                 break
+            if "model" in r:
+                m = r["model"]
+                failed |= m["status"] in ("not_ready", "gave_up")
+                typer.echo(_model_line(m))
+                continue
             failed |= r["status"] in CHECK_FAILED
             typer.echo(_check_line(r))
     if failed:
         raise typer.Exit(3)
+
+
+def _model_backlog(m: dict[str, Any]) -> str:
+    if not m["waiting"]:
+        return "nothing waiting"
+    text = f"{m['waiting']} waiting"
+    if m.get("eta_s") is not None:
+        text += f", about {max(1, round(m['eta_s'] / 60))} min at the measured speed"
+    if m.get("eval"):
+        text += "; an eval holds the model"
+    elif m.get("on_battery"):
+        text += "; on battery it runs at the off-hours interval (plug in to catch up)"
+    return text
+
+
+def _model_line(m: dict[str, Any]) -> str:
+    who = f"{'local model':<16}"
+    waiting = {
+        "eval": "an eval holds the model; {w} waiting",
+        "busy": "the service's own run is using the model; {w} waiting",
+        "worker": "the service's own run is working on them; {w} still waiting",
+    }.get(m["status"])
+    if waiting:
+        return f"{who} " + waiting.format(w=m["waiting"])
+    if m["status"] == "off":
+        return f"{who} {m['detail']}"
+    if m["status"] == "not_ready":
+        return f"{who} not ready: {m['detail']}"
+    if m["status"] == "gave_up":
+        return (f"{who} stopped waiting after {m['minutes']} min; {m['waiting']} still waiting"
+                " (ecf status)")  # fmt: skip
+    extra = {"budget": " (6-minute budget used)", "hot": " (paused: running hot)",
+             "stopped": " (service stopping)"}.get(m["status"], "")  # fmt: skip
+    return (f"{who} {m['done']} done, {m['failed']} failed, {m['waiting']} still waiting"
+            f"{extra}")  # fmt: skip
 
 
 def _check_line(r: dict[str, Any]) -> str:
@@ -206,6 +259,8 @@ def _check_line(r: dict[str, Any]) -> str:
         return f"{who} first check: started from now (older mail: `ecf backfill`)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
+    if r["status"] == "waiting":
+        return f"{who} waiting for the scheduled check that holds this address"
 
     if r["error"]:
         return f"{who} {r['status'].replace('_', ' ')}: {r['error']}"
@@ -376,8 +431,53 @@ def service_uninstall() -> None:
 @service_app.command("start")
 def service_start() -> None:
     """Start the service (also clears the crash-loop breaker)."""
-    manager_for(_paths()).start()
+    paths = _paths()
+    m = watch.marker(paths)
+    if m and m["alive"]:
+        typer.echo(f"`ecf watch` is running the service (pid {m['pid']}); stop it first", err=True)
+        raise typer.Exit(3)
+    manager_for(paths).start()
+    watch.clear(paths)
     typer.echo("started")
+
+
+@app.command("replay", hidden=True)  # development only
+def replay_command(
+    folder: Annotated[Path, typer.Argument(help="A folder of .eml files.")],
+    host: Annotated[str, typer.Option("--host", help="The test IMAP server.")],
+    user: Annotated[str, typer.Option("--user")],
+    port: Annotated[int, typer.Option("--port")] = 993,
+    count: Annotated[
+        int | None, typer.Option("--count", help="Append this many (cycling).")
+    ] = None,
+    cafile: Annotated[Path | None, typer.Option("--cafile", help="Trust this certificate.")] = None,
+    keep_ids: Annotated[
+        bool, typer.Option("--keep-ids", help="Keep the files' Message-IDs.")
+    ] = False,
+    via: Annotated[str, typer.Option("--via", help="append (smtp isn't built).")] = "append",
+) -> None:
+    """Development only: append .eml files into a test IMAP mailbox with fresh Message-IDs
+    (the load test, end-to-end runs). Never point it at a real mailbox."""
+    from ecf import replay  # noqa: PLC0415
+    from ecf.prompts import hidden  # noqa: PLC0415
+
+    if via != "append":
+        raise typer.BadParameter("only --via append is built", param_hint="--via")
+    password = hidden(f"Password for {user} on {host}: ")
+    n = replay.replay(folder, host=host, port=port, user=user, password=password, count=count,
+                      fresh_ids=not keep_ids, cafile=cafile)  # fmt: skip
+    typer.echo(f"appended {n} message(s) to {user} on {host}")
+
+
+@app.command("watch")
+def watch_command() -> None:
+    """Run the service in this terminal instead of the background (Ctrl-C to stop); the
+    background service is stopped first and started again afterwards."""
+    paths = _paths()
+    typer.echo("stopping the background service, then running ecf here (Ctrl-C to stop)")
+    code = watch.run(paths, manager_for(paths))
+    typer.echo(f"ecf stopped (exit {code}); the background service is as it was before")
+    raise typer.Exit(code)
 
 
 @service_app.command("stop")
@@ -651,6 +751,89 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
     typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
 
 
+@eval_app.command("label")
+def eval_label(
+    case_id: Annotated[
+        str | None, typer.Argument(help="One case (default: every pending one).")
+    ] = None,
+    root: RootOpt = EVAL_ROOT,
+    status_only: Annotated[
+        bool, typer.Option("--status", help="Only count what's confirmed.")
+    ] = False,
+    show_flags: Annotated[
+        bool,
+        typer.Option("--show-flags", help="Only the pending cases flagged for your judgement."),
+    ] = False,
+    results: Annotated[
+        Path | None,
+        typer.Option(
+            "--results",
+            help="An eval result file to compare with (default: the"
+            " newest in this install's evals folder).",
+        ),
+    ] = None,
+) -> None:
+    """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
+    toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
+    note are flagged: the note says what to judge."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from ecf.eval import labels  # noqa: PLC0415
+    from ecf.eval.cards import load_cards  # noqa: PLC0415
+    from ecf.prompts import require_terminal  # noqa: PLC0415
+
+    n = labels.counts(root)
+    cards = {c.id: c for c in load_cards(root / "cases")}
+    flagged = [r for r in labels.pending(root) if (c := cards.get(r["id"])) and c.review]
+    typer.echo(f"{n['confirmed']} of {n['cases']} cases confirmed")
+    if flagged:
+        typer.echo(f"{len(flagged)} pending cases flagged for your judgement (--show-flags)")
+    if status_only:
+        return
+    require_terminal()
+    from ecf.eval.results import differences, latest, load_result  # noqa: PLC0415
+
+    run = load_result(results) if results else latest(_paths().data_dir / "evals")
+    got = {c.id: c.got for c in run.cases if c.got} if run else {}
+    if got and run:
+        typer.echo(f"model answers from eval {run.run_id[:8]} ({run.created_at[:10]})")
+    todo = [r for r in (flagged if show_flags else labels.pending(root))
+            if case_id is None or r["id"] == case_id]  # fmt: skip
+    if case_id and not todo:
+        typer.echo(f"{case_id}: nothing to confirm (unknown, or already confirmed)")
+        return
+    for r in todo:
+        card = cards.get(r["id"])
+        if card is None:
+            continue
+        typer.echo("")
+        typer.echo(f"== {card.id} ({card.author}): {card.title}")
+        if card.review:
+            typer.echo(f"   FLAG, needs your judgement: {card.review}")
+            typer.echo("   y = you agree with the expected values below as written;"
+                       " n = you'd change them (it stays pending; say what to change)")  # fmt: skip
+        typer.echo(f"   tests: {card.threat}; control: {card.control}")
+        typer.echo(f"   from: {card.from_}   subject: {card.subject}")
+        body = " ".join(card.body.split())
+        typer.echo(f"   body: {body[:400]}{'...' if len(body) > 400 else ''}")
+        typer.echo(f"   expected: {json.dumps(r['expected'], sort_keys=True)}")
+        if card.id in got:
+            diff = differences(r["expected"], got[card.id])
+            typer.echo("   model returned: " + ("; ".join(diff) if diff else "the expected values"))
+        answer = typer.prompt("   Right? [y]es / [n]o, skip / [q]uit", default="n").strip().lower()
+        if answer == "q":
+            break
+        if answer == "y":
+            labels.confirm(root, card.id, datetime.now(UTC).date())
+            typer.echo("   confirmed")
+        else:
+            typer.echo(f"   skipped: fix {card.id}.md, run `ecf eval build`, then label it again")
+    n = labels.counts(root)
+    typer.echo(
+        f"{n['confirmed']} of {n['cases']} cases confirmed; commit labels.jsonl to keep them"
+    )
+
+
 @eval_app.command("show")
 def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
     """Show a case the way a mail client would: headers, text, attachments."""
@@ -669,10 +852,75 @@ def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
         typer.echo(f"[attachment] {att.name}" + (" (generated PDF)" if att.generate else ""))
 
 
+@eval_app.command("run")
+def eval_run(
+    root: RootOpt = EVAL_ROOT,
+    classifier: Annotated[bool, typer.Option("--classifier/--no-classifier")] = True,
+    actor: Annotated[bool, typer.Option("--actor/--no-actor")] = True,
+    fraud_only: Annotated[
+        bool, typer.Option("--fraud-only", help="Only fraud, injection and escalation cases.")
+    ] = False,
+    battery_floor: Annotated[
+        int, typer.Option("--battery-floor", help="Pause at this battery percent (OD-237).")
+    ] = 15,
+) -> None:
+    """Run the synthetic set through the local model (holds the model; fraud checks go on). A
+    full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
+    (OD-230)."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/runs", {
+            "root": str(root.resolve()), "classifier": classifier, "actor": actor,
+            "fraud_only": fraud_only, "battery_floor": battery_floor})  # fmt: skip
+    typer.echo(f"eval {r['run_id'][:8]} started: {r['total']} cases; follow it with"
+               " `ecf eval status`, stop it with `ecf eval stop`")  # fmt: skip
+    if r.get("on_battery"):
+        typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
+                   " resumes on AC power.")  # fmt: skip
+
+
+@eval_app.command("status")
+def eval_status() -> None:
+    """The running eval's progress and the latest results."""
+    with LocalClient(_paths()) as c:
+        st = c.get("/v1/eval/runs")
+    cur = st["current"]
+    if cur["state"] != "idle":
+        typer.echo(f"eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+                   + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
+    for r in st["recent"]:
+        m = r["metrics"]
+        typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
+                   f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
+                   f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
+                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
+                   + _run_caveat(m))  # fmt: skip
+    if cur["state"] == "idle" and not st["recent"]:
+        typer.echo("no eval has run yet: ecf eval run")
+
+
+def _run_caveat(m: dict[str, Any]) -> str:
+    """Why a run can't pass the go-live gate whatever its score (§9.3)."""
+    opts: dict[str, Any] = m.get("options") or {}
+    if m.get("complete") is False:
+        return f" (stopped after {m.get('cases')} cases)"
+    if opts and not (opts.get("classifier") and opts.get("actor")):
+        return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
+    return ""
+
+
+@eval_app.command("stop")
+def eval_stop() -> None:
+    """Stop the running eval after its current case."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/runs/stop", {})
+    typer.echo(f"stopping eval {r['run_id'][:8]} after its current case")
+
+
 @eval_app.command("compare")
 def eval_compare(a: Path, b: Path) -> None:
-    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points)."""
-    from ecf.eval.results import compare, load_result, summary  # noqa: PLC0415
+    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
+    with Holm)."""
+    from ecf.eval.results import compare, compare_fields, load_result, summary  # noqa: PLC0415
 
     ra, rb = load_result(a), load_result(b)
     c = compare(ra, rb)
@@ -684,6 +932,30 @@ def eval_compare(a: Path, b: Path) -> None:
         f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    for name, run in (("A", ra), ("B", rb)):
+        line = _model_figures(run.summary)
+        if line:
+            typer.echo(f"{name}  model: {line}")
+    fields = compare_fields(ra, rb)
+    if fields:
+        typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
+        for f in fields:
+            mark = "  significant" if f.significant else ""
+            typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
+                       f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+
+
+def _model_figures(summary: dict[str, object] | None) -> str | None:
+    """A result's tokens and speeds (stats.py's figures; absent in results before V1.3 step 9)."""
+    m = (summary or {}).get("model")
+    if not isinstance(m, dict):
+        return None
+    f = cast(dict[str, Any], m)
+    w, t = f["generation_tps"], f["seconds"]
+    per_email = "-" if f["tokens_per_email"] is None else f"{f['tokens_per_email']:.0f}"
+    return (f"{f['calls']} calls, about {per_email} tokens per email; writing"
+            f" {w['median']} tokens/s median (slowest 5% {w['slowest_5']}); {t['median']} s per"
+            f" call median, {t['p95']} s p95")  # fmt: skip
 
 
 def main() -> None:

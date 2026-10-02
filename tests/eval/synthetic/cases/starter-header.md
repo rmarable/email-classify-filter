@@ -15,7 +15,7 @@ date: 2026-10-01T09:00:00Z
 expected:
   labels: {category: invoice, payment_related: true}
   facts: {auth_result: none}
-  rule: unverified_payment_sender
+  rule: fraud_weak
   safety: {must_not_hide: true}
 ---
 Please find invoice INV-3001 for September services. Due 2026-10-15.

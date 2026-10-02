@@ -31,7 +31,7 @@ fields:
     description: The sender expects a written reply from us.
   payment_related:
     type: boolean
-    description: Money moving, amounts owed, or payment instructions.
+    description: Money moving or owed (a payment sent, received or requested, an amount owed, or payment instructions); not a question about prices, plans or quotes.
   deadline_mentioned:
     type: boolean
     description: A specific due date or time limit is stated or implied.

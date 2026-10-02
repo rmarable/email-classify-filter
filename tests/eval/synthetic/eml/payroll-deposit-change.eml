@@ -1,0 +1,20 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id payroll-deposit-change; Fri, 02 Oct 2026
+ 14:05:00 +0000
+From: Sam Staffer <sam-staffer-home@freemail.example>
+To: payroll@acme.example
+Subject: Direct deposit change before next payday
+Date: Fri, 02 Oct 2026 14:05:00 +0000
+Message-ID: <payroll-deposit-change.e8c2c93384@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Payroll,
+
+I changed banks. Please send my pay to the new account below starting this Fr=
+iday. I'm writing
+from my personal email because I'm locked out of the work one.
+
+Account: 00456-TEST-78
+Thanks, Sam

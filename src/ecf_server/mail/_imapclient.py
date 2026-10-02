@@ -78,6 +78,17 @@ class Conn:
     def remove_flags(self, uids: Sequence[int], flags: Sequence[str]) -> None:
         self._c.remove_flags(list(uids), list(flags), silent=True)
 
+    def move(self, uids: Sequence[int], folder: str) -> None:
+        """RFC 6851 UID MOVE on the selected folder (needs the MOVE capability)."""
+        self._c.move(list(uids), folder)
+
+    def copy(self, uids: Sequence[int], folder: str) -> None:
+        self._c.copy(list(uids), folder)
+
+    def uid_expunge(self, uids: Sequence[int]) -> None:
+        """RFC 4315 UID EXPUNGE: only these UIDs (needs UIDPLUS)."""
+        self._c.uid_expunge(list(uids))
+
 
 def envelope_message_id(envelope: Any) -> str | None:
     mid = getattr(envelope, "message_id", None)

@@ -1,0 +1,219 @@
+"""Rules and policy after classification (SPEC §8.2, §8.3, §8.6, §9.1; V1.3 step 4a).
+
+`plan` is pure: it takes what the service knows about one classified item and returns what may be
+done, and how. It never touches the mailbox, the database or a model. Its invariants are tested with
+Hypothesis over the whole classification space (`tests/test_policy.py`).
+
+- **I1, model output can raise risk, never lower it.** A hide action (mark_read, archive, move,
+  junk) survives only when the rule allows hiding, the stage allows it (`live`; step 4b), the
+  address isn't `high` (rules 6-8 become label + leave there, §8.3), none of the blockers is set
+  (`content_unscanned`, quarantine, the regulator trigger, any fraud signal: a fraud or weak fraud
+  trigger, a lookalike domain, or `fraud_risk` of low or more), and it is corroborated from facts
+  alone: authenticated bulk mail from a sender seen before (`bulk_corroborates`), or a category a
+  person confirmed for this sender that matches this classification, on a message whose
+  `auth_result` is pass (OD-057). A hide that doesn't survive leaves the label and adds `leave`;
+  the digest may offer "confirm this sender's category".
+- **I2:** nothing here removes a label or flag; the pre-check's actions are never undone by a
+  classification.
+- **I3:** `high_risk` (§8.2) and `payment_or_fraud` (step-up, Approve-all exclusions) are the facts
+  OR the classification, never AND.
+- **I4:** targets are checked here, not left to the model's output grammar: a label must be a
+  known label name (lowercase letters, digits and underscores, so it is a safe IMAP keyword) and a
+  move target must be in `move_folders` (checked again at execution, step 5).
+- **Modes:** each surviving action is `auto` or `approve`. On `standard` the action policy decides
+  hide actions (default auto, §8.3); on `high` hide actions need approval. High-risk items on the
+  local pair follow `local_high_risk` (§8.2, OD-056): label, flag, escalate and leave are automatic;
+  hide actions need approval; sends are rejected; drafts need approval.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from ecf.schema import CompiledSchema
+from ecf_server import precheck
+from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, RuleInput
+
+Mode = Literal["auto", "approve"]
+SAFE = frozenset({"label", "flag", "escalate", "leave"})
+SENDS = frozenset({"forward_internal", "reply_template"})
+BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory"})
+_LABEL = re.compile(r"^[a-z0-9_]{1,40}$")
+FRAUD_RISKY = ("low", "medium", "high")  # fraud_risk levels that block hiding (I1)
+
+
+@dataclass(frozen=True)
+class Planned:
+    name: str
+    target: str | None
+    mode: Mode
+
+
+@dataclass(frozen=True)
+class Dropped:
+    name: str
+    target: str | None
+    why: str
+
+
+@dataclass
+class Plan:
+    rule_id: str
+    actions: list[Planned] = field(default_factory=list[Planned])
+    dropped: list[Dropped] = field(default_factory=list[Dropped])
+    to_actor: bool = False
+    high_risk: bool = False
+    payment_or_fraud: bool = False
+    offer_confirm: bool = False  # the digest may offer "confirm this sender's category"
+    actor: dict[str, Any] | None = None  # the local actor's proposal and its (cleaned) reason
+
+    @property
+    def hides(self) -> list[Planned]:
+        return [a for a in self.actions if a.name in HIDE_ACTIONS]
+
+
+@dataclass(frozen=True)
+class Context:
+    classification: dict[str, Any]
+    facts: dict[str, Any]
+    sensitivity: str  # standard | high
+    rules: CompiledRules
+    action_policy: dict[str, str]  # standard column for hide actions: auto | approve
+    move_folders: frozenset[str]
+    confirmed_category: str | None = None  # a person's category for this sender
+
+
+def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
+    """Every label name ecf may write: built-ins, category values and the rules' own names."""
+    names = set(BUILTIN_LABELS) | set(schema.fields["category"].values)
+    for r in rules.rules:
+        for a in r.then:
+            if a.action == "label" and isinstance(a.target, str):
+                names.add(a.target)
+    return frozenset(n for n in names if _LABEL.fullmatch(n))
+
+
+def fraud_signal(ctx: Context) -> bool:
+    t: dict[str, Any] = ctx.facts.get("triggers") or {}
+    return bool(t.get("fraud") or t.get("fraud_weak") or t.get("lookalikes")
+                or ctx.facts.get("quarantined")
+                or ctx.classification.get("fraud_risk") in FRAUD_RISKY)  # fmt: skip
+
+
+def hide_blockers(ctx: Context) -> list[str]:
+    t: dict[str, Any] = ctx.facts.get("triggers") or {}
+    out: list[str] = []
+    if ctx.facts.get("content_unscanned"):
+        out.append("content not fully scanned")
+    if t.get("regulator") or ctx.classification.get("category") == "regulatory":
+        out.append("regulatory")
+    if fraud_signal(ctx):
+        out.append("fraud signal")
+    return out
+
+
+def corroborated(ctx: Context) -> bool:
+    """From facts alone (I1): authenticated bulk mail from a sender seen before, or a category a
+    person confirmed for this sender, matching this classification, on an authenticated message."""
+    if ctx.facts.get("bulk_corroborates"):
+        return True
+    return (ctx.confirmed_category is not None
+            and ctx.facts.get("auth_result") == "pass"
+            and ctx.confirmed_category == ctx.classification.get("category"))  # fmt: skip
+
+
+def payment_or_fraud(ctx: Context) -> bool:
+    """I3: the pre-check's test OR the classifier's `payment_related` or fraud risk."""
+    return (precheck.payment_or_fraud(ctx.facts)
+            or ctx.classification.get("payment_related") is True
+            or ctx.classification.get("fraud_risk") in ("medium", "high"))  # fmt: skip
+
+
+def high_risk(ctx: Context) -> bool:
+    """§8.2: a `high` address, a first-time sender, any fraud signal, or payment (I3: OR)."""
+    return (ctx.sensitivity == "high"
+            or not ctx.facts.get("sender_seen_before")
+            or fraud_signal(ctx)
+            or payment_or_fraud(ctx))  # fmt: skip
+
+
+def rule_input(ctx: Context) -> RuleInput:
+    triggers = precheck.fired(ctx.facts)
+    if ctx.facts.get("quarantined"):
+        triggers.add("fraud")
+    return RuleInput(ctx.classification, ctx.facts, frozenset(triggers),
+                     {"sensitivity": ctx.sensitivity})  # fmt: skip
+
+
+def plan(ctx: Context, known_labels: frozenset[str]) -> Plan:
+    decision = ctx.rules.evaluate(rule_input(ctx))
+    p = Plan(decision.rule_id, to_actor=decision.to_actor, high_risk=high_risk(ctx),
+             payment_or_fraud=payment_or_fraud(ctx))  # fmt: skip
+    blockers = hide_blockers(ctx)
+    for a in decision.actions:
+        why = _refuse(ctx, a.name, a.target, known_labels)
+        if why is None and a.name in HIDE_ACTIONS:
+            why = _hide_refusal(ctx, decision.hide, blockers)
+            if why == "not corroborated":
+                p.offer_confirm = True
+        if why is not None:
+            p.dropped.append(Dropped(a.name, a.target, why))
+            continue
+        _add(p, Planned(a.name, a.target, _mode(ctx, a.name, p.high_risk)))
+    if p.dropped and any(d.name in HIDE_ACTIONS for d in p.dropped):
+        _add(p, Planned("leave", None, "auto"))
+    return p
+
+
+def proposal(ctx: Context, p: Plan, name: str, target: str | None,
+             known_labels: frozenset[str]) -> Planned | Dropped:  # fmt: skip
+    """The same checks for one action the actor proposed (step 4c): sends are rejected on the
+    local pair's high-risk items and suppressed otherwise until outbound exists (V1.5)."""
+    if name in SENDS:
+        return Dropped(name, target, "sends are rejected for high-risk items (local_high_risk)"
+                       if p.high_risk else "outbound is off (sending arrives in V1.5)")  # fmt: skip
+    if name == "draft_reply":
+        return Planned(name, None, "approve")
+    why = _refuse(ctx, name, target, known_labels)
+    if why is None and name in HIDE_ACTIONS:
+        why = _hide_refusal(ctx, Hide.CORROBORATED, hide_blockers(ctx))
+    if why is not None:
+        return Dropped(name, target, why)
+    return Planned(name, target, _mode(ctx, name, p.high_risk))
+
+
+def _refuse(ctx: Context, name: str, target: str | None, known: frozenset[str]) -> str | None:
+    if name == "label" and (target is None or target not in known or not _LABEL.fullmatch(target)):
+        return f"unknown label {str(target)[:40]!r}"
+    if name == "move" and target not in ctx.move_folders:
+        return f"{str(target)[:60]!r} isn't in move_folders"
+    return None
+
+
+def _hide_refusal(ctx: Context, hide: Hide, blockers: list[str]) -> str | None:
+    if hide is Hide.NEVER:
+        return "this rule never hides"
+    if ctx.sensitivity == "high":
+        return "high address: label and leave (§8.3)"
+    if blockers:
+        return ", ".join(blockers)
+    if not corroborated(ctx):
+        return "not corroborated"
+    return None
+
+
+def _mode(ctx: Context, name: str, high_risk: bool) -> Mode:
+    if name in SAFE:
+        return "auto"
+    if name in HIDE_ACTIONS:
+        if high_risk or ctx.sensitivity == "high":
+            return "approve"
+        return "auto" if ctx.action_policy.get(name, "auto") == "auto" else "approve"
+    return "approve"
+
+
+def _add(p: Plan, a: Planned) -> None:
+    if all((x.name, x.target) != (a.name, a.target) for x in p.actions):
+        p.actions.append(a)

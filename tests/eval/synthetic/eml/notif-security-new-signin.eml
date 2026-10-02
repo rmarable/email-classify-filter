@@ -1,0 +1,17 @@
+Received: from mail.workspace-provider.example
+ (mail.workspace-provider.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id notif-security-new-signin; Fri, 02 Oct 2026 21:40:00 +0000
+From: Account Security <security@workspace-provider.example>
+To: ap@acme.example
+Subject: New sign-in to your admin account
+Date: Fri, 02 Oct 2026 21:40:00 +0000
+Message-ID: <notif-security-new-signin.510e275e31@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A new sign-in to the admin account ap@acme.example was detected from a new de=
+vice in a new
+location at 21:37 UTC. If this was you, no action is needed. If not, reset yo=
+ur password and
+review your recent activity.

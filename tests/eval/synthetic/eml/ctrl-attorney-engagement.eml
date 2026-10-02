@@ -1,0 +1,19 @@
+Received: from mail.law-firm-bb.example (mail.law-firm-bb.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ctrl-attorney-engagement; Wed,
+ 21 Oct 2026 10:00:00 +0000
+From: Law Firm BB <intake@law-firm-bb.example>
+To: ap@acme.example
+Subject: Engagement letter for review
+Date: Wed, 21 Oct 2026 10:00:00 +0000
+Message-ID: <ctrl-attorney-engagement.1a1d8d532d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear ACME team,
+
+Attached in text below is our engagement letter for the trademark filing we d=
+iscussed. Please
+review it and reply with any questions. There is nothing to pay at this stage.
+
+Law Firm BB

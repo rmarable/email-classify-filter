@@ -1,0 +1,17 @@
+Received: from mail.acme.example.hr-portal.test
+ (mail.acme.example.hr-portal.test [192.0.2.10]) by mx.example.net with ESMTPS
+ id look-acme-subdomain-payroll; Mon, 19 Oct 2026 09:00:00 +0000
+From: ACME Payroll <payroll@acme.example.hr-portal.test>
+To: ap@acme.example
+Subject: Confirm your direct deposit details
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+Message-ID: <look-acme-subdomain-payroll.5796979f00@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Payroll is moving to a new system. Confirm your bank account for direct depos=
+it before Friday
+or your next salary payment will be delayed.
+
+ACME Payroll

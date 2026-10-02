@@ -94,6 +94,23 @@ def test_old_finished_jobs_and_used_nonces_go_too(
     assert issued.nonce_id not in _left(conn, "nonces", "nonce_id")
 
 
+def test_unclicked_batch_buttons_go_once_their_grants_have_expired(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    def put(key: str) -> None:
+        now = to_ts(clock.now())
+        with write_tx(conn):
+            slack_admin.put_setting(conn, key, "[]", now, actor="service")
+
+    put("digest_batch:ap:old")
+    put("review_batch:ap:old")
+    clock.advance(15 * DAY)
+    put("digest_batch:ap:new")
+    assert retention.run(conn, clock)["batches"] == 2
+    left = {r[0] for r in conn.execute("SELECT key FROM settings WHERE key LIKE '%batch:%'")}
+    assert left == {"digest_batch:ap:new"}
+
+
 def test_old_one_off_post_records_go_but_pinned_and_live_bursts_stay(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

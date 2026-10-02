@@ -1,0 +1,20 @@
+Received: from mail.payables-portal.example (mail.payables-portal.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id remit-auto-portal; Wed, 07 Oct
+ 2026 03:00:00 +0000
+From: Payables Portal <no-reply@payables-portal.example>
+To: ap@acme.example
+Subject: Remittance notification for supplier ACME
+Date: Wed, 07 Oct 2026 03:00:00 +0000
+Message-ID: <remit-auto-portal.6e1599bb42@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Supplier: ACME
+Payment date: 2026-10-07
+Amount: 6,300.00 USD
+Invoices: ACME-1090, ACME-1095
+
+This notice was generated automatically. Do not reply.

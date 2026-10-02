@@ -35,13 +35,19 @@ from ecf_server import (
     audit,
     breaker,
     checks,
+    daily,
     db,
-    execute,
+    decide,
     health,
     jobs,
+    mailbox_actions,
+    modelq,
+    models,
     needs_you,
+    pipeline,
     retention,
     schedule,
+    stages,
 )
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
@@ -70,7 +76,6 @@ WORKER = "checks"
 WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
 TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
-ACTIONS_PER_TICK = 20
 STOP_TIMEOUT = 20.0
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
@@ -161,6 +166,11 @@ class Service:
         )
         self.scheduler = Scheduler(self.clock)
         self.work = threading.Event()  # set when checks are due
+        self.model_wake = threading.Event()  # set when the local model has new work
+        self.rounds = modelq.RoundSchedule(self.clock)
+        # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
+        self.in_check = mailbox_actions.run_in_check
+        self.throttle = self.state.throttle  # speeds across rounds, `ecf check`'s too (OD-243)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -180,6 +190,9 @@ class Service:
         try:
             conn = db.connect(self.state.db_path)
             try:
+                power = self.scheduler.power()
+                if power.laptop and not power.on_ac and not slept:
+                    daily.record_battery(conn, self.clock, awake)
                 if self.scheduler.tick(conn):
                     self.work.set()
                 audit.flush(conn, self.clock, self.paths.audit_dir, self.paths.install)
@@ -220,15 +233,32 @@ class Service:
                 if retention.due(conn, self.clock):  # once a day (§6.5)
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
+                self._model_check(conn)
+                decide.sweep(conn, self.clock)
+                approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
+                stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
-                for _ in range(ACTIONS_PER_TICK):
-                    if not execute.run_once(conn, self.clock, self.state.executor):
-                        break
+                # approved and automatic actions run in their address's check, which has the
+                # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
             finally:
                 conn.close()
         except Exception as exc:  # never stops the timer; retried next tick
             return self._tick_failed("approvals.tick_failed", exc)
         return True
+
+    def _model_check(self, conn: sqlite3.Connection) -> None:
+        """Keep the local-model alert current once models are installed here (V1.3 step 1b); from
+        step 2 the model queue also checks before each round."""
+        if not models.installed(conn):
+            return
+        if not models.needed(conn):  # no address uses preset A or B: nothing to watch
+            models.quiet(conn, self.clock, self.state.notifier)
+            return
+        client = self.state.model_client()
+        try:
+            models.check(conn, self.clock, self.state.notifier, client, **self.state.model_check)
+        finally:
+            client.close()
 
     def _final_flush(self) -> None:
         """Copy the last audit rows to the files before exiting."""
@@ -330,6 +360,8 @@ class Service:
                 connect=self.state.connect,
             )
             health.after_check(conn, self.clock, self.state.notifier, report)
+            if report.created:
+                self.model_wake.set()  # new mail for the local model
             schedule.after_check(conn, self.clock, report, self.scheduler.power())
             jobs.complete(conn, job.job_id, WORKER)
         except NotFoundError:  # removed since it was queued
@@ -338,6 +370,46 @@ class Service:
             log.error("check.crashed", address_id=job.address_id, error_type=type(exc).__name__)
             jobs.fail(conn, self.clock, job.job_id, WORKER, type(exc).__name__)
         return True
+
+    def _models(self) -> None:
+        """Run model rounds (SPEC §5.2; V1.3 step 2a): woken by new mail, else every few seconds
+        to see whether a round is due. Idle until a `Work` exists (the classifier, V1.3 step 3)."""
+        while not self.stop.is_set():
+            self.model_wake.wait(5.0)
+            self.model_wake.clear()
+            work = self.state.model_work
+            if work is None or self.state.db_path is None or not self.rounds.due():
+                continue
+            try:
+                self._model_round(work)
+            except Exception as exc:  # never stops the worker; the next wake tries again
+                log.error("model.round_crashed", error_type=type(exc).__name__)
+
+    def _model_round(self, work: modelq.Work) -> None:
+        if self.state.db_path is None:
+            return
+        conn = db.connect(self.state.db_path)
+        try:
+            if not modelq.waiting(conn):
+                return
+            power = self.scheduler.power()
+            on_battery = power.laptop and not power.on_ac
+            self.throttle.power(not on_battery)
+            client = self.state.model_client()
+            try:
+                with modelq.awake(on_ac=not on_battery):
+                    report = modelq.run_round(conn, self.clock, self.state.notifier, client, work,
+                                              resident=modelq.resident(conn),
+                                              check_kw=self.state.model_check, stop=self.stop,
+                                              throttle=self.throttle)  # fmt: skip
+            finally:
+                client.close()
+            self.rounds.after(report, on_battery=on_battery,
+                              offhours=schedule.interval_offhours(conn))  # fmt: skip
+            log.info("model.round", status=report.status, done=report.done, failed=report.failed,
+                     waiting=report.waiting)  # fmt: skip
+        finally:
+            conn.close()
 
     def watchdog_expired(self) -> bool:
         # monotonic time stops while the computer sleeps, so sleep never trips the watchdog
@@ -410,6 +482,10 @@ class Service:
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
+        # the local classifier (V1.3 step 3); a dev service runs it only when asked, so tests that
+        # use one never call the Ollama on the developer's computer
+        if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
+            self.state.model_work = pipeline.work
         return applied
 
     def _api_server(self) -> uvicorn.Server:
@@ -431,6 +507,11 @@ class Service:
         approvals.desktop = self.state.notifier  # Slack clicks queued for step-up notify here
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread
+
+    def _workers(self) -> tuple[threading.Thread, threading.Thread]:
+        """The checks worker and the model worker (V1.3 step 2a)."""
+        return (threading.Thread(target=self._checks, name="checks", daemon=True),
+                threading.Thread(target=self._models, name="models", daemon=True))  # fmt: skip
 
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
@@ -465,7 +546,7 @@ class Service:
             target=server.run, kwargs={"sockets": [sock]}, name="api", daemon=True
         )
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
-        worker = threading.Thread(target=self._checks, name="checks", daemon=True)
+        worker, model_worker = self._workers()
         slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         self._last_tick_wall = self.clock.now()
@@ -474,6 +555,7 @@ class Service:
         web.start()
         timer.start()
         worker.start()
+        model_worker.start()
         if not self.dev:  # dev mode has no Slack; its chat is the recording fake
             slack_thread.start()
         self.work.set()  # check anything already due at start

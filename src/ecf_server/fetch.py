@@ -31,7 +31,7 @@ from typing import Any, Protocol
 from ecf.errors import ConflictError, MailUnavailableError
 from ecf.ids import AddressId, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, leases, probe
+from ecf_server import items, leases, probe, triggers
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.isolate import Isolator
@@ -510,7 +510,11 @@ def _store(
         _fence(c, clock, lease)
         c.execute(
             "INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
-            (sid, parsed.excerpt(CLASSIFIER_CHARS), parsed.excerpt(ACTOR_CHARS)),
+            (
+                sid,
+                parsed.excerpt(CLASSIFIER_CHARS, triggers.redact_injection),
+                parsed.excerpt(ACTOR_CHARS, triggers.redact_injection),
+            ),
         )
         if pg.analyzer is not None:
             pg.analyzer.record(c, parsed, facts)

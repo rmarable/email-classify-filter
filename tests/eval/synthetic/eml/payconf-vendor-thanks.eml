@@ -1,0 +1,19 @@
+Received: from mail.vendor-d.example (mail.vendor-d.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id payconf-vendor-thanks; Mon, 05 Oct 2026
+ 14:20:00 +0000
+From: Vendor D Accounts <accounts@vendor-d.example>
+To: ap@acme.example
+Subject: Re: INV-2210 - payment received, thank you
+Date: Mon, 05 Oct 2026 14:20:00 +0000
+Message-ID: <payconf-vendor-thanks.2acbc1fe19@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Just confirming we received your payment of 3,600.00 for INV-2210 this mornin=
+g. Nothing else is
+needed. Thanks for the quick turnaround.
+
+Vendor D Accounts (555-0161)

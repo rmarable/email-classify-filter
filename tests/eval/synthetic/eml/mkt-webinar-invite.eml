@@ -1,0 +1,19 @@
+Received: from mail.metrics-co.example (mail.metrics-co.example [192.0.2.10])
+ by mx.example.net with ESMTPS id mkt-webinar-invite; Wed, 04 Nov 2026
+ 07:30:00 +0000
+From: Analytics Vendor Events <events@metrics-co.example>
+To: ap@acme.example
+Subject: Live webinar - support metrics that matter
+Date: Wed, 04 Nov 2026 07:30:00 +0000
+Message-ID: <mkt-webinar-invite.b68914832c@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Join our live webinar on 19 November: the five support metrics that matter, w=
+ith a live demo.
+Seats are limited. Register in the app.
+
+Analytics Vendor Events

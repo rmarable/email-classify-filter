@@ -1,0 +1,14 @@
+Received: from mail.university-oo.example (mail.university-oo.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id sales-student-discount; Sun,
+ 01 Nov 2026 20:00:00 +0000
+From: Student OO <student@university-oo.example>
+To: ap@acme.example
+Subject: Student pricing?
+Date: Sun, 01 Nov 2026 20:00:00 +0000
+Message-ID: <sales-student-discount.a6fd07e550@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello, do you have a student discount for a single seat? I'm using it for a c=
+lass project.

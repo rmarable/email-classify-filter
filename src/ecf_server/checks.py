@@ -79,6 +79,12 @@ class CheckReport:
         )
 
 
+def max_per_check_s(conn: sqlite3.Connection) -> float:
+    """`max_per_check` in seconds: a check's IMAP and rules work (1-30 min; OD-228)."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'max_per_check'").fetchone()
+    return float(json.loads(row[0]) * 60) if row else MAX_PER_CHECK_S
+
+
 def holder() -> str:
     """Unique per check: a holder may renew or re-take its own lease, so two checks must never
     share a name."""
@@ -136,7 +142,9 @@ class SecretUnavailableError(ServiceUnavailableError):
 
 # Work that needs the address lease and the open mailbox, run in every check after the pre-check.
 # Registered by the modules that own it (digests.py: queued Undos), so checks needs no Slack code.
-InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int], object]
+# (conn, clock, mailbox, address_id, install, max_scan_bytes, lost): `lost` says the lease is gone
+InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int, Callable[[], bool]],
+                   object]  # fmt: skip
 IN_LEASE: list[InLease] = []
 
 
@@ -170,7 +178,7 @@ def _locked_check(
             cfg = address_config(conn, address_id)
             dns = DnsCache(conn, clock, cap_s=DNS_CAP_S)
             analyzer = MessageAnalyzer.for_address(conn, clock, address_id, dns)
-            deadline = clock.monotonic() + MAX_PER_CHECK_S
+            deadline = clock.monotonic() + max_per_check_s(conn)
             page = fetch_page(
                 conn,
                 clock,
@@ -200,8 +208,9 @@ def _locked_check(
                 outcomes += _backfill(conn, clock, src, cfg, lease, report, install=install,
                                       analyzer=analyzer, lost=renewer.lost, dns=dns,
                                       deadline=deadline)  # fmt: skip
-            for work in IN_LEASE:  # e.g. queued Undos (digests.py)
-                work(conn, clock, src, address_id, install, cfg.max_scan_bytes)
+            for work in IN_LEASE:  # queued Undos (digests.py), actions (mailbox_actions.py)
+                work(conn, clock, src, address_id, install, cfg.max_scan_bytes,
+                     renewer.lost.is_set)  # fmt: skip
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated

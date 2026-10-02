@@ -15,8 +15,10 @@ import os
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -51,19 +53,25 @@ from ecf_server import (
     config,
     db,
     digests,
-    execute,
+    evalrun,
+    gate,
     health,
     inbox,
     initsetup,
+    modelq,
+    models,
+    ollama,
     pause,
     retention,
     ruletest,
+    schedule,
     senders,
     settings,
     slack_admin,
     slack_doctor,
     slack_routes,
     stages,
+    stats,
     stepup,
 )
 from ecf_server.chat import FakeChat
@@ -124,7 +132,12 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
-    executor: execute.Executor = field(default=execute.unavailable, repr=False)  # V1.3/V1.5
+    model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
+    model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
+    model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
+    # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
+    throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
+    power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -202,6 +215,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
+                "model": _model_status(state),
             }
         )
 
@@ -281,6 +295,8 @@ def create_app(state: ServiceState) -> Starlette:
             *_sender_routes(state, allow),
             *_data_routes(state, allow),
             *_setup_routes(state, allow),
+            *_model_routes(state, allow),
+            *_eval_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
@@ -290,6 +306,14 @@ def create_app(state: ServiceState) -> Starlette:
 
 Allow = Callable[..., Callable[[Handler], Handler]]
 MAX_ROUNDS = 100  # `--until-empty` stops after this many checks per address
+UNTIL_EMPTY_MAX_S = 3 * 3600  # `--until-empty` stops waiting after this long
+BUSY_POLL_S = 5.0  # while the scheduled check holds an address
+WORKER_POLL_S = 10.0  # while the service's own model rounds hold the waiting emails
+
+
+def _wait(seconds: float) -> None:
+    """Sleep inside a streaming response (Starlette runs the generator on a worker thread)."""
+    time.sleep(seconds)
 
 
 def _address_states(state: ServiceState) -> list[dict[str, Any]]:
@@ -339,8 +363,10 @@ def _check_lines(
         finally:
             conn.close()
 
+    deadline = state.clock.monotonic() + UNTIL_EMPTY_MAX_S
     for address_id in ids:
-        for _ in range(MAX_ROUNDS if until_empty else 1):
+        rounds, told = 0, False
+        while rounds < (MAX_ROUNDS if until_empty else 1):
             try:
                 r = one(address_id)
             except Exception as exc:  # the response has started: report it, don't cut off
@@ -349,10 +375,87 @@ def _check_lines(
                 yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
                 yield "\n"
                 break
+            if r.status == "busy" and until_empty and state.clock.monotonic() < deadline:
+                if not told:  # the scheduled check holds it: wait for it, then check (12a)
+                    yield json.dumps({"address_id": address_id, "status": "waiting"}) + "\n"
+                    told = True
+                _wait(BUSY_POLL_S)
+                continue
+            rounds += 1
             yield json.dumps(r.to_json()) + "\n"
             if not r.more:
                 break
+    for line in _model_lines(state, until_empty, deadline):
+        yield json.dumps({"model": line}) + "\n"
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
+
+
+def _model_lines(state: ServiceState, until_empty: bool,
+                 deadline: float | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
+    """`ecf check` runs the local model on what waits (V1.3 step 7): one round, or with
+    `--until-empty` rounds until nothing waits. The model worker may run rounds too; each item is
+    taken under its address's lock and lease, so the two never work on the same one. With
+    `--until-empty` (step 12a fix) a heat pause is waited out, and when the worker holds the
+    waiting emails this waits for it, reporting the count as it falls, until nothing waits, the
+    model isn't ready, an eval holds it or `UNTIL_EMPTY_MAX_S` has passed."""
+    work = state.model_work
+    if work is None:
+        yield {"status": "off", "detail": "this service doesn't run the local model"}
+        return
+    end = deadline if deadline is not None else state.clock.monotonic() + UNTIL_EMPTY_MAX_S
+    shown: int | None = None
+    for _ in range(MAX_ROUNDS * 100 if until_empty else 1):
+        line = _model_round(state, work)
+        settled = line["status"] in ("not_ready", "eval", "stopped") or line["waiting"] == 0
+        if not until_empty or settled:
+            yield line
+            return
+        if state.clock.monotonic() >= end:
+            yield line | {"status": "gave_up", "minutes": round(UNTIL_EMPTY_MAX_S / 60)}
+            return
+        if line["status"] == "hot":
+            yield line
+            _wait(modelq.HEAT_PAUSE.total_seconds())
+        elif line["done"] == 0 and line["failed"] == 0:  # the worker holds them: wait for it
+            if line["waiting"] != shown:
+                yield {"status": "worker", "done": 0, "failed": 0, "waiting": line["waiting"]}
+                shown = line["waiting"]
+            _wait(WORKER_POLL_S)
+        else:
+            yield line
+
+
+def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
+    conn, client = state.connect(), state.model_client()
+    power = state.power()
+    state.throttle.power(not (power.laptop and not power.on_ac))
+    try:
+        r = modelq.run_round(conn, state.clock, state.notifier, client, work,
+                             resident=modelq.resident(conn), check_kw=state.model_check,
+                             throttle=state.throttle)  # fmt: skip
+        line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
+                                "waiting": r.waiting}  # fmt: skip
+        if r.status == "not_ready":
+            row = conn.execute(
+                "SELECT detail FROM alerts WHERE kind IN ('local_model',"
+                " 'local_model_unsafe') AND resolved_at IS NULL"
+            ).fetchone()
+            line["detail"] = row[0] if row else "the local model isn't ready"
+        return line
+    finally:
+        client.close()
+        conn.close()
+
+
+def _model_status(state: ServiceState) -> dict[str, Any] | None:
+    if state.db_path is None:
+        return None
+    power = state.power()
+    conn = state.connect()
+    try:
+        return modelq.status(conn, laptop=power.laptop, on_ac=power.on_ac)
+    finally:
+        conn.close()
 
 
 def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -476,8 +579,21 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         body, ref = _body(request), str(request.path_params["ref"])
         to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
         nonce = _opt_str(body, "nonce_id")
+        override, held = body.get("override") is True, _opt_str(body, "held") or "run"
         return _with_conn(lambda c: stages.set_stage(c, state.clock, ref, to, reason=reason,
-                                                     nonce=nonce))  # fmt: skip
+                                                     nonce=nonce, override=override,
+                                                     held=held))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def address_gate(request: Request) -> JSONResponse:
+        ref = str(request.path_params["ref"])
+
+        def get(c: sqlite3.Connection) -> dict[str, Any]:
+            aid = addresses.get_address(c, ref)["address_id"]
+            return {"gate": gate.compute(c, aid).as_json(),
+                    "held": stages.held_by_age(c, aid, state.clock.now())}  # fmt: skip
+
+        return _with_conn(get)
 
     @allow(Caller.CLI)
     def set_sensitivity(request: Request) -> JSONResponse:
@@ -503,6 +619,7 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/stages", stage_status, methods=["GET"]),
         Route("/v1/addresses/{ref}/stage", set_stage, methods=["POST"]),
+        Route("/v1/addresses/{ref}/gate", address_gate, methods=["GET"]),
         Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
         Route("/v1/settings", show_settings, methods=["GET"]),
         Route("/v1/settings", set_setting, methods=["POST"]),
@@ -595,6 +712,103 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+    ]
+
+
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`. CLI only in V1.3; MCP-W
+    arrives with `/ecf-eval` in V1.4."""
+
+    @allow(Caller.CLI)
+    def start_eval(request: Request) -> JSONResponse:
+        body = _body(request)
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+            raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
+        floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
+        if isinstance(floor, bool) or not isinstance(floor, int) or not 0 <= floor <= 100:
+            raise InvalidInputError("battery_floor: a percent from 0 to 100")
+        opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
+                               actor=body.get("actor") is not False,
+                               fraud_only=body.get("fraud_only") is True,
+                               battery_floor=floor)  # fmt: skip
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        run = evalrun.start(state.connect, state.clock, state.model_client,
+                            state.db_path.parent, opts, power=state.power,
+                            check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
+        evalrun.note(state.connect, state.clock,
+                     f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
+                     " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
+        power = state.power()
+        on_battery = power.laptop and not power.on_ac
+        pct = schedule.battery_percent() if on_battery else None
+        return JSONResponse(run | {"on_battery": on_battery, "battery": pct})
+
+    @allow(Caller.CLI)
+    def eval_status(_request: Request) -> JSONResponse:
+        run = evalrun.RUN.snapshot()
+        conn = state.connect()
+        try:
+            rows = conn.execute(
+                "SELECT run_id, digest, created_at, metrics, gate_passed"
+                " FROM eval_runs ORDER BY created_at DESC LIMIT 5"
+            ).fetchall()
+        finally:
+            conn.close()
+        recent = [dict(r) | {"metrics": json.loads(r["metrics"])} for r in rows]
+        return JSONResponse({"current": run, "recent": recent})
+
+    @allow(Caller.CLI)
+    def stop_eval(_request: Request) -> JSONResponse:
+        return JSONResponse(evalrun.stop())
+
+    return [
+        Route("/v1/eval/runs", start_eval, methods=["POST"]),
+        Route("/v1/eval/runs", eval_status, methods=["GET"]),
+        Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
+    ]
+
+
+def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.5, §13.2 (V1.3 step 1b): the local model's status and `ecf models install`."""
+
+    @allow(Caller.CLI)
+    def show_models(_request: Request) -> JSONResponse:
+        conn, client = state.connect(), state.model_client()
+        try:
+            return JSONResponse(models.status(conn, client, **state.model_check))
+        finally:
+            client.close()
+            conn.close()
+
+    @allow(Caller.CLI)
+    def install_models(_request: Request) -> JSONResponse:
+        return JSONResponse(models.start_install(state.connect, state.clock, state.model_client))
+
+    @allow(Caller.CLI)
+    def show_stats(request: Request) -> JSONResponse:
+        """SPEC §13.4 (V1.3 step 9): `ecf stats`."""
+        q = request.query_params
+        try:
+            hours = float(q.get("hours", "168"))
+        except ValueError as exc:
+            raise InvalidInputError("hours: a number") from exc
+        if not 0 < hours <= 24 * 366:
+            raise InvalidInputError("hours: more than 0, at most a year")
+        conn = state.connect()
+        try:
+            ref = q.get("address")
+            aid = addresses.get_address(conn, ref)["address_id"] if ref else None
+            since = state.clock.now() - timedelta(hours=hours)
+            return JSONResponse(stats.report(conn, since, address=aid, preset=q.get("preset")))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/models", show_models, methods=["GET"]),
+        Route("/v1/models/install", install_models, methods=["POST"]),
+        Route("/v1/stats", show_stats, methods=["GET"]),
     ]
 
 

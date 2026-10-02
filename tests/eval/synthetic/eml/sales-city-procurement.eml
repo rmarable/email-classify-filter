@@ -1,0 +1,19 @@
+Received: from mail.city-rr.example (mail.city-rr.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id sales-city-procurement; Mon, 02 Nov 2026
+ 13:00:00 +0000
+From: City Procurement <procurement@city-rr.example>
+To: ap@acme.example
+Subject: Request for quote - help desk software
+Date: Mon, 02 Nov 2026 13:00:00 +0000
+Message-ID: <sales-city-procurement.b736dd5394@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Good afternoon,
+
+The city is collecting quotes for help desk software for 25 staff. Please sen=
+d a quote with
+annual pricing and your standard terms by 20 November.
+
+City Procurement

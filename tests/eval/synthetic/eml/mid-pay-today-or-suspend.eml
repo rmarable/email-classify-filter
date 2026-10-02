@@ -1,0 +1,20 @@
+Received: from mail.host-provider.example (mail.host-provider.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id mid-pay-today-or-suspend; Tue,
+ 10 Nov 2026 15:00:00 +0000
+From: Hosting Billing <billing@host-provider.example>
+To: ap@acme.example
+Subject: Final notice - pay today to avoid suspension
+Date: Tue, 10 Nov 2026 15:00:00 +0000
+Message-ID: <mid-pay-today-or-suspend.bb601eb95b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+FINAL NOTICE
+
+Your account is past due. Pay the outstanding balance of 2,940.00 today or al=
+l services will be
+suspended at midnight. Reply to this email if you need the payment link resen=
+t.
+
+Hosting Billing

@@ -1,0 +1,19 @@
+Received: from mail.vendor-p.example (mail.vendor-p.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id mid-new-contact-invoice; Tue, 10 Nov 2026
+ 09:00:00 +0000
+From: Vendor P Accounts <new-accounts@vendor-p.example>
+To: ap@acme.example
+Subject: Invoice INV-P-2210
+Date: Tue, 10 Nov 2026 09:00:00 +0000
+Message-ID: <mid-new-contact-invoice.6cde76dd3f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+I've taken over accounts at Vendor P. Please find invoice INV-P-2210 for Octo=
+ber support,
+1,180.00, due in 30 days on our usual terms.
+
+Vendor P Accounts

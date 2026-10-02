@@ -1,0 +1,17 @@
+Received: from mail.customer-ff.example (mail.customer-ff.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id bug-invoice-export-totals;
+ Tue, 27 Oct 2026 09:30:00 +0000
+From: Customer FF Finance <finance@customer-ff.example>
+To: ap@acme.example
+Subject: Exported invoice totals are rounded wrong
+Date: Tue, 27 Oct 2026 09:30:00 +0000
+Message-ID: <bug-invoice-export-totals.949b85e01d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+When we export invoices to CSV, totals are rounded to whole numbers, so 1,240=
+.55 becomes
+1,241. The screen shows the right amount. Can you fix the export?

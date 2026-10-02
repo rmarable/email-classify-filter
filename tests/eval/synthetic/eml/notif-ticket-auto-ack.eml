@@ -1,0 +1,15 @@
+Received: from mail.crm-vendor.example (mail.crm-vendor.example [192.0.2.10])
+ by mx.example.net with ESMTPS id notif-ticket-auto-ack; Thu, 12 Nov 2026
+ 10:00:00 +0000
+From: Vendor Support <support@crm-vendor.example>
+To: ap@acme.example
+Subject: [Ticket 88213] We received your request
+Date: Thu, 12 Nov 2026 10:00:00 +0000
+Message-ID: <notif-ticket-auto-ack.07a20865d6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thanks for contacting support. Your request has been received as ticket 88213=
+. An agent will
+reply within one business day. Please do not reply to this message.

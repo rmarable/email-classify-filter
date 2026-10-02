@@ -1,0 +1,20 @@
+Received: from mail.prospect-j.example (mail.prospect-j.example [192.0.2.10])
+ by mx.example.net with ESMTPS id sales-quote-request; Fri, 09 Oct 2026
+ 10:10:00 +0000
+From: Prospect J Purchasing <buyer@prospect-j.example>
+To: ap@acme.example
+Subject: Quote request: 40 seats
+Date: Fri, 09 Oct 2026 10:10:00 +0000
+Message-ID: <sales-quote-request.13fcd3814f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We are evaluating tools for our support team and would like a quote for 40 se=
+ats on an annual
+contract, with onboarding. Could someone send pricing this week?
+
+Thank you,
+Prospect J Purchasing

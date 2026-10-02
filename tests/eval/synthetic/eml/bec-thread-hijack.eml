@@ -1,0 +1,19 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id bec-thread-hijack; Fri, 02 Oct 2026 16:45:00
+ +0000
+From: Vendor A Accounts <accounts@vendor-a.example>
+To: ap@acme.example
+Subject: Re: Invoice INV-2044
+Date: Fri, 02 Oct 2026 16:45:00 +0000
+Message-ID: <bec-thread-hijack.e89de96760@synthetic.acme.example>
+MIME-Version: 1.0
+In-Reply-To: <inv-2044-thread@synthetic.acme.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Following up on the thread below: before you pay INV-2044, please note our ba=
+nk has changed.
+Use the new account 00222-TEST-33 for this payment and all future ones.
+
+> On Monday you wrote:
+> We'll pay INV-2044 on Friday.

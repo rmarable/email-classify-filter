@@ -1,0 +1,19 @@
+Received: from mail.customer-ar.example (mail.customer-ar.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id mid-w9-from-new-customer; Thu,
+ 12 Nov 2026 10:00:00 +0000
+From: Customer AR Procurement <procurement@customer-ar.example>
+To: ap@acme.example
+Subject: Vendor setup - W-9 needed
+Date: Thu, 12 Nov 2026 10:00:00 +0000
+Message-ID: <mid-w9-from-new-customer.474575c294@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We're setting ACME up as a new supplier. Could you send a completed W-9 so ou=
+r procurement team
+can finish the vendor record?
+
+Customer AR Procurement

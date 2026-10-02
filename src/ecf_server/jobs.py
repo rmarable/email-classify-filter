@@ -75,6 +75,7 @@ def enqueue(
 _NEXT = """
 SELECT j.job_id, j.timeout_s FROM jobs j
 WHERE j.queue = :queue AND j.state = 'queued' AND j.visible_at <= :now
+  AND (:address IS NULL OR j.address_id = :address)
   AND NOT EXISTS (
     SELECT 1 FROM jobs k
     WHERE k.queue = j.queue AND k.address_id = j.address_id AND k.state IN ('queued', 'claimed')
@@ -90,8 +91,16 @@ RETURNING job_id, queue, address_id, payload, attempts, max_attempts, timeout_s
 """
 
 
-def claim(conn: sqlite3.Connection, clock: Clock, queue: Queue, worker: str) -> Job | None:
-    """Claim the next ready job, or None. Expired claims are first returned to the queue.
+def claim(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    queue: Queue,
+    worker: str,
+    *,
+    address_id: str | None = None,
+) -> Job | None:
+    """Claim the next ready job (for one address when given), or None. Expired claims are first
+    returned to the queue.
 
     Runs inside one BEGIN IMMEDIATE transaction, so the pick and the claim are atomic.
     """
@@ -105,7 +114,8 @@ def claim(conn: sqlite3.Connection, clock: Clock, queue: Queue, worker: str) -> 
             "WHERE queue = ? AND state = 'claimed' AND claim_expires < ?",
             (queue.value, now),
         )
-        pick = conn.execute(_NEXT, {"queue": queue.value, "now": now}).fetchone()
+        pick = conn.execute(_NEXT, {"queue": queue.value, "now": now,
+                                    "address": address_id}).fetchone()  # fmt: skip
         if pick is None:
             return None
         expires = to_ts(now_dt + timedelta(seconds=pick["timeout_s"] * CLAIM_FACTOR))
@@ -183,3 +193,14 @@ def _owned(conn: sqlite3.Connection, job_id: JobId, worker: str) -> sqlite3.Row:
     if row["state"] != "claimed" or row["claimed_by"] != worker:
         raise ConflictError("job is not claimed by this worker")
     return row
+
+
+def make_due(conn: sqlite3.Connection, clock: Clock, address_id: str) -> None:
+    """Make the address's check due now: it carries out actions queued for it (V1.3 step 5b)."""
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO check_state (address_id, next_due_at) VALUES (?, ?)"
+            " ON CONFLICT (address_id) DO UPDATE SET next_due_at = excluded.next_due_at",
+            (address_id, now),
+        )

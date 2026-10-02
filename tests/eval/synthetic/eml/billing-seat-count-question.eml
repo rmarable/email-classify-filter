@@ -1,0 +1,19 @@
+Received: from mail.customer-an.example (mail.customer-an.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id billing-seat-count-question;
+ Thu, 12 Nov 2026 09:30:00 +0000
+From: Customer AN Office <office@customer-an.example>
+To: ap@acme.example
+Subject: Seat count on this month's bill
+Date: Thu, 12 Nov 2026 09:30:00 +0000
+Message-ID: <billing-seat-count-question.4b1081b88c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+This month's bill lists 30 seats, but we only have 24 active users. Can you e=
+xplain the
+difference or adjust it?
+
+Customer AN Office

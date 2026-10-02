@@ -1,0 +1,15 @@
+Received: from mail.customer-dd.example (mail.customer-dd.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id bug-data-loss-urgent; Sun, 25
+ Oct 2026 06:10:00 +0000
+From: Customer DD Operations <ops@customer-dd.example>
+To: ap@acme.example
+Subject: URGENT - records missing after last night's update
+Date: Sun, 25 Oct 2026 06:10:00 +0000
+Message-ID: <bug-data-loss-urgent.7bba960aa5@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+After last night's update about 2,000 of our records are gone from the dashbo=
+ard. Our team
+cannot work. Please call 555-0191 immediately.

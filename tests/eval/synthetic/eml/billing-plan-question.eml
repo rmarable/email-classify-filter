@@ -1,0 +1,20 @@
+Received: from mail.customer-h.example (mail.customer-h.example [192.0.2.10])
+ by mx.example.net with ESMTPS id billing-plan-question; Thu, 08 Oct 2026
+ 16:00:00 +0000
+From: Customer H <admin@customer-h.example>
+To: ap@acme.example
+Subject: Question about the new pricing
+Date: Thu, 08 Oct 2026 16:00:00 +0000
+Message-ID: <billing-plan-question.836fd9c849@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi team,
+
+We saw the pricing update for next year. We are on the annual plan renewed in=
+ March. Does the
+new price apply at our next renewal or right away?
+
+Regards,
+Customer H

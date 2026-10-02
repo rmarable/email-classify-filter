@@ -8,6 +8,8 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `fraud_weak`: a first-time sender with a payment keyword and no second signal (OD-062), or a
   Reply-To mismatch on a payment item with no other signal (OD-068) (rule 1b).
 - `regulator`: regulator keywords found (rule 2).
+- Fraud trigger 10 (OD-252): text addressed to an automated reader ("note to the classifier",
+  "ignore previous instructions"); an email that tells the model what to conclude goes to a person.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
@@ -28,7 +30,7 @@ from ecf_server.facts import domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "regulator")
+GROUPS = ("bank", "change", "payment", "regulator", "injection")
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
 # each sends from (OD-203).
@@ -78,6 +80,39 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
             if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded):
                 hits[group].append(p.word)
     return hits
+
+
+INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
+
+
+def _injected(text: str) -> bool:
+    cs, ci = fold(text), fold_ci(text)
+    return any(p.regex.search(cs if p.case_sensitive else ci) for p in _patterns()["injection"])
+
+
+def redact_injection(text: str) -> str:
+    """Model input without what fraud trigger 10 matched (OD-254): in each paragraph where a
+    phrase matched, the line where the first match starts and every line after it in that
+    paragraph are replaced by INJECTION_MARK, so the model never reads the instruction and keeps
+    the text before it. A phrase split across a blank line still fires the trigger but isn't
+    removed."""
+    out: list[str] = []
+    removed = False
+    for para in _PARAGRAPH_BREAK.split(text):
+        if not _injected(para):
+            out.append(para)
+            continue
+        removed = True
+        lines = para.split("\n")
+        end = next(k for k in range(len(lines)) if _injected("\n".join(lines[: k + 1])))
+        start = max(j for j in range(end + 1) if _injected("\n".join(lines[j : end + 1])))
+        kept = "\n".join(lines[:start]).rstrip()
+        if kept:
+            out.append(f"{kept}\n{INJECTION_MARK}")
+        elif not out or not out[-1].endswith(INJECTION_MARK):
+            out.append(INJECTION_MARK)
+    return "\n\n".join(out) if removed else text
 
 
 def texts_of(parsed: ParsedMessage) -> list[str]:
@@ -139,6 +174,8 @@ def evaluate(
 
     t.fraud, t.fraud_weak = _money_triggers(keywords, found, bool(t.lookalikes))
     t.fraud += _other_triggers(parsed, found, t.lookalikes, duplicate_message_id, payment)
+    if keywords.get("injection"):  # 10 (OD-252)
+        t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 
     t.regulator = list(keywords["regulator"])
     unsigned_mime = auth == "pass" and found["auth"].get("mime_headers_signed") is False

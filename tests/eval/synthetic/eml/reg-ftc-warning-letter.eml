@@ -1,0 +1,21 @@
+Received: from mail.law-firm-bb.example (mail.law-firm-bb.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id reg-ftc-warning-letter; Fri,
+ 23 Oct 2026 10:00:00 +0000
+From: Law Firm BB <counsel@law-firm-bb.example>
+To: ap@acme.example
+Subject: FTC letter regarding product claims
+Date: Fri, 23 Oct 2026 10:00:00 +0000
+Message-ID: <reg-ftc-warning-letter.664799eeeb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear ACME team,
+
+We received a warning letter from the Federal Trade Commission about claims o=
+n your website
+that the product "eliminates all downtime". They ask for substantiation or re=
+moval within 30
+days. We recommend a call this week.
+
+Law Firm BB

@@ -1,0 +1,16 @@
+Received: from mail.backup-service.example (mail.backup-service.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id notif-backup-complete; Fri, 02
+ Oct 2026 04:00:00 +0000
+From: Backup Service <alerts@backup-service.example>
+To: ap@acme.example
+Subject: Nightly backup completed
+Date: Fri, 02 Oct 2026 04:00:00 +0000
+Message-ID: <notif-backup-complete.ef49bffd5f@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Backup job ACME-NIGHTLY completed at 03:58 UTC. 12,403 files, 41.2 GB, no err=
+ors.

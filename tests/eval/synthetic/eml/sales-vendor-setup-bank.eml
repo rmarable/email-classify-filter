@@ -1,0 +1,22 @@
+Received: from mail.prospect-k.example (mail.prospect-k.example [192.0.2.10])
+ by mx.example.net with ESMTPS id sales-vendor-setup-bank; Fri, 09 Oct 2026
+ 11:40:00 +0000
+From: Prospect K Procurement <procurement@prospect-k.example>
+To: ap@acme.example
+Subject: Supplier onboarding - please send banking details
+Date: Fri, 09 Oct 2026 11:40:00 +0000
+Message-ID: <sales-vendor-setup-bank.9ef62acc17@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We would like to purchase your service and need to set ACME up as a supplier =
+first. Please send
+your company's bank account details, tax ID and a signed supplier form so we =
+can pay your
+first invoice.
+
+Best regards,
+Prospect K Procurement

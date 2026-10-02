@@ -68,10 +68,20 @@ class Decision:
         }
 
 
+def item_payment_or_fraud(row: Any) -> bool:
+    """`payment_or_fraud` for a stored item with the classifier's view added, as the policy's I3
+    test has it (`policy.payment_or_fraud`): `payment_related`, or a medium or high fraud risk.
+    Model output can raise the step-up an item needs, never lower it."""
+    facts: dict[str, Any] = json.loads(row["facts"] or "{}")
+    cls: dict[str, Any] = json.loads(row["classification"] or "{}")
+    return (payment_or_fraud(facts) or cls.get("payment_related") is True
+            or cls.get("fraud_risk") in ("medium", "high"))  # fmt: skip
+
+
 def payment_or_fraud(facts: dict[str, Any]) -> bool:
     """A "payment or fraud item" for step-up rules (§9.6): a payment keyword, any fraud trigger
     (weak ones and lookalike domains included), an unverified payment sender, or quarantine.
-    The classifier's `payment_related` joins this in V1.3."""
+    `item_payment_or_fraud` adds the classifier's `payment_related` (V1.3)."""
     t: dict[str, Any] = facts.get("triggers") or {}
     return bool(
         facts.get("payment_keyword")

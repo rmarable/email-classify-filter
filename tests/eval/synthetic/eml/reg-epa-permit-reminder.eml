@@ -1,0 +1,20 @@
+Received: from mail.env-advisors.example (mail.env-advisors.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id reg-epa-permit-reminder; Sat,
+ 24 Oct 2026 09:00:00 +0000
+From: Environmental Advisors <team@env-advisors.example>
+To: ap@acme.example
+Subject: Stormwater permit renewal due 30 November
+Date: Sat, 24 Oct 2026 09:00:00 +0000
+Message-ID: <reg-epa-permit-reminder.e92a1c9d6e@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+A reminder that ACME's stormwater discharge permit under the EPA general perm=
+it must be renewed
+by 30 November. We can prepare the notice of intent if you confirm by 10 Nove=
+mber.
+
+Environmental Advisors

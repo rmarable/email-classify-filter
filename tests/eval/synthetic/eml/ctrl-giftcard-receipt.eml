@@ -1,0 +1,18 @@
+Received: from mail.office-store.example (mail.office-store.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ctrl-giftcard-receipt; Tue, 20
+ Oct 2026 15:00:00 +0000
+From: Store Receipts <receipts@office-store.example>
+To: ap@acme.example
+Subject: Your receipt - order 30018
+Date: Tue, 20 Oct 2026 15:00:00 +0000
+Message-ID: <ctrl-giftcard-receipt.3b770ae2d8@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thank you for your order 30018.
+
+3 x gift card 50.00 (team prizes)
+Total 150.00, paid by company card ending 0001.
