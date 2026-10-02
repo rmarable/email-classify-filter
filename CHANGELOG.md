@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.3-local-models (not yet tagged)
+## ms-v1.3-local-models (2026-10-01)
 
 - Two decision records: the three presets with Gemma 4 12B on Ollama as the local model (ADR 0005), and the go-live gate bound to the pinned model (ADR 0006).
 - Only an eval run that reaches its last case with both the classifier and the actor can pass the go-live gate; a stopped or partial run is kept for its figures, and `ecf eval status` says why it can't count. `ecf eval run` now checks Ollama before starting, and a run whose Ollama goes away ends as failed instead of saving a meaningless score (OD-263).
