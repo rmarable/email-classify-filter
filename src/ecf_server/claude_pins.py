@@ -3,7 +3,9 @@ OD-014, OD-273; V1.4 step 2).
 
 - **`data/models.lock`** names the Claude model for each role: the main session, `classifier`
   (Haiku family), `classifier_high` and `actor` (Sonnet), `actor_high` (Opus). It ships in the
-  wheel, like `ollama.lock`; only an ecf release changes it.
+  wheel, like `ollama.lock`; only an ecf release changes it. Its `lifecycle` records each pinned
+  ID's state and retirement date from Anthropic's deprecations page (V1.4 step 10; OD-299), which
+  the weekly model watch (`model_watch.py`) announces and the CI canary keeps current.
 - **Override** (`ecf settings set claude_model_override <id>|none`; operator decision 2026-10-02):
   an ID replaces every pin in its family (a `claude-haiku-*` ID replaces the Haiku pins), one
   override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused. It
@@ -21,6 +23,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
+from datetime import date
 from importlib import resources
 from typing import Any
 
@@ -52,6 +56,32 @@ def load_lock() -> dict[str, str]:
     if bad:
         raise ValueError(f"models.lock: not a Claude model ID: {', '.join(bad)}")
     return lock
+
+
+@dataclass(frozen=True)
+class Lifecycle:
+    """One pinned ID's state on Anthropic's deprecations page when the release was made (§7.6,
+    OD-299): `retires` is a firm date (deprecated); `not_sooner_than` the tentative one."""
+
+    state: str  # Active | Legacy | Deprecated
+    retires: date | None = None
+    not_sooner_than: date | None = None
+    replacement: str | None = None
+
+
+def lifecycle() -> dict[str, Lifecycle]:
+    """`models.lock`'s `lifecycle`; every pinned ID has an entry."""
+    raw = json.loads(resources.files("ecf_server.data").joinpath("models.lock").read_text("utf-8"))
+    out: dict[str, Lifecycle] = {}
+    for mid, e in dict(raw.get("lifecycle", {})).items():
+        day = {k: date.fromisoformat(e[k]) if e.get(k) else None
+               for k in ("retires", "not_sooner_than")}  # fmt: skip
+        out[str(mid)] = Lifecycle(str(e["state"]), day["retires"], day["not_sooner_than"],
+                                  e.get("replacement"))  # fmt: skip
+    missing = sorted(set(load_lock().values()) - set(out))
+    if missing:
+        raise ValueError(f"models.lock: no lifecycle for {', '.join(missing)}")
+    return out
 
 
 def overrides(conn: sqlite3.Connection) -> dict[str, str]:

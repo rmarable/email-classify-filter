@@ -45,6 +45,7 @@ from ecf_server import (
     health,
     jobs,
     mailbox_actions,
+    model_watch,
     modelq,
     models,
     needs_you,
@@ -251,6 +252,8 @@ class Service:
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)
+                model_watch.retirement_tick(conn, self.clock, self.state.notifier)  # §7.6
+                self._model_watch(conn)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
@@ -285,6 +288,13 @@ class Service:
             return
         self._ollama_log_at = now
         ollama_log.check(conn, self.clock, self.paths.root)
+
+    def _model_watch(self, conn: sqlite3.Connection) -> None:
+        """The weekly model watch, in its own thread so the timer never waits on the network
+        (SPEC §7.6; V1.4 step 10)."""
+        if model_watch.due(conn, self.clock):
+            model_watch.start(self.state.connect, self.clock, self.state.notifier,
+                              self.state.secrets, self.state.watch_http)  # fmt: skip
 
     def _model_check(self, conn: sqlite3.Connection) -> None:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from

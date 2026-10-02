@@ -67,6 +67,7 @@ from ecf_server import (
     health,
     inbox,
     initsetup,
+    model_watch,
     modelq,
     models,
     ollama,
@@ -145,6 +146,7 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
@@ -237,13 +239,13 @@ def create_app(state: ServiceState) -> Starlette:
                 "model": _model_status(state),
                 "claude": _claude_status(state),
                 "fallback": _with_db(state, fallback.status, []),
+                "model_watch": _with_db(state, model_watch.status, None),
             }
         )
 
     @allow(Caller.CLI)
     def create_session(_request: Request) -> JSONResponse:
-        now = to_ts(state.clock.now())
-        s = Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
+        s = _new_session(state)
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
@@ -321,6 +323,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_data_routes(state, allow),
             *_setup_routes(state, allow),
             *_model_routes(state, allow),
+            *_watch_routes(state, allow),
             *_eval_routes(state, allow),
             *_review_routes(state, allow),
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
@@ -364,6 +367,14 @@ def _end_claims(state: ServiceState, session_id: str) -> None:
     finally:
         conn.close()
     claude_eval.release_session(session_id)
+
+
+def _new_session(state: ServiceState) -> Session:
+    """`ecf claude`'s session; refused while a pin is past its retirement date (§7.5; V1.4
+    step 10)."""
+    _with_db(state, lambda c: model_watch.refuse_retired(c, state.clock), None)
+    now = to_ts(state.clock.now())
+    return Session(new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now)
 
 
 def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
@@ -1022,6 +1033,38 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
+def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §7.6 (V1.4 step 10): the weekly model watch's key and a run now."""
+
+    @allow(Caller.CLI)
+    def api_key(request: Request) -> JSONResponse:
+        """SPEC §7.6 (V1.4 step 10): `ecf models api-key set|clear`; the service alone writes the
+        secret store."""
+        body = _body(request)
+        key = None if body.get("clear") is True else _token(body, "key")
+        conn = state.connect()
+        try:
+            r = model_watch.set_key(conn, state.clock, state.store(), key, state.watch_http)
+        finally:
+            conn.close()
+        log.info("models.api_key_cleared" if key is None else "models.api_key_set")
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def watch_now(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            model_watch.run_now(conn)
+            return JSONResponse(model_watch.status(conn))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/models/api-key", api_key, methods=["POST"]),
+        Route("/v1/models/watch", watch_now, methods=["POST"]),
+    ]
+
+
 def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §7.5, §13.2 (V1.3 step 1b): the local model's status and `ecf models install`."""
 
@@ -1029,7 +1072,10 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def show_models(_request: Request) -> JSONResponse:
         conn, client = state.connect(), state.model_client()
         try:
-            return JSONResponse(models.status(conn, client, **state.model_check))
+            return JSONResponse(
+                models.status(conn, client, **state.model_check)
+                | {"watch": model_watch.status(conn)}
+            )  # V1.4 step 10
         finally:
             client.close()
             conn.close()

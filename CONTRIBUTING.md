@@ -47,6 +47,7 @@ uv run pytest -m imap                           # the IMAP adapter against Dovec
 uv run pytest tests/test_state_machine.py::test_edges_match_spec   # one test
 uv run python scripts/check_licenses.py         # dependency license allow-list
 uv run python scripts/check_licenses.py --markdown   # regenerate the table below
+uv run python scripts/model_canary.py           # the weekly model canary (reads 3 public pages)
 uv build                                        # wheel + sdist
 ```
 
@@ -84,6 +85,10 @@ uv build                                        # wheel + sdist
 
 1. Work on a branch (or worktree), never directly on `main`.
 2. Run the checks above. Push: GitHub CI runs the Linux checks (free minutes; no macOS runners).
+   The `canary` workflow runs `scripts/model_canary.py` every Monday on `main` (start it by hand from
+   the Actions tab on another branch). When it fails, a pinned model's state or dates changed (record
+   them in `src/ecf_server/data/models.lock`'s `lifecycle` and release) or a page changed format (fix
+   the parser and refresh `tests/canary/`); SPEC §7.6.
 3. **macOS merge gate:** before any merge to `main`, run the full suite on a Mac
    (`uv run pytest`) and put the result in the merge commit message, e.g.
    `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`.

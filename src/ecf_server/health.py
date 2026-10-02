@@ -38,8 +38,10 @@ TITLES = {
     "model_failures": "System Error",  # many items the model gave up on (OD-236)
     "local_model_server": "System Error",  # Ollama can't run the model now (out of memory)
     "claude_review": "Operator Input Needed: Claude review waiting",  # V1.4 step 9 (OD-115)
+    "models_api": "System Error",  # the weekly model watch (V1.4 step 10)
+    "models_missing": "System Error",
 }
-NOT_CHECKS = frozenset({"claude_review"})  # a mail check doesn't resolve these
+NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing"})  # not a mail check's
 Resolver = Callable[[str], bool]
 
 

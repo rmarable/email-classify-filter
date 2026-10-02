@@ -7,8 +7,8 @@ emails not fully scanned in the last 24 hours, paused addresses, and who else is
 From V1.3: items waiting for the local model and how that changed since the last summary, and hours
 on battery since then (§10.1; V1.3 step 2b). From V1.4 step 6: Claude's usage in the last 24 hours;
 from step 9, items waiting for `/ecf-review` per address, and those waiting longer than
-`claude_review_reminder_hours`.
-Lines for backups and newer models arrive with those features (V1.4-V1.5).
+`claude_review_reminder_hours`; from step 10, newer Claude models and Ollama tags the weekly model
+watch found since the last summary (each once). Lines for backups arrive with them (V1.5).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -31,6 +31,7 @@ from ecf_server import (
     claude_usage,
     evalrun,
     inbox,
+    model_watch,
     modelq,
     models,
     pause,
@@ -82,6 +83,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> bool:
         slack_admin.put_setting(conn, LAST, today, now, actor="service")
         slack_admin.put_setting(conn, BATTERY, "0", now, actor="service")
         slack_admin.put_setting(conn, BACKLOG, str(_model_backlog(conn)), now, actor="service")
+        model_watch.mark_reported(conn, now)
     return True
 
 
@@ -134,6 +136,7 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     for usage in (stats.daily_line(conn, now - DAY), claude_usage.daily_line(conn, now - DAY)):
         if usage:
             lines.append(usage)
+    lines += model_watch.daily_lines(conn)
     held = evalrun.slack_line()
     if held:
         lines.append(held)
