@@ -12,7 +12,8 @@ plan, 2026-09-30):
 - a move target is still in `move_folders`; archive and junk go only to the folders marked
   `\\Archive` and `\\Junk` (RFC 6154 LIST flags; ecf never guesses a folder name);
 - a draft's approved recipient and text still match (outbound_plan.check) and the mailbox has a
-  folder marked `\\Drafts` (V1.5 step 2c); sends refuse until step 3;
+  folder marked `\\Drafts` (V1.5 step 2c); a send's own checks (send_actions.refusal: live, outbound
+  on, payload, guardrails, recipient, one reply per thread and per sender a week; step 3a);
 - the message is still the item's (same UIDVALIDITY, UID, Message-ID and content hash, §6.4);
 - the check still holds its lease, before every write.
 A refusal fails the item at once with its reason; an IMAP error is retried (3 attempts).
@@ -43,7 +44,7 @@ from ecf.errors import ConflictError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import actions as mail_actions
-from ecf_server import checks, items, outbound_msg, outbound_plan, pause
+from ecf_server import checks, items, outbound_msg, outbound_plan, pause, send_actions
 from ecf_server.actions import Planned, keyword
 from ecf_server.clock import Clock, to_ts
 from ecf_server.config import current
@@ -56,6 +57,7 @@ HIDES = frozenset({"mark_read", "archive", "move", "junk"})
 MOVES = frozenset({"archive", "move", "junk"})
 ROLE = {"archive": "\\Archive", "junk": "\\Junk"}
 DRAFTS = "\\Drafts"
+SENDS = send_actions.SENDS
 NEVER_UNDONE = frozenset({"suspicious", "regulatory"})
 LABEL_FOLDER_FOR = frozenset({"suspicious", "regulatory"})
 
@@ -88,8 +90,6 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
     stage = _stage(conn, item["address_id"])
     allowed = set(current(conn)["move_folders"] or [])
     reasons = [
-        ("sends are carried out from a later V1.5 step",
-         bool(names & {"forward_internal", "reply_template"})),
         ("the address is paused", pause.is_paused(conn, item["address_id"])),
         (f"the address is in {stage}: hiding mail needs live", bool(names & HIDES)
          and stage != "live"),
@@ -118,14 +118,18 @@ def _role_folder(folders: dict[str, frozenset[str]], role: str) -> str | None:
     return next((name for name, roles in folders.items() if role in roles), None)
 
 
-def executor_for(src: MailSource, install: str, max_scan_bytes: int,
-                 lost: Callable[[], bool]) -> Callable[..., list[str]]:  # fmt: skip
+def executor_for(  # noqa: PLR0915 - the writes in their fixed order
+    src: MailSource, install: str, max_scan_bytes: int, lost: Callable[[], bool]
+) -> Callable[..., list[str]]:
     """An `execute.Executor` bound to this check's open mailbox and lease."""
 
-    def run(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
-            planned: list[Planned]) -> list[str]:  # fmt: skip
+    def run(  # noqa: PLR0912 - one branch per kind of write
+        conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, planned: list[Planned]
+    ) -> list[str]:
         folders = {f.name: f.roles for f in src.folders()}
-        why = refusal(conn, item, planned, folders)
+        why = refusal(conn, item, planned, folders) or next(
+            (w for a in planned if a.name in SENDS
+             if (w := send_actions.refusal(conn, clock, item, a))), None)  # fmt: skip
         if why:
             raise RefusedError(why)
 
@@ -160,6 +164,11 @@ def executor_for(src: MailSource, install: str, max_scan_bytes: int,
             src.copy(uid, folder)
             done.append(f"copy to {folder}")
             record.append({"name": "copy", "folder": folder})
+        for a in planned:
+            if a.name in SENDS:
+                guard()  # never hand a message over without the lease (OD-322)
+                record.append(send_actions.run(conn, clock, src, item, a, uid))
+                done.append(f"sent {a.name.replace('_', ' ')} to {record[-1]['to']}")
         for a in planned:
             if a.name == "draft_reply" and a.payload is not None:
                 guard()

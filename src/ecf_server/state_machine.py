@@ -47,6 +47,7 @@ class TransitionContext:
     clarification_rounds: int = 0
     expiry_count: int = 0
     backfill: bool = False  # a records-only backfilled item (OD-216, OD-221)
+    reconciled: bool = False  # a send's outcome settled from the Sent folder (OD-322, V1.5)
 
 
 Guard = Callable[[TransitionContext], bool]
@@ -84,7 +85,7 @@ _TABLE: dict[Status, frozenset[Status]] = {
     S.NEEDS_HUMAN: frozenset({S.PROPOSED}),
     S.EXECUTING: frozenset({S.EXECUTED, S.FAILED, S.FAILED_UNKNOWN, S.EXECUTING}),
     S.FAILED: frozenset({S.EXECUTING}),
-    S.FAILED_UNKNOWN: frozenset({S.EXECUTING}),
+    S.FAILED_UNKNOWN: frozenset({S.EXECUTING, S.EXECUTED, S.FAILED}),
     S.EXECUTED: frozenset({S.UNDOING}),
     S.UNDOING: frozenset({S.UNDONE, S.UNDO_FAILED}),
     S.UNDONE: frozenset({S.PROPOSED}),
@@ -128,6 +129,8 @@ GUARDS: Mapping[tuple[Status, Status], Guard] = {
     (S.EXECUTING, S.EXECUTING): lambda c: c.requeue,
     (S.FAILED, S.EXECUTING): lambda c: c.requeue,
     (S.FAILED_UNKNOWN, S.EXECUTING): lambda c: c.requeue,
+    (S.FAILED_UNKNOWN, S.EXECUTED): lambda c: c.reconciled,
+    (S.FAILED_UNKNOWN, S.FAILED): lambda c: c.reconciled,
     (S.EXECUTED, S.UNDOING): lambda c: c.reversible,
     (S.UNDONE, S.PROPOSED): lambda c: c.fix,
     **{

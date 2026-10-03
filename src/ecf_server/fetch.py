@@ -46,6 +46,7 @@ from ecf_server.message import (
     parse_partial,
     stable_id,
 )
+from ecf_server.outbound_msg import message_ids
 from ecf_server.senderauth import AuthOutcome
 from ecf_server.state_machine import TransitionContext
 
@@ -740,9 +741,12 @@ def message_id_reused(
 
 
 def _facts(p: ParsedMessage) -> dict[str, Any]:
+    refs = message_ids(*p.headers.get("references", ()), *p.headers.get("in-reply-to", ()))
     return {
         "size": p.size,
         "from_count": p.from_count,
+        # the thread's first Message-ID, the key of "one template reply per thread" (OD-325)
+        "thread_root": refs[0] if refs else None,
         "mime_defects": p.defects,
         "text_truncated": p.any_truncated,
         "attachments": [

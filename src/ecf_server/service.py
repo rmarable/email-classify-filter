@@ -54,14 +54,18 @@ from ecf_server import (
     retention,
     schedule,
     send,
+    send_actions,
     stages,
     telemetry_app,
 )
+from ecf_server.addresses import secret_name
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
+from ecf_server.checks import SecretUnavailableError
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
+from ecf_server.mail.fake import FakeSender
 from ecf_server.mail.imap import ImapSource
 from ecf_server.mail.smtp import Sender, SmtpSender
 from ecf_server.notify import Notifier, NullNotifier, host_notifier
@@ -101,6 +105,11 @@ def imap_factory(host: str, user: str, password: Callable[[], str]) -> MailSourc
 
 def smtp_factory(host: str, port: int, user: str, password: Callable[[], str]) -> Sender:
     return SmtpSender(host, port, user, password)
+
+
+def _dev_sender_factory() -> Callable[[str, int, str, Callable[[], str]], Sender]:
+    fake = FakeSender()  # one per dev service: what it would have sent, in memory only
+    return lambda _host, _port, _user, _password: fake
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -541,13 +550,30 @@ class Service:
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
         self.state.mail_factory = imap_factory
-        self.state.sender_factory = smtp_factory
+        # dev mode records sends in memory and never contacts an SMTP server
+        self.state.sender_factory = _dev_sender_factory() if self.dev else smtp_factory
+        send_actions.sender_for = self._sender_for
         # the local classifier (V1.3 step 3); a dev service runs it only when asked, so tests that
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
             self.state.model_work = pipeline.work
             self.state.shadow_work = pipeline.shadow
         return applied
+
+    def _sender_for(self, conn: sqlite3.Connection, address_id: str) -> Sender:
+        """The address's SMTP connection; its app password is read at each connect (V1.5)."""
+        a = conn.execute("SELECT email, smtp_host, smtp_port FROM addresses WHERE address_id = ?",
+                         (address_id,)).fetchone()  # fmt: skip
+        store, name = self.state.store(), secret_name(address_id)
+
+        def password() -> str:
+            pw = store.get(name)
+            if pw is None:
+                raise SecretUnavailableError(f"no app password stored for {address_id}")
+            return pw
+
+        factory = self.state.sender_factory or smtp_factory
+        return factory(str(a["smtp_host"]), int(a["smtp_port"] or 465), str(a["email"]), password)
 
     def _api_server(self) -> uvicorn.Server:
         return uvicorn.Server(

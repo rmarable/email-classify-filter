@@ -140,7 +140,7 @@ def test_a_folder_that_stopped_being_allowed_refuses(
     drafts = mailbox_actions.refusal(conn, item_row(conn, sid), [Planned("draft_reply")], {})
     assert drafts == "the mailbox has no folder marked \\Drafts"
     sends = mailbox_actions.refusal(conn, item_row(conn, sid), [Planned("reply_template")], {})
-    assert sends == "sends are carried out from a later V1.5 step"
+    assert sends is None  # a send's own checks are send_actions.refusal (V1.5 step 3a)
 
 
 def test_a_lost_lease_writes_nothing_and_retries(

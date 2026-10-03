@@ -37,13 +37,16 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ecf.errors import MailUnavailableError
-from ecf_server import checks, probe
+from ecf.ids import StableId
+from ecf.status import Status
+from ecf_server import checks, items, probe
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.smtp import Sender, SendNotSentError, SendOutcomeUnknownError
 from ecf_server.outbound_msg import Built, new_message_id
+from ecf_server.state_machine import TransitionContext
 
 SENT_ROLE = "\\Sent"
 MISSES_TO_FAIL = 2  # later checks that searched the Sent folder in vain (OD-322)
@@ -174,18 +177,34 @@ def settle(conn: sqlite3.Connection, clock: Clock, mail: MailSource, address_id:
                 conn.execute("UPDATE sent SET status = 'sent', settled_at = ?, copy = 'provider'"
                              " WHERE message_id_hash = ?",
                              (to_ts(clock.now()), r["message_id_hash"]))  # fmt: skip
+            _settle_item(conn, clock, r, Status.EXECUTED)
             sent += 1
         elif r["searches"] + 1 >= MISSES_TO_FAIL:
             with write_tx(conn):
                 conn.execute("UPDATE sent SET status = 'failed', settled_at = ?,"
                              " searches = searches + 1 WHERE message_id_hash = ?",
                              (to_ts(clock.now()), r["message_id_hash"]))  # fmt: skip
+            _settle_item(conn, clock, r, Status.FAILED)
             failed += 1
         else:
             with write_tx(conn):
                 conn.execute("UPDATE sent SET searches = searches + 1 WHERE message_id_hash = ?",
                              (r["message_id_hash"],))  # fmt: skip
     return Settled(copies, sent, failed)
+
+
+def _settle_item(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row, to: Status) -> None:
+    """The item that waited at `failed_unknown` for this send follows it (§6.2): `executed` when
+    the Sent folder shows it went, `failed` (so `ecf item requeue` may send it again) when not."""
+    if not r["stable_id"]:
+        return
+    item = conn.execute("SELECT status FROM items WHERE stable_id = ?",
+                        (r["stable_id"],)).fetchone()  # fmt: skip
+    if item is None or item["status"] != Status.FAILED_UNKNOWN:
+        return
+    items.transition(conn, clock, StableId(r["stable_id"]), to,
+                     TransitionContext(reconciled=True), actor="service",
+                     expected=Status.FAILED_UNKNOWN)  # fmt: skip
 
 
 def _sent_folder(conn: sqlite3.Connection, address_id: str) -> tuple[str | None, bool | None]:
