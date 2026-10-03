@@ -24,6 +24,7 @@ from ecf.cli_models import make_models_app
 from ecf.cli_outbound import make_commands as make_outbound_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
+from ecf.cli_upgrade import make_commands as make_upgrade_commands
 from ecf.client import LocalClient
 from ecf.doctor import Level, outbound_line, run_checks
 from ecf.errors import EcfError, InvalidInputError
@@ -82,6 +83,7 @@ make_admin_commands(app, _paths)
 make_outbound_commands(app, _paths)
 make_export_commands(app, _paths)
 make_import_commands(app, _paths)
+make_upgrade_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")

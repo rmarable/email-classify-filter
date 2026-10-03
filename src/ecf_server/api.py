@@ -99,6 +99,7 @@ from ecf_server import (
     telemetry,
     telemetry_app,
 )
+from ecf_server import upgrade_state as upgrade_state_mod
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
@@ -338,6 +339,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
             *_export_routes(state, allow),
+            *_upgrade_routes(state, allow),
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
@@ -1470,6 +1472,23 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/import", import_, methods=["POST"]),
         Route("/v1/restore", restore_, methods=["POST"]),
     ]
+
+
+def _upgrade_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.10 (V1.5 step 11a): what `ecf upgrade` checks against the new wheel."""
+
+    @allow(Caller.CLI)
+    def upgrade_state(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            with state.lock:
+                sessions = len(state.sessions)
+            return JSONResponse(upgrade_state_mod.state(conn, state.clock, api_version=API_VERSION,
+                                                        sessions=sessions))  # fmt: skip
+        finally:
+            conn.close()
+
+    return [Route("/v1/upgrade/state", upgrade_state, methods=["GET"])]
 
 
 def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:

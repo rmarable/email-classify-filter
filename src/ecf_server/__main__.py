@@ -1,4 +1,5 @@
-"""The `ecf-server` entry point: `local` (the service), `migrate`, `reset-breaker`, `regrant`."""
+"""The `ecf-server` entry point: `local` (the service), `migrate`, `reset-breaker`, `regrant`,
+`snapshot` (an upgrade's database copy)."""
 
 from __future__ import annotations
 
@@ -23,12 +24,15 @@ def main(argv: list[str] | None = None) -> None:
             "regrant",
             "let this Python read ecf's Keychain items again (used by `ecf service regrant`)",
         ),
+        ("snapshot", "copy the database before an upgrade (used by `ecf upgrade`)"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--install", default="dev" if name == "dev" else "default")
         if name == "dev":
             p.add_argument("--home", help="data root to use (default: a new /tmp folder)")
             p.add_argument("--keep", action="store_true", help="keep the data folder on exit")
+        if name == "snapshot":
+            p.add_argument("--label", required=True, help="e.g. 0.1.0-to-0.1.1")
         if name in ("local", "dev"):
             p.add_argument("--foreground", action="store_true")
             p.add_argument("--tick-seconds", type=float, default=None, help=argparse.SUPPRESS)
@@ -51,6 +55,11 @@ def main(argv: list[str] | None = None) -> None:
             if args.tick_seconds is not None:
                 opts = Options(args.tick_seconds, args.watchdog_seconds or opts.watchdog_seconds)
             raise SystemExit(Service(paths, opts=opts).run())
+        if args.command == "snapshot":
+            from ecf_server import upgrade_snapshot  # noqa: PLC0415
+
+            sys.stdout.write(f"{upgrade_snapshot.take(paths, args.label)}\n")
+            return
         if args.command == "regrant":
             from ecf_server import regrant  # noqa: PLC0415
 
