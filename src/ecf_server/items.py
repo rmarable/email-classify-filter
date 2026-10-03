@@ -144,6 +144,18 @@ def map_imported(staged: sqlite3.Connection, repost: tuple[str, ...],
                        " '$.actions'), 0) = 0")  # fmt: skip
 
 
+def map_downgraded(conn: sqlite3.Connection) -> None:
+    """`ecf upgrade --to` after the upgrade settled (downgrade.py; OD-331), on the rollback copy,
+    never the live database: open approvals (their grants are voided) go to `expired`, where
+    `ecf approve` offers them again (OD-223); approved, delayed and executing ones to
+    `failed_unknown`, since they may have run under the newer version."""
+    with write_tx(conn), items_writer("transition"):
+        conn.execute("UPDATE items SET status = 'expired' WHERE status IN ('awaiting_approval',"
+                     " 'awaiting_stepup')")  # fmt: skip
+        conn.execute("UPDATE items SET status = 'failed_unknown' WHERE status IN ('approved',"
+                     " 'delayed', 'executing', 'undoing')")  # fmt: skip
+
+
 def _audit(
     conn: sqlite3.Connection,
     ts: str,

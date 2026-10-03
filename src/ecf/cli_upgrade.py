@@ -44,8 +44,8 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
             _continue(paths())
             return
         if to is not None:
-            typer.echo("ecf upgrade --to arrives in V1.5 step 11c", err=True)
-            raise typer.Exit(1)
+            _back(paths(), to)
+            return
         if wheel is None:
             typer.echo(NO_INDEX, err=True)
             raise typer.Exit(1)
@@ -71,9 +71,6 @@ def preflight(
 ) -> tuple[upgrade_check.Release, upgrade_check.Report, list[str]]:
     """Every check that comes before stopping anything; returns the problems (empty: go)."""
     problems: list[str] = []
-    m = watch.marker(paths)
-    if m and m["alive"]:
-        problems.append(f"`ecf watch` is running the service (pid {m['pid']}); stop it first")
     why = upgrade_check.install_problem(install or upgrade_check.this_install())
     if why:
         problems.append(why)
@@ -84,7 +81,52 @@ def preflight(
         problems.append("a prod install upgrades only from published releases (none yet);"
                         " --wheel is for test installs")  # fmt: skip
     report = upgrade_check.compare(state, rel, __version__)
-    problems += report.problems
+    problems += report.problems + busy_problems(paths, state)
+    return rel, report, problems
+
+
+def _back(p: Paths, version: str) -> None:
+    """`ecf upgrade --to <version>` (OD-331, OD-382)."""
+    if upgrade_run.find_snapshot(p, version, __version__) is None:
+        typer.echo(f"there's no copy from {version} here (only versions this install upgraded"
+                   " from can be gone back to); otherwise use ecf export, then ecf import under"
+                   " the older version", err=True)  # fmt: skip
+        raise typer.Exit(1)
+    with LocalClient(p) as c:
+        state: dict[str, Any] = c.get("/v1/upgrade/state")
+    problems = busy_problems(p, state)
+    for why in problems:
+        typer.echo(f"  can't go back: {why}", err=True)
+    if problems:
+        raise typer.Exit(1)
+    rec: dict[str, Any] = state.get("upgrade") or {}
+    settled = not (rec.get("to") == __version__ and rec.get("from") == version
+                   and not rec.get("settled_at"))  # fmt: skip
+    if settled:
+        typer.echo(f"Going back to {version}: the database copy from the upgrade comes back,"
+                   " keeping send history, sender records and gate history from now. Mail since"
+                   " the upgrade is read again; approvals since then must be decided again;"
+                   " anything that was running is marked for you to check; every address is"
+                   " paused at assist at most.")  # fmt: skip
+    else:
+        typer.echo(f"Going back to {version}: the upgrade hasn't settled, so the database as it"
+                   " was before the upgrade comes back whole.")  # fmt: skip
+    if not typer.confirm("Go back?", default=False):
+        raise typer.Exit(1)
+    done = upgrade_run.downgrade(p, _tools(p), version=version, current=__version__,
+                                 settled=settled)  # fmt: skip
+    typer.echo(f"ecf {version} is installed (was {__version__})"
+               + ("" if done["answered"] else "; the service didn't answer: see ecf service"
+                  " status"))  # fmt: skip
+    if settled:
+        typer.echo("addresses are paused: check them, then ecf resume <address>")
+
+
+def busy_problems(p: Paths, state: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    m = watch.marker(p)
+    if m and m["alive"]:
+        problems.append(f"`ecf watch` is running the service (pid {m['pid']}); stop it first")
     busy = state["busy"]
     if busy["executing"]:
         problems.append(f"{busy['executing']} action(s) are running; wait for them")
@@ -92,7 +134,7 @@ def preflight(
         problems.append("a mail check is running; try again in a minute")
     if busy["claude_sessions"]:
         problems.append("an `ecf claude` session is open; close it first")
-    return rel, report, problems
+    return problems
 
 
 def _tools(p: Paths) -> upgrade_run.Tools:

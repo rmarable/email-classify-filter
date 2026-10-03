@@ -176,7 +176,7 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, tmp_path: Path,
     r = runner.invoke(app, ["--install", "t", "upgrade"])
     assert r.exit_code == 1 and "no ecf release index" in r.output
     r = runner.invoke(app, ["--install", "t", "upgrade", "--to", "0.1.0"])
-    assert r.exit_code == 1 and "11c" in r.output
+    assert r.exit_code == 1 and "no copy from 0.1.0" in r.output  # no snapshot here
     new = _wheel(tmp_path, version="9.0.0", name="new.whl")
     r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new), "--check"])
     assert r.exit_code == 0, r.output

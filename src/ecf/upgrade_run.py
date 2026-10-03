@@ -140,15 +140,79 @@ def resume(paths: Paths, tools: Tools, *, regrant: bool) -> dict[str, Any]:
     return done
 
 
+def find_snapshot(paths: Paths, version: str, current: str) -> tuple[Path, Path] | None:
+    """The folder and kept wheel of the upgrade from `version` to `current` (OD-382)."""
+    folder = paths.data_dir / "upgrades" / f"{version}-to-{current}"
+    wheels = sorted(folder.glob("*.whl")) if folder.is_dir() else []
+    if not (folder / "ecf.db").is_file() or not wheels:
+        return None
+    return folder, wheels[0]
+
+
+def downgrade(paths: Paths, tools: Tools, *, version: str, current: str,
+              settled: bool) -> dict[str, Any]:  # fmt: skip
+    """`ecf upgrade --to <version>` (step 11c; OD-331, OD-382). Before the upgrade settled, the
+    whole snapshot; after, the merged copy `ecf-server downgrade-prepare` builds. The current
+    database files are kept in `before-downgrade/` until the older version is installed."""
+    found = find_snapshot(paths, version, current)
+    if found is None:
+        raise EcfError(f"there's no copy from {version} here; going back needs the snapshot of"
+                       f" the upgrade from {version} to {current} (or ecf export, then ecf import"
+                       " under the older version)")  # fmt: skip
+    folder, wheel = found
+    uv = tools.uv()
+    if uv is None:
+        raise EcfError("uv isn't on PATH; ecf upgrade installs with `uv tool install`")
+    label = folder.name
+    _stopping_on_purpose(paths)
+    tools.echo("stopping the service")
+    tools.manager.stop()
+    keep = folder / "before-downgrade"
+    keep.mkdir(mode=0o700, exist_ok=True)
+    for f in _db_files(paths):
+        shutil.copy2(f, keep / f.name)
+    src = folder / "ecf.db"
+    if settled:
+        tools.echo("building the database to go back to")
+        if tools.run([str(tools.server()), "downgrade-prepare", "--install", paths.install,
+                      "--label", label]) != 0:  # fmt: skip
+            tools.manager.start()
+            raise EcfError("couldn't build the database to go back to; nothing changed")
+        src = folder / "ecf.rollback.db"
+    _swap_in(paths, src)
+    tools.echo(f"installing {wheel.name}")
+    if tools.run([uv, "tool", "install", "--force", str(wheel)]) != 0:
+        for f in _db_files(paths):
+            f.unlink()
+        for f in keep.iterdir():
+            shutil.copy2(f, paths.data_dir / f.name)
+        tools.manager.start()
+        raise EcfError(f"{version} didn't install; {current} and its database are back")
+    tools.manager.start()
+    answered = _wait(paths, tools)
+    state = {"from": current, "to": version, "label": label, "phase": "downgraded",
+             "settled": settled, "answered": answered, "finished_at": _now()}  # fmt: skip
+    write_state(paths, state)
+    return state
+
+
+def _db_files(paths: Paths) -> list[Path]:
+    return [f for f in (paths.db, Path(str(paths.db) + "-wal"), Path(str(paths.db) + "-shm"))
+            if f.exists()]  # fmt: skip
+
+
+def _swap_in(paths: Paths, src: Path) -> None:
+    for suffix in ("-wal", "-shm"):
+        Path(str(paths.db) + suffix).unlink(missing_ok=True)
+    shutil.copy2(src, paths.db)
+    paths.db.chmod(0o600)
+
+
 def _roll_back(paths: Paths, tools: Tools, state: dict[str, Any], why: str) -> dict[str, Any]:
     """Before the new service ever ran: the whole snapshot and the old wheel (OD-331)."""
     tools.echo(f"the {why} step failed; restoring the database copy and the old version")
     tools.manager.stop()
-    folder = Path(state["folder"])
-    for suffix in ("-wal", "-shm"):
-        Path(str(paths.db) + suffix).unlink(missing_ok=True)
-    shutil.copy2(folder / "ecf.db", paths.db)
-    paths.db.chmod(0o600)
+    _swap_in(paths, Path(state["folder"]) / "ecf.db")
     uv = tools.uv() or "uv"
     tools.run([uv, "tool", "install", "--force", state["old_wheel"]])
     tools.manager.start()
