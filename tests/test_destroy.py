@@ -68,7 +68,12 @@ class Env:
 
 @pytest.fixture
 def env(conn: sqlite3.Connection, tmp_path: Path) -> Env:
-    e = Env(conn, tmp_path / "root")
+    return make_env(conn, tmp_path / "root")
+
+
+def make_env(conn: sqlite3.Connection, root: Path) -> Env:
+    """Two addresses, Slack with its channels and dead-man's message, alert email, secrets."""
+    e = Env(conn, root)
     now = to_ts(e.clock.now())
     with write_tx(conn):
         for aid in ("ap", "ar"):

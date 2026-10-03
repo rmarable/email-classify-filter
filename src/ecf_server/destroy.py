@@ -203,12 +203,13 @@ def run(
         _save(ctx, rec)
     now = to_ts(ctx.clock.now())
     rec["phase"], rec["service_done_at"] = SERVICE_DONE, now
+    rec["residue"] = residue(rec)  # the CLI prints it, on a resumed run too
     _save(ctx, rec)
     with write_tx(conn):
         conn.execute("INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?,"
                      " 'destroy.completed', 'os_user', 'ok', ?)",
                      (now, json.dumps({"person": stepup.person(), "steps": steps})))  # fmt: skip
-    return rec | {"residue": residue(rec)}
+    return rec
 
 
 def residue(rec: dict[str, Any]) -> list[str]:

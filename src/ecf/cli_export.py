@@ -39,7 +39,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         if to is None:
             typer.echo(ctx.get_help())
             raise typer.Exit(0)
-        _manual(paths(), to)
+        manual(paths(), to)
 
     _key_commands(export_app, paths)
     dir_app = typer.Typer(no_args_is_help=True, help="Where backups go (export_dir).")
@@ -148,7 +148,8 @@ def _plain(s: str) -> str:
     return "".join(s.split()).replace("-", "").upper()
 
 
-def _manual(paths: Paths, to: str) -> None:
+def manual(paths: Paths, to: str) -> None:
+    """`ecf export --to` (also offered by `ecf destroy`, OD-389)."""
     where = Path(os.path.expanduser(to)).absolute()
     if where.is_dir():
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

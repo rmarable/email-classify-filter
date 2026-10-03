@@ -23,7 +23,7 @@ from typing import Annotated, Any
 
 import typer
 
-from ecf import claude_setup, doctor
+from ecf import claude_setup, cli_destroy, doctor
 from ecf.claude_setup import Login
 from ecf.claude_wrapper import find_claude, layout
 from ecf.cli_models import run_install
@@ -81,6 +81,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             )
         require_terminal()
         p = paths()
+        _destroyed_before(p)
         if restore is not None:
             _from_backup(p, restore)
             return
@@ -150,6 +151,19 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool,
             else "ecf claude --login (needs Claude Code; ecf doctor checks it)"),
         row("export", False, "arrives in V1.5"),
     ]  # fmt: skip
+
+
+def _destroyed_before(p: Paths) -> None:
+    """OD-386: a destroy's record for this name warns; an unfinished destroy must finish first."""
+    rec = cli_destroy.read_record(p)
+    if rec is None:
+        return
+    if rec.get("phase") != cli_destroy.DONE:
+        typer.echo(f"a destroy of {p.install} hasn't finished: run ecf destroy first", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Note: an install named {p.install} was destroyed here on"
+               f" {str(rec.get('done_at', ''))[:10]} (record: {cli_destroy.record_path(p)});"
+               " this one starts empty.")  # fmt: skip
 
 
 def _from_backup(p: Paths, bundle: str) -> None:
