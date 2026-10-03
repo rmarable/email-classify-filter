@@ -1,4 +1,4 @@
-"""The `ecf-server` entry point: `local` (the service), `migrate`, `reset-breaker`."""
+"""The `ecf-server` entry point: `local` (the service), `migrate`, `reset-breaker`, `regrant`."""
 
 from __future__ import annotations
 
@@ -19,6 +19,10 @@ def main(argv: list[str] | None = None) -> None:
         ("dev", "run a throwaway development service (fake clock, fake chat, memory secrets)"),
         ("migrate", "apply database migrations and exit"),
         ("reset-breaker", "clear the crash-loop breaker (used by `ecf service start`)"),
+        (
+            "regrant",
+            "let this Python read ecf's Keychain items again (used by `ecf service regrant`)",
+        ),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--install", default="dev" if name == "dev" else "default")
@@ -47,6 +51,10 @@ def main(argv: list[str] | None = None) -> None:
             if args.tick_seconds is not None:
                 opts = Options(args.tick_seconds, args.watchdog_seconds or opts.watchdog_seconds)
             raise SystemExit(Service(paths, opts=opts).run())
+        if args.command == "regrant":
+            from ecf_server import regrant  # noqa: PLC0415
+
+            raise SystemExit(regrant.main(args.install))
         if args.command == "migrate":
             from ecf_server import db  # noqa: PLC0415
 

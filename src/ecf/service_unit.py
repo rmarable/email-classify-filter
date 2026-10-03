@@ -71,6 +71,38 @@ def _reset_breaker(server: Path, install: str, runner: Runner) -> None:
         )
 
 
+def call_foreground(args: list[str]) -> int:
+    """Run with this terminal attached (the re-grant's Keychain dialogs need a person)."""
+    return subprocess.call(args)  # noqa: S603 - our own ecf-server
+
+
+def regrant(
+    paths: Paths,
+    manager: ServiceManager,
+    *,
+    platform: str = sys.platform,
+    call: Callable[[list[str]], int] = call_foreground,
+    server: Callable[[], Path] = ecf_server_path,
+    echo: Callable[[str], None] = print,
+) -> int:
+    """`ecf service regrant` (OD-348): stop the service if it runs, run `ecf-server regrant` in
+    the foreground with the unit's interpreter, then start the service again. Linux needs none."""
+    if platform != "darwin":
+        echo("no re-grant needed here: only the macOS Keychain ties access to the Python binary")
+        return 0
+    was = manager.status()
+    if was.running:
+        echo("stopping the service for the re-grant")
+        manager.stop()
+    try:
+        code = call([str(server()), "regrant", "--install", paths.install])
+    finally:
+        if was.running:
+            manager.start()
+            echo("service started again")
+    return code
+
+
 # ---------------------------------------------------------------------------- launchd (macOS)
 
 

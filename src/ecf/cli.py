@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__, watch
+from ecf import __version__, service_unit, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_export import make_commands as make_export_commands
 from ecf.cli_init import make_commands as make_init_commands
@@ -187,7 +187,7 @@ def status() -> None:
     )
     typer.echo(
         f"secrets:   {ss.get('backend') or 'none usable'}"
-        + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
+        + (" (Python changed: run `ecf service regrant`)" if ss.get("interpreter_changed") else "")
     )
     sl = st.get("slack", {})
     if not sl.get("installed"):
@@ -524,6 +524,21 @@ def watch_command() -> None:
     typer.echo("stopping the background service, then running ecf here (Ctrl-C to stop)")
     code = watch.run(paths, manager_for(paths))
     typer.echo(f"ecf stopped (exit {code}); the background service is as it was before")
+    raise typer.Exit(code)
+
+
+@service_app.command("regrant")
+def service_regrant() -> None:
+    """After a Python change: let ecf read its Keychain items again (macOS; choose Always Allow
+    at each dialog). Stops and restarts the service."""
+    paths = _paths()
+    m = watch.marker(paths)
+    if m and m["alive"]:
+        typer.echo(f"`ecf watch` is running the service (pid {m['pid']}); stop it first", err=True)
+        raise typer.Exit(3)
+    if sys.platform == "darwin":
+        _stopping_on_purpose()
+    code = service_unit.regrant(paths, manager_for(paths), echo=typer.echo)
     raise typer.Exit(code)
 
 

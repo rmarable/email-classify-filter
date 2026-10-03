@@ -28,7 +28,7 @@ from ecf.status import CHECK_FAILED
 MIN_PYTHON = (3, 12)
 MIN_SQLITE = (3, 37, 0)
 TICK_STALE_S = 180
-REGRANT_FIX = "re-grant Keychain access (`ecf upgrade` does this in V1.5)"
+REGRANT_FIX = "ecf service regrant (choose Always Allow at each Keychain dialog)"
 LOW_DISK_BYTES = 1 << 30
 
 
