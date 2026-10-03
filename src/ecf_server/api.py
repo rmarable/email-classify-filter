@@ -36,6 +36,7 @@ from starlette.routing import Route
 from ecf import __version__
 from ecf.errors import (
     PROBLEM_CONTENT_TYPE,
+    ConflictError,
     EcfError,
     ForbiddenProfileError,
     InternalError,
@@ -53,6 +54,7 @@ from ecf_server import (
     approvals,
     audit,
     backfill,
+    bundle_reader,
     checks,
     claude_batch,
     claude_eval,
@@ -68,6 +70,7 @@ from ecf_server import (
     fallback,
     gate,
     health,
+    import_plan,
     inbox,
     initsetup,
     manual_export,
@@ -1349,7 +1352,8 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
-    (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`."""
+    (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`;
+    (step 9b) `ecf import --dry-run`."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1402,6 +1406,23 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                                          nonce=nonce))  # fmt: skip
 
     @allow(Caller.CLI)
+    def inspect(request: Request) -> JSONResponse:
+        path = _str(_body(request), "path")
+        return _with_conn(lambda c: bundle_reader.describe(bundle_reader.inspect(c, path)))
+
+    @allow(Caller.CLI)
+    def import_(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "secret")
+        if body.get("dry_run") is not True:
+            raise ConflictError("applying an import isn't built yet (V1.5 step 9c); use --dry-run")
+
+        def go(c: sqlite3.Connection) -> dict[str, Any]:
+            return import_plan.preview(c, bundle_reader.read(c, path, secret))
+
+        return _with_conn(go)
+
+    @allow(Caller.CLI)
     def set_dir(request: Request) -> JSONResponse:
         body = _body(request)
         path, typed = _str(body, "path"), _str(body, "fingerprint")
@@ -1418,6 +1439,8 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/export/now", now, methods=["POST"]),
         Route("/v1/export/passphrase", suggest, methods=["GET"]),
         Route("/v1/export", manual, methods=["POST"]),
+        Route("/v1/import/inspect", inspect, methods=["POST"]),
+        Route("/v1/import", import_, methods=["POST"]),
     ]
 
 

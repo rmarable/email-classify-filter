@@ -17,6 +17,7 @@ import typer
 from ecf import __version__, service_unit, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_export import make_commands as make_export_commands
+from ecf.cli_import import make_commands as make_import_commands
 from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_models import make_models_app
@@ -80,6 +81,7 @@ app.add_typer(make_item_commands(app, _paths), name="item")
 make_admin_commands(app, _paths)
 make_outbound_commands(app, _paths)
 make_export_commands(app, _paths)
+make_import_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
