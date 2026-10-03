@@ -10,14 +10,18 @@ items, held leases, and open `ecf claude` sessions (OD-379).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
 from ecf import __version__
+from ecf.errors import InvalidInputError
 from ecf_server import claude_pins, export_bundle, initsetup, ollama
 from ecf_server.clock import Clock, to_ts
+from ecf_server.db import write_tx
 
 LOCAL = "local"  # the Ollama digest's key among the pins
+CURRENT = "upgrade.current"  # the last upgrade: {from, to, label, started_at, finished_at, ...}
 
 
 def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
@@ -42,4 +46,48 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "data_format": export_bundle.DATA_FORMAT, "api_version": api_version,
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
+        "upgrade": current(conn),
     }  # fmt: skip
+
+
+def current(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CURRENT,)).fetchone()
+    return None if row is None else json.loads(row[0])
+
+
+def finish(conn: sqlite3.Connection, clock: Clock, body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf upgrade --continue` started this version (V1.5 step 11b): recorded, not yet settled."""
+    rec = {k: body.get(k) for k in ("from", "to", "label", "started_at", "pin_changes",
+                                    "affected")} | {"finished_at": to_ts(clock.now()),
+                                                    "settled_at": None}  # fmt: skip
+    if rec["to"] != __version__:
+        raise InvalidInputError(f"this service is {__version__}, not {rec['to']}")
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        _put(conn, rec, now)
+        conn.execute("INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?,"
+                     " 'upgrade.completed', 'os_user', 'ok', ?)",
+                     (now, json.dumps(rec)))  # fmt: skip
+    return rec
+
+
+def settle(conn: sqlite3.Connection, clock: Clock) -> bool:
+    """The new service's first timer pass whose work all succeeded closes the rollback window
+    (OD-377): afterwards `ecf upgrade --to` follows the after-settling rules (step 11c)."""
+    rec = current(conn)
+    if rec is None or rec.get("settled_at") or rec.get("to") != __version__:
+        return False
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        _put(conn, rec | {"settled_at": now}, now)
+        conn.execute("INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?,"
+                     " 'upgrade.settled', 'service', 'ok', ?)",
+                     (now, json.dumps({"from": rec.get("from"), "to": rec.get("to")})))  # fmt: skip
+    return True
+
+
+def _put(conn: sqlite3.Connection, rec: dict[str, Any], now: str) -> None:
+    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
+                 " 'upgrade') ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+                 " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                 (CURRENT, json.dumps(rec), now))  # fmt: skip

@@ -181,8 +181,8 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, tmp_path: Path,
     r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new), "--check"])
     assert r.exit_code == 0, r.output
     assert f"ecf {__version__} → 9.0.0" in r.output and "checks passed" in r.output
-    r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new)])
-    assert r.exit_code == 1 and "11b" in r.output
+    r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new)], input="n\n")
+    assert r.exit_code == 1 and "Upgrade to 9.0.0?" in r.output  # asks before stopping anything
     c = db.connect(db_path)
     with write_tx(c):
         c.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"

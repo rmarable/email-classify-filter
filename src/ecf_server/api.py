@@ -1488,7 +1488,17 @@ def _upgrade_routes(state: ServiceState, allow: Allow) -> list[Route]:
         finally:
             conn.close()
 
-    return [Route("/v1/upgrade/state", upgrade_state, methods=["GET"])]
+    @allow(Caller.CLI)
+    def finish(request: Request) -> JSONResponse:
+        body = _body(request)
+        conn = state.connect()
+        try:
+            return JSONResponse(upgrade_state_mod.finish(conn, state.clock, body))
+        finally:
+            conn.close()
+
+    return [Route("/v1/upgrade/state", upgrade_state, methods=["GET"]),
+            Route("/v1/upgrade/finish", finish, methods=["POST"])]  # fmt: skip
 
 
 def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:

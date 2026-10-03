@@ -62,6 +62,7 @@ from ecf_server import (
     send_limits,
     stages,
     telemetry_app,
+    upgrade_state,
 )
 from ecf_server.addresses import secret_name
 from ecf_server.api import DevHooks, ServiceState, create_app
@@ -253,6 +254,20 @@ class Service:
             ok = False
         if ok:
             self.state.tick_failures, self.state.tick_error = 0, None
+            self._settle_upgrade()
+
+    def _settle_upgrade(self) -> None:
+        """A whole tick succeeded: an upgrade's rollback window closes (OD-377)."""
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                upgrade_state.settle(conn, self.clock)
+            finally:
+                conn.close()
+        except Exception as exc:  # retried next tick
+            log.error("upgrade.settle_failed", error_type=type(exc).__name__)
 
     def _tick_failed(self, event: str, exc: Exception) -> bool:
         """Log (a SQLite error's own text is safe: no mail content) and count; after

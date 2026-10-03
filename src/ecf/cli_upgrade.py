@@ -11,15 +11,17 @@ and lists model pins that change and the addresses that will drop to `assist` (O
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
-from ecf import __version__, upgrade_check, watch
+from ecf import __version__, upgrade_check, upgrade_run, watch
 from ecf.client import LocalClient
 from ecf.paths import Paths
+from ecf.service_unit import manager_for
 
 NO_INDEX = ("no ecf release index exists yet, so there's nothing to upgrade to: test installs"
             " can use ecf upgrade --wheel <file>")  # fmt: skip
@@ -35,8 +37,12 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
             str | None, typer.Option("--to", help="Go back to an earlier version.")
         ] = None,
         check: Annotated[bool, typer.Option("--check", help="Only run the checks.")] = False,
+        cont: Annotated[bool, typer.Option("--continue", hidden=True)] = False,
     ) -> None:
         """Upgrade ecf from a wheel file (test installs), or go back with --to."""
+        if cont:  # phase 2, run by the new version (upgrade_run.py)
+            _continue(paths())
+            return
         if to is not None:
             typer.echo("ecf upgrade --to arrives in V1.5 step 11c", err=True)
             raise typer.Exit(1)
@@ -47,10 +53,17 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         _print(rel, report, problems)
         if problems:
             raise typer.Exit(1)
-        if not check:
-            typer.echo("applying an upgrade arrives in V1.5 step 11b; --check ran the checks",
-                       err=True)  # fmt: skip
+        if check:
+            return
+        if not typer.confirm(f"Upgrade to {rel.version}? The service stops for a minute or two.",
+                             default=False):  # fmt: skip
             raise typer.Exit(1)
+        p = paths()
+        old = upgrade_check.this_install().wheel
+        assert old is not None  # noqa: S101 - preflight refused otherwise
+        upgrade_run.start(p, _tools(p), old_version=__version__, new_version=rel.version,
+                          new_wheel=rel.wheel, old_wheel=old, pin_changes=report.pin_changes,
+                          affected=report.affected)  # fmt: skip
 
 
 def preflight(
@@ -80,6 +93,24 @@ def preflight(
     if busy["claude_sessions"]:
         problems.append("an `ecf claude` session is open; close it first")
     return rel, report, problems
+
+
+def _tools(p: Paths) -> upgrade_run.Tools:
+    return upgrade_run.Tools(manager=manager_for(p), echo=typer.echo)
+
+
+def _continue(p: Paths) -> None:
+    done = upgrade_run.resume(p, _tools(p), regrant=sys.platform == "darwin")
+    if done["phase"] == "rolled_back":
+        typer.echo(f"the upgrade to {done['to']} failed at the {done['why']} step; ecf"
+                   f" {done['from']} is back, with its database as it was", err=True)  # fmt: skip
+        raise typer.Exit(1)
+    typer.echo(f"ecf {done['to']} is running (was {done['from']})")
+    if done["affected"]:
+        typer.echo(f"model pins changed: {', '.join(done['affected'])} drop to assist until"
+                   " their gate passes again; re-run ecf eval run")  # fmt: skip
+    typer.echo("the database copy is kept in case you go back: ecf upgrade --to"
+               f" {done['from']}")  # fmt: skip
 
 
 def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: list[str]) -> None:
