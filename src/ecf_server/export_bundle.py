@@ -17,15 +17,18 @@ reading a bundle needs memory a few times its size (a stated limit, §12.2).
 
 from __future__ import annotations
 
+import errno
 import gzip
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import struct
 import tarfile
 import tempfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,8 +36,9 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
 from ecf import __version__
-from ecf_server import _age
+from ecf_server import install_identity
 from ecf_server.secretstore.select import INTERPRETER_KEY
+from ecf_server.stepup import person
 
 MAGIC = b"ECFB\x01"
 FORMAT = 1
@@ -117,12 +121,36 @@ def _canonical(value: Any) -> bytes:
 # ---- the file -----------------------------------------------------------------------------------
 
 
-def seal(plaintext: bytes, header: dict[str, Any], recipient: str, seed: bytes) -> bytes:
-    head = _canonical(header | {"format": FORMAT})
+@dataclass(frozen=True)
+class Contents:
+    plaintext: bytes  # the tar.gz
+    header: dict[str, Any]  # the outer header's fields, before `format` and `signed`
+    counts: dict[str, int]
+
+
+def contents(conn: sqlite3.Connection, data_dir: Path, *, install: str, kind: str,
+             created_at: str, seq: int) -> Contents:  # fmt: skip
+    """The plaintext and header of a `scheduled` or `manual` bundle (the same tables either way)."""
+    ident = {"install_id": install_identity.install_id(conn),
+             "generation": install_identity.generation(conn)}  # fmt: skip
+    schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
+    tables = snapshot_tables(conn, data_dir)
+    meta = ident | {"install": install, "mode": "local", "kind": kind, "created_at": created_at,
+                    "seq": seq, "creator": person(), "schema_version": schema}  # fmt: skip
+    header = ident | {"kind": kind, "created_at": created_at, "seq": seq,
+                      "data_format": DATA_FORMAT, "schema_version": schema}  # fmt: skip
+    return Contents(pack(tables, meta), header, {t: len(r) for t, r in tables.items()})
+
+
+def seal(ciphertext: bytes, header: dict[str, Any], seed: bytes | None) -> bytes:
+    """The file: signed with `seed`, or, with none (a manual export before any backup key),
+    unsigned: `signed: false` in the header and 64 zero bytes where the signature goes."""
+    head = _canonical(header | {"format": FORMAT, "signed": seed is not None})
     if len(head) > MAX_HEADER:
         raise BundleError("bundle header too large")
-    signed = MAGIC + struct.pack(">I", len(head)) + head + _age.encrypt(plaintext, recipient)
-    return signed + SigningKey(seed).sign(signed).signature
+    body = MAGIC + struct.pack(">I", len(head)) + head + ciphertext
+    sig = bytes(SIG_BYTES) if seed is None else SigningKey(seed).sign(body).signature
+    return body + sig
 
 
 def read_header(data: bytes) -> dict[str, Any]:
@@ -133,6 +161,8 @@ def read_header(data: bytes) -> dict[str, Any]:
 def verify(data: bytes, keys: Iterable[VerifyKey]) -> tuple[dict[str, Any], bytes]:
     """The header and ciphertext when one of `keys` signed the file; else BundleError."""
     header, ciphertext = _split(data)
+    if header.get("signed") is False:
+        raise BundleError("the bundle isn't signed")
     signed, sig = data[:-SIG_BYTES], data[-SIG_BYTES:]
     for key in keys:
         try:
@@ -171,6 +201,36 @@ def unpack(plaintext: bytes) -> dict[str, bytes]:
             if f is not None:
                 out[m.name] = f.read()
     return out
+
+
+def write_atomic(where: Path, name: str, data: bytes) -> Path:
+    """A 0600 temp file in `where`, synced, then renamed to `name`; never over an existing file."""
+    final = where / name
+    if final.exists():
+        raise FileExistsError(errno.EEXIST, "already exists", str(final))
+    tmp = where / f".{name}.partial"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(tmp, final)  # fails if `name` appeared meanwhile; rename would replace it
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.unlink()
+    try:
+        dfd = os.open(where, os.O_RDONLY)
+    except OSError:
+        return final  # some synced folders can't be opened for a directory sync
+    try:
+        os.fsync(dfd)
+    except OSError:
+        pass
+    finally:
+        os.close(dfd)
+    return final
 
 
 def file_name(install: str, created_at: str, seq: int) -> str:

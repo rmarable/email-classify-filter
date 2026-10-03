@@ -160,7 +160,7 @@ def rotate(
     else:
         text = (f"The backup key was replaced: {old['fingerprint']} → {entry['fingerprint']}."
                 " Bundles made before this need the old key to restore.")  # fmt: skip
-    _notice(conn, clock, notifier, f"{text} If this wasn't you, check the computer ecf runs on.")
+    notice(conn, clock, notifier, f"{text} If this wasn't you, check the computer ecf runs on.")
     return show(conn, data_dir)
 
 
@@ -200,7 +200,7 @@ def set_dir(
     text = f"Backups now go to {where}" + (f" (was {old})." if old else ".")
     if same:
         text += " It's on the same disk as ecf's data, so it won't survive that disk failing."
-    _notice(conn, clock, notifier, f"{text} If this wasn't you, check the computer ecf runs on.")
+    notice(conn, clock, notifier, f"{text} If this wasn't you, check the computer ecf runs on.")
     return show(conn, data_dir)
 
 
@@ -271,7 +271,7 @@ def _audit(conn: sqlite3.Connection, now: str, event: str, data: dict[str, Any])
                  " 'ok', ?)", (now, event, json.dumps(data)))  # fmt: skip
 
 
-def _notice(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, text: str) -> None:
+def notice(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, text: str) -> None:
     ident = slack_admin.identity(conn)
     slack_admin.notice(conn, clock, notifier, text,
                        dms=[ident.member] if ident and ident.member else [])  # fmt: skip

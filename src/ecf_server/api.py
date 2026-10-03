@@ -70,12 +70,14 @@ from ecf_server import (
     health,
     inbox,
     initsetup,
+    manual_export,
     model_watch,
     modelq,
     models,
     ollama,
     outbound,
     outbound_remind,
+    passphrase,
     pause,
     retention,
     ruletest,
@@ -1347,7 +1349,7 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
-    (step 8b) the schedule's state and `ecf export now`."""
+    (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1386,6 +1388,20 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                                          state.install))  # fmt: skip
 
     @allow(Caller.CLI)
+    def suggest(_request: Request) -> JSONResponse:
+        return JSONResponse({"passphrase": passphrase.generate()})
+
+    @allow(Caller.CLI)
+    def manual(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "passphrase")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: manual_export.export(c, state.clock, state.notifier,
+                                                         state.secrets, data_dir(),
+                                                         state.install, path, secret,
+                                                         nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
     def set_dir(request: Request) -> JSONResponse:
         body = _body(request)
         path, typed = _str(body, "path"), _str(body, "fingerprint")
@@ -1400,6 +1416,8 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/export/keys", rotate, methods=["POST"]),
         Route("/v1/export/dir", set_dir, methods=["POST"]),
         Route("/v1/export/now", now, methods=["POST"]),
+        Route("/v1/export/passphrase", suggest, methods=["GET"]),
+        Route("/v1/export", manual, methods=["POST"]),
     ]
 
 

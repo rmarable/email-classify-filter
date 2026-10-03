@@ -1,11 +1,12 @@
 """`ecf export keys show|rotate` and `ecf export dir set` (SPEC §11.9; V1.5 step 8a); `ecf export
-status|now` for scheduled export (step 8b). Manual `ecf export` with a passphrase arrives in step
-9."""
+status|now` for scheduled export (step 8b); manual `ecf export --to <file>` with a passphrase
+(step 9a)."""
 
 from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -13,14 +14,33 @@ import typer
 
 from ecf.client import LocalClient
 from ecf.paths import Paths
+from ecf.prompts import hidden
 from ecf.stepup import with_step_up
 
 DIR_HELP = "An existing folder, ideally on another disk or a synced folder."
+EXPORT_HELP = "Backups: the key, where they go, and a manual export."
+TO_HELP = "A new .ecfb file, or an existing folder to put one in."
 
 
 def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
-    export_app = typer.Typer(no_args_is_help=True, help="Backups: the key and where they go.")
+    export_app = typer.Typer(invoke_without_command=True, help=EXPORT_HELP)
     app.add_typer(export_app, name="export")
+
+    @export_app.callback()
+    def export_manual(
+        ctx: typer.Context,
+        to: Annotated[str | None, typer.Option("--to", help=TO_HELP)] = None,
+    ) -> None:
+        """With --to: export all of ecf's data to one passphrase-protected file. (step-up)"""
+        if ctx.invoked_subcommand is not None:
+            if to is not None:
+                raise typer.BadParameter("--to goes alone: ecf export --to <file>")
+            return
+        if to is None:
+            typer.echo(ctx.get_help())
+            raise typer.Exit(0)
+        _manual(paths(), to)
+
     _key_commands(export_app, paths)
     dir_app = typer.Typer(no_args_is_help=True, help="Where backups go (export_dir).")
     export_app.add_typer(dir_app, name="dir")
@@ -126,6 +146,33 @@ def _typed_fingerprint(fp: str, tries: int = 3) -> str:
 
 def _plain(s: str) -> str:
     return "".join(s.split()).replace("-", "").upper()
+
+
+def _manual(paths: Paths, to: str) -> None:
+    where = Path(os.path.expanduser(to)).absolute()
+    if where.is_dir():
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        where = where / f"ecf-{paths.install}-manual-{stamp}.ecfb"
+    elif where.suffix != ".ecfb":
+        where = where.with_name(where.name + ".ecfb")
+    with LocalClient(paths) as c:
+        offered = c.get("/v1/export/passphrase")["passphrase"]
+        typer.echo("\nA passphrase for this export (ecf doesn't keep it; without it nobody can read"
+                   " the file):\n")  # fmt: skip
+        typer.echo(f"    {offered}\n")
+        if typer.confirm("Use this passphrase? (No: type your own)", default=True):
+            secret = offered
+            while typer.prompt("Type 'saved' once it's saved").strip().lower() != "saved":
+                pass
+        else:
+            typer.echo("At least 20 characters or 5 different words.")
+            secret = hidden("Passphrase (hidden): ", confirm=True)
+        body: dict[str, Any] = {"path": str(where), "passphrase": secret}
+        r = with_step_up(c, lambda n: c.request("POST", "/v1/export", body | {"nonce_id": n},
+                                                timeout=600),
+                         echo=typer.echo)  # fmt: skip
+    typer.echo(f"exported to {r['path']} ({_size(r['bytes'])}"
+               + ("" if r["signed"] else "; unsigned: no backup key yet") + ")")  # fmt: skip
 
 
 def _size(n: int) -> str:

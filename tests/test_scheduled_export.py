@@ -248,9 +248,12 @@ def test_prune_keeps_the_newest_and_touches_only_this_installs_bundles(
     foreign = out / "ecf-t-20200101T000000Z-000001.ecfb"
     foreign.write_bytes(b"not ours")
     other_key = backup_key.derive(bytes([7]) * 32)
-    stranger = export_bundle.seal(b"x", {"install_id": install_identity.install_id(conn),
-                                         "kind": "scheduled", "created_at": "2000", "seq": 0},
-                                  other_key.public.recipient, other_key.signing_seed)  # fmt: skip
+    stranger = export_bundle.seal(
+        _age.encrypt(b"x", other_key.public.recipient),
+        {"install_id": install_identity.install_id(conn), "kind": "scheduled",
+         "created_at": "2000", "seq": 0},
+        other_key.signing_seed,
+    )  # fmt: skip
     (out / "ecf-t-20000101T000000Z-000000.ecfb").write_bytes(stranger)
     (out / ".ecf-t-x.ecfb.partial").write_bytes(b"crash leftover")
     runs: list[dict[str, Any]] = []

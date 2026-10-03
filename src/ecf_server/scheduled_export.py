@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import threading
 import time
@@ -166,31 +165,29 @@ def write(conn: sqlite3.Connection, clock: Clock, store: SecretStore | None, dat
     where_s = export_keys.export_dir(conn)
     if key is None or where_s is None:
         raise ExportFailedError("backups aren't set up")
-    seed = _seed(key, store)
+    seed = signing_seed(key, store)
     where = export_keys.check_dir(where_s, data_dir)
     _clear_partials(where, install)
+    seq = next_seq(conn, clock)
+    created = to_ts(clock.now())
+    c = export_bundle.contents(conn, data_dir, install=install, kind="scheduled",
+                               created_at=created, seq=seq)  # fmt: skip
+    header = c.header | {"key_generation": key["generation"],
+                         "key_fingerprint": key["fingerprint"]}  # fmt: skip
+    data = export_bundle.seal(_age.encrypt(c.plaintext, key["recipient"]), header, seed)
+    name = export_bundle.file_name(install, created, seq)
+    export_bundle.write_atomic(where, name, data)
+    return {"dir": str(where), "file": name, "seq": seq, "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(), "at": created, "counts": c.counts,
+            "key_generation": key["generation"]}  # fmt: skip
+
+
+def next_seq(conn: sqlite3.Connection, clock: Clock) -> int:
+    """`export.seq`, shared by scheduled and manual bundles; restore warns on an older one."""
     with write_tx(conn):
         seq = int(_get(conn, SEQ) or 0) + 1
         _put(conn, SEQ, seq, to_ts(clock.now()))
-    created = to_ts(clock.now())
-    ident = {"install_id": install_identity.install_id(conn),
-             "generation": install_identity.generation(conn)}  # fmt: skip
-    schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
-    tables = export_bundle.snapshot_tables(conn, data_dir)
-    meta = ident | {"install": install, "mode": "local", "kind": "scheduled", "created_at": created,
-                    "seq": seq, "creator": person(), "schema_version": schema}  # fmt: skip
-    plaintext = export_bundle.pack(tables, meta)
-    header = ident | {"kind": "scheduled", "created_at": created, "seq": seq,
-                      "data_format": export_bundle.DATA_FORMAT, "schema_version": schema,
-                      "key_generation": key["generation"],
-                      "key_fingerprint": key["fingerprint"]}  # fmt: skip
-    data = export_bundle.seal(plaintext, header, key["recipient"], seed)
-    name = export_bundle.file_name(install, created, seq)
-    _write_atomic(where, name, data)
-    return {"dir": str(where), "file": name, "seq": seq, "bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(), "at": created,
-            "counts": {t: len(r) for t, r in tables.items()},
-            "key_generation": key["generation"]}  # fmt: skip
+    return seq
 
 
 def prune(conn: sqlite3.Connection, where: Path, install: str, keep: int) -> list[str]:
@@ -240,7 +237,7 @@ def daily_line(conn: sqlite3.Connection) -> str:
 # ---- helpers ------------------------------------------------------------------------------------
 
 
-def _seed(key: dict[str, Any], store: SecretStore | None) -> bytes:
+def signing_seed(key: dict[str, Any], store: SecretStore | None) -> bytes:
     if store is None:
         raise ExportFailedError("no secret store to read the signing key from")
     raw = store.get(export_keys.SEED_NAME)  # a locked store raises SecretStoreNeedsYouError
@@ -257,30 +254,6 @@ def _seed(key: dict[str, Any], store: SecretStore | None) -> bytes:
 def _verify_keys(conn: sqlite3.Connection) -> list[VerifyKey]:
     entries = [*(export_keys.previous(conn)), export_keys.current(conn)]
     return [VerifyKey(bytes.fromhex(e["verify_key"])) for e in entries if e is not None]
-
-
-def _write_atomic(where: Path, name: str, data: bytes) -> None:
-    tmp = where / f".{name}.partial"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, where / name)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    try:
-        dfd = os.open(where, os.O_RDONLY)
-    except OSError:
-        return  # some synced folders can't be opened for a directory sync; the rename stands
-    try:
-        os.fsync(dfd)
-    except OSError:
-        pass
-    finally:
-        os.close(dfd)
 
 
 def _clear_partials(where: Path, install: str) -> None:
