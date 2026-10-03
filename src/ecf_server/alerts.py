@@ -100,6 +100,11 @@ def routes(conn: sqlite3.Connection, cls: str) -> list[str]:
     return [r for r in got if not (cls == "slack" and r == "slack")]
 
 
+def install_routes(conn: sqlite3.Connection) -> list[str]:
+    """The install-wide routes, which the mail-content alerts follow (OD-334)."""
+    return _get(conn, _key(None)) or DEFAULT
+
+
 def show(conn: sqlite3.Connection) -> dict[str, Any]:
     cfg = alert_mail.config(conn)
     mail = None if cfg is None else {"from": cfg.address_id, "from_email": cfg.email,

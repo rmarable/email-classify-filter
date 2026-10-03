@@ -431,11 +431,17 @@ def advance_delays(conn: sqlite3.Connection, clock: Clock, awake_s: float, *, wo
 def _announce_delay(
     conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, grant_id: str
 ) -> None:
-    row = conn.execute("SELECT remaining_s FROM delays WHERE stable_id = ?",
+    row = conn.execute("SELECT remaining_s, announced_at FROM delays WHERE stable_id = ?",
                        (item["stable_id"],)).fetchone()  # fmt: skip
     minutes = max(1, round((row["remaining_s"] if row else SEND_DELAY_S) / 60))
     _edit(conn, clock, item, f"Sending in {minutes} minute(s) unless you cancel",
           [Button(CANCEL, "Cancel", item["stable_id"], "danger")])  # fmt: skip
+    if row is not None and row["announced_at"] is None:  # emailed once, when the delay starts
+        aid, short = item["address_id"], item["stable_id"][: cards.SHORT_ID]
+        alerts.email(conn, clock, "operator_input",
+                     alerts.title("operator_input", f"send scheduled in 10 minutes ({aid})"),
+                     f"{aid}: an approved send (item {short}) goes out in {minutes} minute(s)."
+                     f" Cancel it: ecf cancel {short}, or Cancel in Slack.")  # fmt: skip
     with write_tx(conn):
         conn.execute("UPDATE delays SET announced_at = ? WHERE stable_id = ?",
                      (to_ts(clock.now()), item["stable_id"]))  # fmt: skip

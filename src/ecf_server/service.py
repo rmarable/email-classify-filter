@@ -30,6 +30,7 @@ from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
 from ecf_server import (
+    alert_items,
     alert_mail,
     alerts,
     answers,
@@ -281,6 +282,8 @@ class Service:
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
                 alerts.email_sweep(conn, self.clock)  # sent by the alert-mail thread (V1.5)
+                alert_items.sweep(conn, self.clock)  # fraud and regulatory mail (V1.5)
+                alert_items.unverified_batch(conn, self.clock)  # hourly, `high` addresses
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
                 claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it

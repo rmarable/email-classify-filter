@@ -255,9 +255,12 @@ def _other_triggers(
             "ambiguous From header: parsers may disagree on the sender",
         ),  # 8
         (parsed.headers_ambiguous, "bare CR in the headers: parsers may disagree on them"),  # 8
-        # 9: not on ecf's own mail or another install's from this mailbox (own_mail; V1.5)
+        # 9: not on ecf's own mail or another install's from this mailbox, nor on a copy of
+        # one of this install's alert emails (own_mail; V1.5, OD-338)
         (
-            bool(parsed.headers.get("x-ecf-install")) and not found.get("ecf_mail"),
+            bool(parsed.headers.get("x-ecf-install"))
+            and not found.get("ecf_mail")
+            and found.get("alert_echo") != "copy",
             "carries an X-ECF-Install header",
         ),
     )

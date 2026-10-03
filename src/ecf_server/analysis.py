@@ -58,6 +58,7 @@ class MessageAnalyzer:
         )
         found = auth.facts() | computed
         found["ecf_mail"] = own_mail.classify(self._conn, parsed, auth.result)
+        found["alert_echo"] = own_mail.alert_echo(self._conn, parsed, raw)
         fired = triggers.evaluate(
             parsed,
             keywords,

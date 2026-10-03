@@ -45,7 +45,7 @@ from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, RuleInput
 Mode = Literal["auto", "approve"]
 SAFE = frozenset({"label", "flag", "escalate", "leave"})
 SENDS = frozenset({"forward_internal", "reply_template"})
-BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory"})
+BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory", "alert_echo"})
 _LABEL = re.compile(r"^[a-z0-9_]{1,40}$")
 FRAUD_RISKY = ("low", "medium", "high")  # fraud_risk levels that block hiding (I1)
 
@@ -177,7 +177,23 @@ def plan(ctx: Context, known_labels: frozenset[str]) -> Plan:
         _add(p, Planned(a.name, a.target, _mode(ctx, a.name, p.high_risk)))
     if p.dropped and any(d.name in HIDE_ACTIONS for d in p.dropped):
         _add(p, Planned("leave", None, "auto"))
-    return p
+    return _alert_echo(ctx, p, known_labels) or p
+
+
+def _alert_echo(ctx: Context, p: Plan, known_labels: frozenset[str]) -> Plan | None:
+    """A bounce, auto-reply or copy of an alert email (own_mail.alert_echo; OD-330, OD-337):
+    labelled `alert_echo` and left, no actor, unless the plan escalates or a fraud or regulatory
+    signal holds, which keep their plan (only the alert email is suppressed for them)."""
+    if not ctx.facts.get("alert_echo") or "regulatory" in hide_blockers(ctx):
+        return None
+    if fraud_signal(ctx) or any(a.name == "escalate" for a in p.actions):
+        return None
+    echo = Plan("alert_echo", to_actor=False, high_risk=p.high_risk,
+                payment_or_fraud=p.payment_or_fraud)  # fmt: skip
+    if "alert_echo" in known_labels:
+        _add(echo, Planned("label", "alert_echo", _mode(ctx, "label", echo.high_risk)))
+    _add(echo, Planned("leave", None, "auto"))
+    return echo
 
 
 def proposal(ctx: Context, p: Plan, name: str, target: str | None,
