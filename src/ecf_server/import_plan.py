@@ -10,7 +10,8 @@ interpreter, marks and timestamps) and is dropped; the target keeps its own.
 
 **Rows**: addresses arrive paused, at stage `assist` at most, outbound off. Slack routes are
 dropped (reconnect Slack). Items waiting for a decision (`awaiting_approval`, `awaiting_stepup`,
-`approved`, `delayed`) go back to `awaiting_approval` to be re-posted for a fresh decision; items
+`approved`, `delayed`) go back to `awaiting_approval` to be re-posted for a fresh decision (one
+with no actions to approve becomes `needs_human`); items
 `executing` or `undoing` become `failed_unknown`, since they may have run on the other computer.
 """
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
+from typing import Any, cast
 
 from ecf_server import config, retention, settings
 from ecf_server.bundle_reader import Parsed
@@ -52,6 +53,7 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
     t = parsed.tables
     items = t.get("items", [])
     statuses = [str(r.get("status")) for r in items]
+    repost = [r for r in items if r.get("status") in REPOST and _has_actions(r)]
     kept = [r for r in t.get("settings", []) if setting_kept(str(r.get("key")))]
     m = parsed.manifest
     return {
@@ -81,7 +83,8 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
             for a in t.get("addresses", [])
             if a.get("removed_at") is None
         ],
-        "reposted": sum(s in REPOST for s in statuses),
+        "reposted": len(repost),
+        "needs_human": sum(s in REPOST for s in statuses) - len(repost),
         "failed_unknown": sum(s in UNKNOWN for s in statuses),
         "settings_kept": len(kept),
         "settings_dropped": len(t.get("settings", [])) - len(kept),
@@ -95,6 +98,15 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
             "approvals in progress: re-posted for a fresh decision",
         ],
     }
+
+
+def _has_actions(item: dict[str, Any]) -> bool:
+    """An approval without actions can't be re-posted; it arrives as `needs_human`."""
+    try:
+        doc: Any = json.loads(str(item.get("proposal") or "{}"))
+    except ValueError:
+        return False
+    return isinstance(doc, dict) and bool(cast("dict[str, Any]", doc).get("actions"))
 
 
 def target_empty(conn: sqlite3.Connection) -> bool:

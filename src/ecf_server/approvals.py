@@ -268,6 +268,16 @@ def _reoffer(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actor: s
     return _item(conn, sid)
 
 
+def reissue_after_import(conn: sqlite3.Connection, clock: Clock, sid: str) -> str:
+    """An imported item waiting for a decision gets a fresh grant here (grants never travel in a
+    bundle, OD-358); `post_held_cards` posts its card once Slack routes exist again."""
+    item = _item(conn, sid)
+    grant = _issue(conn, clock, item, _actions(item))
+    data = {"grant_id": grant, "why": "import"}
+    _audit(conn, clock, item, "approval.reoffered", "service", data, tx=True)
+    return grant
+
+
 def _queue_for_computer(
     conn: sqlite3.Connection,
     clock: Clock,

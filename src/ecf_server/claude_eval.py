@@ -231,6 +231,8 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
         opts: dict[str, Any] = metrics.get("options") or {}
         if not (metrics.get("complete") and opts.get("classifier")):
             continue
+        if not row["path"] or not Path(row["path"]).is_file():
+            continue  # an imported run: its result file stayed on the other computer (V1.5)
         result = load_result(Path(row["path"]))
         if any(not c.got for c in result.cases):
             break  # a run from before OD-259 holds no classifications

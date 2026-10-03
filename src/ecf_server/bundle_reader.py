@@ -62,6 +62,10 @@ class Opened:
     own: bool  # signed by this install's current or an earlier key
     claims_this_install: bool
 
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.data).hexdigest()
+
 
 @dataclass
 class Parsed:

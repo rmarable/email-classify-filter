@@ -45,6 +45,7 @@ from tests.test_scheduled_export import ROOT, _set, _set_up  # pyright: ignore[r
 KEY_TEXT = backup_key.key_text(ROOT)
 OTHER = bytes([5]) * 32
 PASS = "maple orbit candle river stone"
+LABEL = json.dumps({"actions": [{"name": "label", "target": "invoice"}]})
 
 
 @pytest.fixture
@@ -75,9 +76,9 @@ def _data(conn: sqlite3.Connection) -> None:
                      " 't')")  # fmt: skip
         for i, status in enumerate(("awaiting_approval", "delayed", "executing", "executed")):
             conn.execute("INSERT INTO items (stable_id, address_id, uid, uidvalidity, status,"
-                         " content_hash, created_at, updated_at) VALUES (?, 'ap', ?, 1, ?, 'h',"
-                         " 't', 't')",
-                         (f"s{i}", i + 1, status))  # fmt: skip
+                         " content_hash, proposal, created_at, updated_at) VALUES (?, 'ap', ?, 1,"
+                         " ?, 'h', ?, 't', 't')",
+                         (f"s{i}", i + 1, status, LABEL))  # fmt: skip
     _set(conn, "alerts.routes", ["slack", "email"])
     _set(conn, "slack_member_id", "U1")
     _set(conn, "business_hours", {"days": [0], "start": "08:00", "end": "17:00", "tz": "UTC"})
@@ -341,7 +342,7 @@ def test_routes(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, data_
     r = call(st, "POST", "/v1/import", body, TOKEN)
     assert r.status_code == 200 and r.json()["signer"] == "own", r.text
     r = call(st, "POST", "/v1/import", body | {"dry_run": False}, TOKEN)
-    assert r.status_code == 409 and "9c" in r.text
+    assert r.status_code == 403 and r.json()["code"] == "stepup_required"  # applying (9c)
 
 
 def test_cli_dry_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, data_dir: Path,
@@ -365,4 +366,4 @@ def test_cli_dry_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, 
     assert "signed by this install's backup key" in r.output
     assert "address ap (ap@acme.example): arrives paused, stage assist, outbound off" in r.output
     assert "re-posted for a fresh decision: 2; marked failed_unknown: 1" in r.output
-    assert "a real import would need --replace" in r.output
+    assert "this install isn't empty: importing needs --replace" in r.output

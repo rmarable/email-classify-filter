@@ -36,7 +36,6 @@ from starlette.routing import Route
 from ecf import __version__
 from ecf.errors import (
     PROBLEM_CONTENT_TYPE,
-    ConflictError,
     EcfError,
     ForbiddenProfileError,
     InternalError,
@@ -71,6 +70,7 @@ from ecf_server import (
     gate,
     health,
     import_plan,
+    importer,
     inbox,
     initsetup,
     manual_export,
@@ -1353,7 +1353,7 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
 def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
     (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`;
-    (step 9b) `ecf import --dry-run`."""
+    (step 9b) `ecf import --dry-run`; (step 9c) `ecf import [--replace]`."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1414,11 +1414,16 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def import_(request: Request) -> JSONResponse:
         body = _body(request)
         path, secret = _str(body, "path"), _str(body, "secret")
-        if body.get("dry_run") is not True:
-            raise ConflictError("applying an import isn't built yet (V1.5 step 9c); use --dry-run")
+        dry_run, replace = body.get("dry_run") is True, body.get("replace") is True
+        typed, nonce = _opt_str(body, "install"), _opt_str(body, "nonce_id")
 
         def go(c: sqlite3.Connection) -> dict[str, Any]:
-            return import_plan.preview(c, bundle_reader.read(c, path, secret))
+            parsed = bundle_reader.read(c, path, secret)
+            if dry_run:
+                return import_plan.preview(c, parsed)
+            return importer.apply(c, state.clock, state.notifier, data_dir(), state.install,
+                                  parsed, path, replace=replace, typed_install=typed,
+                                  nonce=nonce)  # fmt: skip
 
         return _with_conn(go)
 
