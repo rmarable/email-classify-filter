@@ -72,18 +72,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         """Choose where backups go. (step-up)"""
         where = str(Path(os.path.expanduser(directory)).absolute())
         with LocalClient(paths()) as c:
-            key = c.get("/v1/export")["key"]
-            if key is None:
-                typer.echo("make the backup key first: ecf export keys rotate", err=True)
-                raise typer.Exit(1)
-            typed = typer.prompt(f"Type the backup key's fingerprint ({key['fingerprint']})")
-            body: dict[str, Any] = {"path": where, "fingerprint": typed}
-            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/dir",
-                                                      body | {"nonce_id": n}),
-                               echo=typer.echo)  # fmt: skip
-        typer.echo(f"backups go to {got['dir']}")
-        if got["same_volume"]:
-            typer.echo(_SAME_VOLUME, err=True)
+            set_dir(c, where)
 
 
 def _key_commands(export_app: typer.Typer, paths: Callable[[], Paths]) -> None:
@@ -108,23 +97,48 @@ def _key_commands(export_app: typer.Typer, paths: Callable[[], Paths]) -> None:
                            " they're gone.")  # fmt: skip
                 if not typer.confirm("Make a new key?", default=False):
                     raise typer.Exit(1)
-            r = c.request("POST", "/v1/export/keys/new")
-            typer.echo("\nYour backup key (ecf shows it only this once and doesn't keep it):\n")
-            typer.echo(f"    {r['key_text']}\n")
-            typer.echo(f"Fingerprint: {r['fingerprint']}\n")
-            typer.echo("Save the key in your password manager. Restoring a backup needs it; without"
-                       " it, nobody can read your backups, you included.")  # fmt: skip
-            while typer.prompt("Type 'saved' once it's saved").strip().lower() != "saved":
-                pass
-            typed = _typed_fingerprint(r["fingerprint"])
-            body: dict[str, Any] = {"pending_id": r["pending_id"], "fingerprint": typed}
-            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/keys",
-                                                      body | {"nonce_id": n}),
-                               echo=typer.echo)  # fmt: skip
-        typer.echo(f"backup key {got['key']['fingerprint']} in use (generation"
-                   f" {got['key']['generation']})")  # fmt: skip
+            got = new_key(c)
         if got["dir"] is None:
             typer.echo("next: ecf export dir set <directory>")
+
+
+def new_key(c: LocalClient) -> dict[str, Any]:
+    """Make a backup key and put it in use: shown once, `saved` and the fingerprint typed, then
+    step-up (`ecf export keys rotate` and `ecf init`). Returns the service's export state."""
+    r = c.request("POST", "/v1/export/keys/new")
+    typer.echo("\nYour backup key (ecf shows it only this once and doesn't keep it):\n")
+    typer.echo(f"    {r['key_text']}\n")
+    typer.echo(f"Fingerprint: {r['fingerprint']}\n")
+    typer.echo("Save the key in your password manager. Restoring a backup needs it; without"
+               " it, nobody can read your backups, you included.")  # fmt: skip
+    while typer.prompt("Type 'saved' once it's saved").strip().lower() != "saved":
+        pass
+    typed = _typed_fingerprint(r["fingerprint"])
+    body: dict[str, Any] = {"pending_id": r["pending_id"], "fingerprint": typed}
+    got: dict[str, Any] = with_step_up(c, lambda n: c.request("POST", "/v1/export/keys",
+                                                              body | {"nonce_id": n}),
+                                       echo=typer.echo)  # fmt: skip
+    typer.echo(f"backup key {got['key']['fingerprint']} in use (generation"
+               f" {got['key']['generation']})")  # fmt: skip
+    return got
+
+
+def set_dir(c: LocalClient, where: str, fingerprint: str | None = None) -> dict[str, Any]:
+    """Point backups at `where` (absolute): the key's fingerprint typed (or the one just typed for
+    a new key, `ecf init`), then step-up. Returns the service's export state."""
+    key = c.get("/v1/export")["key"]
+    if key is None:
+        typer.echo("make the backup key first: ecf export keys rotate", err=True)
+        raise typer.Exit(1)
+    typed = fingerprint or typer.prompt(f"Type the backup key's fingerprint ({key['fingerprint']})")
+    body: dict[str, Any] = {"path": where, "fingerprint": typed}
+    got: dict[str, Any] = with_step_up(c, lambda n: c.request("POST", "/v1/export/dir",
+                                                              body | {"nonce_id": n}),
+                                       echo=typer.echo)  # fmt: skip
+    typer.echo(f"backups go to {got['dir']}")
+    if got["same_volume"]:
+        typer.echo(_SAME_VOLUME, err=True)
+    return got
 
 
 _SAME_VOLUME = ("warning: that folder is on the same disk as ecf's data; a backup there won't"

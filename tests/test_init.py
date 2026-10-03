@@ -15,7 +15,7 @@ from ecf.errors import ConflictError, InvalidInputError
 from ecf.paths import Paths
 from ecf.service_unit import UnitStatus
 from ecf_server import initsetup
-from ecf_server.clock import FakeClock
+from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 
 
@@ -36,7 +36,10 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
                   "models": {"needed": False, "installed": False},
-                  "fallback_off": [], "claude_needed": False}  # fmt: skip
+                  "fallback_off": [], "claude_needed": False, "smtp_addresses": [],
+                  "alert_email": None, "skipped": {},
+                  "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None},
+                  }  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
@@ -56,7 +59,8 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
 def test_describe() -> None:
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": None,
           "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": [],
-          "models": {"needed": False, "installed": False}}  # fmt: skip
+          "models": {"needed": False, "installed": False},
+          "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
     lines = cli_init.describe(st, installed=True, running=True)
     assert lines[0].split()[:2] == ["service", "done"]
     assert "click Confirm" in lines[2] and "to do" in lines[2]
@@ -164,9 +168,9 @@ def test_init_runs_the_steps_then_resumes_without_repeating_them(
     quiet.s = UnitStatus(installed=True, running=True)  # the service answering is the unit
     added: list[tuple[Any, ...]] = []
     app = _app(running, added)
-    # checklist, Ready, role, skip Slack, add the first mailbox, install the model
+    # checklist, Ready, role, skip Slack, add the first mailbox, no backups, install the model
     r = CliRunner().invoke(
-        app, ["init"], input="\ntest\nn\ny\nap@acme.example\nimap.acme.example\ny\n"
+        app, ["init"], input="\ntest\nn\ny\nap@acme.example\nimap.acme.example\nn\ny\n"
     )
     assert r.exit_code == 0, r.output
     assert "Have ready" in r.output and "service: running" in r.output
@@ -176,6 +180,7 @@ def test_init_runs_the_steps_then_resumes_without_repeating_them(
     assert "Install the local model now?" in r.output and quiet.calls == ["models"]
     assert "service unit: installed and running" in r.output
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\n")  # only Slack is left to ask
+    assert "backups: skipped earlier" in r.output
     assert r.exit_code == 0, r.output
     assert "Have ready" not in r.output and "first address: added" in r.output
     assert "models: installed and ready" in r.output
@@ -205,7 +210,7 @@ def test_a_foreground_service_is_left_alone(running: Paths, quiet: FakeManager) 
                     " VALUES ('install_role', '\"test\"', 'now', 't')")  # fmt: skip
     _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # no Slack, no model
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\nn\n")  # no Slack, backups, model
     assert r.exit_code == 0, r.output
     assert "models: skipped; later: ecf models install" in r.output
     assert "outside its unit" in r.output and quiet.calls == []
@@ -238,7 +243,7 @@ def test_a_missing_ollama_is_explained_and_init_goes_on(
                     " VALUES ('install_role', '\"test\"', 'now', 't')")  # fmt: skip
     _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\ny\n")  # no Slack; yes, the model
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\ny\n")  # Slack, backups; model
     assert r.exit_code == 0, r.output
     assert "models: Ollama isn't installed (macOS: `brew install ollama && brew pin ollama" \
         " mlx-c`); then: ecf models install" in r.output  # fmt: skip
@@ -269,7 +274,9 @@ def test_init_offers_the_claude_login_once_an_address_uses_b_or_c(
 
     monkeypatch.setattr(cli_init.claude_setup, "run_login", run_login)
     app = _app(running, [])
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\nn\n")  # Slack, model, login
+    r = CliRunner().invoke(
+        app, ["init", "--resume"], input="n\nn\nn\nn\n"
+    )  # Slack/backups/model/login
     assert r.exit_code == 0, r.output
     assert "Log in to Claude for `ecf claude` now?" in r.output
     assert "claude: skipped; later: ecf claude --login" in r.output and logins == []
@@ -283,3 +290,139 @@ def test_init_offers_the_claude_login_once_an_address_uses_b_or_c(
     assert logins == ["login"]
     r = CliRunner().invoke(app, ["init", "status"])
     assert "claude        done   ecf's own configuration is logged in" in r.output
+
+
+# ---- V1.5 step 13b: alert email and backups (OD-400 to OD-403) -----------------------------------
+
+
+def test_a_skipped_step_is_recorded(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    with pytest.raises(InvalidInputError, match="email, export"):
+        initsetup.skip(conn, clock, "slack")
+    assert initsetup.skip(conn, clock, "export") == {"skipped": {"export": to_ts(clock.now())}}
+    assert initsetup.status(conn)["skipped"] == {"export": to_ts(clock.now())}
+    events = [r[0] for r in conn.execute("SELECT event FROM audit")]
+    assert events == ["init.step_skipped"]
+
+
+def test_describe_alert_email_and_export() -> None:
+    export = {"key": None, "dir": None, "schedule": "daily", "last_ok": None}
+    st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
+          "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": ["ap"],
+          "models": {"needed": False, "installed": False}, "export": export}  # fmt: skip
+
+    def rows() -> tuple[str, str]:
+        lines = cli_init.describe(st, installed=True, running=True)
+        return lines[8], lines[9]
+
+    email, exp = rows()
+    assert email.startswith("alert email   to do  asked by ecf init (optional)")
+    assert exp == "export        to do  ecf export keys rotate, then ecf export dir set <directory>"
+    st["skipped"] = {"email": "2026-10-03T10:00:00.000000Z", "export": "2026-10-03T10:00:00Z"}
+    email, exp = rows()
+    assert email.startswith("alert email   done   skipped 2026-10-03 (off)")
+    assert exp.startswith("export        to do  skipped 2026-10-03: no backups are made")
+    st["alert_email"] = {"from": "ap", "from_email": "ap@acme.example", "to": "me@home.example"}
+    export.update(key="ABCD", dir="/Volumes/Backup/ecf-backups")
+    email, exp = rows()
+    assert email == "alert email   done   from ap to me@home.example"
+    assert exp == "export        done   daily to /Volumes/Backup/ecf-backups; first due"
+    export["last_ok"] = "2026-10-03T04:05:06.000000Z"
+    assert rows()[1].endswith("; last 2026-10-03 04:05 UTC")
+    export["schedule"] = "off"
+    assert rows()[1].startswith("export        done   off (export_schedule: off")
+
+
+def _nothing(*_a: object) -> None: ...
+
+
+def _ready(paths: Paths, smtp: tuple[str, ...] = ("ap",)) -> None:
+    _write(paths, "INSERT INTO settings (key, value, updated_at, updated_by)"
+                  " VALUES ('install_role', '\"test\"', 'now', 't')")  # fmt: skip
+    for aid in ("ap", "ar"):
+        _write(paths, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
+                      " smtp_host, smtp_port) VALUES (?, ?, 'standard', 'C', 'now', ?, ?)",
+               aid, f"{aid}@acme.example", "smtp.acme.example" if aid in smtp else None,
+               465 if aid in smtp else None)  # fmt: skip
+
+
+def test_init_asks_for_alert_email_and_records_a_no(
+    running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quiet.s = UnitStatus(installed=True, running=True)
+    _ready(running, smtp=("ap", "ar"))
+    monkeypatch.setattr(cli_init, "_backups", _nothing)
+    monkeypatch.setattr(cli_init, "_claude", _nothing)
+    sent: list[dict[str, Any]] = []
+
+    def step_up(_c: LocalClient, call: Any, echo: Any) -> dict[str, Any]:
+        del call, echo
+        sent.append({})
+        return {"email": {"from_email": "ar@acme.example", "to": "me@home.example"}}
+
+    monkeypatch.setattr(cli_init, "with_step_up", step_up)
+    app = _app(running, [])
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # Slack; alert email
+    assert r.exit_code == 0, r.output
+    assert "Also send alerts by email?" in r.output and "alert email: off; later" in r.output
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\n")  # Slack only
+    assert "alert email: skipped earlier" in r.output and sent == []
+    r = CliRunner().invoke(app, ["init"], input="\nn\ny\nzz\nar\nme@home.example\n")
+    assert r.exit_code == 0, r.output
+    assert "Send them from which address (ap, ar)" in r.output and len(sent) == 1
+    assert "alert email: on, from ar@acme.example to me@home.example" in r.output
+
+
+def test_init_alert_email_needs_an_smtp_server(
+    running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    quiet.s = UnitStatus(installed=True, running=True)
+    _ready(running, smtp=())
+    monkeypatch.setattr(cli_init, "_backups", _nothing)
+    monkeypatch.setattr(cli_init, "_claude", _nothing)
+    r = CliRunner().invoke(_app(running, []), ["init", "--resume"], input="n\n")
+    assert r.exit_code == 0, r.output
+    assert "alert email: needs an address with an SMTP server first" in r.output
+
+
+def test_init_sets_up_backups(running: Paths, quiet: FakeManager, tmp_path: Any,
+                              monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    quiet.s = UnitStatus(installed=True, running=True)
+    _ready(running, smtp=())
+    monkeypatch.setattr(cli_init, "_claude", _nothing)
+    calls: list[tuple[str, Any]] = []
+    sync = tmp_path / "Sync"
+    sync.mkdir()
+
+    def new_key(_c: LocalClient) -> dict[str, Any]:
+        calls.append(("key", None))
+        return {"key": {"fingerprint": "ABCD-EFGH"}}
+
+    def set_dir(_c: LocalClient, where: str, fp: str | None = None) -> dict[str, Any]:
+        calls.append(("dir", (where, fp)))
+        return {}
+
+    monkeypatch.setattr(cli_init.cli_export, "new_key", new_key)
+    monkeypatch.setattr(cli_init.cli_export, "set_dir", set_dir)
+    monkeypatch.setattr(cli_init, "folder_suggestions", lambda: [sync / "ecf-backups"])
+    app = _app(running, [])
+    # Slack no; backups yes; folder 1; create it; first backup now (fails: not set up for real)
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\ny\n1\ny\ny\nn\n")
+    assert r.exit_code == 0, r.output
+    assert "Set up daily backups now? (recommended)" in r.output
+    assert f"1. {sync / 'ecf-backups'}" in r.output
+    assert calls == [("key", None), ("dir", (str(sync / "ecf-backups"), "ABCD-EFGH"))]
+    assert (sync / "ecf-backups").is_dir()
+    assert (sync / "ecf-backups").stat().st_mode & 0o077 == 0
+    assert "backups: the first failed (backups aren't set up" in r.output
+
+
+def test_folder_suggestions(tmp_path: Any) -> None:
+    home, vols = tmp_path / "home", tmp_path / "Volumes"
+    icloud = home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+    dropbox = home / "Library" / "CloudStorage" / "Dropbox"
+    for d in (icloud, dropbox, vols / "Backup"):
+        d.mkdir(parents=True)
+    (vols / "Macintosh HD").symlink_to("/")
+    got = cli_init.folder_suggestions(home, vols, "darwin")
+    assert got == [icloud / "ecf-backups", dropbox / "ecf-backups", vols / "Backup" / "ecf-backups"]
+    assert cli_init.folder_suggestions(home, vols, "linux") == []  # no /media/home here

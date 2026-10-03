@@ -874,6 +874,15 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
+    def init_skip(request: Request) -> JSONResponse:
+        step = _str(_body(request), "step")
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.skip(conn, state.clock, step))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
     def doctor_slack(_request: Request) -> JSONResponse:
         conn = state.connect()
         try:
@@ -916,6 +925,7 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/digests", digest_now, methods=["POST"]),
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
+        Route("/v1/init/skip", init_skip, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
         Route("/v1/doctor/ops", doctor_ops, methods=["GET"]),
     ]
