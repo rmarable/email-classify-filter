@@ -13,8 +13,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from ecf.errors import NotFoundError
-from ecf_server import addresses, slack_in, slack_out
+from ecf.errors import ConflictError, NotFoundError
+from ecf_server import addresses, restore, slack_in, slack_out
 from ecf_server.chat import RouteRef
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -48,12 +48,19 @@ def set_paused(
     else:
         a = addresses.get_address(conn, ref)  # raises NotFoundError
         targets = [a["address_id"]] if a["paused"] != paused else []
+    if not paused:  # after a restore, an address waits for a passing mail check (OD-366)
+        held = {aid: why for aid in targets if (why := restore.resume_blocked(conn, aid))}
+        if held and ref != ALL:
+            raise ConflictError(next(iter(held.values())))
+        targets = [aid for aid in targets if aid not in held]
     now = to_ts(clock.now())
     event = "address.paused" if paused else "address.resumed"
     with write_tx(conn):
         for aid in targets:
             conn.execute("UPDATE addresses SET paused = ? WHERE address_id = ?",
                          (int(paused), aid))  # fmt: skip
+            if not paused:
+                restore.resumed(conn, aid)
             conn.execute(
                 "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
                 " VALUES (?, ?, ?, ?, 'ok', ?)",
@@ -89,7 +96,7 @@ def _click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click, *, pau
     try:
         changed = set_paused(conn, clock, click.ref, paused, actor=f"slack:{click.user}")
         text = describe(changed, paused)
-    except NotFoundError as exc:
+    except (NotFoundError, ConflictError) as exc:  # unknown address; held after a restore
         _tell(conn, clock, click, f"Not done: {exc.detail}")
         raise
     _tell(conn, clock, click, text)

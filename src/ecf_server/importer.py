@@ -100,8 +100,8 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         try:
             try:
                 _stage(staged, parsed, source)
-                kept = _kept_settings(staged)
-                config_doc = _validate(staged, kept)
+                kept = kept_settings(staged)
+                config_doc = validate(staged, kept)
             except sqlite3.Error as exc:  # malformed JSON in a row, a value of the wrong type
                 raise BadBundleError(f"the bundle's rows don't load ({exc})") from None
             before = config.current(conn)
@@ -137,29 +137,36 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
 # ---- staging ------------------------------------------------------------------------------------
 
 
-def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str) -> None:
+def load(staged: sqlite3.Connection, parsed: Parsed) -> None:
+    """Load the bundle's rows into a temporary database built at its schema version, then bring
+    it up to date with the normal migrations (OD-355). Restore uses this too."""
     db.migrate(staged, up_to=int(parsed.manifest["schema_version"]))
     with write_tx(staged), db.items_writer("create"):
-        for table in COPY:
+        for table in (*COPY, "routes", "alerts"):
             rows = parsed.tables.get(table, [])
             if rows:
-                _insert(staged, "main", table, rows)
+                insert(staged, table, rows)
         rows = parsed.tables.get("settings", [])
         if rows:
-            _insert(staged, "main", "settings", rows, replace=True)
+            insert(staged, "settings", rows, replace=True)
     db.migrate(staged)
     items.map_imported(staged, import_plan.REPOST, import_plan.UNKNOWN)
+    with write_tx(staged):
+        staged.execute("UPDATE eval_runs SET path = ''")  # the result file stayed behind
+
+
+def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str) -> None:
+    load(staged, parsed)
     with write_tx(staged):
         staged.execute("UPDATE addresses SET paused = 1, outbound = 0, stage ="
                        " CASE WHEN stage = 'live' THEN 'assist' ELSE stage END")  # fmt: skip
         staged.execute("UPDATE items SET origin = ?", (source,))
         staged.execute("UPDATE audit SET origin = ?", (source,))
-        staged.execute("UPDATE eval_runs SET path = ''")
 
 
-def _insert(c: sqlite3.Connection, schema: str, table: str, rows: list[dict[str, Any]], *,
-            replace: bool = False) -> None:  # fmt: skip
-    have = {r[1] for r in c.execute(f'PRAGMA "{schema}".table_info("{table}")')}
+def insert(c: sqlite3.Connection, table: str, rows: list[dict[str, Any]], *,
+           replace: bool = False) -> None:  # fmt: skip
+    have = {r[1] for r in c.execute(f'PRAGMA main.table_info("{table}")')}
     for n, row in enumerate(rows, 1):
         extra = set(row) - have
         if extra:
@@ -167,7 +174,7 @@ def _insert(c: sqlite3.Connection, schema: str, table: str, rows: list[dict[str,
                                  f" {sorted(extra)[0][:40]}")  # fmt: skip
     cols = sorted({k for r in rows for k in r})
     verb = "INSERT OR REPLACE" if replace else "INSERT"
-    sql = (f'{verb} INTO "{schema}"."{table}" ({", ".join(f"[{k}]" for k in cols)})'
+    sql = (f'{verb} INTO main."{table}" ({", ".join(f"[{k}]" for k in cols)})'
            f" VALUES ({', '.join('?' for _ in cols)})")  # fmt: skip
     try:
         c.executemany(sql, [[r.get(k) for k in cols] for r in rows])
@@ -175,7 +182,7 @@ def _insert(c: sqlite3.Connection, schema: str, table: str, rows: list[dict[str,
         raise BadBundleError(f"{table}: a row breaks a rule of the schema ({exc})") from None
 
 
-def _kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
+def kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
     """The settings the allow-list keeps, from the staged (migrated) copy (OD-358)."""
     out: dict[str, str] = {}
     for key, value in staged.execute("SELECT key, value FROM settings ORDER BY key"):
@@ -184,7 +191,7 @@ def _kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
     return out
 
 
-def _validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]:
+def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]:
     """Re-check what the schema can't: addresses, kept settings, and the config (OD-359)."""
     for a in staged.execute("SELECT address_id, email, overrides FROM addresses"):
         if not re.fullmatch(SLUG_PATTERN, str(a["address_id"])):
@@ -238,7 +245,7 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
                 conn.execute("DELETE FROM main.slack_messages WHERE key LIKE 'item:%'")
             counts: dict[str, int] = {}
             for table in COPY:
-                counts[table] = _copy(conn, table)
+                counts[table] = copy(conn, table)
             now = to_ts(clock.now())
             for key, value in kept.items():
                 conn.execute(
@@ -259,9 +266,11 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
     return counts
 
 
-def _copy(conn: sqlite3.Connection, table: str) -> int:
+def copy(conn: sqlite3.Connection, table: str, *, keep_ids: bool = False) -> int:
+    """Copy the attached `imp` table into `main`; audit, model-call and Claude-call rows get new
+    row IDs unless `keep_ids` (restore into an emptied table)."""
     cols = [r[1] for r in conn.execute(f'PRAGMA imp.table_info("{table}")')]
-    if table in NEW_IDS:
+    if table in NEW_IDS and not keep_ids:
         cols = [c for c in cols if c != "id"]
     names = ", ".join(f"[{c}]" for c in cols)
     order = " ORDER BY id" if table in NEW_IDS else ""

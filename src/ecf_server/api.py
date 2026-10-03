@@ -82,6 +82,7 @@ from ecf_server import (
     outbound_remind,
     passphrase,
     pause,
+    restore,
     retention,
     ruletest,
     schedule,
@@ -1353,7 +1354,8 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
 def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
     (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`;
-    (step 9b) `ecf import --dry-run`; (step 9c) `ecf import [--replace]`."""
+    (step 9b) `ecf import --dry-run`; (step 9c) `ecf import [--replace]`; (step 10a) `ecf
+    restore`."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1428,6 +1430,26 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(go)
 
     @allow(Caller.CLI)
+    def restore_(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "secret")
+        key_text = _opt_str(body, "backup_key")
+        nonce = _opt_str(body, "nonce_id")
+
+        def go(c: sqlite3.Connection) -> dict[str, Any]:
+            parsed = bundle_reader.read(c, path, secret, key_text)
+            if body.get("dry_run") is True:
+                return restore.check(c, parsed)
+            typed = secret if parsed.opened.header["kind"] == "scheduled" else key_text
+            if typed is None:
+                raise InvalidInputError("restoring a manual bundle needs the backup key too")
+            return restore.restore(c, state.clock, state.notifier, state.store(), data_dir(),
+                                   parsed, path, typed, stopped=body.get("stopped") is True,
+                                   older_ok=body.get("older_ok") is True, nonce=nonce)  # fmt: skip
+
+        return _with_conn(go)
+
+    @allow(Caller.CLI)
     def set_dir(request: Request) -> JSONResponse:
         body = _body(request)
         path, typed = _str(body, "path"), _str(body, "fingerprint")
@@ -1446,6 +1468,7 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/export", manual, methods=["POST"]),
         Route("/v1/import/inspect", inspect, methods=["POST"]),
         Route("/v1/import", import_, methods=["POST"]),
+        Route("/v1/restore", restore_, methods=["POST"]),
     ]
 
 

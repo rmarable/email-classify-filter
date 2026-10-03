@@ -182,6 +182,11 @@ def write(conn: sqlite3.Connection, clock: Clock, store: SecretStore | None, dat
             "key_generation": key["generation"]}  # fmt: skip
 
 
+def status_seq(conn: sqlite3.Connection) -> int:
+    """The newest `export.seq` this install has used (0 before any export)."""
+    return int(_get(conn, SEQ) or 0)
+
+
 def next_seq(conn: sqlite3.Connection, clock: Clock) -> int:
     """`export.seq`, shared by scheduled and manual bundles; restore warns on an older one."""
     with write_tx(conn):

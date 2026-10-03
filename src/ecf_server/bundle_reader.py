@@ -73,6 +73,7 @@ class Parsed:
     signer: str  # own, typed_key, unknown, unsigned
     manifest: dict[str, Any]
     tables: dict[str, list[dict[str, Any]]] = field(repr=False)
+    typed_verified: bool = False  # the typed backup key's public half verifies the signature
 
 
 def inspect(conn: sqlite3.Connection, path: str) -> Opened:
@@ -100,16 +101,22 @@ def describe(o: Opened) -> dict[str, Any]:
             "bytes": len(o.data)}  # fmt: skip
 
 
-def read(conn: sqlite3.Connection, path: str, secret: str) -> Parsed:
-    """Open, decrypt with `secret` (the backup key text or the passphrase), unpack and check."""
+def read(conn: sqlite3.Connection, path: str, secret: str,
+         backup_key_text: str | None = None) -> Parsed:  # fmt: skip
+    """Open, decrypt with `secret` (the backup key text or the passphrase), unpack and check.
+    `backup_key_text` (restore of a manual bundle, OD-362) is checked against the signature."""
     o = inspect(conn, path)
     ciphertext = o.data[_body_start(o.data) : -export_bundle.SIG_BYTES]
     signer = "own" if o.own else ("unknown" if o.signed else "unsigned")
-    if o.header["kind"] == "scheduled":
-        root = backup_key.parse_key_text(secret)
-        derived = backup_key.derive(root)
-        if o.signed and not o.own and _verifies(o.data, [backup_key.verify_key(derived.public)]):
+    key_text = secret if o.header["kind"] == "scheduled" else backup_key_text
+    typed = False
+    if key_text is not None and o.signed:
+        typed_pub = backup_key.derive(backup_key.parse_key_text(key_text)).public
+        typed = _verifies(o.data, [backup_key.verify_key(typed_pub)])
+        if typed and not o.own:
             signer = "typed_key"
+    if o.header["kind"] == "scheduled":
+        derived = backup_key.derive(backup_key.parse_key_text(secret))
         try:
             plaintext = _age.decrypt(ciphertext, derived.identity)
         except _age.AgeError:
@@ -121,7 +128,7 @@ def read(conn: sqlite3.Connection, path: str, secret: str) -> Parsed:
             raise BadBundleError("that passphrase doesn't open this bundle") from None
     manifest, tables = unpack(plaintext)
     check_versions(conn, o.header, manifest)
-    return Parsed(o, signer, manifest, tables)
+    return Parsed(o, signer, manifest, tables, typed)
 
 
 # ---- unpacking ----------------------------------------------------------------------------------

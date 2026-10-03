@@ -1,6 +1,6 @@
 """`ecf import <bundle> [--dry-run] [--replace]` (SPEC §11.9; OD-352 to OD-361; V1.5 steps 9b and
-9c). The preview is shown first; an import then needs a yes, the install name typed for
-`--replace`, and step-up."""
+9c) and `ecf restore <bundle>` (OD-362 to OD-373; step 10a). Each shows its preview first, then
+needs yeses and step-up."""
 
 from __future__ import annotations
 
@@ -69,6 +69,72 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                 f"{ch['section']}: {ch['change']}" for ch in done["config_changes"]))  # fmt: skip
         typer.echo("next: ecf address set <address> --app-password, reconnect Slack (ecf slack"
                    " set-tokens), then ecf resume <address> for each")  # fmt: skip
+
+    @app.command("restore")
+    def restore_command(
+        bundle: Annotated[str, typer.Argument(help="A backup (.ecfb) of this install.")],
+    ) -> None:
+        """Recover this install from one of its backups (also on a new computer). Addresses
+        arrive paused at their previous stage. (step-up)"""
+        restore(paths(), str(Path(os.path.expanduser(bundle)).absolute()))
+
+
+def restore(paths: Paths, path: str) -> dict[str, Any]:
+    """`ecf restore`, and `ecf init --restore` after it starts the service (step 10b)."""
+    with LocalClient(paths) as c:
+        head = c.request("POST", "/v1/import/inspect", {"path": path})
+        _print_head(head)
+        body: dict[str, Any] = {"path": path}
+        if head["kind"] == "scheduled":
+            body["secret"] = hidden("Backup key (hidden): ")
+        else:
+            body["secret"] = hidden("Passphrase (hidden): ")
+            body["backup_key"] = hidden("Backup key (hidden; it signed this export): ")
+        r = c.request("POST", "/v1/restore", body | {"dry_run": True}, timeout=600)
+        _print_restore(r)
+        if r["older"] and not typer.confirm(
+            f"This backup (seq {r['seq']}) is older than your newest (seq"
+            f" {r['newest_seq_here']}). Go back to it anyway?", default=False):  # fmt: skip
+            raise typer.Exit(1)
+        typer.echo("If ecf still runs on another computer with this install, stop it first:"
+                   " two copies would act on the same mail.")  # fmt: skip
+        if not typer.confirm("Is ecf stopped everywhere else (or is this the same computer)?",
+                             default=False):  # fmt: skip
+            raise typer.Exit(1)
+        if not typer.confirm("Restore?", default=False):
+            raise typer.Exit(1)
+        body |= {"stopped": True, "older_ok": bool(r["older"])}
+        done = with_step_up(c, lambda n: c.request("POST", "/v1/restore", body | {"nonce_id": n},
+                                                   timeout=600),
+                            echo=typer.echo)  # fmt: skip
+    n = done["counts"]
+    typer.echo(f"restored {n.get('addresses', 0)} address(es) and {n.get('items', 0)} emails;"
+               f" generation {done['generation']}; {n.get('reposted', 0)} approval(s) to decide"
+               " again")  # fmt: skip
+    if done["safety_copy"]:
+        typer.echo(f"the data from before is kept for 7 days: {done['safety_copy']}")
+    typer.echo("next, for each address: ecf address set <address> --app-password, ecf check"
+               " <address>, then ecf resume <address>; Slack: ecf slack status (ecf slack"
+               " set-tokens if it isn't connected)")  # fmt: skip
+    return done
+
+
+def _print_restore(r: dict[str, Any]) -> None:
+    src = r["source"]
+    when = str(src.get("created_at") or "?")[:16].replace("T", " ")
+    new = "; this install is empty (a new computer)" if r["empty_target"] else ""
+    typer.echo(f"backup of {src.get('install')} ({src.get('install_id')}) from {when} UTC,"
+               f" seq {src.get('seq')}{new}")  # fmt: skip
+    typer.echo("rows: " + ", ".join(f"{k} {n}" for k, n in r["counts"].items() if n))
+    for a in r["addresses"]:
+        typer.echo(f"  address {a['address_id']} ({a['email']}): paused until resumed, stage"
+                   f" {a['stage']}, outbound {'on' if a['outbound'] else 'off'}")  # fmt: skip
+    for ch in r["config_changes"]:
+        typer.echo(f"  config {ch['section']}: {ch['change']}")
+    sd = r["senders"]
+    if any(sd.values()):
+        typer.echo(f"  sender records: {sd['added']} added, {sd['removed']} removed,"
+                   f" {sd['changed']} changed")  # fmt: skip
 
 
 def _print_head(h: dict[str, Any]) -> None:
