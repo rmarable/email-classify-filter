@@ -275,8 +275,15 @@ def judge_fallback(st: dict[str, Any]) -> list[Check]:
     return out
 
 
+def outbound_line(a: dict[str, Any]) -> str:
+    """`outbound: off (N suppressed)`, always shown (SPEC §9.8)."""
+    if a.get("outbound"):
+        return "outbound: on"
+    return f"outbound: off ({a.get('suppressed', 0)} suppressed)"
+
+
 def judge_addresses(st: dict[str, Any]) -> list[Check]:
-    """Each address's last check, and open alerts (SPEC §13.2; OD-190)."""
+    """Each address's last check and outbound (§9.8), and open alerts (SPEC §13.2; OD-190)."""
     out: list[Check] = []
     failing = CHECK_FAILED
     for a in st.get("addresses", []):
@@ -294,6 +301,7 @@ def judge_addresses(st: dict[str, Any]) -> list[Check]:
             out.append(
                 Check(name, Level.OK, f"last check {a['last_finished_at']} ({a['last_status']})")
             )
+        out.append(Check(f"outbound {a['address_id']}", Level.OK, outbound_line(a)))  # §9.8
     for alert in st.get("alerts", []):
         out.append(Check("alert", Level.FAIL, f"{alert['title']}: {alert['detail']}"))
     return out

@@ -74,6 +74,7 @@ from ecf_server import (
     models,
     ollama,
     outbound,
+    outbound_remind,
     pause,
     retention,
     ruletest,
@@ -725,12 +726,28 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(get)
 
     @allow(Caller.CLI)
+    def outbound_report(request: Request) -> JSONResponse:
+        """`ecf outbound report` (§9.8; V1.5 step 6)."""
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: outbound_remind.report(c, state.clock, ref))
+
+    @allow(Caller.CLI)
     def set_outbound(request: Request) -> JSONResponse:
-        """`ecf outbound enable|disable` (§9.8; step-up to enable, OD-323 on disable)."""
+        """`ecf outbound enable|disable|resume|snooze|dismiss` (§9.8; step-up to enable, OD-323 on
+        disable)."""
         body, ref = _body(request), str(request.path_params["ref"])
         value, nonce = _str(body, "value"), _opt_str(body, "nonce_id")
-        if value not in ("on", "off", "resume"):
-            raise InvalidInputError("value must be on, off or resume")
+        if value not in ("on", "off", "resume", "snooze", "dismiss"):
+            raise InvalidInputError("value must be on, off, resume, snooze or dismiss")
+        if value == "snooze":
+            days = body.get("days", 7)
+            if not isinstance(days, int) or isinstance(days, bool):
+                raise InvalidInputError("days must be a whole number")
+            return _with_conn(lambda c: outbound_remind.snooze(c, state.clock, ref, days,
+                                                               actor="os_user"))  # fmt: skip
+        if value == "dismiss":
+            return _with_conn(lambda c: outbound_remind.dismiss(c, state.clock, ref,
+                                                                actor="os_user"))  # fmt: skip
         if value == "resume":  # after the send limit (OD-059)
             return _with_conn(lambda c: send_limits.resume(c, state.clock, ref, actor="os_user",
                                                            nonce=nonce))  # fmt: skip
@@ -779,6 +796,7 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/addresses/{ref}/gate", address_gate, methods=["GET"]),
         Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
         Route("/v1/addresses/{ref}/outbound", set_outbound, methods=["POST"]),
+        Route("/v1/addresses/{ref}/outbound", outbound_report, methods=["GET"]),
         Route("/v1/settings", show_settings, methods=["GET"]),
         Route("/v1/settings", set_setting, methods=["POST"]),
     ]

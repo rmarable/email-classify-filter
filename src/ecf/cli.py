@@ -23,7 +23,7 @@ from ecf.cli_outbound import make_commands as make_outbound_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
 from ecf.client import LocalClient
-from ecf.doctor import Level, run_checks
+from ecf.doctor import Level, outbound_line, run_checks
 from ecf.errors import EcfError, InvalidInputError
 from ecf.ids import SLUG_PATTERN
 from ecf.log import configure_logging
@@ -172,6 +172,7 @@ def status() -> None:
         if a["paused"]:
             line += ", PAUSED"
         typer.echo(line)
+        typer.echo(f"{'':<16} {outbound_line(a)}")
         if a["last_error"] and a["last_status"] in CHECK_FAILED:
             typer.echo(f"{'':<16} last error: {a['last_error']}")
     for alert in st.get("alerts", []):

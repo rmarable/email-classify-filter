@@ -50,6 +50,7 @@ from ecf_server import (
     models,
     needs_you,
     ollama_log,
+    outbound_remind,
     pipeline,
     retention,
     schedule,
@@ -267,6 +268,7 @@ class Service:
                 fallback.hand_off(conn, self.clock)  # items that waited too long for Claude
                 claude_review.remind(conn, self.clock, self.state.notifier)  # OD-115 (step 9)
                 send_limits.sweep(conn, self.clock, self.state.notifier)  # OD-059 (V1.5)
+                outbound_remind.remind(conn, self.clock, self.state.notifier)  # §9.8
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)

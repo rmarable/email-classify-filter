@@ -336,11 +336,16 @@ def _event(status: str) -> str:
 
 
 def states(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Per active address: stage, pause and the last check (for `ecf status`)."""
+    """Per active address: stage, pause, outbound with its suppressed sends (§9.8) and the last
+    check (for `ecf status` and `doctor`)."""
     rows = conn.execute(
-        "SELECT a.address_id, a.email, a.stage, a.paused, c.last_finished_at, c.last_status,"
-        " c.backlog, c.deferred, c.last_error, c.last_error_at, c.next_due_at FROM addresses a"
-        " LEFT JOIN check_state c USING (address_id) WHERE a.removed_at IS NULL"
+        "SELECT a.address_id, a.email, a.stage, a.paused, a.outbound, c.last_finished_at,"
+        " c.last_status, c.backlog, c.deferred, c.last_error, c.last_error_at, c.next_due_at"
+        " FROM addresses a LEFT JOIN check_state c USING (address_id) WHERE a.removed_at IS NULL"
         " ORDER BY a.address_id"
     ).fetchall()
-    return [dict(r) | {"paused": bool(r["paused"])} for r in rows]
+    held = conn.execute("SELECT address_id, count(*) FROM items WHERE suppressed_action IS NOT"
+                        " NULL GROUP BY address_id").fetchall()  # fmt: skip
+    suppressed = {h[0]: int(h[1]) for h in held}
+    return [dict(r) | {"paused": bool(r["paused"]), "outbound": bool(r["outbound"]),
+                       "suppressed": suppressed.get(r["address_id"], 0)} for r in rows]  # fmt: skip

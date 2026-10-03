@@ -28,13 +28,14 @@ from ecf_server.outbound_plan import SENDS
 PURPOSE = "outbound_enable"
 HIGH_REVIEWED = 20  # §9.8
 HIGH_CORRECT = 0.95
+REVIEWED = ("correct", "fixed")  # not `asked` or `not_sampled` (review.py)
 
 
 def track_record(conn: sqlite3.Connection, address_id: str) -> dict[str, Any]:
     """Suppressed send proposals, how many you reviewed, and how many you marked correct."""
     row = conn.execute(
         "SELECT count(*) AS suppressed,"
-        " sum(review IS NOT NULL AND json_extract(review, '$.verdict') IS NOT NULL) AS reviewed,"
+        " sum(json_extract(review, '$.verdict') IN ('correct', 'fixed')) AS reviewed,"
         " sum(json_extract(review, '$.verdict') = 'correct') AS correct"
         " FROM items WHERE address_id = ? AND suppressed_action IS NOT NULL",
         (address_id,),
