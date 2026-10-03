@@ -15,7 +15,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, slack_admin, slack_out, slack_routes
+from ecf_server import _slack, alert_mail, alerts, slack_admin, slack_out, slack_routes
 from ecf_server.chat import RouteRef
 from ecf_server.secretstore import SecretStore
 from ecf_server.slack_chat import SlackChat
@@ -86,13 +86,16 @@ def _unrouted(conn: sqlite3.Connection) -> list[dict[str, str]]:
 
 
 def _notifications(conn: sqlite3.Connection) -> list[dict[str, str]]:
-    """With desktop notifications off, Slack-delivery alerts reach nobody (§13.2; email V1.5)."""
+    """With desktop notifications off and Slack Delivery Failed not emailed, a Slack failure
+    reaches nobody (§13.2, §13.3)."""
     row = conn.execute("SELECT value FROM settings WHERE key = 'notifications'").fetchone()
     if row is None or json.loads(row[0]) != "off":
         return []
-    return [_c("notifications", WARN, "desktop notifications are off, so a Slack delivery"
-               " failure reaches nobody (email alerts arrive in V1.5)",
-               "ecf settings set notifications on")]  # fmt: skip
+    if "email" in alerts.routes(conn, "slack") and alert_mail.config(conn) is not None:
+        return []
+    fix = "ecf settings set notifications on (or ecf alerts set slack --to email)"
+    return [_c("notifications", WARN, "desktop notifications are off and Slack Delivery Failed"
+               " isn't emailed, so a Slack delivery failure reaches nobody", fix)]  # fmt: skip
 
 
 def _stepup(stepper: Stepper | None) -> dict[str, str]:

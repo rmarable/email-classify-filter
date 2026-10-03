@@ -114,6 +114,7 @@ def _send(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, aid: str, 
                 f" approval and step-up). Reminder {n} of {FULL}; stop them with"
                 f" `ecf outbound snooze {aid}` or `ecf outbound dismiss {aid}`.")  # fmt: skip
         notifier.notify(head, text)
+        alerts.email(conn, clock, "operator_input", head, text)
         ident = slack_admin.identity(conn) if slack else None
         if ident is not None and ident.member:
             slack_out.enqueue_post(conn, clock, key=f"{key}:dm", route=RouteRef(ident.member),

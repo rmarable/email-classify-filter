@@ -47,6 +47,7 @@ _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 
 MailFactory = Callable[[str, str, Callable[[], str]], MailSource]  # (host, user, password)
 SMTP_SET = "smtp_set"  # the step-up purpose for changing an address's SMTP server
+ALERT_SENDER_KEY = "alerts.email.monitored_address"  # who sends alert email (alert_mail.py)
 
 
 def smtp_default(imap_host: str) -> tuple[str, int] | None:
@@ -369,6 +370,12 @@ def remove_address(
     step-up when any is a payment or fraud item (OD-218)."""
     a = get_address(conn, ref)
     aid = a["address_id"]
+    sender = conn.execute("SELECT json_extract(value, '$') FROM settings WHERE key = ?",
+                          (ALERT_SENDER_KEY,)).fetchone()  # fmt: skip
+    if sender is not None and sender[0] == aid:
+        raise ConflictError(f"{aid} sends ecf's alert email; first run `ecf alerts email set"
+                            " --from <another address> --to <destination>` or"
+                            " `ecf alerts email off`")  # fmt: skip
     items_open = _open_items(conn, aid)
     risky = sum(1 for _, pf in items_open if pf)
     if risky:

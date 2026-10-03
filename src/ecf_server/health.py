@@ -1,6 +1,7 @@
 """Mail-health alerts (SPEC §13.3). V1.1 step 13b: desktop notifications, `ecf status` and
 `ecf doctor` (OD-190). From V1.2 the Slack thread also posts them to the summary channel
-(`alerts.sweep`), except Slack Delivery Failed; email arrives in V1.5.
+(`alerts.sweep`), except Slack Delivery Failed; from V1.5 they are emailed when routed
+(`alerts.email_sweep`).
 
 - **Mail Provider Unreachable:** after 15 minutes of consecutive mail errors while the network is
   up (OD confirmed 2026-09-27). "Up" means the provider's host name resolves through the system
@@ -42,10 +43,11 @@ TITLES = {
     "models_missing": "System Error",
     "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
     "send_limit": "Operator Input Needed: send limit reached",  # §8.4 (V1.5 step 5)
+    "alert_email": "System Error",  # alert email isn't getting through (§13.3; V1.5 step 7a)
 }
 # not a mail check's to resolve on success
 NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
-                        "send_limit"})  # fmt: skip
+                        "send_limit", "alert_email"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 
@@ -164,7 +166,7 @@ def open_alert(
             "INSERT INTO alerts (key, kind, address_id, detail, opened_at) VALUES (?, ?, ?, ?, ?)"
             " ON CONFLICT (key) DO UPDATE SET detail = excluded.detail,"
             " opened_at = excluded.opened_at, resolved_at = NULL, slack_opened_at = NULL,"
-            " slack_resolved_at = NULL",
+            " slack_resolved_at = NULL, email_opened_at = NULL, email_resolved_at = NULL",
             (key, kind, aid, detail, to_ts(clock.now())),
         )
         _audit(conn, clock, aid, "alert.opened", kind)

@@ -33,7 +33,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError, ServiceUnavailableError
-from ecf_server import health, slack_in, slack_out, stepup
+from ecf_server import alert_mail, health, slack_in, slack_out, stepup
 from ecf_server._slack import SlackError, SlackNetworkError
 from ecf_server.chat import Button, Card, RouteRef
 from ecf_server.clock import Clock, to_ts
@@ -362,8 +362,8 @@ def refresh(conn: sqlite3.Connection, clock: Clock) -> int:
 def notice(
     conn: sqlite3.Connection, clock: Clock, notifier: Notifier, text: str, *, dms: list[str]
 ) -> None:
-    """A Security Notice (§13.3): a desktop notification, a DM to each member named and a post
-    in the summary channel once it exists. Email copies arrive with email alerts (V1.5, OD-206)."""
+    """A Security Notice (§13.3): a desktop notification, a DM to each member named, a post in the
+    summary channel once it exists, and an email when alert email is on (V1.5 step 7a)."""
     notifier.notify("[ecf-alert] Security Notice", text)
     card = Card("[ecf-alert] Security Notice", text=text)
     key = f"notice:{secrets.token_hex(8)}"
@@ -373,8 +373,10 @@ def notice(
     if summary:
         slack_out.enqueue_post(conn, clock, key=f"{key}:summary", route=RouteRef(summary),
                                card=card)  # fmt: skip
+    emailed = alert_mail.queue(conn, clock, "[ecf-alert] Security Notice", text,
+                               slack_done=bool(dms or summary)) is not None  # fmt: skip
     with write_tx(conn):
-        data = {"dms": len(dms), "summary": bool(summary)}
+        data = {"dms": len(dms), "summary": bool(summary), "email": emailed}
         _audit(conn, to_ts(clock.now()), "security.notice", data)
 
 

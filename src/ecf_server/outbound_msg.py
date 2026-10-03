@@ -1,5 +1,5 @@
-"""Messages ecf writes: template replies, internal forwards and drafts (SPEC §8.4; OD-317,
-OD-318, OD-320, OD-321).
+"""Messages ecf writes: template replies, internal forwards, drafts and alert email (SPEC §8.4,
+§13.3; OD-317, OD-318, OD-320, OD-321).
 
 Everything taken from an email (its subject, sender, Message-IDs) is untrusted: control and format
 characters (NUL, CR, LF, escape sequences, right-to-left overrides, zero-width marks) are removed
@@ -7,9 +7,9 @@ before any of it reaches a header, recipients are bare addresses (no display nam
 could show instead of the real address), and non-ASCII header text is RFC 2047-encoded. The output
 is 7-bit with CRLF line ends, ready for SMTP.
 
-- Replies and forwards carry `X-ECF-Install: <id>.<generation>` and `Auto-Submitted`
-  (`auto-replied` on replies, `auto-generated` on forwards; OD-320). Drafts carry neither: you
-  send a draft yourself.
+- Replies, forwards and alert email carry `X-ECF-Install: <id>.<generation>` and
+  `Auto-Submitted` (`auto-replied` on replies, `auto-generated` on forwards and alerts; OD-320).
+  Drafts carry neither: you send a draft yourself.
 - A forward attaches the original unmodified: as `message/rfc822` with 7bit encoding when it is
   7-bit clean (ASCII, CRLF line ends, lines of at most 998 octets), otherwise as
   `application/octet-stream` named `original.eml` in base64, which decodes to the exact bytes.
@@ -162,6 +162,27 @@ def build_draft(
     _threading(m, in_reply_to, references)
     m.set_content(body)
     return _built(m, mid)
+
+
+def build_alert(
+    *,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+    install_header: str,
+    date: datetime,
+    message_id: str,
+) -> Built:
+    """An alert email (§13.3): a fixed `[ecf-alert]` subject and the desktop notification's text
+    (OD-316), with `Auto-Submitted: auto-generated` and `X-ECF-Install` (OD-320)."""
+    m = EmailMessage(policy=_POLICY)
+    _headers(m, from_addr=from_addr, to_addr=to_addr, subject=subject, date=date,
+             message_id=message_id)  # fmt: skip
+    m["Auto-Submitted"] = "auto-generated"
+    m["X-ECF-Install"] = install_header
+    m.set_content(body)
+    return _built(m, message_id)
 
 
 def seven_bit_clean(raw: bytes) -> bool:

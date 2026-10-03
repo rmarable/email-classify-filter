@@ -33,6 +33,7 @@ from ecf.errors import ConflictError, EcfError, GrantInvalidError, InvalidInputE
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.status import Status
 from ecf_server import (
+    alerts,
     cards,
     inbox,
     items,
@@ -282,9 +283,10 @@ def _queue_for_computer(
         _audit(conn, clock, item, "approval.queued", actor, {"grant_id": g.grant_id}, tx=True)
     waiting = queued_count(conn)
     short = item["stable_id"][: cards.SHORT_ID]
-    notifier.notify(f"[ecf-alert] Operator Input Needed: approval waiting ({item['address_id']})",
-                    f"Confirm with Touch ID or your password: ecf approve {short}"
-                    f" ({waiting} waiting)")  # fmt: skip
+    head = f"[ecf-alert] Operator Input Needed: approval waiting ({item['address_id']})"
+    text = f"Confirm with Touch ID or your password: ecf approve {short} ({waiting} waiting)"
+    notifier.notify(head, text)
+    alerts.email(conn, clock, "operator_input", head, text)
     _edit(conn, clock, item, f"Queued for your computer ({waiting} waiting)",
           [Button(REJECT, "Reject", g.grant_id)])  # fmt: skip
     return {"status": Status.AWAITING_STEPUP.value, "waiting": waiting}

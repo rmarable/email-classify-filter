@@ -265,7 +265,9 @@ class SlackRuntime:
                         code=getattr(exc, "code", None))  # fmt: skip
             return  # retried at the next check
         if problem and problem != self._problem:  # tell the person once per new problem
-            self._notifier.notify(alerts.title("operator_input", "a Slack channel"), problem)
+            head = alerts.title("operator_input", "a Slack channel")
+            self._notifier.notify(head, problem)
+            alerts.email(conn, self._clock, "operator_input", head, problem)
         self._problem = problem
         self.status["channels"] = problem or None
 

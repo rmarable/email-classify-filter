@@ -30,6 +30,7 @@ from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
 from ecf_server import (
+    alert_mail,
     alerts,
     answers,
     approvals,
@@ -92,6 +93,7 @@ WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
 TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
 STOP_TIMEOUT = 20.0
+ALERT_MAIL_S = 10.0  # how often the alert-mail thread looks for due alert email
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
 
@@ -112,6 +114,23 @@ def smtp_factory(host: str, port: int, user: str, password: Callable[[], str]) -
 def _dev_sender_factory() -> Callable[[str, int, str, Callable[[], str]], Sender]:
     fake = FakeSender()  # one per dev service: what it would have sent, in memory only
     return lambda _host, _port, _user, _password: fake
+
+
+def make_sender(conn: sqlite3.Connection, store: SecretStore,
+                factory: Callable[[str, int, str, Callable[[], str]], Sender],
+                address_id: str) -> Sender:  # fmt: skip
+    """An address's SMTP connection; its app password is read at each connect (V1.5)."""
+    a = conn.execute("SELECT email, smtp_host, smtp_port FROM addresses WHERE address_id = ?",
+                     (address_id,)).fetchone()  # fmt: skip
+    name = secret_name(address_id)
+
+    def password() -> str:
+        pw = store.get(name)
+        if pw is None:
+            raise SecretUnavailableError(f"no app password stored for {address_id}")
+        return pw
+
+    return factory(str(a["smtp_host"]), int(a["smtp_port"] or 465), str(a["email"]), password)
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -261,6 +280,7 @@ class Service:
                 if retention.due(conn, self.clock):  # once a day (§6.5)
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
+                alerts.email_sweep(conn, self.clock)  # sent by the alert-mail thread (V1.5)
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
                 claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it
@@ -358,7 +378,7 @@ class Service:
 
     def _report_trip(self, crashes: int) -> None:
         """The breaker tripped: the service is about to exit, so nothing will send a queued post.
-        Tell the desktop, and Slack directly (best effort, §11.1)."""
+        Tell the desktop, and Slack and alert email directly (best effort, §11.1, §13.3)."""
         text = (f"ecf stopped after {crashes} crashes in 10 minutes and stays stopped."
                 " Run `ecf service start` after checking `ecf logs`.")  # fmt: skip
         if self.dev:
@@ -372,6 +392,9 @@ class Service:
             conn = db.connect(self.paths.db)
             try:
                 alerts.post_now(conn, store, alerts.title("system_error"), text)
+                alert_mail.send_now(conn, self.clock,
+                                    lambda c, aid: make_sender(c, store, smtp_factory, aid),
+                                    alerts.title("system_error"), text)  # fmt: skip
             finally:
                 conn.close()
         except Exception as exc:  # the service is stopping either way
@@ -566,18 +589,22 @@ class Service:
 
     def _sender_for(self, conn: sqlite3.Connection, address_id: str) -> Sender:
         """The address's SMTP connection; its app password is read at each connect (V1.5)."""
-        a = conn.execute("SELECT email, smtp_host, smtp_port FROM addresses WHERE address_id = ?",
-                         (address_id,)).fetchone()  # fmt: skip
-        store, name = self.state.store(), secret_name(address_id)
+        return make_sender(conn, self.state.store(), self.state.sender_factory or smtp_factory,
+                           address_id)  # fmt: skip
 
-        def password() -> str:
-            pw = store.get(name)
-            if pw is None:
-                raise SecretUnavailableError(f"no app password stored for {address_id}")
-            return pw
-
-        factory = self.state.sender_factory or smtp_factory
-        return factory(str(a["smtp_host"]), int(a["smtp_port"] or 465), str(a["email"]), password)
+    def _alert_mail(self) -> None:
+        """Alert email (alert_mail.py), in its own thread so the timer never waits on SMTP."""
+        while not self.stop.wait(ALERT_MAIL_S):
+            if self.state.db_path is None:
+                continue
+            try:
+                conn = db.connect(self.state.db_path)
+                try:
+                    alert_mail.drain(conn, self.clock, self.state.notifier, self._sender_for)
+                finally:
+                    conn.close()
+            except Exception as exc:  # never stops the thread; retried next time
+                log.error("alert_mail.drain_failed", error_type=type(exc).__name__)
 
     def _api_server(self) -> uvicorn.Server:
         return uvicorn.Server(
@@ -608,10 +635,12 @@ class Service:
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread
 
-    def _workers(self) -> tuple[threading.Thread, threading.Thread]:
-        """The checks worker and the model worker (V1.3 step 2a)."""
+    def _workers(self) -> tuple[threading.Thread, threading.Thread, threading.Thread]:
+        """The checks worker and the model worker (V1.3 step 2a), and alert email (V1.5)."""
         return (threading.Thread(target=self._checks, name="checks", daemon=True),
-                threading.Thread(target=self._models, name="models", daemon=True))  # fmt: skip
+                threading.Thread(target=self._models, name="models", daemon=True),
+                threading.Thread(target=self._alert_mail, name="alert-mail",
+                                 daemon=True))  # fmt: skip
 
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
@@ -659,7 +688,7 @@ class Service:
         )
         receiver, tel, tsock = self._receiver()
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
-        worker, model_worker = self._workers()
+        worker, model_worker, mailer = self._workers()
         slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         self._last_tick_wall = self.clock.now()
@@ -668,8 +697,8 @@ class Service:
         web.start()
         tel.start()
         timer.start()
-        worker.start()
-        model_worker.start()
+        for t in (worker, model_worker, mailer):
+            t.start()
         if not self.dev:  # dev mode has no Slack; its chat is the recording fake
             slack_thread.start()
         self.work.set()  # check anything already due at start
@@ -678,6 +707,7 @@ class Service:
         server.should_exit = True
         receiver.should_exit = True
         self._join(web, timer, worker, slack_thread)
+        mailer.join(STOP_TIMEOUT)
         tel.join(STOP_TIMEOUT)
         tsock.close()
         # only a stop you asked for disarms the dead-man's switch (OD-222)

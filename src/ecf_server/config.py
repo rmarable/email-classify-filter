@@ -3,8 +3,9 @@
 One YAML document, `version: 1`, with optional sections; an omitted section is left unchanged,
 and a section set to `default` returns to its shipped value (OD-225; `org_domains` has none).
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
-`templates`. `export_schedule` and email alert routes are refused until V1.5 (OD-206); alert
-routes change with `ecf alerts set`. Unknown keys are refused.
+`templates`. `export_schedule` is refused until it arrives with exports in V1.5 (OD-206); alert
+routes change with `ecf alerts set` and alert email with `ecf alerts email set`. Unknown keys are
+refused.
 
 Every change needs step-up. The step-up target is the whole canonical document: the service
 recomputes the diff and the dialog text from it, and the bound hash covers the document and the
@@ -41,7 +42,7 @@ SECTIONS = ("org_domains", "forward_allow_list", "move_folders", "action_policy"
             "templates")  # fmt: skip
 LATER = {
     "export_schedule": "arrives with exports in V1.5 (OD-206)",
-    "alerts": "change alert routes with `ecf alerts set`; email routes arrive in V1.5 (OD-206)",
+    "alerts": "change alert routes with `ecf alerts set`, alert email with `ecf alerts email set`",
     "export_dir": "changes only through its own step-up, which arrives with exports in V1.5",
 }
 KEY = {s: f"config.{s}" for s in SECTIONS} | {"org_domains": addresses.ORG_DOMAINS_KEY}

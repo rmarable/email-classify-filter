@@ -1294,7 +1294,8 @@ def _sender_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up."""
+    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up. V1.5
+    step 7a: `ecf alerts email set|off` (step-up)."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1319,10 +1320,25 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def test(_request: Request) -> JSONResponse:
         return _with_conn(lambda c: alerts.test(c, state.clock, state.notifier))
 
+    @allow(Caller.CLI)
+    def email_set(request: Request) -> JSONResponse:
+        body = _body(request)
+        frm, to = _opt_str(body, "from") or "", _opt_str(body, "to") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: alerts.set_email(c, state.clock, state.notifier, frm, to,
+                                                     nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def email_off(request: Request) -> JSONResponse:
+        nonce = _opt_str(_body(request), "nonce_id")
+        return _with_conn(lambda c: alerts.email_off(c, state.clock, state.notifier, nonce=nonce))
+
     return [
         Route("/v1/alerts", show, methods=["GET"]),
         Route("/v1/alerts", set_routes, methods=["POST"]),
         Route("/v1/alerts/test", test, methods=["POST"]),
+        Route("/v1/alerts/email", email_set, methods=["POST"]),
+        Route("/v1/alerts/email/off", email_off, methods=["POST"]),
     ]
 
 

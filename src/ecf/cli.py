@@ -92,13 +92,18 @@ def alerts_show() -> None:
     typer.echo(f"default: {', '.join(r['default'])} (desktop notifications: {r['desktop']})")
     for cls, routes in r["classes"].items():
         typer.echo(f"{cls:<9} {', '.join(routes) or 'desktop only'}")
+    mail = r.get("email")
+    typer.echo("email:    off (ecf alerts email set --from <address> --to <destination>)"
+               if mail is None else
+               f"email:    from {mail['from_email']} ({mail['from']}) to {mail['to']}")  # fmt: skip
 
 
 @alerts_app.command("set")
 def alerts_set(
-    to: Annotated[str, typer.Option("--to", help="slack (email arrives in V1.5).")],
+    to: Annotated[str, typer.Option("--to", help="slack, email or slack,email.")],
     cls: Annotated[
-        str | None, typer.Argument(help="mail, system or operator (all when left out).")
+        str | None,
+        typer.Argument(help="mail, system, operator or slack (all when left out)."),
     ] = None,
 ) -> None:
     """Change where alerts go. (step-up)"""
@@ -109,13 +114,42 @@ def alerts_set(
     typer.echo("changed; a Security Notice says so in Slack")
 
 
+alerts_email_app = typer.Typer(no_args_is_help=True, help="Alert email.")
+alerts_app.add_typer(alerts_email_app, name="email")
+
+
+@alerts_email_app.command("set")
+def alerts_email_set(
+    frm: Annotated[str, typer.Option("--from", help="The watched address whose login sends.")],
+    to: Annotated[str, typer.Option("--to", help="Where alerts go; not a watched address.")],
+) -> None:
+    """Send alerts by email, then a test. (step-up)"""
+    body: dict[str, Any] = {"from": frm, "to": to}
+    with LocalClient(_paths()) as c:
+        r = with_step_up(c, lambda n: c.request("POST", "/v1/alerts/email", body | {"nonce_id": n}),
+                         echo=typer.echo)  # fmt: skip
+    mail = r["email"]
+    typer.echo(f"alert email on: from {mail['from_email']} to {mail['to']}; a test email is on"
+               f" its way. Routes: {', '.join(r['default'])} (change: ecf alerts set)")  # fmt: skip
+
+
+@alerts_email_app.command("off")
+def alerts_email_off() -> None:
+    """Stop alert email; email leaves every route. (step-up)"""
+    with LocalClient(_paths()) as c:
+        r = with_step_up(c, lambda n: c.request("POST", "/v1/alerts/email/off", {"nonce_id": n}),
+                         echo=typer.echo)  # fmt: skip
+    typer.echo(f"alert email off; routes: {', '.join(r['default'])}")
+
+
 @alerts_app.command("test")
 def alerts_test() -> None:
     """Send a test alert on every route."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/alerts/test")
-    where = [("slack (queued: it posts within a minute)" if w == "slack" else w)
-             for w in r["sent"]]  # fmt: skip
+    queued = {"slack": "slack (queued: it posts within a minute)",
+              "email": "email (queued: it goes within a minute)"}  # fmt: skip
+    where = [queued.get(str(w), str(w)) for w in r["sent"]]
     typer.echo(f"sent to: {', '.join(where) or 'nowhere (desktop off, no Slack)'}")
 
 
