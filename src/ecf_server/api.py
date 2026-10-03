@@ -64,6 +64,7 @@ from ecf_server import (
     db,
     digests,
     evalrun,
+    export_keys,
     fallback,
     gate,
     health,
@@ -329,6 +330,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_item_routes(state, allow),
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
+            *_export_routes(state, allow),
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
@@ -1339,6 +1341,56 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/alerts/test", test, methods=["POST"]),
         Route("/v1/alerts/email", email_set, methods=["POST"]),
         Route("/v1/alerts/email/off", email_off, methods=["POST"]),
+    ]
+
+
+def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    def data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: export_keys.show(c, data_dir()))
+
+    @allow(Caller.CLI)
+    def new_key(_request: Request) -> JSONResponse:
+        state.store()  # no secret store, no key: fail before showing one
+        return _with_conn(lambda c: export_keys.new_key(c, state.clock))
+
+    @allow(Caller.CLI)
+    def rotate(request: Request) -> JSONResponse:
+        body = _body(request)
+        pid, typed = _str(body, "pending_id"), _str(body, "fingerprint")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: export_keys.rotate(c, state.clock, state.notifier,
+                                                       state.store(), data_dir(), pid, typed,
+                                                       nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def set_dir(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, typed = _str(body, "path"), _str(body, "fingerprint")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: export_keys.set_dir(c, state.clock, state.notifier,
+                                                        data_dir(), path, typed,
+                                                        nonce=nonce))  # fmt: skip
+
+    return [
+        Route("/v1/export", show, methods=["GET"]),
+        Route("/v1/export/keys/new", new_key, methods=["POST"]),
+        Route("/v1/export/keys", rotate, methods=["POST"]),
+        Route("/v1/export/dir", set_dir, methods=["POST"]),
     ]
 
 

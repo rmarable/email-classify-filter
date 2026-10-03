@@ -43,7 +43,7 @@ SECTIONS = ("org_domains", "forward_allow_list", "move_folders", "action_policy"
 LATER = {
     "export_schedule": "arrives with exports in V1.5 (OD-206)",
     "alerts": "change alert routes with `ecf alerts set`, alert email with `ecf alerts email set`",
-    "export_dir": "changes only through its own step-up, which arrives with exports in V1.5",
+    "export_dir": "change it with `ecf export dir set <path>` (step-up)",
 }
 KEY = {s: f"config.{s}" for s in SECTIONS} | {"org_domains": addresses.ORG_DOMAINS_KEY}
 POLICY_CHOICES = ("auto", "approve")

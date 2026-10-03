@@ -155,7 +155,7 @@ ELSEWHERE = {
     "claude_model_override": "set it with `ecf settings set claude_model_override <id>|none`"
     " (step-up); `ecf models status` shows it",
     "export_schedule": "arrives with exports in V1.5",
-    "export_dir": "arrives with exports in V1.5",
+    "export_dir": "change it with `ecf export dir set <path>` (step-up)",
     "export_keep": "arrives with exports in V1.5",
     "max_sends_per_hour": "change it with `ecf address set --max-sends-per-hour` (step-up)",
     "max_sends_per_day": "change it with `ecf address set --max-sends-per-day` (step-up)",

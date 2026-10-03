@@ -1,0 +1,122 @@
+"""`ecf export keys show|rotate` and `ecf export dir set` (SPEC §11.9; V1.5 step 8a). Scheduled
+export arrives in step 8b, manual `ecf export` in step 9."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable
+from pathlib import Path
+from typing import Annotated, Any
+
+import typer
+
+from ecf.client import LocalClient
+from ecf.paths import Paths
+from ecf.stepup import with_step_up
+
+DIR_HELP = "An existing folder, ideally on another disk or a synced folder."
+
+
+def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    export_app = typer.Typer(no_args_is_help=True, help="Backups: the key and where they go.")
+    app.add_typer(export_app, name="export")
+    keys_app = typer.Typer(no_args_is_help=True, help="The backup key.")
+    export_app.add_typer(keys_app, name="keys")
+    dir_app = typer.Typer(no_args_is_help=True, help="Where backups go (export_dir).")
+    export_app.add_typer(dir_app, name="dir")
+
+    @keys_app.command("show")
+    def keys_show() -> None:
+        """The backup key's fingerprint and where backups go."""
+        with LocalClient(paths()) as c:
+            _print(c.get("/v1/export"))
+
+    @keys_app.command("rotate")
+    def keys_rotate() -> None:
+        """Make a new backup key (the first one too). ecf shows it once, for your password
+        manager. (step-up)"""
+        with LocalClient(paths()) as c:
+            old = c.get("/v1/export")["key"]
+            if old is not None:
+                typer.echo(f"This replaces backup key {old['fingerprint']}. Bundles made before"
+                           " now can then be restored only with the old key: keep it until"
+                           " they're gone.")  # fmt: skip
+                if not typer.confirm("Make a new key?", default=False):
+                    raise typer.Exit(1)
+            r = c.request("POST", "/v1/export/keys/new")
+            typer.echo("\nYour backup key (ecf shows it only this once and doesn't keep it):\n")
+            typer.echo(f"    {r['key_text']}\n")
+            typer.echo(f"Fingerprint: {r['fingerprint']}\n")
+            typer.echo("Save the key in your password manager. Restoring a backup needs it; without"
+                       " it, nobody can read your backups, you included.")  # fmt: skip
+            while typer.prompt("Type 'saved' once it's saved").strip().lower() != "saved":
+                pass
+            typed = _typed_fingerprint(r["fingerprint"])
+            body: dict[str, Any] = {"pending_id": r["pending_id"], "fingerprint": typed}
+            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/keys",
+                                                      body | {"nonce_id": n}),
+                               echo=typer.echo)  # fmt: skip
+        typer.echo(f"backup key {got['key']['fingerprint']} in use (generation"
+                   f" {got['key']['generation']})")  # fmt: skip
+        if got["dir"] is None:
+            typer.echo("next: ecf export dir set <directory>")
+
+    @dir_app.command("set")
+    def dir_set(
+        directory: Annotated[str, typer.Argument(help=DIR_HELP)],
+    ) -> None:
+        """Choose where backups go. (step-up)"""
+        where = str(Path(os.path.expanduser(directory)).absolute())
+        with LocalClient(paths()) as c:
+            key = c.get("/v1/export")["key"]
+            if key is None:
+                typer.echo("make the backup key first: ecf export keys rotate", err=True)
+                raise typer.Exit(1)
+            typed = typer.prompt(f"Type the backup key's fingerprint ({key['fingerprint']})")
+            body: dict[str, Any] = {"path": where, "fingerprint": typed}
+            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/dir",
+                                                      body | {"nonce_id": n}),
+                               echo=typer.echo)  # fmt: skip
+        typer.echo(f"backups go to {got['dir']}")
+        if got["same_volume"]:
+            typer.echo(_SAME_VOLUME, err=True)
+
+
+_SAME_VOLUME = ("warning: that folder is on the same disk as ecf's data; a backup there won't"
+                " survive the disk failing. An external disk or a synced folder (iCloud Drive,"
+                " Dropbox) is safer.")  # fmt: skip
+
+
+def _typed_fingerprint(fp: str, tries: int = 3) -> str:
+    """Ask for the new key's fingerprint, so a key nobody saw isn't put in use; the service checks
+    it again."""
+    for _ in range(tries):
+        typed = typer.prompt("Type the fingerprint shown above")
+        if _plain(typed) == _plain(fp):
+            return typed
+        typer.echo("that's not the fingerprint shown above")
+    typer.echo("the new key wasn't put in use; run `ecf export keys rotate` again", err=True)
+    raise typer.Exit(1)
+
+
+def _plain(s: str) -> str:
+    return "".join(s.split()).replace("-", "").upper()
+
+
+def _print(r: dict[str, Any]) -> None:
+    key = r["key"]
+    if key is None:
+        typer.echo("backup key: none (ecf export keys rotate)")
+    else:
+        typer.echo(f"backup key: {key['fingerprint']} (generation {key['generation']}, made"
+                   f" {key['created_at'][:16].replace('T', ' ')} UTC)")  # fmt: skip
+        if r["previous"]:
+            typer.echo(f"  earlier keys: {r['previous']} (older bundles need them)")
+    if r["dir"] is None:
+        typer.echo("backups go to: not set (ecf export dir set <directory>)")
+    else:
+        typer.echo(f"backups go to: {r['dir']}")
+        if r["same_volume"]:
+            typer.echo(_SAME_VOLUME)
+        elif r["same_volume"] is None:
+            typer.echo("  warning: ecf can't read that folder now")

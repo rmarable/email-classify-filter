@@ -144,7 +144,7 @@ read, needs a reviewed entry in the script, checked at its locked version (reada
 wins). Development-only tools
 (pytest, ruff, pyright, import-linter, hypothesis) never ship and aren't listed.
 
-Runtime dependencies (generated 2026-10-02):
+Runtime dependencies (generated 2026-10-03):
 
 | Package | Version | License | Installed on |
 |---|---|---|---|
@@ -192,6 +192,7 @@ Runtime dependencies (generated 2026-10-02):
 | `pyobjc-framework-cocoa` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-localauthentication` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-security` | 12.2.2 | MIT | macOS |
+| `pyrage` | 1.4.0 | MIT | all platforms |
 | `python-multipart` | 0.0.32 | Apache-2.0 | all platforms |
 | `python-pam` | 2.1.0 | MIT | Linux |
 | `pywin32` | 312 | PSF-2.0 | Windows |

@@ -80,7 +80,7 @@ def test_install_and_address_values_and_where_other_keys_live(
     assert r["restart"] is True
     for name, addr, why in (
         ("slack_member_id", None, "set-member"),
-        ("export_dir", None, "V1.5"),
+        ("export_dir", None, "ecf export dir set"),
         ("outbound", "ap", "outbound enable"),
         ("security_config_delay_minutes", None, "OD-074"),
         ("nonsense", None, "no setting"),
