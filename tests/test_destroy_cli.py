@@ -5,6 +5,7 @@ record, the residue, deleting only this install's folder, and `ecf init`'s note.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -289,5 +290,6 @@ def test_init_notes_or_refuses(paths: Paths, capsys: pytest.CaptureFixture[str])
 
 def test_help_marks_step_up() -> None:
     r = CliRunner().invoke(app, ["destroy", "--help"])
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # Rich colors help on GitHub Actions
     assert r.exit_code == 0
-    assert "(step-up)" in r.output and "--config-token" in r.output
+    assert "(step-up)" in plain and "--config-token" in plain
