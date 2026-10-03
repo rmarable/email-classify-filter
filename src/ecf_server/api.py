@@ -80,6 +80,7 @@ from ecf_server import (
     retention,
     ruletest,
     schedule,
+    scheduled_export,
     send_limits,
     senders,
     settings,
@@ -1345,7 +1346,8 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up."""
+    """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
+    (step 8b) the schedule's state and `ecf export now`."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1361,7 +1363,7 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def show(_request: Request) -> JSONResponse:
-        return _with_conn(lambda c: export_keys.show(c, data_dir()))
+        return _with_conn(lambda c: export_keys.show(c, data_dir()) | scheduled_export.status(c))
 
     @allow(Caller.CLI)
     def new_key(_request: Request) -> JSONResponse:
@@ -1378,6 +1380,12 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                                        nonce=nonce))  # fmt: skip
 
     @allow(Caller.CLI)
+    def now(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: scheduled_export.now(c, state.clock, state.notifier,
+                                                         state.secrets, data_dir(),
+                                                         state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
     def set_dir(request: Request) -> JSONResponse:
         body = _body(request)
         path, typed = _str(body, "path"), _str(body, "fingerprint")
@@ -1391,6 +1399,7 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/export/keys/new", new_key, methods=["POST"]),
         Route("/v1/export/keys", rotate, methods=["POST"]),
         Route("/v1/export/dir", set_dir, methods=["POST"]),
+        Route("/v1/export/now", now, methods=["POST"]),
     ]
 
 

@@ -3,8 +3,8 @@
 One YAML document, `version: 1`, with optional sections; an omitted section is left unchanged,
 and a section set to `default` returns to its shipped value (OD-225; `org_domains` has none).
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
-`templates`. `export_schedule` is refused until it arrives with exports in V1.5 (OD-206); alert
-routes change with `ecf alerts set` and alert email with `ecf alerts email set`. Unknown keys are
+`templates`, and from V1.5 `export_schedule` (`daily`, `weekly`, `off`; OD-343); alert routes
+change with `ecf alerts set` and alert email with `ecf alerts email set`. Unknown keys are
 refused.
 
 Every change needs step-up. The step-up target is the whole canonical document: the service
@@ -39,13 +39,14 @@ from ecf_server.notify import Notifier
 MAX_BYTES = 48 * 1024  # inside the API's 64 KB request limit
 MAX_ENTRIES = 50
 SECTIONS = ("org_domains", "forward_allow_list", "move_folders", "action_policy", "rules",
-            "templates")  # fmt: skip
+            "templates", "export_schedule")  # fmt: skip
 LATER = {
-    "export_schedule": "arrives with exports in V1.5 (OD-206)",
     "alerts": "change alert routes with `ecf alerts set`, alert email with `ecf alerts email set`",
     "export_dir": "change it with `ecf export dir set <path>` (step-up)",
 }
-KEY = {s: f"config.{s}" for s in SECTIONS} | {"org_domains": addresses.ORG_DOMAINS_KEY}
+KEY = {s: f"config.{s}" for s in SECTIONS} | {"org_domains": addresses.ORG_DOMAINS_KEY,
+                                              "export_schedule": "export_schedule"}  # fmt: skip
+EXPORT_SCHEDULES = ("daily", "weekly", "off")  # scheduled_export.py reads it (V1.5 step 8b)
 POLICY_CHOICES = ("auto", "approve")
 DEFAULT_POLICY = dict.fromkeys(sorted(rules.HIDE_ACTIONS), "auto")  # §8.3, `standard` column
 _ENTRY_ID = re.compile(r"^[a-z0-9_]{1,40}$")
@@ -129,6 +130,10 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
         out["rules"] = _rules(doc["rules"], folders)
     elif "move_folders" in doc:  # the rules in force must still move only to allowed folders
         _rules(_effective(out, now, "rules") or _starter(), folders)
+    if "export_schedule" in doc and "export_schedule" not in out:
+        if doc["export_schedule"] not in EXPORT_SCHEDULES:
+            raise InvalidInputError("config: export_schedule: daily, weekly or off")
+        out["export_schedule"] = doc["export_schedule"]
     if "templates" in doc and "templates" not in out:
         templates.load_templates(canonical_json(doc["templates"]), source="templates")
         out["templates"] = doc["templates"]
@@ -240,7 +245,7 @@ def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
 
 _SHIPPED_NAME = {"forward_allow_list": "none", "move_folders": "none",
                  "action_policy": "the default policy", "rules": "the starter rules",
-                 "templates": "the shipped templates"}  # fmt: skip
+                 "templates": "the shipped templates", "export_schedule": "daily"}  # fmt: skip
 
 
 def _shipped_value(section: str) -> Any:
@@ -250,15 +255,19 @@ def _shipped_value(section: str) -> Any:
         return _shipped_templates()
     if section == "action_policy":
         return {"standard": DEFAULT_POLICY}
+    if section == "export_schedule":
+        return "daily"
     return []
 
 
-def _describe_change(section: str, old: Any, new: Any) -> str:
+def _describe_change(section: str, old: Any, new: Any) -> str:  # noqa: PLR0911 - one per section
     if new is None:  # a reset; old is set, or there would be no change
         change = _describe_change(section, old, _shipped_value(section))
         return f"reset to {_SHIPPED_NAME[section]}: {change}"
     if section in ("org_domains", "move_folders"):
         return _set_change(old or [], new)
+    if section == "export_schedule":
+        return f"{old or 'daily'} to {new}"
     if section == "forward_allow_list":
         was_list: list[dict[str, str]] = old or []
         entries: list[dict[str, str]] = new
@@ -313,8 +322,8 @@ def _shipped(name: str) -> dict[str, Any]:
 
 
 # riskiest first, so a cut-off summary still names what matters most (V1.2 review, 2026-09-30)
-RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "templates",
-              "move_folders")  # fmt: skip
+RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "export_schedule",
+              "templates", "move_folders")  # fmt: skip
 
 
 def summary(changes: list[dict[str, str]], limit: int = 300) -> str:

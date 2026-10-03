@@ -56,6 +56,7 @@ from ecf_server import (
     pipeline,
     retention,
     schedule,
+    scheduled_export,
     send,
     send_actions,
     send_limits,
@@ -297,6 +298,7 @@ class Service:
                 self._ollama_log(conn)
                 model_watch.retirement_tick(conn, self.clock, self.state.notifier)  # §7.6
                 self._model_watch(conn)
+                self._export(conn)  # scheduled export, in its own thread (V1.5 step 8b)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
@@ -338,6 +340,13 @@ class Service:
         if model_watch.due(conn, self.clock):
             model_watch.start(self.state.connect, self.clock, self.state.notifier,
                               self.state.secrets, self.state.watch_http)  # fmt: skip
+
+    def _export(self, conn: sqlite3.Connection) -> None:
+        """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""
+        if self.state.db_path is not None and scheduled_export.due(conn, self.clock):
+            scheduled_export.start(self.state.connect, self.clock, self.state.notifier,
+                                   self.state.secrets, self.state.db_path.parent,
+                                   self.paths.install)  # fmt: skip
 
     def _model_check(self, conn: sqlite3.Connection) -> None:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from

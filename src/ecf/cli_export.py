@@ -1,5 +1,6 @@
-"""`ecf export keys show|rotate` and `ecf export dir set` (SPEC §11.9; V1.5 step 8a). Scheduled
-export arrives in step 8b, manual `ecf export` in step 9."""
+"""`ecf export keys show|rotate` and `ecf export dir set` (SPEC §11.9; V1.5 step 8a); `ecf export
+status|now` for scheduled export (step 8b). Manual `ecf export` with a passphrase arrives in step
+9."""
 
 from __future__ import annotations
 
@@ -20,10 +21,54 @@ DIR_HELP = "An existing folder, ideally on another disk or a synced folder."
 def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
     export_app = typer.Typer(no_args_is_help=True, help="Backups: the key and where they go.")
     app.add_typer(export_app, name="export")
-    keys_app = typer.Typer(no_args_is_help=True, help="The backup key.")
-    export_app.add_typer(keys_app, name="keys")
+    _key_commands(export_app, paths)
     dir_app = typer.Typer(no_args_is_help=True, help="Where backups go (export_dir).")
     export_app.add_typer(dir_app, name="dir")
+
+    @export_app.command("status")
+    def export_status() -> None:
+        """The schedule, the last backup, failures, the key and where backups go."""
+        with LocalClient(paths()) as c:
+            r = c.get("/v1/export")
+        _print_schedule(r)
+        _print(r)
+
+    @export_app.command("now")
+    def export_now() -> None:
+        """Make a scheduled backup now (as the schedule would; kept and pruned with them)."""
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/export/now", timeout=600)
+        if not r["ok"]:
+            typer.echo(f"backup failed: {r['error']}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"backup written: {Path(r['dir']) / r['file']} ({_size(r['bytes'])})")
+        if r["pruned"]:
+            typer.echo(f"removed {len(r['pruned'])} older backup(s)")
+
+    @dir_app.command("set")
+    def dir_set(
+        directory: Annotated[str, typer.Argument(help=DIR_HELP)],
+    ) -> None:
+        """Choose where backups go. (step-up)"""
+        where = str(Path(os.path.expanduser(directory)).absolute())
+        with LocalClient(paths()) as c:
+            key = c.get("/v1/export")["key"]
+            if key is None:
+                typer.echo("make the backup key first: ecf export keys rotate", err=True)
+                raise typer.Exit(1)
+            typed = typer.prompt(f"Type the backup key's fingerprint ({key['fingerprint']})")
+            body: dict[str, Any] = {"path": where, "fingerprint": typed}
+            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/dir",
+                                                      body | {"nonce_id": n}),
+                               echo=typer.echo)  # fmt: skip
+        typer.echo(f"backups go to {got['dir']}")
+        if got["same_volume"]:
+            typer.echo(_SAME_VOLUME, err=True)
+
+
+def _key_commands(export_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    keys_app = typer.Typer(no_args_is_help=True, help="The backup key.")
+    export_app.add_typer(keys_app, name="keys")
 
     @keys_app.command("show")
     def keys_show() -> None:
@@ -61,26 +106,6 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         if got["dir"] is None:
             typer.echo("next: ecf export dir set <directory>")
 
-    @dir_app.command("set")
-    def dir_set(
-        directory: Annotated[str, typer.Argument(help=DIR_HELP)],
-    ) -> None:
-        """Choose where backups go. (step-up)"""
-        where = str(Path(os.path.expanduser(directory)).absolute())
-        with LocalClient(paths()) as c:
-            key = c.get("/v1/export")["key"]
-            if key is None:
-                typer.echo("make the backup key first: ecf export keys rotate", err=True)
-                raise typer.Exit(1)
-            typed = typer.prompt(f"Type the backup key's fingerprint ({key['fingerprint']})")
-            body: dict[str, Any] = {"path": where, "fingerprint": typed}
-            got = with_step_up(c, lambda n: c.request("POST", "/v1/export/dir",
-                                                      body | {"nonce_id": n}),
-                               echo=typer.echo)  # fmt: skip
-        typer.echo(f"backups go to {got['dir']}")
-        if got["same_volume"]:
-            typer.echo(_SAME_VOLUME, err=True)
-
 
 _SAME_VOLUME = ("warning: that folder is on the same disk as ecf's data; a backup there won't"
                 " survive the disk failing. An external disk or a synced folder (iCloud Drive,"
@@ -101,6 +126,25 @@ def _typed_fingerprint(fp: str, tries: int = 3) -> str:
 
 def _plain(s: str) -> str:
     return "".join(s.split()).replace("-", "").upper()
+
+
+def _size(n: int) -> str:
+    return f"{n / 1_048_576:.1f} MB" if n >= 1_048_576 else f"{max(n // 1024, 1)} KB"
+
+
+def _print_schedule(r: dict[str, Any]) -> None:
+    typer.echo(f"schedule: {r['schedule']} (keeps the newest {r['keep']})")
+    last = r["last_ok"]
+    if last is None:
+        typer.echo("last backup: none yet")
+    else:
+        typer.echo(f"last backup: {last['at'][:16].replace('T', ' ')} UTC, {last['file']}"
+                   f" ({_size(last['bytes'])})")  # fmt: skip
+    if r["failures"]:
+        err: dict[str, Any] = r["last_error"] or {}
+        typer.echo(f"failing: {r['failures']} tries in a row; last: {err.get('why')}")
+    if not r["set_up"]:
+        typer.echo("not set up: ecf export keys rotate, then ecf export dir set <directory>")
 
 
 def _print(r: dict[str, Any]) -> None:

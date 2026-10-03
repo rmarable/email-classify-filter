@@ -59,6 +59,10 @@ def current(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return _setting(conn, KEY_KEY)
 
 
+def previous(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return list(_setting(conn, PREVIOUS_KEY) or [])
+
+
 def export_dir(conn: sqlite3.Connection) -> str | None:
     return _setting(conn, DIR_KEY)
 

@@ -260,8 +260,9 @@ def test_routes(conn: sqlite3.Connection, db_path: Path) -> None:
     del conn
     st = _state(db_path)
     r = call(st, "GET", "/v1/export", None, TOKEN)
-    assert r.status_code == 200 and r.json() == {"key": None, "previous": 0, "dir": None,
-                                                 "same_volume": None}  # fmt: skip
+    got = r.json()
+    assert r.status_code == 200 and got["key"] is None and got["dir"] is None
+    assert got["previous"] == 0 and got["same_volume"] is None and not got["set_up"]
     new = call(st, "POST", "/v1/export/keys/new", {}, TOKEN).json()
     body = {"pending_id": new["pending_id"], "fingerprint": new["fingerprint"]}
     r = call(st, "POST", "/v1/export/keys", body, TOKEN)
@@ -274,7 +275,7 @@ def test_routes(conn: sqlite3.Connection, db_path: Path) -> None:
     assert r.status_code == 503  # no secret store: no key is shown
 
 
-class _Client:
+class ApiClient:
     """LocalClient over the ASGI app."""
 
     def __init__(self, st: ServiceState) -> None:
@@ -298,8 +299,8 @@ def test_cli_rotate_and_dir_set(conn: sqlite3.Connection, db_path: Path, tmp_pat
     del conn
     st = _state(db_path)
 
-    def client(_paths: Paths) -> _Client:
-        return _Client(st)
+    def client(_paths: Paths) -> ApiClient:
+        return ApiClient(st)
 
     monkeypatch.setattr(ecf.cli_export, "LocalClient", client)
     runner = CliRunner()

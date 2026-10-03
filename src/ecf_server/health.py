@@ -44,10 +44,11 @@ TITLES = {
     "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
     "send_limit": "Operator Input Needed: send limit reached",  # §8.4 (V1.5 step 5)
     "alert_email": "System Error",  # alert email isn't getting through (§13.3; V1.5 step 7a)
+    "export_failed": "System Error",  # scheduled backups keep failing (§11.9; V1.5 step 8b)
 }
 # not a mail check's to resolve on success
 NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
-                        "send_limit", "alert_email"})  # fmt: skip
+                        "send_limit", "alert_email", "export_failed"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 

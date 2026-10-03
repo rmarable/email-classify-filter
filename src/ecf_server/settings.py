@@ -135,6 +135,7 @@ _install = [
     Key("ollama_log_max_mb", "install", _int(1, 1024), 10),  # rotate ollama.log above (OD-266)
     Key("ollama_log_rotate_days", "install", _int(1, 90), 7),  # ... or this often (OD-266)
     Key("claude_review_reminder_hours", "install", _int(1, 168), 24),  # OD-115 (V1.4 step 9)
+    Key("export_keep", "install", _int(1, 365), 14),  # scheduled bundles kept (§11.9; V1.5)
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),
@@ -154,9 +155,8 @@ ELSEWHERE = {
     "stage": "change it with `ecf stage set`",
     "claude_model_override": "set it with `ecf settings set claude_model_override <id>|none`"
     " (step-up); `ecf models status` shows it",
-    "export_schedule": "arrives with exports in V1.5",
+    "export_schedule": "change it with `ecf config apply` (step-up)",
     "export_dir": "change it with `ecf export dir set <path>` (step-up)",
-    "export_keep": "arrives with exports in V1.5",
     "max_sends_per_hour": "change it with `ecf address set --max-sends-per-hour` (step-up)",
     "max_sends_per_day": "change it with `ecf address set --max-sends-per-day` (step-up)",
     "dns.doh_url": "not built yet",
