@@ -8,10 +8,10 @@
 
 ## Context
 
-ecf reads business mail that attackers write. A model reads that mail and proposes actions, so
-anything ecf sends is a path from attacker text to a real recipient: a reply that confirms a fake
-invoice, a forward that leaks a document, or a loop between two auto-responders. A wrong label can
-be undone; a sent email can't. At the same time, routine replies and internal hand-offs are much
+Anyone can write to the mailboxes ecf reads, and a model proposes actions on that mail, so
+anything ecf sends is a path from an attacker's text to a real recipient: a reply that confirms a
+fake invoice, a forward that leaks a document, or a loop between two auto-responders. Labels can be
+undone; sent mail can't. At the same time, routine replies and internal hand-offs are much
 of the work on an `info@` or `billing@` mailbox, so some sending is worth having.
 
 ## Decision

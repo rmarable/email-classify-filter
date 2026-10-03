@@ -12,8 +12,8 @@
 The mailboxes ecf watches (`billing@`, `accounts-payable@`, `info@`) sit at many providers. ecf
 needs the original message byte for byte (DKIM covers the whole body, ADR 0011), its own labels on
 the mail (IMAP keywords), and moves, drafts and sends. The credential that grants this access
-reads and sends all of a business's mail at that address, so where it lives matters as much as
-which protocol uses it. v1 has no web server, so no OAuth redirect (ADR 0002).
+reads and sends all of a business's mail at that address, so where it is stored matters. v1 has
+no web server, so no OAuth redirect (ADR 0002).
 
 ## Decision
 

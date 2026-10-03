@@ -12,7 +12,7 @@ Milestones V1.0 to V1.4 are done; V1.5 (sending, alerts by email, backups, upgra
 finished. **Not ready for anyone else to use yet:** milestone tags (`ms-…`) record internal
 progress, not releases. The first release will be `v1.0.0` (SPEC §1.5 lists what it needs).
 
-## What it does, and what it never does
+## What it does
 
 - Reads each watched mailbox every 10 minutes in business hours and every 30 otherwise.
 - Checks DKIM and DMARC itself and computes facts about the sender (first time, lookalike domain,
@@ -86,7 +86,9 @@ secret-store checks, whether this install is `prod` or `test`, the Slack app, yo
 (its app password, your org domains, a probe of the mailbox, the preset), alert email (optional),
 backups (the backup key, shown once for your password manager, and a folder off this disk), the
 local model, and Claude for presets B and C. `ecf init --resume` picks up where you stopped;
-`ecf init status` shows each step. Every address starts in `shadow` with sending off.
+`ecf init status` shows each step. Every address starts in `shadow` with sending off. On Linux
+(unverified until V1.6) the service is a systemd user unit; `loginctl enable-linger` lets it run
+when you aren't logged in.
 
 Then:
 
@@ -97,7 +99,7 @@ ecf status          # each address, the backlog, the service
 
 ## Day to day
 
-- **Slack** is where you work: approve or reject, answer ecf's questions, undo, pause.
+- In Slack you approve or reject, answer ecf's questions, undo and pause.
 - `ecf inbox` lists everything waiting on you; `ecf item show <id>` explains one email.
 - `ecf approve --pending` lists approvals from Slack that wait for step-up at the computer;
   `ecf approve <id>` confirms one.

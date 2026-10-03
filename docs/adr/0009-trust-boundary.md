@@ -12,8 +12,8 @@
 ecf hands email written by strangers to models: Gemma locally, Claude in `/ecf-review`. A model
 can be steered by text in the email (prompt injection), and in presets B and C the model runs in a
 Claude Code session the service doesn't control. Clients (the `ecf` CLI and `ecf-mcp`) are thin
-and run in places where other code runs too. Something has to decide what is safe, and it has to
-be a component that neither the email nor a model can talk round. The same component moves to
+and run in places where other code runs too. The component that decides what is safe must
+therefore take no instructions from email or model output. The same component moves to
 `ecf-api` in M1, so the line must not depend on running on one computer.
 
 ## Decision
