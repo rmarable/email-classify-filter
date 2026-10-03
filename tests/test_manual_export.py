@@ -5,6 +5,7 @@ step-up bound to the path, the routes and the CLI."""
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import stat
 from collections.abc import Callable
@@ -237,4 +238,5 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, out: Path,
     ciphertext = raw[raw.index(b"}") + 1 : -export_bundle.SIG_BYTES]
     assert _age.decrypt_passphrase(ciphertext, GOOD)
     r = runner.invoke(app, ["--install", "t", "export"])
-    assert r.exit_code == 0 and "--to" in r.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # Rich colors help on GitHub Actions
+    assert r.exit_code == 0 and "--to" in plain
