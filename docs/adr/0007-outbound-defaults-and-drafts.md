@@ -59,5 +59,5 @@ of the work on an `info@` or `billing@` mailbox, so some sending is worth having
 - Each send costs a step-up at the computer, so sending at volume isn't a v1 use.
 - Templates and the forward allow-list are security-relevant config (§9.7): a send approved
   before one of them changed is refused at execution.
-- The `high` enablement rule and the per-send delay are single-user stand-ins for the two-person
-  rule in M2.
+- In M2, outbound on `high` addresses needs two distinct approvers (design plan §7); v1 has one
+  person, so it has approver, step-up and the delay instead.

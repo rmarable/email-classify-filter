@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.5-outbound-ops (not yet tagged)
 
+- Eleven more decision records, ADR 0009 to 0019, one for each remaining design decision: the trust boundary, IMAP only, ecf's own DKIM/DMARC, the local service with SQLite and its socket, secret storage, Slack Socket Mode, approvals, pinned Claude models, no `/loop`, the MCP SDK and MCP profiles (OD-409).
 - Two new decision records: ADR 0007 (sending is off by default, drafts never send) and ADR 0008 (one package, one version for the CLI, the service and the plugin). Decided for the documents: no vulnerability reports and no supported version until `v1.0.0`, and every remaining planned decision record is written in V1.5 (OD-404 to OD-410).
 - `ecf init` now asks whether to send alerts by email too (off unless you say yes) and sets up backups: it shows the backup key once for your password manager, suggests a folder off this disk (iCloud Drive, Dropbox and similar, an external disk) and offers a first backup. A question you decline isn't asked again by `ecf init --resume`; `ecf init status` shows both steps (OD-400 to OD-403).
 - `ecf doctor` now checks sending and backups: each address's SMTP server (failing when outbound is on or it sends alert email), alert email (where it goes, the last one delivered, a queue that's stuck), a warning when neither alert email nor desktop notifications could tell you about a Slack failure, and backups (set up, the folder writable and on another disk, the last backup's age) (OD-394 to OD-399).
