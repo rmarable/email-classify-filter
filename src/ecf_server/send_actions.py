@@ -9,7 +9,7 @@ that fails the item without a retry:
 - the recipient isn't one of this install's monitored addresses (a reply there would come back in
   as new mail);
 - a template reply is the first in its thread (the thread is the address, the sender and the
-  thread's first Message-ID) and the first to that sender in 7 days.
+  thread's first Message-ID) and the first to that sender in 7 days, counted from `sent`.
 
 A template reply is built from the template as approved (`Re:`, threaded under the email); a
 forward attaches the email as it is in the mailbox now, which the check has just verified is the
@@ -32,7 +32,6 @@ from typing import Any
 from ecf_server import install_identity, outbound_plan, send
 from ecf_server.actions import Planned
 from ecf_server.clock import Clock, to_ts
-from ecf_server.db import write_tx
 from ecf_server.mail import MailSource
 from ecf_server.mail.smtp import Sender, SendNotSentError
 from ecf_server.outbound_msg import build_forward, build_reply
@@ -82,23 +81,28 @@ def thread_hash(item: sqlite3.Row) -> str:
 
 def _reply_limits(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
                   grant_id: str | None) -> str | None:  # fmt: skip
-    """OD-325, counting sends that may have gone (pending, sent, unknown), never this grant's."""
-    mine = conn.execute("SELECT 1 FROM sent WHERE grant_id = ?", (grant_id,)).fetchone()
-    if mine is not None:
-        return None  # a retry of this grant's own send
-    row = conn.execute("SELECT template_replies FROM threads WHERE thread_hash = ?",
-                       (thread_hash(item),)).fetchone()  # fmt: skip
-    if row is not None and row["template_replies"] >= 1:
-        return "this thread already got a template reply"
+    """OD-325, from `sent`: replies that went or may have gone (`sent`, `unknown`, and another
+    item's `pending`) count; this item's own attempts that didn't go (a retry, a requeue after a
+    definite failure) don't."""
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+    rows = conn.execute(
+        "SELECT s.stable_id, s.status, s.sent_at, s.grant_id, i.facts, i.message_id, i.address_id"
+        " FROM sent s JOIN items i USING (stable_id) WHERE s.address_id = ? AND s.kind = 'reply'"
+        " AND s.status != 'failed' AND json_extract(i.facts, '$.sender_hash') IS ?",
+        (item["address_id"], facts.get("sender_hash")),
+    ).fetchall()
     since = to_ts(clock.now() - timedelta(days=SENDER_DAYS))
-    recent = conn.execute(
-        "SELECT 1 FROM sent s JOIN items i USING (stable_id) WHERE s.address_id = ?"
-        " AND s.kind = 'reply' AND s.status != 'failed' AND s.sent_at >= ?"
-        " AND json_extract(i.facts, '$.sender_hash') = ?",
-        (item["address_id"], since, facts.get("sender_hash")),
-    ).fetchone()
-    return "this sender got a template reply in the last 7 days" if recent else None
+    mine = thread_hash(item)
+    for r in rows:
+        if r["grant_id"] == grant_id:
+            continue  # this grant's own send, retried
+        if r["stable_id"] == item["stable_id"] and r["status"] == "pending":
+            continue  # an earlier attempt of this item that never went
+        if thread_hash(r) == mine:
+            return "this thread already got a template reply"
+        if r["sent_at"] >= since:
+            return "this sender got a template reply in the last 7 days"
+    return None
 
 
 def run(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.Row,
@@ -120,7 +124,6 @@ def run(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.R
                             in_reply_to=item["message_id"], references=None,
                             install_header=header, date=clock.now(), message_id=mid)  # fmt: skip
         kind = "reply"
-        _count_thread(conn, item, grant_id)
     else:
         original = src.fetch(uid)
         if original is None:
@@ -133,32 +136,8 @@ def run(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.R
         kind = "forward"
     out = send.Outgoing(item["address_id"], kind, frm, (to,), built, stable_id=item["stable_id"],
                         grant_id=grant_id)  # fmt: skip
-    try:
-        send.submit(conn, clock, sender_for(conn, item["address_id"]), out, src)
-    except SendNotSentError as exc:
-        if not exc.retryable and kind == "reply":
-            _uncount_thread(conn, item)
-        raise
+    send.submit(conn, clock, sender_for(conn, item["address_id"]), out, src)
     return {"name": a.name, "target": a.target, "to": to, "message_id": built.message_id}
-
-
-def _count_thread(conn: sqlite3.Connection, item: sqlite3.Row, grant_id: str | None) -> None:
-    """Count the reply against its thread before it goes, once per grant (a retry doesn't)."""
-    if conn.execute("SELECT 1 FROM sent WHERE grant_id = ?", (grant_id,)).fetchone():
-        return
-    with write_tx(conn):
-        conn.execute(
-            "INSERT INTO threads (thread_hash, address_id, template_replies) VALUES (?, ?, 1)"
-            " ON CONFLICT (thread_hash) DO UPDATE SET template_replies = template_replies + 1",
-            (thread_hash(item), item["address_id"]),
-        )
-
-
-def _uncount_thread(conn: sqlite3.Connection, item: sqlite3.Row) -> None:
-    """A reply the server refused for good never went: it doesn't use up its thread."""
-    with write_tx(conn):
-        conn.execute("UPDATE threads SET template_replies = max(template_replies - 1, 0)"
-                     " WHERE thread_hash = ?", (thread_hash(item),))  # fmt: skip
 
 
 def _grant(conn: sqlite3.Connection, sid: str) -> str | None:

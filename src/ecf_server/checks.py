@@ -64,6 +64,8 @@ class CheckReport:
     digest: int = 0
     relocated: int = 0  # known messages re-pointed after a mailbox reset
     resolved_by_mailbox: int = 0  # open items whose message left INBOX
+    own_skipped: int = 0  # ecf's own mail come back, skipped (V1.5)
+    second_install: bool = False  # mail from another install: the address was paused (§13.6)
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -214,6 +216,7 @@ def _locked_check(
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
+        report.own_skipped, report.second_install = page.own_skipped, page.second_install
         report.quarantined, report.large_done = len(page.quarantined), len(page.large_done)
         report.deferred, report.remaining = len(page.deferred), page.remaining
         report.escalations = sum(o.decision.escalate for o in outcomes)

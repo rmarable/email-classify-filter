@@ -510,15 +510,12 @@ def requeue(
     elif status not in (Status.FAILED, Status.FAILED_UNKNOWN):
         raise ConflictError(f"this email is {status}: nothing to requeue", current=str(status))
     actions = _actions(item)
-    ran = conn.execute(
-        "SELECT 1 FROM grants WHERE stable_id = ? AND status = 'consumed' AND action_hash = ?",
-        (sid, action_hash(sid, item["content_hash"], actions)),
-    ).fetchone()
-    if is_send(actions) and (status is Status.FAILED_UNKNOWN or ran):
+    if is_send(actions) and (status is not Status.FAILED or _may_have_gone(conn, sid)):
         raise ConflictError(
-            "this send may already have gone out; check the Sent folder, then close it with"
-            " `ecf item resolve` (a send is never retried unchecked)"
-        )  # until V1.5 reconciles against Sent (§6.2)
+            "this send may already have gone out; ecf checks the Sent folder on the next checks"
+            " where the provider keeps sent mail, else check it yourself and close it with"
+            " `ecf item resolve` (a send is retried only once it surely failed; OD-322)"
+        )
     if is_send(actions):
         stepup.consume(conn, clock, "item_requeue", {"stable_id": sid}, nonce)
     _void(conn, sid)
@@ -530,6 +527,19 @@ def requeue(
             (grant_id, sid, action_hash(sid, item["content_hash"], actions), item["content_hash"],
              to_ts(clock.now() + TTL_SEND)),
         )  # fmt: skip
+    if is_send(actions) and _sensitivity(conn, item) == "high":  # the delay again (OD-329)
+        items.transition(conn, clock, sid, Status.DELAYED,
+                         TransitionContext(requeue=True, send_on_high=True), actor=actor,
+                         expected=status)  # fmt: skip
+        with write_tx(conn):
+            conn.execute("INSERT INTO delays (stable_id, grant_id, remaining_s, created_at)"
+                         " VALUES (?, ?, ?, ?) ON CONFLICT (stable_id) DO UPDATE SET"
+                         " grant_id = excluded.grant_id, remaining_s = excluded.remaining_s,"
+                         " created_at = excluded.created_at, announced_at = NULL",
+                         (sid, grant_id, SEND_DELAY_S, to_ts(clock.now())))  # fmt: skip
+        _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
+        _announce_delay(conn, clock, _item(conn, sid), grant_id)
+        return {"status": Status.DELAYED.value}
     items.transition(conn, clock, sid, Status.EXECUTING, TransitionContext(requeue=True),
                      actor=actor, expected=status)  # fmt: skip
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
@@ -538,6 +548,19 @@ def requeue(
     jobs.make_due(conn, clock, item["address_id"])
     _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
     return {"status": Status.EXECUTING.value}
+
+
+def _may_have_gone(conn: sqlite3.Connection, sid: str) -> bool:
+    """A send of this item that went or may have gone: `sent` or `unknown`, or a used grant with
+    no `sent` row saying otherwise (a crash before the record; V1.2 review)."""
+    if conn.execute("SELECT 1 FROM sent WHERE stable_id = ? AND status IN ('sent', 'unknown')",
+                    (sid,)).fetchone():  # fmt: skip
+        return True
+    used = conn.execute("SELECT grant_id FROM grants WHERE stable_id = ? AND status = 'consumed'",
+                        (sid,)).fetchall()  # fmt: skip
+    return any(conn.execute("SELECT 1 FROM sent WHERE grant_id = ? AND status IN ('failed',"
+                            " 'pending')", (g["grant_id"],)).fetchone() is None
+               for g in used)  # fmt: skip
 
 
 # ---- grants -------------------------------------------------------------------------------------

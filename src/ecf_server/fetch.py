@@ -31,7 +31,7 @@ from typing import Any, Protocol
 from ecf.errors import ConflictError, MailUnavailableError
 from ecf.ids import AddressId, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, leases, probe, triggers
+from ecf_server import items, leases, own_mail, probe, triggers
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.isolate import Isolator
@@ -112,6 +112,8 @@ class PageResult:
     large_done: list[int] = field(default_factory=list[int])  # deferred messages handled now
     remaining: int = 0  # new UIDs not reached in this page
     stopped: str = "done"  # done | page_limit | time | lease_lost
+    own_skipped: int = 0  # ecf's own mail come back (own_mail; V1.5)
+    second_install: bool = False  # mail from another install on this mailbox: address paused
 
 
 def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
@@ -505,6 +507,19 @@ def _store(
         return
     facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw, auth) if pg.analyzer else {})
     facts["identity_digest"] = digest
+    if facts.get("ecf_mail") == own_mail.OWN:  # ecf's own mail came back: no item (§8.4)
+        with write_tx(conn):
+            _fence(conn, clock, lease)
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'mail.own_skipped', 'service', 'ok', ?)",
+                (to_ts(clock.now()), cfg.address_id, json.dumps({"uid": uid})),
+            )
+            _unmark_in(conn, cfg.address_id, uv, uid)
+        pg.result.own_skipped += 1
+        return
+    if facts.get("ecf_mail") == own_mail.SECOND:
+        pg.result.second_install |= _pause_second_install(conn, clock, cfg.address_id)
     reused = message_id_reused(conn, cfg.address_id, parsed.message_id, parsed.content_hash, digest)
 
     def also(c: sqlite3.Connection) -> None:
@@ -738,6 +753,21 @@ def message_id_reused(
         (address_id, message_id, content_hash, digest, digest),
     ).fetchone()
     return row is not None
+
+
+def _pause_second_install(conn: sqlite3.Connection, clock: Clock, address_id: str) -> bool:
+    """Pause the address (as `ecf pause` does) when mail from another install arrives (§13.6);
+    True if it wasn't paused yet. The check's report raises Operator Input Needed."""
+    with write_tx(conn):
+        n = conn.execute("UPDATE addresses SET paused = 1 WHERE address_id = ? AND paused = 0",
+                         (address_id,)).rowcount  # fmt: skip
+        if n:
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'address.paused', 'service', 'ok', ?)",
+                (to_ts(clock.now()), address_id, json.dumps({"why": "second_install"})),
+            )
+    return bool(n)
 
 
 def _facts(p: ParsedMessage) -> dict[str, Any]:

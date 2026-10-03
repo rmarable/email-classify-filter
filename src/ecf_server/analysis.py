@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from ecf_server import facts, senderauth, triggers
+from ecf_server import facts, own_mail, senderauth, triggers
 from ecf_server.addresses import get_org_domains
 from ecf_server.clock import Clock, to_ts
 from ecf_server.dnscache import DnsCache
@@ -57,6 +57,7 @@ class MessageAnalyzer:
             payment_keyword=bool(keywords["payment"]),
         )
         found = auth.facts() | computed
+        found["ecf_mail"] = own_mail.classify(self._conn, parsed, auth.result)
         fired = triggers.evaluate(
             parsed,
             keywords,

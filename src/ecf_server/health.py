@@ -40,8 +40,10 @@ TITLES = {
     "claude_review": "Operator Input Needed: Claude review waiting",  # V1.4 step 9 (OD-115)
     "models_api": "System Error",  # the weekly model watch (V1.4 step 10)
     "models_missing": "System Error",
+    "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
 }
-NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing"})  # not a mail check's
+# not a mail check's to resolve on success
+NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install"})
 Resolver = Callable[[str], bool]
 
 
@@ -67,6 +69,13 @@ def after_check(
     aid = report.address_id
     if report.status == "busy":
         return
+    if report.second_install:
+        open_alert(conn, clock, notifier, "second_install", aid,
+                   f"{aid}: mail from another ecf install (or a second running copy of this one)"
+                   f" arrived from this mailbox, so {aid} is paused. Stop the other one, then"
+                   f" `ecf resume {aid}`.")  # fmt: skip
+    elif _running(conn, aid):
+        resolve_alert(conn, clock, notifier, "second_install", aid)
     probe_row = conn.execute("SELECT host FROM probe WHERE address_id = ?", (aid,)).fetchone()
     host = probe_row["host"] if probe_row and probe_row["host"] else ""
     row = conn.execute(
@@ -125,6 +134,11 @@ def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         " ORDER BY opened_at"
     ).fetchall()
     return [dict(r) | {"title": TITLES.get(r["kind"], r["kind"])} for r in rows]
+
+
+def _running(conn: sqlite3.Connection, aid: str) -> bool:
+    row = conn.execute("SELECT paused FROM addresses WHERE address_id = ?", (aid,)).fetchone()
+    return row is not None and not row["paused"]
 
 
 def open_alert(

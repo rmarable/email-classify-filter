@@ -13,8 +13,9 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
-Not in V1.1: staff-name matching in display names (no staff list is configured yet), the
-second-install exception for `X-ECF-Install` and loop suppression (both need V1.5's `sent` table).
+Not in V1.1: staff-name matching in display names (no staff list is configured yet). Since V1.5
+trigger 9 skips ecf's own mail and another install's (own_mail.py); loop suppression for alert
+mail arrives with email alerts.
 """
 
 from __future__ import annotations
@@ -254,7 +255,11 @@ def _other_triggers(
             "ambiguous From header: parsers may disagree on the sender",
         ),  # 8
         (parsed.headers_ambiguous, "bare CR in the headers: parsers may disagree on them"),  # 8
-        (bool(parsed.headers.get("x-ecf-install")), "carries an X-ECF-Install header"),  # 9
+        # 9: not on ecf's own mail or another install's from this mailbox (own_mail; V1.5)
+        (
+            bool(parsed.headers.get("x-ecf-install")) and not found.get("ecf_mail"),
+            "carries an X-ECF-Install header",
+        ),
     )
     return [reason for hit, reason in checks if hit]
 

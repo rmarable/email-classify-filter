@@ -23,6 +23,7 @@ is 7-bit with CRLF line ends, ready for SMTP.
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 import secrets
 import unicodedata
@@ -62,6 +63,11 @@ def addr_spec(value: str) -> str:
         raise InvalidInputError("not a plain email address")
     local, _, domain = v.rpartition("@")
     return f"{local}@{domain.lower()}"
+
+
+def message_id_hash(message_id: str) -> str:
+    """The `sent` table's key for a Message-ID."""
+    return hashlib.sha256(message_id.encode("utf-8")).hexdigest()
 
 
 def new_message_id(domain: str) -> str:

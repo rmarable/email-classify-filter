@@ -30,7 +30,6 @@ doesn't, and nothing about the message is kept. Alerts get no copy.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Sequence
@@ -45,16 +44,12 @@ from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.mail.smtp import Sender, SendNotSentError, SendOutcomeUnknownError
-from ecf_server.outbound_msg import Built, new_message_id
+from ecf_server.outbound_msg import Built, message_id_hash, new_message_id
 from ecf_server.state_machine import TransitionContext
 
 SENT_ROLE = "\\Sent"
 MISSES_TO_FAIL = 2  # later checks that searched the Sent folder in vain (OD-322)
 KINDS = ("reply", "forward", "alert")
-
-
-def message_id_hash(message_id: str) -> str:
-    return hashlib.sha256(message_id.encode("utf-8")).hexdigest()
 
 
 def message_id_for(conn: sqlite3.Connection, grant_id: str, domain: str) -> str:
