@@ -691,11 +691,30 @@ def address_set(
     smtp_port: Annotated[
         int, typer.Option("--smtp-port", help="465 (TLS) or 587 (STARTTLS), with --smtp-host.")
     ] = 465,
+    max_sends_per_hour: Annotated[
+        int | None, typer.Option("--max-sends-per-hour", help="Send limit per hour (25). (step-up)")
+    ] = None,
+    max_sends_per_day: Annotated[
+        int | None, typer.Option("--max-sends-per-day", help="Send limit per day (250). (step-up)")
+    ] = None,
 ) -> None:
     """Change a mailbox's settings: `--app-password` (re-enter or rotate), or `--smtp-host`
     (the server the app password is sent to; step-up and a Security Notice). (step-up)"""
     if app_password and smtp_host:
         raise typer.BadParameter("set --app-password and --smtp-host separately")
+    asked = (("max_sends_per_hour", max_sends_per_hour), ("max_sends_per_day", max_sends_per_day))
+    limits = {k: v for k, v in asked if v is not None}
+    if limits:
+        if app_password or smtp_host:
+            raise typer.BadParameter("set the send limits on their own")
+        with LocalClient(_paths()) as c:
+            path = f"/v1/addresses/{address}"
+            r = with_step_up(c, lambda n: c.request("POST", path, limits | {"stepup_nonce": n}),
+                             echo=typer.echo)  # fmt: skip
+        lim = r["limits"]
+        typer.echo(f"{r['address_id']}: at most {lim['max_sends_per_hour']} sends an hour,"
+                   f" {lim['max_sends_per_day']} a day")  # fmt: skip
+        return
     if smtp_host:
         with LocalClient(_paths()) as c:
             body: dict[str, object] = {"smtp_host": smtp_host, "smtp_port": smtp_port}
@@ -706,7 +725,9 @@ def address_set(
         _echo_probe(a)
         return
     if not app_password:
-        raise typer.BadParameter("nothing to set; use --app-password or --smtp-host")
+        raise typer.BadParameter(
+            "nothing to set; use --app-password, --smtp-host or --max-sends-per-hour|-day"
+        )
     require_terminal()
     with LocalClient(_paths()) as c:
         pw = hidden(f"New app password for {address} (hidden): ")

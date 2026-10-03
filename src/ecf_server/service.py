@@ -55,6 +55,7 @@ from ecf_server import (
     schedule,
     send,
     send_actions,
+    send_limits,
     stages,
     telemetry_app,
 )
@@ -265,6 +266,7 @@ class Service:
                 fallback.tick(conn, self.clock)  # the local fallback's own gate (V1.4 step 8)
                 fallback.hand_off(conn, self.clock)  # items that waited too long for Claude
                 claude_review.remind(conn, self.clock, self.state.notifier)  # OD-115 (step 9)
+                send_limits.sweep(conn, self.clock, self.state.notifier)  # OD-059 (V1.5)
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)

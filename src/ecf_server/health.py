@@ -41,9 +41,11 @@ TITLES = {
     "models_api": "System Error",  # the weekly model watch (V1.4 step 10)
     "models_missing": "System Error",
     "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
+    "send_limit": "Operator Input Needed: send limit reached",  # §8.4 (V1.5 step 5)
 }
 # not a mail check's to resolve on success
-NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install"})
+NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
+                        "send_limit"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 

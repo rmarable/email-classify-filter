@@ -78,6 +78,7 @@ from ecf_server import (
     retention,
     ruletest,
     schedule,
+    send_limits,
     senders,
     settings,
     slack_admin,
@@ -728,8 +729,11 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         """`ecf outbound enable|disable` (§9.8; step-up to enable, OD-323 on disable)."""
         body, ref = _body(request), str(request.path_params["ref"])
         value, nonce = _str(body, "value"), _opt_str(body, "nonce_id")
-        if value not in ("on", "off"):
-            raise InvalidInputError("value must be on or off")
+        if value not in ("on", "off", "resume"):
+            raise InvalidInputError("value must be on, off or resume")
+        if value == "resume":  # after the send limit (OD-059)
+            return _with_conn(lambda c: send_limits.resume(c, state.clock, ref, actor="os_user",
+                                                           nonce=nonce))  # fmt: skip
         if value == "off":
             return _with_conn(lambda c: outbound.disable(c, state.clock, ref, actor="os_user"))
         return _with_conn(lambda c: outbound.enable(c, state.clock,
@@ -1593,11 +1597,14 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_address(request: Request) -> JSONResponse:
         ref = str(request.path_params["ref"])
         body = _body(request)
-        unknown = set(body) - {"app_password", "smtp_host", "smtp_port", "stepup_nonce"}
+        unknown = set(body) - {"app_password", "smtp_host", "smtp_port", "stepup_nonce",
+                               *send_limits.DEFAULTS}  # fmt: skip
         if unknown:
             raise InvalidInputError(f"can't set {', '.join(sorted(unknown))} here yet")
         if "smtp_host" in body:
             return JSONResponse(_set_smtp(state, ref, body))
+        if set(body) & set(send_limits.DEFAULTS):
+            return JSONResponse(_set_limits(state, ref, body))
         conn = state.connect()
         try:
             a = addresses.set_app_password(
@@ -1702,6 +1709,23 @@ def _set_smtp(state: ServiceState, ref: str, body: dict[str, Any]) -> dict[str, 
             actor="os_user",
             nonce=nonce if isinstance(nonce, str) else None,
         )
+    finally:
+        conn.close()
+
+
+def _set_limits(state: ServiceState, ref: str, body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf address set --max-sends-per-hour|--max-sends-per-day` (step-up; §9.6)."""
+    new = {k: v for k, v in body.items() if k in send_limits.DEFAULTS}
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in new.values()):
+        raise InvalidInputError("send limits must be numbers")
+    if set(body) - set(new) - {"stepup_nonce"}:
+        raise InvalidInputError("set send limits on their own")
+    nonce = body.get("stepup_nonce")
+    conn = state.connect()
+    try:
+        return send_limits.set_limits(conn, state.clock, lambda t: _notice(state, conn, t), ref,
+                                      new, actor="os_user",
+                                      nonce=nonce if isinstance(nonce, str) else None)  # fmt: skip
     finally:
         conn.close()
 

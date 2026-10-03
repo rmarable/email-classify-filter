@@ -21,7 +21,7 @@ from typing import Any
 from ecf.errors import GrantInvalidError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
-from ecf_server import approvals, items, jobs, pause
+from ecf_server import approvals, items, jobs, pause, send_limits
 from ecf_server.actions import MessageChangedError, Planned, action_hash
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -30,6 +30,7 @@ from ecf_server.mail.smtp import SendNotSentError, SendOutcomeUnknownError
 from ecf_server.state_machine import TransitionContext
 
 WORKER = "actions"
+SENDS = frozenset({"reply_template", "forward_internal"})
 PAUSED_RECHECK_S = 60
 Executor = Callable[[sqlite3.Connection, Clock, sqlite3.Row, list[Planned]], list[str]]
 
@@ -50,6 +51,11 @@ def run_once(  # noqa: PLR0911 - one return per outcome
         return True
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
     actions = [Planned.from_json(a) for a in p.get("actions", [])]
+    if any(a.name in SENDS for a in actions) and not send_limits.allow(
+        conn, clock, item["address_id"], grant_id
+    ):  # the send circuit breaker: held, grant unused, not an attempt (OD-059)
+        jobs.hold(conn, clock, job.job_id, WORKER, send_limits.HOLD_S, "send limit")
+        return True
     try:
         _consume(conn, clock, grant_id, action_hash(sid, item["content_hash"], actions))
     except GrantInvalidError as exc:

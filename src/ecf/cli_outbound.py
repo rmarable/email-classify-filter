@@ -1,4 +1,5 @@
-"""`ecf outbound enable|disable` (SPEC §8.4, §9.8; OD-323; V1.5 step 3b)."""
+"""`ecf outbound enable|disable` (SPEC §8.4, §9.8; OD-323; V1.5 step 3b) and `resume` (the send
+circuit breaker, OD-059; step 5)."""
 
 from __future__ import annotations
 
@@ -38,3 +39,16 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         typer.echo(f"{r['email']}: outbound off")
         if r["stopped"]:
             typer.echo(f"stopped {len(r['stopped'])} approved send(s): {', '.join(r['stopped'])}")
+
+    @out_app.command("resume")
+    def outbound_resume(address: ADDRESS) -> None:
+        """Let this address send again after it reached its send limit. (step-up)"""
+        path = f"/v1/addresses/{address}/outbound"
+        with LocalClient(paths()) as c:
+            r = with_step_up(c, lambda n: c.request("POST", path,
+                                                    {"value": "resume", "nonce_id": n}),
+                             echo=typer.echo)  # fmt: skip
+        now, lim = r["counts"], r["limits"]
+        typer.echo(f"{r['email']}: sends resume ({now['max_sends_per_hour']} in the last hour of"
+                   f" {lim['max_sends_per_hour']}, {now['max_sends_per_day']} today of"
+                   f" {lim['max_sends_per_day']})")  # fmt: skip
