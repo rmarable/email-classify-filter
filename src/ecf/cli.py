@@ -19,6 +19,7 @@ from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_models import make_models_app
+from ecf.cli_outbound import make_commands as make_outbound_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
 from ecf.client import LocalClient
@@ -76,6 +77,7 @@ def _paths() -> Paths:
 app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
 make_admin_commands(app, _paths)
+make_outbound_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")

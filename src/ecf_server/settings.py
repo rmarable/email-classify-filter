@@ -162,7 +162,7 @@ ELSEWHERE = {
     "dns.doh_url": "not built yet",
     "alerts.email.monitored_address": "arrives with email alerts in V1.5 (OD-206)",
     "alerts.email.destination_address": "arrives with email alerts in V1.5 (OD-206)",
-    "outbound": "change it with `ecf outbound enable|disable`, which arrive in V1.5",
+    "outbound": "change it with `ecf outbound enable|disable`",
     "preset": "chosen with `ecf address add`",
     "security_config_delay_minutes": "fixed at 0 in local mode (OD-074)",
     "sensitivity_downgrade_delay_minutes": "fixed at 0 in local mode",
