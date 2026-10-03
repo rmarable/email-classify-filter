@@ -1,4 +1,5 @@
-"""`ecf doctor` (SPEC §13.2): checks that exist as of V1.0; later milestones add their own.
+"""`ecf doctor` (SPEC §13.2): the V1.0 checks, plus each milestone's own (Slack and step-up,
+models, Claude, and from V1.5 step 13a sending, alert email and backups).
 
 Each check returns ok / warn / fail with the command that fixes it. Doctor reads SQLite directly
 (read-only) so it still works when the service is down.
@@ -309,13 +310,23 @@ def judge_addresses(st: dict[str, Any]) -> list[Check]:
 
 def check_slack(paths: Paths) -> list[Check]:
     """Slack and step-up, checked by the service, which holds the tokens (V1.2 step 12a)."""
+    return _service_rows(paths, "/v1/doctor/slack", "slack", "Slack")
+
+
+def check_ops(paths: Paths) -> list[Check]:
+    """SMTP, alert email and backups, checked by the service, which sends the mail and writes the
+    backups (V1.5 step 13a)."""
+    return _service_rows(paths, "/v1/doctor/ops", "sending and backups", "them")
+
+
+def _service_rows(paths: Paths, route: str, name: str, what: str) -> list[Check]:
     try:
         with LocalClient(paths) as c:
-            rows: list[dict[str, str]] = c.get("/v1/doctor/slack")["checks"]
+            rows: list[dict[str, str]] = c.get(route)["checks"]
     except ServiceUnavailableError:
         return []  # the service check already says it isn't answering
     except EcfError as exc:  # answering, but the check failed: say so, never a silent OK
-        return [Check("slack", Level.FAIL, f"can't check Slack: {exc.detail}", "see ecf logs")]
+        return [Check(name, Level.FAIL, f"can't check {what}: {exc.detail}", "see ecf logs")]
     return [Check(r["name"], Level(r["level"]), r["detail"], r["fix"]) for r in rows]
 
 
@@ -575,6 +586,7 @@ def run_checks(
     checks += check_watch(paths)
     checks += check_service(paths, now or datetime.now(UTC))
     checks += check_slack(paths)
+    checks += check_ops(paths)
     checks.append(check_org_domains(paths))
     checks += check_models(paths)
     checks.append(check_dns())

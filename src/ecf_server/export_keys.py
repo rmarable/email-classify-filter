@@ -74,7 +74,7 @@ def show(conn: sqlite3.Connection, data_dir: Path) -> dict[str, Any]:
         "key": None if key is None else {k: key[k] for k in SHOWN},
         "previous": len(_setting(conn, PREVIOUS_KEY) or []),
         "dir": where,
-        "same_volume": None if where is None else _same_volume_or_none(Path(where), data_dir),
+        "same_volume": None if where is None else same_volume_or_none(Path(where), data_dir),
     }
 
 
@@ -235,7 +235,7 @@ def same_volume(path: Path, data_dir: Path, home: Path | None = None) -> bool:
     return os.stat(where).st_dev == os.stat(data_dir).st_dev
 
 
-def _same_volume_or_none(path: Path, data_dir: Path) -> bool | None:
+def same_volume_or_none(path: Path, data_dir: Path) -> bool | None:
     try:
         return same_volume(path, data_dir)
     except OSError:  # gone or unreadable; the export says so when it runs

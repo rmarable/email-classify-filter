@@ -79,6 +79,7 @@ from ecf_server import (
     modelq,
     models,
     ollama,
+    ops_doctor,
     outbound,
     outbound_remind,
     passphrase,
@@ -852,7 +853,8 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks."""
+    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks; V1.5
+    step 13a: doctor's sending, alert-email and backup checks."""
 
     @allow(Caller.CLI)
     def init_status(_request: Request) -> JSONResponse:
@@ -882,6 +884,18 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
+    def doctor_ops(_request: Request) -> JSONResponse:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        conn = state.connect()
+        try:
+            rows = ops_doctor.checks(conn, state.clock, state.db_path.parent,
+                                     state.notifier.name)  # fmt: skip
+            return JSONResponse({"checks": rows})
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
     def digest_now(request: Request) -> JSONResponse:
         ref = _str(_body(request), "address_id")
         conn = state.connect()
@@ -903,6 +917,7 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+        Route("/v1/doctor/ops", doctor_ops, methods=["GET"]),
     ]
 
 
