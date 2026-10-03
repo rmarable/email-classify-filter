@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.5-outbound-ops (not yet tagged)
 
+- The README now covers what ecf does and never does, installing, `ecf init`, daily use, time away, privacy and security advice. New `SECURITY.md`: vulnerability reports and supported versions wait for `v1.0.0`; what someone with your Slack account can and can't do; the stated limits (OD-406 to OD-408). Corrected: opt-in DNS over HTTPS isn't built yet.
 - Eleven more decision records, ADR 0009 to 0019, one for each remaining design decision: the trust boundary, IMAP only, ecf's own DKIM/DMARC, the local service with SQLite and its socket, secret storage, Slack Socket Mode, approvals, pinned Claude models, no `/loop`, the MCP SDK and MCP profiles (OD-409).
 - Two new decision records: ADR 0007 (sending is off by default, drafts never send) and ADR 0008 (one package, one version for the CLI, the service and the plugin). Decided for the documents: no vulnerability reports and no supported version until `v1.0.0`, and every remaining planned decision record is written in V1.5 (OD-404 to OD-410).
 - `ecf init` now asks whether to send alerts by email too (off unless you say yes) and sets up backups: it shows the backup key once for your password manager, suggests a folder off this disk (iCloud Drive, Dropbox and similar, an external disk) and offers a first backup. A question you decline isn't asked again by `ecf init --resume`; `ecf init status` shows both steps (OD-400 to OD-403).

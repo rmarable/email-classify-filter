@@ -1133,7 +1133,7 @@ This section owns the threat model, stated limits and privacy statement; README,
 - MCP profiles are hygiene, not a boundary.
 - **Any process on this computer that can bind 127.0.0.1:11434, or write `~/.ollama`, can answer as the local model:** ecf verifies the model's digest and that Ollama listens only on loopback (§7.5, OD-240), not the server itself (V1.3 plan security review, 2026-09-30).
 - **Local web pages can call Ollama:** its default `OLLAMA_ORIGINS` allows `file://*`, any `localhost` and `127.0.0.1` port, `app://*`, `tauri://*` and VS Code webviews, and setting `OLLAMA_ORIGINS` only adds to that list; a foreign Host header or origin is refused (HTTP 403), so DNS rebinding from a remote site is blocked (measured 2026-09-30, V1.3 step 0, Ollama 0.35.0 (Homebrew) on the Mac17,3 Air, 24 GB, on AC). Such a page can delete, create or pull models; ecf's digest check (§7.5) is what stops a swapped model from being used.
-- DKIM key lookups use ordinary DNS unless DoH is enabled.
+- DKIM key lookups use ordinary DNS unless DoH is enabled (opt-in DoH, OD-050, isn't built yet: `dns.doh_url` is refused as "not built yet", read from `ecf_server/settings.py` 2026-10-03).
 - **Time Machine or another live copy of the data folder is not a backup:** a live SQLite copy isn't a consistent snapshot; the scheduled export is the backup (operator decision 2026-10-02, OD-311; not measured).
 - **Building or reading a backup needs memory a few times its size:** `pyrage` encrypts and decrypts whole buffers and the signature covers the whole file (V1.5 step 8b, OD-345).
 - Slack keeps what ecf posts under Slack's own retention.
