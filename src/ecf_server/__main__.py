@@ -1,5 +1,6 @@
 """The `ecf-server` entry point: `local` (the service), `migrate`, `reset-breaker`, `regrant`,
-`snapshot` (an upgrade's database copy), `downgrade-prepare` (going back after one)."""
+`snapshot` (an upgrade's database copy), `downgrade-prepare` (going back after one), `destroy`
+(its service part, when the service can't run)."""
 
 from __future__ import annotations
 
@@ -26,18 +27,9 @@ def main(argv: list[str] | None = None) -> None:
         ),
         ("snapshot", "copy the database before an upgrade (used by `ecf upgrade`)"),
         ("downgrade-prepare", "build the database for going back (used by `ecf upgrade --to`)"),
+        ("destroy", "the service's part of a destroy, in the foreground (used by `ecf destroy`)"),
     ):
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("--install", default="dev" if name == "dev" else "default")
-        if name == "dev":
-            p.add_argument("--home", help="data root to use (default: a new /tmp folder)")
-            p.add_argument("--keep", action="store_true", help="keep the data folder on exit")
-        if name in ("snapshot", "downgrade-prepare"):
-            p.add_argument("--label", required=True, help="e.g. 0.1.0-to-0.1.1")
-        if name in ("local", "dev"):
-            p.add_argument("--foreground", action="store_true")
-            p.add_argument("--tick-seconds", type=float, default=None, help=argparse.SUPPRESS)
-            p.add_argument("--watchdog-seconds", type=float, default=None, help=argparse.SUPPRESS)
+        _add_arguments(sub.add_parser(name, help=help_text), name)
     args = parser.parse_args(argv)
     import re  # noqa: PLC0415
 
@@ -59,10 +51,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.command in ("snapshot", "downgrade-prepare"):
             sys.stdout.write(f"{_upgrade_files(args.command, paths, args.label)}\n")
             return
-        if args.command == "regrant":
-            from ecf_server import regrant  # noqa: PLC0415
-
-            raise SystemExit(regrant.main(args.install))
+        if args.command in ("regrant", "destroy"):
+            raise SystemExit(_foreground(args))
         if args.command == "migrate":
             from ecf_server import db  # noqa: PLC0415
 
@@ -78,6 +68,37 @@ def main(argv: list[str] | None = None) -> None:
     except EcfError as exc:
         sys.stderr.write(f"ecf-server: {exc.detail}\n")
         raise SystemExit(int(exc.exit_code)) from exc
+
+
+def _add_arguments(p: argparse.ArgumentParser, name: str) -> None:
+    p.add_argument("--install", default="dev" if name == "dev" else "default")
+    if name == "dev":
+        p.add_argument("--home", help="data root to use (default: a new /tmp folder)")
+        p.add_argument("--keep", action="store_true", help="keep the data folder on exit")
+    if name in ("snapshot", "downgrade-prepare"):
+        p.add_argument("--label", required=True, help="e.g. 0.1.0-to-0.1.1")
+    if name == "destroy":
+        p.add_argument("--confirm", required=True, help="the install name, typed again")
+        p.add_argument(
+            "--config-token",
+            action="store_true",
+            help="ask for a Slack configuration token to delete the app",
+        )
+    if name in ("local", "dev"):
+        p.add_argument("--foreground", action="store_true")
+        p.add_argument("--tick-seconds", type=float, default=None, help=argparse.SUPPRESS)
+        p.add_argument("--watchdog-seconds", type=float, default=None, help=argparse.SUPPRESS)
+
+
+def _foreground(args: argparse.Namespace) -> int:
+    """`regrant` and `destroy`: run with a person at the terminal, while the service is stopped."""
+    if args.command == "regrant":
+        from ecf_server import regrant  # noqa: PLC0415
+
+        return regrant.main(args.install)
+    from ecf_server import destroy  # noqa: PLC0415
+
+    return destroy.main(args.install, args.confirm, ask_token=args.config_token)
 
 
 def _upgrade_files(command: str, paths: Paths, label: str) -> object:

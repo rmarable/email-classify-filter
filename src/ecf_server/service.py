@@ -43,6 +43,7 @@ from ecf_server import (
     daily,
     db,
     decide,
+    destroy,
     fallback,
     health,
     jobs,
@@ -560,6 +561,11 @@ class Service:
         os.umask(0o077)  # everything the service creates is private (logs, state, rotated files)
         _private_dir(self.paths.data_dir)
         configure_logging("service", log_file=self.paths.log)
+        if destroy.blocks_start(self.paths.root, self.paths.install):
+            log.info("service.destroyed", install=self.paths.install)
+            sys.stderr.write("ecf-server: this install is being destroyed; run `ecf destroy` again"
+                             " to finish\n")  # fmt: skip
+            return EXIT_OK  # exit 0 so launchd/systemd don't restart it
         try:
             lock = acquire_lock(self.paths)
         except AlreadyRunningError as exc:
@@ -603,6 +609,7 @@ class Service:
         # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
+        self.state.request_stop = self.stop.set  # after `ecf destroy`'s service part (V1.5)
         self.state.mail_factory = imap_factory
         # dev mode records sends in memory and never contacts an SMTP server
         self.state.sender_factory = _dev_sender_factory() if self.dev else smtp_factory

@@ -63,6 +63,7 @@ from ecf_server import (
     claude_usage,
     config,
     db,
+    destroy,
     digests,
     evalrun,
     export_keys,
@@ -87,6 +88,7 @@ from ecf_server import (
     ruletest,
     schedule,
     scheduled_export,
+    send_actions,
     send_limits,
     senders,
     settings,
@@ -176,6 +178,7 @@ class ServiceState:
     # its call's events (V1.4 step 6; logs are exported every second)
     telemetry: Telemetry = field(default_factory=Telemetry, repr=False)
     telemetry_wait_s: float = 2.0
+    request_stop: Callable[[], None] = field(default=lambda: None, repr=False)  # the service's
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -340,6 +343,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_alert_routes(state, allow),
             *_export_routes(state, allow),
             *_upgrade_routes(state, allow),
+            *_destroy_routes(state, allow),
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
@@ -1472,6 +1476,54 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/import", import_, methods=["POST"]),
         Route("/v1/restore", restore_, methods=["POST"]),
     ]
+
+
+def _destroy_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.11 (V1.5 step 12a): `ecf destroy`'s preview and the service's part; after the
+    service's part the service stops, as a stop you asked for (OD-222)."""
+
+    def root() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent.parent
+
+    def sessions() -> int:
+        with state.lock:
+            return len(state.sessions)
+
+    def sender_for(conn: sqlite3.Connection, address_id: str) -> Any:
+        if send_actions.sender_for is None:
+            raise ServiceUnavailableError("no mail sender here")
+        return send_actions.sender_for(conn, address_id)
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(destroy.preview(conn, state.clock, state.install, root(),
+                                                sessions()))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def run(request: Request) -> JSONResponse:
+        body = _body(request)
+        typed, token = _str(body, "install"), _opt_str(body, "config_token")
+        nonce = _opt_str(body, "nonce_id")
+        ctx = destroy.Context(state.install, root(), state.clock, state.notifier, state.store(),
+                              state.slack_web, sender_for)  # fmt: skip
+        conn = state.connect()
+        try:
+            rec = destroy.run(conn, ctx, typed=typed, config_token=token, nonce=nonce,
+                              sessions=sessions())  # fmt: skip
+        finally:
+            conn.close()
+        state.stopping_on_purpose = True
+        state.request_stop()
+        return JSONResponse(rec)
+
+    return [Route("/v1/destroy", show, methods=["GET"]),
+            Route("/v1/destroy", run, methods=["POST"])]  # fmt: skip
 
 
 def _upgrade_routes(state: ServiceState, allow: Allow) -> list[Route]:
