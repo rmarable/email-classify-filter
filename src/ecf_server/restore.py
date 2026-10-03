@@ -49,6 +49,7 @@ from ecf_server import (
     import_plan,
     importer,
     install_identity,
+    keywords,
     scheduled_export,
     stepup,
 )
@@ -59,8 +60,9 @@ from ecf_server.notify import Notifier
 from ecf_server.secretstore import SecretStore
 from ecf_server.secretstore.select import INTERPRETER_KEY
 
-AT_KEY = "restore.at"
+AT_KEY = keywords.RESTORE_AT_KEY
 AWAITING_KEY = "restore.awaiting_check"  # address IDs ecf resume holds until a check passes
+CURSORS_KEY = keywords.RESTORE_CURSORS_KEY
 SAFETY_KEEP = timedelta(days=7)
 # this computer's state: the target keeps its own values (OD-368)
 MACHINE_LOCAL = frozenset({
@@ -274,6 +276,10 @@ def _settings(conn: sqlite3.Connection, clock: Clock, derived: backup_key.Derive
         scheduled_export.SEQ: max(seq_here, seq_bundle),
         AT_KEY: now,
         AWAITING_KEY: restored,
+        CURSORS_KEY: {
+            r[0]: [r[1], r[2]]
+            for r in conn.execute("SELECT address_id, uidvalidity, last_uid FROM main.cursors")
+        },
     }
     if key is None or key.get("verify_key") != derived.public.verify_key:
         # the bundle names an earlier key (or none): the typed key is the one in use now

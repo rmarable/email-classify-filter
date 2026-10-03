@@ -226,6 +226,8 @@ def send_refusal(name: str, facts: dict[str, Any], *, fraud_signal: bool) -> str
         (send and bool(facts.get("bulk_signal")), "no sends for bulk mail"),
         (send and bool(facts.get("content_unscanned")), "no sends for mail not fully scanned"),
         (send and fraud_signal, "no sends for mail with a fraud signal"),
+        ((reply or send) and bool(facts.get("ecf_keywords")),
+         "ecf handled this email before (its labels are on it)"),  # keywords.py (V1.5)
     ]  # fmt: skip
     return next((why for applies, why in checks if applies), None)
 

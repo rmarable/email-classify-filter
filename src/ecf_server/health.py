@@ -44,11 +44,14 @@ TITLES = {
     "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
     "send_limit": "Operator Input Needed: send limit reached",  # §8.4 (V1.5 step 5)
     "alert_email": "System Error",  # alert email isn't getting through (§13.3; V1.5 step 7a)
+    # ecf's own labels on mail newer than a restored cursor (OD-318, OD-372; V1.5 step 10b)
+    "restored_keywords": "Operator Input Needed: ecf's labels on new mail after a restore",
     "export_failed": "System Error",  # scheduled backups keep failing (§11.9; V1.5 step 8b)
 }
 # not a mail check's to resolve on success
 NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
-                        "send_limit", "alert_email", "export_failed"})  # fmt: skip
+                        "send_limit", "alert_email", "export_failed",
+                        "restored_keywords"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 
@@ -81,6 +84,13 @@ def after_check(
                    f" `ecf resume {aid}`.")  # fmt: skip
     elif _running(conn, aid):
         resolve_alert(conn, clock, notifier, "second_install", aid)
+    if report.restored_keywords:
+        open_alert(conn, clock, notifier, "restored_keywords", aid,
+                   f"{aid}: mail newer than the restored backup already carries this install's"
+                   " labels, so another copy of this install may still be running. Stop it,"
+                   f" then `ecf resume {aid}`.")  # fmt: skip
+    elif _running(conn, aid):
+        resolve_alert(conn, clock, notifier, "restored_keywords", aid)
     probe_row = conn.execute("SELECT host FROM probe WHERE address_id = ?", (aid,)).fetchone()
     host = probe_row["host"] if probe_row and probe_row["host"] else ""
     row = conn.execute(

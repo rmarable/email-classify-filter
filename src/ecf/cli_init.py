@@ -15,8 +15,10 @@ an address uses B or C (`ecf claude --login`). The email-alerts and export steps
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -62,6 +64,12 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
         resume: Annotated[
             bool, typer.Option("--resume", help="Continue without the checklist.")
         ] = False,
+        restore: Annotated[
+            str | None,
+            typer.Option(
+                "--restore", help="Set up from a backup of this install (a new computer)."
+            ),
+        ] = None,
     ) -> None:
         """Set up ecf: service, Slack, first mailbox, local model. Safe to run again; done steps
         are skipped."""
@@ -73,6 +81,9 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress)
             )
         require_terminal()
         p = paths()
+        if restore is not None:
+            _from_backup(p, restore)
+            return
         if not resume:
             typer.echo(CHECKLIST)
             if not typer.confirm("Ready?", default=True):
@@ -139,6 +150,21 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool,
             else "ecf claude --login (needs Claude Code; ecf doctor checks it)"),
         row("export", False, "arrives in V1.5"),
     ]  # fmt: skip
+
+
+def _from_backup(p: Paths, bundle: str) -> None:
+    """`ecf init --restore <bundle>` (SPEC §11.9; OD-371): start the service, restore, then list
+    what's left instead of running init's own steps."""
+    from ecf.cli_import import restore  # noqa: PLC0415
+
+    _service(p, manager_for(p))
+    done = restore(p, str(Path(os.path.expanduser(bundle)).absolute()))
+    typer.echo("\nLeft to do on this computer:")
+    typer.echo("  1. ecf slack status (ecf slack set-tokens if Slack isn't connected)")
+    for aid in done["addresses"]:
+        typer.echo(f"  2. ecf address set {aid} --app-password, ecf check {aid}, then ecf resume"
+                   f" {aid}")  # fmt: skip
+    typer.echo("  3. ecf doctor")
 
 
 def _service(p: Paths, manager: ServiceManager) -> None:

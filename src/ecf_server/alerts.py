@@ -66,6 +66,7 @@ CLASS_OF = {
     "operator_input": "operator",
     "claude_review": "operator",
     "second_install": "operator",
+    "restored_keywords": "operator",
     "send_limit": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",

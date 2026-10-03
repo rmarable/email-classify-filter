@@ -66,6 +66,7 @@ class CheckReport:
     resolved_by_mailbox: int = 0  # open items whose message left INBOX
     own_skipped: int = 0  # ecf's own mail come back, skipped (V1.5)
     second_install: bool = False  # mail from another install: the address was paused (§13.6)
+    restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372)
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -191,6 +192,7 @@ def _locked_check(
                 analyzer=analyzer,
                 deadline=deadline,
                 isolator=_isolator(conn, dns),
+                install=install,
             )
             cur = load_cursor(conn, address_id)
             if cur is not None and cur.uidvalidity is not None:
@@ -217,6 +219,7 @@ def _locked_check(
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
         report.own_skipped, report.second_install = page.own_skipped, page.second_install
+        report.restored_keywords = page.restored_keywords
         report.quarantined, report.large_done = len(page.quarantined), len(page.large_done)
         report.deferred, report.remaining = len(page.deferred), page.remaining
         report.escalations = sum(o.decision.escalate for o in outcomes)
