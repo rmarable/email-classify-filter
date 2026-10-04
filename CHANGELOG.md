@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.5-outbound-ops (not yet tagged)
+## ms-v1.5-outbound-ops (2026-10-04)
 
 - `ecf approve <id>` now shows what you approve before it acts (each action, a send's recipient, a draft's whole text) and asks; `--yes` skips the question. `ecf item show` lists an undecided proposal too. Found in the closing run: a draft could be approved at the computer without being seen.
 - Closing real-service run of V1.5 on the test mailbox (OD-332): upgrade from a wheel and back, a fraud-only eval, going live by override, a draft, an internal forward and a template reply on real mail, a delayed send on `high` cancelled, alert email, a scheduled export, a restore, and destroying a throwaway install. Confirmed: Purelymail's SMTP on port 465 and that it keeps ecf's Message-ID.
