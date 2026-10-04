@@ -128,6 +128,34 @@ def transition(
     return frm
 
 
+def map_imported(staged: sqlite3.Connection, repost: tuple[str, ...],
+                 unknown: tuple[str, ...]) -> None:  # fmt: skip
+    """Import only (importer.py; OD-358), on the staging copy, never the live database: statuses
+    from another computer are mapped, not transitioned. Waiting items go back to
+    `awaiting_approval` (`needs_human` when the proposal has no actions); ones that may have run
+    there become `failed_unknown`. Here so this module stays the only writer of `items.status`."""
+    with write_tx(staged), items_writer("transition"):
+        staged.execute("UPDATE items SET status = 'awaiting_approval' WHERE status IN"
+                       " (SELECT value FROM json_each(?))", (json.dumps(repost),))  # fmt: skip
+        staged.execute("UPDATE items SET status = 'failed_unknown' WHERE status IN"
+                       " (SELECT value FROM json_each(?))", (json.dumps(unknown),))  # fmt: skip
+        staged.execute("UPDATE items SET status = 'needs_human' WHERE status ="
+                       " 'awaiting_approval' AND coalesce(json_array_length(proposal,"
+                       " '$.actions'), 0) = 0")  # fmt: skip
+
+
+def map_downgraded(conn: sqlite3.Connection) -> None:
+    """`ecf upgrade --to` after the upgrade settled (downgrade.py; OD-331), on the rollback copy,
+    never the live database: open approvals (their grants are voided) go to `expired`, where
+    `ecf approve` offers them again (OD-223); approved, delayed and executing ones to
+    `failed_unknown`, since they may have run under the newer version."""
+    with write_tx(conn), items_writer("transition"):
+        conn.execute("UPDATE items SET status = 'expired' WHERE status IN ('awaiting_approval',"
+                     " 'awaiting_stepup')")  # fmt: skip
+        conn.execute("UPDATE items SET status = 'failed_unknown' WHERE status IN ('approved',"
+                     " 'delayed', 'executing', 'undoing')")  # fmt: skip
+
+
 def _audit(
     conn: sqlite3.Connection,
     ts: str,

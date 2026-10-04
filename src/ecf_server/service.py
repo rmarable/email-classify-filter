@@ -30,6 +30,8 @@ from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
 from ecf.paths import Paths
 from ecf_server import (
+    alert_items,
+    alert_mail,
     alerts,
     answers,
     approvals,
@@ -41,6 +43,7 @@ from ecf_server import (
     daily,
     db,
     decide,
+    destroy,
     fallback,
     health,
     jobs,
@@ -50,18 +53,28 @@ from ecf_server import (
     models,
     needs_you,
     ollama_log,
+    outbound_remind,
     pipeline,
     retention,
     schedule,
+    scheduled_export,
+    send,
+    send_actions,
+    send_limits,
     stages,
     telemetry_app,
+    upgrade_state,
 )
+from ecf_server.addresses import secret_name
 from ecf_server.api import DevHooks, ServiceState, create_app
 from ecf_server.chat import FakeChat
+from ecf_server.checks import SecretUnavailableError
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
+from ecf_server.mail.fake import FakeSender
 from ecf_server.mail.imap import ImapSource
+from ecf_server.mail.smtp import Sender, SmtpSender
 from ecf_server.notify import Notifier, NullNotifier, host_notifier
 from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
@@ -84,6 +97,7 @@ WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
 TICK_ALERT_AFTER = 5  # failing ticks in a row (minutes) before a desktop System Error
 STOP_TIMEOUT = 20.0
+ALERT_MAIL_S = 10.0  # how often the alert-mail thread looks for due alert email
 EXIT_OK, EXIT_UNAVAILABLE, EXIT_CRASH = 0, 3, 70
 
 
@@ -95,6 +109,32 @@ class Options:
 
 def imap_factory(host: str, user: str, password: Callable[[], str]) -> MailSource:
     return ImapSource(host, user, password)
+
+
+def smtp_factory(host: str, port: int, user: str, password: Callable[[], str]) -> Sender:
+    return SmtpSender(host, port, user, password)
+
+
+def _dev_sender_factory() -> Callable[[str, int, str, Callable[[], str]], Sender]:
+    fake = FakeSender()  # one per dev service: what it would have sent, in memory only
+    return lambda _host, _port, _user, _password: fake
+
+
+def make_sender(conn: sqlite3.Connection, store: SecretStore,
+                factory: Callable[[str, int, str, Callable[[], str]], Sender],
+                address_id: str) -> Sender:  # fmt: skip
+    """An address's SMTP connection; its app password is read at each connect (V1.5)."""
+    a = conn.execute("SELECT email, smtp_host, smtp_port FROM addresses WHERE address_id = ?",
+                     (address_id,)).fetchone()  # fmt: skip
+    name = secret_name(address_id)
+
+    def password() -> str:
+        pw = store.get(name)
+        if pw is None:
+            raise SecretUnavailableError(f"no app password stored for {address_id}")
+        return pw
+
+    return factory(str(a["smtp_host"]), int(a["smtp_port"] or 465), str(a["email"]), password)
 
 
 class AlreadyRunningError(ServiceUnavailableError):
@@ -179,6 +219,7 @@ class Service:
         self.rounds = modelq.RoundSchedule(self.clock)
         # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
         self.in_check = mailbox_actions.run_in_check
+        self.settle_sends = send.settle_in_check  # settles open sends in each check (V1.5)
         self._ollama_log_at: float | None = None  # monotonic time of the last look (OD-266)
         self.throttle = self.state.throttle  # speeds across rounds, `ecf check`'s too (OD-243)
 
@@ -214,6 +255,20 @@ class Service:
             ok = False
         if ok:
             self.state.tick_failures, self.state.tick_error = 0, None
+            self._settle_upgrade()
+
+    def _settle_upgrade(self) -> None:
+        """A whole tick succeeded: an upgrade's rollback window closes (OD-377)."""
+        if self.state.db_path is None:
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                upgrade_state.settle(conn, self.clock)
+            finally:
+                conn.close()
+        except Exception as exc:  # retried next tick
+            log.error("upgrade.settle_failed", error_type=type(exc).__name__)
 
     def _tick_failed(self, event: str, exc: Exception) -> bool:
         """Log (a SQLite error's own text is safe: no mail content) and count; after
@@ -243,17 +298,23 @@ class Service:
                 if retention.due(conn, self.clock):  # once a day (§6.5)
                     retention.run(conn, self.clock)
                 alerts.dead_jobs(conn, self.clock, self.state.notifier)
+                alerts.email_sweep(conn, self.clock)  # sent by the alert-mail thread (V1.5)
+                alert_items.sweep(conn, self.clock)  # fraud and regulatory mail (V1.5)
+                alert_items.unverified_batch(conn, self.clock)  # hourly, `high` addresses
                 self._model_check(conn)
                 decide.sweep(conn, self.clock)
                 claude_queue.sweep(conn, self.clock)  # B and C: items a crash left short of it
                 fallback.tick(conn, self.clock)  # the local fallback's own gate (V1.4 step 8)
                 fallback.hand_off(conn, self.clock)  # items that waited too long for Claude
                 claude_review.remind(conn, self.clock, self.state.notifier)  # OD-115 (step 9)
+                send_limits.sweep(conn, self.clock, self.state.notifier)  # OD-059 (V1.5)
+                outbound_remind.remind(conn, self.clock, self.state.notifier)  # §9.8
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 self._ollama_log(conn)
                 model_watch.retirement_tick(conn, self.clock, self.state.notifier)  # §7.6
                 self._model_watch(conn)
+                self._export(conn)  # scheduled export, in its own thread (V1.5 step 8b)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
                 # mailbox open under the lease (mailbox_actions.run_in_check; V1.3 step 5b)
@@ -295,6 +356,13 @@ class Service:
         if model_watch.due(conn, self.clock):
             model_watch.start(self.state.connect, self.clock, self.state.notifier,
                               self.state.secrets, self.state.watch_http)  # fmt: skip
+
+    def _export(self, conn: sqlite3.Connection) -> None:
+        """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""
+        if self.state.db_path is not None and scheduled_export.due(conn, self.clock):
+            scheduled_export.start(self.state.connect, self.clock, self.state.notifier,
+                                   self.state.secrets, self.state.db_path.parent,
+                                   self.paths.install)  # fmt: skip
 
     def _model_check(self, conn: sqlite3.Connection) -> None:
         """Keep the local-model alert current once models are installed here (V1.3 step 1b); from
@@ -338,7 +406,7 @@ class Service:
 
     def _report_trip(self, crashes: int) -> None:
         """The breaker tripped: the service is about to exit, so nothing will send a queued post.
-        Tell the desktop, and Slack directly (best effort, §11.1)."""
+        Tell the desktop, and Slack and alert email directly (best effort, §11.1, §13.3)."""
         text = (f"ecf stopped after {crashes} crashes in 10 minutes and stays stopped."
                 " Run `ecf service start` after checking `ecf logs`.")  # fmt: skip
         if self.dev:
@@ -352,6 +420,9 @@ class Service:
             conn = db.connect(self.paths.db)
             try:
                 alerts.post_now(conn, store, alerts.title("system_error"), text)
+                alert_mail.send_now(conn, self.clock,
+                                    lambda c, aid: make_sender(c, store, smtp_factory, aid),
+                                    alerts.title("system_error"), text)  # fmt: skip
             finally:
                 conn.close()
         except Exception as exc:  # the service is stopping either way
@@ -490,6 +561,11 @@ class Service:
         os.umask(0o077)  # everything the service creates is private (logs, state, rotated files)
         _private_dir(self.paths.data_dir)
         configure_logging("service", log_file=self.paths.log)
+        if destroy.blocks_start(self.paths.root, self.paths.install):
+            log.info("service.destroyed", install=self.paths.install)
+            sys.stderr.write("ecf-server: this install is being destroyed; run `ecf destroy` again"
+                             " to finish\n")  # fmt: skip
+            return EXIT_OK  # exit 0 so launchd/systemd don't restart it
         try:
             lock = acquire_lock(self.paths)
         except AlreadyRunningError as exc:
@@ -533,13 +609,36 @@ class Service:
         # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets
+        self.state.request_stop = self.stop.set  # after `ecf destroy`'s service part (V1.5)
         self.state.mail_factory = imap_factory
+        # dev mode records sends in memory and never contacts an SMTP server
+        self.state.sender_factory = _dev_sender_factory() if self.dev else smtp_factory
+        send_actions.sender_for = self._sender_for
         # the local classifier (V1.3 step 3); a dev service runs it only when asked, so tests that
         # use one never call the Ollama on the developer's computer
         if not self.dev or os.environ.get("ECF_DEV_MODEL") == "1":
             self.state.model_work = pipeline.work
             self.state.shadow_work = pipeline.shadow
         return applied
+
+    def _sender_for(self, conn: sqlite3.Connection, address_id: str) -> Sender:
+        """The address's SMTP connection; its app password is read at each connect (V1.5)."""
+        return make_sender(conn, self.state.store(), self.state.sender_factory or smtp_factory,
+                           address_id)  # fmt: skip
+
+    def _alert_mail(self) -> None:
+        """Alert email (alert_mail.py), in its own thread so the timer never waits on SMTP."""
+        while not self.stop.wait(ALERT_MAIL_S):
+            if self.state.db_path is None:
+                continue
+            try:
+                conn = db.connect(self.state.db_path)
+                try:
+                    alert_mail.drain(conn, self.clock, self.state.notifier, self._sender_for)
+                finally:
+                    conn.close()
+            except Exception as exc:  # never stops the thread; retried next time
+                log.error("alert_mail.drain_failed", error_type=type(exc).__name__)
 
     def _api_server(self) -> uvicorn.Server:
         return uvicorn.Server(
@@ -570,10 +669,12 @@ class Service:
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread
 
-    def _workers(self) -> tuple[threading.Thread, threading.Thread]:
-        """The checks worker and the model worker (V1.3 step 2a)."""
+    def _workers(self) -> tuple[threading.Thread, threading.Thread, threading.Thread]:
+        """The checks worker and the model worker (V1.3 step 2a), and alert email (V1.5)."""
         return (threading.Thread(target=self._checks, name="checks", daemon=True),
-                threading.Thread(target=self._models, name="models", daemon=True))  # fmt: skip
+                threading.Thread(target=self._models, name="models", daemon=True),
+                threading.Thread(target=self._alert_mail, name="alert-mail",
+                                 daemon=True))  # fmt: skip
 
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
@@ -621,7 +722,7 @@ class Service:
         )
         receiver, tel, tsock = self._receiver()
         timer = threading.Thread(target=self._timer, name="timer", daemon=True)
-        worker, model_worker = self._workers()
+        worker, model_worker, mailer = self._workers()
         slack, slack_thread = self._slack_runtime()
         self._last_tick_mono = self.clock.monotonic()  # the watchdog counts from here, not __init__
         self._last_tick_wall = self.clock.now()
@@ -630,8 +731,8 @@ class Service:
         web.start()
         tel.start()
         timer.start()
-        worker.start()
-        model_worker.start()
+        for t in (worker, model_worker, mailer):
+            t.start()
         if not self.dev:  # dev mode has no Slack; its chat is the recording fake
             slack_thread.start()
         self.work.set()  # check anything already due at start
@@ -640,6 +741,7 @@ class Service:
         server.should_exit = True
         receiver.should_exit = True
         self._join(web, timer, worker, slack_thread)
+        mailer.join(STOP_TIMEOUT)
         tel.join(STOP_TIMEOUT)
         tsock.close()
         # only a stop you asked for disarms the dead-man's switch (OD-222)

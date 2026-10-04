@@ -14,15 +14,20 @@ from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__, watch
+from ecf import __version__, service_unit, watch
 from ecf.cli_admin import make_commands as make_admin_commands
+from ecf.cli_destroy import make_commands as make_destroy_commands
+from ecf.cli_export import make_commands as make_export_commands
+from ecf.cli_import import make_commands as make_import_commands
 from ecf.cli_init import make_commands as make_init_commands
 from ecf.cli_items import make_commands as make_item_commands
 from ecf.cli_models import make_models_app
+from ecf.cli_outbound import make_commands as make_outbound_commands
 from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
+from ecf.cli_upgrade import make_commands as make_upgrade_commands
 from ecf.client import LocalClient
-from ecf.doctor import Level, run_checks
+from ecf.doctor import Level, outbound_line, run_checks
 from ecf.errors import EcfError, InvalidInputError
 from ecf.ids import SLUG_PATTERN
 from ecf.log import configure_logging
@@ -76,6 +81,11 @@ def _paths() -> Paths:
 app.add_typer(make_slack_app(_paths), name="slack")
 app.add_typer(make_item_commands(app, _paths), name="item")
 make_admin_commands(app, _paths)
+make_outbound_commands(app, _paths)
+make_export_commands(app, _paths)
+make_import_commands(app, _paths)
+make_upgrade_commands(app, _paths)
+make_destroy_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
@@ -90,13 +100,18 @@ def alerts_show() -> None:
     typer.echo(f"default: {', '.join(r['default'])} (desktop notifications: {r['desktop']})")
     for cls, routes in r["classes"].items():
         typer.echo(f"{cls:<9} {', '.join(routes) or 'desktop only'}")
+    mail = r.get("email")
+    typer.echo("email:    off (ecf alerts email set --from <address> --to <destination>)"
+               if mail is None else
+               f"email:    from {mail['from_email']} ({mail['from']}) to {mail['to']}")  # fmt: skip
 
 
 @alerts_app.command("set")
 def alerts_set(
-    to: Annotated[str, typer.Option("--to", help="slack (email arrives in V1.5).")],
+    to: Annotated[str, typer.Option("--to", help="slack, email or slack,email.")],
     cls: Annotated[
-        str | None, typer.Argument(help="mail, system or operator (all when left out).")
+        str | None,
+        typer.Argument(help="mail, system, operator or slack (all when left out)."),
     ] = None,
 ) -> None:
     """Change where alerts go. (step-up)"""
@@ -107,13 +122,42 @@ def alerts_set(
     typer.echo("changed; a Security Notice says so in Slack")
 
 
+alerts_email_app = typer.Typer(no_args_is_help=True, help="Alert email.")
+alerts_app.add_typer(alerts_email_app, name="email")
+
+
+@alerts_email_app.command("set")
+def alerts_email_set(
+    frm: Annotated[str, typer.Option("--from", help="The watched address whose login sends.")],
+    to: Annotated[str, typer.Option("--to", help="Where alerts go; not a watched address.")],
+) -> None:
+    """Send alerts by email, then a test. (step-up)"""
+    body: dict[str, Any] = {"from": frm, "to": to}
+    with LocalClient(_paths()) as c:
+        r = with_step_up(c, lambda n: c.request("POST", "/v1/alerts/email", body | {"nonce_id": n}),
+                         echo=typer.echo)  # fmt: skip
+    mail = r["email"]
+    typer.echo(f"alert email on: from {mail['from_email']} to {mail['to']}; a test email is on"
+               f" its way. Routes: {', '.join(r['default'])} (change: ecf alerts set)")  # fmt: skip
+
+
+@alerts_email_app.command("off")
+def alerts_email_off() -> None:
+    """Stop alert email; email leaves every route. (step-up)"""
+    with LocalClient(_paths()) as c:
+        r = with_step_up(c, lambda n: c.request("POST", "/v1/alerts/email/off", {"nonce_id": n}),
+                         echo=typer.echo)  # fmt: skip
+    typer.echo(f"alert email off; routes: {', '.join(r['default'])}")
+
+
 @alerts_app.command("test")
 def alerts_test() -> None:
     """Send a test alert on every route."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/alerts/test")
-    where = [("slack (queued: it posts within a minute)" if w == "slack" else w)
-             for w in r["sent"]]  # fmt: skip
+    queued = {"slack": "slack (queued: it posts within a minute)",
+              "email": "email (queued: it goes within a minute)"}  # fmt: skip
+    where = [queued.get(str(w), str(w)) for w in r["sent"]]
     typer.echo(f"sent to: {', '.join(where) or 'nowhere (desktop off, no Slack)'}")
 
 
@@ -149,7 +193,7 @@ def status() -> None:
     )
     typer.echo(
         f"secrets:   {ss.get('backend') or 'none usable'}"
-        + (" (Python changed: re-grant needed)" if ss.get("interpreter_changed") else "")
+        + (" (Python changed: run `ecf service regrant`)" if ss.get("interpreter_changed") else "")
     )
     sl = st.get("slack", {})
     if not sl.get("installed"):
@@ -170,6 +214,7 @@ def status() -> None:
         if a["paused"]:
             line += ", PAUSED"
         typer.echo(line)
+        typer.echo(f"{'':<16} {outbound_line(a)}")
         if a["last_error"] and a["last_status"] in CHECK_FAILED:
             typer.echo(f"{'':<16} last error: {a['last_error']}")
     for alert in st.get("alerts", []):
@@ -488,6 +533,21 @@ def watch_command() -> None:
     raise typer.Exit(code)
 
 
+@service_app.command("regrant")
+def service_regrant() -> None:
+    """After a Python change: let ecf read its Keychain items again (macOS; choose Always Allow
+    at each dialog). Stops and restarts the service."""
+    paths = _paths()
+    m = watch.marker(paths)
+    if m and m["alive"]:
+        typer.echo(f"`ecf watch` is running the service (pid {m['pid']}); stop it first", err=True)
+        raise typer.Exit(3)
+    if sys.platform == "darwin":
+        _stopping_on_purpose()
+    code = service_unit.regrant(paths, manager_for(paths), echo=typer.echo)
+    raise typer.Exit(code)
+
+
 @service_app.command("stop")
 def service_stop() -> None:
     """Stop the service until the next login."""
@@ -548,12 +608,21 @@ def address_add(
     address_id: Annotated[
         str | None, typer.Option("--id", help="Short name (default: from the local part).")
     ] = None,
+    smtp_host: Annotated[
+        str | None,
+        typer.Option("--smtp-host", help="SMTP server for sending (default: imap. → smtp.)."),
+    ] = None,
+    smtp_port: Annotated[
+        int | None, typer.Option("--smtp-port", help="465 (TLS, default) or 587 (STARTTLS).")
+    ] = None,
 ) -> None:
-    """Add a mailbox: checks the app password by logging in, then stores it in the OS secret
-    store. It starts in shadow (watch only) with outbound off. Needs a real terminal."""
+    """Add a mailbox: checks the app password by logging in (IMAP, and SMTP without sending),
+    then stores it in the OS secret store. It starts in shadow (watch only) with outbound off.
+    Needs a real terminal."""
     require_terminal()
     with LocalClient(_paths()) as c:
-        add_address(c, email, imap_host, sensitivity, preset, address_id)
+        add_address(c, email, imap_host, sensitivity, preset, address_id,
+                    smtp_host=smtp_host, smtp_port=smtp_port)  # fmt: skip
 
 
 PRESET_NOTES = {
@@ -572,6 +641,9 @@ def add_address(
     sensitivity: str | None,
     preset: str | None,
     address_id: str | None,
+    *,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
 ) -> dict[str, Any]:
     """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
     current = c.get("/v1/addresses")
@@ -590,6 +662,10 @@ def add_address(
     }
     if address_id:
         body["address_id"] = address_id
+    if smtp_host:
+        body["smtp_host"] = smtp_host
+    if smtp_port is not None:
+        body["smtp_port"] = smtp_port
     if not current["org_domains"]:
         domain = email.rsplit("@", 1)[-1].lower()
         typer.echo(
@@ -635,6 +711,10 @@ def _echo_probe(a: dict[str, Any]) -> None:
         f"keywords {'yes' if p['custom_keywords'] else 'no'}; "
         f"size limit {_size_note(size, p.get('max_size_source'))}"
     )
+    smtp = p.get("smtp")
+    if smtp and smtp.get("ok"):
+        limit = f", size limit {_mb(smtp['size'])}" if smtp.get("size") else ""
+        typer.echo(f"smtp: {smtp['host']}:{smtp['port']} login ok (nothing sent){limit}")
     for w in p["warnings"]:
         typer.echo(f"  note: {w}")
 
@@ -662,10 +742,50 @@ def address_set(
     app_password: Annotated[
         bool, typer.Option("--app-password", help="Enter a new app password (hidden prompt).")
     ] = False,
+    smtp_host: Annotated[
+        str | None,
+        typer.Option("--smtp-host", help="Send through this SMTP server instead (step-up)."),
+    ] = None,
+    smtp_port: Annotated[
+        int, typer.Option("--smtp-port", help="465 (TLS) or 587 (STARTTLS), with --smtp-host.")
+    ] = 465,
+    max_sends_per_hour: Annotated[
+        int | None, typer.Option("--max-sends-per-hour", help="Send limit per hour (25). (step-up)")
+    ] = None,
+    max_sends_per_day: Annotated[
+        int | None, typer.Option("--max-sends-per-day", help="Send limit per day (250). (step-up)")
+    ] = None,
 ) -> None:
-    """Change a mailbox's settings. Now: `--app-password` (re-enter or rotate)."""
+    """Change a mailbox's settings: `--app-password` (re-enter or rotate), or `--smtp-host`
+    (the server the app password is sent to; step-up and a Security Notice). (step-up)"""
+    if app_password and smtp_host:
+        raise typer.BadParameter("set --app-password and --smtp-host separately")
+    asked = (("max_sends_per_hour", max_sends_per_hour), ("max_sends_per_day", max_sends_per_day))
+    limits = {k: v for k, v in asked if v is not None}
+    if limits:
+        if app_password or smtp_host:
+            raise typer.BadParameter("set the send limits on their own")
+        with LocalClient(_paths()) as c:
+            path = f"/v1/addresses/{address}"
+            r = with_step_up(c, lambda n: c.request("POST", path, limits | {"stepup_nonce": n}),
+                             echo=typer.echo)  # fmt: skip
+        lim = r["limits"]
+        typer.echo(f"{r['address_id']}: at most {lim['max_sends_per_hour']} sends an hour,"
+                   f" {lim['max_sends_per_day']} a day")  # fmt: skip
+        return
+    if smtp_host:
+        with LocalClient(_paths()) as c:
+            body: dict[str, object] = {"smtp_host": smtp_host, "smtp_port": smtp_port}
+            path = f"/v1/addresses/{address}"
+            a = with_step_up(c, lambda n: c.request("POST", path, body | {"stepup_nonce": n}),
+                             echo=typer.echo)  # fmt: skip
+        typer.echo(f"{a['email']} now sends through {a['smtp_host']}:{a['smtp_port']}")
+        _echo_probe(a)
+        return
     if not app_password:
-        raise typer.BadParameter("nothing to set; use --app-password")
+        raise typer.BadParameter(
+            "nothing to set; use --app-password, --smtp-host or --max-sends-per-hour|-day"
+        )
     require_terminal()
     with LocalClient(_paths()) as c:
         pw = hidden(f"New app password for {address} (hidden): ")

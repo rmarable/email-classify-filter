@@ -54,6 +54,9 @@ OVERRIDES: dict[str, tuple[str, str, str]] = {  # name -> (locked version, licen
     # 2026-09-28) are the zlib text and the BSD-3-Clause text respectively.
     "dkimpy": ("1.1.8", "Zlib", "dist-info licenses/LICENSE, 2026-09-28"),
     "imapclient": ("4.1.0", "BSD-3-Clause", "dist-info licenses/COPYING, 2026-09-28"),
+    # Metadata has no license field; the wheel's license file is the MIT text (V1.5, read
+    # 2026-10-03; the repo's LICENSE is MIT too, checked 2026-10-02)
+    "pyrage": ("1.4.0", "MIT", "dist-info licenses/LICENSE, 2026-10-03"),
     # Via mcp 2.2.0 (V1.4), never installed on macOS or Linux; PyPI metadata, 2026-10-02
     "httpx2-jsfetch": ("1.0", "BSD-3-Clause", "PyPI License-Expression (emscripten only)"),
     "pywin32": ("312", "PSF-2.0", "PyPI License 'PSF' and PSF classifier (Windows only)"),

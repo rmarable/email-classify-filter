@@ -64,12 +64,14 @@ def test_slack_delivery_failed_never_goes_through_slack(
     assert alerts.routes(conn, "slack") == []
 
 
-def test_routes_refuse_email_until_v15_and_slack_for_slack_health() -> None:
+def test_routes_refuse_email_while_off_and_slack_for_slack_health() -> None:
     assert alerts.validate(None, ["Slack", "slack"]) == ["slack"]
-    with pytest.raises(InvalidInputError, match=r"V1\.5"):
+    with pytest.raises(InvalidInputError, match="alert email is off"):
         alerts.validate(None, ["slack", "email"])
+    assert alerts.validate(None, ["email", "slack"], email_on=True) == ["email", "slack"]
     with pytest.raises(InvalidInputError, match="desktop"):
         alerts.validate("slack", ["slack"])
+    assert alerts.validate("slack", ["email"], email_on=True) == ["email"]
     with pytest.raises(InvalidInputError, match="at least one"):
         alerts.validate("mail", [" "])
     with pytest.raises(InvalidInputError, match="classes"):

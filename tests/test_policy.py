@@ -127,10 +127,10 @@ def _ctx(**kw: Any) -> Context:
                       "deadline_mentioned": False, "sender_type": "vendor",
                       "fraud_risk": "none"} | kw.pop("classification", {})  # fmt: skip
     facts = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
-             "bulk_corroborates": True} | kw.pop("facts", {})  # fmt: skip
+             "bulk_corroborates": True, "from_count": 1} | kw.pop("facts", {})  # fmt: skip
     return Context(classification, facts, kw.pop("sensitivity", "standard"),
                    kw.pop("rules", STARTER), kw.pop("action_policy", {}), FOLDERS,
-                   kw.pop("confirmed_category", None))  # fmt: skip
+                   kw.pop("confirmed_category", None), **kw)  # fmt: skip
 
 
 def _names(p: policy.Plan) -> list[tuple[str, str | None, str]]:
@@ -213,7 +213,61 @@ def test_actor_proposals_get_the_same_checks(name: str, target: str | None, expe
 
 
 def test_sends_are_rejected_for_high_risk_items() -> None:
-    ctx = _ctx(classification={"payment_related": True})
+    ctx = _ctx(classification={"payment_related": True}, templates=frozenset({"ack"}),
+               outbound=True)  # fmt: skip
     p = policy.plan(ctx, LABELS)
     got = policy.proposal(ctx, p, "reply_template", "ack", LABELS)
     assert isinstance(got, Dropped) and "rejected" in got.why
+
+
+def _send_ctx(**kw: Any) -> Context:
+    facts = {"sender_seen_before": True, "bulk_corroborates": False} | kw.pop("facts", {})
+    return _ctx(classification={"category": "invoice", "requires_reply": True}, facts=facts,
+                templates=frozenset({"ack"}), forwards=frozenset({"ap_lead"}),
+                **({"outbound": True} | kw))  # fmt: skip
+
+
+@pytest.mark.parametrize(("name", "target"), [("reply_template", "ack"),
+                                               ("forward_internal", "ap_lead")])  # fmt: skip
+def test_a_valid_send_needs_approval(name: str, target: str) -> None:
+    ctx = _send_ctx()
+    got = policy.proposal(ctx, policy.plan(ctx, LABELS), name, target, LABELS)
+    assert isinstance(got, Planned) and (got.target, got.mode) == (target, "approve")
+
+
+def test_sends_on_high_addresses_are_allowed_for_claude_not_the_local_pair() -> None:
+    claude = _send_ctx(sensitivity="high", local_pair=False)
+    got = policy.proposal(claude, policy.plan(claude, LABELS), "reply_template", "ack", LABELS)
+    assert isinstance(got, Planned)
+    local = _send_ctx(sensitivity="high")
+    got = policy.proposal(local, policy.plan(local, LABELS), "reply_template", "ack", LABELS)
+    assert isinstance(got, Dropped) and "local_high_risk" in got.why
+
+
+@pytest.mark.parametrize(
+    ("name", "target", "facts", "why"),
+    [
+        ("reply_template", "nope", {}, "isn't an enabled template"),
+        ("forward_internal", "nope", {}, "allow-list"),
+        ("reply_template", "ack", {"auth_result": "none"}, "authenticated"),
+        ("reply_template", "ack", {"from_count": 2}, "one From"),
+        ("draft_reply", None, {"from_count": 0}, "one From"),
+        ("forward_internal", "ap_lead", {"bulk_signal": True}, "bulk"),
+        ("forward_internal", "ap_lead", {"content_unscanned": True}, "scanned"),
+        ("reply_template", "ack", {"triggers": {"fraud_weak": ["x"]}}, "fraud signal"),
+    ],
+)  # fmt: skip
+def test_send_guardrails(name: str, target: str | None, facts: dict[str, Any], why: str) -> None:
+    ctx = _send_ctx(facts=facts, local_pair=False)
+    got = policy.proposal(ctx, policy.plan(ctx, LABELS), name, target, LABELS)
+    assert isinstance(got, Dropped) and why in got.why, got
+
+
+def test_outbound_off_suppresses_and_flags() -> None:
+    ctx = _send_ctx(outbound=False)
+    p = policy.plan(ctx, LABELS)
+    got = policy.proposal(ctx, p, "reply_template", "ack", LABELS)
+    assert isinstance(got, Dropped) and "suppressed" in got.why
+    assert p.suppressed == "reply_template" and ("flag", None, "auto") in _names(p)
+    draft = policy.proposal(ctx, p, "draft_reply", None, LABELS)  # drafts never wait for it
+    assert isinstance(draft, Planned) and draft.mode == "approve"

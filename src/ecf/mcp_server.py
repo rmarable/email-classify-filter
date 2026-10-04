@@ -200,7 +200,7 @@ async def _record_classification(svc: Service, args: dict[str, Any],
 
 async def _propose_action(svc: Service, args: dict[str, Any], started: float) -> dict[str, Any]:
     body = _claim_body(svc, args)
-    for key in ("action", "target", "reason", "question"):
+    for key in ("action", "target", "reason", "question", "text"):
         if key in args:
             body[key] = args[key]
     return cast(dict[str, Any], await svc.call("POST", _claim_path(args, "proposal"), started,
@@ -264,15 +264,21 @@ TOOLS: tuple[ToolDef, ...] = (
         "propose_action", "Propose an action",
         "Propose one action for a claimed item, from the actions get_message allowed. ecf's "
         "rules and policy decide what happens; the person approves in team chat. Use "
-        "needs_clarification with a `question` to ask the person something. Returns accepted, "
-        "or the errors to fix (3 tries per claim).",
+        "needs_clarification with a `question` to ask the person something, and draft_reply "
+        "with the reply in `text` (a draft is never sent). Returns accepted, or the errors to "
+        "fix (3 tries per claim).",
         {"id": ID, "claim_token": CLAIM,
          "action": {"type": "string", "description": "One of the actions get_message allowed."},
-         "target": {"type": "string", "description": "The label or folder, for label or move."},
+         "target": {"type": "string",
+                    "description": "The label or folder for label or move, the template id for "
+                                   "reply_template, the colleague's id for forward_internal."},
          "reason": {"type": "string", "maxLength": 300,
                     "description": "Why, in one or two sentences (300 characters at most)."},
          "question": {"type": "string",
-                      "description": "Only with needs_clarification: the question to ask."}},
+                      "description": "Only with needs_clarification: the question to ask."},
+         "text": {"type": "string", "maxLength": 4000,
+                  "description": "Only with draft_reply: the reply, plain text, 4,000 characters "
+                                 "at most; it commits to no payment, bank detail, price or date."}},
         ("id", "claim_token", "action", "reason"),
         read_only=False, work_only=True, handler=_propose_action, agent_tool=True,
     ),

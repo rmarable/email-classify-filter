@@ -4,7 +4,9 @@ Every implementation passes the same contract tests (tests/mail_contract.py). Re
 `\\Seen` (fetches use PEEK). Adapters hide provider quirks: `uids_after` never returns a UID at
 or below the one asked about, even though IMAP's `UID SEARCH UID n:*` can (§5.1). Writes cover
 keywords and `\\Flagged` (label, flag and their undo; OD-189), and from V1.3 `\\Seen`, moving to a
-folder and back, and copying (the hide actions and `label_folder`); sending arrives in V1.5.
+folder and back, and copying (the hide actions and `label_folder`), and from V1.5 appending to a
+folder (drafts, sent copies) and deleting one message there (undoing a draft). Sending is its own
+port, `Sender` (ecf_server/mail/smtp.py).
 """
 
 from __future__ import annotations
@@ -127,6 +129,16 @@ class MailSource(Protocol):
     def fetch_in(self, folder: str, uid: int) -> bytes | None: ...
     def move_back(self, folder: str, uid: int) -> None:
         """Move a message from `folder` back to INBOX (undo)."""
+        ...
+
+    def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
+        """Store a message in `folder` (IMAP APPEND), e.g. a draft with `\\Draft` or a sent copy
+        with `\\Seen`. Find it again by Message-ID with `find_in`."""
+        ...
+
+    def delete_in(self, folder: str, uid: int) -> None:
+        """Delete one message from `folder`: `\\Deleted` then UID EXPUNGE of just that UID
+        (UIDPLUS); refused without UIDPLUS, since a plain EXPUNGE could remove other mail."""
         ...
 
     def close(self) -> None: ...

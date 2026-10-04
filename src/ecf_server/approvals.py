@@ -33,6 +33,7 @@ from ecf.errors import ConflictError, EcfError, GrantInvalidError, InvalidInputE
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.status import Status
 from ecf_server import (
+    alerts,
     cards,
     inbox,
     items,
@@ -78,8 +79,11 @@ class Grant:
 
 
 def describe(actions: list[Planned]) -> str:
+    """What the actions do, naming a draft's or send's recipient (§9.5, §9.6)."""
+
     def one(a: Planned) -> str:
         t = a.target or ""
+        to = str((a.payload or {}).get("to") or "")
         return {
             "label": f"label {t}",
             "flag": "flag",
@@ -87,9 +91,9 @@ def describe(actions: list[Planned]) -> str:
             "archive": "archive email",
             "move": f"move to {t}",
             "junk": "move to Junk",
-            "draft_reply": "save a draft reply",
-            "reply_template": f"send template '{t}'",
-            "forward_internal": f"forward to {t}",
+            "draft_reply": f"save a draft reply to {to}" if to else "save a draft reply",
+            "reply_template": f"send template '{t}' to {to}" if to else f"send template '{t}'",
+            "forward_internal": f"forward to {to or t}",
         }.get(a.name, a.name)
 
     return " and ".join(one(a) for a in actions)
@@ -114,7 +118,7 @@ def is_send(actions: list[Planned]) -> bool:
 
 def _actions(item: sqlite3.Row) -> list[Planned]:
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
-    return [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]
+    return [Planned.from_json(a) for a in p.get("actions", [])]
 
 
 def queued_answer(item: sqlite3.Row) -> bool:
@@ -264,6 +268,16 @@ def _reoffer(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actor: s
     return _item(conn, sid)
 
 
+def reissue_after_import(conn: sqlite3.Connection, clock: Clock, sid: str) -> str:
+    """An imported item waiting for a decision gets a fresh grant here (grants never travel in a
+    bundle, OD-358); `post_held_cards` posts its card once Slack routes exist again."""
+    item = _item(conn, sid)
+    grant = _issue(conn, clock, item, _actions(item))
+    data = {"grant_id": grant, "why": "import"}
+    _audit(conn, clock, item, "approval.reoffered", "service", data, tx=True)
+    return grant
+
+
 def _queue_for_computer(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -279,9 +293,10 @@ def _queue_for_computer(
         _audit(conn, clock, item, "approval.queued", actor, {"grant_id": g.grant_id}, tx=True)
     waiting = queued_count(conn)
     short = item["stable_id"][: cards.SHORT_ID]
-    notifier.notify(f"[ecf-alert] Operator Input Needed: approval waiting ({item['address_id']})",
-                    f"Confirm with Touch ID or your password: ecf approve {short}"
-                    f" ({waiting} waiting)")  # fmt: skip
+    head = f"[ecf-alert] Operator Input Needed: approval waiting ({item['address_id']})"
+    text = f"Confirm with Touch ID or your password: ecf approve {short} ({waiting} waiting)"
+    notifier.notify(head, text)
+    alerts.email(conn, clock, "operator_input", head, text)
     _edit(conn, clock, item, f"Queued for your computer ({waiting} waiting)",
           [Button(REJECT, "Reject", g.grant_id)])  # fmt: skip
     return {"status": Status.AWAITING_STEPUP.value, "waiting": waiting}
@@ -426,11 +441,17 @@ def advance_delays(conn: sqlite3.Connection, clock: Clock, awake_s: float, *, wo
 def _announce_delay(
     conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, grant_id: str
 ) -> None:
-    row = conn.execute("SELECT remaining_s FROM delays WHERE stable_id = ?",
+    row = conn.execute("SELECT remaining_s, announced_at FROM delays WHERE stable_id = ?",
                        (item["stable_id"],)).fetchone()  # fmt: skip
     minutes = max(1, round((row["remaining_s"] if row else SEND_DELAY_S) / 60))
     _edit(conn, clock, item, f"Sending in {minutes} minute(s) unless you cancel",
           [Button(CANCEL, "Cancel", item["stable_id"], "danger")])  # fmt: skip
+    if row is not None and row["announced_at"] is None:  # emailed once, when the delay starts
+        aid, short = item["address_id"], item["stable_id"][: cards.SHORT_ID]
+        alerts.email(conn, clock, "operator_input",
+                     alerts.title("operator_input", f"send scheduled in 10 minutes ({aid})"),
+                     f"{aid}: an approved send (item {short}) goes out in {minutes} minute(s)."
+                     f" Cancel it: ecf cancel {short}, or Cancel in Slack.")  # fmt: skip
     with write_tx(conn):
         conn.execute("UPDATE delays SET announced_at = ? WHERE stable_id = ?",
                      (to_ts(clock.now()), item["stable_id"]))  # fmt: skip
@@ -507,15 +528,12 @@ def requeue(
     elif status not in (Status.FAILED, Status.FAILED_UNKNOWN):
         raise ConflictError(f"this email is {status}: nothing to requeue", current=str(status))
     actions = _actions(item)
-    ran = conn.execute(
-        "SELECT 1 FROM grants WHERE stable_id = ? AND status = 'consumed' AND action_hash = ?",
-        (sid, action_hash(sid, item["content_hash"], actions)),
-    ).fetchone()
-    if is_send(actions) and (status is Status.FAILED_UNKNOWN or ran):
+    if is_send(actions) and (status is not Status.FAILED or _may_have_gone(conn, sid)):
         raise ConflictError(
-            "this send may already have gone out; check the Sent folder, then close it with"
-            " `ecf item resolve` (a send is never retried unchecked)"
-        )  # until V1.5 reconciles against Sent (§6.2)
+            "this send may already have gone out; ecf checks the Sent folder on the next checks"
+            " where the provider keeps sent mail, else check it yourself and close it with"
+            " `ecf item resolve` (a send is retried only once it surely failed; OD-322)"
+        )
     if is_send(actions):
         stepup.consume(conn, clock, "item_requeue", {"stable_id": sid}, nonce)
     _void(conn, sid)
@@ -527,6 +545,19 @@ def requeue(
             (grant_id, sid, action_hash(sid, item["content_hash"], actions), item["content_hash"],
              to_ts(clock.now() + TTL_SEND)),
         )  # fmt: skip
+    if is_send(actions) and _sensitivity(conn, item) == "high":  # the delay again (OD-329)
+        items.transition(conn, clock, sid, Status.DELAYED,
+                         TransitionContext(requeue=True, send_on_high=True), actor=actor,
+                         expected=status)  # fmt: skip
+        with write_tx(conn):
+            conn.execute("INSERT INTO delays (stable_id, grant_id, remaining_s, created_at)"
+                         " VALUES (?, ?, ?, ?) ON CONFLICT (stable_id) DO UPDATE SET"
+                         " grant_id = excluded.grant_id, remaining_s = excluded.remaining_s,"
+                         " created_at = excluded.created_at, announced_at = NULL",
+                         (sid, grant_id, SEND_DELAY_S, to_ts(clock.now())))  # fmt: skip
+        _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
+        _announce_delay(conn, clock, _item(conn, sid), grant_id)
+        return {"status": Status.DELAYED.value}
     items.transition(conn, clock, sid, Status.EXECUTING, TransitionContext(requeue=True),
                      actor=actor, expected=status)  # fmt: skip
     jobs.enqueue(conn, clock, jobs.Queue.ACTIONS, AddressId(item["address_id"]),
@@ -535,6 +566,19 @@ def requeue(
     jobs.make_due(conn, clock, item["address_id"])
     _audit(conn, clock, item, "item.requeued", actor, {"grant_id": grant_id}, tx=True)
     return {"status": Status.EXECUTING.value}
+
+
+def _may_have_gone(conn: sqlite3.Connection, sid: str) -> bool:
+    """A send of this item that went or may have gone: `sent` or `unknown`, or a used grant with
+    no `sent` row saying otherwise (a crash before the record; V1.2 review)."""
+    if conn.execute("SELECT 1 FROM sent WHERE stable_id = ? AND status IN ('sent', 'unknown')",
+                    (sid,)).fetchone():  # fmt: skip
+        return True
+    used = conn.execute("SELECT grant_id FROM grants WHERE stable_id = ? AND status = 'consumed'",
+                        (sid,)).fetchall()  # fmt: skip
+    return any(conn.execute("SELECT 1 FROM sent WHERE grant_id = ? AND status IN ('failed',"
+                            " 'pending')", (g["grant_id"],)).fetchone() is None
+               for g in used)  # fmt: skip
 
 
 # ---- grants -------------------------------------------------------------------------------------
@@ -595,7 +639,7 @@ def _card(
     base = cards.item_card(item, mention=member)
     verb = describe(actions)
     fields = (("Action", verb), *base.fields)
-    card = Card(title or f"Approve? {verb}", fields=fields,
+    card = Card(title or f"Approve? {verb}", fields=fields, text=_draft_text(actions),
                 buttons=(Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),
                          Button(REJECT, "Reject", grant_id),
                          Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])),
@@ -603,6 +647,15 @@ def _card(
                 mention=member)  # fmt: skip
     slack_out.enqueue_post(conn, clock, key=f"item:{item['stable_id']}", route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
+
+
+def _draft_text(actions: list[Planned]) -> str:
+    """A proposed draft in full, labelled as model output, links not clickable (OD-317)."""
+    draft = next((a for a in actions if a.name == "draft_reply" and a.payload), None)
+    if draft is None or draft.payload is None:
+        return ""
+    return ("Draft written by ecf's model (it can be wrong; it is saved, never sent):\n"
+            + cards.defang(str(draft.payload.get("text") or "")))  # fmt: skip
 
 
 CARDS_PER_TICK = 20

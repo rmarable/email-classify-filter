@@ -85,6 +85,9 @@ class Conn:
     def copy(self, uids: Sequence[int], folder: str) -> None:
         self._c.copy(list(uids), folder)
 
+    def append(self, folder: str, raw: bytes, flags: Sequence[str]) -> None:
+        self._c.append(folder, raw, flags=list(flags))
+
     def uid_expunge(self, uids: Sequence[int]) -> None:
         """RFC 4315 UID EXPUNGE: only these UIDs (needs UIDPLUS)."""
         self._c.uid_expunge(list(uids))

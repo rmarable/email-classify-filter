@@ -197,9 +197,17 @@ def test_doctor_reports_addresses_and_alerts() -> None:
         ],
         "alerts": [{"title": "Mailbox Login Rejected", "detail": "ap: rejected 3 times"}],
     }
+    st["addresses"][0] |= {"outbound": False, "suppressed": 3}
+    st["addresses"][1] |= {"outbound": True}
     checks = doctor.judge_addresses(st)
-    assert [c.level for c in checks] == [Level.FAIL, Level.OK, Level.WARN, Level.FAIL]
+    ok = Level.OK
+    assert [c.level for c in checks] == [Level.FAIL, ok, ok, ok, Level.WARN, ok, Level.FAIL]
     assert "--app-password" in checks[0].fix
+    assert [c.detail for c in checks if c.name.startswith("outbound")] == [
+        "outbound: off (3 suppressed)",
+        "outbound: on",
+        "outbound: off (0 suppressed)",
+    ]
 
 
 def test_doctor_dns_check() -> None:

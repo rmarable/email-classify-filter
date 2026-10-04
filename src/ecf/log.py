@@ -67,6 +67,9 @@ CONTENT_KEYS = frozenset(
         "message",
         "attachments",
         "credentials",
+        # the backup key text, shown once by `ecf export keys rotate` (V1.5 step 8a)
+        "key_text",
+        "backup_key",
     }
 )
 # Any key containing one of these is redacted too ("bot_token", "client_secret", ...).

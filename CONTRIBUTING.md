@@ -101,8 +101,9 @@ uv build                                        # wheel + sdist
 
 - **Dev:** `uv run ecf-server dev` runs a throwaway service (a `/tmp` folder, a fake clock you move
   with `POST /v1/dev/clock?advance=<seconds>`, a fake chat, secrets in memory only). It prints the
-  `ECF_SOCKET=...` line that points the CLI at it. The mail containers (Dovecot, Postfix +
-  OpenDMARC) join in V1.1.
+  `ECF_SOCKET=...` line that points the CLI at it. The IMAP tests use a Dovecot container (V1.1);
+  the SMTP tests use an in-process server, `aiosmtpd`, so no mail container is needed for them
+  (OD-308).
 - **Test install:** a real local install with `--install test` on a test Slack workspace and a
   test mailbox that receives only synthetic mail (from V1.2).
 - **Prod:** your real install; it only ever receives tagged releases.
@@ -138,12 +139,12 @@ This table is owned here (SPEC §17.5) and generated from `uv.lock` with
 `uv run python scripts/check_licenses.py --markdown`. The allow-list is MIT, MIT-0, BSD, ISC,
 Apache-2.0, zlib, MIT-CMU and PSF-2.0; MPL-2.0 only for development tools, plus the named runtime
 exception for unmodified `certifi` (OD-128); Unicode-3.0 only for the shipped `confusables.txt`
-data file (OD-188; `src/ecf_server/data/unicode/`, with its license and provenance). A package that exists on only one platform, or whose metadata the script can't
+data file (OD-188; `src/ecf_server/data/unicode/`, with its license and provenance). The BIP 39 English wordlist (MIT) ships as a data file for manual-export passphrases (OD-349; `src/ecf_server/data/wordlist/`, with its license and provenance). A package that exists on only one platform, or whose metadata the script can't
 read, needs a reviewed entry in the script, checked at its locked version (readable metadata always
 wins). Development-only tools
 (pytest, ruff, pyright, import-linter, hypothesis) never ship and aren't listed.
 
-Runtime dependencies (generated 2026-10-02):
+Runtime dependencies (generated 2026-10-03):
 
 | Package | Version | License | Installed on |
 |---|---|---|---|
@@ -191,6 +192,7 @@ Runtime dependencies (generated 2026-10-02):
 | `pyobjc-framework-cocoa` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-localauthentication` | 12.2.2 | MIT | macOS |
 | `pyobjc-framework-security` | 12.2.2 | MIT | macOS |
+| `pyrage` | 1.4.0 | MIT | all platforms |
 | `python-multipart` | 0.0.32 | Apache-2.0 | all platforms |
 | `python-pam` | 2.1.0 | MIT | Linux |
 | `pywin32` | 312 | PSF-2.0 | Windows |

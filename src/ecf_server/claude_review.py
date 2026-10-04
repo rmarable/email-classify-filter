@@ -287,13 +287,16 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
     if claim["need"] == "classify":
         out["schema"] = load_schema_v1().json_schema()
     else:
-        ctx, _p = decide.plan_for(conn, item)
+        ctx, p = decide.plan_for(conn, item)
         state: dict[str, Any] = json.loads(item["proposal"] or "{}")
+        acts = actor.offered(ctx, p)
         out |= {
             "classification": ctx.classification,
-            "actions": list(actor.allowed(ctx.classification)),
+            "actions": list(acts),
             "labels": sorted(policy.labels(load_schema_v1(), ctx.rules)),
             "move_folders": sorted(ctx.move_folders),
+            "templates": sorted(ctx.templates) if "reply_template" in acts else [],
+            "forward_to": sorted(ctx.forwards) if "forward_internal" in acts else [],
             "earlier_answers": [{"question": r.get("question", ""),
                                  "answer": str(r.get("answer", ""))[:answers.ANSWER_MAX]}
                                 for r in state.get("answers", []) if r.get("answer")],
@@ -339,7 +342,7 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
         _done(conn, claim)
         _outcome(conn, clock, claim, session_id)
         raise ConflictError(f"the item moved on (now {item['status']})")
-    proposal = {k: body.get(k) for k in ("action", "target", "reason", "question")}
+    proposal = {k: body.get(k) for k in ("action", "target", "reason", "question", "text")}
     why = _proposal_problem(conn, item, proposal)
     if why is not None:
         return _invalid(conn, clock, claim, [why])
@@ -348,18 +351,24 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
 
 def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
                       proposal: dict[str, Any]) -> str | None:  # fmt: skip
-    ctx, _p = decide.plan_for(conn, item)
+    ctx, p = decide.plan_for(conn, item)
     labels = policy.labels(load_schema_v1(), ctx.rules)
-    return check_proposal(proposal, labels, ctx.move_folders, actor.allowed(ctx.classification))
+    return check_proposal(proposal, labels, ctx.move_folders, actor.offered(ctx, p),
+                          templates=ctx.templates, forwards=ctx.forwards)  # fmt: skip
 
 
 def check_proposal(proposal: dict[str, Any], labels: frozenset[str], folders: frozenset[str],
-                   allowed: tuple[str, ...]) -> str | None:  # fmt: skip
-    """Why a proposal is refused, or None: the local actor's checks (`actor.problem`, OD-250) and
-    a question only, and always, with needs_clarification (`/ecf-review` and `/ecf-eval`)."""
+                   allowed: tuple[str, ...], *, templates: frozenset[str] = frozenset(),
+                   forwards: frozenset[str] = frozenset()) -> str | None:  # fmt: skip
+    """Why a proposal is refused, or None: the local actor's checks (`actor.problem`, OD-250;
+    drafts and sends, OD-317) and a question only, and always, with needs_clarification
+    (`/ecf-review` and `/ecf-eval`). Text only, and always, with draft_reply."""
     action, target, reason = proposal["action"], proposal["target"] or "", proposal["reason"]
-    question = proposal["question"]
-    why = actor.problem(action, target, reason, labels, folders, allowed)
+    question, text = proposal["question"], proposal.get("text")
+    if text is not None and action != "draft_reply":
+        return "text goes only with draft_reply"
+    why = actor.problem(action, target, reason, labels, folders, allowed, templates=templates,
+                        forwards=forwards, text=text if text is not None else "")  # fmt: skip
     if why is None and action == "needs_clarification":
         if not isinstance(question, str) or not question.strip():
             why = "needs_clarification needs the question to ask"
@@ -428,13 +437,15 @@ def _apply_proposal(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, h
     action = proposal["action"]
     got = {
         "action": str(action),
-        "target": str(proposal["target"] or "") if action in ("label", "move") else "",
+        "target": str(proposal["target"] or "") if action in actor.TARGETED else "",
         "reason": answers.model_text(str(proposal["reason"]), actor.REASON_MAX),
         "model": model,
         "agent": hold.agent,
     }
     if isinstance(proposal["question"], str):
         got["question"] = proposal["question"]  # cleaned and capped by answers.ask
+    if action == "draft_reply" and isinstance(proposal.get("text"), str):
+        got["text"] = proposal["text"]  # cleaned and capped by outbound_plan.resolve
     actor.decide_one(conn, clock, item, ctx, p, got, labels, local=False)
 
 

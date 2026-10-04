@@ -587,3 +587,17 @@ def test_reset_recovery_finds_a_backlog_read_late(
         if r.remaining == 0 and not r.deferred:
             break
     assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 36
+
+
+def test_own_mail_is_skipped_and_another_install_pauses(setup: sqlite3.Connection,
+                                                        clock: FakeClock) -> None:  # fmt: skip
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0))
+    src.deliver(message(1))
+    marks = iter(["own", "second_install"])
+    r = run(setup, clock, src, analyzer=Fn(lambda _p, _r: {"ecf_mail": next(marks)}))
+    assert r.own_skipped == 1 and len(r.created) == 1 and r.second_install
+    assert setup.execute("SELECT paused FROM addresses").fetchone()[0] == 1
+    events = [e[0] for e in setup.execute("SELECT event FROM audit ORDER BY id")]
+    assert "mail.own_skipped" in events and "address.paused" in events

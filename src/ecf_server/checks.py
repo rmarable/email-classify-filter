@@ -64,6 +64,9 @@ class CheckReport:
     digest: int = 0
     relocated: int = 0  # known messages re-pointed after a mailbox reset
     resolved_by_mailbox: int = 0  # open items whose message left INBOX
+    own_skipped: int = 0  # ecf's own mail come back, skipped (V1.5)
+    second_install: bool = False  # mail from another install: the address was paused (§13.6)
+    restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372)
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -189,6 +192,7 @@ def _locked_check(
                 analyzer=analyzer,
                 deadline=deadline,
                 isolator=_isolator(conn, dns),
+                install=install,
             )
             cur = load_cursor(conn, address_id)
             if cur is not None and cur.uidvalidity is not None:
@@ -214,6 +218,8 @@ def _locked_check(
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
+        report.own_skipped, report.second_install = page.own_skipped, page.second_install
+        report.restored_keywords = page.restored_keywords
         report.quarantined, report.large_done = len(page.quarantined), len(page.large_done)
         report.deferred, report.remaining = len(page.deferred), page.remaining
         report.escalations = sum(o.decision.escalate for o in outcomes)
@@ -333,11 +339,16 @@ def _event(status: str) -> str:
 
 
 def states(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Per active address: stage, pause and the last check (for `ecf status`)."""
+    """Per active address: stage, pause, outbound with its suppressed sends (§9.8) and the last
+    check (for `ecf status` and `doctor`)."""
     rows = conn.execute(
-        "SELECT a.address_id, a.email, a.stage, a.paused, c.last_finished_at, c.last_status,"
-        " c.backlog, c.deferred, c.last_error, c.last_error_at, c.next_due_at FROM addresses a"
-        " LEFT JOIN check_state c USING (address_id) WHERE a.removed_at IS NULL"
+        "SELECT a.address_id, a.email, a.stage, a.paused, a.outbound, c.last_finished_at,"
+        " c.last_status, c.backlog, c.deferred, c.last_error, c.last_error_at, c.next_due_at"
+        " FROM addresses a LEFT JOIN check_state c USING (address_id) WHERE a.removed_at IS NULL"
         " ORDER BY a.address_id"
     ).fetchall()
-    return [dict(r) | {"paused": bool(r["paused"])} for r in rows]
+    held = conn.execute("SELECT address_id, count(*) FROM items WHERE suppressed_action IS NOT"
+                        " NULL GROUP BY address_id").fetchall()  # fmt: skip
+    suppressed = {h[0]: int(h[1]) for h in held}
+    return [dict(r) | {"paused": bool(r["paused"]), "outbound": bool(r["outbound"]),
+                       "suppressed": suppressed.get(r["address_id"], 0)} for r in rows]  # fmt: skip

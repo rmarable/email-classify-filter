@@ -11,20 +11,26 @@ plan, 2026-09-30):
   assist;
 - a move target is still in `move_folders`; archive and junk go only to the folders marked
   `\\Archive` and `\\Junk` (RFC 6154 LIST flags; ecf never guesses a folder name);
-- drafts and sends refuse (V1.5);
+- a draft's approved recipient and text still match (outbound_plan.check) and the mailbox has a
+  folder marked `\\Drafts` (V1.5 step 2c); a send's own checks (send_actions.refusal: live, outbound
+  on, payload, guardrails, recipient, one reply per thread and per sender a week; step 3a);
 - the message is still the item's (same UIDVALIDITY, UID, Message-ID and content hash, §6.4);
 - the check still holds its lease, before every write.
 A refusal fails the item at once with its reason; an IMAP error is retried (3 attempts).
 
 Order: labels and the flag, then mark read, then the copy to `label_folder` (for `suspicious` and
 `regulatory` items, §8.3), then at most one move (archive, move or junk). Where the message went is
-recorded on the item (`proposal.done`), for Undo.
+recorded on the item (`proposal.done`), for Undo. A draft (V1.5, OD-317) is built from the approved
+payload (To the email's From address only; In-Reply-To the email; no ecf headers) and appended to
+the Drafts folder with `\\Draft`; its Message-ID and content hash are recorded.
 
 **Undo** (from the digest's Undo button, run in the next check): finds the moved message in the
 folder it went to by its Message-ID, refuses unless exactly one message there matches and its
 content hash is the item's (a sender controls Message-IDs), moves it back to INBOX, then removes the
 labels (never `suspicious` or `regulatory`, OD-213), the flag and the read mark ecf added. The copy
-to `label_folder` stays. The item goes `executed → undoing → undone`.
+to `label_folder` stays. A draft is deleted from the Drafts folder only when exactly one message
+there has its Message-ID and it is unchanged (same content hash); a draft you edited or sent is
+left alone and Undo says so. The item goes `executed → undoing → undone`.
 """
 
 from __future__ import annotations
@@ -38,7 +44,7 @@ from ecf.errors import ConflictError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import actions as mail_actions
-from ecf_server import checks, items, pause
+from ecf_server import checks, items, outbound_msg, outbound_plan, pause, send_actions
 from ecf_server.actions import Planned, keyword
 from ecf_server.clock import Clock, to_ts
 from ecf_server.config import current
@@ -50,6 +56,8 @@ from ecf_server.state_machine import TransitionContext
 HIDES = frozenset({"mark_read", "archive", "move", "junk"})
 MOVES = frozenset({"archive", "move", "junk"})
 ROLE = {"archive": "\\Archive", "junk": "\\Junk"}
+DRAFTS = "\\Drafts"
+SENDS = send_actions.SENDS
 NEVER_UNDONE = frozenset({"suspicious", "regulatory"})
 LABEL_FOLDER_FOR = frozenset({"suspicious", "regulatory"})
 
@@ -82,8 +90,6 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
     stage = _stage(conn, item["address_id"])
     allowed = set(current(conn)["move_folders"] or [])
     reasons = [
-        ("drafts and sends arrive in V1.5",
-         bool(names & {"forward_internal", "reply_template", "draft_reply"})),
         ("the address is paused", pause.is_paused(conn, item["address_id"])),
         (f"the address is in {stage}: hiding mail needs live", bool(names & HIDES)
          and stage != "live"),
@@ -100,6 +106,11 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
         if a.name in ROLE:
             reasons.append((f"the mailbox has no folder marked {ROLE[a.name]}",
                             _role_folder(folders, ROLE[a.name]) is None))  # fmt: skip
+        if a.name == "draft_reply":
+            reasons.append(("the mailbox has no folder marked \\Drafts",
+                            _role_folder(folders, DRAFTS) is None))  # fmt: skip
+            why = outbound_plan.check(conn, item, a.name, a.target, a.payload)
+            reasons.append((why or "", why is not None))
     return next((why for why, applies in reasons if applies), None)
 
 
@@ -107,14 +118,18 @@ def _role_folder(folders: dict[str, frozenset[str]], role: str) -> str | None:
     return next((name for name, roles in folders.items() if role in roles), None)
 
 
-def executor_for(src: MailSource, install: str, max_scan_bytes: int,
-                 lost: Callable[[], bool]) -> Callable[..., list[str]]:  # fmt: skip
+def executor_for(  # noqa: PLR0915 - the writes in their fixed order
+    src: MailSource, install: str, max_scan_bytes: int, lost: Callable[[], bool]
+) -> Callable[..., list[str]]:
     """An `execute.Executor` bound to this check's open mailbox and lease."""
 
-    def run(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
-            planned: list[Planned]) -> list[str]:  # fmt: skip
+    def run(  # noqa: PLR0912 - one branch per kind of write
+        conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, planned: list[Planned]
+    ) -> list[str]:
         folders = {f.name: f.roles for f in src.folders()}
-        why = refusal(conn, item, planned, folders)
+        why = refusal(conn, item, planned, folders) or next(
+            (w for a in planned if a.name in SENDS
+             if (w := send_actions.refusal(conn, clock, item, a))), None)  # fmt: skip
         if why:
             raise RefusedError(why)
 
@@ -150,6 +165,17 @@ def executor_for(src: MailSource, install: str, max_scan_bytes: int,
             done.append(f"copy to {folder}")
             record.append({"name": "copy", "folder": folder})
         for a in planned:
+            if a.name in SENDS:
+                guard()  # never hand a message over without the lease (OD-322)
+                record.append(send_actions.run(conn, clock, src, item, a, uid))
+                done.append(f"sent {a.name.replace('_', ' ')} to {record[-1]['to']}")
+        for a in planned:
+            if a.name == "draft_reply" and a.payload is not None:
+                guard()
+                record.append(_save_draft(conn, clock, src, item, a.payload,
+                                          str(_role_folder(folders, DRAFTS))))  # fmt: skip
+                done.append(f"draft saved to {record[-1]['folder']}")
+        for a in planned:
             if a.name in MOVES:
                 target = a.target if a.name == "move" else _role_folder(folders, ROLE[a.name])
                 if target is None:  # refusal() checked it; never move to a guessed folder
@@ -162,6 +188,20 @@ def executor_for(src: MailSource, install: str, max_scan_bytes: int,
         return done
 
     return run
+
+
+def _save_draft(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.Row,
+                payload: dict[str, Any], folder: str) -> dict[str, Any]:  # fmt: skip
+    """Build the approved draft and append it to the Drafts folder; what Undo needs to find it."""
+    frm = conn.execute("SELECT email FROM addresses WHERE address_id = ?",
+                       (item["address_id"],)).fetchone()["email"]  # fmt: skip
+    built = outbound_msg.build_draft(from_addr=str(frm), to_addr=str(payload["to"]),
+                                     subject=str(item["subject"] or ""),
+                                     body=str(payload["text"]), in_reply_to=item["message_id"],
+                                     references=None, date=clock.now())  # fmt: skip
+    src.append(folder, built.raw, ["\\Draft"])
+    return {"name": "draft_reply", "folder": folder, "message_id": built.message_id,
+            "content_hash": built.content_hash}  # fmt: skip
 
 
 def _remember(conn: sqlite3.Connection, clock: Clock, sid: str,
@@ -204,10 +244,15 @@ def undo_item(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sql
     try:
         if lost():
             raise LeaseLostError("the check lost its lease")
+        for r in record:
+            if r["name"] == "draft_reply":
+                undone.append(_delete_draft(src, r))
         moved = next((r for r in record if r["name"] in MOVES), None)
         if moved is not None:
             _move_back(src, item, str(moved["folder"]))
             undone.append(f"{moved['name']} back to INBOX")
+        if not any(r["name"] in ("label", "flag", "mark_read") for r in record):
+            return _undone(conn, clock, sid, undone)  # a draft alone: the email wasn't touched
         uid = _inbox_uid(src, item, moved=moved is not None)
         for r in record:
             if lost():
@@ -225,9 +270,26 @@ def undo_item(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sql
         items.transition(conn, clock, sid, Status.UNDO_FAILED, TransitionContext(),
                          actor="service", expected=Status.UNDOING)  # fmt: skip
         raise
+    return _undone(conn, clock, sid, undone)
+
+
+def _undone(conn: sqlite3.Connection, clock: Clock, sid: StableId, undone: list[str]) -> list[str]:
     items.transition(conn, clock, sid, Status.UNDONE, TransitionContext(), actor="service",
                      expected=Status.UNDOING)  # fmt: skip
     return undone
+
+
+def _delete_draft(src: MailSource, r: dict[str, Any]) -> str:
+    """Delete ecf's draft only if it is still exactly what ecf saved (see the module docstring)."""
+    folder = str(r["folder"])
+    found = src.find_in(folder, str(r["message_id"]))
+    if len(found) != 1:
+        return "draft not deleted (not found, or found more than once: edited or sent?)"
+    raw = src.fetch_in(folder, found[0])
+    if raw is None or parse(raw).content_hash != r["content_hash"]:
+        return "draft not deleted (it was edited)"
+    src.delete_in(folder, found[0])
+    return "draft deleted"
 
 
 def _move_back(src: MailSource, item: sqlite3.Row, folder: str) -> None:

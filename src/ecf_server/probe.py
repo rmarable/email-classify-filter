@@ -4,8 +4,9 @@ Runs when an address is added or its app password changes (and after mail errors
 Read-only: it logs in, reads capabilities, folder roles and INBOX's permanent flags, and changes
 nothing. Two facts can't be read over IMAP without sending mail: whether the provider saves sent
 mail itself, and its message size limit (unless it advertises APPENDLIMIT). Those come from the
-provider table (SPEC §18) for known providers and are otherwise unknown until V1.5's sending
-code can test them.
+provider table (SPEC §18) for known providers; otherwise ecf learns whether sent mail is saved at
+the first send. From V1.5 the probe also checks the address's SMTP server (TLS and login, no send;
+OD-324); a failure there is a warning, since outbound is off until you turn it on.
 """
 
 from __future__ import annotations
@@ -15,8 +16,10 @@ import sqlite3
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from ecf.errors import MailUnavailableError
 from ecf_server.clock import Clock, to_ts
 from ecf_server.mail import MailSource
+from ecf_server.mail.smtp import Sender
 
 
 @dataclass(frozen=True)
@@ -35,8 +38,8 @@ KNOWN: dict[str, Known] = {
 ROLES_NEEDED = {
     "\\Archive": "archive actions will be held for a person (no Archive folder)",
     "\\Junk": "junk actions will be held for a person (no Junk folder)",
-    "\\Sent": "no Sent folder: sent copies can't be saved (matters from V1.5)",
-    "\\Drafts": "no Drafts folder: draft replies can't be saved (matters from V1.5)",
+    "\\Sent": "no Sent folder: sent copies can't be saved",
+    "\\Drafts": "no Drafts folder: draft replies can't be saved",
 }
 
 
@@ -52,6 +55,7 @@ class ProbeResult:
     max_message_bytes: int | None
     max_size_source: str | None
     warnings: list[str] = field(default_factory=list[str])
+    smtp: dict[str, Any] | None = None  # check_smtp's result; None when not checked
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,8 +105,23 @@ def warnings(r: ProbeResult) -> list[str]:
     if r.max_message_bytes is None:
         out.append("the provider's message size limit is unknown")
     if r.saves_sent is None:
-        out.append("whether the provider saves sent mail is unknown (tested when sending, V1.5)")
+        out.append(
+            "whether the provider saves sent mail is unknown (ecf learns it at the first send)"
+        )
+    if r.smtp is not None and not r.smtp["ok"]:
+        out.append(f"SMTP: {r.smtp['error']}; sending won't work until this is fixed")
     return out
+
+
+def check_smtp(sender: Sender) -> dict[str, Any]:
+    """Log in to the SMTP server and quit (no send). The error text names the host and the
+    failure, never the password."""
+    try:
+        info = sender.check()
+    except MailUnavailableError as exc:
+        return {"ok": False, "error": str(exc.detail)[:200]}
+    return {"ok": True, "host": info.host, "port": info.port, "size": info.size,
+            "eight_bit": info.eight_bit}  # fmt: skip
 
 
 def store(
@@ -113,13 +132,14 @@ def store(
             "append_limit": r.append_limit}  # fmt: skip
     conn.execute(
         "INSERT INTO probe (address_id, special_use, permanent_keywords, saves_sent,"
-        " max_message_bytes, host, probed_at, capabilities, max_size_source, warnings)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " max_message_bytes, host, probed_at, capabilities, max_size_source, warnings, smtp)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT (address_id) DO UPDATE SET special_use = excluded.special_use,"
         " permanent_keywords = excluded.permanent_keywords, saves_sent = excluded.saves_sent,"
         " max_message_bytes = excluded.max_message_bytes, host = excluded.host,"
         " probed_at = excluded.probed_at, capabilities = excluded.capabilities,"
-        " max_size_source = excluded.max_size_source, warnings = excluded.warnings",
+        " max_size_source = excluded.max_size_source, warnings = excluded.warnings,"
+        " smtp = excluded.smtp",
         (
             address_id,
             json.dumps(r.roles, sort_keys=True),
@@ -131,6 +151,7 @@ def store(
             json.dumps(caps, sort_keys=True),
             r.max_size_source,
             json.dumps(r.warnings),
+            None if r.smtp is None else json.dumps(r.smtp, sort_keys=True),
         ),
     )
 
@@ -163,4 +184,5 @@ def load(conn: sqlite3.Connection, address_id: str) -> dict[str, Any] | None:
         "max_size_source": row["max_size_source"],
         "capabilities": json.loads(row["capabilities"]),
         "warnings": json.loads(row["warnings"]),
+        "smtp": None if row["smtp"] is None else json.loads(row["smtp"]),
     }

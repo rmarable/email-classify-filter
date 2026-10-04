@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email import message_from_bytes, policy
@@ -20,6 +20,7 @@ from ecf_server.mail import (
     PartInfo,
     check_keyword,
 )
+from ecf_server.mail.smtp import SmtpInfo
 
 DEFAULT_FOLDERS = (
     Folder("INBOX", frozenset()),
@@ -219,6 +220,16 @@ class FakeMailSource:
             self._msgs[self._next] = s
             self._next += 1
 
+    def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
+        target = self._folder(folder)
+        target[self._next] = _Stored(raw, datetime.now(UTC), set(flags))
+        self._next += 1
+
+    def delete_in(self, folder: str, uid: int) -> None:
+        if not self._caps.uidplus:
+            raise MailUnavailableError("no UIDPLUS: can't delete just one message")
+        self._folder(folder).pop(uid, None)
+
     def close(self) -> None:
         self.closed = True
 
@@ -246,3 +257,40 @@ def _split(raw: bytes) -> tuple[bytes, bytes]:
         if found:
             return head + sep, body
     return raw, b""
+
+
+class FakeSender:
+    """A Sender for tests and `ecf-server dev`: records what it would send. `fail` makes the next
+    sends fail: "temp" (not sent, retryable), "refused" (not sent), "unknown" (outcome unknown),
+    "login" (login rejected)."""
+
+    def __init__(self, *, size: int | None = 51_200_000) -> None:
+        self.sent: list[tuple[str, tuple[str, ...], bytes]] = []
+        self.fail: str | None = None
+        self.size = size
+        self.connects = 0
+
+    def _connect(self) -> None:
+        from ecf_server.mail.imap import MailLoginRejectedError  # noqa: PLC0415
+        from ecf_server.mail.smtp import SendNotSentError  # noqa: PLC0415
+
+        self.connects += 1
+        if self.fail == "login":
+            raise MailLoginRejectedError("fake: login rejected")
+        if self.fail == "temp":
+            raise SendNotSentError("fake: try later", retryable=True)
+
+    def check(self) -> SmtpInfo:
+        self._connect()
+        return SmtpInfo(host="smtp.fake", port=465, size=self.size, eight_bit=True)
+
+    def send(self, raw: bytes, mail_from: str, rcpt: Sequence[str]) -> None:
+        from ecf_server.mail.smtp import SendNotSentError, SendOutcomeUnknownError  # noqa: PLC0415
+
+        self._connect()
+        if self.fail == "refused":
+            raise SendNotSentError("fake: 550 refused", retryable=False)
+        if self.fail == "unknown":
+            self.sent.append((mail_from, tuple(rcpt), raw))  # it may well have gone
+            raise SendOutcomeUnknownError("fake: no final reply")
+        self.sent.append((mail_from, tuple(rcpt), raw))

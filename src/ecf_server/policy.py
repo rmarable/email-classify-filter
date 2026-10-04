@@ -25,6 +25,11 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   in a Claude batch that held a risky or still unclassified item (§5.6, V1.4 step 3). High-risk
   items on the local pair follow `local_high_risk` (§8.2, OD-056): label, flag, escalate and leave
   are automatic; hide actions need approval; sends are rejected; drafts need approval.
+- **Drafts and sends** (V1.5, OD-317): always need approval. A send's target must be an enabled
+  template or a forward allow-list entry, the email must pass §8.4's guardrails
+  (send_refusal), and outbound must be on for the address; while it's off the proposal is
+  dropped as suppressed (kept on the item as `suppressed_action`) and the item is flagged (§8.4).
+  The payload (recipient and text) is resolved by the caller, which has the database.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, RuleInput
 Mode = Literal["auto", "approve"]
 SAFE = frozenset({"label", "flag", "escalate", "leave"})
 SENDS = frozenset({"forward_internal", "reply_template"})
-BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory"})
+BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory", "alert_echo"})
 _LABEL = re.compile(r"^[a-z0-9_]{1,40}$")
 FRAUD_RISKY = ("low", "medium", "high")  # fraud_risk levels that block hiding (I1)
 
@@ -50,6 +55,7 @@ class Planned:
     name: str
     target: str | None
     mode: Mode
+    payload: dict[str, Any] | None = None  # a draft's or send's text and recipient (V1.5)
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ class Plan:
     payment_or_fraud: bool = False
     offer_confirm: bool = False  # the digest may offer "confirm this sender's category"
     actor: dict[str, Any] | None = None  # the local actor's proposal and its (cleaned) reason
+    suppressed: str | None = None  # a send proposed while outbound is off (§8.4)
 
     @property
     def hides(self) -> list[Planned]:
@@ -85,6 +92,10 @@ class Context:
     move_folders: frozenset[str]
     confirmed_category: str | None = None  # a person's category for this sender
     batch_risky: bool = False  # a model batch with a risky or unclassified item (§5.6)
+    outbound: bool = False  # the address's outbound switch (§8.4)
+    local_pair: bool = True  # the local actor decides (preset A, or the local fallback; §8.2)
+    templates: frozenset[str] = frozenset()  # enabled template ids
+    forwards: frozenset[str] = frozenset()  # forward allow-list entry ids
 
 
 def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
@@ -166,24 +177,76 @@ def plan(ctx: Context, known_labels: frozenset[str]) -> Plan:
         _add(p, Planned(a.name, a.target, _mode(ctx, a.name, p.high_risk)))
     if p.dropped and any(d.name in HIDE_ACTIONS for d in p.dropped):
         _add(p, Planned("leave", None, "auto"))
-    return p
+    return _alert_echo(ctx, p, known_labels) or p
+
+
+def _alert_echo(ctx: Context, p: Plan, known_labels: frozenset[str]) -> Plan | None:
+    """A bounce, auto-reply or copy of an alert email (own_mail.alert_echo; OD-330, OD-337):
+    labelled `alert_echo` and left, no actor, unless the plan escalates or a fraud or regulatory
+    signal holds, which keep their plan (only the alert email is suppressed for them)."""
+    if not ctx.facts.get("alert_echo") or "regulatory" in hide_blockers(ctx):
+        return None
+    if fraud_signal(ctx) or any(a.name == "escalate" for a in p.actions):
+        return None
+    echo = Plan("alert_echo", to_actor=False, high_risk=p.high_risk,
+                payment_or_fraud=p.payment_or_fraud)  # fmt: skip
+    if "alert_echo" in known_labels:
+        _add(echo, Planned("label", "alert_echo", _mode(ctx, "label", echo.high_risk)))
+    _add(echo, Planned("leave", None, "auto"))
+    return echo
 
 
 def proposal(ctx: Context, p: Plan, name: str, target: str | None,
              known_labels: frozenset[str]) -> Planned | Dropped:  # fmt: skip
-    """The same checks for one action the actor proposed (step 4c): sends are rejected on the
-    local pair's high-risk items and suppressed otherwise until outbound exists (V1.5)."""
-    if name in SENDS:
-        return Dropped(name, target, "sends are rejected for high-risk items (local_high_risk)"
-                       if p.high_risk else "outbound is off (sending arrives in V1.5)")  # fmt: skip
-    if name == "draft_reply":
-        return Planned(name, None, "approve")
+    """The same checks for one action the actor proposed (step 4c), plus drafts and sends (V1.5;
+    see the module docstring). Sends on the local pair's high-risk items are rejected."""
+    if name in SENDS or name == "draft_reply":
+        why = _outbound_refusal(ctx, p, name, target)
+        if why is not None:
+            return Dropped(name, target, why)
+        return Planned(name, target if name in SENDS else None, "approve")
     why = _refuse(ctx, name, target, known_labels)
     if why is None and name in HIDE_ACTIONS:
         why = _hide_refusal(ctx, Hide.CORROBORATED, hide_blockers(ctx))
     if why is not None:
         return Dropped(name, target, why)
     return Planned(name, target, _mode(ctx, name, p.high_risk))
+
+
+def send_refusal(name: str, facts: dict[str, Any], *, fraud_signal: bool) -> str | None:
+    """The §8.4 guardrails that depend on the email: replies (drafts too) need a single From
+    mailbox, a template reply an authenticated sender; nothing is sent for bulk mail, mail not
+    fully scanned, or any fraud signal. A draft is never sent, so only the From rule applies."""
+    reply = name in ("draft_reply", "reply_template")
+    send = name in SENDS
+    checks = [
+        (reply and facts.get("from_count") != 1, "not exactly one From address"),
+        (name == "reply_template" and facts.get("auth_result") != "pass",
+         "replies need an authenticated sender"),
+        (send and bool(facts.get("bulk_signal")), "no sends for bulk mail"),
+        (send and bool(facts.get("content_unscanned")), "no sends for mail not fully scanned"),
+        (send and fraud_signal, "no sends for mail with a fraud signal"),
+        ((reply or send) and bool(facts.get("ecf_keywords")),
+         "ecf handled this email before (its labels are on it)"),  # keywords.py (V1.5)
+    ]  # fmt: skip
+    return next((why for applies, why in checks if applies), None)
+
+
+def _outbound_refusal(ctx: Context, p: Plan, name: str, target: str | None) -> str | None:
+    if name in SENDS and p.high_risk and ctx.local_pair:
+        return "sends are rejected for high-risk items (local_high_risk)"
+    if name == "reply_template" and target not in ctx.templates:
+        return f"{str(target)[:40]!r} isn't an enabled template"
+    if name == "forward_internal" and target not in ctx.forwards:
+        return f"{str(target)[:40]!r} isn't on the forward allow-list"
+    why = send_refusal(name, ctx.facts, fraud_signal=fraud_signal(ctx))
+    if why is not None:
+        return why
+    if name in SENDS and not ctx.outbound:
+        p.suppressed = name
+        _add(p, Planned("flag", None, "auto"))
+        return "outbound is off (suppressed)"
+    return None
 
 
 def _refuse(ctx: Context, name: str, target: str | None, known: frozenset[str]) -> str | None:

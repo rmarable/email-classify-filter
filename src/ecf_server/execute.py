@@ -6,7 +6,9 @@ attempts to `failed` (`ecf item requeue` runs it again).
 
 The executor is a port. From V1.3 the real one (`mailbox_actions.executor_for`) runs inside each
 address's check, which holds the lease and has the mailbox open; a refusal at execution (stage,
-pause, folders, a changed message) fails the item at once without a retry. Sends arrive in V1.5.
+pause, folders, a changed message) fails the item at once without a retry. For sends (V1.5,
+OD-322): a refusal the server made for good fails the item; a temporary one retries; a send handed
+over with no final reply goes to `failed_unknown` with its grant used, and is never sent again.
 """
 
 from __future__ import annotations
@@ -19,14 +21,16 @@ from typing import Any
 from ecf.errors import GrantInvalidError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
-from ecf_server import approvals, items, jobs, pause
+from ecf_server import approvals, items, jobs, pause, send_limits
 from ecf_server.actions import MessageChangedError, Planned, action_hash
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
+from ecf_server.mail.smtp import SendNotSentError, SendOutcomeUnknownError
 from ecf_server.state_machine import TransitionContext
 
 WORKER = "actions"
+SENDS = frozenset({"reply_template", "forward_internal"})
 PAUSED_RECHECK_S = 60
 Executor = Callable[[sqlite3.Connection, Clock, sqlite3.Row, list[Planned]], list[str]]
 
@@ -46,7 +50,12 @@ def run_once(  # noqa: PLR0911 - one return per outcome
         jobs.hold(conn, clock, job.job_id, WORKER, PAUSED_RECHECK_S, "paused")
         return True
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
-    actions = [Planned(str(a["name"]), a.get("target")) for a in p.get("actions", [])]
+    actions = [Planned.from_json(a) for a in p.get("actions", [])]
+    if any(a.name in SENDS for a in actions) and not send_limits.allow(
+        conn, clock, item["address_id"], grant_id
+    ):  # the send circuit breaker: held, grant unused, not an attempt (OD-059)
+        jobs.hold(conn, clock, job.job_id, WORKER, send_limits.HOLD_S, "send limit")
+        return True
     try:
         _consume(conn, clock, grant_id, action_hash(sid, item["content_hash"], actions))
     except GrantInvalidError as exc:
@@ -57,25 +66,43 @@ def run_once(  # noqa: PLR0911 - one return per outcome
         return True
     try:
         done = executor(conn, clock, item, actions)
+    except SendOutcomeUnknownError:  # handed over, no final reply: never sent twice (OD-322)
+        _outcome_unknown(conn, clock, job, item)  # the grant stays consumed
+        return True
+    except SendNotSentError as exc:
+        if exc.retryable:
+            return _retry(conn, clock, job, item, grant_id, exc)
+        with write_tx(conn):
+            conn.execute("UPDATE grants SET status = 'voided' WHERE grant_id = ?", (grant_id,))
+        _failed(conn, clock, job, item, str(exc.detail)[:200])
+        return True
     except (PolicyDeniedError, MessageChangedError) as exc:  # refused at execution: no retry
         with write_tx(conn):
             conn.execute("UPDATE grants SET status = 'voided' WHERE grant_id = ?", (grant_id,))
         _failed(conn, clock, job, item, str(exc.detail)[:200])
         return True
     except Exception as exc:  # retried with backoff, then failed
-        with write_tx(conn):  # the grant is usable again for the retry
-            conn.execute("UPDATE grants SET status = 'approved', consumed_at = NULL"
-                          " WHERE grant_id = ?", (grant_id,))  # fmt: skip
-        state = jobs.fail(conn, clock, job.job_id, WORKER, type(exc).__name__)
-        log.warning("action.failed", stable_id=sid, error_type=type(exc).__name__, state=state)
-        if state == "dead":
-            _failed(conn, clock, job, item, str(exc)[:200], complete=False)
-        return True
+        return _retry(conn, clock, job, item, grant_id, exc)
     items.transition(conn, clock, StableId(sid), Status.EXECUTED, TransitionContext(),
                      actor="service", expected=Status.EXECUTING)  # fmt: skip
     _audit(conn, clock, item, "action.executed", {"grant_id": grant_id, "done": done})
     jobs.complete(conn, job.job_id, WORKER)
     approvals.edit_card(conn, clock, sid, f"Done: {', '.join(done) or 'nothing to do'}")
+    return True
+
+
+def _retry(conn: sqlite3.Connection, clock: Clock, job: jobs.Job, item: sqlite3.Row,
+           grant_id: str, exc: Exception) -> bool:  # fmt: skip
+    """Put the grant back and let the job retry with backoff; after the last attempt, `failed`. A
+    send's retry reuses its recorded Message-ID (send.message_id_for)."""
+    with write_tx(conn):  # the grant is usable again for the retry
+        conn.execute("UPDATE grants SET status = 'approved', consumed_at = NULL"
+                     " WHERE grant_id = ?", (grant_id,))  # fmt: skip
+    state = jobs.fail(conn, clock, job.job_id, WORKER, type(exc).__name__)
+    log.warning("action.failed", stable_id=item["stable_id"], error_type=type(exc).__name__,
+                state=state)  # fmt: skip
+    if state == "dead":
+        _failed(conn, clock, job, item, str(exc)[:200], complete=False)
     return True
 
 

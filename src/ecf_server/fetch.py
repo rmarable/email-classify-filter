@@ -31,7 +31,7 @@ from typing import Any, Protocol
 from ecf.errors import ConflictError, MailUnavailableError
 from ecf.ids import AddressId, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, leases, probe, triggers
+from ecf_server import items, keywords, leases, own_mail, probe, triggers
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.isolate import Isolator
@@ -46,6 +46,7 @@ from ecf_server.message import (
     parse_partial,
     stable_id,
 )
+from ecf_server.outbound_msg import message_ids
 from ecf_server.senderauth import AuthOutcome
 from ecf_server.state_machine import TransitionContext
 
@@ -111,6 +112,9 @@ class PageResult:
     large_done: list[int] = field(default_factory=list[int])  # deferred messages handled now
     remaining: int = 0  # new UIDs not reached in this page
     stopped: str = "done"  # done | page_limit | time | lease_lost
+    own_skipped: int = 0  # ecf's own mail come back (own_mail; V1.5)
+    second_install: bool = False  # mail from another install on this mailbox: address paused
+    restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372): paused
 
 
 def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
@@ -204,9 +208,11 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     analyzer: Analyzer | None = None,
     deadline: float | None = None,
     isolator: Isolator | None = None,
+    install: str = "",
 ) -> PageResult:
     """One page of new mail, then deferred large mail while `deadline` (monotonic; default the
-    check budget from now) leaves time for it."""
+    check budget from now) leaves time for it. With `install`, ecf's keywords on the page are
+    read (one request) and sorted (keywords.py)."""
     result = PageResult()
     state = src.inbox()
     cur = load_cursor(conn, cfg.address_id)
@@ -225,6 +231,9 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     metas = src.meta(page)
     pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer, isolator)
     pg.recovering_until = cur.recovering_until
+    pg.install = install
+    if install and page:
+        pg.flags = src.flags(page)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -389,6 +398,8 @@ class _Page:
     fetched_bytes: int = 0
     fetch_s: float = 0.0
     recovering_until: int = 0
+    install: str = ""  # this install's name, for its keywords (V1.5 step 10b)
+    flags: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
 
     def rate(self) -> float:
         """Measured fetch throughput in bytes/s, or DEFAULT_RATE before there is enough data."""
@@ -504,6 +515,20 @@ def _store(
         return
     facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw, auth) if pg.analyzer else {})
     facts["identity_digest"] = digest
+    if facts.get("ecf_mail") == own_mail.OWN:  # ecf's own mail came back: no item (§8.4)
+        with write_tx(conn):
+            _fence(conn, clock, lease)
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'mail.own_skipped', 'service', 'ok', ?)",
+                (to_ts(clock.now()), cfg.address_id, json.dumps({"uid": uid})),
+            )
+            _unmark_in(conn, cfg.address_id, uv, uid)
+        pg.result.own_skipped += 1
+        return
+    if facts.get("ecf_mail") == own_mail.SECOND:
+        pg.result.second_install |= _pause_second_install(conn, clock, cfg.address_id)
+    _keywords(pg, uid, facts)
     reused = message_id_reused(conn, cfg.address_id, parsed.message_id, parsed.content_hash, digest)
 
     def also(c: sqlite3.Connection) -> None:
@@ -739,10 +764,50 @@ def message_id_reused(
     return row is not None
 
 
+def _keywords(pg: _Page, uid: int, facts: dict[str, Any]) -> None:
+    """ecf's keywords on the message (keywords.py; §13.6, OD-372)."""
+    if not pg.install:
+        return
+    if uid not in pg.flags:  # deferred large mail: read here
+        pg.flags.update(pg.src.flags([uid]))
+    mine, others = keywords.sort(pg.flags.get(uid, frozenset()), pg.install)
+    aid = pg.cfg.address_id
+    if others:
+        _pause(pg.conn, pg.clock, aid, "second_install")
+        pg.result.second_install = True
+    if mine:
+        facts["ecf_keywords"] = mine
+        if keywords.in_restore_window(pg.conn, pg.clock, aid, pg.uidvalidity, uid):
+            _pause(pg.conn, pg.clock, aid, "restored_keywords")
+            pg.result.restored_keywords = True
+
+
+def _pause_second_install(conn: sqlite3.Connection, clock: Clock, address_id: str) -> bool:
+    """Pause the address (as `ecf pause` does) when mail from another install arrives (§13.6);
+    True if it wasn't paused yet. The check's report raises Operator Input Needed."""
+    return _pause(conn, clock, address_id, "second_install")
+
+
+def _pause(conn: sqlite3.Connection, clock: Clock, address_id: str, why: str) -> bool:
+    with write_tx(conn):
+        n = conn.execute("UPDATE addresses SET paused = 1 WHERE address_id = ? AND paused = 0",
+                         (address_id,)).rowcount  # fmt: skip
+        if n:
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'address.paused', 'service', 'ok', ?)",
+                (to_ts(clock.now()), address_id, json.dumps({"why": why})),
+            )
+    return bool(n)
+
+
 def _facts(p: ParsedMessage) -> dict[str, Any]:
+    refs = message_ids(*p.headers.get("references", ()), *p.headers.get("in-reply-to", ()))
     return {
         "size": p.size,
         "from_count": p.from_count,
+        # the thread's first Message-ID, the key of "one template reply per thread" (OD-325)
+        "thread_root": refs[0] if refs else None,
         "mime_defects": p.defects,
         "text_truncated": p.any_truncated,
         "attachments": [

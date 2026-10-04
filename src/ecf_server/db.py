@@ -121,8 +121,9 @@ def _migration_files() -> list[tuple[int, str, str]]:
     return sorted(out)
 
 
-def migrate(conn: sqlite3.Connection) -> list[str]:
-    """Apply pending migrations in order, each in its own write transaction; return their names."""
+def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
+    """Apply pending migrations in order, each in its own write transaction; return their names.
+    `up_to` stops after that version (import builds an older bundle's schema first, OD-355)."""
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations "
         "(version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT"
@@ -132,6 +133,8 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
     for version, name, sql in _migration_files():
         if version in done:
             continue
+        if up_to is not None and version > up_to:
+            break
         with write_tx(conn):
             # another migrator may have applied it since we looked
             again = "SELECT 1 FROM schema_migrations WHERE version = ?"

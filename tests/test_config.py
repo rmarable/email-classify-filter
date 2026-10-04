@@ -69,7 +69,7 @@ V = "version: 1\n"
         ("org_domains: [acme.example]", "version: 1"),
         ("version: 1", "no sections"),
         ("version: 1\nnonsense: 1", "unknown section"),
-        ("version: 1\nexport_schedule: daily", r"V1\.5"),
+        ("version: 1\nexport_schedule: hourly", "daily, weekly or off"),
         ("version: 1\nalerts: {routes: [email]}", "ecf alerts set"),
         ("version: 1\norg_domains: [gmail.com]", "public mailbox"),
         (V + "forward_allow_list: [{id: x, address: boss@else.example}]", "isn't in org_domains"),

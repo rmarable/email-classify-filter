@@ -53,6 +53,7 @@ from ecf_server import (
     approvals,
     audit,
     backfill,
+    bundle_reader,
     checks,
     claude_batch,
     claude_eval,
@@ -62,21 +63,34 @@ from ecf_server import (
     claude_usage,
     config,
     db,
+    destroy,
     digests,
     evalrun,
+    export_keys,
     fallback,
     gate,
     health,
+    import_plan,
+    importer,
     inbox,
     initsetup,
+    manual_export,
     model_watch,
     modelq,
     models,
     ollama,
+    ops_doctor,
+    outbound,
+    outbound_remind,
+    passphrase,
     pause,
+    restore,
     retention,
     ruletest,
     schedule,
+    scheduled_export,
+    send_actions,
+    send_limits,
     senders,
     settings,
     slack_admin,
@@ -88,9 +102,11 @@ from ecf_server import (
     telemetry,
     telemetry_app,
 )
+from ecf_server import upgrade_state as upgrade_state_mod
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.mail.smtp import SenderFactory
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.secretstore import SecretStore
 from ecf_server.stepper import Stepper
@@ -145,6 +161,7 @@ class ServiceState:
     db_path: Path | None = None
     secrets: SecretStore | None = field(default=None, repr=False)
     mail_factory: addresses.MailFactory | None = field(default=None, repr=False)
+    sender_factory: SenderFactory | None = field(default=None, repr=False)  # SMTP (V1.5)
     notifier: Notifier = field(default_factory=NullNotifier, repr=False)
     stepper: Stepper | None = field(default=None, repr=False)  # None: step-up is refused
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
@@ -162,6 +179,7 @@ class ServiceState:
     # its call's events (V1.4 step 6; logs are exported every second)
     telemetry: Telemetry = field(default_factory=Telemetry, repr=False)
     telemetry_wait_s: float = 2.0
+    request_stop: Callable[[], None] = field(default=lambda: None, repr=False)  # the service's
 
     def connect(self) -> sqlite3.Connection:
         if self.db_path is None:
@@ -324,6 +342,9 @@ def create_app(state: ServiceState) -> Starlette:
             *_item_routes(state, allow),
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
+            *_export_routes(state, allow),
+            *_upgrade_routes(state, allow),
+            *_destroy_routes(state, allow),
             *_stage_routes(state, allow),
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
@@ -721,6 +742,38 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(get)
 
     @allow(Caller.CLI)
+    def outbound_report(request: Request) -> JSONResponse:
+        """`ecf outbound report` (§9.8; V1.5 step 6)."""
+        ref = str(request.path_params["ref"])
+        return _with_conn(lambda c: outbound_remind.report(c, state.clock, ref))
+
+    @allow(Caller.CLI)
+    def set_outbound(request: Request) -> JSONResponse:
+        """`ecf outbound enable|disable|resume|snooze|dismiss` (§9.8; step-up to enable, OD-323 on
+        disable)."""
+        body, ref = _body(request), str(request.path_params["ref"])
+        value, nonce = _str(body, "value"), _opt_str(body, "nonce_id")
+        if value not in ("on", "off", "resume", "snooze", "dismiss"):
+            raise InvalidInputError("value must be on, off, resume, snooze or dismiss")
+        if value == "snooze":
+            days = body.get("days", 7)
+            if not isinstance(days, int) or isinstance(days, bool):
+                raise InvalidInputError("days must be a whole number")
+            return _with_conn(lambda c: outbound_remind.snooze(c, state.clock, ref, days,
+                                                               actor="os_user"))  # fmt: skip
+        if value == "dismiss":
+            return _with_conn(lambda c: outbound_remind.dismiss(c, state.clock, ref,
+                                                                actor="os_user"))  # fmt: skip
+        if value == "resume":  # after the send limit (OD-059)
+            return _with_conn(lambda c: send_limits.resume(c, state.clock, ref, actor="os_user",
+                                                           nonce=nonce))  # fmt: skip
+        if value == "off":
+            return _with_conn(lambda c: outbound.disable(c, state.clock, ref, actor="os_user"))
+        return _with_conn(lambda c: outbound.enable(c, state.clock,
+                                                    lambda t: _notice(state, c, t), ref,
+                                                    actor="os_user", nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
     def set_sensitivity(request: Request) -> JSONResponse:
         body, ref = _body(request), str(request.path_params["ref"])
         to, reason = _str(body, "value"), _opt_str(body, "reason") or ""
@@ -758,6 +811,8 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/addresses/{ref}/stage", set_stage, methods=["POST"]),
         Route("/v1/addresses/{ref}/gate", address_gate, methods=["GET"]),
         Route("/v1/addresses/{ref}/sensitivity", set_sensitivity, methods=["POST"]),
+        Route("/v1/addresses/{ref}/outbound", set_outbound, methods=["POST"]),
+        Route("/v1/addresses/{ref}/outbound", outbound_report, methods=["GET"]),
         Route("/v1/settings", show_settings, methods=["GET"]),
         Route("/v1/settings", set_setting, methods=["POST"]),
     ]
@@ -798,7 +853,8 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks."""
+    """SPEC §13.1, §13.2 (V1.2 steps 11c, 12a): `ecf init` state and doctor's Slack checks; V1.5
+    step 13a: doctor's sending, alert-email and backup checks."""
 
     @allow(Caller.CLI)
     def init_status(_request: Request) -> JSONResponse:
@@ -818,11 +874,32 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
+    def init_skip(request: Request) -> JSONResponse:
+        step = _str(_body(request), "step")
+        conn = state.connect()
+        try:
+            return JSONResponse(initsetup.skip(conn, state.clock, step))
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
     def doctor_slack(_request: Request) -> JSONResponse:
         conn = state.connect()
         try:
             rows = slack_doctor.checks(conn, state.secrets, state.slack_web, dict(state.slack),
                                        state.stepper)  # fmt: skip
+            return JSONResponse({"checks": rows})
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def doctor_ops(_request: Request) -> JSONResponse:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        conn = state.connect()
+        try:
+            rows = ops_doctor.checks(conn, state.clock, state.db_path.parent,
+                                     state.notifier.name)  # fmt: skip
             return JSONResponse({"checks": rows})
         finally:
             conn.close()
@@ -848,7 +925,9 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/digests", digest_now, methods=["POST"]),
         Route("/v1/init", init_status, methods=["GET"]),
         Route("/v1/init/role", init_role, methods=["POST"]),
+        Route("/v1/init/skip", init_skip, methods=["POST"]),
         Route("/v1/doctor/slack", doctor_slack, methods=["GET"]),
+        Route("/v1/doctor/ops", doctor_ops, methods=["GET"]),
     ]
 
 
@@ -1255,7 +1334,8 @@ def _sender_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up."""
+    """SPEC §13.3, §15.1 (V1.2 step 9): `ecf alerts show|set|test`; `set` needs step-up. V1.5
+    step 7a: `ecf alerts email set|off` (step-up)."""
 
     def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
         conn = state.connect()
@@ -1280,11 +1360,222 @@ def _alert_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def test(_request: Request) -> JSONResponse:
         return _with_conn(lambda c: alerts.test(c, state.clock, state.notifier))
 
+    @allow(Caller.CLI)
+    def email_set(request: Request) -> JSONResponse:
+        body = _body(request)
+        frm, to = _opt_str(body, "from") or "", _opt_str(body, "to") or ""
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: alerts.set_email(c, state.clock, state.notifier, frm, to,
+                                                     nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def email_off(request: Request) -> JSONResponse:
+        nonce = _opt_str(_body(request), "nonce_id")
+        return _with_conn(lambda c: alerts.email_off(c, state.clock, state.notifier, nonce=nonce))
+
     return [
         Route("/v1/alerts", show, methods=["GET"]),
         Route("/v1/alerts", set_routes, methods=["POST"]),
         Route("/v1/alerts/test", test, methods=["POST"]),
+        Route("/v1/alerts/email", email_set, methods=["POST"]),
+        Route("/v1/alerts/email/off", email_off, methods=["POST"]),
     ]
+
+
+def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.9, §15.1 (V1.5 step 8a): the backup key and `export_dir`, each with step-up;
+    (step 8b) the schedule's state and `ecf export now`; (step 9a) manual `ecf export --to`;
+    (step 9b) `ecf import --dry-run`; (step 9c) `ecf import [--replace]`; (step 10a) `ecf
+    restore`."""
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    def data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: export_keys.show(c, data_dir()) | scheduled_export.status(c))
+
+    @allow(Caller.CLI)
+    def new_key(_request: Request) -> JSONResponse:
+        state.store()  # no secret store, no key: fail before showing one
+        return _with_conn(lambda c: export_keys.new_key(c, state.clock))
+
+    @allow(Caller.CLI)
+    def rotate(request: Request) -> JSONResponse:
+        body = _body(request)
+        pid, typed = _str(body, "pending_id"), _str(body, "fingerprint")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: export_keys.rotate(c, state.clock, state.notifier,
+                                                       state.store(), data_dir(), pid, typed,
+                                                       nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def now(_request: Request) -> JSONResponse:
+        return _with_conn(lambda c: scheduled_export.now(c, state.clock, state.notifier,
+                                                         state.secrets, data_dir(),
+                                                         state.install))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def suggest(_request: Request) -> JSONResponse:
+        return JSONResponse({"passphrase": passphrase.generate()})
+
+    @allow(Caller.CLI)
+    def manual(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "passphrase")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: manual_export.export(c, state.clock, state.notifier,
+                                                         state.secrets, data_dir(),
+                                                         state.install, path, secret,
+                                                         nonce=nonce))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def inspect(request: Request) -> JSONResponse:
+        path = _str(_body(request), "path")
+        return _with_conn(lambda c: bundle_reader.describe(bundle_reader.inspect(c, path)))
+
+    @allow(Caller.CLI)
+    def import_(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "secret")
+        dry_run, replace = body.get("dry_run") is True, body.get("replace") is True
+        typed, nonce = _opt_str(body, "install"), _opt_str(body, "nonce_id")
+
+        def go(c: sqlite3.Connection) -> dict[str, Any]:
+            parsed = bundle_reader.read(c, path, secret)
+            if dry_run:
+                return import_plan.preview(c, parsed)
+            return importer.apply(c, state.clock, state.notifier, data_dir(), state.install,
+                                  parsed, path, replace=replace, typed_install=typed,
+                                  nonce=nonce)  # fmt: skip
+
+        return _with_conn(go)
+
+    @allow(Caller.CLI)
+    def restore_(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, secret = _str(body, "path"), _str(body, "secret")
+        key_text = _opt_str(body, "backup_key")
+        nonce = _opt_str(body, "nonce_id")
+
+        def go(c: sqlite3.Connection) -> dict[str, Any]:
+            parsed = bundle_reader.read(c, path, secret, key_text)
+            if body.get("dry_run") is True:
+                return restore.check(c, parsed)
+            typed = secret if parsed.opened.header["kind"] == "scheduled" else key_text
+            if typed is None:
+                raise InvalidInputError("restoring a manual bundle needs the backup key too")
+            return restore.restore(c, state.clock, state.notifier, state.store(), data_dir(),
+                                   parsed, path, typed, stopped=body.get("stopped") is True,
+                                   older_ok=body.get("older_ok") is True, nonce=nonce)  # fmt: skip
+
+        return _with_conn(go)
+
+    @allow(Caller.CLI)
+    def set_dir(request: Request) -> JSONResponse:
+        body = _body(request)
+        path, typed = _str(body, "path"), _str(body, "fingerprint")
+        nonce = _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: export_keys.set_dir(c, state.clock, state.notifier,
+                                                        data_dir(), path, typed,
+                                                        nonce=nonce))  # fmt: skip
+
+    return [
+        Route("/v1/export", show, methods=["GET"]),
+        Route("/v1/export/keys/new", new_key, methods=["POST"]),
+        Route("/v1/export/keys", rotate, methods=["POST"]),
+        Route("/v1/export/dir", set_dir, methods=["POST"]),
+        Route("/v1/export/now", now, methods=["POST"]),
+        Route("/v1/export/passphrase", suggest, methods=["GET"]),
+        Route("/v1/export", manual, methods=["POST"]),
+        Route("/v1/import/inspect", inspect, methods=["POST"]),
+        Route("/v1/import", import_, methods=["POST"]),
+        Route("/v1/restore", restore_, methods=["POST"]),
+    ]
+
+
+def _destroy_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.11 (V1.5 step 12a): `ecf destroy`'s preview and the service's part; after the
+    service's part the service stops, as a stop you asked for (OD-222)."""
+
+    def root() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent.parent
+
+    def sessions() -> int:
+        with state.lock:
+            return len(state.sessions)
+
+    def sender_for(conn: sqlite3.Connection, address_id: str) -> Any:
+        if send_actions.sender_for is None:
+            raise ServiceUnavailableError("no mail sender here")
+        return send_actions.sender_for(conn, address_id)
+
+    @allow(Caller.CLI)
+    def show(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(destroy.preview(conn, state.clock, state.install, root(),
+                                                sessions()))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def run(request: Request) -> JSONResponse:
+        body = _body(request)
+        typed, token = _str(body, "install"), _opt_str(body, "config_token")
+        nonce = _opt_str(body, "nonce_id")
+        ctx = destroy.Context(state.install, root(), state.clock, state.notifier, state.store(),
+                              state.slack_web, sender_for)  # fmt: skip
+        conn = state.connect()
+        try:
+            rec = destroy.run(conn, ctx, typed=typed, config_token=token, nonce=nonce,
+                              sessions=sessions())  # fmt: skip
+        finally:
+            conn.close()
+        state.stopping_on_purpose = True
+        state.request_stop()
+        return JSONResponse(rec)
+
+    return [Route("/v1/destroy", show, methods=["GET"]),
+            Route("/v1/destroy", run, methods=["POST"])]  # fmt: skip
+
+
+def _upgrade_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §11.10 (V1.5 step 11a): what `ecf upgrade` checks against the new wheel."""
+
+    @allow(Caller.CLI)
+    def upgrade_state(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            with state.lock:
+                sessions = len(state.sessions)
+            return JSONResponse(upgrade_state_mod.state(conn, state.clock, api_version=API_VERSION,
+                                                        sessions=sessions))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def finish(request: Request) -> JSONResponse:
+        body = _body(request)
+        conn = state.connect()
+        try:
+            return JSONResponse(upgrade_state_mod.finish(conn, state.clock, body))
+        finally:
+            conn.close()
+
+    return [Route("/v1/upgrade/state", upgrade_state, methods=["GET"]),
+            Route("/v1/upgrade/finish", finish, methods=["POST"])]  # fmt: skip
 
 
 def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -1552,11 +1843,19 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
             app_password=_str(body, "app_password"),
             address_id=_str(body, "address_id") if body.get("address_id") is not None else None,
             org_domains=_str_list(org) if org is not None else None,
+            smtp_host=_str(body, "smtp_host") if body.get("smtp_host") is not None else None,
+            smtp_port=_port(body.get("smtp_port")),
         )
         conn = state.connect()
         try:
             a = addresses.add_address(
-                conn, state.clock, state.store(), _factory(), req, actor="os_user"
+                conn,
+                state.clock,
+                state.store(),
+                _factory(),
+                req,
+                actor="os_user",
+                sender_factory=state.sender_factory,
             )
         finally:
             conn.close()
@@ -1568,9 +1867,14 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_address(request: Request) -> JSONResponse:
         ref = str(request.path_params["ref"])
         body = _body(request)
-        unknown = set(body) - {"app_password"}
+        unknown = set(body) - {"app_password", "smtp_host", "smtp_port", "stepup_nonce",
+                               *send_limits.DEFAULTS}  # fmt: skip
         if unknown:
             raise InvalidInputError(f"can't set {', '.join(sorted(unknown))} here yet")
+        if "smtp_host" in body:
+            return JSONResponse(_set_smtp(state, ref, body))
+        if set(body) & set(send_limits.DEFAULTS):
+            return JSONResponse(_set_limits(state, ref, body))
         conn = state.connect()
         try:
             a = addresses.set_app_password(
@@ -1581,6 +1885,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 ref,
                 _str(body, "app_password"),
                 actor="os_user",
+                sender_factory=state.sender_factory,
             )
         finally:
             conn.close()
@@ -1653,6 +1958,61 @@ def _body(request: Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise InvalidInputError("request body must be a JSON object")
     return cast(dict[str, Any], data)
+
+
+def _set_smtp(state: ServiceState, ref: str, body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf address set --smtp-host` (step-up, Security Notice; OD-324)."""
+    if "app_password" in body:
+        raise InvalidInputError("set the app password and the SMTP server separately")
+    nonce = body.get("stepup_nonce")
+    conn = state.connect()
+    try:
+        return addresses.set_smtp(
+            conn,
+            state.clock,
+            lambda text: _notice(state, conn, text),
+            state.store(),
+            state.sender_factory,
+            ref,
+            _str(body, "smtp_host"),
+            _port(body.get("smtp_port")) or 465,
+            actor="os_user",
+            nonce=nonce if isinstance(nonce, str) else None,
+        )
+    finally:
+        conn.close()
+
+
+def _set_limits(state: ServiceState, ref: str, body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf address set --max-sends-per-hour|--max-sends-per-day` (step-up; §9.6)."""
+    new = {k: v for k, v in body.items() if k in send_limits.DEFAULTS}
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in new.values()):
+        raise InvalidInputError("send limits must be numbers")
+    if set(body) - set(new) - {"stepup_nonce"}:
+        raise InvalidInputError("set send limits on their own")
+    nonce = body.get("stepup_nonce")
+    conn = state.connect()
+    try:
+        return send_limits.set_limits(conn, state.clock, lambda t: _notice(state, conn, t), ref,
+                                      new, actor="os_user",
+                                      nonce=nonce if isinstance(nonce, str) else None)  # fmt: skip
+    finally:
+        conn.close()
+
+
+def _port(v: Any) -> int | None:
+    if v is None:
+        return None
+    if not isinstance(v, int) or isinstance(v, bool):
+        raise InvalidInputError("smtp_port must be a number")
+    return v
+
+
+def _notice(state: ServiceState, conn: sqlite3.Connection, text: str) -> None:
+    """A Security Notice to the desktop, your DM and the summary channel (§13.3)."""
+    ident = slack_admin.identity(conn)
+    slack_admin.notice(conn, state.clock, state.notifier, text,
+                       dms=[ident.member] if ident and ident.member else [])  # fmt: skip
 
 
 def _str(body: dict[str, Any], key: str) -> str:
