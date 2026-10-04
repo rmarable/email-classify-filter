@@ -74,7 +74,7 @@ Approvals expire after 4 days for sends and 14 days for everything else; on expi
 
   ```sh
   ecf approve --pending     # lists them (sends separately), asks, one step-up for the non-sends
-  ecf approve <id>          # one item; every send needs its own
+  ecf approve <id>          # one item: shows what it does (a draft in full), asks; every send needs its own
   ecf reject <id>
   ```
 

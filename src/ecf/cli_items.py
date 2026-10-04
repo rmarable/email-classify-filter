@@ -115,15 +115,17 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         pending: Annotated[
             bool, typer.Option("--pending", help="Approvals queued from Slack for step-up.")
         ] = False,
+        yes: Annotated[bool, typer.Option("--yes", help="Don't ask after showing it.")] = False,
     ) -> None:
-        """Approve an action ecf proposed. (step-up for sends, irreversible actions, and hiding
-        fraud or regulator email)"""
+        """Approve an action ecf proposed, after showing it. (step-up for sends, irreversible
+        actions, and hiding fraud or regulator email)"""
         with LocalClient(paths()) as c:
             if pending:
                 _approve_pending(c)
                 return
             if not item:
                 raise typer.BadParameter("give an item ID, or --pending")
+            _show_proposal(c, item, yes)
             r = with_step_up(c, lambda n: c.request("POST", f"/v1/items/{item}/approve",
                                                     {"nonce_id": n}), echo=typer.echo)  # fmt: skip
         typer.echo(_after(r["status"]))
@@ -202,6 +204,16 @@ def _after(status: str) -> str:
     return AFTER.get(status, f"approved ({status})")
 
 
+def _show_proposal(c: LocalClient, item: str, yes: bool) -> None:
+    """Show what `ecf approve` would approve, then ask unless `--yes` (§8.4)."""
+    d = c.get(f"/v1/items/{item}")
+    typer.echo(plain(f"{d['sender'][:60]}: {d['subject'][:60]} ({d['address_id']})"))
+    for line in proposal_lines(d):
+        typer.echo(plain(line))
+    if not yes and not typer.confirm("Approve?", default=False):
+        raise typer.Exit(1)
+
+
 def _approve_pending(c: LocalClient) -> None:
     p = c.request("POST", "/v1/approvals/pending", {})
     for s in p["sends"]:
@@ -224,6 +236,42 @@ def _approve_pending(c: LocalClient) -> None:
                      echo=typer.echo)  # fmt: skip
     for x in r["results"]:
         typer.echo(f"  {x['id'][:8]}: {_after(x['status'])}")
+
+
+def _action_line(a: dict[str, Any]) -> str:
+    name, target = str(a.get("name", "")), a.get("target")
+    payload: dict[str, Any] = a.get("payload") or {}
+    if name == "forward_internal":
+        text = f"forward to {payload.get('to', '?')} ({payload.get('entry', target)})"
+    elif name == "reply_template":
+        text = f"send template '{payload.get('template', target)}' to {payload.get('to', '?')}"
+    elif name == "draft_reply":
+        text = f"save a draft reply to {payload.get('to', '?')} (never sent)"
+    else:
+        text = name + (f" {target}" if target else "")
+    return text + ("   (needs your approval)" if a.get("mode") == "approve" else "")
+
+
+def proposal_lines(d: dict[str, Any]) -> list[str]:
+    """What ecf proposes for the item, with a draft's whole text: what `ecf approve` approves
+    (§8.4: a draft is shown in full before approval)."""
+    p: dict[str, Any] = d.get("proposal") or {}
+    plan: dict[str, Any] = p.get("plan") or {}
+    actions: list[dict[str, Any]] = plan.get("actions") or p.get("actions") or []
+    if not actions or p.get("done") is not None:
+        return []
+    lines = ["proposed:"]
+    for a in actions:
+        lines.append(f"  {_action_line(a)}")
+        payload: dict[str, Any] = a.get("payload") or {}
+        text = str(payload.get("text") or "") if a.get("name") == "draft_reply" else ""
+        if text:
+            lines.append("    draft written by ecf's model (it can be wrong):")
+            lines += [f"    | {x}" for x in text.splitlines()]
+    actor: dict[str, Any] = plan.get("actor") or {}
+    if actor.get("reason"):
+        lines.append(f"  model's reason: {actor['reason']}")
+    return lines
 
 
 def describe(d: dict[str, Any]) -> list[str]:
@@ -249,6 +297,7 @@ def describe(d: dict[str, Any]) -> list[str]:
         )
     if d["payment_or_fraud"]:
         lines.append("note:         This acts on the email only. ecf never pays anything.")
+    lines += proposal_lines(d)
     lines.append("history:")
     lines += [
         f"  {h['ts']}  {h['event']:<28} {h['actor']:<14} {h['outcome']}" for h in d["history"]
