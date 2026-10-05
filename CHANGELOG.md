@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## next (not yet tagged; the next milestone is decided later, OD-423)
 
+- Fixed: `ecf destroy` no longer calls an install that never ran `ecf init` `(prod)`; it says the role isn't set.
+- Fixed: an approval confirmed with step-up now records the step-up on its grant (`grants.stepup_nonce_id` was never written).
 - Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).
 - Planned: `v1.0.0` will watch personal Gmail accounts (gmail.com) over IMAP with an app password, with a setup guide for non-technical users; this is new milestone V1.6 Gmail. Another person's account may be watched only when its owner creates the app password and agrees. Google Workspace accounts wait for the Gmail API, roadmap milestone M6 (OD-425 to OD-427). One install may watch Gmail only, its own-domain IMAP mailboxes only, or both (OD-428).
 - Planned: model-written replies (Later) now list their prerequisites, starting with an eval of draft quality (OD-424).
