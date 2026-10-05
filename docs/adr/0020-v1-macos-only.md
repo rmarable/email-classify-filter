@@ -1,6 +1,8 @@
 # ADR 0020: v1.0.0 is macOS-only; Linux moves to milestone M5
 
-- **Status:** accepted (operator decision 2026-10-04, OD-421, OD-422); amends ADR 0002
+- **Status:** accepted (operator decision 2026-10-04, OD-421, OD-422); amends ADR 0002; amended
+  by OD-425 (2026-10-04): v1's milestones are V1.0-V1.6, where V1.6 is now Gmail over IMAP;
+  Linux stays M5
 - **Context source:** SPEC §1.1, §1.2, §1.3, §1.5; `docs/roadmap/m5-linux.md` on branch `m5-linux`
 
 ## Context

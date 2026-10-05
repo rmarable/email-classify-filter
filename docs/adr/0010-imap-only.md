@@ -2,7 +2,9 @@
 
 - **Status:** accepted (design plan "Decision summary", Mail, reviewed by the operator
   2026-09-26/27; OD-086, 2026-09-27; OD-191, 2026-09-28; OD-196, 2026-09-29; OD-324, 2026-10-02);
-  implemented in V1.1 (IMAP, the probe), SMTP in V1.5
+  implemented in V1.1 (IMAP, the probe), SMTP in V1.5. Gmail personal accounts over IMAP
+  follow this ADR in V1.6 (OD-425); the Gmail API is roadmap milestone M6 (OD-426), which
+  brings the ADR that supersedes the "Later" alternative below
 - **Context source:** SPEC §1.1, §3.2, §3.3, §5.1, §10.2, §11.6, §18, §23.5 (G1-32 to
   G1-37); design plan (`docs/history/design-plan-2026-09-27.md`) "Decision summary";
   `ecf_server/mail/imap.py`, `mail/smtp.py`, `probe.py`
