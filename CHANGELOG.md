@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## next (not yet tagged; the next milestone is decided later, OD-423)
 
+- Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).
 - Planned: `v1.0.0` will watch personal Gmail accounts (gmail.com) over IMAP with an app password, with a setup guide for non-technical users; this is new milestone V1.6 Gmail. Another person's account may be watched only when its owner creates the app password and agrees. Google Workspace accounts wait for the Gmail API, roadmap milestone M6 (OD-425 to OD-427). One install may watch Gmail only, its own-domain IMAP mailboxes only, or both (OD-428).
 - Planned: model-written replies (Later) now list their prerequisites, starting with an eval of draft quality (OD-424).
 - `v1.0.0` will support macOS only. Linux verification, planned as V1.6, is now roadmap milestone M5, after M4; until then `ecf doctor` warns that Linux isn't supported yet (OD-421, OD-422, ADR 0020).

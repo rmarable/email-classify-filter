@@ -26,6 +26,7 @@ from ecf.status import OPEN, Status
 from ecf_server import items, probe, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
+from ecf_server.facts import PUBLIC_DOMAINS
 from ecf_server.mail import MailSource
 from ecf_server.mail.smtp import PORTS, SenderFactory
 from ecf_server.precheck import item_payment_or_fraud
@@ -35,13 +36,6 @@ from ecf_server.state_machine import TransitionContext
 ORG_DOMAINS_KEY = "org_domains"
 SENSITIVITIES = ("standard", "high")
 PRESETS = ("A", "B", "C")
-# Public mailbox providers can't be org domains (SPEC §7.2): anyone can get an address there.
-PUBLIC_DOMAINS = frozenset({
-    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
-    "yahoo.com", "ymail.com", "aol.com", "icloud.com", "me.com", "mac.com", "proton.me",
-    "protonmail.com", "pm.me", "gmx.com", "gmx.net", "mail.com", "zoho.com", "yandex.com",
-    "fastmail.com", "hey.com", "tutanota.com", "tuta.io", "purelymail.com",
-})  # fmt: skip
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9.-]{1,253})$")
 _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 

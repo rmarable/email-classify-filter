@@ -18,6 +18,14 @@ from typing import Any
 from ecf_server.clock import from_ts
 from ecf_server.message import ParsedMessage
 
+# Public mailbox providers can't be org domains (SPEC §7.2): anyone can get an address there.
+# Nor is one a lookalike of another (OD-430): `ymail.com` isn't impersonating `gmail.com`.
+PUBLIC_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
+    "yahoo.com", "ymail.com", "aol.com", "icloud.com", "me.com", "mac.com", "proton.me",
+    "protonmail.com", "pm.me", "gmx.com", "gmx.net", "mail.com", "zoho.com", "yandex.com",
+    "fastmail.com", "hey.com", "tutanota.com", "tuta.io", "purelymail.com",
+})  # fmt: skip
 SEEN_COUNT = 3  # OD-043: at least 3 earlier DMARC-pass messages ...
 SEEN_SPREAD = timedelta(days=14)  # ... spread over 14 days or more
 # Shared platforms send for many unrelated customers, so their senders never count as seen.
