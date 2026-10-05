@@ -6,7 +6,7 @@ rule and the commit rules are in `CLAUDE.md`.
 ## Requirements
 
 - macOS. Linux runs the tests (CI does) but ecf isn't supported there until milestone M5.
-- Python 3.12 or newer, managed by [uv](https://docs.astral.sh/uv/) (`.python-version` pins 3.12).
+- Python 3.12.6 or newer, managed by [uv](https://docs.astral.sh/uv/) (`.python-version` asks for 3.12.6 or a later 3.12).
 - v1 needs no AWS and no CDK. `infra/` (arriving in M1) is the AWS infrastructure source.
 - A container engine for the IMAP tests (a Dovecot container, OD-186): on macOS
   `brew install colima docker && brew services start colima`; on Linux, Docker Engine. Without one,

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## next (not yet tagged; the next milestone is decided later, OD-423)
 
+- Changed: ecf now needs Python 3.12.6 or newer (was 3.12). Earlier 3.12 releases parse some malformed email addresses differently (CVE-2023-27043); `ecf doctor` fails the python check on them (OD-454).
 - Fixed: `ecf destroy` no longer calls an install that never ran `ecf init` `(prod)`; it says the role isn't set.
 - Fixed: an approval confirmed with step-up now records the step-up on its grant (`grants.stepup_nonce_id` was never written).
 - Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).

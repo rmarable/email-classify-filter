@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Watches business mailboxes, flags invoice and payment fraud, and asks a person to approve actions in Slack."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.12"
+requires-python = ">=3.12.6"
 authors = [{ name = "Rodney Marable" }]
 dependencies = [
     "dkimpy[ed25519]>=1.1",

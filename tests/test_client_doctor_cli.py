@@ -15,6 +15,7 @@ from ecf.doctor import (
     check_data_dir,
     check_database,
     check_disk_encryption,
+    check_python,
     check_unit,
     judge_status,
     run_checks,
@@ -97,6 +98,16 @@ def test_disk_encryption(
 )
 def test_unit_check(status: UnitStatus, level: Level) -> None:
     assert check_unit(FakeManager(status)).level is level
+
+
+@pytest.mark.parametrize(
+    ("version", "level"), [((3, 12, 5), Level.FAIL), ((3, 12, 6), Level.OK), ((3, 13, 0), Level.OK)]
+)
+def test_python_check_needs_3_12_6(
+    monkeypatch: pytest.MonkeyPatch, version: tuple[int, int, int], level: Level
+) -> None:
+    monkeypatch.setattr(sys, "version_info", version)  # strict address parsing, OD-454
+    assert check_python().level is level
 
 
 def test_data_dir_permissions(home: Path) -> None:
