@@ -2604,6 +2604,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-451 | 2026-10-05 | (V1.6 step 1) | SPEC §8.5 | No trigger 6 exception for mailing-list mail; the noise is counted in V1.6 step 9 |
 | OD-452 | 2026-10-05 | (V1.6 step 1) | SPEC §9.7 | Removing an `org_addresses` entry or org domain a forward entry needs is refused until that entry goes too |
 | OD-453 | 2026-10-05 | (V1.6 step 1b) | SPEC §8.5 | Impersonation reasons also go in the `fraud` trigger list with a payment keyword and in `fraud_weak` without one, so every fraud-signal check and the pre-check count them; the fact and the rule 1 and 1b clauses stay |
+| OD-454 | 2026-10-05 | (operator decision) | SPEC §17.2 | ecf requires Python 3.12.6 or newer: 3.12.6 made `email.utils` address parsing strict (the CVE-2023-27043 fix), earlier releases parse the same address differently, and 3.12.3 failed the synthetic eval build |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
