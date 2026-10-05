@@ -27,7 +27,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.yamlio import load_yaml
-from ecf_server.facts import domain_of
+from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
@@ -169,7 +169,9 @@ def evaluate(
             f"{d} looks like {k}"
             for d in candidates
             for k in [*org_domains, *known_vendors]
-            if lookalike(d, k) and not (k in org_domains and saas_tenant(d, k))
+            if lookalike(d, k)
+            and not (k in org_domains and saas_tenant(d, k))
+            and not (d in PUBLIC_DOMAINS and k in PUBLIC_DOMAINS)  # OD-430
         }
     )
 
