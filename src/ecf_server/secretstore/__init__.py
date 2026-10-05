@@ -1,6 +1,6 @@
 """The SecretStore port (SPEC §3.3, §11.6). The service is the only writer of secrets.
 
-Backends: macOS Keychain; Linux Secret Service or `systemd-creds --user` (unverified until V1.6).
+Backends: macOS Keychain; Linux Secret Service or `systemd-creds --user` (unverified until M5).
 Names are fixed (SPEC §11.6); items live under the service name `email-classify-filter/<install>`.
 """
 

@@ -251,7 +251,7 @@ def render_systemd_unit(
     ]
     lines += [f'Environment="{k}={v}"' for k, v in _env().items()]
     for cred in credential_files or []:
-        # not quoted: quoting support for this setting is unverified until the V1.6 Linux test
+        # not quoted: quoting support for this setting is unverified until the M5 Linux test
         lines.append(f"LoadCredentialEncrypted={cred.name.removesuffix('.cred')}:{cred}")
     lines += ["", "[Install]", "WantedBy=default.target", ""]
     return "\n".join(lines)

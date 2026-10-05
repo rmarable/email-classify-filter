@@ -1,6 +1,7 @@
 # ADR 0002: v1 is single-user local mode
 
-- **Status:** accepted (operator decision 2026-09-26, OD-013; platforms OD-001, OD-002)
+- **Status:** accepted (operator decision 2026-09-26, OD-013; platforms OD-001, OD-002); platforms
+  amended by ADR 0020 (2026-10-04: `v1.0.0` is macOS-only, Linux in M5)
 - **Context source:** SPEC §1; design plan (`docs/history/design-plan-2026-09-27.md`), Scope and §17
 
 ## Context
@@ -26,7 +27,8 @@ model or client, so M1 moves it to Lambdas without redesign.
 - **Everything in v1** (AWS, teams, remote MCP): rejected; too much to build before the first real
   test (superseded 2026-09-26).
 - **A reduced v1** (R4-25): rejected in Review 4.
-- **macOS only:** rejected; Linux is in v1 but unverified until V1.6.
+- **macOS only:** rejected; Linux is in v1 but unverified until V1.6. (Reversed for `v1.0.0` by
+  ADR 0020: Linux moved to M5.)
 
 ## Consequences
 

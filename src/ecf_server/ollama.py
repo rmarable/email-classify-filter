@@ -74,7 +74,7 @@ FIX: dict[str, str] = {
     "server": "close other large apps (the model needs about 9 GB free), then wait: ecf retries"
     " each minute",
 }
-# Ollama's wording for "can't run the model now" (unverified, confirm in V1.6): an HTTP 5xx
+# Ollama's wording for "can't run the model now" (unverified, confirm in M5): an HTTP 5xx
 # whose error names memory or the runner
 _SERVER_FAULT = re.compile(r"memory|runner", re.IGNORECASE)
 

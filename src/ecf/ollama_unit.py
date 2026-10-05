@@ -1,7 +1,7 @@
 """ecf's own login item for Ollama (SPEC §7.5; OD-246; V1.3 step 1c).
 
 `ollama serve` runs from a LaunchAgent (macOS) or a systemd user unit (Linux, unverified until
-V1.6) with a fixed environment, so the settings ecf relies on don't depend on how Ollama was
+M5) with a fixed environment, so the settings ecf relies on don't depend on how Ollama was
 installed: loopback only, one request at a time (the prompt cache), the cloud feature off, and none
 of flash attention, the q8 cache or debug logging (measured 2026-09-30: no gain, and request
 logging writes email text to disk). One item per user, shared by every install. `ProcessType` is
@@ -171,7 +171,7 @@ def render_systemd(ollama: Path, home: Path, root: Path) -> str:
 
 
 class SystemdOllama:
-    """Unverified until V1.6."""
+    """Unverified until M5."""
 
     def __init__(
         self,

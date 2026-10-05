@@ -4,8 +4,8 @@ and the fake; nonces, binding and the routes are in `stepup.py`.
 
 - **macOS:** LocalAuthentication (Touch ID or the login password) from the LaunchAgent; the reason
   text in the dialog names the action, recipient, address and a short code the CLI also prints.
-- **Linux:** PAM with the password the CLI sends over the 0600 socket (unverified until V1.6);
-  PAM only in V1.2; polkit on desktops arrives with V1.6 (OD-224).
+- **Linux:** PAM with the password the CLI sends over the 0600 socket (unverified until M5);
+  PAM only in V1.2; polkit on desktops arrives with M5 (OD-224).
 
 One authentication at a time across the service: a second request waits for the first to end, so
 a same-user process can't slip its own dialog in beside a real one (security review of the V1.2
@@ -49,7 +49,7 @@ class MacStepper:
 
 
 class PamStepper:
-    """Unverified until V1.6."""
+    """Unverified until M5."""
 
     name = "pam"
     needs_password = True

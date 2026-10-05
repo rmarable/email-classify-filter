@@ -9,7 +9,7 @@
 
 ecf classifies business mail and proposes actions. The operator wants it to work with no cloud
 model at all, to use Claude where it helps, and to keep email content to the destinations in the
-SPEC privacy statement (§12.4). v1 runs on one Mac (Linux verified in V1.6), so the local model has
+SPEC privacy statement (§12.4). v1 runs on one Mac (Linux in M5, ADR 0020), so the local model has
 to fit a laptop's memory and heat, and its output has to be checked before anything trusts it.
 
 ## Decision
@@ -55,4 +55,4 @@ From the design plan's appendix and the V1.3 build:
 - Every model change (a new pin) is a new digest: the go-live gate starts again for it (ADR 0006).
 - An ecf upgrade changes the ecf copy's name; the service copies the pinned model again by itself
   when Ollama still holds it unchanged, and `ecf models install` removes copies for other releases.
-- Linux runs the same design through a systemd user unit, unverified until V1.6.
+- Linux runs the same design through a systemd user unit, unsupported until M5 (ADR 0020).
