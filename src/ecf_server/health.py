@@ -47,11 +47,12 @@ TITLES = {
     # ecf's own labels on mail newer than a restored cursor (OD-318, OD-372; V1.5 step 10b)
     "restored_keywords": "Operator Input Needed: ecf's labels on new mail after a restore",
     "export_failed": "System Error",  # scheduled backups keep failing (§11.9; V1.5 step 8b)
+    "download_budget": "Operator Input Needed: Gmail download limit reached",  # OD-440 (V1.6)
 }
 # not a mail check's to resolve on success
 NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
                         "send_limit", "alert_email", "export_failed",
-                        "restored_keywords"})  # fmt: skip
+                        "restored_keywords", "download_budget"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 
@@ -91,6 +92,7 @@ def after_check(
                    f" then `ecf resume {aid}`.")  # fmt: skip
     elif _running(conn, aid):
         resolve_alert(conn, clock, notifier, "restored_keywords", aid)
+    _download_budget(conn, clock, notifier, report)
     probe_row = conn.execute("SELECT host FROM probe WHERE address_id = ?", (aid,)).fetchone()
     host = probe_row["host"] if probe_row and probe_row["host"] else ""
     row = conn.execute(
@@ -154,6 +156,21 @@ def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def _running(conn: sqlite3.Connection, aid: str) -> bool:
     row = conn.execute("SELECT paused FROM addresses WHERE address_id = ?", (aid,)).fetchone()
     return row is not None and not row["paused"]
+
+
+def _download_budget(
+    conn: sqlite3.Connection, clock: Clock, notifier: Notifier, report: CheckReport
+) -> None:
+    """Gmail's daily download budget stopped fetching (OD-440): open; a later check that isn't
+    stopped resolves it."""
+    aid = report.address_id
+    if report.download_budget:
+        open_alert(conn, clock, notifier, "download_budget", aid,
+                   f"{aid}: ecf has downloaded close to Gmail's daily limit, so new mail waits"
+                   " and is read as the last 24 hours' downloads age out. Nothing is skipped;"
+                   " a large backfill or a busy inbox can cause this.")  # fmt: skip
+    elif report.status in ("ok", "first_run", "reset_recovered"):
+        resolve_alert(conn, clock, notifier, "download_budget", aid)
 
 
 def open_alert(

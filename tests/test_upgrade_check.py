@@ -26,6 +26,8 @@ from ecf_server.db import write_tx
 from tests.test_addresses import make_state
 from tests.test_export_keys import ApiClient
 
+# the newest migration, so these tests don't change with each one
+SCHEMA = max(v for v, _n, _s in db._migration_files())  # pyright: ignore[reportPrivateUsage]
 LOCK = {"main_session": "claude-haiku-4-5-20251001", "classifier": "claude-haiku-4-5-20251001",
         "classifier_high": "claude-sonnet-5-5", "actor": "claude-sonnet-5-5",
         "actor_high": "claude-opus-5-5"}  # fmt: skip
@@ -38,11 +40,11 @@ def test_version_order() -> None:
         upgrade_check.version_key("1.0")
 
 
-def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int = 31, data_format: int = 2,
+def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int | None = None, data_format: int = 2,
            min_client: str = "0.1.0.dev0", lock: dict[str, str] | None = None,
            digest: str = "d" * 64, name: str = "w.whl") -> Path:  # fmt: skip
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
-            "data_format": data_format, "schema_version": schema,
+            "data_format": data_format, "schema_version": SCHEMA if schema is None else schema,
             "min_client": min_client}  # fmt: skip
     path = tmp / name
     with zipfile.ZipFile(path, "w") as z:
@@ -89,7 +91,7 @@ def test_install_detection(tmp_path: Path) -> None:
 
 
 def _state(**over: Any) -> dict[str, Any]:
-    return {"version": "0.1.0", "schema_version": 31, "data_format": 1, "api_version": 1,
+    return {"version": "0.1.0", "schema_version": SCHEMA, "data_format": 1, "api_version": 1,
             "pins": LOCK | {"local": "d" * 64}, "pin_users": {"local": ["ap"], "actor": ["b"]},
             "install_role": "test",
             "busy": {"executing": 0, "leases": 0, "claude_sessions": 0}} | over  # fmt: skip
@@ -126,7 +128,7 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
         conn.execute("INSERT INTO leases (address_id, holder, fencing_token, expires_at) VALUES"
                      " ('a', 'w', 1, ?)", (to_ts(clock.now().replace(year=2100)),))  # fmt: skip
     s = upgrade_state.state(conn, clock, api_version=1, sessions=1)
-    assert s["version"] == __version__ and s["schema_version"] == 31
+    assert s["version"] == __version__ and s["schema_version"] == SCHEMA
     assert s["pin_users"]["local"] == ["a", "b"]
     assert s["pin_users"]["actor"] == ["b", "c"] and s["pin_users"]["classifier"] == ["c"]
     assert s["busy"] == {"executing": 1, "leases": 1, "claude_sessions": 1}
@@ -148,7 +150,7 @@ def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> Non
     assert oct(db_file.stat().st_mode & 0o777) == "0o600"
     assert oct(made[-1].stat().st_mode & 0o777) == "0o700"
     copy = sqlite3.connect(db_file)
-    assert copy.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 31
+    assert copy.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == SCHEMA
     copy.close()
     with pytest.raises(InvalidInputError):
         upgrade_snapshot.take(paths, "../escape")

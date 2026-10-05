@@ -68,6 +68,7 @@ CLASS_OF = {
     "second_install": "operator",
     "restored_keywords": "operator",
     "send_limit": "operator",
+    "download_budget": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",
     "security_notice": "security",
