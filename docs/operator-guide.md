@@ -78,7 +78,7 @@ Approvals expire after 4 days for sends and 14 days for everything else; on expi
   ecf reject <id>
   ```
 
-  Step-up is Touch ID or your password (Linux: your password via PAM, unverified until V1.6). The
+  Step-up is Touch ID or your password (Linux, not supported until M5: your password via PAM). The
   dialog names the action, sender, subject and address, plus a 4-character code that the CLI
   prints too; check they match (SPEC §9.6).
 - **Sends on `high` addresses** then wait 10 minutes of awake time, announced in Slack with
@@ -203,7 +203,7 @@ raises `Operator Input Needed: Claude review waiting (<address>)` (SPEC §10.3, 
 ## Notifications and alert email
 
 - **Desktop notifications** carry no email text (address IDs, counts, commands). On macOS they show
-  as Script Editor (unverified); Linux desktops use `notify-send` (unverified until V1.6); headless
+  as Script Editor (unverified); Linux desktops use `notify-send` (Linux isn't supported until M5); headless
   Linux has none.
 - **Alert email** (if set up; admin guide) carries the same text, never a subject, sender or
   excerpt. At most 10 an hour of one kind and 30 in all, then an hourly summary. `ecf alerts show`

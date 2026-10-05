@@ -78,8 +78,7 @@ ecf doesn't protect against these (SPEC §12.2 has the details and measurements)
 
 ## Linux
 
-Linux is unverified until milestone V1.6 (OD-408). The design covers Secret Service on desktops,
-`systemd-creds` (systemd 256 or later; headless Linux is best-effort) on headless machines, and PAM
-for step-up (polkit on desktops from V1.6). CI runs the test suite on Linux, but the secret stores
-and step-up are tested there only with fakes; the real-service tests run in V1.6. This section is
-finalized then.
+Linux isn't supported in `v1.0.0`, which is macOS-only (OD-422, ADR 0020). The Linux code (Secret
+Service on desktops, `systemd-creds` on headless machines, PAM for step-up) is in the repo and CI runs
+its unit tests with fakes, but no real-service test has run on Linux. Roadmap milestone M5 verifies
+it, adds polkit step-up and fixes the known Linux defects; this section is finalized then.

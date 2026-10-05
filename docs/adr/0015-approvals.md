@@ -2,7 +2,7 @@
 
 - **Status:** accepted (OD-041, 2026-09-26; OD-071 to OD-073, OD-076, OD-077, OD-084, OD-087,
   2026-09-27; OD-207, OD-208, OD-213, 2026-09-29; OD-223, OD-224, 2026-09-30); implemented in V1.2,
-  real sends in V1.5; Linux step-up unverified until V1.6
+  real sends in V1.5; Linux step-up unverified until M5
 - **Context source:** SPEC §9.5, §9.6, §6.5, §10.4, §12.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) §7; `ecf_server/approvals.py`, `stepup.py`,
   `stepper.py`, `execute.py`, `ecf/cli_items.py`
@@ -29,7 +29,7 @@ MCP client is driven by a model.
   OD-077, OD-213; full list §9.6). The service always performs the check; a result reported by the
   CLI is never trusted (OD-073). It issues a single-use nonce bound to the target's hash and
   computes the dialog text itself: LocalAuthentication (Touch ID or password) on macOS; PAM on
-  Linux, polkit from V1.6 (OD-224). A Slack click on such an action waits at `awaiting_stepup`.
+  Linux, polkit from M5 (OD-224, ADR 0020). A Slack click on such an action waits at `awaiting_stepup`.
 - **Sends on `high` addresses** wait 10 minutes of awake time after step-up, announced with
   Cancel (§9.5, OD-207).
 

@@ -2,7 +2,7 @@
 
 - **Status:** accepted (OD-096, 2026-09-26; OD-097, OD-163, OD-172, 2026-09-27; OD-348,
   2026-10-03); implemented in V1.0 (adapters), the re-grant command in V1.5; Linux unverified until
-  V1.6
+  M5 (ADR 0020)
 - **Context source:** SPEC §11.6, §12.2, §21.1, §21.2; ADR 0001; design plan
   (`docs/history/design-plan-2026-09-27.md`) §10a; `ecf_server/regrant.py`, `ecf/service_unit.py`
 
@@ -49,7 +49,7 @@ across both platforms and who may write them.
 - A Python update under ecf needs one foreground re-grant; until then the service waits with
   "secret store needs you" instead of hanging (§11.6).
 - On Linux desktops after a reboot, the service can't read Secret Service until you log in
-  (unverified, V1.6); the `systemd-creds` behavior is unverified too (V1.6).
+  (unverified, M5); the `systemd-creds` behavior is unverified too (M5).
 - Backups never contain secrets (§11.9): after a restore or import, app passwords and Slack tokens
   are entered again.
 - M1 moves the same accounts to AWS Secrets Manager (design plan, `ecf migrate`).

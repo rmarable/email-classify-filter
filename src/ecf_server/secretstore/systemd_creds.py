@@ -1,10 +1,10 @@
-"""`systemd-creds --user` secrets for headless Linux (SPEC §11.6). Unverified until V1.6.
+"""`systemd-creds --user` secrets for headless Linux (SPEC §11.6). Unverified until M5.
 
 systemd decrypts each credential when the unit starts (`LoadCredentialEncrypted=`) and exposes it
 under `$CREDENTIALS_DIRECTORY`. A write encrypts a new `.cred` file with `systemd-creds encrypt
 --user`; the unit's credential list then has to be updated and the service restarted. Nothing
 acts on `restart_required` yet: that is wired up with address management (V1.1) and verified on
-Linux in V1.6. Until then the new value is kept in memory for this run.
+Linux in M5. Until then the new value is kept in memory for this run.
 """
 
 from __future__ import annotations

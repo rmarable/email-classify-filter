@@ -594,5 +594,5 @@ def run_checks(
     checks.append(check_disk_encryption(run))
     checks += check_claude(paths, claude_used(paths))
     if sys.platform.startswith("linux"):
-        checks.append(Check("platform", Level.WARN, "Linux support is unverified until V1.6"))
+        checks.append(Check("platform", Level.WARN, "Linux isn't supported yet (milestone M5)"))
     return checks

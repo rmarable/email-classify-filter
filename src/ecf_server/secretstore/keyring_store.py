@@ -57,7 +57,7 @@ def macos_keychain(install: str, *, interactive: bool) -> KeyringSecretStore:
 
 
 def secret_service(install: str) -> KeyringSecretStore:
-    """Secret Service (GNOME Keyring, KWallet, KeePassXC). Unverified until V1.6."""
+    """Secret Service (GNOME Keyring, KWallet, KeePassXC). Unverified until M5."""
     from keyring.backends import SecretService  # noqa: PLC0415
 
     return KeyringSecretStore(SecretService.Keyring(), install, backend_name="secret-service")

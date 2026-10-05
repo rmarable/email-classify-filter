@@ -6,7 +6,7 @@ upgrades, removal and recovery. Day-to-day use (Slack cards, approvals, `ecf inb
 
 In v1 one person is admin and approver. Commands marked "(step-up)" in `--help` ask for Touch ID
 or your password at this computer (SPEC §9.6). `--install <name>` picks another install on the
-same computer (default `default`). Linux behaviour is unverified until V1.6 (OD-408).
+same computer (default `default`). Linux isn't supported until roadmap milestone M5 (OD-422).
 
 ## Install
 
@@ -272,7 +272,7 @@ Bulk: `ecf item resolve --older-than <days> [--address <a>] --reason <text>`.
 can't read its Keychain items and waits with "secret store needs you". Run `ecf service regrant`:
 it stops the service, reads each item with the Keychain dialog on (enter your login password,
 choose Always Allow), records the new interpreter only when every read succeeded, and starts the
-service. A locked Linux keyring (after a reboot, before you log in) is unverified until V1.6.
+service. A locked Linux keyring (after a reboot, before you log in) is unverified until M5.
 
 **Crash loop:** after 5 crashes in 10 minutes the service posts why and stays stopped until
 `ecf service start` (SPEC §11.1). A message that crashes the service twice is quarantined

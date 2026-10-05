@@ -5,12 +5,13 @@
 
 ## Context
 
-The build is split into milestones V1.0-V1.6 and later M1-M4. Progress needs recording, but a
+The build is split into milestones V1.0-V1.5 and later M1-M5 (V1.6 became M5, ADR 0020).
+Progress needs recording, but a
 milestone being done doesn't mean the software is fit for anyone else to install.
 
 ## Decision
 
-- **Milestone tags** are annotated tags named `ms-…` (`ms-v1.0-foundations` … `ms-v1.6-linux`,
+- **Milestone tags** are annotated tags named `ms-…` (`ms-v1.0-foundations` … `ms-v1.5-outbound-ops`,
   later `ms-m1-aws` and so on). They record internal progress only.
 - **Release tags** are `vX.Y.Z`, optionally `-rcN`. They are the only tags built and published
   from, and the only ones `ecf upgrade --to` accepts. `v1.0.0` needs every V1.x milestone and the

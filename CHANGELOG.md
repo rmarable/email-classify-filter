@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## next (not yet tagged; the next milestone is decided later, OD-423)
+
+- `v1.0.0` will support macOS only. Linux verification, planned as V1.6, is now roadmap milestone M5, after M4; until then `ecf doctor` warns that Linux isn't supported yet (OD-421, OD-422, ADR 0020).
+
 ## ms-v1.5-outbound-ops (2026-10-04)
 
 - `ecf approve <id>` now shows what you approve before it acts (each action, a send's recipient, a draft's whole text) and asks; `--yes` skips the question. `ecf item show` lists an undecided proposal too. Found in the closing run: a draft could be approved at the computer without being seen.

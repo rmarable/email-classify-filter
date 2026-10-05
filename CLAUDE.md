@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS and Linux (no AWS). Roadmap: M1 AWS mode, M2 teams, M3 remote access, M4 always-on.
+ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 teams, M3 remote access, M4 always-on, M5 Linux.
 
 Each deliverable, and each real-service test, starts only when the operator names it.
 
@@ -37,7 +37,7 @@ Each deliverable, and each real-service test, starts only when the operator name
 
 ## Build milestones
 
-V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 local models (preset A) · V1.4 Claude on demand (B, C) · V1.5 outbound and operations · V1.6 Linux verification (gates `v1.0.0`).
+V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 local models (preset A) · V1.4 Claude on demand (B, C) · V1.5 outbound and operations (these gate `v1.0.0`). V1.6 Linux verification became roadmap milestone M5 (OD-421); its plan is on branch `m5-linux` (`docs/roadmap/m5-linux.md`), not merged.
 
 ## Commands
 
@@ -76,7 +76,7 @@ uv build                                  # wheel + sdist
 
 ## Tags
 
-- **Milestone tags** (`ms-v1.0-foundations` … `ms-v1.5-outbound-ops`, `ms-v1.6-linux`, later `ms-m1-aws`, …) are annotated tags recording internal progress. They do **not** mean the software is ready for anyone else.
+- **Milestone tags** (`ms-v1.0-foundations` … `ms-v1.5-outbound-ops`, later `ms-m1-aws`, … `ms-m5-linux`) are annotated tags recording internal progress. They do **not** mean the software is ready for anyone else.
 - **Release tags** `vX.Y.Z` (optionally `-rcN`) are the only tags built and published from, and the only ones `ecf upgrade --to` accepts. `v1.0.0` requires every V1.x milestone plus the release criteria in SPEC.
 - Create or push a tag only after the operator confirms and approves both the tag and the push.
 - When a milestone's work looks complete (its scope built, CI green, its gating real-service test passed), prompt the operator that the `ms-…` tag is due, and say what's done and what isn't. Never apply a tag unprompted.

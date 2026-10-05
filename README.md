@@ -3,7 +3,7 @@
 ecf watches business mailboxes (for example `billing@` or `accounts-payable@`) over IMAP and
 classifies each message. It flags likely invoice and payment fraud and regulator mail with
 deterministic rules, and asks you to approve actions in Slack before anything risky happens. v1 runs
-on one computer (macOS, or Linux, which is unverified until milestone V1.6) with a local model or
+on one Mac (Linux isn't supported yet; it is roadmap milestone M5) with a local model or
 Claude, and needs no cloud infrastructure.
 
 ## Status
@@ -56,7 +56,7 @@ slower on battery (SPEC §7.5, §21.2).
 
 ## Install
 
-Requirements: macOS (the primary platform) or Linux (unverified until V1.6); Python 3.12 or newer
+Requirements: macOS (Linux isn't supported until milestone M5); Python 3.12 or newer
 and [uv](https://docs.astral.sh/uv/); full-disk encryption and a screen lock; a Slack workspace
 where you can install an app; an IMAP mailbox with app passwords (Purelymail is tested; Microsoft
 365 isn't supported, as it needs OAuth); Ollama for presets A and B; Claude Code and a separate
@@ -86,9 +86,7 @@ secret-store checks, whether this install is `prod` or `test`, the Slack app, yo
 (its app password, your org domains, a probe of the mailbox, the preset), alert email (optional),
 backups (the backup key, shown once for your password manager, and a folder off this disk), the
 local model, and Claude for presets B and C. `ecf init --resume` picks up where you stopped;
-`ecf init status` shows each step. Every address starts in `shadow` with sending off. On Linux
-(unverified until V1.6) the service is a systemd user unit; `loginctl enable-linger` lets it run
-when you aren't logged in.
+`ecf init status` shows each step. Every address starts in `shadow` with sending off.
 
 Then:
 
