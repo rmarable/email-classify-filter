@@ -316,6 +316,15 @@ def test_saas_tenant_of_an_org_domain_is_not_a_lookalike() -> None:
     assert fire("hi", from_domain="acme.evil.test").lookalikes
 
 
+def test_a_public_provider_is_not_a_lookalike_of_another() -> None:
+    """OD-430: once a gmail.com sender is known, a ymail.com sender isn't impersonating it, though
+    the names are one edit apart; a registered lookalike of gmail.com still is."""
+    for d, k in (("ymail.com", "gmail.com"), ("mail.com", "gmail.com"), ("gmx.net", "gmx.com")):
+        assert tr.lookalike(d, k), (d, k)
+        assert fire("hi", from_domain=d, vendors=[k]).lookalikes == [], (d, k)
+    assert fire("hi", from_domain="gmai1.com", vendors=["gmail.com"]).lookalikes
+
+
 def test_bare_cr_in_headers_is_a_fraud_trigger() -> None:
     raw = mail("hi").replace(b"Subject:", b"X-Note: a\rReply-To: x@evil.test\r\nSubject:", 1)
     assert parse(raw).headers_ambiguous

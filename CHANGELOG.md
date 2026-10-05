@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).
 - V1.6 Gmail is the next milestone; the remaining `v1.0.0` work (Claude eval gates, third-party notices, release build) follows it (OD-429).
 - Planned: `v1.0.0` will watch personal Gmail accounts (gmail.com) over IMAP with an app password, with a setup guide for non-technical users; this is new milestone V1.6 Gmail. Another person's account may be watched only when its owner creates the app password and agrees. Google Workspace accounts wait for the Gmail API, roadmap milestone M6 (OD-425 to OD-427). One install may watch Gmail only, its own-domain IMAP mailboxes only, or both (OD-428).
 - Planned: model-written replies (Later) now list their prerequisites, starting with an eval of draft quality (OD-424).
