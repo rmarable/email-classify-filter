@@ -11,13 +11,14 @@ from typing import Any
 import pytest
 
 from ecf.errors import GrantInvalidError
-from ecf_server import actions, leases, precheck
+from ecf_server import actions, leases, precheck, probe
 from ecf_server.actions import Planned
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock
+from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import address_config, fetch_page
-from ecf_server.mail import FLAGGED, MailSource
+from ecf_server.mail import FLAGGED, Capabilities, MailSource
 from ecf_server.mail.fake import FakeMailSource
 from tests.test_senderauth import FakeDns
 from tests.test_triggers import mail
@@ -149,6 +150,28 @@ def test_live_labels_and_flags_under_a_grant_and_can_undo(
         conn, clock, src, item, o.decision.actions, install=INSTALL, max_scan_bytes=1 << 20
     )
     assert not {KW, FLAGGED} & src.flags([1])[1]
+
+
+def test_labels_the_provider_cant_keep_are_skipped_not_failed(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-439 (Proton Bridge: no `\\*` in PERMANENTFLAGS): the flag and escalation still happen."""
+    _setup(conn, "live")
+    src = FakeMailSource(caps=Capabilities(custom_keywords=False, move=True, uidplus=True,
+                                           condstore=True))  # fmt: skip
+    with write_tx(conn):
+        probe.store(
+            conn, clock, "ap", "imap.proton.example", probe.probe(src, "imap.proton.example")
+        )
+    _check(conn, clock, src)
+    src.deliver(BEC)
+    (o,) = _check(conn, clock, src)
+    assert o.executed == ["label suspicious not stored by this provider", "flag", "escalate",
+                          "label unverified_sender not stored by this provider"]  # fmt: skip
+    assert src.flags([1])[1] == frozenset({FLAGGED})
+    item = conn.execute("SELECT * FROM items").fetchone()
+    assert actions.undo(conn, clock, src, item, o.decision.actions, install=INSTALL,
+                        max_scan_bytes=1 << 20) == ["flag"]  # fmt: skip
 
 
 def test_a_changed_message_is_left_alone(conn: sqlite3.Connection, clock: FakeClock) -> None:

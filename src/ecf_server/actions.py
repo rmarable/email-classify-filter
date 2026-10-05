@@ -21,6 +21,7 @@ from typing import Any, cast
 
 from ecf.errors import ConflictError, GrantInvalidError
 from ecf.ids import new_grant_id
+from ecf_server import probe
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail import MailSource
@@ -111,9 +112,12 @@ def execute(
     grant = _grant(conn, clock, item, actions, principal)
     _claim(conn, clock, grant)  # single use: claimed before anything is done
     done: list[str] = []
+    stored = probe.keywords_stored(conn, item["address_id"])
     try:
         for a in actions:
-            if a.name == "label" and a.target:
+            if a.name == "label" and a.target and not stored:  # skipped, not a failure (OD-439)
+                done.append(f"label {a.target} not stored by this provider")
+            elif a.name == "label" and a.target:
                 src.add_keyword(uid, keyword(install, a.target))
                 done.append(f"label {a.target}")
             elif a.name == "flag":
@@ -150,8 +154,9 @@ def undo(
     """Reverse label and flag actions (§4: labels and flags are reversible)."""
     uid = verify(src, item, max_scan_bytes)
     undone: list[str] = []
+    stored = probe.keywords_stored(conn, item["address_id"])
     for a in actions:
-        if a.name == "label" and a.target:
+        if a.name == "label" and a.target and stored:  # never written where not stored (OD-439)
             src.remove_keyword(uid, keyword(install, a.target))
             undone.append(f"label {a.target}")
         elif a.name == "flag":

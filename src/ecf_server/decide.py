@@ -31,7 +31,17 @@ from typing import Any
 
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.schema import load_schema_v1
-from ecf_server import approvals, claude_queue, config, items, jobs, modelq, outbound_plan, policy
+from ecf_server import (
+    approvals,
+    claude_queue,
+    config,
+    items,
+    jobs,
+    modelq,
+    outbound_plan,
+    policy,
+    probe,
+)
 from ecf_server.actions import Planned as MailAction
 from ecf_server.actions import action_hash
 from ecf_server.clock import Clock, to_ts
@@ -80,6 +90,7 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
         local_pair=addr is None or addr["preset"] == "A" or bool(item["fallback_at"]),
         templates=frozenset(outbound_plan.enabled_templates(conn)),
         forwards=frozenset(outbound_plan.forward_entries(conn)),
+        keywords_stored=probe.keywords_stored(conn, item["address_id"]),
     )
 
 

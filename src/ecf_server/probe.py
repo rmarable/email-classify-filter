@@ -207,6 +207,14 @@ def cap_to_provider(conn: sqlite3.Connection, address_id: str, limit: int) -> in
     return min(limit, int(provider)) if provider else limit
 
 
+def keywords_stored(conn: sqlite3.Connection, address_id: str) -> bool:
+    """The mailbox keeps custom keywords (`\\*` in PERMANENTFLAGS at its last probe). Without a
+    probe on record, assume it does (OD-439 only skips labels a probe showed can't be kept)."""
+    row = conn.execute("SELECT permanent_keywords FROM probe WHERE address_id = ?",
+                       (address_id,)).fetchone()  # fmt: skip
+    return row is None or bool(row["permanent_keywords"])
+
+
 def is_gmail(conn: sqlite3.Connection, address_id: str) -> bool:
     """The address's mailbox was in Gmail mode at its last probe (OD-438)."""
     row = conn.execute("SELECT json_extract(capabilities, '$.gmail') FROM probe"

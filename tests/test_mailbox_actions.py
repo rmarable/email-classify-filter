@@ -400,3 +400,25 @@ def test_gmail_port_never_moves_out_of_or_deletes_in_all_mail_or_trash() -> None
                  lambda: src.delete_in(TRASH, 1)):  # fmt: skip
         with pytest.raises(MailUnavailableError, match="Gmail: ecf never"):
             call()
+
+
+def test_a_label_the_provider_cant_keep_is_skipped_and_not_undone(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-439: planned before a probe showed it (or the probe changed), the executor skips it."""
+    _address(conn, clock)
+    src = FakeMailSource()
+    notification = MARKETING | {"category": "notification", "sender_type": "automated"}
+    sid = _mail_item(conn, clock, src, 0, notification, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)  # planned with labels: no probe yet
+    with write_tx(conn):
+        probe.store(conn, clock, "ap", "imap.proton.example", probe.probe(
+            FakeMailSource(caps=Capabilities(custom_keywords=False, move=True, uidplus=True,
+                                             condstore=True)), "imap.proton.example"))  # fmt: skip
+    _run(conn, clock, src)
+    row = item_row(conn, sid)
+    assert row["status"] == "executed"
+    assert [r["name"] for r in json.loads(row["proposal"])["done"]] == ["mark_read", "archive"]
+    undone = mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                                       lost=lambda: False)  # fmt: skip
+    assert undone == ["archive back to INBOX", "mark_read"]

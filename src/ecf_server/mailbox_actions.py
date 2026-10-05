@@ -153,20 +153,9 @@ def executor_for(
 
         guard()
         uid = mail_actions.verify(src, item, max_scan_bytes)
-        done: list[str] = []
-        record: list[dict[str, Any]] = []
         labels = [a.target for a in planned if a.name == "label" and a.target]
-        for a in planned:
-            if a.name == "label" and a.target:
-                guard()
-                src.add_keyword(uid, keyword(install, a.target))
-                done.append(f"label {a.target}")
-                record.append({"name": "label", "target": a.target})
-            elif a.name == "flag":
-                guard()
-                src.set_flagged(uid, True)
-                done.append("flag")
-                record.append({"name": "flag"})
+        stored = probe.keywords_stored(conn, item["address_id"])
+        done, record = _label_and_flag(src, uid, planned, install, stored=stored, guard=guard)
         if any(a.name == "mark_read" for a in planned):
             guard()
             src.set_seen(uid, True)
@@ -198,6 +187,29 @@ def executor_for(
         return done
 
     return run
+
+
+def _label_and_flag(src: MailSource, uid: int, planned: list[Planned], install: str, *,
+                    stored: bool, guard: Callable[[], None],
+                    ) -> tuple[list[str], list[dict[str, Any]]]:  # fmt: skip
+    """Labels (ecf's keywords) and the flag. A label the provider can't keep is skipped and not
+    recorded, so Undo leaves it alone (OD-439)."""
+    done: list[str] = []
+    record: list[dict[str, Any]] = []
+    for a in planned:
+        if a.name == "label" and a.target and not stored:
+            done.append(f"label {a.target} not stored by this provider")
+        elif a.name == "label" and a.target:
+            guard()
+            src.add_keyword(uid, keyword(install, a.target))
+            done.append(f"label {a.target}")
+            record.append({"name": "label", "target": a.target})
+        elif a.name == "flag":
+            guard()
+            src.set_flagged(uid, True)
+            done.append("flag")
+            record.append({"name": "flag"})
+    return done, record
 
 
 def _move(src: MailSource, uid: int, a: Planned, folders: dict[str, frozenset[str]],

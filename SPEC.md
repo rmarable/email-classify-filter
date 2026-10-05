@@ -641,6 +641,8 @@ High risk (computed by the service) = any item on a `high` address, a first-time
 
 Purelymail: keywords persist (operator test) but its webmail doesn't show them; an optional per-address `label_folder` copies `suspicious` and `regulatory` items to a visible folder.
 
+**Labels a provider can't keep** (V1.6 step 5, 2026-10-05; operator decision 2026-10-05, OD-439; code: `ecf_server/policy.py`, `decide.py`, `actions.py`, `mailbox_actions.py`, `probe.py`): when the last probe found no `\*` in `PERMANENTFLAGS` (Proton Bridge, §18), a label is dropped at planning with "label not stored by this provider" (a dropped action, like any other, never an item failure), and the pre-check and the action runner skip label writes the same way, so an item planned before such a probe doesn't fail either; skipped labels aren't recorded, so Undo leaves them alone. The flag, the escalation, the moves and `label_folder` copies still run. Before V1.6 ecf tried the write anyway; whether Proton Bridge refuses it (failing the item after its retries) or keeps the keyword only for the session is unverified. Without a probe on record ecf assumes keywords are kept.
+
 ### 8.4 Outbound
 
 - **Switch:** `forward_internal` and `reply_template` require `OUTBOUND = on` (default off). `draft_reply` isn't gated by it but always needs approval (operator decision 2026-09-26, OD-058; also OD-015). While off, proposals are recorded as `suppressed_action`, shown in the digest, and the item gets `flag`.
@@ -1217,6 +1219,7 @@ This section owns the threat model, stated limits and privacy statement; README,
 - **An address in `org_addresses` at a provider other than Gmail** is only as trustworthy as that provider's check that a user sends only as themselves; unverified (V1.6 design, OD-447).
 - **Impersonation detection (V1.6 design) knows only listed names and addresses:** a sender using neither isn't caught, and an outside person who shares a listed name is flagged (OD-433, OD-448).
 - **ecf reads INBOX only** (`ecf_server/fetch.py`): mail the provider files elsewhere, such as Gmail's Spam, is never checked (V1.6 planning, 2026-10-04, OD-425).
+- **Where a provider can't keep custom keywords** (no `\*` in `PERMANENTFLAGS`, e.g. Proton Bridge), ecf's labels are skipped (OD-439), and what relies on them doesn't work there: spotting a second install by its keywords, the post-restore keyword check (§13.6, OD-318) and the reply guardrail for mail ecf handled before (§8.4); the `X-ECF-Install` check on ecf's own sent mail still works.
 - **ecf can't check that another person agreed** to have their Google account watched; OD-427 makes it the operator's condition, and the Gmail guide says so.
 
 ### 12.3 Key controls (summary)
