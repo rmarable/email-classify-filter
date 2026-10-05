@@ -56,7 +56,7 @@ slower on battery (SPEC §7.5, §21.2).
 
 ## Install
 
-Requirements: macOS (Linux isn't supported until milestone M5); Python 3.12 or newer
+Requirements: macOS (Linux isn't supported until milestone M5); Python 3.12.6 or newer
 and [uv](https://docs.astral.sh/uv/); full-disk encryption and a screen lock; a Slack workspace
 where you can install an app; an IMAP mailbox with app passwords (Purelymail is tested; Microsoft
 365 isn't supported, as it needs OAuth); Ollama for presets A and B; Claude Code and a separate
