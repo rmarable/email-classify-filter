@@ -25,7 +25,7 @@ from ecf.ids import AddressId, StableId
 from ecf.prompts import NO_TERMINAL, hidden
 from ecf.status import Status
 from ecf_server import addresses as ad
-from ecf_server import claude_queue, items, modelq, slack_admin, slack_routes, stepup
+from ecf_server import claude_queue, items, modelq, send_limits, slack_admin, slack_routes, stepup
 from ecf_server.api import ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import FakeClock
@@ -99,7 +99,7 @@ def test_first_address_sets_org_domains_and_stores_the_secret(env: Env) -> None:
 
 
 def test_first_address_must_set_org_domains(env: Env) -> None:
-    with pytest.raises(InvalidInputError, match="first address must set it"):
+    with pytest.raises(InvalidInputError, match="must set it"):
         add(env, req(org_domains=None))
 
 
@@ -117,6 +117,39 @@ def test_later_addresses_cant_change_org_domains(env: Env) -> None:
     with pytest.raises(InvalidInputError, match="config apply"):
         add(env, req("x@acme.example", org_domains=["other.example"]))
     assert ad.get_org_domains(env[0]) == ["acme.example"]
+
+
+def test_a_gmail_address_needs_no_org_domains_or_imap_host(env: Env) -> None:
+    """V1.6 (OD-441): a public-provider address sets no org domains; Gmail's servers are known
+    and its daily send limit starts at 100 (§14.2)."""
+    conn, _clock, _secrets, mail = env
+    a = add(env, req("Pat.Lee@gmail.com", imap_host="", org_domains=None))
+    assert (a["imap_host"], a["smtp_host"], a["smtp_port"]) == ("imap.gmail.com", "smtp.gmail.com",
+                                                               465)  # fmt: skip
+    assert a["max_sends_per_day"] == ad.GMAIL_SENDS_PER_DAY == 100
+    assert send_limits.limits(conn, a["address_id"]) == {"max_sends_per_hour": 25,
+                                                          "max_sends_per_day": 100}  # fmt: skip
+    assert ad.get_org_domains(conn) == []
+    assert mail.logins == [("imap.gmail.com", "Pat.Lee@gmail.com")]
+    # the first address at your own domain must still set them
+    with pytest.raises(InvalidInputError, match="must set it"):
+        add(env, req(org_domains=None))
+    assert add(env, req())["max_sends_per_day"] is None  # the usual default
+    assert ad.get_org_domains(conn) == ["acme.example"]
+
+
+def test_an_unknown_providers_imap_server_is_needed(env: Env) -> None:
+    with pytest.raises(InvalidInputError, match="--imap-host"):
+        add(env, req(imap_host=""))
+
+
+def test_a_revived_gmail_address_keeps_the_send_limit_it_had(env: Env) -> None:
+    conn = env[0]
+    a = add(env, req("pat@gmail.com", imap_host="", org_domains=None))
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET overrides = '{\"max_sends_per_day\": 40}'")
+    ad.remove_address(conn, env[1], env[2], a["address_id"], actor="os_user")
+    assert add(env, req("pat@gmail.com", imap_host="", org_domains=None))["max_sends_per_day"] == 40
 
 
 def test_rejected_login_stores_nothing(env: Env) -> None:
@@ -299,6 +332,9 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
     assert GOOD not in r.text
     listed = call(st, "GET", "/v1/addresses").json()
     assert listed["org_domains"] == ["acme.example"] and len(listed["addresses"]) == 1
+    assert listed["org_addresses"] == 0 and "gmail.com" in listed["public_domains"]
+    assert listed["imap_defaults"] == {"gmail.com": "imap.gmail.com",
+                                       "googlemail.com": "imap.gmail.com"}  # fmt: skip
     r = call(st, "POST", "/v1/addresses/ap", {"app_password": "wrong"})
     assert r.status_code == 503 and r.json()["code"] == "mail_unavailable"
     assert "wrong" not in r.text

@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- `ecf address add` for a Gmail address needs no `--imap-host` and doesn't ask for org domains; it starts with a limit of 100 sends a day (Google allows 500). `ecf init` asks for the IMAP server only when ecf doesn't know it (OD-441).
+- `ecf doctor` now warns when there are neither org domains nor org addresses (impersonation of people you work with isn't detected), instead of "org domains not set"; `ecf address list` and `ecf init` show the org addresses count.
 - New `org_addresses` section in `ecf config apply`: the exact addresses (a personal Gmail too) of people you work with, each with an optional name of at least two words. Mail from a listed address that passes DMARC counts as internal; one that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to yourself (OD-431, OD-446).
 - Mail pretending to be someone in `org_addresses` (their name or address in the display name, a one-letter Gmail typo of their address, or their address at another provider) is labelled suspicious and flagged, and escalated when it is about money (OD-433, OD-436, OD-448, OD-453).
 - An internal forward may go to an address in `org_addresses`; the step-up dialog names a personal account your organization doesn't control. Removing an org domain or address a forward needs is refused until the forward goes too (OD-437, OD-452). `org_domains` may be empty when you watch only addresses at public providers (OD-441).

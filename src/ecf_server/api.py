@@ -74,6 +74,7 @@ from ecf_server import (
     importer,
     inbox,
     initsetup,
+    internal,
     manual_export,
     model_watch,
     modelq,
@@ -105,6 +106,7 @@ from ecf_server import (
 from ecf_server import upgrade_state as upgrade_state_mod
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
+from ecf_server.facts import PUBLIC_DOMAINS
 from ecf_server.log_bridge import log
 from ecf_server.mail.smtp import SenderFactory
 from ecf_server.notify import Notifier, NullNotifier
@@ -1826,6 +1828,11 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 {
                     "addresses": addresses.list_addresses(conn),
                     "org_domains": addresses.get_org_domains(conn),
+                    # V1.6: the internal set's other half, and what `address add` needs to know
+                    # to skip the org-domains question and the IMAP server for Gmail (OD-441)
+                    "org_addresses": len(internal.org_addresses(conn)),
+                    "public_domains": sorted(PUBLIC_DOMAINS),
+                    "imap_defaults": addresses.imap_defaults(),
                 }
             )
         finally:
@@ -1837,7 +1844,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         org = body.get("org_domains")
         req = addresses.AddRequest(
             email=_str(body, "email"),
-            imap_host=_str(body, "imap_host"),
+            imap_host=_str(body, "imap_host") if body.get("imap_host") is not None else "",
             sensitivity=_str(body, "sensitivity"),
             preset=_str(body, "preset"),
             app_password=_str(body, "app_password"),

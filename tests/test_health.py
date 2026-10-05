@@ -221,6 +221,12 @@ def test_doctor_org_domains_without_a_service(tmp_path: Path) -> None:
     assert c.level is Level.WARN
 
 
+def test_doctor_warns_when_nothing_is_internal(running: Paths) -> None:
+    """V1.6 (OD-431): with no org domains and no org addresses, impersonation isn't detected."""
+    c = doctor.check_org_domains(running)
+    assert c.level is Level.WARN and "isn't detected" in c.detail and "org_addresses" in c.fix
+
+
 def test_other_failures_never_raise_mail_provider_unreachable(
     ap: sqlite3.Connection, clock: FakeClock
 ) -> None:

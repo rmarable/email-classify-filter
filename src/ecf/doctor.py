@@ -331,16 +331,25 @@ def _service_rows(paths: Paths, route: str, name: str, what: str) -> list[Check]
 
 
 def check_org_domains(paths: Paths) -> Check:
+    """Who counts as internal: org domains and org addresses (V1.6, OD-431). With neither,
+    nothing is internal, so impersonation of people you work with isn't detected."""
     try:
         with LocalClient(paths) as c:
-            org: list[str] = c.get("/v1/addresses")["org_domains"]
+            data = c.get("/v1/addresses")
     except EcfError:
         return Check("org domains", Level.WARN, "can't ask the service")
-    if not org:
+    org: list[str] = data["org_domains"]
+    listed = int(data.get("org_addresses") or 0)
+    if not org and not listed:
         return Check(
-            "org domains", Level.WARN, "not set", "ecf address add (the first address sets them)"
-        )
-    return Check("org domains", Level.OK, ", ".join(org))
+            "org domains", Level.WARN,
+            "no org domains or org addresses: mail pretending to be people you work with isn't"
+            " detected",
+            "list their addresses and names in org_addresses (ecf config apply), or your"
+            " domains in org_domains",
+        )  # fmt: skip
+    return Check("org domains", Level.OK,
+                 f"{', '.join(org) or 'none'}; org addresses: {listed}")  # fmt: skip
 
 
 def check_models(paths: Paths) -> list[Check]:

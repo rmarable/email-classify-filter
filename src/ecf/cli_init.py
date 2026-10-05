@@ -51,7 +51,7 @@ CHECKLIST = """Have ready:
   - a password manager, for the backup key ecf shows once
   - optionally, an email address ecf doesn't watch, for alerts by email"""
 
-AddAddress = Callable[[LocalClient, str, str, str | None, str | None, str | None], Any]
+AddAddress = Callable[[LocalClient, str, str | None, str | None, str | None, str | None], Any]
 
 
 def make_commands(app: typer.Typer, paths: Callable[[], Paths], add: AddAddress) -> None:
@@ -141,8 +141,11 @@ def describe(st: dict[str, Any], *, installed: bool, running: bool,
             else "ecf slack install" if not st["slack_installed"]
             else "click Confirm in the DM ecf sent you (to send it again: ecf slack"
             " set-member <your member ID>)"),
-        row("org domains", bool(st["org_domains"]),
-            ", ".join(st["org_domains"]) or "set with the first address"),
+        row("org domains", bool(st["org_domains"]) or bool(st.get("public_only")),
+            (", ".join(st["org_domains"])
+             or ("none needed: every address is at a public provider" if st.get("public_only")
+                 else "set with the first address at your own domain"))
+            + (f"; org addresses: {st['org_addresses']}" if st.get("org_addresses") else "")),
         row("first address", bool(st["addresses"]),
             ", ".join(st["addresses"]) or "ecf address add"),
         row("models", st["models"]["installed"] or not st["models"]["needed"],
@@ -296,8 +299,10 @@ def _first_address(c: LocalClient, add: AddAddress) -> None:
         typer.echo("first address: skipped; later: ecf address add")
         return
     email = typer.prompt("Mailbox address (e.g. ap@example.com)").strip()
-    host = typer.prompt("Its IMAP server (port 993, TLS)").strip()
-    add(c, email, host, None, None, None)
+    known: dict[str, str] = c.get("/v1/addresses").get("imap_defaults") or {}
+    domain = email.rsplit("@", 1)[-1].lower()
+    host = None if domain in known else typer.prompt("Its IMAP server (port 993, TLS)").strip()
+    add(c, email, host, None, None, None)  # Gmail's server is known (V1.6)
 
 
 EMAIL_HINT = "ecf alerts email set --from <address> --to <destination>"
