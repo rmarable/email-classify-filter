@@ -248,6 +248,7 @@ def test_route_previews_runs_and_stops(env: Env, db_path: Path) -> None:
     assert r.status_code == 200, r.text
     p = r.json()
     assert p["install"] == "t" and p["slack"] == {"app_id": "A1", "channels": 3}
+    assert p["role"] is None  # no init: not guessed as prod
     assert p["busy"] == [] and p["record"] is None and p["last_export_at"] is None
     assert [a["address_id"] for a in p["addresses"]] == ["ap", "ar"]
     r = call(st, "POST", "/v1/destroy", {"install": "t"})

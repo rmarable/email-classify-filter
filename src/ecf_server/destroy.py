@@ -379,10 +379,11 @@ def _save(ctx: Context, rec: dict[str, Any]) -> None:
     write_record(ctx.root, ctx.install, rec)
 
 
-def _role(conn: sqlite3.Connection) -> str:
+def _role(conn: sqlite3.Connection) -> str | None:
+    """None before `ecf init` sets it (shown as such, never guessed as prod)."""
     from ecf_server import initsetup  # noqa: PLC0415
 
-    return initsetup.role(conn) or "prod"
+    return initsetup.role(conn)
 
 
 def _addresses(conn: sqlite3.Connection) -> list[dict[str, str]]:

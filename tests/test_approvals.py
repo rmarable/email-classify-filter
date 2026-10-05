@@ -69,6 +69,12 @@ def _grants(conn: sqlite3.Connection, sid: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _nonces(conn: sqlite3.Connection, sid: str) -> list[str | None]:
+    rows = conn.execute("SELECT stepup_nonce_id FROM grants WHERE stable_id = ? ORDER BY rowid",
+                        (sid,))  # fmt: skip
+    return [r[0] for r in rows]
+
+
 def _posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid")
     return [json.loads(r[0]) for r in rows]
@@ -153,6 +159,7 @@ def test_a_reversible_approval_is_one_click_then_runs(
     grant = approvals.request(conn, clock, sid, ARCHIVE)
     _click(db_path, clock, conn, "approve", grant)
     assert _status(conn, sid) == Status.EXECUTING and _grants(conn, sid) == ["approved"]
+    assert _nonces(conn, sid) == [None]  # no step-up
     ex = FakeExecutor()
     assert execute.run_once(conn, clock, ex) and ex.ran == [(sid, ["archive"])]
     assert _status(conn, sid) == Status.EXECUTED and _grants(conn, sid) == ["consumed"]
@@ -185,6 +192,7 @@ def test_a_send_clicked_in_slack_waits_for_your_computer(
     stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
     r = approvals.approve(conn, clock, n, "aaaaaaaa", actor="os_user", nonce=issued.nonce_id)
     assert r["status"] == Status.EXECUTING  # a standard address: no delay
+    assert _nonces(conn, sid) == [issued.nonce_id]
 
 
 def test_hiding_a_fraud_item_needs_step_up_even_from_the_cli(
@@ -311,6 +319,7 @@ def test_pending_batches_non_sends_under_one_step_up(
     nonce = _verified_nonce(conn, clock, ei.value)
     [r] = approvals.approve_pending(conn, clock, FakeNotifier(), [hide], nonce=nonce)
     assert r["status"] == Status.EXECUTING and _status(conn, send) == Status.AWAITING_STEPUP
+    assert _nonces(conn, hide) == [nonce] and _nonces(conn, send) == [None]
 
 
 # ---- running, failing, requeue --------------------------------------------------------------

@@ -41,7 +41,7 @@ V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 loc
 
 ## Commands
 
-Python ≥ 3.12, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md`.
+Python ≥ 3.12.6, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md`.
 
 ```sh
 uv sync                                   # create/update .venv from uv.lock

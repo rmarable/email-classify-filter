@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Changed: ecf now needs Python 3.12.6 or newer (was 3.12). Earlier 3.12 releases parse some malformed email addresses differently (CVE-2023-27043); `ecf doctor` fails the python check on them (OD-454).
+- Fixed: `ecf destroy` no longer calls an install that never ran `ecf init` `(prod)`; it says the role isn't set.
+- Fixed: an approval confirmed with step-up now records the step-up on its grant (`grants.stepup_nonce_id` was never written).
 - Changed: on a mailbox that can't keep ecf's labels (custom keywords, e.g. Proton Bridge), ecf now skips the labels and does the rest (flag, escalation, moves) instead of trying to write them; second-install and restore checks that rely on labels don't work there (OD-439).
 - Archive works on Gmail: the email leaves the inbox and stays in All Mail; Undo puts it back. Undo on Gmail finds the email by Gmail's own ID, which a sender can't copy. ecf never moves anything out of, or deletes anything in, Gmail's All Mail or Trash (OD-438).
 - On Gmail, ecf stops downloading for an address before it passes 2,500 MB in 24 hours (Google limits IMAP downloads; the exact limit for personal accounts is unverified): new mail waits and is read later, nothing is skipped, and an Operator Input Needed alert says so (OD-440). Database migration 0032.
@@ -19,7 +22,6 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 - Lookalikes of the mail provider you watch an address at (`gmai1.com` for gmail.com) count as lookalike domains (OD-434).
 - Backups and exports now use data format 2: an older ecf refuses them instead of dropping `org_addresses` silently (OD-442).
 - Designed (not built yet): a new config list, `org_addresses`, of the people you work with (including personal Gmail addresses), with names, so ecf can flag email that pretends to be one of them, and escalate it when it's about money; your own notes to yourself on Gmail don't raise a fraud alert (ADR 0021, OD-446 to OD-452).
-
 - Gmail test run done: ecf's labels on Gmail stay hidden keywords, as elsewhere (OD-445); results recorded in SPEC.
 - V1.6 plan reviewed and approved: how ecf decides who counts as your organization without an org domain, colleague impersonation, forwards to a personal account, Gmail's labels and archive, and the eval for personal mail (OD-431 to OD-444).
 - Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).

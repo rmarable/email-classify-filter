@@ -129,7 +129,8 @@ def test_whole_run(st: ServiceState, env: Env, paths: Paths) -> None:
     assert rec["cli"] == {"unit": "removed", "claude_logout": "ok", "data_dir": "deleted"}
     assert rec["steps"]["secrets"]["deleted"]
     out = f.text()
-    assert "This deletes the ecf install t" in out and "watching ap@acme.example" in out
+    assert "This deletes the ecf install t (role not set: init wasn't run)" in out
+    assert "watching ap@acme.example" in out
     assert "No export in the last 24 hours." in out
     assert "Slack app A1 still exists" in out
     assert "revoke the app password for ap@acme.example" in out

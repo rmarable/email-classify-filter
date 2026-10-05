@@ -250,7 +250,7 @@ def approve(
     else:
         items.transition(conn, clock, sid, Status.APPROVED, TransitionContext(reversible=True),
                          actor=actor, expected=status)  # fmt: skip
-    _set_grant(conn, g.grant_id, "issued", "approved")
+    _set_grant(conn, g.grant_id, "issued", "approved", nonce if risky else None)
     _audit(conn, clock, item, "approval.approved", actor, {"grant_id": g.grant_id}, tx=True)
     return _after_approved(conn, clock, _item(conn, sid), g.grant_id, actions)
 
@@ -406,8 +406,8 @@ def approve_pending(
         grants.append(_open_grant(conn, clock, r, None))
     stepup.consume(conn, clock, "approve_batch",
                    {"grant_ids": sorted(g.grant_id for g in grants)}, nonce)  # fmt: skip
-    return [approve(conn, clock, notifier, r["stable_id"], actor="os_user",
-                    grant_id=g.grant_id, batch_verified=True) | {"id": r["stable_id"]}
+    return [approve(conn, clock, notifier, r["stable_id"], actor="os_user", grant_id=g.grant_id,
+                    nonce=nonce, batch_verified=True) | {"id": r["stable_id"]}
             for r, g in zip(rows, grants, strict=True)]  # fmt: skip
 
 
@@ -611,10 +611,16 @@ def _open_grant(
     return g
 
 
-def _set_grant(conn: sqlite3.Connection, grant_id: str, frm: str, to: str) -> None:
+def _set_grant(
+    conn: sqlite3.Connection, grant_id: str, frm: str, to: str, nonce_id: str | None = None
+) -> None:
+    """`nonce_id`: the step-up that approved it, kept on the grant (record only; enforcement is
+    stepup.consume)."""
     with write_tx(conn):
-        n = conn.execute("UPDATE grants SET status = ? WHERE grant_id = ? AND status = ?",
-                         (to, grant_id, frm)).rowcount  # fmt: skip
+        n = conn.execute("UPDATE grants SET status = ?,"
+                         " stepup_nonce_id = coalesce(?, stepup_nonce_id)"
+                         " WHERE grant_id = ? AND status = ?",
+                         (to, nonce_id, grant_id, frm)).rowcount  # fmt: skip
     if n != 1:
         raise ConflictError("someone else decided this first")
 

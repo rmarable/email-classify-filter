@@ -187,7 +187,8 @@ def _local_problems(p: Paths, state: dict[str, Any]) -> list[str]:
 
 
 def _show(p: Paths, t: Tools, pre: dict[str, Any]) -> None:
-    t.echo(f"This deletes the ecf install {p.install} ({pre.get('role')}) on this computer:")
+    role = pre.get("role") or "role not set: init wasn't run"
+    t.echo(f"This deletes the ecf install {p.install} ({role}) on this computer:")
     t.echo(f"  - its service and its data folder {p.data_dir}")
     t.echo("  - every secret it keeps (app passwords, Slack tokens, the backup signing key)")
     for a in pre["addresses"]:
