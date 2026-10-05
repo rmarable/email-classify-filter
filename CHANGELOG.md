@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Gmail test run done: ecf's labels on Gmail stay hidden keywords, as elsewhere (OD-445); results recorded in SPEC.
 - V1.6 plan reviewed and approved: how ecf decides who counts as your organization without an org domain, colleague impersonation, forwards to a personal account, Gmail's labels and archive, and the eval for personal mail (OD-431 to OD-444).
 - Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).
 - V1.6 Gmail is the next milestone; the remaining `v1.0.0` work (Claude eval gates, third-party notices, release build) follows it (OD-429).
