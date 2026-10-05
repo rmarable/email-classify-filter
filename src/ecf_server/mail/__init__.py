@@ -11,6 +11,11 @@ port, `Sender` (ecf_server/mail/smtp.py).
 Gmail (V1.6, OD-438): Gmail mode is the `X-GM-EXT-1` capability (`Capabilities.gmail`), never the
 host name. In Gmail mode the port also reads each message's Gmail labels (`X-GM-LABELS`) and counts
 INBOX against Gmail's own `in:inbox` search, to spot the IMAP folder size limit setting (OD-440).
+For Gmail's archive and its Undo (V1.6 step 4) it reads a message's `X-GM-MSGID`, which Gmail
+assigns and keeps through every move (no sender can set it), finds a message by it in any
+folder, and copies a message back to INBOX. In Gmail mode it refuses to move a message back or
+delete one out of All Mail or Trash: a message there may be in no other folder, so either could
+lose it (OD-438).
 """
 
 from __future__ import annotations
@@ -139,6 +144,19 @@ class MailSource(Protocol):
     def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         """Gmail labels of INBOX messages (`X-GM-LABELS`; system ones like `\\Sent` keep their
         backslash). Empty when the server isn't Gmail."""
+        ...
+
+    def gmail_msgid(self, uid: int) -> int | None:
+        """Gmail's ID of an INBOX message (`X-GM-MSGID`); None off Gmail or if it's gone."""
+        ...
+
+    def gmail_find(self, folder: str, msgid: int) -> list[int]:
+        """UIDs in `folder` of the message with this `X-GM-MSGID` (at most one); [] off Gmail."""
+        ...
+
+    def copy_back(self, folder: str, uid: int) -> None:
+        """Copy a message from `folder` into INBOX (Gmail: puts `\\Inbox` back on an archived
+        message, with a new INBOX UID; tested 2026-10-05)."""
         ...
 
     def gmail_inbox_counts(self) -> tuple[int, int] | None:

@@ -37,6 +37,7 @@ class _Stored:
     raw: bytes
     internaldate: datetime
     flags: set[str] = field(default_factory=set[str])
+    msgid: int = 0  # Gmail's X-GM-MSGID: kept through moves and copies
 
 
 class FakeMailSource:
@@ -66,7 +67,7 @@ class FakeMailSource:
     def deliver(self, raw: bytes, internaldate: datetime | None = None) -> int:
         uid = self._next
         self._next += 1
-        self._msgs[uid] = _Stored(raw, internaldate or datetime.now(UTC))
+        self._msgs[uid] = _Stored(raw, internaldate or datetime.now(UTC), msgid=1_000_000 + uid)
         return uid
 
     def expunge(self, uid: int) -> None:
@@ -209,7 +210,7 @@ class FakeMailSource:
     def copy(self, uid: int, folder: str) -> None:
         target = self._folder(folder)
         if (s := self._msgs.get(uid)) is not None:
-            target[self._next] = _Stored(s.raw, s.internaldate, set(s.flags))
+            target[self._next] = _Stored(s.raw, s.internaldate, set(s.flags), s.msgid)
             self._next += 1
 
     def find_in(self, folder: str, message_id: str) -> list[int]:
@@ -221,9 +222,30 @@ class FakeMailSource:
         return None if s is None else s.raw
 
     def move_back(self, folder: str, uid: int) -> None:
+        self._refuse_on_gmail(folder, "move a message back out of")
         if (s := self._folder(folder).pop(uid, None)) is not None:
             self._msgs[self._next] = s
             self._next += 1
+
+    def copy_back(self, folder: str, uid: int) -> None:
+        if (s := self._folder(folder).get(uid)) is not None:
+            self._msgs[self._next] = _Stored(s.raw, s.internaldate, set(s.flags), s.msgid)
+            self._next += 1
+
+    def gmail_msgid(self, uid: int) -> int | None:
+        s = self._msgs.get(uid)
+        return s.msgid if self._caps.gmail and s is not None else None
+
+    def gmail_find(self, folder: str, msgid: int) -> list[int]:
+        if not self._caps.gmail:
+            return []
+        where = self._msgs if folder == "INBOX" else self._folder(folder)
+        return sorted(u for u, s in where.items() if s.msgid == msgid)
+
+    def _refuse_on_gmail(self, folder: str, what: str) -> None:
+        roles = next((f.roles for f in self._folders if f.name == folder), frozenset[str]())
+        if self._caps.gmail and roles & {"\\All", "\\Trash"}:
+            raise MailUnavailableError(f"Gmail: ecf never tries to {what} {folder}")
 
     def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         if not self._caps.gmail:
@@ -241,6 +263,7 @@ class FakeMailSource:
         self._next += 1
 
     def delete_in(self, folder: str, uid: int) -> None:
+        self._refuse_on_gmail(folder, "delete a message in")
         if not self._caps.uidplus:
             raise MailUnavailableError("no UIDPLUS: can't delete just one message")
         self._folder(folder).pop(uid, None)

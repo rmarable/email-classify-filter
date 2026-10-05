@@ -189,6 +189,20 @@ class MailSourceContract:
         assert len(back) == 1 and src.fetch(back[0]) == raw
         assert src.find_in(folder, "<contract-0@synthetic.acme.example>") == []
 
+    def test_copy_back_puts_a_copy_in_inbox(self, harness: Harness) -> None:
+        """V1.6 step 4: Gmail's archive Undo; generic IMAP COPY into INBOX elsewhere."""
+        src = harness.source
+        [uid] = self._fill(harness, 1)
+        raw = src.fetch(uid)
+        folder = self._archive(harness)
+        src.move(uid, folder)
+        assert src.gmail_msgid(uid) is None  # not Gmail, and gone from INBOX anyway
+        [there] = src.find_in(folder, "<contract-0@synthetic.acme.example>")
+        assert src.gmail_find(folder, 1) == []  # not Gmail
+        src.copy_back(folder, there)
+        [back] = src.find_message_id("<contract-0@synthetic.acme.example>")
+        assert src.fetch(back) == raw and src.fetch_in(folder, there) == raw  # both kept
+
     def test_copy_leaves_the_message_in_inbox(self, harness: Harness) -> None:
         src = harness.source
         [uid] = self._fill(harness, 1)

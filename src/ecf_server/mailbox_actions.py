@@ -31,6 +31,15 @@ labels (never `suspicious` or `regulatory`, OD-213), the flag and the read mark 
 to `label_folder` stays. A draft is deleted from the Drafts folder only when exactly one message
 there has its Message-ID and it is unchanged (same content hash); a draft you edited or sent is
 left alone and Undo says so. The item goes `executed → undoing → undone`.
+
+**Gmail** (V1.6 step 4, OD-438; Gmail mode from the last probe): Gmail has no Archive folder;
+archive is `UID MOVE` to the folder marked `\\All` (All Mail), which removes the `\\Inbox` label
+and keeps the message and ecf's keywords (tested 2026-10-05), and is refused when All Mail isn't
+shown over IMAP. Every move records the message's `X-GM-MSGID`, which Gmail assigns and keeps, so
+Undo finds the message by it (never by a Message-ID a sender chose), checks its content hash, and
+puts it back: archive by copying it from All Mail into INBOX (the port never moves anything out of
+All Mail), junk and folder moves by moving it back. A message back in INBOX has a new UID, also
+found by its Gmail ID.
 """
 
 from __future__ import annotations
@@ -44,7 +53,7 @@ from ecf.errors import ConflictError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import actions as mail_actions
-from ecf_server import checks, items, outbound_msg, outbound_plan, pause, send_actions
+from ecf_server import checks, items, outbound_msg, outbound_plan, pause, probe, send_actions
 from ecf_server.actions import Planned, keyword
 from ecf_server.clock import Clock, to_ts
 from ecf_server.config import current
@@ -56,6 +65,8 @@ from ecf_server.state_machine import TransitionContext
 HIDES = frozenset({"mark_read", "archive", "move", "junk"})
 MOVES = frozenset({"archive", "move", "junk"})
 ROLE = {"archive": "\\Archive", "junk": "\\Junk"}
+GMAIL_ROLE = ROLE | {"archive": "\\All"}  # Gmail's archive: All Mail (OD-438)
+INBOX = "INBOX"
 DRAFTS = "\\Drafts"
 SENDS = send_actions.SENDS
 NEVER_UNDONE = frozenset({"suspicious", "regulatory"})
@@ -88,6 +99,7 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
     """Why these actions may not run now, or None."""
     names = {a.name for a in actions}
     stage = _stage(conn, item["address_id"])
+    roles = GMAIL_ROLE if probe.is_gmail(conn, item["address_id"]) else ROLE
     allowed = set(current(conn)["move_folders"] or [])
     reasons = [
         ("the address is paused", pause.is_paused(conn, item["address_id"])),
@@ -103,9 +115,10 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
                 a.name == "move" and (a.target not in allowed or a.target not in folders),
             )
         )
-        if a.name in ROLE:
-            reasons.append((f"the mailbox has no folder marked {ROLE[a.name]}",
-                            _role_folder(folders, ROLE[a.name]) is None))  # fmt: skip
+        if a.name in roles:
+            missing = ("Gmail's All Mail isn't shown over IMAP" if roles[a.name] == "\\All"
+                       else f"the mailbox has no folder marked {roles[a.name]}")  # fmt: skip
+            reasons.append((missing, _role_folder(folders, roles[a.name]) is None))
         if a.name == "draft_reply":
             reasons.append(("the mailbox has no folder marked \\Drafts",
                             _role_folder(folders, DRAFTS) is None))  # fmt: skip
@@ -118,15 +131,16 @@ def _role_folder(folders: dict[str, frozenset[str]], role: str) -> str | None:
     return next((name for name, roles in folders.items() if role in roles), None)
 
 
-def executor_for(  # noqa: PLR0915 - the writes in their fixed order
+def executor_for(
     src: MailSource, install: str, max_scan_bytes: int, lost: Callable[[], bool]
 ) -> Callable[..., list[str]]:
     """An `execute.Executor` bound to this check's open mailbox and lease."""
 
-    def run(  # noqa: PLR0912 - one branch per kind of write
+    def run(
         conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, planned: list[Planned]
     ) -> list[str]:
         folders = {f.name: f.roles for f in src.folders()}
+        roles = GMAIL_ROLE if probe.is_gmail(conn, item["address_id"]) else ROLE
         why = refusal(conn, item, planned, folders) or next(
             (w for a in planned if a.name in SENDS
              if (w := send_actions.refusal(conn, clock, item, a))), None)  # fmt: skip
@@ -177,17 +191,24 @@ def executor_for(  # noqa: PLR0915 - the writes in their fixed order
                 done.append(f"draft saved to {record[-1]['folder']}")
         for a in planned:
             if a.name in MOVES:
-                target = a.target if a.name == "move" else _role_folder(folders, ROLE[a.name])
-                if target is None:  # refusal() checked it; never move to a guessed folder
-                    raise RefusedError(f"no folder for {a.name}")
                 guard()
-                src.move(uid, target)
-                done.append(f"{a.name} to {target}")
-                record.append({"name": a.name, "folder": target})
+                record.append(_move(src, uid, a, folders, roles))
+                done.append(f"{a.name} to {record[-1]['folder']}")
         _remember(conn, clock, item["stable_id"], record)
         return done
 
     return run
+
+
+def _move(src: MailSource, uid: int, a: Planned, folders: dict[str, frozenset[str]],
+          roles: dict[str, str]) -> dict[str, Any]:  # fmt: skip
+    """Archive, junk or move the email; what Undo needs to find it."""
+    target = a.target if a.name == "move" else _role_folder(folders, roles[a.name])
+    if not isinstance(target, str):  # refusal() checked it; never move to a guessed folder
+        raise RefusedError(f"no folder for {a.name}")
+    msgid = src.gmail_msgid(uid)  # Gmail: how Undo finds it again (None elsewhere)
+    src.move(uid, target)
+    return {"name": a.name, "folder": target} | ({"gm_msgid": msgid} if msgid is not None else {})
 
 
 def _save_draft(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.Row,
@@ -249,11 +270,11 @@ def undo_item(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sql
                 undone.append(_delete_draft(src, r))
         moved = next((r for r in record if r["name"] in MOVES), None)
         if moved is not None:
-            _move_back(src, item, str(moved["folder"]))
+            _move_back(src, item, moved)
             undone.append(f"{moved['name']} back to INBOX")
         if not any(r["name"] in ("label", "flag", "mark_read") for r in record):
             return _undone(conn, clock, sid, undone)  # a draft alone: the email wasn't touched
-        uid = _inbox_uid(src, item, moved=moved is not None)
+        uid = _inbox_uid(src, item, moved=moved)
         for r in record:
             if lost():
                 raise LeaseLostError("the check lost its lease")
@@ -292,27 +313,41 @@ def _delete_draft(src: MailSource, r: dict[str, Any]) -> str:
     return "draft deleted"
 
 
-def _move_back(src: MailSource, item: sqlite3.Row, folder: str) -> None:
+def _move_back(src: MailSource, item: sqlite3.Row, moved: dict[str, Any]) -> None:
+    folder = str(moved["folder"])
+    msgid = moved.get("gm_msgid")
     mid = item["message_id"]
-    if not mid:
+    if msgid is not None:  # Gmail: by its Gmail ID, which no sender sets
+        found = src.gmail_find(folder, int(msgid))
+    elif not mid:
         raise mail_actions.MessageChangedError("no Message-ID: move it back by hand")
-    found = src.find_in(folder, mid)
+    else:
+        found = src.find_in(folder, mid)
     if len(found) != 1:
         raise mail_actions.MessageChangedError(
-            f"{len(found)} messages with this Message-ID in {folder}: move it back by hand"
+            f"{len(found)} messages with this {'Gmail ID' if msgid is not None else 'Message-ID'}"
+            f" in {folder}: move it back by hand"
         )
     raw = src.fetch_in(folder, found[0])
     if raw is None or parse(raw, max_scan_bytes=10 * 1024 * 1024).content_hash != item[
             "content_hash"]:  # fmt: skip
         raise mail_actions.MessageChangedError(f"the message in {folder} isn't this email's")
-    src.move_back(folder, found[0])
+    if msgid is not None and moved["name"] == "archive":
+        src.copy_back(folder, found[0])  # Gmail: never moved out of All Mail (OD-438)
+    else:
+        src.move_back(folder, found[0])
 
 
-def _inbox_uid(src: MailSource, item: sqlite3.Row, *, moved: bool) -> int:
-    """The email's UID in INBOX, checked by content hash: by Message-ID (a sender can reuse one,
-    so every match is checked and exactly one must be this email), else, when it never moved,
-    its stored UID. Raises MessageChangedError otherwise."""
-    candidates = src.find_message_id(item["message_id"]) if item["message_id"] else []
+def _inbox_uid(src: MailSource, item: sqlite3.Row, *, moved: dict[str, Any] | None) -> int:
+    """The email's UID in INBOX, checked by content hash: on Gmail by its Gmail ID; else by
+    Message-ID (a sender can reuse one, so every match is checked and exactly one must be this
+    email), else, when it never moved, its stored UID. Raises MessageChangedError otherwise."""
+    if moved is not None and moved.get("gm_msgid") is not None:
+        candidates = src.gmail_find(INBOX, int(moved["gm_msgid"]))
+    elif item["message_id"]:
+        candidates = src.find_message_id(item["message_id"])
+    else:
+        candidates = []
     if not candidates and not moved:  # the stored UID is still valid only if it never moved
         candidates = [int(json.loads(item["locator"])["uid"])]
     mine = [uid for uid in candidates if _is_this_email(src.fetch(uid), item)]

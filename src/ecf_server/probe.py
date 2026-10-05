@@ -119,7 +119,9 @@ def warnings(r: ProbeResult) -> list[str]:
             "the server doesn't allow custom keywords: labels can't be stored on messages; "
             "flags and Slack still work"
         )
-    out += [msg for role, msg in ROLES_NEEDED.items() if role not in r.roles]
+    # Gmail has no Archive folder; its archive uses All Mail (OD-438), warned about below
+    out += [msg for role, msg in ROLES_NEEDED.items()
+            if role not in r.roles and not (r.gmail and role == "\\Archive")]  # fmt: skip
     if not r.move and not r.uidplus:
         out.append(
             "no MOVE or UIDPLUS: moving a message could also expunge others marked deleted; "

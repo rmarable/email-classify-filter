@@ -11,12 +11,13 @@ from typing import Any
 
 import pytest
 
+from ecf.errors import MailUnavailableError
 from ecf.ids import AddressId, StableId
-from ecf_server import decide, digests, execute, items, jobs, mailbox_actions
+from ecf_server import decide, digests, execute, items, jobs, mailbox_actions, probe
 from ecf_server.actions import MessageChangedError, keyword
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
-from ecf_server.mail import SEEN, MailSource
+from ecf_server.mail import SEEN, Capabilities, Folder, MailSource
 from ecf_server.mail.fake import FakeMailSource
 from ecf_server.message import parse
 from ecf_server.state_machine import Stage, Status, TransitionContext
@@ -319,3 +320,83 @@ def test_archive_and_undo_on_a_real_server(conn: sqlite3.Connection, clock: Fake
         assert h.source.flags([back])[back] - {"\\Recent"} == frozenset()  # the server's own
     finally:
         h.close()
+
+
+# ---- Gmail (V1.6 step 4, OD-438) ----------------------------------------------------------------
+
+GMAIL_CAPS = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True, gmail=True)
+ALL, SPAM, TRASH = "[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"
+GMAIL_FOLDERS = (Folder("INBOX", frozenset()), Folder(ALL, frozenset({"\\All"})),
+                 Folder(SPAM, frozenset({"\\Junk"})), Folder(TRASH, frozenset({"\\Trash"})),
+                 Folder("[Gmail]/Drafts", frozenset({"\\Drafts"})))  # fmt: skip
+SPAM_CLS = MARKETING | {"category": "spam_or_phishing"}
+
+
+def _gmail(conn: sqlite3.Connection, clock: FakeClock, folders: tuple[Folder, ...] = GMAIL_FOLDERS
+           ) -> FakeMailSource:  # fmt: skip
+    _address(conn, clock)
+    src = FakeMailSource(caps=GMAIL_CAPS, folders=folders)
+    with write_tx(conn):
+        probe.store(conn, clock, "ap", "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
+    return src
+
+
+def test_gmail_archive_goes_to_all_mail_and_undo_copies_it_back(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = _gmail(conn, clock)
+    notification = MARKETING | {"category": "notification", "sender_type": "automated"}
+    sid = _mail_item(conn, clock, src, 0, notification, KNOWN_BULK, src.deliver)
+    [uid] = src.uids_after(0)
+    msgid = src.gmail_msgid(uid)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    assert src.uids_after(0) == []
+    done = json.loads(item_row(conn, sid)["proposal"])["done"]
+    assert done[-1] == {"name": "archive", "folder": ALL, "gm_msgid": msgid}
+    src.deliver(message(0))  # a sender reusing the Message-ID: Undo goes by Gmail's ID instead
+    src.move(max(src.uids_after(0)), ALL)
+    undone = mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                                       lost=lambda: False)  # fmt: skip
+    assert undone == ["archive back to INBOX", "label notification", "mark_read"]
+    [back] = src.uids_after(0)
+    assert src.gmail_msgid(back) == msgid and src.flags([back])[back] == frozenset()
+    assert len(src.gmail_find(ALL, int(msgid or 0))) == 1  # copied back, never moved out
+
+
+def test_gmail_archive_is_refused_without_all_mail(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R12: All Mail hidden from IMAP; there is no Archive folder to fall back on."""
+    src = _gmail(conn, clock, tuple(f for f in GMAIL_FOLDERS if f.name != ALL))
+    sid = _mail_item(conn, clock, src, 0, MARKETING, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    row = item_row(conn, sid)
+    assert row["status"] == "failed" and len(src.uids_after(0)) == 1
+
+
+def test_gmail_junk_undo_moves_it_back_by_gmail_id(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = _gmail(conn, clock)
+    sid = _mail_item(conn, clock, src, 0, SPAM_CLS, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    assert src.uids_after(0) == [] and json.loads(item_row(conn, sid)["proposal"])["done"][-1][
+        "folder"] == SPAM  # fmt: skip
+    mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                              lost=lambda: False)  # fmt: skip
+    assert len(src.uids_after(0)) == 1 and src.elsewhere[SPAM] == {}
+
+
+def test_gmail_port_never_moves_out_of_or_deletes_in_all_mail_or_trash() -> None:
+    """OD-438: a message there may be in no other folder."""
+    src = FakeMailSource(caps=GMAIL_CAPS, folders=GMAIL_FOLDERS)
+    uid = src.deliver(message(0))
+    src.move(uid, ALL)
+    [there] = src.find_in(ALL, "<contract-0@synthetic.acme.example>")
+    for call in (lambda: src.move_back(ALL, there), lambda: src.delete_in(ALL, there),
+                 lambda: src.delete_in(TRASH, 1)):  # fmt: skip
+        with pytest.raises(MailUnavailableError, match="Gmail: ecf never"):
+            call()

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Archive works on Gmail: the email leaves the inbox and stays in All Mail; Undo puts it back. Undo on Gmail finds the email by Gmail's own ID, which a sender can't copy. ecf never moves anything out of, or deletes anything in, Gmail's All Mail or Trash (OD-438).
 - On Gmail, ecf stops downloading for an address before it passes 2,500 MB in 24 hours (Google limits IMAP downloads; the exact limit for personal accounts is unverified): new mail waits and is read later, nothing is skipped, and an Operator Input Needed alert says so (OD-440). Database migration 0032.
 - Gmail is recognised by its IMAP capability, not its server name. `ecf doctor` warns when Gmail hides All Mail from IMAP or limits how many inbox messages IMAP shows, and names the Gmail setting to change. ecf no longer tries to save or count its own copy of sent mail on Gmail, which saves sent mail itself (OD-438, OD-440).
 - On Gmail, your own notes to yourself no longer raise a fraud alert when your address is in `org_addresses`; a forged copy of your address still does (OD-446).
