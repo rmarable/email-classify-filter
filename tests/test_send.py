@@ -72,6 +72,18 @@ def test_a_send_is_recorded_then_copied_to_sent(
     assert len(smtp.sent) == 1
 
 
+def test_gmail_never_appends_or_counts_in_sent(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """OD-438: Gmail saves sent mail and merges an appended copy into it, so the two-copy count
+    would learn the wrong answer; in Gmail mode ecf treats the copy as the provider's."""
+    _address(conn, clock, saves=None)
+    with write_tx(conn):
+        conn.execute("UPDATE probe SET capabilities = json_set(capabilities, '$.gmail', 1)")
+    mail = FakeMailSource()
+    out = _out(conn)
+    send.submit(conn, clock, FakeSender(), out, mail)
+    assert _row(conn)["copy"] == "provider" and mail.find_in("Sent", out.built.message_id) == []
+
+
 def test_no_sent_folder_means_no_copy(conn: sqlite3.Connection, clock: FakeClock) -> None:
     _address(conn, clock, saves=False, sent_folder=False)
     send.submit(conn, clock, FakeSender(), _out(conn), FakeMailSource())

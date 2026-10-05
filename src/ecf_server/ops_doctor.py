@@ -12,6 +12,9 @@ slack_doctor's (`{name, level, detail, fix}`):
   once the oldest queued email has waited 10 minutes (an `alert_email` System Error already
   covers the failure). **Reach**: a warning when alert email is off and desktop notifications
   are off or unavailable, since Slack-health alerts then reach nobody (OD-397).
+- **Gmail** (V1.6, OD-438, OD-440), per address in Gmail mode at its last probe: whether All Mail
+  is shown over IMAP (archive needs it) and whether the IMAP folder size limit hides inbox mail;
+  either is a warning, with the Gmail setting to change.
 - **Backups**: set up or not, the schedule, `export_dir` writable (a test file) and off the data
   directory's disk, and the last backup's age: fine to one period plus 2 h, a warning to two
   periods, then a failure; a first backup is "due" for one period plus 2 h after setup (OD-398).
@@ -25,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf_server import addresses, alert_mail, alerts, export_keys, scheduled_export
+from ecf_server import addresses, alert_mail, alerts, export_keys, probe, scheduled_export
 from ecf_server.clock import Clock, from_ts
 
 OK, WARN, FAIL = "ok", "warn", "FAIL"
@@ -43,6 +46,7 @@ def checks(
     now = clock.now()
     return [
         *smtp(conn),
+        *gmail(conn),
         *alert_email(conn, now),
         *reach(conn, notifier),
         *backups(conn, now, data_dir),
@@ -83,6 +87,30 @@ def smtp(conn: sqlite3.Connection) -> list[dict[str, str]]:
                           " --smtp-host <host> (or --app-password) to check again"))  # fmt: skip
         else:
             out.append(_c(name, OK, f"{server}; login checked {str(probed)[:16]}Z"))
+    return out
+
+
+def gmail(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for a in addresses.list_addresses(conn):
+        p: dict[str, Any] = a.get("probe") or {}
+        caps: dict[str, Any] = p.get("capabilities") or {}
+        if not caps.get("gmail"):
+            continue
+        name = f"gmail {a['address_id']}"
+        stored: list[int] | None = caps.get("gmail_inbox")
+        counts = (stored[0], stored[1]) if stored else None
+        if "\\All" not in (p.get("roles") or {}):
+            out.append(_c(name, WARN, "All Mail isn't shown over IMAP: archive is held for you",
+                          "Gmail settings, Labels: Show in IMAP for All Mail; then ecf address set"
+                          f" {a['address_id']} --app-password (probes again)"))  # fmt: skip
+        elif counts is not None and probe.inbox_limited(counts):
+            out.append(_c(name, WARN, f"IMAP shows {counts[0]} of {counts[1]} inbox messages",
+                          "Gmail settings, Forwarding and POP/IMAP: Folder size limits, Do not"
+                          " limit"))  # fmt: skip
+        else:
+            out.append(_c(name, OK, f"Gmail mode; All Mail shown; probed"
+                          f" {str(p.get('probed_at'))[:16]}Z"))  # fmt: skip
     return out
 
 

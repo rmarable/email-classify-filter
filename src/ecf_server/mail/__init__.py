@@ -7,6 +7,10 @@ keywords and `\\Flagged` (label, flag and their undo; OD-189), and from V1.3 `\\
 folder and back, and copying (the hide actions and `label_folder`), and from V1.5 appending to a
 folder (drafts, sent copies) and deleting one message there (undoing a draft). Sending is its own
 port, `Sender` (ecf_server/mail/smtp.py).
+
+Gmail (V1.6, OD-438): Gmail mode is the `X-GM-EXT-1` capability (`Capabilities.gmail`), never the
+host name. In Gmail mode the port also reads each message's Gmail labels (`X-GM-LABELS`) and counts
+INBOX against Gmail's own `in:inbox` search, to spot the IMAP folder size limit setting (OD-440).
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class Capabilities:
     uidplus: bool
     condstore: bool
     append_limit: int | None = None  # RFC 7889 APPENDLIMIT=n, when the server advertises it
+    gmail: bool = False  # X-GM-EXT-1: Gmail mode (OD-438)
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,17 @@ class MailSource(Protocol):
     def fetch_in(self, folder: str, uid: int) -> bytes | None: ...
     def move_back(self, folder: str, uid: int) -> None:
         """Move a message from `folder` back to INBOX (undo)."""
+        ...
+
+    def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
+        """Gmail labels of INBOX messages (`X-GM-LABELS`; system ones like `\\Sent` keep their
+        backslash). Empty when the server isn't Gmail."""
+        ...
+
+    def gmail_inbox_counts(self) -> tuple[int, int] | None:
+        """(messages INBOX shows over IMAP, messages Gmail's `in:inbox` search finds in All Mail),
+        or None when the server isn't Gmail or All Mail isn't shown over IMAP. Fewer in INBOX
+        means Gmail's IMAP folder size limit setting hides the rest (OD-440)."""
         ...
 
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:

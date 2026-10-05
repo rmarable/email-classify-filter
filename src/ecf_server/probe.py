@@ -7,6 +7,12 @@ mail itself, and its message size limit (unless it advertises APPENDLIMIT). Thos
 provider table (SPEC §18) for known providers; otherwise ecf learns whether sent mail is saved at
 the first send. From V1.5 the probe also checks the address's SMTP server (TLS and login, no send;
 OD-324); a failure there is a warning, since outbound is off until you turn it on.
+
+Gmail (V1.6, OD-438, OD-440): Gmail mode is the `X-GM-EXT-1` capability, never the host, and its
+provider facts follow it (Gmail saves sent mail itself; tested 2026-10-05). The probe records
+whether All Mail is shown over IMAP (archive on Gmail needs it) and compares the messages INBOX
+shows with Gmail's own `in:inbox` count: fewer means the IMAP folder size limit setting hides the
+rest, which would make ecf think the hidden mail was handled elsewhere. Both are warnings.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from ecf_server.mail.smtp import Sender
 @dataclass(frozen=True)
 class Known:
     saves_sent: bool
-    max_message_bytes: int
+    max_message_bytes: int | None  # the receiving limit; None when not known
     source: str
 
 
@@ -35,6 +41,19 @@ KNOWN: dict[str, Known] = {
         saves_sent=False, max_message_bytes=51_200_000, source="provider table (tested 2026-09-28)"
     ),
 }
+# Gmail's facts, by capability (OD-438). Its receiving limit isn't known (APPENDLIMIT is the upload
+# limit, OD-200), so there is none here.
+GMAIL = Known(saves_sent=True, max_message_bytes=None, source="Gmail (tested 2026-10-05)")
+GMAIL_NO_ALL_MAIL = (
+    "Gmail's All Mail isn't shown over IMAP: archive actions will be held for a person (Gmail"
+    " settings, Labels: Show in IMAP for All Mail)"
+)
+GMAIL_LIMITED = (
+    "Gmail shows {shown} of the {found} messages in your inbox over IMAP: its folder size limit"
+    " setting hides the rest, and ecf would treat them as handled elsewhere (Gmail settings,"
+    " Forwarding and POP/IMAP: Folder size limits, Do not limit)"
+)
+LIMIT_SLACK = 10
 ROLES_NEEDED = {
     "\\Archive": "archive actions will be held for a person (no Archive folder)",
     "\\Junk": "junk actions will be held for a person (no Junk folder)",
@@ -56,6 +75,8 @@ class ProbeResult:
     max_size_source: str | None
     warnings: list[str] = field(default_factory=list[str])
     smtp: dict[str, Any] | None = None  # check_smtp's result; None when not checked
+    gmail: bool = False  # X-GM-EXT-1 (OD-438)
+    gmail_inbox: tuple[int, int] | None = None  # (shown, found), Gmail only (OD-440)
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,10 +88,10 @@ def probe(src: MailSource, host: str) -> ProbeResult:
     for f in src.folders():
         for r in sorted(f.roles):
             roles.setdefault(r, f.name)  # the first folder with a role wins
-    known = KNOWN.get(host.lower())
+    known = GMAIL if caps.gmail else KNOWN.get(host.lower())
     if caps.append_limit is not None:
         max_bytes, source = caps.append_limit, "APPENDLIMIT"
-    elif known is not None:
+    elif known is not None and known.max_message_bytes is not None:
         max_bytes, source = known.max_message_bytes, known.source
     else:
         max_bytes, source = None, None
@@ -84,6 +105,8 @@ def probe(src: MailSource, host: str) -> ProbeResult:
         saves_sent=known.saves_sent if known else None,
         max_message_bytes=max_bytes,
         max_size_source=source,
+        gmail=caps.gmail,
+        gmail_inbox=src.gmail_inbox_counts() if caps.gmail else None,
     )
     result.warnings = warnings(result)
     return result
@@ -108,9 +131,20 @@ def warnings(r: ProbeResult) -> list[str]:
         out.append(
             "whether the provider saves sent mail is unknown (ecf learns it at the first send)"
         )
+    if r.gmail and "\\All" not in r.roles:
+        out.append(GMAIL_NO_ALL_MAIL)
+    if inbox_limited(r.gmail_inbox):
+        shown, found = r.gmail_inbox or (0, 0)
+        out.append(GMAIL_LIMITED.format(shown=shown, found=found))
     if r.smtp is not None and not r.smtp["ok"]:
         out.append(f"SMTP: {r.smtp['error']}; sending won't work until this is fixed")
     return out
+
+
+def inbox_limited(counts: tuple[int, int] | None) -> bool:
+    """Gmail's search finds more inbox mail than INBOX shows: the folder size limit is on. A few
+    apart is mail arriving between the two counts (unverified on real Gmail, V1.6 step 9)."""
+    return counts is not None and counts[1] - counts[0] > LIMIT_SLACK
 
 
 def check_smtp(sender: Sender) -> dict[str, Any]:
@@ -129,7 +163,8 @@ def store(
 ) -> None:
     """Write the probe row; call inside the caller's write transaction."""
     caps = {"move": r.move, "uidplus": r.uidplus, "condstore": r.condstore,
-            "append_limit": r.append_limit}  # fmt: skip
+            "append_limit": r.append_limit, "gmail": r.gmail,
+            "gmail_inbox": None if r.gmail_inbox is None else list(r.gmail_inbox)}  # fmt: skip
     conn.execute(
         "INSERT INTO probe (address_id, special_use, permanent_keywords, saves_sent,"
         " max_message_bytes, host, probed_at, capabilities, max_size_source, warnings, smtp)"
@@ -168,6 +203,13 @@ def cap_to_provider(conn: sqlite3.Connection, address_id: str, limit: int) -> in
     ).fetchone()
     provider = row["max_message_bytes"] if row is not None else None
     return min(limit, int(provider)) if provider else limit
+
+
+def is_gmail(conn: sqlite3.Connection, address_id: str) -> bool:
+    """The address's mailbox was in Gmail mode at its last probe (OD-438)."""
+    row = conn.execute("SELECT json_extract(capabilities, '$.gmail') FROM probe"
+                       " WHERE address_id = ?", (address_id,)).fetchone()  # fmt: skip
+    return bool(row and row[0])
 
 
 def load(conn: sqlite3.Connection, address_id: str) -> dict[str, Any] | None:

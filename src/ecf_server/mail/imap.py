@@ -33,6 +33,8 @@ CONNECT_S = 15.0
 COMMAND_S = 60.0
 INBOX = "INBOX"
 CHUNK = 500  # UIDs per command, to keep command lines short
+GMAIL_CAPABILITY = "X-GM-EXT-1"  # Gmail mode (OD-438; tested 2026-10-05, SPEC §18)
+GMAIL_LABELS = "X-GM-LABELS"
 
 
 class MailLoginRejectedError(MailUnavailableError):
@@ -139,6 +141,7 @@ class ImapSource:
             uidplus="UIDPLUS" in caps,
             condstore="CONDSTORE" in caps,
             append_limit=_append_limit(caps),
+            gmail=GMAIL_CAPABILITY in caps,
         )
 
     def folders(self) -> list[Folder]:
@@ -262,6 +265,30 @@ class ImapSource:
     def move_back(self, folder: str, uid: int) -> None:
         conn = self._other(folder, readonly=False)
         self._relocate(conn, uid, INBOX)
+
+    def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
+        conn = self._connect()
+        if GMAIL_CAPABILITY not in self._call(conn.capabilities):
+            return {}
+        conn = self._reads()
+        out: dict[int, frozenset[str]] = {}
+        for chunk in _chunks(sorted(set(uids))):
+            data = self._call(lambda c=chunk: conn.fetch(c, [GMAIL_LABELS]))
+            out.update({u: lib.flag_set(d.get(GMAIL_LABELS)) for u, d in data.items()})
+        return out
+
+    def gmail_inbox_counts(self) -> tuple[int, int] | None:
+        conn = self._connect()
+        if GMAIL_CAPABILITY not in self._call(conn.capabilities):
+            return None
+        all_mail = next((f.name for f in self.folders() if "\\All" in f.roles), None)
+        if all_mail is None:
+            return None
+        _conn, info = self._inbox(readonly=True)
+        shown = int(info.get("EXISTS") or 0)
+        conn = self._other(all_mail, readonly=True)
+        found = self._call(lambda: conn.gmail_search("in:inbox"))
+        return shown, len(found)
 
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         conn = self._connect()

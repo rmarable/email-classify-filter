@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Gmail is recognised by its IMAP capability, not its server name. `ecf doctor` warns when Gmail hides All Mail from IMAP or limits how many inbox messages IMAP shows, and names the Gmail setting to change. ecf no longer tries to save or count its own copy of sent mail on Gmail, which saves sent mail itself (OD-438, OD-440).
+- On Gmail, your own notes to yourself no longer raise a fraud alert when your address is in `org_addresses`; a forged copy of your address still does (OD-446).
 - `ecf address add` for a Gmail address needs no `--imap-host` and doesn't ask for org domains; it starts with a limit of 100 sends a day (Google allows 500). `ecf init` asks for the IMAP server only when ecf doesn't know it (OD-441).
 - `ecf doctor` now warns when there are neither org domains nor org addresses (impersonation of people you work with isn't detected), instead of "org domains not set"; `ecf address list` and `ecf init` show the org addresses count.
 - New `org_addresses` section in `ecf config apply`: the exact addresses (a personal Gmail too) of people you work with, each with an optional name of at least two words. Mail from a listed address that passes DMARC counts as internal; one that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to yourself (OD-431, OD-446).

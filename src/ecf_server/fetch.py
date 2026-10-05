@@ -71,7 +71,12 @@ class Analyzer(Protocol):
     `record` runs inside the item's transaction (sender history)."""
 
     def analyze(
-        self, parsed: ParsedMessage, raw: bytes, auth: AuthOutcome | None = None, /
+        self,
+        parsed: ParsedMessage,
+        raw: bytes,
+        auth: AuthOutcome | None = None,
+        gmail_labels: frozenset[str] | None = None,
+        /,
     ) -> dict[str, Any]: ...
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, facts: dict[str, Any], /
@@ -98,6 +103,7 @@ class AddressConfig:
     sensitivity: str
     max_message_bytes: int
     max_scan_bytes: int
+    gmail: bool = False  # Gmail mode, from the last probe (OD-438)
 
 
 @dataclass
@@ -131,6 +137,7 @@ def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
             int(overrides.get("max_message_bytes", DEFAULT_MAX[row["sensitivity"]])),
         ),
         max_scan_bytes=int(overrides.get("max_scan_bytes_per_part", DEFAULT_SCAN)),
+        gmail=probe.is_gmail(conn, address_id),
     )
 
 
@@ -234,6 +241,8 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     pg.install = install
     if install and page:
         pg.flags = src.flags(page)
+    if cfg.gmail and page:  # Gmail's labels, for its own mail to itself (`self_sent`, OD-446)
+        pg.labels = src.gmail_labels(page)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -400,6 +409,7 @@ class _Page:
     recovering_until: int = 0
     install: str = ""  # this install's name, for its keywords (V1.5 step 10b)
     flags: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
+    labels: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
 
     def rate(self) -> float:
         """Measured fetch throughput in bytes/s, or DEFAULT_RATE before there is enough data."""
@@ -513,7 +523,13 @@ def _store(
             _unmark_in(conn, cfg.address_id, uv, uid)
         pg.result.duplicates += 1
         return
-    facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw, auth) if pg.analyzer else {})
+    labels = None
+    if pg.cfg.gmail:
+        if uid not in pg.labels:  # deferred large mail: read here
+            pg.labels.update(pg.src.gmail_labels([uid]))
+        labels = pg.labels.get(uid, frozenset())
+    found = pg.analyzer.analyze(parsed, raw, auth, labels) if pg.analyzer else {}
+    facts = _facts(parsed) | extra | found
     facts["identity_digest"] = digest
     if facts.get("ecf_mail") == own_mail.OWN:  # ecf's own mail came back: no item (§8.4)
         with write_tx(conn):

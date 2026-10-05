@@ -137,6 +137,13 @@ class MailSourceContract:
         for f in folders:
             assert f.roles <= ROLES
 
+    def test_gmail_calls_are_empty_off_gmail(self, harness: Harness) -> None:
+        """V1.6 (OD-438): neither test server is Gmail, so Gmail mode is off."""
+        uids = self._fill(harness, 1)
+        assert not harness.source.capabilities().gmail
+        assert harness.source.gmail_labels(uids) == {}
+        assert harness.source.gmail_inbox_counts() is None
+
     def test_structure(self, harness: Harness) -> None:
         harness.deliver(message(0, multipart=True), DAY1)
         harness.deliver(message(1), DAY1)

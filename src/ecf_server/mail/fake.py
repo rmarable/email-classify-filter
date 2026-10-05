@@ -56,6 +56,11 @@ class FakeMailSource:
         self.elsewhere: dict[str, dict[int, _Stored]] = {}  # other folders (moves, copies)
         self._next = 1
         self.closed = False
+        # Gmail mode (caps.gmail): labels per INBOX UID (default `\\Inbox`), and the counts
+        # `gmail_inbox_counts` reports (default: INBOX shows everything). V1.6 step 3; the full
+        # Gmail fake (one store, folders as views) comes in step 6.
+        self.labels: dict[int, frozenset[str]] = {}
+        self.inbox_counts: tuple[int, int] | None = None
 
     # -- test helpers ---------------------------------------------------------------------------
     def deliver(self, raw: bytes, internaldate: datetime | None = None) -> int:
@@ -219,6 +224,16 @@ class FakeMailSource:
         if (s := self._folder(folder).pop(uid, None)) is not None:
             self._msgs[self._next] = s
             self._next += 1
+
+    def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
+        if not self._caps.gmail:
+            return {}
+        return {u: self.labels.get(u, frozenset({"\\Inbox"})) for u in uids if u in self._msgs}
+
+    def gmail_inbox_counts(self) -> tuple[int, int] | None:
+        if not self._caps.gmail or not any("\\All" in f.roles for f in self._folders):
+            return None
+        return self.inbox_counts or (len(self._msgs), len(self._msgs))
 
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         target = self._folder(folder)

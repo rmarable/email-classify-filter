@@ -10,13 +10,14 @@ from typing import Any
 
 import pytest
 
-from ecf_server import facts, leases
+from ecf_server import facts, leases, probe
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import address_config, fetch_page
 from ecf_server.internal import OrgAddress
+from ecf_server.mail import Capabilities
 from ecf_server.mail.fake import FakeMailSource
 from ecf_server.message import parse, parse_partial
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
@@ -276,6 +277,45 @@ def test_fetch_with_the_analyzer_builds_sender_history(
         seen.append(f["sender_seen_before"])
         clock.advance(7 * 86400 + day)
     assert seen == [False, False, False, True]  # the 4th, after 3 passes over 14+ days
+
+
+def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.6 end to end (OD-446): Gmail delivers the account's mail to itself unsigned and labels it
+    Sent; the same unsigned mail without the label is a forgery of your own listed address."""
+    me = "pat.lee@gmail.com"
+    conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                 " VALUES ('pat', ?, 'standard', 'A', 'now')", (me,))  # fmt: skip
+    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                 " ('config.org_addresses', ?, 'now', 'test')",
+                 (json.dumps([{"address": me, "name": "Pat Lee"}]),))  # fmt: skip
+    caps = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True, gmail=True)
+    src = FakeMailSource(caps=caps)
+    with write_tx(conn):
+        probe.store(conn, clock, "pat", "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
+
+    def one_check() -> list[str]:
+        lease = leases.acquire(conn, clock, "pat", "w")
+        assert lease is not None
+        analyzer = MessageAnalyzer.for_address(conn, clock, "pat",
+                                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+        created = fetch_page(conn, clock, src, address_config(conn, "pat"), lease,
+                             analyzer=analyzer).created  # fmt: skip
+        leases.release(conn, lease)
+        return created
+
+    one_check()  # first run: start from now
+    note = src.deliver(mail(me, to=me))
+    src.labels[note] = frozenset({"\\Sent", "\\Inbox"})
+    src.deliver(mail(me, to=me, extra={"Message-ID": "<forged@x.example>"}))
+    facts_of = [json.loads(conn.execute("SELECT facts FROM items WHERE stable_id = ?",
+                                        (sid,)).fetchone()[0]) for sid in one_check()]  # fmt: skip
+    mine, forged = facts_of
+    assert mine["self_sent"] and mine["from_org_address"] and mine["triggers"]["fraud"] == []
+    assert not forged["self_sent"]
+    why = "From is one of your org addresses but isn't authenticated"
+    assert why in forged["triggers"]["fraud"]
 
 
 @pytest.mark.parametrize(
