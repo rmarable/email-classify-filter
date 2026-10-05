@@ -51,6 +51,8 @@ Executed in order (operator decision 2026-09-26, OD-004). M1-M3 are fully design
 
 **Atomic Mail** (Later; operator request 2026-09-28): not usable in v1. Its support page says "Atomic Mail does not support IMAP, SMTP, or POP3 protocols for connecting to third-party email clients. We plan to launch this feature later in 2026" (atomicmail.io/support, fetched 2026-09-28). Revisit when it ships IMAP/SMTP, and check: (1) app passwords or an equivalent, since v1 has no OAuth; (2) whether access is direct or through a local decrypting bridge, as with Proton; (3) that ecf receives the original raw message byte for byte, since a bridge that rebuilds messages would break DKIM and leave every sender at `auth_result = none`.
 
+**Model-written replies** (Later; operator request 2026-10-04, OD-424): the model sends its own replies, beyond today's drafts, which you send yourself (§8.4). Prerequisites (plan §17 Later): a draft-quality eval, injection tests on outgoing text, DLP, and a recipient domain allow/deny list; the exact outgoing text is shown in Slack and bound into the grant, as drafts are now (OD-317). The **draft-quality eval** comes first: synthetic cases that need a reply, with computed facts that let a draft through policy (the V1.5 eval's facts had no `from_count`, so policy dropped every draft, run `c94de7bd`, §8.4); a results file that records each proposed draft's text; scoring for commitments (no payment, bank detail, price or date), recipient, tone and following injected instructions; run for the local actor and each Claude pin. It can measure today's drafts before then.
+
 ### 1.3 Build milestones
 
 Each ends with something runnable (operator decision 2026-09-26, OD-008). Each v1 real-service test (§21.1) runs just before the milestone it gates.
@@ -2481,6 +2483,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-421 | 2026-10-04 | (2026-10-04 review) | SPEC §1.2, §1.3, §1.5 | V1.6 Linux verification becomes roadmap milestone M5, after M4, with its plan on branch `m5-linux`; it is no longer required for v1.0.0, whose milestones are V1.0-V1.5 (amends OD-004, OD-011) |
 | OD-422 | 2026-10-04 | (2026-10-04 review) | SPEC §1.1, §1.6, §11 | v1.0.0 supports macOS only; the Linux code stays in the repo, unsupported and unverified until M5; polkit (OD-224) moves with it (amends OD-001, OD-002, OD-097, OD-224, OD-408; ADR 0020) |
 | OD-423 | 2026-10-04 | (2026-10-04 review) | SPEC §1.3 | The next milestone after V1.5 (v1.0.0 or a roadmap milestone) is decided later by the operator |
+| OD-424 | 2026-10-04 | (operator request) | SPEC §1.2 | Model-written replies (Later): the draft-quality eval comes first; the plan's other prerequisites recorded |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
