@@ -48,7 +48,7 @@ uv sync                                   # create/update .venv from uv.lock
 uv run ruff check . && uv run ruff format --check .
 uv run pyright                            # strict
 uv run lint-imports                       # ecf must never import ecf_server
-uv run pytest                             # all tests for this OS
+uv run pytest -n auto                     # all tests for this OS, in parallel (pytest-xdist)
 uv run pytest tests/test_smoke.py::test_cli_version   # one test
 uv run pytest -m macos                    # macOS-only tests
 uv run python scripts/check_licenses.py   # dependency license allow-list (--markdown: table)
@@ -57,14 +57,14 @@ uv run ecf eval build                     # synthetic set: hygiene scan, then .e
 uv build                                  # wheel + sdist
 ```
 
-**When to run tests** (operator decision 2026-10-02; a full run takes ~3 minutes):
+**When to run tests** (operator decision 2026-10-02; a full run takes ~1.5 minutes with `-n auto`, ~4.5 one test at a time; measured 2026-10-05):
 - While working, run only the test files for the code you changed (`uv run pytest tests/test_x.py`), plus ruff and pyright.
 - Run the full suite once, right before asking to commit, and only after the change is final. If the code changes after that, re-run only the affected files, unless the change touches code many tests share (then run it all once more).
 - Don't re-run a suite whose inputs haven't changed, and don't run the full suite to "double-check" a green targeted run. After a push, CI is the check (see Commits); the full macOS run with 0 skipped is for the merge gate.
 
 **Shell on macOS:** use `gsed` for GNU sed syntax (the built-in BSD sed rejects `\|` alternation and needs `-i ''`); for multi-line or exact replacements prefer the Edit tool or a short Python script.
 
-**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; the Ollama tests need Ollama installed and the pinned model (`uv run ecf models install`), see CONTRIBUTING; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
+**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -n auto -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; the Ollama tests need Ollama installed and the pinned model (`uv run ecf models install`), see CONTRIBUTING; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
 
 ## Hard constraints
 
