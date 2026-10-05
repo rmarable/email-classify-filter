@@ -121,6 +121,7 @@ def subject_line(item: sqlite3.Row) -> str:
 def why(facts: dict[str, Any]) -> str:
     t: dict[str, Any] = facts.get("triggers") or {}
     parts: list[str] = [*t.get("fraud", []), *t.get("regulator", [])]
+    parts += [x for x in t.get("impersonation", []) if x not in parts]  # weak ones too (V1.6)
     parts += [f"looks like {d}" for d in t.get("lookalikes", [])]
     if facts.get("quarantined"):
         parts.insert(0, "reading it crashed ecf twice; it was set aside")

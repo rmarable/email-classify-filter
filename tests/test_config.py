@@ -82,8 +82,18 @@ V = "version: 1\n"
         (V + "templates: {version: 1, templates: [{id: t, subject: s, body: '{x}'}]}", "only"),
         (V + "rules: {version: 1, rules: [{id: r, then: [{move: Vendors}]}]}", "move_folders"),
         (V + "rules: {version: 1, rules: [{id: r, then: [reply_template]}]}", "not allowed"),
+        (V + "org_addresses: [{address: pat@x.example, name: Pat}]", "at least two words"),
+        (V + "org_addresses: [{address: pat@x.example, role: ceo}]", "{address, name}"),
+        (V + "org_addresses: [{name: Pat Lee}]", "{address, name}"),
+        (V + "org_addresses: [{address: not-an-address}]", "not an email address"),
+        (V + "org_addresses: [{address: patlee@gmail.com}, {address: Pat.Lee+x@googlemail.com}]",
+         "listed twice"),
+        (V + f"org_addresses: [{', '.join(f'{{address: a{i}@x.example}}' for i in range(51))}]",
+         "at most 50"),
+        ("version: 1\norg_domains: []", "can't be empty while you watch an address at"),
+        ("version: 1\norg_addresses: default\norg_domains: default", "no default"),
     ],
-)
+)  # fmt: skip
 def test_bad_documents_are_refused(
     conn: sqlite3.Connection, clock: FakeClock, text: str, why: str
 ) -> None:
@@ -308,6 +318,67 @@ def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small
     r = CliRunner().invoke(app, ["--install", "t", "config", "apply", str(cfg)], input="n\n")
     assert r.exit_code == 1, r.output  # declined at the prompt: no step-up, nothing applied
     assert "move_folders: +Receipts" in r.output
+
+
+# ---- org addresses (V1.6) ---------------------------------------------------------------------
+
+
+def test_org_addresses_are_stored_lowercased_with_names_tidied(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    doc = config.parse(conn, V + "org_addresses: [{address: Pat.Lee@Gmail.com, name: ' Pat  Lee '},"
+                             " {address: dana@acme.example}]")  # fmt: skip
+    assert doc == {"org_addresses": [{"address": "pat.lee@gmail.com", "name": "Pat Lee"},
+                                     {"address": "dana@acme.example"}]}  # fmt: skip
+    changes = config.diff(config.current(conn), doc)
+    assert changes == [{"section": "org_addresses",
+                        "change": "+pat.lee@gmail.com, +dana@acme.example"}]  # fmt: skip
+    assert config.parse(conn, V + "org_addresses: default") == {"org_addresses": "default"}
+
+
+def test_org_domains_may_be_empty_when_every_watched_address_is_at_a_public_provider(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-441."""
+    _setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET email = 'me@gmail.com'")
+    assert config.parse(conn, "version: 1\norg_domains: []") == {"org_domains": []}
+
+
+def test_a_forward_to_a_listed_personal_account_is_allowed_and_named_in_the_dialog(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-437: a forward target is in org_domains or exactly in org_addresses; one at a public
+    provider is named first in the step-up dialog."""
+    _setup(conn, clock)
+    n = FakeNotifier()
+    text = (V + "org_addresses: [{address: pat.lee@gmail.com, name: Pat Lee}]\n"
+            "forward_allow_list: [{id: pat, address: pat.lee@gmail.com}]")  # fmt: skip
+    with pytest.raises(StepupRequiredError) as ei:
+        config.apply(conn, clock, n, text, dry_run=False, nonce=None)
+    issued = stepup.issue(conn, clock, FakeStepper(), "config_apply", ei.value.extra["target"])
+    want = "ecf: apply config: pat.lee@gmail.com is a personal account your organization"
+    assert issued.prompt.startswith(want + " doesn't control; forward_allow_list:")
+    stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
+    assert config.apply(conn, clock, n, text, dry_run=False, nonce=issued.nonce_id).applied
+    with pytest.raises(InvalidInputError, match="isn't in org_domains or org_addresses"):
+        config.parse(conn, V + "forward_allow_list: [{id: x, address: patlee@gmail.com}]")  # exact
+    # OD-452: removing the address a forward needs is refused until the forward goes too
+    with pytest.raises(InvalidInputError, match="remove the forward too"):
+        config.parse(conn, V + "org_addresses: []")
+    with pytest.raises(InvalidInputError, match="remove the forward too"):
+        config.parse(conn, V + "org_addresses: default")
+    assert config.parse(conn, V + "org_addresses: []\nforward_allow_list: []")
+
+
+def test_an_org_domain_forward_isnt_named_as_personal(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    doc = config.parse(conn, V + "forward_allow_list: [{id: a, address: lead@acme.example}]")
+    assert config.personal_targets(config.current(conn), doc) == ""
 
 
 def test_the_summary_puts_the_riskiest_change_first_and_counts_what_it_cuts() -> None:

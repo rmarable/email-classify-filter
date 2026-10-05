@@ -3,7 +3,11 @@
 One YAML document, `version: 1`, with optional sections; an omitted section is left unchanged,
 and a section set to `default` returns to its shipped value (OD-225; `org_domains` has none).
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
-`templates`, and from V1.5 `export_schedule` (`daily`, `weekly`, `off`; OD-343); alert routes
+`templates`, from V1.5 `export_schedule` (`daily`, `weekly`, `off`; OD-343), and from V1.6
+`org_addresses` (exact addresses with optional names: the internal set beside `org_domains`,
+OD-431, OD-433; ADR 0021). `org_domains` may be empty only when no watched address is at a
+non-public domain (OD-441). A forward target is in `org_domains` or exactly in `org_addresses`
+(OD-437); one at a public provider is named in the step-up dialog. Alert routes
 change with `ecf alerts set` and alert email with `ecf alerts email set`. Unknown keys are
 refused.
 
@@ -31,15 +35,16 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.schema import load_schema_v1
 from ecf.yamlio import load_yaml
-from ecf_server import addresses, rules, slack_admin, stepup, templates
+from ecf_server import addresses, internal, rules, slack_admin, stepup, templates
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
+from ecf_server.facts import PUBLIC_DOMAINS
 from ecf_server.notify import Notifier
 
 MAX_BYTES = 48 * 1024  # inside the API's 64 KB request limit
 MAX_ENTRIES = 50
-SECTIONS = ("org_domains", "forward_allow_list", "move_folders", "action_policy", "rules",
-            "templates", "export_schedule")  # fmt: skip
+SECTIONS = ("org_domains", "org_addresses", "forward_allow_list", "move_folders", "action_policy",
+            "rules", "templates", "export_schedule")  # fmt: skip
 LATER = {
     "alerts": "change alert routes with `ecf alerts set`, alert email with `ecf alerts email set`",
     "export_dir": "change it with `ecf export dir set <path>` (step-up)",
@@ -52,6 +57,8 @@ DEFAULT_POLICY = dict.fromkeys(sorted(rules.HIDE_ACTIONS), "auto")  # §8.3, `st
 _ENTRY_ID = re.compile(r"^[a-z0-9_]{1,40}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _POLICY_SHAPE = "{standard: {action: auto|approve}}"
+MAX_ADDRESS = 254
+MAX_NAME = 100
 DEFAULT = "default"  # `<section>: default` returns the section to its shipped value (OD-225)
 
 
@@ -114,16 +121,20 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
     now = current(conn)
     out: dict[str, Any] = {k: DEFAULT for k, v in doc.items() if v == DEFAULT}
     if "org_domains" in doc:
-        domains = _strings(doc["org_domains"], "org_domains")
-        out["org_domains"] = addresses.check_org_domains(domains)
+        out["org_domains"] = _org_domains(conn, _strings(doc["org_domains"], "org_domains"))
     org = out.get("org_domains", now["org_domains"] or [])
+    if "org_addresses" in doc and "org_addresses" not in out:
+        out["org_addresses"] = _org_addresses(doc["org_addresses"])
+    listed: list[dict[str, str]] = _effective(out, now, "org_addresses") or []
     if "move_folders" in doc and "move_folders" not in out:
         out["move_folders"] = _folders(doc["move_folders"])
     folders: list[str] = _effective(out, now, "move_folders") or []
     if "forward_allow_list" in doc and "forward_allow_list" not in out:
-        out["forward_allow_list"] = _forwards(conn, doc["forward_allow_list"], org)
-    elif "org_domains" in doc and now["forward_allow_list"] and "forward_allow_list" not in out:
-        _forwards(conn, now["forward_allow_list"], org)  # new org domains must still cover them
+        out["forward_allow_list"] = _forwards(conn, doc["forward_allow_list"], org, listed)
+    elif (("org_domains" in doc or "org_addresses" in doc) and now["forward_allow_list"]
+          and "forward_allow_list" not in out):  # fmt: skip
+        # the new internal set must still cover them: refused otherwise (OD-452)
+        _forwards(conn, now["forward_allow_list"], org, listed)
     if "action_policy" in doc and "action_policy" not in out:
         out["action_policy"] = _policy(doc["action_policy"])
     if "rules" in doc and "rules" not in out:
@@ -155,6 +166,59 @@ def _strings(v: Any, where: str) -> list[str]:
     return items
 
 
+def _org_domains(conn: sqlite3.Connection, domains: list[str]) -> list[str]:
+    """Public domains refused; empty only when no watched address is at a non-public domain
+    (OD-441)."""
+    if domains:
+        return addresses.check_org_domains(domains)
+    own = sorted({
+        str(r[0]).rsplit("@", 1)[-1].lower()
+        for r in conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL")
+    } - PUBLIC_DOMAINS)  # fmt: skip
+    if own:
+        raise InvalidInputError(f"config: org_domains can't be empty while you watch an address"
+                                f" at {', '.join(own)}")  # fmt: skip
+    return []
+
+
+def _org_addresses(v: Any) -> list[dict[str, str]]:
+    shape = f"a list of at most {MAX_ENTRIES} {{address, name}} entries (name optional)"
+    if not isinstance(v, list) or len(cast("list[Any]", v)) > MAX_ENTRIES:
+        raise InvalidInputError(f"config: org_addresses: {shape}")
+    out: list[dict[str, str]] = []
+    accounts: set[str] = set()
+    for e in cast("list[Any]", v):
+        keys: set[str] = set(cast("dict[str, Any]", e)) if isinstance(e, dict) else set()
+        if not keys or not keys <= {"address", "name"} or "address" not in keys:
+            raise InvalidInputError(f"config: org_addresses: {shape}")
+        entry = cast("dict[str, Any]", e)
+        raw = entry["address"]
+        if not isinstance(raw, str) or len(raw) > MAX_ADDRESS:
+            raise InvalidInputError(f"config: org_addresses: not an address: {raw!r}")
+        local, domain = addresses.parse_email(raw)
+        email = f"{local}@{domain}".lower()
+        if internal.fold(email) in accounts:
+            raise InvalidInputError(f"config: org_addresses: {raw} is listed twice (Gmail ignores"
+                                    " dots and +tags, so these are one account)")  # fmt: skip
+        accounts.add(internal.fold(email))
+        item = {"address": email}
+        if "name" in entry:
+            item["name"] = _name(entry["name"], raw)
+        out.append(item)
+    return out
+
+
+def _name(v: Any, addr: str) -> str:
+    if not isinstance(v, str) or len(v) > MAX_NAME or _CONTROL.search(v):
+        raise InvalidInputError(f"config: org_addresses: {addr}: the name is text of at most"
+                                f" {MAX_NAME} characters")  # fmt: skip
+    name = " ".join(v.split())
+    if len(internal.name_words(name)) < 2:  # OD-433
+        raise InvalidInputError(f"config: org_addresses: {addr}: a name needs at least"
+                                " two words (a first name alone matches too many)")  # fmt: skip
+    return name
+
+
 def _folders(v: Any) -> list[str]:
     out: list[str] = []
     for f in _strings(v, "move_folders"):
@@ -168,7 +232,9 @@ def _folders(v: Any) -> list[str]:
     return out
 
 
-def _forwards(conn: sqlite3.Connection, v: Any, org: list[str]) -> list[dict[str, str]]:
+def _forwards(
+    conn: sqlite3.Connection, v: Any, org: list[str], listed: list[dict[str, str]]
+) -> list[dict[str, str]]:
     if not isinstance(v, list) or len(cast("list[Any]", v)) > MAX_ENTRIES:
         raise InvalidInputError(f"config: forward_allow_list: a list of at most {MAX_ENTRIES}"
                                 " {id, address} entries")  # fmt: skip
@@ -187,10 +253,12 @@ def _forwards(conn: sqlite3.Connection, v: Any, org: list[str]) -> list[dict[str
         if any(o["id"] == eid for o in out):
             raise InvalidInputError(f"config: forward_allow_list: id {eid!r} is listed twice")
         local, domain = addresses.parse_email(str(addr))
-        if domain not in org:
-            raise InvalidInputError(f"config: forward_allow_list: {addr} isn't in org_domains"
-                                    " (forwards stay inside your organization)")  # fmt: skip
         email = f"{local}@{domain}"
+        if domain not in org and email.lower() not in {x["address"] for x in listed}:
+            raise InvalidInputError(f"config: forward_allow_list: {addr} isn't in org_domains or"
+                                    " org_addresses (forwards stay with people you work with;"
+                                    " to remove an org domain or address a forward needs,"
+                                    " remove the forward too)")  # fmt: skip
         if email.lower() in monitored:
             raise InvalidInputError(f"config: forward_allow_list: {addr} is a monitored address"
                                     " (a forward there would be fetched again)")  # fmt: skip
@@ -243,7 +311,7 @@ def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
-_SHIPPED_NAME = {"forward_allow_list": "none", "move_folders": "none",
+_SHIPPED_NAME = {"forward_allow_list": "none", "move_folders": "none", "org_addresses": "none",
                  "action_policy": "the default policy", "rules": "the starter rules",
                  "templates": "the shipped templates", "export_schedule": "daily"}  # fmt: skip
 
@@ -268,6 +336,11 @@ def _describe_change(section: str, old: Any, new: Any) -> str:  # noqa: PLR0911 
         return _set_change(old or [], new)
     if section == "export_schedule":
         return f"{old or 'daily'} to {new}"
+    if section == "org_addresses":
+        was_addr: list[dict[str, str]] = old or []
+        listed: list[dict[str, str]] = new
+        return _keyed_change({e["address"]: e for e in was_addr},
+                             {e["address"]: e for e in listed})  # fmt: skip
     if section == "forward_allow_list":
         was_list: list[dict[str, str]] = old or []
         entries: list[dict[str, str]] = new
@@ -322,8 +395,8 @@ def _shipped(name: str) -> dict[str, Any]:
 
 
 # riskiest first, so a cut-off summary still names what matters most (V1.2 review, 2026-09-30)
-RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "export_schedule",
-              "templates", "move_folders")  # fmt: skip
+RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "org_addresses",
+              "export_schedule", "templates", "move_folders")  # fmt: skip
 
 
 def summary(changes: list[dict[str, str]], limit: int = 300) -> str:
@@ -360,8 +433,24 @@ def _describe_apply(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
     changes = diff(before, doc)
     return stepup.Bound(
         stepup.digest("config_apply", canonical_json(doc), canonical_json(before)),
-        f"ecf: apply config: {summary(changes, 200)}",
+        f"ecf: apply config: {personal_targets(before, doc)}{summary(changes, 200)}",
     )
+
+
+def personal_targets(before: dict[str, Any], doc: dict[str, Any]) -> str:
+    """New forward targets at a public provider, named first in the dialog (OD-437)."""
+    new = doc.get("forward_allow_list")
+    if not isinstance(new, list):
+        return ""
+    was: list[dict[str, str]] = before["forward_allow_list"] or []
+    had = {e["address"].lower() for e in was}
+    added = [str(e["address"]) for e in cast("list[dict[str, str]]", new)
+             if e["address"].lower() not in had
+             and e["address"].rsplit("@", 1)[-1].lower() in PUBLIC_DOMAINS]  # fmt: skip
+    if not added:
+        return ""
+    more = f" (+{len(added) - 1} more)" if len(added) > 1 else ""
+    return f"{added[0]}{more} is a personal account your organization doesn't control; "
 
 
 @dataclass(frozen=True)

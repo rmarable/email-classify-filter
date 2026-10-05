@@ -16,6 +16,7 @@ from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import address_config, fetch_page
+from ecf_server.internal import OrgAddress
 from ecf_server.mail.fake import FakeMailSource
 from ecf_server.message import parse, parse_partial
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
@@ -190,6 +191,37 @@ def test_unscanned_reasons(conn: sqlite3.Connection, clock: FakeClock) -> None:
     big = parse_partial(b"From: a@vendor-a.example\r\n\r\n", [], {}, size=99)
     f = facts.compute(conn, STD, big, "none", [])
     assert f["unscanned_reasons"] == ["over the size limit"]
+
+
+LISTED = (OrgAddress("patlee@gmail.com", "Pat Lee"),)
+
+
+def test_an_exact_org_address_is_internal_and_a_folded_one_is_the_same_account(
+    conn: sqlite3.Connection,
+) -> None:
+    """OD-431, OD-432: internal needs DMARC pass and the exact address; a folded variant is the
+    same account (`from_org_address`, so trigger 6 applies) but not internal."""
+    for sender, origin in (("patlee@gmail.com", "internal"), ("pat.lee@gmail.com", "external")):
+        f = facts.compute(conn, STD, parse(mail(sender)), "pass", [], org_addresses=LISTED)
+        assert (f["sender_origin"], f["from_org_address"], f["from_org_domain"]) == (
+            origin, True, False), sender  # fmt: skip
+    f = facts.compute(conn, STD, parse(mail("patlee@gmail.com")), "none", [], org_addresses=LISTED)
+    assert f["sender_origin"] == "external"
+    f = facts.compute(conn, STD, parse(mail("pat@else.example")), "pass", [], org_addresses=LISTED)
+    assert f["from_org_address"] is False and f["sender_origin"] == "external"
+
+
+def test_gmails_sent_label_marks_the_accounts_own_note_to_itself(conn: sqlite3.Connection) -> None:
+    """OD-446: only on Gmail (labels given), only From the watched address, only with \\Sent."""
+    me = facts.AddressInfo("me", "Pat.Lee@gmail.com", "standard")
+    note = parse(mail("pat.lee@gmail.com", to="pat.lee@gmail.com"))
+    sent = frozenset({"\\Sent", "\\Inbox"})
+    assert facts.compute(conn, me, note, "none", [], gmail_labels=sent)["self_sent"] is True
+    assert facts.compute(conn, me, note, "none", [], gmail_labels=frozenset({"\\Inbox"}))[
+        "self_sent"] is False  # fmt: skip
+    assert facts.compute(conn, me, note, "none", [])["self_sent"] is False  # not Gmail
+    other = parse(mail("someone@gmail.com", to="pat.lee@gmail.com"))
+    assert facts.compute(conn, me, other, "none", [], gmail_labels=sent)["self_sent"] is False
 
 
 def test_unnamed_inline_images_are_not_attachments(conn: sqlite3.Connection) -> None:

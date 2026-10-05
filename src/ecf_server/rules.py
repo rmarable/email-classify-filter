@@ -39,6 +39,9 @@ FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
     "content_unscanned": None,
     "sender_verified": None,
     "payment_keyword": None,  # a payment keyword in the text (§8.5; OD-262)
+    "from_org_address": None,  # From is in org_addresses (§7.2; V1.6, OD-431)
+    "impersonates_internal": None,  # trigger 7's org address or name clause (§8.5; OD-436)
+    "self_sent": None,  # Gmail: the account's own mail to itself (§7.2; OD-446)
 }
 TRIGGERS = frozenset({"fraud", "fraud_weak", "regulator", "unverified_payment"})
 ADDRESS_ATTRS: dict[str, tuple[str, ...]] = {"sensitivity": ("standard", "high")}

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from ecf_server import facts, own_mail, senderauth, triggers
+from ecf_server import facts, internal, own_mail, senderauth, triggers
 from ecf_server.addresses import get_org_domains
 from ecf_server.clock import Clock, to_ts
 from ecf_server.dnscache import DnsCache
@@ -28,6 +28,8 @@ class MessageAnalyzer:
     ) -> None:
         self._conn, self._clock, self._address, self._dns = conn, clock, address, dns
         self._org = get_org_domains(conn)
+        self._org_addresses = internal.org_addresses(conn)
+        self._providers = watched_providers(conn)
         self._vendors = facts.known_vendor_domains(conn, address.address_id)
 
     @classmethod
@@ -42,9 +44,14 @@ class MessageAnalyzer:
         )
 
     def analyze(
-        self, parsed: ParsedMessage, raw: bytes, auth: senderauth.AuthOutcome | None = None
+        self,
+        parsed: ParsedMessage,
+        raw: bytes,
+        auth: senderauth.AuthOutcome | None = None,
+        gmail_labels: frozenset[str] | None = None,
     ) -> dict[str, Any]:
-        """`auth` is given when a child process already checked the message (isolate.py)."""
+        """`auth` is given when a child process already checked the message (isolate.py);
+        `gmail_labels` is the message's `X-GM-LABELS` on Gmail (V1.6)."""
         if auth is None:
             auth = senderauth.evaluate(raw, parsed, self._dns)
         keywords = triggers.scan(triggers.texts_of(parsed))
@@ -55,6 +62,8 @@ class MessageAnalyzer:
             auth.result,
             self._org,
             payment_keyword=bool(keywords["payment"]),
+            org_addresses=self._org_addresses,
+            gmail_labels=gmail_labels,
         )
         found = auth.facts() | computed
         found["ecf_mail"] = own_mail.classify(self._conn, parsed, auth.result)
@@ -66,6 +75,8 @@ class MessageAnalyzer:
             org_domains=self._org,
             known_vendors=self._vendors,
             duplicate_message_id=self._reused(parsed),
+            org_addresses=self._org_addresses,
+            watched_providers=self._providers,
         )
         return found | fired.facts()
 
@@ -90,3 +101,10 @@ class MessageAnalyzer:
             found["auth_result"],
             to_ts(self._clock.now()),
         )
+
+
+def watched_providers(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """Public provider domains this install watches an address at: lookalike targets (OD-434)."""
+    rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL").fetchall()
+    domains = {facts.domain_of(str(r[0])) for r in rows}
+    return tuple(sorted(d for d in domains if d in facts.PUBLIC_DOMAINS))

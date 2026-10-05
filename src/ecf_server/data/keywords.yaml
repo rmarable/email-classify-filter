@@ -65,6 +65,11 @@ payment:
     - purchase order
     - please pay
     - pay now
+    # gift-card scams (V1.6, OD-436); noise measured in V1.6 steps 7 and 9
+    - gift card
+    - gift cards
+    - giftcard
+    - giftcards
 
 # Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
 # common terms; add state and non-US agencies as needed.

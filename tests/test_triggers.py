@@ -13,6 +13,7 @@ from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock
 from ecf_server.dnscache import DnsCache
 from ecf_server.facts import AddressInfo
+from ecf_server.internal import ORG_ADDRESSES_KEY, OrgAddress
 from ecf_server.message import parse
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
@@ -135,6 +136,8 @@ def fire(
     dup: bool = False,
     vendors: list[str] | None = None,
     raw: bytes | None = None,
+    listed: tuple[OrgAddress, ...] = (),
+    providers: tuple[str, ...] = (),
     **facts: Any,
 ) -> tr.Triggers:
     parsed = parse(raw or mail(body))
@@ -146,6 +149,8 @@ def fire(
         org_domains=ORG,
         known_vendors=vendors or [],
         duplicate_message_id=dup,
+        org_addresses=listed,
+        watched_providers=providers,
     )
 
 
@@ -323,6 +328,99 @@ def test_a_public_provider_is_not_a_lookalike_of_another() -> None:
         assert tr.lookalike(d, k), (d, k)
         assert fire("hi", from_domain=d, vendors=[k]).lookalikes == [], (d, k)
     assert fire("hi", from_domain="gmai1.com", vendors=["gmail.com"]).lookalikes
+
+
+def test_the_watched_providers_domain_is_a_lookalike_target() -> None:
+    """OD-434: an install watching gmail.com addresses treats gmai1.com as imitating it."""
+    assert fire("hi", from_domain="gmai1.com", providers=("gmail.com",)).lookalikes
+    assert fire("hi", from_domain="ymail.com", providers=("gmail.com",)).lookalikes == []  # OD-430
+
+
+# ---- org addresses and impersonation (V1.6) -------------------------------------------------
+
+PAT = OrgAddress("patlee@gmail.com", "Pat Lee")
+DANA = OrgAddress("dana.ruiz@acme.example", "Dana Ruiz")
+LISTED = (PAT, DANA)
+
+
+def gmail(sender: str, body: str = "Can you help me with something?") -> dict[str, Any]:
+    raw = mail(body, sender=sender)
+    addr = parse(raw).from_addr or ""
+    return {"raw": raw, "from_domain": addr.rsplit("@", 1)[1], "listed": LISTED}
+
+
+def test_an_unauthenticated_org_address_is_trigger_6_unless_gmail_says_it_sent_it() -> None:
+    """OD-446: gmail.com is p=none, so a forged listed address arrives `none`; the account's own
+    note to itself (Gmail's Sent label) is the exception."""
+    why = "From is one of your org addresses but isn't authenticated"
+    kw: dict[str, Any] = gmail("patlee@gmail.com") | {"from_org_address": True}
+    assert why in fire("", auth_result="none", **kw).fraud
+    assert why not in fire("", **kw).fraud  # pass
+    assert why not in fire("", auth_result="none", self_sent=True, **kw).fraud
+    assert not fire("Invoice 4", auth_result="none", self_sent=True, **kw).unverified_payment
+
+
+@pytest.mark.parametrize(
+    ("sender", "matched"),
+    [
+        ('"Pat Lee" <random123@gmail.com>', "display name matches Pat Lee"),
+        ('"LEE, P\u0430t" <random123@gmail.com>', "display name matches Pat Lee"),  # Cyrillic a
+        ('"Dana Ruiz (CEO)" <dana.ruiz.ceo@outlook.com>', "display name matches Dana Ruiz"),
+        ('"patlee@gmail.com" <random123@gmail.com>', "display name shows patlee@gmail.com"),
+        ('"dana.ruiz@acme.example" <x123@gmail.com>', "display name shows dana.ruiz@acme.example"),
+        ("Someone <patlea@gmail.com>", "patlea@gmail.com looks like patlee@gmail.com"),  # typo
+        ("Someone <pat.lee@outlook.com>", "pat.lee@outlook.com looks like patlee@gmail.com"),
+        ("Someone <danaruiz@gmail.com>", "looks like dana.ruiz@acme.example"),  # OD-448
+    ],
+)
+def test_impersonation(sender: str, matched: str) -> None:
+    t = fire("", **gmail(sender))
+    assert t.impersonation and any(matched in r for r in t.impersonation), t.impersonation
+    assert t.facts()["impersonates_internal"] is True
+    # no money: weak, rule 1b (OD-436); another domain in the display name is also trigger 7's
+    # domain clause, a fraud trigger as before (OD-205)
+    assert t.fraud_weak == t.impersonation and not set(t.impersonation) & set(t.fraud)
+
+
+def test_impersonation_about_money_is_a_fraud_trigger() -> None:
+    t = fire("", **gmail('"Pat Lee" <random123@gmail.com>', "Please buy 5 gift cards today."))
+    assert t.impersonation and set(t.impersonation) <= set(t.fraud)  # OD-436, gift card keyword
+
+
+@pytest.mark.parametrize(
+    ("sender", "extra"),
+    [
+        ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat
+        ('"Pat Lee" <p.a.t.lee@googlemail.com>', {"from_org_address": True}),  # Pat's account
+        ('"Dana Ruiz" <dana@acme.example>', {"from_org_domain": True}),  # inside the org
+        ('"Pat" <random123@gmail.com>', {}),  # one word isn't a name
+        ('"Pat Leeson" <random123@gmail.com>', {}),  # another word
+        ("Someone <patx@gmail.com>", {}),  # too short to compare
+        ("Someone <dana.ruiz@acme-shop.example>", {}),  # not a public provider: trigger 3's job
+    ],
+)
+def test_not_impersonation(sender: str, extra: dict[str, Any]) -> None:
+    kw: dict[str, Any] = gmail(sender) | extra
+    kw["listed"] = (*LISTED, OrgAddress("patx@gmail.com"))
+    assert fire("", **kw).impersonation == []
+
+
+def test_analyzer_reads_org_addresses_and_flags_an_impersonator(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, 'now',"
+                 " 'test')", (ORG_ADDRESSES_KEY,
+                              '[{"address": "patlee@gmail.com", "name": "Pat Lee"}]'))  # fmt: skip
+    conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                 " VALUES ('me', 'me.myself@gmail.com', 'standard', 'A', 'now')")  # fmt: skip
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("me", "me.myself@gmail.com", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    raw = mail("Are you at your desk?", sender='"Pat Lee" <random123@gmail.com>')
+    f = analyzer.analyze(parse(raw), raw)
+    assert f["impersonates_internal"] and f["triggers"]["fraud_weak"]
+    assert f["sender_origin"] == "external" and f["from_org_address"] is False
+    looks = mail("hi", sender="x@gmai1.com")
+    assert analyzer.analyze(parse(looks), looks)["triggers"]["lookalikes"]  # OD-434
 
 
 def test_bare_cr_in_headers_is_a_fraud_trigger() -> None:

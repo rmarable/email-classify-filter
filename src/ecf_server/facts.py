@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from ecf_server import internal
 from ecf_server.clock import from_ts
 from ecf_server.message import ParsedMessage
 
@@ -112,8 +113,14 @@ def compute(
     org_domains: list[str],
     *,
     payment_keyword: bool = False,
+    org_addresses: tuple[internal.OrgAddress, ...] = (),
+    gmail_labels: frozenset[str] | None = None,
 ) -> dict[str, Any]:
+    """`gmail_labels` is the message's `X-GM-LABELS` on Gmail, None elsewhere (V1.6)."""
     from_domain = domain_of(parsed.from_addr)
+    org_domain = in_domains(from_domain, org_domains)
+    # the internal set is org_domains plus exact org_addresses; no Gmail folding (OD-431, OD-432)
+    internal_sender = org_domain or internal.exactly_listed(parsed.from_addr, org_addresses)
     history = _history(conn, address.address_id, parsed.from_addr)
     shared = in_domains(from_domain, SHARED_PLATFORMS)
     confirmed = history is not None and history["confirmed_category"] is not None
@@ -127,10 +134,10 @@ def compute(
         "from_domain": from_domain,
         # the sender record's key, so a later decision can read a confirmed category (V1.3)
         "sender_hash": sender_hash(parsed.from_addr) if parsed.from_addr else None,
-        "sender_origin": "internal"
-        if in_domains(from_domain, org_domains) and auth_result == "pass"
-        else "external",
-        "from_org_domain": in_domains(from_domain, org_domains),
+        "sender_origin": "internal" if internal_sender and auth_result == "pass" else "external",
+        "from_org_domain": org_domain,
+        "from_org_address": internal.listed(parsed.from_addr, org_addresses) is not None,
+        "self_sent": self_sent(parsed, address, gmail_labels),
         "sender_seen_before": seen,
         "sender_confirmed": confirmed and not shared,
         # human-verified for rule 1a (`ecf sender set-verified`, OD-065); fraud triggers ignore it
@@ -160,6 +167,15 @@ def record_sender(
         " last_pass_at = excluded.last_pass_at",
         (address_id, sender_hash(from_addr), domain_of(from_addr), now, now),
     )
+
+
+def self_sent(
+    parsed: ParsedMessage, address: AddressInfo, gmail_labels: frozenset[str] | None
+) -> bool:
+    """Gmail delivers an account's mail to itself unsigned, and labels it `\\Sent`: the mailbox,
+    not the message, says it came from the account; no sender can set a label there (OD-446)."""
+    return (gmail_labels is not None and "\\Sent" in gmail_labels
+            and parsed.from_addr == address.email.lower())  # fmt: skip
 
 
 def known_vendor_domains(conn: sqlite3.Connection, address_id: str) -> list[str]:

@@ -38,7 +38,7 @@ def test_version_order() -> None:
         upgrade_check.version_key("1.0")
 
 
-def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int = 31, data_format: int = 1,
+def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int = 31, data_format: int = 2,
            min_client: str = "0.1.0.dev0", lock: dict[str, str] | None = None,
            digest: str = "d" * 64, name: str = "w.whl") -> Path:  # fmt: skip
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
