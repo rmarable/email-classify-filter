@@ -12,6 +12,7 @@ import pytest
 
 from ecf.errors import MailUnavailableError
 from ecf_server.mail import MailSource
+from ecf_server.mail import _imapclient as lib
 from ecf_server.mail.imap import ImapSource, MailLoginRejectedError
 from tests import dovecot
 from tests.mail_contract import Harness, MailSourceContract, message
@@ -89,6 +90,31 @@ def test_reconnects_after_the_server_drops_the_connection(server: dovecot.Doveco
         with pytest.raises(MailUnavailableError):
             h.imap.uids_after(0)
         assert len(h.imap.uids_after(0)) == 1  # the next call reconnects
+    finally:
+        h.close()
+
+
+def test_a_stale_search_hit_is_dropped(
+    server: dovecot.Dovecot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OD-450: Purelymail's HEADER search returns expunged UIDs (SPEC §21.2); a hit counts only
+    when a FETCH returns it with the same Message-ID."""
+    real = lib.Conn.search
+
+    def stale(self: lib.Conn, criteria: list[object]) -> list[int]:
+        hits = real(self, criteria)  # pyright: ignore[reportArgumentType]
+        return sorted([*hits, 9_999]) if criteria[:1] == ["HEADER"] else hits
+
+    monkeypatch.setattr(lib.Conn, "search", stale)
+    h = DovecotHarness(server)
+    try:
+        h.deliver(message(0), datetime.now().astimezone())
+        h.deliver(message(1), datetime.now().astimezone())
+        first, second = h.imap.uids_after(0)
+        assert h.imap.find_message_id("<contract-0@synthetic.acme.example>") == [first]
+        h.imap.move(second, h.move_target)
+        [there] = h.imap.find_in(h.move_target, "<contract-1@synthetic.acme.example>")
+        assert there != 9_999
     finally:
         h.close()
 

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Country domains of the big mail providers (`outlook.fr`, `hotmail.de`, `yahoo.co.uk`, `gmx.de`, …) and a few more providers (`web.de`, `tuta.com`, `laposte.net`, …) now count as public mail providers: mail from them is no longer flagged as a lookalike of `outlook.com` or `yahoo.com`, and none can be an org domain. `yandex.com` is no longer on the list (OD-455).
 - Eval cards can now be addressed to a personal free-mail account (`profile: freemail`) as well as the fictitious organization; `ecf rules test`, `ecf eval run` and `/ecf-eval` set up each profile's org addresses, so impersonation counts toward the fraud-guard gate. A card can no longer set the internal-set facts itself (OD-443).
 - Changed: ecf now needs Python 3.12.6 or newer (was 3.12). Earlier 3.12 releases parse some malformed email addresses differently (CVE-2023-27043); `ecf doctor` fails the python check on them (OD-454).
 - Fixed: `ecf destroy` no longer calls an install that never ran `ecf init` `(prod)`; it says the role isn't set.

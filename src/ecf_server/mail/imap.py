@@ -172,7 +172,8 @@ class ImapSource:
     def find_message_id(self, message_id: str) -> list[int]:
         conn = self._fresh()
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
-        # HEADER search is a substring match; keep exact matches only.
+        # HEADER search is a substring match, and Purelymail's also returns expunged UIDs
+        # (SPEC §21.2, OD-450): keep only UIDs a FETCH returns with exactly this Message-ID.
         return sorted(u for u, m in self.meta(hits).items() if m.message_id == message_id)
 
     def existing(self, uids: Iterable[int]) -> set[int]:
@@ -251,7 +252,7 @@ class ImapSource:
     def find_in(self, folder: str, message_id: str) -> list[int]:
         conn = self._other(folder, readonly=True)
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
-        found: list[int] = []
+        found: list[int] = []  # as in find_message_id: FETCH drops stale and substring hits
         for chunk in _chunks(hits):
             data = self._call(lambda c=chunk: conn.fetch(c, ["ENVELOPE"]))
             found += [u for u, d in data.items()

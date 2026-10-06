@@ -12,7 +12,7 @@ from ecf_server import triggers as tr
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock
 from ecf_server.dnscache import DnsCache
-from ecf_server.facts import AddressInfo
+from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
 from ecf_server.internal import ORG_ADDRESSES_KEY, OrgAddress
 from ecf_server.message import parse
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
@@ -328,6 +328,16 @@ def test_a_public_provider_is_not_a_lookalike_of_another() -> None:
         assert tr.lookalike(d, k), (d, k)
         assert fire("hi", from_domain=d, vendors=[k]).lookalikes == [], (d, k)
     assert fire("hi", from_domain="gmai1.com", vendors=["gmail.com"]).lookalikes
+
+
+def test_a_providers_country_domain_is_not_a_lookalike_of_it() -> None:
+    """OD-455: outlook.fr isn't imitating a watched outlook.com, nor yahoo.co.uk yahoo.com."""
+    for d, k in (("outlook.fr", "outlook.com"), ("yahoo.co.uk", "yahoo.com"),
+                 ("gmx.de", "gmx.net"), ("hotmail.de", "hotmail.com")):  # fmt: skip
+        assert tr.lookalike(d, k), (d, k)
+        assert fire("hi", from_domain=d, providers=(k,)).lookalikes == [], (d, k)
+    assert fire("hi", from_domain="outlook.co.uk", providers=("outlook.com",)).lookalikes
+    assert "yandex.com" not in PUBLIC_DOMAINS  # no Russian providers (operator decision)
 
 
 def test_the_watched_providers_domain_is_a_lookalike_target() -> None:
