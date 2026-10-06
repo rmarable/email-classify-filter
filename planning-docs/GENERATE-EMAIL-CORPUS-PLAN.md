@@ -37,7 +37,7 @@ is the one under Verification. Each phase starts when the operator names it.
 ## Command surface (CLI token only; MCP gets nothing)
 
 ```
-ecf corpus fetch --out PATH [--total 100] [--chunk 10] [--sleep 10]
+ecf corpus fetch --out PATH [--total 500] [--chunk 10] [--sleep 10]
                  [--order most-recent|random|oldest] [--folder INBOX]
                  [--address ADDR | (prompts: email, IMAP host [imap.gmail.com for gmail.com], app password)]
 ecf corpus status | stop
@@ -47,7 +47,8 @@ ecf eval label --corpus FILE / ecf eval run --corpus FILE ...                   
 ```
 
 **Limits** (to record as an operator decision in SPEC):
-- **`--total`:** default 100, maximum 5,000.
+- **`--total`:** default 500, maximum 5,000 (operator decision 2026-10-06; was 100). 500 is the label count the
+  decision-model comparison needs (`planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md`).
   - The run also stops at **512 MiB** of message bytes, the most held in memory before encryption.
   - On Gmail it may use at most **half of the address's remaining download budget**, so live fetch keeps
     working and the account stays well under 2,500 MB/day. With one-off credentials the budget is recorded
@@ -57,8 +58,9 @@ ecf eval label --corpus FILE / ecf eval run --corpus FILE ...                   
   still its own `BODY.PEEK[]` FETCH (line 265).
 - **`--sleep`:** default 10 s, range 1-600 on Gmail, 0-600 elsewhere. Before starting, the CLI prints the batch count
   (`ceil(total/chunk)`), the total bytes (from `RFC822.SIZE` in a meta pass) and an estimated duration.
-- **Recommended maximum:** 5,000 messages. At the defaults that is 500 batches × 10 s, about 1.4 h plus fetch
-  time. The byte cap and the budget share bind before the count does for mail with large attachments.
+- **At the defaults** (500 messages): 50 batches × 10 s, about 8 min plus fetch time.
+- **Recommended maximum:** 5,000 messages. At the default chunk and sleep that is 500 batches × 10 s, about
+  1.4 h plus fetch time. The byte cap and the budget share bind before the count does for mail with large attachments.
 
 **Selection:** one meta pass over the folder's UIDs (`ImapSource.meta`, 500 UIDs per command), then:
 - `most-recent`: the highest N by INTERNALDATE.
