@@ -35,6 +35,7 @@ import json
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -486,8 +487,11 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
         # One agent type per round, and none while this session's claims for another are out:
         # the model check can't tell overlapping work of two models apart (telemetry.py), so the
         # service keeps them apart instead of relying on the session to (V1.0.0 run 6cea77b1).
+        # only claims still being worked on: a held submission's window has closed (its spawn
+        # finished), so new work on another model can't overlap it (C high run 9e745b99 ended
+        # its loop on empty rounds while holds settled)
         out_agents = {w.agent for w in run.works
-                      if w.session == session_id and w.claim != "free"}  # fmt: skip
+                      if w.session == session_id and w.claim == "claimed"}  # fmt: skip
         agent = _agent_of(run, free[0]) if free else None
         if agent is not None and out_agents - {agent}:
             free = []
@@ -506,6 +510,28 @@ def _agent_of(run: Run, w: Work) -> str:
     else:
         role = "actor_high" if w.plan is not None and w.plan.high_risk else "actor"
     return agent_name(role, run.pinned)
+
+
+WAIT_S = 6.0  # under ecf-mcp's 10 s request limit (§15.4)
+POLL_S = 2.0
+
+
+def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str,
+                      *, limit: int = claude_review.LIMIT_DEFAULT, stopped: str | None = None,
+                      sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
+    """`eval_next`, but a reply that would be empty only because work is still out or being
+    prepared waits up to `WAIT_S` for some: the session can't pause itself (`ecf claude` denies
+    every tool that could), and gives up after 5 empty replies (C high run 9e745b99)."""
+    waited = 0.0
+    while True:
+        got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped)
+        busy = got.get("in_progress", 0) or got.get("preparing")
+        if got.get("items") or got.get("done") or got.get("stopped") or not busy:
+            return got
+        if waited >= WAIT_S:
+            return got
+        sleep(POLL_S)
+        waited += POLL_S
 
 
 def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:

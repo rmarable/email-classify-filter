@@ -173,6 +173,10 @@ def settings_doc(main_model: str, statusline: str) -> dict[str, Any]:
     return {
         "cleanupPeriodDays": 1,
         "model": main_model,
+        # Background calls that do no ecf work: in the C high eval, prompt suggestions were 19%
+        # of its plan usage (v1.0.0, 2026-10-06; keys: code.claude.com settings reference).
+        "promptSuggestionEnabled": False,
+        "awaySummaryEnabled": False,
         "statusLine": {"type": "command", "command": statusline},
         "permissions": {
             "defaultMode": "dontAsk",

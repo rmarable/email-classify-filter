@@ -70,6 +70,7 @@ MODELS = {"main_session": "claude-haiku-x", "classifier": "claude-haiku-x",
 def test_settings_document() -> None:
     d = cw.settings_doc("claude-haiku-x", "status-cmd")
     assert d["cleanupPeriodDays"] == 1 and d["model"] == "claude-haiku-x"
+    assert d["promptSuggestionEnabled"] is False and d["awaySummaryEnabled"] is False
     assert d["statusLine"] == {"type": "command", "command": "status-cmd"}
     assert d["permissions"]["defaultMode"] == "dontAsk"
     allow = d["permissions"]["allow"]

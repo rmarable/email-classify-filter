@@ -1105,8 +1105,8 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise InvalidInputError("limit must be a whole number")
         stopped = state.telemetry.stopped(sid)
-        return JSONResponse(claude_eval.eval_next(state.connect, state.clock, sid, limit=limit,
-                                                  stopped=stopped))  # fmt: skip
+        return JSONResponse(claude_eval.eval_next_waiting(
+            state.connect, state.clock, sid, limit=limit, stopped=stopped))  # fmt: skip
 
     @allow(Caller.WORK)
     def eval_results(_request: Request) -> JSONResponse:

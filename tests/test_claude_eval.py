@@ -240,6 +240,41 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     assert item["id"] in {i["id"] for i in again["items"]}
 
 
+def test_a_held_submission_doesnt_block_the_next_agent_type(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """A submission waiting for telemetry has finished its spawn: the session may take other
+    agents' work meanwhile, or its loop sees empty rounds and ends (run 9e745b99)."""
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    case_of = {w.ref: w.case.id for w in run.works}
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    control = next(i for i in q["items"] if case_of[i["id"]] == "starter-control")
+    other = next(i for i in q["items"] if i is not control)
+    assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # needs its actor now
+    ref, token, agent = other["id"], other["claim_token"], other["agent"]
+    claude_eval.get_message(clock, S1, ref, token, agent)
+    held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    assert isinstance(held, Hold)  # submitted, waiting for telemetry: not "claimed" any more
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    assert any(i["agent"].startswith("ecf-actor") for i in q["items"])
+
+
+def test_an_empty_reply_waits_briefly_while_work_is_out(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The session can't pause and gives up after 5 empty replies; the service waits up to
+    WAIT_S (polling) while work is out, and returns at once when there's nothing to wait for."""
+    start(db_path, clock, root)
+    slept: list[float] = []
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, limit=10, sleep=slept.append)
+    assert q["items"] and slept == []  # work to hand out: no wait
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, sleep=slept.append)
+    assert q["items"] == [] and q["in_progress"] > 0
+    assert sum(slept) == claude_eval.WAIT_S and claude_eval.WAIT_S < 10  # under ecf-mcp's limit
+
+
 def test_a_built_in_agent_in_the_session_stops_it() -> None:
     """Claude Code can deny agents only by name; a built-in one ecf doesn't know yet (the first
     /ecf-eval run handed its loop to `claude`, v1.0.0) stops the session instead of spending."""
