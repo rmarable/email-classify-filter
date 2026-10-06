@@ -159,7 +159,7 @@ class Triggers:
         }
 
 
-def evaluate(
+def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     parsed: ParsedMessage,
     keywords: dict[str, list[str]],
     found: dict[str, Any],
@@ -169,10 +169,12 @@ def evaluate(
     duplicate_message_id: bool,
     org_addresses: tuple[internal.OrgAddress, ...] = (),
     watched_providers: tuple[str, ...] = (),
+    public_domains: frozenset[str] = PUBLIC_DOMAINS,
 ) -> Triggers:
     """`found` holds the auth and computed facts for this message (senderauth, facts).
     `watched_providers` are the public provider domains this install watches an address at: they
-    are lookalike targets too (OD-434)."""
+    are lookalike targets too (OD-434). `public_domains` is `PUBLIC_DOMAINS` except in the eval
+    scratch, which adds its stand-in `freemail.example` (OD-443)."""
     t = Triggers(keywords)
     payment = bool(keywords["payment"])
     auth = found["auth_result"]
@@ -186,13 +188,13 @@ def evaluate(
             for k in [*org_domains, *known_vendors, *watched_providers]
             if lookalike(d, k)
             and not (k in org_domains and saas_tenant(d, k))
-            and not (d in PUBLIC_DOMAINS and k in PUBLIC_DOMAINS)  # OD-430
+            and not (d in public_domains and k in public_domains)  # OD-430
         }
     )
 
     t.fraud, t.fraud_weak = _money_triggers(keywords, found, bool(t.lookalikes))
     t.fraud += _other_triggers(parsed, found, t.lookalikes, duplicate_message_id, payment)
-    t.impersonation = impersonation(parsed, found, org_domains, org_addresses)
+    t.impersonation = impersonation(parsed, found, org_domains, org_addresses, public_domains)
     (t.fraud if payment else t.fraud_weak).extend(t.impersonation)  # module docstring
     if keywords.get("injection"):  # 10 (OD-252)
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
@@ -302,6 +304,7 @@ def impersonation(
     found: dict[str, Any],
     org_domains: list[str],
     entries: tuple[internal.OrgAddress, ...],
+    public_domains: frozenset[str] = PUBLIC_DOMAINS,
 ) -> list[str]:
     """Why the sender claims to be someone in the internal set without being in it (module
     docstring); empty when it doesn't, or when the sender is internal."""
@@ -323,17 +326,18 @@ def impersonation(
     if inside:
         out.append(f"display name shows {inside[0]}, an internal address, but the sender is"
                    f" {sender}")  # fmt: skip
-    near = _near_address(sender, entries)  # 3 and 4
+    near = _near_address(sender, entries, public_domains)  # 3 and 4
     if near:
         out.append(f"{sender} looks like {near}, one of your org addresses")
     return out
 
 
-def _near_address(sender: str, entries: tuple[internal.OrgAddress, ...]) -> str | None:
+def _near_address(sender: str, entries: tuple[internal.OrgAddress, ...],
+                  public_domains: frozenset[str]) -> str | None:  # fmt: skip
     """A listed address the sender imitates: a one-edit or same-skeleton Gmail typo (OD-432), or
     the same local part at another public provider (OD-448); local parts of 5 or more."""
     local, domain = internal.bare_local(sender), internal.split(internal.fold(sender))[1]
-    if domain not in PUBLIC_DOMAINS or len(local) < internal.MIN_LOCAL:
+    if domain not in public_domains or len(local) < internal.MIN_LOCAL:
         return None
     for e in entries:
         e_local = internal.bare_local(e.address)

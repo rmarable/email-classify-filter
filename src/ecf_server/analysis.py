@@ -25,11 +25,15 @@ class MessageAnalyzer:
         clock: Clock,
         address: facts.AddressInfo,
         dns: DnsCache,
+        *,
+        public_domains: frozenset[str] = facts.PUBLIC_DOMAINS,
     ) -> None:
+        """`public_domains` differs only in the eval scratch (ruletest, OD-443)."""
         self._conn, self._clock, self._address, self._dns = conn, clock, address, dns
         self._org = get_org_domains(conn)
         self._org_addresses = internal.org_addresses(conn)
-        self._providers = watched_providers(conn)
+        self._public = public_domains
+        self._providers = watched_providers(conn, public_domains)
         self._vendors = facts.known_vendor_domains(conn, address.address_id)
 
     @classmethod
@@ -77,6 +81,7 @@ class MessageAnalyzer:
             duplicate_message_id=self._reused(parsed),
             org_addresses=self._org_addresses,
             watched_providers=self._providers,
+            public_domains=self._public,
         )
         return found | fired.facts()
 
@@ -103,8 +108,10 @@ class MessageAnalyzer:
         )
 
 
-def watched_providers(conn: sqlite3.Connection) -> tuple[str, ...]:
+def watched_providers(
+    conn: sqlite3.Connection, public_domains: frozenset[str] = facts.PUBLIC_DOMAINS
+) -> tuple[str, ...]:
     """Public provider domains this install watches an address at: lookalike targets (OD-434)."""
     rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL").fetchall()
     domains = {facts.domain_of(str(r[0])) for r in rows}
-    return tuple(sorted(d for d in domains if d in facts.PUBLIC_DOMAINS))
+    return tuple(sorted(d for d in domains if d in public_domains))

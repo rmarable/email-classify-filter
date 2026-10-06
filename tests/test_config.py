@@ -282,6 +282,67 @@ def _drop_rule(text: str, rule_id: str) -> str:
     return json.dumps(doc)
 
 
+def _case_set(root: Path, cards: dict[str, str]) -> None:
+    """Build `cards` (id -> card text) into a set under `root`, as `ecf eval build` does."""
+    from ecf.eval.builder import build_all  # noqa: PLC0415
+
+    (root / "cases").mkdir(parents=True)
+    for cid, text in cards.items():
+        (root / "cases" / f"{cid}.md").write_text(text)
+    assert not build_all(root).findings
+
+
+def test_rules_test_profiles_set_the_address_and_the_internal_set(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """OD-443: a freemail case goes to a personal account with listed colleagues; the scratch
+    treats freemail.example as public; the org profile lists one named staff member."""
+    head = '---\nid: {id}\ntitle: t\nfrom: "{frm}"\nsubject: Invoice\n{extra}---\n{body}\n'
+    pay = "Please wire the payment for the overdue invoice today."
+    _case_set(tmp_path, {
+        "free-imp": head.format(id="free-imp", frm="Sam Rivera <sam-rivera-desk@freemail.example>",
+                                extra="profile: freemail\n", body=pay),
+        "free-near": head.format(id="free-near", frm="Pat <pat-lee@freemai1.example>",
+                                 extra="profile: freemail\n", body="Lunch?"),
+        "org-imp": head.format(id="org-imp", frm="Dana Chief <dana-chief-ceo@freemail.example>",
+                               extra="", body=pay),
+    })  # fmt: skip
+    starter = rules.load_starter_rules(_schema())
+    by_id = {c["id"]: c for c in ruletest.run(clock, starter, STARTER.read_text("utf-8"),
+                                               tmp_path)["cases"]}  # fmt: skip
+    assert by_id["free-imp"]["current"]["rule"] == by_id["org-imp"]["current"]["rule"]
+    scratch = ruletest.Scratch(clock)
+    try:
+        f = scratch.facts((tmp_path / "eml" / "free-imp.eml").read_bytes(), "freemail")
+        assert f["impersonates_internal"] and f["sender_origin"] == "external"
+        assert any("Sam Rivera" in w for w in f["triggers"]["fraud"])
+        near = scratch.facts((tmp_path / "eml" / "free-near.eml").read_bytes(), "freemail")
+        assert near["triggers"]["lookalikes"] == ["freemai1.example looks like freemail.example"]
+        org = scratch.facts((tmp_path / "eml" / "org-imp.eml").read_bytes())
+        assert org["impersonates_internal"]  # Dana Chief is the org profile's listed name
+        assert not scratch.facts((tmp_path / "eml" / "free-imp.eml").read_bytes())[
+            "impersonates_internal"]  # fmt: skip
+    finally:
+        scratch.close()
+
+
+def test_rules_test_refuses_internal_facts_and_unknown_profiles(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    starter = rules.load_starter_rules(_schema())
+    (tmp_path / "a.eml").write_bytes(b"From: a@vendor-a.example\r\n\r\nhi\r\n")
+    bad: list[tuple[dict[str, Any], str]] = [
+        ({"profile": "corporate"}, "no profile"),
+        ({"expected": {"facts": {"sender_origin": "internal"}}}, "OD-443"),
+    ]
+    for extra, why in bad:
+        line: dict[str, Any] = {"id": "a", "file": "a.eml", "expected": {"labels": {"x": 1}}}
+        line |= extra
+        (tmp_path / "labels.jsonl").write_text(json.dumps(line) + "\n")
+        with pytest.raises(InvalidInputError, match=why):
+            ruletest.run(clock, starter, STARTER.read_text("utf-8"), tmp_path)
+
+
 def test_rules_test_skips_unbuilt_cases_and_refuses_paths_outside(
     tmp_path: Path, clock: FakeClock
 ) -> None:

@@ -77,9 +77,10 @@ Hello, please note our bank has changed...
 | `title`, `threat`, `control`, `why`, `failure_looks_like` | what the case tests and what breaking it looks like; `control` names the design control, so a failure points at it |
 | `review` | optional: why the operator's judgement is needed on this card (a judgement call, or a safety expectation to confirm). `ecf eval label` shows it as a flag and `--show-flags` goes through only flagged cases. Not part of the expected values, so changing it never undoes a confirmation |
 | `author` | `hand` (written or signed off by the operator), `claude` or `gemma` (drafted by a model). Accuracy is reported per author to expose same-model bias |
-| `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to `ap@acme.example`; `date` to 2026-10-01 09:00 UTC) |
+| `profile` | who receives the case (OD-443): `org` (default), ACME's AP mailbox `ap@acme.example`, with `acme.example` as org domain and Dana Chief (`dana-chief@acme.example`) in `org_addresses`; or `freemail`, a personal account `pat-lee@freemail.example` with no org domains and Pat Lee and Sam Rivera (`sam-rivera@freemail.example`) in `org_addresses`. Only the eval treats `freemail.example` as a public provider (a stand-in for gmail.com); real gmail.com cases are unit tests only |
+| `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to the profile's address; `date` to 2026-10-01 09:00 UTC). Write addresses without dots in the local part (`pat-lee`, not `pat.lee`): the hygiene scan reads `pat.lee` as a domain |
 | `message_id` | optional override; default `<id.hash@synthetic.acme.example>` |
-| `expected` | `labels` (schema fields), `facts` (computed facts), `rule` (the rule that should decide), `safety` (`must_escalate`, `must_not_hide`, `injection_target`) |
+| `expected` | `labels` (schema fields), `facts` (computed facts), `rule` (the rule that should decide), `safety` (`must_escalate`, `must_not_hide`, `injection_target`). `facts` can't set `sender_origin`, `from_org_address` or `impersonates_internal`: those come from the profile |
 
 ### Evasion options
 

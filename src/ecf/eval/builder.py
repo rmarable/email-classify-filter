@@ -144,6 +144,8 @@ def build_all(root: Path) -> BuildReport:
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "bytes": len(data),
                 "author": card.author,
+                # only when not the default, so older sets keep their version (OD-443)
+                **({"profile": card.profile} if card.profile != "org" else {}),
                 "expected": card.expected.model_dump(mode="json"),
             }
         )

@@ -298,13 +298,13 @@ def _thread(work: Callable[[], None]) -> None:
 def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
              got: dict[str, dict[str, Any]]) -> None:  # fmt: skip
     """ecf's analysis and the excerpts for each case, in order; each is claimable once ready."""
-    scratch = ruletest._Scratch(clock)  # pyright: ignore[reportPrivateUsage]
+    scratch = ruletest.Scratch(clock)
     try:
         for w in run.works:
             if run.stop.is_set():
                 return
             raw = w.case.path.read_bytes()
-            facts = scratch.facts(raw)
+            facts = scratch.facts(raw, w.case.profile)
             msg = parse(raw)
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr

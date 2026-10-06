@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Eval cards can now be addressed to a personal free-mail account (`profile: freemail`) as well as the fictitious organization; `ecf rules test`, `ecf eval run` and `/ecf-eval` set up each profile's org addresses, so impersonation counts toward the fraud-guard gate. A card can no longer set the internal-set facts itself (OD-443).
 - Changed: ecf now needs Python 3.12.6 or newer (was 3.12). Earlier 3.12 releases parse some malformed email addresses differently (CVE-2023-27043); `ecf doctor` fails the python check on them (OD-454).
 - Fixed: `ecf destroy` no longer calls an install that never ran `ecf init` `(prod)`; it says the role isn't set.
 - Fixed: an approval confirmed with step-up now records the step-up on its grant (`grants.stepup_nonce_id` was never written).
