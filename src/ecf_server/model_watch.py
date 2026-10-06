@@ -6,8 +6,8 @@
   date raises `[ecf-alert] Model Retirement Scheduled` when first seen, again 30 days before and
   again 7 days before (a one-off alert each time, desktop and Slack), while an address uses B or
   C. From the date on, `ecf claude` refuses to open (`refuse_retired`). An override that replaces
-  the pin's family ends it. No release index exists yet (OD-272), so the alert says no release
-  moving the pin is known.
+  the pin's family ends it. The alert doesn't look at ecf's releases (the release check below
+  doesn't read their pins), so it says no release moving the pin is known.
 - **Models API** (only with the optional key, `ecf models api-key set`; secret `models-api-key`):
   `GET /v1/models` once a week. It has no deprecation fields (verified 2026-10-02, platform.claude
   .com List Models reference), so it adds two things: a pinned ID it doesn't list (retired early,
@@ -20,9 +20,15 @@
   appears later goes on the next daily summary, once. Digest changes are ignored. A page ecf
   can't read is shown in `ecf models status` and `ecf doctor` only (the canary catches format
   changes).
+- **ecf releases** (operator decision D7, 2026-10-06): the release list of ecf's GitHub
+  repository through `gh` (ecf/release_source.py; metadata only, nothing downloaded), once a
+  week. The newest stable release newer than this ecf goes on the next daily summary, once,
+  naming `ecf upgrade`. A failure (no `gh`, not signed in, offline) is shown in `ecf models
+  status` only. The service runs it only when given a lister (`service.py`).
 
 Nothing here ever changes a pin: a newer model is never adopted automatically. The watch sends no
-mail content anywhere: an API key to api.anthropic.com, nothing to ollama.com.
+mail content anywhere: an API key to api.anthropic.com, nothing to ollama.com, and to GitHub
+only `gh`'s own sign-in.
 """
 
 from __future__ import annotations
@@ -37,7 +43,8 @@ from typing import Any
 
 import httpx
 
-from ecf.errors import ConflictError, InvalidInputError
+from ecf import __version__, release_source
+from ecf.errors import ConflictError, EcfError, InvalidInputError
 from ecf_server import alerts, claude_pins, health, models, ollama
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -58,10 +65,18 @@ MAX_PAGES = 5  # 1,000 models a page
 REMIND_DAYS = (30, 7)
 NEXT, CLAUDE, OLLAMA, RETIRE = ("model_watch.next_at", "model_watch.claude",
                                 "model_watch.ollama", "model_watch.retirement")  # fmt: skip
+RELEASE = "model_watch.release"
+GITHUB_HOST = "api.github.com"
 API_ALERT, MISSING_ALERT, RETIRE_KIND = "models_api", "models_missing", "model_retirement"
 _TAG = re.compile(r'href="/library/([a-z0-9._-]+):([A-Za-z0-9._-]+)"')
 HttpFactory = Callable[[], httpx.Client]
 Spawn = Callable[[Callable[[], None]], None]
+Releases = Callable[[], list[release_source.ReleaseInfo]]
+
+
+def gh_releases() -> list[release_source.ReleaseInfo]:
+    """The service's lister: ecf's GitHub releases through `gh` (§7.6)."""
+    return release_source.list_releases(release_source.Gh())
 
 
 def http_client() -> httpx.Client:
@@ -189,7 +204,7 @@ def _thread(fn: Callable[[], None]) -> None:
 
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: Notifier,
           store: SecretStore | None, http: HttpFactory = http_client, *,
-          spawn: Spawn = _thread) -> bool:  # fmt: skip
+          spawn: Spawn = _thread, releases: Releases | None = None) -> bool:  # fmt: skip
     """Run the watch in its own thread (the timer never waits on the network); False when one is
     already running."""
     if not _RUNNING.acquire(blocking=False):
@@ -199,7 +214,7 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: Not
         try:
             conn = connect()
             try:
-                run(conn, clock, notifier, store, http)
+                run(conn, clock, notifier, store, http, releases=releases)
             finally:
                 conn.close()
         except Exception as exc:  # retried at the next due time; never raised into the thread
@@ -212,9 +227,11 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: Not
 
 
 def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: SecretStore | None,
-        http: HttpFactory = http_client) -> dict[str, Any]:  # fmt: skip
-    """One watch: the Models API (with a key) and the Ollama library (when A or B is used). The
-    next run is a week on, or an hour on when a host didn't resolve."""
+        http: HttpFactory = http_client, *,
+        releases: Releases | None = None) -> dict[str, Any]:  # fmt: skip
+    """One watch: the Models API (with a key), the Ollama library (when A or B is used) and,
+    given a lister, ecf's releases. The next run is a week on, or an hour on when a host didn't
+    resolve."""
     offline = False
     key = _key(store)
     with http() as client:
@@ -222,6 +239,8 @@ def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: Secre
             offline |= _claude(conn, clock, notifier, client, key) == "offline"
         if models.needed(conn):
             offline |= _ollama(conn, clock, client) == "offline"
+    if releases is not None:
+        offline |= _release(conn, clock, releases) == "offline"
     now = clock.now()
     with write_tx(conn):
         _put(conn, NEXT, to_ts(now + (OFFLINE_RETRY if offline else EVERY)), to_ts(now))
@@ -370,6 +389,28 @@ def _ollama(conn: sqlite3.Connection, clock: Clock, client: httpx.Client) -> str
     return "ok"
 
 
+def _release(conn: sqlite3.Connection, clock: Clock, releases: Releases) -> str:
+    """The newest stable ecf release newer than this one, for the daily summary (§7.6)."""
+    now = to_ts(clock.now())
+    if not health.resolves(GITHUB_HOST):
+        return "offline"
+    prev: dict[str, Any] = _get(conn, RELEASE) or {}
+    try:
+        found = release_source.newest(releases(), __version__)
+    except EcfError as e:
+        with write_tx(conn):
+            _put(conn, RELEASE, prev | {"error": e.detail, "failed_at": now}, now)
+            _audit(conn, now, "models.watch", {"part": "release", "error": e.code.value})
+        return "failed"
+    tag = found.tag if found else None
+    reported = bool(prev.get("reported")) and prev.get("newest") == tag
+    with write_tx(conn):
+        _put(conn, RELEASE, {"checked_at": now, "error": None, "current": __version__,
+                             "newest": tag, "reported": reported}, now)  # fmt: skip
+        _audit(conn, now, "models.watch", {"part": "release", "newest": tag})
+    return "ok"
+
+
 def parse_tags(html: str, repo: str) -> set[str]:
     """The tags an ollama.com library tags page links to (format read 2026-10-02)."""
     return {t for r, t in _TAG.findall(html) if r == repo}
@@ -393,6 +434,10 @@ def daily_lines(conn: sqlite3.Connection) -> list[str]:
         shown = ", ".join(tags[:8]) + (f" and {len(tags) - 8} more" if len(tags) > 8 else "")
         out.append(f"New {ol.get('repo')} tags in the Ollama library: {shown}. ecf keeps"
                    f" {ollama.load_pin().tag} until a release moves it.")  # fmt: skip
+    rel: dict[str, Any] = _get(conn, RELEASE) or {}
+    if rel.get("newest") and not rel.get("reported") and rel.get("current") == __version__:
+        out.append(f"ecf {release_source.tag_version(rel['newest'])} is out (this is"
+                   f" {__version__}): `ecf upgrade` checks it, then asks.")  # fmt: skip
     return out
 
 
@@ -403,10 +448,22 @@ def mark_reported(conn: sqlite3.Connection, now: str) -> None:
         if v and any(not e["reported"] for e in v.get(field, {}).values()):
             v[field] = {k: e | {"reported": True} for k, e in v[field].items()}
             _put(conn, key, v, now)
+    rel: dict[str, Any] | None = _get(conn, RELEASE)
+    if rel and rel.get("newest") and not rel.get("reported"):
+        _put(conn, RELEASE, rel | {"reported": True}, now)
 
 
 def _iso(d: date | None) -> str | None:
     return d.isoformat() if d else None
+
+
+def _release_status(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The last release check; its newest release is dropped once this ecf isn't the version
+    that checked (upgraded since)."""
+    rel: dict[str, Any] | None = _get(conn, RELEASE)
+    if rel and rel.get("current") != __version__:
+        return rel | {"newest": None}
+    return rel
 
 
 def status(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -419,6 +476,7 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "api_key": bool(_get(conn, "model_watch.api_key_set")),
         "claude": _get(conn, CLAUDE),
         "ollama": _get(conn, OLLAMA) if models.needed(conn) else None,
+        "release": _release_status(conn),
         "retiring": retiring(conn),
         "lifecycle": {
             m: {
