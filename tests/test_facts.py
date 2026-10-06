@@ -17,8 +17,7 @@ from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import address_config, fetch_page
 from ecf_server.internal import OrgAddress
-from ecf_server.mail import Capabilities
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.message import parse, parse_partial
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
@@ -290,8 +289,7 @@ def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
     conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
                  " ('config.org_addresses', ?, 'now', 'test')",
                  (json.dumps([{"address": me, "name": "Pat Lee"}]),))  # fmt: skip
-    caps = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True, gmail=True)
-    src = FakeMailSource(caps=caps)
+    src = GmailFakeSource()
     with write_tx(conn):
         probe.store(conn, clock, "pat", "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
 
@@ -306,8 +304,7 @@ def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
         return created
 
     one_check()  # first run: start from now
-    note = src.deliver(mail(me, to=me))
-    src.labels[note] = frozenset({"\\Sent", "\\Inbox"})
+    src.deliver(mail(me, to=me), labels=("\\Sent", "\\Inbox"))
     src.deliver(mail(me, to=me, extra={"Message-ID": "<forged@x.example>"}))
     facts_of = [json.loads(conn.execute("SELECT facts FROM items WHERE stable_id = ?",
                                         (sid,)).fetchone()[0]) for sid in one_check()]  # fmt: skip

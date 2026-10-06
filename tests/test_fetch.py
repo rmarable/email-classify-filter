@@ -22,8 +22,8 @@ from ecf_server.fetch import (
     load_cursor,
 )
 from ecf_server.isolate import IsolationError
-from ecf_server.mail import Capabilities
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.mail import MailSource
+from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.message import ParsedMessage, parse
 from ecf_server.senderauth import AuthOutcome
 from tests.mail_contract import message
@@ -47,7 +47,7 @@ def take(conn: sqlite3.Connection, clock: FakeClock, holder: str = "w1") -> leas
     return lease
 
 
-def run(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, **kw: Any) -> PageResult:
+def run(conn: sqlite3.Connection, clock: FakeClock, src: MailSource, **kw: Any) -> PageResult:
     return fetch_page(conn, clock, src, address_config(conn, ADDR), take(conn, clock), **kw)
 
 
@@ -76,7 +76,7 @@ class Fn:
         pass
 
 
-def started(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource) -> None:
+def started(conn: sqlite3.Connection, clock: FakeClock, src: MailSource) -> None:
     assert run(conn, clock, src).first_run
 
 
@@ -192,13 +192,11 @@ def test_analysis_is_merged_into_facts(setup: sqlite3.Connection, clock: FakeClo
 def test_gmail_labels_reach_the_analyzer(setup: sqlite3.Connection, clock: FakeClock) -> None:
     """V1.6: in Gmail mode (from the last probe) each message's labels go to the analysis, for
     `self_sent` (OD-446); off Gmail none are read."""
-    gmail = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True, gmail=True)
-    src = FakeMailSource(caps=gmail)
+    src = GmailFakeSource()
     with db.write_tx(setup):
         probe.store(setup, clock, ADDR, "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
     started(setup, clock, src)
-    a, b = src.deliver(message(0)), src.deliver(message(1))
-    src.labels[b] = frozenset({"\\Sent", "\\Inbox"})
+    a, b = src.deliver(message(0)), src.deliver(message(1), labels=("\\Sent", "\\Inbox"))
     fn = Fn(lambda _p, _r: {})
     run(setup, clock, src, analyzer=fn)
     assert fn.labels == [frozenset({"\\Inbox"}), frozenset({"\\Sent", "\\Inbox"})]

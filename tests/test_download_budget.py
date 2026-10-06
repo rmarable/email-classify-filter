@@ -9,19 +9,16 @@ import pytest
 from ecf_server import db, download_budget, health, probe
 from ecf_server.checks import CheckReport
 from ecf_server.clock import FakeClock
-from ecf_server.mail import Capabilities
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.notify import FakeNotifier
 from tests.mail_contract import message
 from tests.test_fetch import ADDR, run, setup, started
 
 __all__ = ["setup"]  # the fixture, used by name
 
-GMAIL = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True, gmail=True)
 
-
-def _gmail(conn: sqlite3.Connection, clock: FakeClock) -> FakeMailSource:
-    src = FakeMailSource(caps=GMAIL)
+def _gmail(conn: sqlite3.Connection, clock: FakeClock) -> GmailFakeSource:
+    src = GmailFakeSource()
     with db.write_tx(conn):
         probe.store(conn, clock, ADDR, "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
     started(conn, clock, src)
