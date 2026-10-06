@@ -52,7 +52,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# Pinned so a rebuild of a tag gives the same bytes (scripts/release_build.py; SPEC §17.4).
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]

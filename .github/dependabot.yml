@@ -1,0 +1,32 @@
+# Dependency updates (SPEC §17.4): uv.lock and the pinned GitHub Actions, weekly, grouped, with a
+# cooldown so a new release has a week to be pulled or fixed before a PR proposes it.
+# The `uv` ecosystem value: GitHub Docs, "Supported ecosystems and repositories", checked 2026-10-06.
+# Each PR still goes through CI, and the macOS merge gate before any merge to main (CLAUDE.md).
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      python-dependencies:
+        applies-to: version-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 5
