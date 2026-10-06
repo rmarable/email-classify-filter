@@ -1,0 +1,24 @@
+Received: from mail.citywater.example (mail.citywater.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id home-utility-bill; Sat, 10 Oct 2026 08:00:00
+ +0000
+From: City Water and Power <billing@citywater.example>
+To: pat-lee@freemail.example
+Subject: Your October bill is ready
+Date: Sat, 10 Oct 2026 08:00:00 +0000
+Message-ID: <home-utility-bill.7be39c25c6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Your bill for service at 12 Elm Row is ready.
+
+Amount due: 64.20
+Due date: 2026-10-28
+
+Autopay is on, so nothing is needed from you; the amount will be taken from y=
+our saved
+card on the due date. Questions: 555-0137.
+
+City Water and Power
