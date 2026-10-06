@@ -1,0 +1,19 @@
+Received: from mail.swapmarket.example (mail.swapmarket.example [192.0.2.10])
+ by mx.example.net with ESMTPS id home-marketplace-sale; Sun, 18 Oct 2026
+ 14:40:00 +0000
+From: SwapMarket <messages@swapmarket.example>
+To: pat-lee@freemail.example
+Subject: Your item sold: bike helmet
+Date: Sun, 18 Oct 2026 14:40:00 +0000
+Message-ID: <home-marketplace-sale.97a37bf19b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Good news: your listing "Bike helmet, size M, worn twice" sold for 30.00.
+
+The buyer's payment is held by SwapMarket until delivery is confirmed. Please=
+ ship within
+3 days using the prepaid label in your SwapMarket account, under Sold items.
+
+You never need to send anything to the buyer outside SwapMarket.

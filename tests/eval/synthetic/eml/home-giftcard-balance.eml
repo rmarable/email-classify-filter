@@ -1,0 +1,17 @@
+Received: from mail.beanstreet-cafe.example (mail.beanstreet-cafe.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id home-giftcard-balance; Mon, 19
+ Oct 2026 08:15:00 +0000
+From: Bean Street Cafe <rewards@beanstreet-cafe.example>
+To: pat-lee@freemail.example
+Subject: Thanks for visiting - your gift card balance
+Date: Mon, 19 Oct 2026 08:15:00 +0000
+Message-ID: <home-giftcard-balance.cde324f981@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thanks for stopping by Bean Street Cafe this morning.
+
+Your gift card ending 0004 was used for 4.60. Remaining balance: 12.40.
+
+See you soon.

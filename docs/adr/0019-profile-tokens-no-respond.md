@@ -1,7 +1,7 @@
 # ADR 0019: MCP access by service-issued tokens; no approvals and no answers through MCP
 
-- **Status:** accepted (OD-087, 2026-09-26; OD-267, OD-280, OD-281, OD-307, 2026-10-02);
-  implemented in V1.4 (steps 3 and 13)
+- **Status:** accepted (OD-087, 2026-09-26; OD-267, OD-280, OD-281, OD-307, 2026-10-02;
+  OD-456, 2026-10-05); implemented in V1.4 (steps 3 and 13)
 - **Context source:** SPEC §9.9, §10.3, §10.4, §12.1, §12.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) "MCP tool profiles" and the superseded list
   ("Approvals and answers in chat"); `ecf_server/claude_review.py`, `ecf/mcp_server.py`,
@@ -40,7 +40,7 @@ From the design plan's superseded list and notes:
 - **Elicitation-gated MCP approvals:** rejected; approvals stay in Slack or the CLI, with step-up
   at the computer for risky ones (§9.5, §9.6).
 - **`answer`/`ask_team` in watch sessions:** removed with `/loop` (ADR 0017); RESPOND (`answer`,
-  `ask_team`) is a later item, first for VS Code, and M3 gives claude.ai only a proposal-only
+  `ask_team`) is a later item (its first host, VS Code, was dropped by OD-456), and M3 gives claude.ai only a proposal-only
   `answer` confirmed in Slack.
 - **Main-session reads checked by telemetry** (OD-274) and submissions bound by telemetry alone
   (OD-268, OD-285): replaced by OD-307's per-agent servers after the B shadow run (§21.2).

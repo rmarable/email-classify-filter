@@ -74,6 +74,7 @@ from ecf_server import (
     importer,
     inbox,
     initsetup,
+    internal,
     manual_export,
     model_watch,
     modelq,
@@ -105,6 +106,7 @@ from ecf_server import (
 from ecf_server import upgrade_state as upgrade_state_mod
 from ecf_server.chat import FakeChat
 from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
+from ecf_server.facts import PUBLIC_DOMAINS
 from ecf_server.log_bridge import log
 from ecf_server.mail.smtp import SenderFactory
 from ecf_server.notify import Notifier, NullNotifier
@@ -1826,6 +1828,11 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 {
                     "addresses": addresses.list_addresses(conn),
                     "org_domains": addresses.get_org_domains(conn),
+                    # V1.6: the internal set's other half, and what `address add` needs to know
+                    # to skip the org-domains question and the IMAP server for Gmail (OD-441)
+                    "org_addresses": len(internal.org_addresses(conn)),
+                    "public_domains": sorted(PUBLIC_DOMAINS),
+                    "imap_defaults": addresses.imap_defaults(),
                 }
             )
         finally:
@@ -1837,7 +1844,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
         org = body.get("org_domains")
         req = addresses.AddRequest(
             email=_str(body, "email"),
-            imap_host=_str(body, "imap_host"),
+            imap_host=_str(body, "imap_host") if body.get("imap_host") is not None else "",
             sensitivity=_str(body, "sensitivity"),
             preset=_str(body, "preset"),
             app_password=_str(body, "app_password"),
@@ -1933,14 +1940,24 @@ def _remove_address(state: ServiceState, ref: str, nonce: str | None) -> dict[st
 
 
 def _planned_channel(state: ServiceState, address_id: str) -> str | None:
-    """The channel name an added address will get once Slack is installed and you're confirmed
-    (the Slack thread creates it within a minute; the name may gain a suffix if taken)."""
+    """The channel name an added address gets within a minute (the name may gain a suffix if
+    taken), or None when the Slack thread won't create it: Slack counts as installed only with its
+    IDs and both tokens (as the runtime starts it), and channels wait for your confirmed member ID
+    (slack_routes.ensure)."""
     conn = state.connect()
     try:
-        installed = slack_admin.identity(conn) is not None
+        ident = slack_admin.identity(conn)
     finally:
         conn.close()
-    return slack_routes.channel_name(state.install, address_id) if installed else None
+    store = state.secrets
+    ready = (
+        ident is not None
+        and bool(ident.member)
+        and store is not None
+        and bool(store.get(slack_admin.BOT_SECRET))
+        and bool(store.get(slack_admin.APP_SECRET))
+    )
+    return slack_routes.channel_name(state.install, address_id) if ready else None
 
 
 MAX_BODY = 64 * 1024

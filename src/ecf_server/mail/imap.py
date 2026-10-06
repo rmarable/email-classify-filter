@@ -33,6 +33,9 @@ CONNECT_S = 15.0
 COMMAND_S = 60.0
 INBOX = "INBOX"
 CHUNK = 500  # UIDs per command, to keep command lines short
+GMAIL_CAPABILITY = "X-GM-EXT-1"  # Gmail mode (OD-438; tested 2026-10-05, SPEC §18)
+GMAIL_LABELS = "X-GM-LABELS"
+GMAIL_KEEP = frozenset({"\\All", "\\Trash"})  # never moved back out of or deleted in (OD-438)
 
 
 class MailLoginRejectedError(MailUnavailableError):
@@ -139,6 +142,7 @@ class ImapSource:
             uidplus="UIDPLUS" in caps,
             condstore="CONDSTORE" in caps,
             append_limit=_append_limit(caps),
+            gmail=GMAIL_CAPABILITY in caps,
         )
 
     def folders(self) -> list[Folder]:
@@ -168,7 +172,8 @@ class ImapSource:
     def find_message_id(self, message_id: str) -> list[int]:
         conn = self._fresh()
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
-        # HEADER search is a substring match; keep exact matches only.
+        # HEADER search is a substring match, and Purelymail's also returns expunged UIDs
+        # (SPEC §21.2, OD-450): keep only UIDs a FETCH returns with exactly this Message-ID.
         return sorted(u for u, m in self.meta(hits).items() if m.message_id == message_id)
 
     def existing(self, uids: Iterable[int]) -> set[int]:
@@ -247,7 +252,7 @@ class ImapSource:
     def find_in(self, folder: str, message_id: str) -> list[int]:
         conn = self._other(folder, readonly=True)
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
-        found: list[int] = []
+        found: list[int] = []  # as in find_message_id: FETCH drops stale and substring hits
         for chunk in _chunks(hits):
             data = self._call(lambda c=chunk: conn.fetch(c, ["ENVELOPE"]))
             found += [u for u, d in data.items()
@@ -260,14 +265,66 @@ class ImapSource:
         return lib.as_bytes(data[uid].get("BODY[]")) if uid in data else None
 
     def move_back(self, folder: str, uid: int) -> None:
+        self._refuse_on_gmail(folder, "move a message back out of")
         conn = self._other(folder, readonly=False)
         self._relocate(conn, uid, INBOX)
+
+    def copy_back(self, folder: str, uid: int) -> None:
+        conn = self._other(folder, readonly=True)  # COPY changes nothing in the source folder
+        self._call(lambda: conn.copy([uid], INBOX))
+
+    def gmail_msgid(self, uid: int) -> int | None:
+        if not self._is_gmail():
+            return None
+        conn = self._reads()
+        return self._call(lambda: conn.gmail_msgids([uid])).get(uid)
+
+    def gmail_find(self, folder: str, msgid: int) -> list[int]:
+        if not self._is_gmail():
+            return []
+        conn = self._other(folder, readonly=True)
+        return self._call(lambda: conn.search(["X-GM-MSGID", msgid]))
+
+    def _is_gmail(self) -> bool:
+        conn = self._connect()
+        return GMAIL_CAPABILITY in self._call(conn.capabilities)
+
+    def _refuse_on_gmail(self, folder: str, what: str) -> None:
+        """OD-438: in Gmail, All Mail and Trash may hold a message's only copy."""
+        if not self._is_gmail():
+            return
+        roles = next((f.roles for f in self.folders() if f.name == folder), frozenset[str]())
+        if roles & GMAIL_KEEP:
+            raise MailUnavailableError(f"Gmail: ecf never tries to {what} {folder}")
+
+    def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
+        if not self._is_gmail():
+            return {}
+        conn = self._reads()
+        out: dict[int, frozenset[str]] = {}
+        for chunk in _chunks(sorted(set(uids))):
+            data = self._call(lambda c=chunk: conn.fetch(c, [GMAIL_LABELS]))
+            out.update({u: lib.flag_set(d.get(GMAIL_LABELS)) for u, d in data.items()})
+        return out
+
+    def gmail_inbox_counts(self) -> tuple[int, int] | None:
+        if not self._is_gmail():
+            return None
+        all_mail = next((f.name for f in self.folders() if "\\All" in f.roles), None)
+        if all_mail is None:
+            return None
+        _conn, info = self._inbox(readonly=True)
+        shown = int(info.get("EXISTS") or 0)
+        conn = self._other(all_mail, readonly=True)
+        found = self._call(lambda: conn.gmail_search("in:inbox"))
+        return shown, len(found)
 
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         conn = self._connect()
         self._call(lambda: conn.append(folder, raw, list(flags)))
 
     def delete_in(self, folder: str, uid: int) -> None:
+        self._refuse_on_gmail(folder, "delete a message in")
         conn = self._other(folder, readonly=False)
         if "UIDPLUS" not in self._call(conn.capabilities):
             raise MailUnavailableError(f"{self._host} lacks UIDPLUS: can't delete just one message")

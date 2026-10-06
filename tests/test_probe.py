@@ -14,9 +14,10 @@ from ecf_server import probe
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.mail import Capabilities, Folder, MailSource
-from ecf_server.mail.fake import DEFAULT_FOLDERS, FakeMailSource
+from ecf_server.mail.fake import DEFAULT_FOLDERS, FakeMailSource, GmailFakeSource
 from ecf_server.mail.imap import _append_limit  # pyright: ignore[reportPrivateUsage]
 from ecf_server.secretstore.memory import MemorySecretStore
+from tests.mail_contract import message
 
 FULL = Capabilities(custom_keywords=True, move=True, uidplus=True, condstore=True)
 
@@ -55,12 +56,46 @@ def test_missing_features_become_warnings() -> None:
     text = " ".join(r.warnings)
     for needle in ("custom keywords", "no Archive", "no Junk", "no Sent", "no Drafts", "MOVE"):
         assert needle in text, needle
+    # a refused move fails the item and leaves the email in the inbox; nothing is "held"
+    assert "held" not in text and text.count("will fail and leave the email in the inbox") == 3
 
 
 def test_first_folder_with_a_role_wins() -> None:
     folders = (*DEFAULT_FOLDERS, Folder("Archive2", frozenset({"\\Archive"})))
     r = probe.probe(FakeMailSource(caps=FULL, folders=folders), "imap.purelymail.com")
     assert r.roles["\\Archive"] == "Archive"
+
+
+GMAIL_FOLDERS = (Folder("INBOX", frozenset()), Folder("[Gmail]/All Mail", frozenset({"\\All"})),
+                 Folder("[Gmail]/Sent Mail", frozenset({"\\Sent"})),
+                 Folder("[Gmail]/Drafts", frozenset({"\\Drafts"})),
+                 Folder("[Gmail]/Spam", frozenset({"\\Junk"})))  # fmt: skip
+
+
+def test_gmail_facts_follow_the_capability_not_the_host() -> None:
+    """OD-438: X-GM-EXT-1 decides; Gmail saves sent mail; its APPENDLIMIT is an upload limit."""
+    r = probe.probe(GmailFakeSource(folders=GMAIL_FOLDERS), "mail.example")
+    assert r.gmail and r.saves_sent is True and r.gmail_inbox == (0, 0)
+    assert (r.max_message_bytes, r.max_size_source) == (35_651_584, "APPENDLIMIT")
+    assert not any("All Mail" in w or "folder size" in w for w in r.warnings)
+    plain = probe.probe(FakeMailSource(caps=FULL), "imap.gmail.com")  # the host alone: not Gmail
+    assert not plain.gmail and plain.saves_sent is None and plain.gmail_inbox is None
+
+
+def test_gmail_warns_when_all_mail_is_hidden_or_the_inbox_is_limited() -> None:
+    """R12 and OD-440: archive needs All Mail; a folder size limit hides inbox mail."""
+    hidden = tuple(f for f in GMAIL_FOLDERS if "\\All" not in f.roles)
+    r = probe.probe(GmailFakeSource(folders=hidden), "imap.gmail.com")
+    assert probe.GMAIL_NO_ALL_MAIL in r.warnings and r.gmail_inbox is None
+    assert "will fail and leave the email in the inbox" in probe.GMAIL_NO_ALL_MAIL
+    src = GmailFakeSource(folders=GMAIL_FOLDERS)
+    for i in range(30):
+        src.deliver(message(i))
+    src.inbox_limit = 30 - probe.LIMIT_SLACK - 1
+    r = probe.probe(src, "imap.gmail.com")
+    assert any(w.startswith("Gmail shows 19 of the 30 messages") for w in r.warnings)
+    src.inbox_limit = 30 - probe.LIMIT_SLACK  # as if mail arrived between the two counts
+    assert not any("folder size" in w for w in probe.probe(src, "imap.gmail.com").warnings)
 
 
 def test_appendlimit_parsing() -> None:
@@ -83,6 +118,8 @@ def test_store_and_load_round_trip(conn: sqlite3.Connection, clock: FakeClock) -
     assert loaded["capabilities"] == {
         "append_limit": None,
         "condstore": True,
+        "gmail": False,
+        "gmail_inbox": None,
         "move": True,
         "uidplus": True,
     }

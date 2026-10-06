@@ -11,13 +11,21 @@ from typing import Any
 
 import pytest
 
+from ecf.errors import MailUnavailableError
 from ecf.ids import AddressId, StableId
-from ecf_server import decide, digests, execute, items, jobs, mailbox_actions
+from ecf_server import decide, digests, execute, inbox, items, jobs, mailbox_actions, probe
 from ecf_server.actions import MessageChangedError, keyword
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
-from ecf_server.mail import SEEN, MailSource
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.mail import SEEN, Capabilities, Folder, MailSource
+from ecf_server.mail.fake import (
+    GMAIL_ALL,
+    GMAIL_FOLDERS,
+    GMAIL_SPAM,
+    GMAIL_TRASH,
+    FakeMailSource,
+    GmailFakeSource,
+)
 from ecf_server.message import parse
 from ecf_server.state_machine import Stage, Status, TransitionContext
 from tests.mail_contract import message
@@ -319,3 +327,110 @@ def test_archive_and_undo_on_a_real_server(conn: sqlite3.Connection, clock: Fake
         assert h.source.flags([back])[back] - {"\\Recent"} == frozenset()  # the server's own
     finally:
         h.close()
+
+
+# ---- Gmail (V1.6 step 4, OD-438) ----------------------------------------------------------------
+
+ALL, SPAM, TRASH = GMAIL_ALL, GMAIL_SPAM, GMAIL_TRASH
+SPAM_CLS = MARKETING | {"category": "spam_or_phishing"}
+
+
+def _gmail(conn: sqlite3.Connection, clock: FakeClock, folders: tuple[Folder, ...] = GMAIL_FOLDERS
+           ) -> GmailFakeSource:  # fmt: skip
+    _address(conn, clock)
+    src = GmailFakeSource(folders=folders)
+    with write_tx(conn):
+        probe.store(conn, clock, "ap", "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
+    return src
+
+
+def test_gmail_archive_goes_to_all_mail_and_undo_copies_it_back(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = _gmail(conn, clock)
+    notification = MARKETING | {"category": "notification", "sender_type": "automated"}
+    sid = _mail_item(conn, clock, src, 0, notification, KNOWN_BULK, src.deliver)
+    [uid] = src.uids_after(0)
+    msgid = src.gmail_msgid(uid)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    assert src.uids_after(0) == []
+    done = json.loads(item_row(conn, sid)["proposal"])["done"]
+    assert done[-1] == {"name": "archive", "folder": ALL, "gm_msgid": msgid}
+    src.deliver(message(0))  # a sender reusing the Message-ID: Undo goes by Gmail's ID instead
+    src.move(max(src.uids_after(0)), ALL)
+    assert len(src.find_in(ALL, "<contract-0@synthetic.acme.example>")) == 2
+    undone = mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                                       lost=lambda: False)  # fmt: skip
+    assert undone == ["archive back to INBOX", "label notification", "mark_read"]
+    [back] = src.uids_after(0)
+    assert src.gmail_msgid(back) == msgid and src.flags([back])[back] == frozenset()
+    assert len(src.gmail_find(ALL, int(msgid or 0))) == 1  # copied back, never moved out
+
+
+def test_gmail_archive_is_refused_without_all_mail(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R12: All Mail hidden from IMAP; there is no Archive folder to fall back on. The item fails,
+    the email stays in the inbox untouched, and `ecf inbox` lists it (what the probe warning and
+    doctor row say)."""
+    src = _gmail(conn, clock, tuple(f for f in GMAIL_FOLDERS if f.name != ALL))
+    sid = _mail_item(conn, clock, src, 0, MARKETING, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    row = item_row(conn, sid)
+    assert row["status"] == "failed" and len(src.uids_after(0)) == 1
+    [uid] = src.uids_after(0)
+    assert src.flags([uid])[uid] == frozenset()  # refused before anything was written
+    assert [i["status"] for i in inbox.inbox(conn) if i["id"] == sid] == ["failed"]
+
+
+def test_gmail_junk_undo_moves_it_back_by_gmail_id(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = _gmail(conn, clock)
+    sid = _mail_item(conn, clock, src, 0, SPAM_CLS, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)
+    _run(conn, clock, src)
+    assert src.uids_after(0) == [] and json.loads(item_row(conn, sid)["proposal"])["done"][-1][
+        "folder"] == SPAM  # fmt: skip
+    mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                              lost=lambda: False)  # fmt: skip
+    assert (
+        len(src.uids_after(0)) == 1
+        and src.find_in(SPAM, "<contract-0@synthetic.acme.example>") == []
+    )
+
+
+def test_gmail_port_never_moves_out_of_or_deletes_in_all_mail_or_trash() -> None:
+    """OD-438: a message there may be in no other folder."""
+    src = GmailFakeSource()
+    uid = src.deliver(message(0))
+    src.move(uid, ALL)
+    [there] = src.find_in(ALL, "<contract-0@synthetic.acme.example>")
+    for call in (lambda: src.move_back(ALL, there), lambda: src.delete_in(ALL, there),
+                 lambda: src.delete_in(TRASH, 1)):  # fmt: skip
+        with pytest.raises(MailUnavailableError, match="Gmail: ecf never"):
+            call()
+
+
+def test_a_label_the_provider_cant_keep_is_skipped_and_not_undone(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-439: planned before a probe showed it (or the probe changed), the executor skips it."""
+    _address(conn, clock)
+    src = FakeMailSource()
+    notification = MARKETING | {"category": "notification", "sender_type": "automated"}
+    sid = _mail_item(conn, clock, src, 0, notification, KNOWN_BULK, src.deliver)
+    decide.apply(conn, clock, sid)  # planned with labels: no probe yet
+    with write_tx(conn):
+        probe.store(conn, clock, "ap", "imap.proton.example", probe.probe(
+            FakeMailSource(caps=Capabilities(custom_keywords=False, move=True, uidplus=True,
+                                             condstore=True)), "imap.proton.example"))  # fmt: skip
+    _run(conn, clock, src)
+    row = item_row(conn, sid)
+    assert row["status"] == "executed"
+    assert [r["name"] for r in json.loads(row["proposal"])["done"]] == ["mark_read", "archive"]
+    undone = mailbox_actions.undo_item(conn, clock, src, item_row(conn, sid), install=INSTALL,
+                                       lost=lambda: False)  # fmt: skip
+    assert undone == ["archive back to INBOX", "mark_read"]

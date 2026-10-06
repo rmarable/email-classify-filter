@@ -1,13 +1,17 @@
 """`ecf rules test <file>` (SPEC §8.6; V1.2 step 10b): runs proposed rules against the synthetic
 set and shows which outcomes change from the rules in force.
 
-Each case is analyzed offline, in a scratch in-memory database, as a message to `ap@acme.example`
-(a `standard` address of the synthetic set's fictitious org, `org_domains: [acme.example]`) from a
-first-time sender, with no DNS (so `auth_result` is `none` unless the case's expected facts say
-otherwise). The case's expected facts then override the computed ones, and its expected labels
-stand in for the classifier's output. Nothing is written to the live database, and no mail, Slack
-or network is touched. Cases whose `.eml` isn't built (large ones, `ecf eval build`) are skipped
-and listed.
+Each case is analyzed offline, in a scratch in-memory database, as a message from a first-time
+sender to its card's profile (OD-443): `org`, `ap@acme.example` (a `standard` address of the
+synthetic set's fictitious org, `org_domains: [acme.example]`, one named staff member in
+`org_addresses`), or `freemail`, `pat-lee@freemail.example` (a personal account, no org domains,
+two named people in `org_addresses`; the scratch alone treats `freemail.example` as a public
+provider, standing in for gmail.com). There is no DNS (so `auth_result` is `none` unless the
+case's expected facts say otherwise). The case's expected facts then override the computed ones,
+except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and its
+expected labels stand in for the classifier's output. Nothing is written to the live database,
+and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones, `ecf eval
+build`) are skipped and listed.
 """
 
 from __future__ import annotations
@@ -19,16 +23,33 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
+from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
 from ecf.schema import load_schema_v1
-from ecf_server import db, precheck, rules
+from ecf_server import db, internal, precheck, rules
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
-from ecf_server.facts import AddressInfo
+from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
 from ecf_server.message import parse
 
-ADDRESS = AddressInfo("ap", "ap@acme.example", "standard")
-ORG_DOMAINS = ["acme.example"]
+FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
+
+
+@dataclass(frozen=True)
+class Profile:
+    address: AddressInfo
+    org_domains: tuple[str, ...]
+    org_addresses: tuple[internal.OrgAddress, ...]
+
+
+PROFILES = {
+    "org": Profile(AddressInfo("ap", PROFILE_TO["org"], "standard"), ("acme.example",),
+                   (internal.OrgAddress("dana-chief@acme.example", "Dana Chief"),)),
+    "freemail": Profile(AddressInfo("pat", PROFILE_TO["freemail"], "standard"), (),
+                        (internal.OrgAddress(PROFILE_TO["freemail"], "Pat Lee"),
+                         internal.OrgAddress("sam-rivera@freemail.example", "Sam Rivera"))),
+}  # fmt: skip
+ADDRESS = PROFILES["org"].address  # both profiles are `standard`
 MAX_CASES = 1000
 MAX_INDEX_BYTES = 4 * 1024 * 1024  # labels.jsonl
 MAX_CASE_BYTES = 16 * 1024 * 1024  # larger ones are parsed in a child in a check (OD-195)
@@ -46,6 +67,7 @@ class Case:
     labels: dict[str, Any]
     facts: dict[str, Any]
     expected_rule: str | None
+    profile: str = "org"
 
 
 def load_cases(root: Path) -> tuple[list[Case], list[str]]:
@@ -66,9 +88,15 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             path = (root / row["file"]).resolve()
             expected = row["expected"]
             case = Case(str(row["id"]), path, dict(expected.get("labels") or {}),
-                        dict(expected.get("facts") or {}), expected.get("rule"))  # fmt: skip
+                        dict(expected.get("facts") or {}), expected.get("rule"),
+                        str(row.get("profile") or "org"))  # fmt: skip
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise InvalidInputError(f"labels.jsonl line {n}: {exc}") from None
+        if case.profile not in PROFILES:
+            raise InvalidInputError(f"labels.jsonl line {n}: no profile {case.profile!r}")
+        if bad := sorted(INTERNAL_FACTS & case.facts.keys()):
+            raise InvalidInputError(f"labels.jsonl line {n}: {', '.join(bad)} can't be set by"
+                                    " a case (OD-443)")  # fmt: skip
         if not path.is_relative_to(root):
             raise InvalidInputError(f"labels.jsonl line {n}: {row['file']} is outside {root}")
         if path.is_file():
@@ -80,28 +108,43 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
     return cases, missing
 
 
-class _Scratch:
-    """A throwaway database holding only the synthetic address and its org domains."""
+class Scratch:
+    """Throwaway databases, one per profile, each holding only its address and internal set."""
 
     def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+        self._conns: dict[str, sqlite3.Connection] = {}
+
+    def _conn(self, name: str) -> sqlite3.Connection:
+        if (conn := self._conns.get(name)) is not None:
+            return conn
+        p = PROFILES[name]
         conn = sqlite3.connect(":memory:", autocommit=True)
         conn.row_factory = sqlite3.Row
         db.migrate(conn)
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES (?, ?, ?, 'A', 'now')",
-                     (ADDRESS.address_id, ADDRESS.email, ADDRESS.sensitivity))  # fmt: skip
-        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
-                     " VALUES ('org_domains', ?, 'now', 'ruletest')",
-                     (json.dumps(ORG_DOMAINS),))  # fmt: skip
-        self.conn, self.clock = conn, clock
+                     (p.address.address_id, p.address.email, p.address.sensitivity))  # fmt: skip
+        conn.executemany(
+            "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, 'now',"
+            " 'ruletest')",
+            [("org_domains", json.dumps(list(p.org_domains))),
+             (internal.ORG_ADDRESSES_KEY, json.dumps([{"address": e.address, "name": e.name}
+                                                      for e in p.org_addresses]))],
+        )  # fmt: skip
+        self._conns[name] = conn
+        return conn
 
-    def facts(self, raw: bytes) -> dict[str, Any]:
-        analyzer = MessageAnalyzer(self.conn, self.clock, ADDRESS,
-                                   DnsCache(self.conn, self.clock, lookup=_no_dns))  # fmt: skip
+    def facts(self, raw: bytes, profile: str = "org") -> dict[str, Any]:
+        conn = self._conn(profile)
+        analyzer = MessageAnalyzer(conn, self.clock, PROFILES[profile].address,
+                                   DnsCache(conn, self.clock, lookup=_no_dns),
+                                   public_domains=PUBLIC_DOMAINS | {FREEMAIL})  # fmt: skip
         return analyzer.analyze(parse(raw), raw)
 
     def close(self) -> None:
-        self.conn.close()
+        for conn in self._conns.values():
+            conn.close()
 
 
 def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, Any]:
@@ -118,14 +161,14 @@ def run(
 ) -> dict[str, Any]:
     proposed = rules.compile_rules(proposed_text, load_schema_v1(), source="proposed rules")
     cases, missing = load_cases(root)
-    scratch = _Scratch(clock)
+    scratch = Scratch(clock)
     rows: list[dict[str, Any]] = []
     try:
         for case in cases:
             if case.path.stat().st_size > MAX_CASE_BYTES:  # skipped, named (V1.2 review)
                 missing.append(case.id)
                 continue
-            found = scratch.facts(case.path.read_bytes()) | case.facts
+            found = scratch.facts(case.path.read_bytes(), case.profile) | case.facts
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
             before, after = _outcome(current, inp), _outcome(proposed, inp)

@@ -39,6 +39,8 @@ def names(d: Any) -> list[tuple[str, str | None]]:
         {"sender_type": "staff", "_facts": {"payment_keyword": True}},
         {"payment_related": True, "_facts": {"auth_result": "fail"}},
         {"_triggers": {"fraud"}},
+        {"payment_related": True, "_facts": {"impersonates_internal": True}},  # OD-436
+        {"_facts": {"impersonates_internal": True, "payment_keyword": True}},
     ],
 )
 def test_fraud_guard(case: dict[str, Any]) -> None:
@@ -66,6 +68,19 @@ def test_fraud_weak() -> None:
     assert d.rule_id == "fraud_weak"
     assert names(d) == [("label", "suspicious"), ("flag", None)]
     assert not d.to_actor and d.hide is Hide.NEVER
+
+
+def test_impersonation_without_money_is_only_flagged() -> None:
+    """OD-436: the money split lives in rules 1 and 1b."""
+    d = run(facts={"impersonates_internal": True})
+    assert d.rule_id == "fraud_weak" and d.hide is Hide.NEVER
+
+
+def test_your_own_note_to_yourself_isnt_an_unverified_payment_sender() -> None:
+    """OD-446: on Gmail the account's mail to itself is unsigned; Gmail's Sent label says it's
+    yours."""
+    mine = {"auth_result": "none", "self_sent": True}
+    assert run(facts=mine, payment_related=True).rule_id != "unverified_payment_sender"
 
 
 def test_unverified_payment_sender() -> None:

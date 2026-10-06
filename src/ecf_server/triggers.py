@@ -13,9 +13,16 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
-Not in V1.1: staff-name matching in display names (no staff list is configured yet). Since V1.5
-trigger 9 skips ecf's own mail and another install's (own_mail.py); loop suppression for alert
-mail arrives with email alerts.
+Impersonation (V1.6, OD-433, OD-436, OD-448; ADR 0021) is trigger 7's "org address or staff
+name" clause: someone outside the internal set using a listed name, an internal address in the
+display name, a one-edit Gmail typo of a listed address, or a listed local part at another public
+provider. It is the fact `impersonates_internal`, which rules 1 and 1b split by money (with the
+classifier's `payment_related` too); its reasons also go in `fraud` with a payment keyword and in
+`fraud_weak` without one, as trigger 2's do, so everything that counts fraud signals counts it
+(OD-449) and the model-free pre-check acts on it.
+
+Since V1.5 trigger 9 skips ecf's own mail and another install's (own_mail.py); loop suppression
+for alert mail arrives with email alerts.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.yamlio import load_yaml
+from ecf_server import internal
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
@@ -133,22 +141,25 @@ class Triggers:
     regulator: list[str] = field(default_factory=list[str])
     unverified_payment: bool = False
     lookalikes: list[str] = field(default_factory=list[str])
+    impersonation: list[str] = field(default_factory=list[str])
 
     def facts(self) -> dict[str, Any]:
         return {
             "keywords": self.keywords,
             "payment_keyword": bool(self.keywords["payment"]),
+            "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,
                 "fraud_weak": self.fraud_weak,
                 "regulator": self.regulator,
                 "unverified_payment": self.unverified_payment,
                 "lookalikes": self.lookalikes,
+                "impersonation": self.impersonation,
             },
         }
 
 
-def evaluate(
+def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     parsed: ParsedMessage,
     keywords: dict[str, list[str]],
     found: dict[str, Any],
@@ -156,8 +167,14 @@ def evaluate(
     org_domains: list[str],
     known_vendors: list[str],
     duplicate_message_id: bool,
+    org_addresses: tuple[internal.OrgAddress, ...] = (),
+    watched_providers: tuple[str, ...] = (),
+    public_domains: frozenset[str] = PUBLIC_DOMAINS,
 ) -> Triggers:
-    """`found` holds the auth and computed facts for this message (senderauth, facts)."""
+    """`found` holds the auth and computed facts for this message (senderauth, facts).
+    `watched_providers` are the public provider domains this install watches an address at: they
+    are lookalike targets too (OD-434). `public_domains` is `PUBLIC_DOMAINS` except in the eval
+    scratch, which adds its stand-in `freemail.example` (OD-443)."""
     t = Triggers(keywords)
     payment = bool(keywords["payment"])
     auth = found["auth_result"]
@@ -168,22 +185,25 @@ def evaluate(
         {
             f"{d} looks like {k}"
             for d in candidates
-            for k in [*org_domains, *known_vendors]
+            for k in [*org_domains, *known_vendors, *watched_providers]
             if lookalike(d, k)
             and not (k in org_domains and saas_tenant(d, k))
-            and not (d in PUBLIC_DOMAINS and k in PUBLIC_DOMAINS)  # OD-430
+            and not (d in public_domains and k in public_domains)  # OD-430
         }
     )
 
     t.fraud, t.fraud_weak = _money_triggers(keywords, found, bool(t.lookalikes))
     t.fraud += _other_triggers(parsed, found, t.lookalikes, duplicate_message_id, payment)
+    t.impersonation = impersonation(parsed, found, org_domains, org_addresses, public_domains)
+    (t.fraud if payment else t.fraud_weak).extend(t.impersonation)  # module docstring
     if keywords.get("injection"):  # 10 (OD-252)
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 
     t.regulator = list(keywords["regulator"])
     unsigned_mime = auth == "pass" and found["auth"].get("mime_headers_signed") is False
     verified = bool(found.get("sender_verified"))  # `ecf sender set-verified` (OD-065)
-    t.unverified_payment = payment and (auth == "none" or unsigned_mime) and not verified
+    t.unverified_payment = (payment and (auth == "none" or unsigned_mime) and not verified
+                            and not found.get("self_sent"))  # OD-446  # fmt: skip
     return t
 
 
@@ -250,6 +270,13 @@ def _other_triggers(
             found["from_org_domain"] and auth != "pass",
             "From uses your organization's domain but isn't authenticated",
         ),  # 6
+        (  # 6 for a listed address; not for the account's own note to itself (OD-446)
+            not found["from_org_domain"]
+            and found.get("from_org_address")
+            and auth != "pass"
+            and not found.get("self_sent"),
+            f"From is {parsed.from_addr}, one of your org addresses, but isn't authenticated",
+        ),
         (display is not None, f"display name shows {display}"),  # 7
         (parsed.from_count > 1, "more than one From header"),  # 8
         (
@@ -267,6 +294,68 @@ def _other_triggers(
         ),
     )
     return [reason for hit, reason in checks if hit]
+
+
+# ---- impersonation (trigger 7, V1.6) --------------------------------------------------------
+
+
+def impersonation(
+    parsed: ParsedMessage,
+    found: dict[str, Any],
+    org_domains: list[str],
+    entries: tuple[internal.OrgAddress, ...],
+    public_domains: frozenset[str] = PUBLIC_DOMAINS,
+) -> list[str]:
+    """Why the sender claims to be someone in the internal set without being in it (module
+    docstring); empty when it doesn't, or when the sender is internal."""
+    sender = parsed.from_addr
+    if not sender or found.get("from_org_domain") or found.get("from_org_address"):
+        return []
+    out: list[str] = []
+    words = set(internal.name_words(parsed.from_name))
+    for e in entries:  # 1. a listed name, every word in any order (OD-433)
+        need = internal.name_words(e.name or "")
+        if len(need) >= 2 and words.issuperset(need):  # names have at least 2 words
+            out.append(f"display name matches {e.name} ({e.address}), one of your org"
+                       f" addresses, but the sender is {sender}")  # fmt: skip
+            break
+    shown = _display_addresses(parsed.from_name)  # 2. an internal address in the display name
+    inside = [a for a in shown if internal.listed(a, entries)
+              or any(domain_of(a) == d or str(domain_of(a)).endswith("." + d)
+                     for d in org_domains)]  # fmt: skip
+    if inside:
+        out.append(f"display name shows {inside[0]}, an internal address, but the sender is"
+                   f" {sender}")  # fmt: skip
+    near = _near_address(sender, entries, public_domains)  # 3 and 4
+    if near:
+        out.append(f"{sender} looks like {near}, one of your org addresses")
+    return out
+
+
+def _near_address(sender: str, entries: tuple[internal.OrgAddress, ...],
+                  public_domains: frozenset[str]) -> str | None:  # fmt: skip
+    """A listed address the sender imitates: a one-edit or same-skeleton Gmail typo (OD-432), or
+    the same local part at another public provider (OD-448); local parts of 5 or more."""
+    local, domain = internal.bare_local(sender), internal.split(internal.fold(sender))[1]
+    if domain not in public_domains or len(local) < internal.MIN_LOCAL:
+        return None
+    for e in entries:
+        e_local = internal.bare_local(e.address)
+        e_domain = internal.split(internal.fold(e.address))[1]
+        if len(e_local) < internal.MIN_LOCAL:
+            continue
+        if e_domain != domain and local == e_local:
+            return e.address
+        typo = 0 < _edits(local, e_local) <= 1 or (
+            local != e_local and fold_ci(local) == fold_ci(e_local))  # fmt: skip
+        if domain == e_domain == "gmail.com" and typo:
+            return e.address
+    return None
+
+
+def _display_addresses(name: str) -> list[str]:
+    text = normalize(name).casefold()
+    return sorted({m.group(0) for m in _ADDRESS.finditer(text)})
 
 
 # ---- domains --------------------------------------------------------------------------------

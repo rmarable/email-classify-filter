@@ -12,6 +12,9 @@ rules:
             - {fact: sender_origin, eq: external}
             - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
+        - and:                           # impersonating someone internal, about money (OD-436)
+            - {fact: impersonates_internal, eq: true}
+            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - {trigger: fraud}
     then: [{label: suspicious}, flag, escalate]
     actor: none
@@ -30,6 +33,7 @@ rules:
       or:                                # outside with no money (OD-262). Digest section.
         - {trigger: fraud_weak}
         - and: [{field: sender_type, eq: staff}, {fact: sender_origin, eq: external}]
+        - {fact: impersonates_internal, eq: true}   # without money (OD-436)
     then: [{label: suspicious}, flag]
     actor: none
     hide: never
@@ -40,6 +44,7 @@ rules:
         - {field: payment_related, eq: true}
         - {fact: auth_result, eq: none}
         - not: {fact: sender_verified, eq: true}  # `ecf sender set-verified` (OD-065)
+        - not: {fact: self_sent, eq: true}  # Gmail: your own note to yourself (OD-446)
     then: [{label: unverified_sender}, flag]
     actor: none
     hide: never

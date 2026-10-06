@@ -9,6 +9,11 @@ Each address sends through its own SMTP server (OD-324): chosen at `address add`
 host with `imap.` replaced by `smtp.`, port 465) and checked by logging in, never by sending; a
 failed check is a probe warning, since outbound starts off. Changing it later needs step-up and a
 Security Notice, because the app password goes to that server.
+
+Gmail (V1.6): a gmail.com or googlemail.com address needs no `--imap-host` (`imap.gmail.com`; SMTP
+`smtp.gmail.com`, the usual default) and starts with `max_sends_per_day` 100, under Google's 500
+(§14.2, §18). `org_domains` is required only when an address at a non-public domain is added and
+none is set (OD-441); an install watching only public-provider addresses may have none.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Any
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import SLUG_PATTERN, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, probe, stepup
+from ecf_server import internal, items, probe, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.facts import PUBLIC_DOMAINS
@@ -42,6 +47,15 @@ _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 MailFactory = Callable[[str, str, Callable[[], str]], MailSource]  # (host, user, password)
 SMTP_SET = "smtp_set"  # the step-up purpose for changing an address's SMTP server
 ALERT_SENDER_KEY = "alerts.email.monitored_address"  # who sends alert email (alert_mail.py)
+GMAIL_IMAP = "imap.gmail.com"
+# Google allows 500 a day (support.google.com/mail/answer/22839, fetched 2026-10-05); whether
+# mail sent over SMTP counts the same way is unverified, so ecf starts well below (§18)
+GMAIL_SENDS_PER_DAY = 100
+
+
+def imap_defaults() -> dict[str, str]:
+    """The IMAP server for mail domains ecf knows (`--imap-host` may be left out for them)."""
+    return dict.fromkeys(internal.GMAIL_DOMAINS, GMAIL_IMAP)
 
 
 def smtp_default(imap_host: str) -> tuple[str, int] | None:
@@ -93,7 +107,8 @@ def check_org_domains(domains: list[str]) -> list[str]:
     if public:
         raise InvalidInputError(
             f"public mailbox domains can't be org domains (anyone can get an address there): "
-            f"{', '.join(public)}"
+            f"{', '.join(public)}; list the people you work with there, one address each, in"
+            " org_addresses (ecf config apply)"
         )
     return out
 
@@ -164,7 +179,10 @@ def add_address(
         raise InvalidInputError(f"sensitivity must be one of {', '.join(SENSITIVITIES)}")
     if req.preset not in PRESETS:
         raise InvalidInputError(f"preset must be one of {', '.join(PRESETS)}")
-    host = normalize_domain(req.imap_host)
+    imap_host = req.imap_host.strip() or imap_defaults().get(domain)
+    if not imap_host:
+        raise InvalidInputError(f"the IMAP server for {domain} is needed (--imap-host)")
+    host = normalize_domain(imap_host)
     address_id = req.address_id or default_address_id(email)
     if not re.fullmatch(SLUG_PATTERN, address_id):
         raise InvalidInputError("address id: lowercase letters, digits and hyphens, at most 40")
@@ -175,15 +193,7 @@ def add_address(
         raise InvalidInputError("--smtp-port needs --smtp-host")
     else:
         smtp = smtp_default(host)
-    org = get_org_domains(conn)
-    new_org = check_org_domains(req.org_domains) if req.org_domains is not None else None
-    if not org and new_org is None:
-        raise InvalidInputError(f"org_domains isn't set; the first address must set it ({domain}?)")
-    if org and new_org is not None and new_org != org:
-        raise InvalidInputError(
-            "org_domains is already set; changing it is security-relevant config "
-            "(`ecf config apply`, with step-up)"
-        )
+    org, new_org = _org_domains_for(conn, req, domain)
 
     _refuse_duplicates(conn, address_id, email)
     # network: outside any transaction
@@ -209,6 +219,11 @@ def add_address(
                     (address_id, email, req.sensitivity, req.preset, smtp_host, smtp_port, now),
                 )
             probe.store(conn, clock, address_id, host, found)
+            if internal.is_gmail(domain):  # unless the limit was set before (a revived address)
+                conn.execute("UPDATE addresses SET overrides = json_set(overrides,"
+                             " '$.max_sends_per_day', ?) WHERE address_id = ? AND"
+                             " json_extract(overrides, '$.max_sends_per_day') IS NULL",
+                             (GMAIL_SENDS_PER_DAY, address_id))  # fmt: skip
             if not org and new_org is not None:
                 _set(conn, ORG_DOMAINS_KEY, new_org, now, actor)
                 _audit(conn, now, None, "config.applied", actor, {"key": ORG_DOMAINS_KEY})
@@ -230,6 +245,24 @@ def add_address(
         secrets.delete(secret_name(address_id))
         raise
     return get_address(conn, address_id)
+
+
+def _org_domains_for(
+    conn: sqlite3.Connection, req: AddRequest, domain: str
+) -> tuple[list[str], list[str] | None]:
+    """The org domains now, and the ones this request sets; required only for an address at a
+    non-public domain when none are set (OD-441)."""
+    org = get_org_domains(conn)
+    new_org = check_org_domains(req.org_domains) if req.org_domains is not None else None
+    if not org and new_org is None and domain not in PUBLIC_DOMAINS:
+        raise InvalidInputError(f"org_domains isn't set; the first address at your own domain"
+                                f" must set it ({domain}?)")  # fmt: skip
+    if org and new_org is not None and new_org != org:
+        raise InvalidInputError(
+            "org_domains is already set; changing it is security-relevant config "
+            "(`ecf config apply`, with step-up)"
+        )
+    return org, new_org
 
 
 def set_app_password(
@@ -440,7 +473,7 @@ def get_address(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
 
 _SELECT = (
     "SELECT a.address_id, a.email, a.sensitivity, a.stage, a.paused, a.outbound, a.preset,"
-    " a.created_at, a.smtp_host, a.smtp_port, p.host FROM addresses a"
+    " a.created_at, a.smtp_host, a.smtp_port, a.overrides, p.host FROM addresses a"
     " LEFT JOIN probe p USING (address_id)"
 )
 
@@ -457,6 +490,7 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
         "imap_host": r["host"],
         "smtp_host": r["smtp_host"],
         "smtp_port": r["smtp_port"],
+        "max_sends_per_day": json.loads(r["overrides"]).get("max_sends_per_day"),  # None: default
         "created_at": r["created_at"],
     }
 

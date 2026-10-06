@@ -35,6 +35,7 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     st = initsetup.status(conn)
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
+                  "org_addresses": 0, "public_only": False,
                   "models": {"needed": False, "installed": False},
                   "fallback_off": [], "claude_needed": False, "smtp_addresses": [],
                   "alert_email": None, "skipped": {},
@@ -54,6 +55,21 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
         conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4")
     st = initsetup.status(conn)
     assert st["models"]["needed"] is True and st["fallback_off"] == []
+
+
+def test_describe_org_domains_for_a_gmail_only_install() -> None:
+    """OD-441: no org domain is needed when every address is at a public provider."""
+    st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
+          "slack_pending_app": None, "org_domains": [], "addresses": ["pat"],
+          "public_only": True, "org_addresses": 2,
+          "models": {"needed": False, "installed": False},
+          "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
+    row = cli_init.describe(st, installed=True, running=True)[3]
+    assert row == ("org domains   done   none needed: every address is at a public provider;"
+                   " org addresses: 2")  # fmt: skip
+    st["public_only"] = False
+    row = cli_init.describe(st, installed=True, running=True)[3]
+    assert row.startswith("org domains   to do  set with the first address at your own domain")
 
 
 def test_describe() -> None:

@@ -141,6 +141,19 @@ def test_service_part_in_order(env: Env) -> None:
     assert "ar@acme.example at your mail provider\n" in text + "\n"
 
 
+def test_the_residue_names_googles_app_password_page_for_a_gmail_address() -> None:
+    """V1.6 step 8: where to revoke it, not just "at your mail provider"."""
+    rec: dict[str, Any] = {"addresses": [
+        {"email": "Pat.Lee@googlemail.com", "imap_host": "imap.gmail.com"},
+        {"email": "ap@acme.example", "imap_host": "imap.acme.example"},
+    ]}  # fmt: skip
+    assert destroy.residue(rec) == [
+        "revoke the app password for Pat.Lee@googlemail.com: remove it at"
+        " https://myaccount.google.com/apppasswords, signed in to that Google account",
+        "revoke the app password for ap@acme.example at your mail provider (imap.acme.example)",
+    ]
+
+
 def test_config_token_deletes_the_app(env: Env) -> None:
     rec = env.run(token=CONFIG)
     assert env.webs[CONFIG].calls == [("apps.manifest.delete", {"app_id": "A1"})]

@@ -42,6 +42,7 @@ from ecf_server import (
     alerts,
     deadman,
     install_identity,
+    internal,
     pause,
     regrant,
     scheduled_export,
@@ -231,8 +232,13 @@ def residue(rec: dict[str, Any]) -> list[str]:
     if steps.get("deadman", {}).get("result") == "failed":
         out.append("the dead-man's message in the summary channel may still post once")
     for a in rec.get("addresses", []):
-        where = f" ({a['imap_host']})" if a.get("imap_host") else ""
-        out.append(f"revoke the app password for {a['email']} at your mail provider{where}")
+        if internal.is_gmail(internal.split(a["email"])[1]):  # V1.6
+            page = internal.GOOGLE_APP_PASSWORDS
+            out.append(f"revoke the app password for {a['email']}: remove it at {page},"
+                       " signed in to that Google account")  # fmt: skip
+        else:
+            where = f" ({a['imap_host']})" if a.get("imap_host") else ""
+            out.append(f"revoke the app password for {a['email']} at your mail provider{where}")
     if rec.get("export_dir"):
         out.append(f"backups in {rec['export_dir']} are kept; delete them when you no longer"
                    " need them (they need your backup key or passphrase to open)")  # fmt: skip

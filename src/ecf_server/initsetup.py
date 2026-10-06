@@ -23,12 +23,14 @@ from ecf_server import (
     claude_pins,
     export_keys,
     fallback,
+    internal,
     models,
     scheduled_export,
     slack_admin,
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
+from ecf_server.facts import PUBLIC_DOMAINS
 
 ROLE_KEY = "install_role"
 ROLES = ("prod", "test")
@@ -115,6 +117,10 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "slack_member": s["member"],
         "slack_pending_app": s["pending_app_id"],
         "org_domains": addresses.get_org_domains(conn),
+        "org_addresses": len(internal.org_addresses(conn)),  # V1.6 (OD-431)
+        # every watched address is at a public provider: no org domain is needed (OD-441)
+        "public_only": bool(listed)
+        and all(a["email"].rsplit("@", 1)[-1].lower() in PUBLIC_DOMAINS for a in listed),
         "addresses": [a["address_id"] for a in listed],
         "smtp_addresses": [a["address_id"] for a in listed if a["smtp_host"]],
         "alert_email": _alert_email(conn),

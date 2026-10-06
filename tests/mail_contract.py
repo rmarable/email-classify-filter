@@ -1,5 +1,6 @@
 """The MailSource contract (SPEC §3.3). Subclass MailSourceContract and provide a `harness`
-fixture; the fake runs it in test_mail_fake.py, the IMAP adapter against Dovecot in step 2."""
+fixture; the fakes (plain and Gmail) run it in test_mail_fake.py, the IMAP adapter against Dovecot
+in test_mail_imap.py."""
 
 from __future__ import annotations
 
@@ -137,6 +138,20 @@ class MailSourceContract:
         for f in folders:
             assert f.roles <= ROLES
 
+    def test_gmail_calls_follow_gmail_mode(self, harness: Harness) -> None:
+        """V1.6 (OD-438): empty off Gmail (Dovecot, the plain fake); on Gmail (GmailFakeSource)
+        each INBOX message has `\\Inbox` among its labels and a Gmail ID."""
+        [uid] = self._fill(harness, 1)
+        src = harness.source
+        if src.capabilities().gmail:
+            assert "\\Inbox" in src.gmail_labels([uid])[uid]
+            assert src.gmail_inbox_counts() == (1, 1)
+            msgid = src.gmail_msgid(uid)
+            assert msgid is not None and src.gmail_find("INBOX", msgid) == [uid]
+        else:
+            assert src.gmail_labels([uid]) == {} and src.gmail_inbox_counts() is None
+            assert src.gmail_msgid(uid) is None and src.gmail_find("INBOX", 1) == []
+
     def test_structure(self, harness: Harness) -> None:
         harness.deliver(message(0, multipart=True), DAY1)
         harness.deliver(message(1), DAY1)
@@ -181,6 +196,21 @@ class MailSourceContract:
         back = src.find_message_id("<contract-0@synthetic.acme.example>")
         assert len(back) == 1 and src.fetch(back[0]) == raw
         assert src.find_in(folder, "<contract-0@synthetic.acme.example>") == []
+
+    def test_copy_back_puts_a_copy_in_inbox(self, harness: Harness) -> None:
+        """V1.6 step 4: Gmail's archive Undo; generic IMAP COPY into INBOX elsewhere."""
+        src = harness.source
+        [uid] = self._fill(harness, 1)
+        raw = src.fetch(uid)
+        msgid = src.gmail_msgid(uid)
+        folder = self._archive(harness)
+        src.move(uid, folder)
+        assert src.gmail_msgid(uid) is None  # gone from INBOX
+        [there] = src.find_in(folder, "<contract-0@synthetic.acme.example>")
+        assert src.gmail_find(folder, msgid or 1) == ([there] if msgid else [])
+        src.copy_back(folder, there)
+        [back] = src.find_message_id("<contract-0@synthetic.acme.example>")
+        assert src.fetch(back) == raw and src.fetch_in(folder, there) == raw  # both kept
 
     def test_copy_leaves_the_message_in_inbox(self, harness: Harness) -> None:
         src = harness.source

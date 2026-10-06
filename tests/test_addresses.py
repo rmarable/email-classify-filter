@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -13,7 +14,9 @@ from typing import Any
 import anyio
 import httpx
 import pytest
+from typer.testing import CliRunner
 
+from ecf.cli import app
 from ecf.errors import (
     ConflictError,
     InvalidInputError,
@@ -25,7 +28,7 @@ from ecf.ids import AddressId, StableId
 from ecf.prompts import NO_TERMINAL, hidden
 from ecf.status import Status
 from ecf_server import addresses as ad
-from ecf_server import claude_queue, items, modelq, slack_admin, slack_routes, stepup
+from ecf_server import claude_queue, items, modelq, send_limits, slack_admin, slack_routes, stepup
 from ecf_server.api import ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import FakeClock
@@ -99,14 +102,14 @@ def test_first_address_sets_org_domains_and_stores_the_secret(env: Env) -> None:
 
 
 def test_first_address_must_set_org_domains(env: Env) -> None:
-    with pytest.raises(InvalidInputError, match="first address must set it"):
+    with pytest.raises(InvalidInputError, match="must set it"):
         add(env, req(org_domains=None))
 
 
 @pytest.mark.parametrize("domain", ["gmail.com", "Outlook.com", "purelymail.com"])
 def test_public_mail_domains_are_refused(env: Env, domain: str) -> None:
-    with pytest.raises(InvalidInputError, match="public mailbox domains"):
-        add(env, req(org_domains=["acme.example", domain]))
+    with pytest.raises(InvalidInputError, match=r"public mailbox domains.* in org_addresses"):
+        add(env, req(org_domains=["acme.example", domain]))  # pointed to org_addresses (V1.6)
     assert env[2].get("mailbox/ap") is None
 
 
@@ -117,6 +120,50 @@ def test_later_addresses_cant_change_org_domains(env: Env) -> None:
     with pytest.raises(InvalidInputError, match="config apply"):
         add(env, req("x@acme.example", org_domains=["other.example"]))
     assert ad.get_org_domains(env[0]) == ["acme.example"]
+
+
+def test_a_gmail_address_needs_no_org_domains_or_imap_host(env: Env) -> None:
+    """V1.6 (OD-441): a public-provider address sets no org domains; Gmail's servers are known
+    and its daily send limit starts at 100 (§14.2)."""
+    conn, _clock, _secrets, mail = env
+    a = add(env, req("Pat.Lee@gmail.com", imap_host="", org_domains=None))
+    assert (a["imap_host"], a["smtp_host"], a["smtp_port"]) == ("imap.gmail.com", "smtp.gmail.com",
+                                                               465)  # fmt: skip
+    assert a["max_sends_per_day"] == ad.GMAIL_SENDS_PER_DAY == 100
+    assert send_limits.limits(conn, a["address_id"]) == {"max_sends_per_hour": 25,
+                                                          "max_sends_per_day": 100}  # fmt: skip
+    assert ad.get_org_domains(conn) == []
+    assert mail.logins == [("imap.gmail.com", "Pat.Lee@gmail.com")]
+    # the first address at your own domain must still set them
+    with pytest.raises(InvalidInputError, match="must set it"):
+        add(env, req(org_domains=None))
+    assert add(env, req())["max_sends_per_day"] is None  # the usual default
+    assert ad.get_org_domains(conn) == ["acme.example"]
+
+
+def test_address_add_help_says_what_a_gmail_address_needs() -> None:
+    """V1.6 step 8: no --imap-host, an app password (2-Step Verification), the send default."""
+    r = CliRunner().invoke(app, ["address", "add", "--help"])
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # Rich colors help on GitHub Actions
+    plain = " ".join(re.sub(r"[│╭╮╰╯─]", " ", plain).split())  # Rich boxes
+    assert r.exit_code == 0
+    assert "(gmail.com or googlemail.com) needs no --imap-host and a Google app password" in plain
+    assert "2-Step Verification" in plain
+    assert f"at most {ad.GMAIL_SENDS_PER_DAY} emails a day" in plain
+
+
+def test_an_unknown_providers_imap_server_is_needed(env: Env) -> None:
+    with pytest.raises(InvalidInputError, match="--imap-host"):
+        add(env, req(imap_host=""))
+
+
+def test_a_revived_gmail_address_keeps_the_send_limit_it_had(env: Env) -> None:
+    conn = env[0]
+    a = add(env, req("pat@gmail.com", imap_host="", org_domains=None))
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET overrides = '{\"max_sends_per_day\": 40}'")
+    ad.remove_address(conn, env[1], env[2], a["address_id"], actor="os_user")
+    assert add(env, req("pat@gmail.com", imap_host="", org_domains=None))["max_sends_per_day"] == 40
 
 
 def test_rejected_login_stores_nothing(env: Env) -> None:
@@ -296,9 +343,12 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
     }
     r = call(st, "POST", "/v1/addresses", body)
     assert r.status_code == 201, r.text
-    assert GOOD not in r.text
+    assert GOOD not in r.text and r.json()["slack_channel"] is None  # no Slack: none coming
     listed = call(st, "GET", "/v1/addresses").json()
     assert listed["org_domains"] == ["acme.example"] and len(listed["addresses"]) == 1
+    assert listed["org_addresses"] == 0 and "gmail.com" in listed["public_domains"]
+    assert listed["imap_defaults"] == {"gmail.com": "imap.gmail.com",
+                                       "googlemail.com": "imap.gmail.com"}  # fmt: skip
     r = call(st, "POST", "/v1/addresses/ap", {"app_password": "wrong"})
     assert r.status_code == 503 and r.json()["code"] == "mail_unavailable"
     assert "wrong" not in r.text
@@ -312,7 +362,10 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
 def test_api_names_the_slack_channel_and_archives_it_on_removal(
     conn: sqlite3.Connection, db_path: Path
 ) -> None:
-    st = make_state(db_path, MemorySecretStore())
+    secrets = MemorySecretStore()
+    secrets.set(slack_admin.BOT_SECRET, "xoxb-test")
+    secrets.set(slack_admin.APP_SECRET, "xapp-test")
+    st = make_state(db_path, secrets)
     now = "2026-10-01T12:00:00.000000Z"
     with write_tx(conn):
         for k, v in (("slack_app_id", "A1"), ("slack_team_id", "T1"),
@@ -328,6 +381,32 @@ def test_api_names_the_slack_channel_and_archives_it_on_removal(
     assert r.status_code == 200 and r.json()["slack_channel_archived"] == "ecf-t-ap"
     job = conn.execute("SELECT payload FROM jobs WHERE queue = 'slack_out'").fetchone()
     assert json.loads(job["payload"])["op"] == "archive"
+
+
+@pytest.mark.parametrize("missing", ["tokens", "member"])
+def test_api_names_no_slack_channel_when_slack_cant_create_it(
+    conn: sqlite3.Connection, db_path: Path, missing: str
+) -> None:
+    """V1.6 closing run: `address add` said a channel was coming on an install whose database still
+    had Slack's IDs but whose tokens were gone. The channel is named only when the Slack thread
+    would create it: IDs, both tokens and a confirmed member ID."""
+    secrets = MemorySecretStore()
+    if missing != "tokens":
+        secrets.set(slack_admin.BOT_SECRET, "xoxb-test")
+        secrets.set(slack_admin.APP_SECRET, "xapp-test")
+    st = make_state(db_path, secrets)
+    now = "2026-10-01T12:00:00.000000Z"
+    rows = [("slack_app_id", "A1"), ("slack_team_id", "T1")]
+    if missing != "member":
+        rows.append(("slack_member_id", "U0ME1"))
+    with write_tx(conn):
+        for k, v in rows:
+            slack_admin.put_setting(conn, k, v, now, actor="test")
+    body = {"email": "ap@acme.example", "imap_host": "imap.acme.example",
+            "sensitivity": "standard", "preset": "A", "app_password": GOOD,
+            "org_domains": ["acme.example"]}  # fmt: skip
+    r = call(st, "POST", "/v1/addresses", body)
+    assert r.status_code == 201 and r.json()["slack_channel"] is None
 
 
 def test_api_rejects_bad_bodies_and_non_cli_callers(

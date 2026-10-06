@@ -1,0 +1,19 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id free-forged-own-address; Mon, 05 Oct 2026
+ 03:10:00 +0000
+From: Pat Lee <pat-lee@freemail.example>
+To: pat-lee@freemail.example
+Subject: Security check: confirm it was you
+Date: Mon, 05 Oct 2026 03:10:00 +0000
+Message-ID: <free-forged-own-address.d197299847@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A new sign-in to your account was detected from an unrecognised device.
+
+If this was you, no action is needed. If it wasn't, reply to this message wit=
+h the 6-digit
+code we just sent to your phone so we can lock the device out.
+
+Account Security

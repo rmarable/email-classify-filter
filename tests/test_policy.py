@@ -137,6 +137,13 @@ def _names(p: policy.Plan) -> list[tuple[str, str | None, str]]:
     return [(a.name, a.target, a.mode) for a in p.actions]
 
 
+def test_labels_are_dropped_where_the_provider_cant_keep_them() -> None:
+    """OD-439: a dropped action with its reason, never an item failure; the rest stands."""
+    p = policy.plan(_ctx(keywords_stored=False), LABELS)
+    assert _names(p) == [("archive", None, "auto")]
+    assert [(d.name, d.why) for d in p.dropped] == [("label", policy.NOT_STORED)]
+
+
 def test_corroborated_marketing_is_archived_automatically() -> None:
     p = policy.plan(_ctx(), LABELS)
     assert _names(p) == [("label", "marketing", "auto"), ("archive", None, "auto")]

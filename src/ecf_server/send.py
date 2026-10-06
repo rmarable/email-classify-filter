@@ -20,7 +20,9 @@ known to save sent mail itself. Where that isn't known yet the row is marked `co
 `settle` on the next check counts the messages in Sent with that Message-ID: two means the provider
 saved one too, so ecf deletes its own and records that the provider saves sent mail; one means it
 doesn't (`probe.saves_sent`). A provider that saves a little late isn't mistaken for one that
-doesn't, and nothing about the message is kept. Alerts get no copy.
+doesn't, and nothing about the message is kept. Alerts get no copy. Gmail saves sent mail and
+merges an appended copy into its own, so the count would always say one: on Gmail ecf never
+appends, counts or deletes in Sent (OD-438; tested 2026-10-05).
 
 `settle`, run by each address's check, works through the rows a send left open:
 - **unknown outcomes**, only where the provider is known to save sent mail: found in the Sent
@@ -206,6 +208,8 @@ def _sent_folder(conn: sqlite3.Connection, address_id: str) -> tuple[str | None,
     """The Sent folder's name (None without one) and whether the provider saves sent mail."""
     info = probe.load(conn, address_id) or {}
     roles: dict[str, str] = info.get("roles") or {}
+    if probe.is_gmail(conn, address_id):
+        return roles.get(SENT_ROLE), True  # whatever was stored (OD-438)
     saves = info.get("saves_sent")
     return roles.get(SENT_ROLE), None if saves is None else bool(saves)
 

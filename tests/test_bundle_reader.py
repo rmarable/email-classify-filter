@@ -288,7 +288,7 @@ def test_versions(conn: sqlite3.Connection, out: Path) -> None:
     files = {"tables/addresses.jsonl": ROWS}
     schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
     for over, why in (({"schema_version": schema + 1}, "newer ecf"),
-                      ({"data_format": 2}, "data format 2"),
+                      ({"data_format": 3}, "data format 3"),
                       ({"seq": 9}, "disagree on seq")):  # fmt: skip
         header = {k: v for k, v in over.items() if k != "seq"}
         m = _manifest(conn, files, **over)

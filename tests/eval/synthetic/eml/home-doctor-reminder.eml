@@ -1,0 +1,22 @@
+Received: from mail.lakeside-clinic.example (mail.lakeside-clinic.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id home-doctor-reminder; Mon, 12
+ Oct 2026 09:00:00 +0000
+From: Lakeside Family Clinic <reminders@lakeside-clinic.example>
+To: pat-lee@freemail.example
+Subject: Appointment reminder: Thursday 2026-10-15 at 10:30
+Date: Mon, 12 Oct 2026 09:00:00 +0000
+Message-ID: <home-doctor-reminder.13c339bc60@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+This is a reminder of your appointment with the nurse practitioner on Thursday
+2026-10-15 at 10:30.
+
+Please arrive 15 minutes early and bring your insurance card and a list of yo=
+ur current
+medicines. To reschedule, call 555-0142 at least a day ahead.
+
+Lakeside Family Clinic

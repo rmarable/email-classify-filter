@@ -3,7 +3,7 @@
   "product": "email-classify-filter",
   "version": "0.1.0.dev0",
   "api_version": 1,
-  "data_format": 1,
-  "schema_version": 31,
+  "data_format": 2,
+  "schema_version": 32,
   "min_client": "0.1.0.dev0"
 }

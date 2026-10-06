@@ -66,6 +66,47 @@ def test_card_parsing() -> None:
             parse_card(bad)
 
 
+def test_profile_sets_the_default_recipient_and_internal_facts_are_refused() -> None:
+    """OD-443: a card goes to its profile's address; the internal set's facts are computed."""
+    assert parse_card(card()).to == ["ap@acme.example"]
+    free = parse_card(card("profile: freemail\n"))
+    assert free.profile == "freemail" and free.to == ["pat-lee@freemail.example"]
+    assert parse_card(card("profile: freemail\nto: [x@vendor-a.example]\n")).to == [
+        "x@vendor-a.example"
+    ]
+    for fact in ("sender_origin", "from_org_address", "impersonates_internal"):
+        with pytest.raises(InvalidInputError, match="come from the profile"):
+            parse_card(card(f"expected:\n  facts: {{{fact}: true}}\n"))
+    with pytest.raises(InvalidInputError, match="profile"):
+        parse_card(card("profile: corporate\n"))
+
+
+def test_freemail_template_parses_builds_and_passes_hygiene(tmp_path: Path) -> None:
+    """`ecf eval new-case --template freemail`: goes to the profile address, builds clean."""
+    r = CliRunner()
+    made = r.invoke(app, ["eval", "new-case", "free-9", "--template", "freemail",
+                          "--root", str(tmp_path)])  # fmt: skip
+    assert made.exit_code == 0, made.output
+    c = parse_card((tmp_path / "cases" / "free-9.md").read_text("utf-8"))
+    assert (c.profile, c.to) == ("freemail", ["pat-lee@freemail.example"])
+    assert c.expected.rule == "fraud_guard"
+    built = r.invoke(app, ["eval", "build", "--root", str(tmp_path)])
+    assert built.exit_code == 0, built.output
+    row = json.loads((tmp_path / "labels.jsonl").read_text("utf-8").splitlines()[0])
+    assert row["profile"] == "freemail"
+    assert b"To: pat-lee@freemail.example" in (tmp_path / "eml" / "free-9.eml").read_bytes()
+
+
+def test_labels_carry_a_profile_only_when_not_org(tmp_path: Path) -> None:
+    """So the committed set's version (a hash of labels.jsonl) is unchanged by OD-443."""
+    (tmp_path / "cases").mkdir()
+    (tmp_path / "cases" / "a.md").write_text(card())
+    (tmp_path / "cases" / "b.md").write_text(card("profile: freemail\n").replace("t-1", "t-2"))
+    assert not build_all(tmp_path).findings
+    rows = [json.loads(x) for x in (tmp_path / "labels.jsonl").read_text().splitlines()]
+    assert [r.get("profile") for r in rows] == [None, "freemail"]
+
+
 def test_duplicate_card_ids(tmp_path: Path) -> None:
     for name in ("a.md", "b.md"):
         (tmp_path / name).write_text(card())

@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from ecf_server import db, fetch, leases
+from ecf_server import db, fetch, leases, probe
 from ecf_server.clock import FakeClock
 from ecf_server.fetch import (
     LeaseLostError,
@@ -22,7 +22,8 @@ from ecf_server.fetch import (
     load_cursor,
 )
 from ecf_server.isolate import IsolationError
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.mail import MailSource
+from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.message import ParsedMessage, parse
 from ecf_server.senderauth import AuthOutcome
 from tests.mail_contract import message
@@ -46,7 +47,7 @@ def take(conn: sqlite3.Connection, clock: FakeClock, holder: str = "w1") -> leas
     return lease
 
 
-def run(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, **kw: Any) -> PageResult:
+def run(conn: sqlite3.Connection, clock: FakeClock, src: MailSource, **kw: Any) -> PageResult:
     return fetch_page(conn, clock, src, address_config(conn, ADDR), take(conn, clock), **kw)
 
 
@@ -56,11 +57,17 @@ class Fn:
     def __init__(self, fn: Callable[[ParsedMessage, bytes], dict[str, Any]]) -> None:
         self.fn = fn
         self.auths: list[AuthOutcome | None] = []
+        self.labels: list[frozenset[str] | None] = []
 
     def analyze(
-        self, parsed: ParsedMessage, raw: bytes, auth: AuthOutcome | None = None
+        self,
+        parsed: ParsedMessage,
+        raw: bytes,
+        auth: AuthOutcome | None = None,
+        gmail_labels: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         self.auths.append(auth)
+        self.labels.append(gmail_labels)
         return self.fn(parsed, raw)
 
     def record(
@@ -69,7 +76,7 @@ class Fn:
         pass
 
 
-def started(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource) -> None:
+def started(conn: sqlite3.Connection, clock: FakeClock, src: MailSource) -> None:
     assert run(conn, clock, src).first_run
 
 
@@ -180,6 +187,29 @@ def test_analysis_is_merged_into_facts(setup: sqlite3.Connection, clock: FakeClo
     r = run(setup, clock, src, analyzer=Fn(analyze))
     row = setup.execute("SELECT facts FROM items WHERE stable_id = ?", (r.created[0],)).fetchone()
     assert json.loads(row["facts"])["auth_result"] == "pass"
+
+
+def test_gmail_labels_reach_the_analyzer(setup: sqlite3.Connection, clock: FakeClock) -> None:
+    """V1.6: in Gmail mode (from the last probe) each message's labels go to the analysis, for
+    `self_sent` (OD-446); off Gmail none are read."""
+    src = GmailFakeSource()
+    with db.write_tx(setup):
+        probe.store(setup, clock, ADDR, "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
+    started(setup, clock, src)
+    a, b = src.deliver(message(0)), src.deliver(message(1), labels=("\\Sent", "\\Inbox"))
+    fn = Fn(lambda _p, _r: {})
+    run(setup, clock, src, analyzer=fn)
+    assert fn.labels == [frozenset({"\\Inbox"}), frozenset({"\\Sent", "\\Inbox"})]
+    assert a < b
+
+
+def test_no_labels_off_gmail(setup: sqlite3.Connection, clock: FakeClock) -> None:
+    src = FakeMailSource()
+    started(setup, clock, src)
+    src.deliver(message(0))
+    fn = Fn(lambda _p, _r: {})
+    run(setup, clock, src, analyzer=fn)
+    assert fn.labels == [None]
 
 
 def _limit(conn: sqlite3.Connection, max_bytes: int) -> None:

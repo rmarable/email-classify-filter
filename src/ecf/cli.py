@@ -598,7 +598,10 @@ def _suggest_sensitivity(email: str) -> str:
 @address_app.command("add")
 def address_add(
     email: Annotated[str, typer.Argument(help="The mailbox to watch, e.g. ap@example.com.")],
-    imap_host: Annotated[str, typer.Option("--imap-host", help="IMAP server (port 993, TLS).")],
+    imap_host: Annotated[
+        str | None,
+        typer.Option("--imap-host", help="IMAP server (port 993, TLS); not needed for Gmail."),
+    ] = None,
     sensitivity: Annotated[
         str | None, typer.Option(help="standard, or high for finance mailboxes (extra checks).")
     ] = None,
@@ -618,7 +621,10 @@ def address_add(
 ) -> None:
     """Add a mailbox: checks the app password by logging in (IMAP, and SMTP without sending),
     then stores it in the OS secret store. It starts in shadow (watch only) with outbound off.
-    Needs a real terminal."""
+    A Gmail address (gmail.com or googlemail.com) needs no --imap-host and a Google app password,
+    which needs 2-Step Verification on the account (docs/gmail-setup.md); it sends at most 100
+    emails a day once outbound is on (change: ecf address set --max-sends-per-day). Needs a real
+    terminal."""
     require_terminal()
     with LocalClient(_paths()) as c:
         add_address(c, email, imap_host, sensitivity, preset, address_id,
@@ -637,7 +643,7 @@ PRESET_NOTES = {
 def add_address(
     c: LocalClient,
     email: str,
-    imap_host: str,
+    imap_host: str | None,
     sensitivity: str | None,
     preset: str | None,
     address_id: str | None,
@@ -647,6 +653,10 @@ def add_address(
 ) -> dict[str, Any]:
     """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
     current = c.get("/v1/addresses")
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    known: dict[str, str] = current.get("imap_defaults") or {}
+    if not imap_host and domain not in known:
+        imap_host = typer.prompt("Its IMAP server (port 993, TLS)").strip()
     if sensitivity is None:
         suggestion = _suggest_sensitivity(email)
         sensitivity = typer.prompt(
@@ -656,7 +666,7 @@ def add_address(
         preset = typer.prompt("Preset (A all-local, B local + Claude, C all-Claude)", default="A")
     body: dict[str, object] = {
         "email": email,
-        "imap_host": imap_host,
+        "imap_host": imap_host or known[domain],
         "sensitivity": sensitivity,
         "preset": (preset or "").upper(),
     }
@@ -666,8 +676,8 @@ def add_address(
         body["smtp_host"] = smtp_host
     if smtp_port is not None:
         body["smtp_port"] = smtp_port
-    if not current["org_domains"]:
-        domain = email.rsplit("@", 1)[-1].lower()
+    public = domain in (current.get("public_domains") or [])
+    if not current["org_domains"] and not public:  # not needed for gmail.com and the like (OD-441)
         typer.echo(
             "Your organization's domains decide which senders count as internal "
             "(change them later with `ecf config apply`)."
@@ -683,6 +693,12 @@ def add_address(
         f"{a['preset']}, stage {a['stage']}, outbound off"
     )
     _echo_probe(a)
+    if a.get("max_sends_per_day"):
+        typer.echo(f"sends: at most {a['max_sends_per_day']} a day once outbound is on (change:"
+                   f" ecf address set {a['address_id']} --max-sends-per-day <n>)")  # fmt: skip
+    if public and not current.get("org_addresses"):
+        typer.echo("People you work with: list their addresses and names in org_addresses"
+                   " (ecf config apply) so mail pretending to be them is caught.")  # fmt: skip
     if a.get("slack_channel"):
         typer.echo(f"Slack: private channel {a['slack_channel']} is created within a minute")
     return a
@@ -724,7 +740,8 @@ def address_list() -> None:
     """List monitored mailboxes."""
     with LocalClient(_paths()) as c:
         data = c.get("/v1/addresses")
-    typer.echo(f"org domains: {', '.join(data['org_domains']) or 'not set'}")
+    typer.echo(f"org domains: {', '.join(data['org_domains']) or 'none'};"
+               f" org addresses: {data.get('org_addresses', 0)}")  # fmt: skip
     for a in data["addresses"]:
         flags = [a["stage"], a["sensitivity"], f"preset {a['preset']}"]
         if a["paused"]:
@@ -846,7 +863,9 @@ RootOpt = Annotated[Path, typer.Option("--root", help="The synthetic set folder.
 @eval_app.command("new-case")
 def eval_new_case(
     case_id: Annotated[str, typer.Argument(help="Card id, e.g. bec-002.")],
-    template: Annotated[str, typer.Option("--template", help="bec, injection, header or control.")],
+    template: Annotated[
+        str, typer.Option("--template", help="bec, injection, header, control or freemail.")
+    ],
     root: RootOpt = EVAL_ROOT,
 ) -> None:
     """Write a new case card from a template (edit it, then `ecf eval build`)."""

@@ -10,13 +10,14 @@ from typing import Any
 
 import pytest
 
-from ecf_server import facts, leases
+from ecf_server import facts, leases, probe
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
 from ecf_server.fetch import address_config, fetch_page
-from ecf_server.mail.fake import FakeMailSource
+from ecf_server.internal import OrgAddress
+from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.message import parse, parse_partial
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
@@ -192,6 +193,37 @@ def test_unscanned_reasons(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert f["unscanned_reasons"] == ["over the size limit"]
 
 
+LISTED = (OrgAddress("patlee@gmail.com", "Pat Lee"),)
+
+
+def test_an_exact_org_address_is_internal_and_a_folded_one_is_the_same_account(
+    conn: sqlite3.Connection,
+) -> None:
+    """OD-431, OD-432: internal needs DMARC pass and the exact address; a folded variant is the
+    same account (`from_org_address`, so trigger 6 applies) but not internal."""
+    for sender, origin in (("patlee@gmail.com", "internal"), ("pat.lee@gmail.com", "external")):
+        f = facts.compute(conn, STD, parse(mail(sender)), "pass", [], org_addresses=LISTED)
+        assert (f["sender_origin"], f["from_org_address"], f["from_org_domain"]) == (
+            origin, True, False), sender  # fmt: skip
+    f = facts.compute(conn, STD, parse(mail("patlee@gmail.com")), "none", [], org_addresses=LISTED)
+    assert f["sender_origin"] == "external"
+    f = facts.compute(conn, STD, parse(mail("pat@else.example")), "pass", [], org_addresses=LISTED)
+    assert f["from_org_address"] is False and f["sender_origin"] == "external"
+
+
+def test_gmails_sent_label_marks_the_accounts_own_note_to_itself(conn: sqlite3.Connection) -> None:
+    """OD-446: only on Gmail (labels given), only From the watched address, only with \\Sent."""
+    me = facts.AddressInfo("me", "Pat.Lee@gmail.com", "standard")
+    note = parse(mail("pat.lee@gmail.com", to="pat.lee@gmail.com"))
+    sent = frozenset({"\\Sent", "\\Inbox"})
+    assert facts.compute(conn, me, note, "none", [], gmail_labels=sent)["self_sent"] is True
+    assert facts.compute(conn, me, note, "none", [], gmail_labels=frozenset({"\\Inbox"}))[
+        "self_sent"] is False  # fmt: skip
+    assert facts.compute(conn, me, note, "none", [])["self_sent"] is False  # not Gmail
+    other = parse(mail("someone@gmail.com", to="pat.lee@gmail.com"))
+    assert facts.compute(conn, me, other, "none", [], gmail_labels=sent)["self_sent"] is False
+
+
 def test_unnamed_inline_images_are_not_attachments(conn: sqlite3.Connection) -> None:
     m = EmailMessage()
     m["From"] = "billing@vendor-a.example"
@@ -244,6 +276,43 @@ def test_fetch_with_the_analyzer_builds_sender_history(
         seen.append(f["sender_seen_before"])
         clock.advance(7 * 86400 + day)
     assert seen == [False, False, False, True]  # the 4th, after 3 passes over 14+ days
+
+
+def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.6 end to end (OD-446): Gmail delivers the account's mail to itself unsigned and labels it
+    Sent; the same unsigned mail without the label is a forgery of your own listed address."""
+    me = "pat.lee@gmail.com"
+    conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                 " VALUES ('pat', ?, 'standard', 'A', 'now')", (me,))  # fmt: skip
+    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                 " ('config.org_addresses', ?, 'now', 'test')",
+                 (json.dumps([{"address": me, "name": "Pat Lee"}]),))  # fmt: skip
+    src = GmailFakeSource()
+    with write_tx(conn):
+        probe.store(conn, clock, "pat", "imap.gmail.com", probe.probe(src, "imap.gmail.com"))
+
+    def one_check() -> list[str]:
+        lease = leases.acquire(conn, clock, "pat", "w")
+        assert lease is not None
+        analyzer = MessageAnalyzer.for_address(conn, clock, "pat",
+                                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+        created = fetch_page(conn, clock, src, address_config(conn, "pat"), lease,
+                             analyzer=analyzer).created  # fmt: skip
+        leases.release(conn, lease)
+        return created
+
+    one_check()  # first run: start from now
+    src.deliver(mail(me, to=me), labels=("\\Sent", "\\Inbox"))
+    src.deliver(mail(me, to=me, extra={"Message-ID": "<forged@x.example>"}))
+    facts_of = [json.loads(conn.execute("SELECT facts FROM items WHERE stable_id = ?",
+                                        (sid,)).fetchone()[0]) for sid in one_check()]  # fmt: skip
+    mine, forged = facts_of
+    assert mine["self_sent"] and mine["from_org_address"] and mine["triggers"]["fraud"] == []
+    assert not forged["self_sent"]
+    why = f"From is {me}, one of your org addresses, but isn't authenticated"
+    assert why in forged["triggers"]["fraud"]
 
 
 @pytest.mark.parametrize(

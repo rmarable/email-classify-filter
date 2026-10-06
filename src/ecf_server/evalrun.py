@@ -135,6 +135,7 @@ class Case:
     expected: dict[str, Any]
     confirmed: bool
     author: str
+    profile: str = "org"  # the address it goes to (ruletest.PROFILES, OD-443)
 
 
 def set_version(root: Path) -> str:
@@ -167,7 +168,8 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
             or safety.get("injection_target")
         ):
             continue  # fmt: skip
-        out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", ""))))
+        out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", "")),
+                        str(r.get("profile") or "org")))  # fmt: skip
     return out, set_version(root)
 
 
@@ -396,7 +398,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
     schema = load_schema_v1()
     conn = connect()
     client = client_factory()
-    scratch = ruletest._Scratch(clock)  # pyright: ignore[reportPrivateUsage]
+    scratch = ruletest.Scratch(clock)
     results: list[CaseResult] = []
     calls: list[stats.Call] = []
     firsts: dict[str, dict[str, Any] | None] = {}
@@ -410,7 +412,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
                 stopped = f"stopped after {i} of {len(cases)}"
                 break
             raw = case.path.read_bytes()
-            facts = scratch.facts(raw)
+            facts = scratch.facts(raw, case.profile)
             text = parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
             cls = _classify(client, text, schema, calls) if opts.classifier else None
             if i < DETERMINISM_CASES:

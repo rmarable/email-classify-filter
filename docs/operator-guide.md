@@ -51,7 +51,7 @@ titles and what raises each are in SPEC §13.3; the ones you'll see most:
 
 | Title | What to do |
 |---|---|
-| `Operator Input Needed: <condition> (<address>)` | the condition names it: approvals queued for step-up, stale items, outbound off, send limit reached, Claude review waiting, a send scheduled in 10 minutes, a possible second install |
+| `Operator Input Needed: <condition> (<address>)` | the condition names it: approvals queued for step-up, stale items, outbound off, send limit reached, Claude review waiting, a send scheduled in 10 minutes, a possible second install, Gmail download limit reached (new mail waits; nothing to do) |
 | `Possible Fraud Attempt`, `Regulatory Mail Notice` | open the escalation card; check out of band before acting |
 | `Mail Provider Unreachable`, `Mailbox Login Rejected` | see the admin guide (recovery) |
 | `System Error`, `Slack Delivery Failed` | run `ecf doctor`; see the admin guide |
@@ -104,6 +104,33 @@ question is model output and can be wrong (SPEC §9.9).
 - An undone draft is deleted only when it's unchanged in Drafts; one you edited, sent or deleted is
   left alone ("draft not deleted").
 - **Dismiss** closes an item with no payment, fraud or regulator signal (`resolved_manual`).
+
+## Mail pretending to be someone you work with
+
+When the admin lists people in `org_addresses` (admin guide, Gmail), ecf checks each email that
+isn't from them for signs it claims to be them (SPEC §8.5). The card's or `ecf item show`'s
+**Why** names what matched:
+
+| Why says | Meaning |
+|---|---|
+| `display name matches Pat Lee, one of your org addresses, but the sender is x@gmail.com` | the sender used a listed person's name |
+| `display name shows pat.lee@gmail.com, an internal address, but the sender is x@gmail.com` | the display name shows an internal address that isn't the real sender |
+| `patlee1@gmail.com looks like patlee@gmail.com, one of your org addresses` | a one-letter Gmail typo, or the same name at another provider |
+
+- **About money** (a payment keyword, or the model says it's payment-related): labelled
+  `suspicious`, flagged and escalated: its own card, mentioning you.
+- **Otherwise:** labelled `suspicious` and flagged, and listed in the address's digest under weak
+  fraud signals.
+
+What to do: don't reply, pay, open links or change anything from the email. Contact the person
+through a channel you already trust (phone, or their known address in a new email) and ask. If it
+was really them writing from a new account, the admin adds that address to `org_addresses`. An
+outside person who happens to share a listed name is flagged too; resolve the item with
+`ecf item resolve <id> --reason <text>` (step-up on payment or fraud items).
+
+A different check covers a listed address itself: mail from it that doesn't pass ecf's DMARC check
+is a possible fraud attempt (a forged copy of your own Gmail address included), except your own
+notes to yourself on Gmail (SPEC §8.5, OD-446).
 
 ## The inbox and single items
 

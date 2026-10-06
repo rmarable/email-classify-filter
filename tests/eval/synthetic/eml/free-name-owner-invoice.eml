@@ -1,0 +1,17 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id free-name-owner-invoice; Sat, 03 Oct 2026
+ 11:00:00 +0000
+From: Pat Lee <pat-lee-billing@freemail.example>
+To: pat-lee@freemail.example
+Subject: Invoice 7781 - subscription renewal
+Date: Sat, 03 Oct 2026 11:00:00 +0000
+Message-ID: <free-name-owner-invoice.c213e485f0@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your annual storage subscription renews today. Invoice 7781: 89.99.
+
+Payment failed on the card we hold. Please pay now by bank transfer within 48=
+ hours to
+keep your files, or the account will be closed.

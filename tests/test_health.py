@@ -101,6 +101,25 @@ def test_login_rejected_three_times_then_hourly(ap: sqlite3.Connection, clock: F
     assert from_ts(row["next_due_at"]) == clock.now() and row["login_failures"] == 3
 
 
+def test_login_rejected_on_a_gmail_address_says_what_to_check(
+    ap: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """V1.6 step 8 (§13.3): a password change revokes Google app passwords, and they need 2-Step
+    Verification; other providers get the plain text."""
+    n = FakeNotifier()
+    for _ in range(3):
+        after(ap, clock, n, "login_rejected")
+    assert "Gmail" not in n.sent[0][1]
+    health.resolve_alert(ap, clock, n, "login_rejected", "ap")
+    ap.execute("UPDATE addresses SET email = 'pat.lee@gmail.com'")
+    after(ap, clock, n, "login_rejected")
+    body = n.sent[-1][1]
+    assert body.startswith("ap: the provider rejected the app password 4 times")
+    assert "revokes app passwords when the account's password changes" in body
+    assert "2-Step Verification is on" in body
+    assert "https://myaccount.google.com/apppasswords" in body
+
+
 def test_a_new_app_password_clears_the_backoff(ap: sqlite3.Connection, clock: FakeClock) -> None:
     from ecf_server.secretstore.memory import MemorySecretStore  # noqa: PLC0415
 
@@ -219,6 +238,12 @@ def test_doctor_dns_check() -> None:
 def test_doctor_org_domains_without_a_service(tmp_path: Path) -> None:
     c = doctor.check_org_domains(Paths(install="t", root=tmp_path))
     assert c.level is Level.WARN
+
+
+def test_doctor_warns_when_nothing_is_internal(running: Paths) -> None:
+    """V1.6 (OD-431): with no org domains and no org addresses, impersonation isn't detected."""
+    c = doctor.check_org_domains(running)
+    assert c.level is Level.WARN and "isn't detected" in c.detail and "org_addresses" in c.fix
 
 
 def test_other_failures_never_raise_mail_provider_unreachable(

@@ -43,6 +43,31 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     return {r["name"]: r for r in rows}
 
 
+# ---- Gmail --------------------------------------------------------------------------------------
+
+
+def test_gmail_rows(conn: sqlite3.Connection) -> None:
+    """V1.6 (OD-438, OD-440): only for addresses in Gmail mode; All Mail and the folder limit."""
+    for aid in ("plain", "ok", "hidden", "limited"):
+        _address(conn, aid)
+    rows = {"ok": ('{"\\\\All": "[Gmail]/All Mail"}', [10, 10]),
+            "hidden": ("{}", None),
+            "limited": ('{"\\\\All": "[Gmail]/All Mail"}', [1000, 4211])}  # fmt: skip
+    with write_tx(conn):
+        for aid, (roles, counts) in rows.items():
+            caps = json.dumps({"gmail": True, "gmail_inbox": counts})
+            conn.execute("UPDATE probe SET special_use = ?, capabilities = ? WHERE address_id = ?",
+                         (roles, caps, aid))  # fmt: skip
+    got = _by_name(ops_doctor.gmail(conn))
+    assert set(got) == {"gmail ok", "gmail hidden", "gmail limited"}
+    assert got["gmail ok"]["level"] == "ok"
+    assert got["gmail hidden"]["level"] == "warn" and "Show in IMAP" in got["gmail hidden"]["fix"]
+    assert got["gmail hidden"]["detail"] == (
+        "All Mail isn't shown over IMAP: archive fails and the email stays in the inbox"
+    )
+    assert got["gmail limited"]["detail"] == "IMAP shows 1000 of 4211 inbox messages"
+
+
 # ---- SMTP ---------------------------------------------------------------------------------------
 
 

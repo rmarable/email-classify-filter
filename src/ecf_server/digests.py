@@ -121,6 +121,7 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     if not rows and not handed:
         return None
     weak: list[str] = []
+    posing: list[str] = []
     unverified: list[str] = []
     undoable: list[str] = []
     unscanned = 0
@@ -128,8 +129,9 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
         facts: dict[str, Any] = json.loads(r["facts"] or "{}")
         names = fired(facts)
         unscanned += bool(facts.get("content_unscanned"))
-        if "fraud_weak" in names and "fraud" not in names:
-            weak.append(_line(r, facts))
+        t: dict[str, Any] = facts.get("triggers") or {}
+        if "fraud_weak" in names and "fraud" not in names:  # impersonation on its own (V1.6)
+            (posing if t.get("impersonation") else weak).append(_line(r, facts))
         elif "unverified_payment" in names and "fraud" not in names:
             unverified.append(_line(r, facts))
         if may_undo(facts):
@@ -143,7 +145,9 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     if held:
         text.append(held)
     fell = [_line(r, json.loads(r["facts"] or "{}")) for r in handed]
-    for title, lines in (("Weak fraud signals (first-time sender asking for payment):", weak),
+    for title, lines in (("Pretending to be someone you work with (no payment wording found):",
+                          posing),
+                         ("Weak fraud signals (first-time sender asking for payment):", weak),
                          ("Payment email from unverified senders:", unverified),
                          ("Waited too long for /ecf-review; the local model decides them"
                           " (local_high_risk):", fell)):  # fmt: skip
@@ -158,7 +162,7 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     buttons = [Button(UNDO, f"Undo {sid[: cards.SHORT_ID]}", sid) for sid in undoable[:UNDO_MAX]]
     buttons += offered
     buttons.append(Button(pause.PAUSE, f"Pause {aid}", aid))
-    note = cards.PAYMENT_NOTE if (weak or unverified) else ""
+    note = cards.PAYMENT_NOTE if (weak or posing or unverified) else ""
     return Card(f"Digest: {aid}", text="\n".join(text), buttons=tuple(buttons), note=note)
 
 

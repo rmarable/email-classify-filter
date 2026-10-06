@@ -31,12 +31,12 @@ from typing import Any, Protocol
 from ecf.errors import ConflictError, MailUnavailableError
 from ecf.ids import AddressId, StableId
 from ecf.status import OPEN, Status
-from ecf_server import items, keywords, leases, own_mail, probe, triggers
+from ecf_server import download_budget, items, keywords, leases, own_mail, probe, triggers
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.isolate import Isolator
 from ecf_server.log_bridge import log
-from ecf_server.mail import MailSource
+from ecf_server.mail import MailSource, MessageMeta
 from ecf_server.message import (
     ACTOR_CHARS,
     CLASSIFIER_CHARS,
@@ -71,7 +71,12 @@ class Analyzer(Protocol):
     `record` runs inside the item's transaction (sender history)."""
 
     def analyze(
-        self, parsed: ParsedMessage, raw: bytes, auth: AuthOutcome | None = None, /
+        self,
+        parsed: ParsedMessage,
+        raw: bytes,
+        auth: AuthOutcome | None = None,
+        gmail_labels: frozenset[str] | None = None,
+        /,
     ) -> dict[str, Any]: ...
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, facts: dict[str, Any], /
@@ -98,6 +103,7 @@ class AddressConfig:
     sensitivity: str
     max_message_bytes: int
     max_scan_bytes: int
+    gmail: bool = False  # Gmail mode, from the last probe (OD-438)
 
 
 @dataclass
@@ -111,7 +117,7 @@ class PageResult:
     deferred: list[int] = field(default_factory=list[int])  # still waiting after this check
     large_done: list[int] = field(default_factory=list[int])  # deferred messages handled now
     remaining: int = 0  # new UIDs not reached in this page
-    stopped: str = "done"  # done | page_limit | time | lease_lost
+    stopped: str = "done"  # done | page_limit | time | lease_lost | download_budget (Gmail)
     own_skipped: int = 0  # ecf's own mail come back (own_mail; V1.5)
     second_install: bool = False  # mail from another install on this mailbox: address paused
     restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372): paused
@@ -131,6 +137,7 @@ def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
             int(overrides.get("max_message_bytes", DEFAULT_MAX[row["sensitivity"]])),
         ),
         max_scan_bytes=int(overrides.get("max_scan_bytes_per_part", DEFAULT_SCAN)),
+        gmail=probe.is_gmail(conn, address_id),
     )
 
 
@@ -232,8 +239,11 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     pg = _Page(conn, clock, src, cfg, lease, state.uidvalidity, result, analyzer, isolator)
     pg.recovering_until = cur.recovering_until
     pg.install = install
+    pg.budget_left = download_budget.left(conn, clock, cfg.address_id, gmail=cfg.gmail)
     if install and page:
         pg.flags = src.flags(page)
+    if cfg.gmail and page:  # Gmail's labels, for its own mail to itself (`self_sent`, OD-446)
+        pg.labels = src.gmail_labels(page)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -248,8 +258,8 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
         if meta is not None and (meta.size > cfg.max_message_bytes or meta.size > LARGE_BYTES):
             cur.deferred.append(uid)
             _note_deferred(cur, meta.internaldate)
-        elif meta is not None:
-            _process(pg, uid, meta.internaldate)
+        elif meta is not None and not _within_budget(pg, uid, meta):
+            break  # Gmail's download budget: this message and the rest wait for a later check
         cur.last_uid = uid  # vanished messages (no meta) are simply passed
         if cur.recovering_until and cur.last_uid >= cur.recovering_until:
             cur.recovering_until = 0  # recovery done
@@ -258,7 +268,7 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
     if result.stopped == "done" and len(new) > len(page):
         result.stopped = "page_limit"
     result.remaining = len(new) - done
-    if result.stopped != "lease_lost" and cur.deferred:
+    if result.stopped not in ("lease_lost", "download_budget") and cur.deferred:
         cur = _deferred(pg, cur, end, lost)
     result.deferred = list(cur.deferred)
     return result
@@ -320,6 +330,7 @@ def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collabo
     page = todo[:PAGE_MESSAGES]
     metas = src.meta(page)
     pg = _Page(conn, clock, src, cfg, lease, bf.uidvalidity, result, analyzer, isolator)
+    pg.budget_left = download_budget.left(conn, clock, cfg.address_id, gmail=cfg.gmail)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
     done = 0
@@ -334,8 +345,10 @@ def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collabo
         if meta is not None and (meta.size > cfg.max_message_bytes or meta.size > LARGE_BYTES):
             oversized = meta.size > cfg.max_message_bytes
             need = HEADER_LIMIT + cfg.max_scan_bytes if oversized else meta.size
-            if clock.monotonic() + need / pg.rate() > end or not LARGE_LOCK.acquire(blocking=False):
-                result.stopped = "time"  # the next backfill job picks it up
+            if (pg.over_budget(need) or clock.monotonic() + need / pg.rate() > end
+                    or not LARGE_LOCK.acquire(blocking=False)):  # fmt: skip
+                # the next backfill job picks it up
+                result.stopped = "download_budget" if pg.budget_spent else "time"
                 break
             try:
                 if oversized:
@@ -344,8 +357,8 @@ def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collabo
                     _process_large(pg, uid, meta.internaldate)
             finally:
                 LARGE_LOCK.release()
-        elif meta is not None:
-            _process(pg, uid, meta.internaldate)
+        elif meta is not None and not _within_budget(pg, uid, meta):
+            break
         bf.after_uid = uid  # vanished messages (no meta) are simply passed
         done += 1
     if result.stopped == "done" and len(todo) > len(page):
@@ -367,7 +380,7 @@ def _deferred(pg: _Page, cur: Cursor, end: float, lost: threading.Event | None) 
             continue
         oversized = meta.size > pg.cfg.max_message_bytes
         need = HEADER_LIMIT + pg.cfg.max_scan_bytes if oversized else meta.size
-        if pg.clock.monotonic() + need / pg.rate() > end:
+        if pg.clock.monotonic() + need / pg.rate() > end or pg.over_budget(need):
             break  # next check
         if not LARGE_LOCK.acquire(blocking=False):
             break  # another address is processing a large message
@@ -399,13 +412,36 @@ class _Page:
     fetch_s: float = 0.0
     recovering_until: int = 0
     install: str = ""  # this install's name, for its keywords (V1.5 step 10b)
+    budget_left: int | None = None  # Gmail's download budget still free (OD-440); None: none
+    budget_spent: bool = False
     flags: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
+    labels: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
+
+    def over_budget(self, need: int) -> bool:
+        """Fetching `need` more bytes would pass Gmail's download budget: stop (OD-440)."""
+        if self.budget_left is None or need <= self.budget_left:
+            return False
+        self.result.stopped, self.budget_spent = "download_budget", True
+        return True
+
+    def downloaded(self, nbytes: int) -> None:
+        if self.budget_left is not None:
+            download_budget.record(self.conn, self.clock, self.cfg.address_id, nbytes)
+            self.budget_left -= nbytes
 
     def rate(self) -> float:
         """Measured fetch throughput in bytes/s, or DEFAULT_RATE before there is enough data."""
         if self.fetch_s < 0.5 or self.fetched_bytes == 0:
             return DEFAULT_RATE
         return self.fetched_bytes / self.fetch_s
+
+
+def _within_budget(pg: _Page, uid: int, meta: MessageMeta) -> bool:
+    """Process the message unless it would pass Gmail's download budget (OD-440)."""
+    if pg.over_budget(meta.size):
+        return False
+    _process(pg, uid, meta.internaldate)
+    return True
 
 
 def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
@@ -423,6 +459,7 @@ def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
             return
         pg.fetched_bytes += len(raw)
         pg.fetch_s += clock.monotonic() - t0
+        pg.downloaded(len(raw))
         if pg.isolator is not None:  # every message, with a time limit (OD-204)
             parsed, auth = pg.isolator(raw, cfg.max_scan_bytes)
             _store(pg, uid, parsed, raw, {}, internaldate, auth)
@@ -466,6 +503,7 @@ def _process_partial(pg: _Page, uid: int, size: int, internaldate: datetime | No
         texts: dict[str, bytes] = {}
         for p in [p for p in parts if p.content_type.startswith("text/")][:MAX_PARTIAL_TEXTS]:
             texts[p.section] = pg.src.fetch_part(uid, p.section, cfg.max_scan_bytes) or b""
+        pg.downloaded(len(header) + sum(len(t) for t in texts.values()))
         parsed = parse_partial(header, parts, texts, size=size, max_scan_bytes=cfg.max_scan_bytes)
         _store(
             pg, uid, parsed, header, {"oversized": True, "content_unscanned": True}, internaldate
@@ -513,7 +551,13 @@ def _store(
             _unmark_in(conn, cfg.address_id, uv, uid)
         pg.result.duplicates += 1
         return
-    facts = _facts(parsed) | extra | (pg.analyzer.analyze(parsed, raw, auth) if pg.analyzer else {})
+    labels = None
+    if pg.cfg.gmail:
+        if uid not in pg.labels:  # deferred large mail: read here
+            pg.labels.update(pg.src.gmail_labels([uid]))
+        labels = pg.labels.get(uid, frozenset())
+    found = pg.analyzer.analyze(parsed, raw, auth, labels) if pg.analyzer else {}
+    facts = _facts(parsed) | extra | found
     facts["identity_digest"] = digest
     if facts.get("ecf_mail") == own_mail.OWN:  # ecf's own mail came back: no item (§8.4)
         with write_tx(conn):

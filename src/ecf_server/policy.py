@@ -48,6 +48,7 @@ SENDS = frozenset({"forward_internal", "reply_template"})
 BUILTIN_LABELS = frozenset({"suspicious", "unverified_sender", "regulatory", "alert_echo"})
 _LABEL = re.compile(r"^[a-z0-9_]{1,40}$")
 FRAUD_RISKY = ("low", "medium", "high")  # fraud_risk levels that block hiding (I1)
+NOT_STORED = "label not stored by this provider"
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class Context:
     local_pair: bool = True  # the local actor decides (preset A, or the local fallback; §8.2)
     templates: frozenset[str] = frozenset()  # enabled template ids
     forwards: frozenset[str] = frozenset()  # forward allow-list entry ids
+    keywords_stored: bool = True  # the provider keeps custom keywords (probe; OD-439)
 
 
 def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
@@ -190,7 +192,7 @@ def _alert_echo(ctx: Context, p: Plan, known_labels: frozenset[str]) -> Plan | N
         return None
     echo = Plan("alert_echo", to_actor=False, high_risk=p.high_risk,
                 payment_or_fraud=p.payment_or_fraud)  # fmt: skip
-    if "alert_echo" in known_labels:
+    if "alert_echo" in known_labels and ctx.keywords_stored:
         _add(echo, Planned("label", "alert_echo", _mode(ctx, "label", echo.high_risk)))
     _add(echo, Planned("leave", None, "auto"))
     return echo
@@ -252,6 +254,8 @@ def _outbound_refusal(ctx: Context, p: Plan, name: str, target: str | None) -> s
 def _refuse(ctx: Context, name: str, target: str | None, known: frozenset[str]) -> str | None:
     if name == "label" and (target is None or target not in known or not _LABEL.fullmatch(target)):
         return f"unknown label {str(target)[:40]!r}"
+    if name == "label" and not ctx.keywords_stored:  # skipped, not a failure (OD-439)
+        return NOT_STORED
     if name == "move" and target not in ctx.move_folders:
         return f"{str(target)[:60]!r} isn't in move_folders"
     return None

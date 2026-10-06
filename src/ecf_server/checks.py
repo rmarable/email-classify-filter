@@ -67,6 +67,7 @@ class CheckReport:
     own_skipped: int = 0  # ecf's own mail come back, skipped (V1.5)
     second_install: bool = False  # mail from another install: the address was paused (§13.6)
     restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372)
+    download_budget: bool = False  # Gmail's daily download budget stopped fetching (OD-440)
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -220,6 +221,7 @@ def _locked_check(
         report.relocated = page.relocated
         report.own_skipped, report.second_install = page.own_skipped, page.second_install
         report.restored_keywords = page.restored_keywords
+        report.download_budget |= page.stopped == "download_budget"
         report.quarantined, report.large_done = len(page.quarantined), len(page.large_done)
         report.deferred, report.remaining = len(page.deferred), page.remaining
         report.escalations = sum(o.decision.escalate for o in outcomes)
@@ -268,6 +270,7 @@ def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
                                install=install, max_scan_bytes=cfg.max_scan_bytes)  # fmt: skip
     backfill.save(conn, clock, cfg.address_id, bf)
     report.backfill_created, report.backfill_remaining = len(page.created), page.remaining
+    report.download_budget |= page.stopped == "download_budget"
     if page.remaining == 0 and page.stopped == "done":
         backfill.finish(conn, clock, cfg.address_id, bf, "done")
     return outcomes

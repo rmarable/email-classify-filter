@@ -68,6 +68,14 @@ class Conn:
     def search(self, criteria: Sequence[Criterion]) -> list[int]:
         return sorted(int(u) for u in self._c.search(list(criteria)))
 
+    def gmail_msgids(self, uids: Sequence[int]) -> dict[int, int]:
+        data = self._c.fetch(list(uids), ["X-GM-MSGID"])
+        return {int(u): int(d[b"X-GM-MSGID"]) for u, d in data.items() if b"X-GM-MSGID" in d}
+
+    def gmail_search(self, query: str) -> list[int]:
+        """`X-GM-RAW`: Gmail's own search syntax, in the selected folder."""
+        return sorted(int(u) for u in self._c.gmail_search(query))
+
     def fetch(self, uids: Sequence[int], items: Sequence[str]) -> dict[int, dict[str, Any]]:
         raw = self._c.fetch(list(uids), list(items))
         return {int(u): {_s(k): v for k, v in d.items()} for u, d in raw.items()}
