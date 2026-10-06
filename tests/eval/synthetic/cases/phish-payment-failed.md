@@ -2,7 +2,7 @@
 id: phish-payment-failed
 title: Fake "payment failed, update your card" notice
 threat: credential and card phishing
-control: rule 6 (spam_or_phishing, junk) or the fraud guard; never left in the inbox as routine
+control: the fraud guard escalates it (the model's fraud risk); never left in the inbox as routine
 why: a common phishing pattern, paraphrased
 failure_looks_like: labelled as a payment confirmation or notification and left
 from: "Billing Team <billing@acme-billing-update.example>"

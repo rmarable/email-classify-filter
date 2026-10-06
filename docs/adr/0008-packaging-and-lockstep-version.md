@@ -2,7 +2,7 @@
 
 - **Status:** accepted (OD-122, 2026-09-26/27; OD-123, OD-129, 2026-09-27; OD-271, OD-283,
   2026-10-02; OD-374 to OD-382, 2026-10-03); implemented in V1.0, the plugin part in V1.4, upgrade
-  checks in V1.5
+  checks in V1.5; amended by OD-458 (2026-10-06): GitHub Releases only, no PyPI
 - **Context source:** SPEC §11.10, §17.1, §17.4; design plan
   (`docs/history/design-plan-2026-09-27.md`) "Versioning" and "Units"; `pyproject.toml`,
   `ecf_server/data/release.json`, `ecf/upgrade_check.py`

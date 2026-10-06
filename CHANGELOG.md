@@ -5,6 +5,15 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- Releases are GitHub Releases on this repository only (wheel, source archive, `SHA256SUMS`, `release-manifest.json`), built reproducibly by CI from a `vX.Y.Z` or `vX.Y.Z-rcN` tag; there is no PyPI package. Install the release wheel with `uv tool install` (OD-458).
+- `ecf upgrade` installs the newest stable release through your signed-in `gh`, and `ecf upgrade --to vX.Y.Z[-rcN]` a named one (release candidates only by name); it refuses unless the release's manifest and `SHA256SUMS` agree and the wheel matches them. A prod install upgrades from verified releases; `--wheel` stays for test installs, optionally checked with `--sha256sums` (OD-458).
+- The weekly model watch also lists ecf's releases and puts a newer stable release on the daily summary once (OD-458).
+- `THIRD_PARTY_NOTICES` lists every runtime dependency with its license and notice texts; it ships in the source archive and the wheel, and CI fails when it is out of date.
+- Dependabot proposes `uv.lock` and GitHub Actions updates weekly, grouped, with a cooldown.
+- The eval's go-live gate also needs 100% fraud-guard recall: every confirmed case that expects the fraud guard must end there; `ecf eval status` and `ecf eval compare` show it, and a run saved before this no longer passes the synthetic check (OD-460).
+- Six synthetic cases that expect the fraud guard now also require an escalation, and `sales-urgent-po-forwarder` expects what ecf guarantees (labelled and flagged, never hidden); these labels need confirming again (OD-460).
+- Security reports go to rodney.marable@gmail.com, accepted now; from `v1.0.0` the latest release is supported (OD-459).
+- The README status and install sections describe the GitHub Release install.
 - Fixed: the source archive (sdist) now holds only the source, tests, scripts and top-level documents; it had also packaged local caches and agent work folders, and the large on-demand eval files.
 
 ## ms-v1.6-gmail (2026-10-06)

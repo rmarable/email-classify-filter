@@ -55,7 +55,6 @@ jobs:
     needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: release
     permissions:
       contents: write # create the GitHub Release and upload its files; nothing else
     steps:

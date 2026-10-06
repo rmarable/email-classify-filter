@@ -285,8 +285,11 @@ works once a mail check has passed since the restore.
 
 ## Upgrade and rollback
 
-Until a release index exists, `ecf upgrade` with no arguments refuses (OD-374). Test installs
-upgrade from a wheel (`prod` refuses `--wheel`):
+`ecf upgrade` installs the newest stable release from this repository's GitHub Releases, through
+your signed-in `gh`; `ecf upgrade --to vX.Y.Z[-rcN]` installs a named one (release candidates
+only by name), and `--to` an older version goes back to that upgrade's snapshot. It refuses unless
+the release's `release-manifest.json` and `SHA256SUMS` agree and the wheel matches them. Test
+installs can also upgrade from a local wheel (`prod` refuses `--wheel`):
 
 ```sh
 ecf upgrade --wheel <file> --check   # all checks, nothing stopped
