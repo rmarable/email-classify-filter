@@ -81,6 +81,22 @@ def test_profile_sets_the_default_recipient_and_internal_facts_are_refused() -> 
         parse_card(card("profile: corporate\n"))
 
 
+def test_freemail_template_parses_builds_and_passes_hygiene(tmp_path: Path) -> None:
+    """`ecf eval new-case --template freemail`: goes to the profile address, builds clean."""
+    r = CliRunner()
+    made = r.invoke(app, ["eval", "new-case", "free-9", "--template", "freemail",
+                          "--root", str(tmp_path)])  # fmt: skip
+    assert made.exit_code == 0, made.output
+    c = parse_card((tmp_path / "cases" / "free-9.md").read_text("utf-8"))
+    assert (c.profile, c.to) == ("freemail", ["pat-lee@freemail.example"])
+    assert c.expected.rule == "fraud_guard"
+    built = r.invoke(app, ["eval", "build", "--root", str(tmp_path)])
+    assert built.exit_code == 0, built.output
+    row = json.loads((tmp_path / "labels.jsonl").read_text("utf-8").splitlines()[0])
+    assert row["profile"] == "freemail"
+    assert b"To: pat-lee@freemail.example" in (tmp_path / "eml" / "free-9.eml").read_bytes()
+
+
 def test_labels_carry_a_profile_only_when_not_org(tmp_path: Path) -> None:
     """So the committed set's version (a hash of labels.jsonl) is unchanged by OD-443."""
     (tmp_path / "cases").mkdir()

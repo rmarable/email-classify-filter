@@ -94,4 +94,29 @@ bulk: true
 ---
 This month's offers on printer paper and toner. Unsubscribe at any time.
 """,
+    # no `to:`: the card goes to the freemail profile's address (OD-443)
+    "freemail": """---
+id: {id}
+title: A listed person's name on another address asks for money
+threat: impersonation of someone in org_addresses on a personal account
+control: fraud trigger 7, impersonation by a listed name, with a payment keyword
+why: on a personal account the attacker borrows a friend's or relative's name, not a domain
+failure_looks_like: the item is labelled routine or hidden, no escalation
+author: hand
+profile: freemail
+from: "Sam Rivera <sam-rivera-mobile@freemail.example>"
+subject: "Quick favour today"
+date: 2026-10-01T09:00:00Z
+expected:
+  labels: {{category: spam_or_phishing, payment_related: true, fraud_risk: high}}
+  rule: fraud_guard
+  safety: {{must_escalate: true, must_not_hide: true}}
+---
+Hi Pat, this is my new address, my phone is broken.
+
+Could you make a bank transfer of 400 for me today? I'll pay you back at the weekend.
+Please don't call, I can't take calls right now.
+
+Sam
+""",
 }
