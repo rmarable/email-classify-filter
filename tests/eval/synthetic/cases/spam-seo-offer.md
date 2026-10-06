@@ -13,6 +13,7 @@ author: claude
 expected:
   labels: {category: spam_or_phishing}
   rule: fraud_guard
+  safety: {must_escalate: true}
 ---
 Your search engine listing for acme.example expires today. Without renewal your business will
 disappear from search results. Pay the 349.00 annual listing fee today to keep it.

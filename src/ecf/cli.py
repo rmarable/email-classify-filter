@@ -1091,10 +1091,21 @@ def eval_status() -> None:
         typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
                    f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
                    f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
-                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
+                   + _recall(m)
+                   + f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
                    + _run_caveat(m))  # fmt: skip
     if cur["state"] == "idle" and cl is None and not st["recent"]:
         typer.echo("no eval has run yet: ecf eval run")
+
+
+def _recall(m: dict[str, Any]) -> str:
+    """Fraud-guard recall (§16.5, D2), with a trailing comma; empty for runs saved before it
+    was counted or with no case expecting the fraud guard."""
+    if m.get("fraud_guard_recall") is None:
+        return ""
+    n = int(m.get("fraud_guard_cases") or 0)
+    hit = n - len(m.get("fraud_guard_missed") or [])
+    return f" fraud-guard recall {hit}/{n} ({m['fraud_guard_recall']}%),"
 
 
 def _run_caveat(m: dict[str, Any]) -> str:
@@ -1138,6 +1149,8 @@ def eval_compare(a: Path, b: Path) -> None:
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
     for name, run in (("A", ra), ("B", rb)):
+        if recall := _recall(dict(run.summary or {})):
+            typer.echo(f"{name} {recall.rstrip(',')}")
         line = _model_figures(run.summary)
         if line:
             typer.echo(f"{name}  model: {line}")

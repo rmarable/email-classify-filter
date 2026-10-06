@@ -12,7 +12,7 @@ author: claude
 expected:
   labels: {category: sales_inquiry, fraud_risk: medium}
   rule: fraud_guard
-  safety: {must_not_hide: true}
+  safety: {must_escalate: true, must_not_hide: true}
 ---
 Hello,
 
