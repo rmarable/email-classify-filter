@@ -26,7 +26,8 @@ done (SPEC §13.1):
 2. checks disk encryption and the secret store;
 3. sets the install role, `prod` or `test`, once;
 4. Slack (`ecf slack install`, below);
-5. the first address (`ecf address add`, below), including your org domains;
+5. the first address (`ecf address add`, below), including your org domains (not asked for a
+   Gmail address);
 6. alert email (optional, default no);
 7. backups: a backup key, a folder, a first backup (default yes);
 8. the local model (presets A and B), then Claude's login for `ecf claude` (presets B and C);
@@ -80,10 +81,77 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   item), archives its Slack channel and deletes its app password; ecf's labels stay on messages.
   It's refused while the address sends alert email.
 
+## Gmail
+
+Personal Google accounts (`@gmail.com`, `@googlemail.com`) work over IMAP with an app password
+(SPEC §18, OD-425). Google Workspace accounts don't (they wait for milestone M6). Do Google's side
+first: [Gmail setup](gmail-setup.md) (2-Step Verification, the app password, two Gmail settings,
+someone else's account).
+
+```sh
+ecf address add pat.lee@gmail.com --sensitivity high --preset A
+```
+
+- No `--imap-host`: ecf uses `imap.gmail.com`, and SMTP `smtp.gmail.com` on port 465.
+- It doesn't ask for org domains (a public provider's domain is never internal, OD-441).
+- It starts with a limit of 100 sends a day (Google allows 500, SPEC §18); `add` prints the
+  command to change it, `ecf address set <address> --max-sends-per-day <n>` (step-up).
+- When `org_addresses` is empty it suggests listing the people you work with (below).
+- Gmail is recognised by its IMAP capability, not the host name (OD-438).
+
+**`org_addresses`** (in `ecf config apply`, SPEC §9.7): the exact addresses of people you work
+with, at any provider, each with an optional name of at least two words.
+
+```yaml
+org_addresses:
+  - {address: pat.lee@gmail.com, name: Pat Lee}
+  - {address: dana@acme.example, name: Dana Ruiz}
+```
+
+- Mail from a listed address that passes ecf's DMARC check counts as internal. Mail claiming a
+  listed address that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to
+  yourself (OD-446).
+- Mail pretending to be a listed person (their name or address in the display name, a one-letter
+  Gmail typo of their address, or the same address at another public provider) is labelled
+  `suspicious` and flagged, and escalated when it's about money (SPEC §8.5; what you see is in the
+  [operator guide](operator-guide.md#mail-pretending-to-be-someone-you-work-with)). Names aren't
+  learned: unlisted people aren't covered.
+- At most 50 entries. Gmail ignores dots and `+tags`, so `patlee@` and `pat.lee+x@gmail.com` are
+  one account and can't both be listed. A one-word name is refused.
+- Only Gmail is verified to stop one account sending as another; an address at another provider is
+  only as trustworthy as that provider (SPEC §12.2, OD-447).
+
+**Forwards to a personal account:** a `forward_allow_list` entry must be in `org_domains` or exactly
+in `org_addresses`, never a watched address. Adding one at a public provider puts "<address> is a
+personal account your organization doesn't control" in the step-up dialog. An org domain or
+address a forward needs can't be removed until the forward goes too (OD-437, OD-452). Don't
+forward another person's watched mail to a personal address without that owner's agreement
+(OD-437; ecf can't check it).
+
+**`ecf doctor` on Gmail:**
+
+| Row | Warning | Fix |
+|---|---|---|
+| `gmail <id>` | All Mail isn't shown over IMAP: archive is held for you | Gmail settings, Labels: Show in IMAP for All Mail; then `ecf address set <id> --app-password` (probes again) |
+| `gmail <id>` | IMAP shows N of M inbox messages | Gmail settings, Forwarding and POP/IMAP: Folder size limits, Do not limit |
+| `org domains` | no org domains or org addresses: mail pretending to be people you work with isn't detected | list them in `org_addresses`, or your domains in `org_domains` |
+
+Both Gmail rows come from the last probe; `ecf address add` prints the same warnings as `note:`
+lines.
+
+**Download limit:** ecf stops downloading for a Gmail address before it passes 2,500 MB in 24
+hours and raises `Operator Input Needed: Gmail download limit reached (<address>)`; new mail waits,
+nothing is skipped, and the next check that isn't stopped resolves it (SPEC §14.3, OD-440).
+
+**Mailbox Login Rejected on Gmail:** changing the Google Account password revokes every app
+password ([Gmail setup](gmail-setup.md#after-a-password-change)). Create a new one, then
+`ecf address set <address> --app-password`.
+
 ## Configuration
 
-**Security-relevant config** (org domains, forward allow-list, move folders, templates, action
-policy, rules, `export_schedule`) changes only through a YAML file (SPEC §9.7, file shape there):
+**Security-relevant config** (org domains, org addresses, forward allow-list, move folders,
+templates, action policy, rules, `export_schedule`) changes only through a YAML file (SPEC §9.7,
+file shape there):
 
 ```sh
 ecf rules test rules.yaml        # run proposed rules on the synthetic set; shows what changes
@@ -300,7 +368,8 @@ read; a manual export can still be brought in with its passphrase through `ecf i
 dialog names the old and new fingerprints), then `ecf export now` so a readable backup exists.
 
 **Stolen laptop** (SPEC §12.1): full-disk encryption and a screen lock are what protect it. Then,
-from another computer: revoke each mailbox's app password at your provider; revoke ecf's Slack
+from another computer: revoke each mailbox's app password at your provider (Gmail:
+[Gmail setup](gmail-setup.md#revoking-ecfs-access)); revoke ecf's Slack
 tokens (or remove its app) in Slack; sign out ecf's Claude login (presets B and C) in your Claude
 account. SPEC names these steps but not each provider's screens. On a new computer:
 `ecf init --restore <bundle>` with your backup key; it lists what's left (Slack tokens,

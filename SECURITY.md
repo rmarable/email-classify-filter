@@ -75,6 +75,9 @@ ecf doesn't protect against these (SPEC §12.2 has the details and measurements)
 - Time Machine or another live copy of the data folder is not a backup; the scheduled export is.
 - Building or reading a backup needs memory a few times its size.
 - Slack keeps what ecf posts under Slack's own retention.
+- Gmail: ecf reads INBOX only, so mail Gmail files in Spam isn't checked; it can't check that the
+  owner of another person's Google account agreed to it being watched; impersonation detection
+  knows only the names and addresses listed in `org_addresses`. Setup: `docs/gmail-setup.md`.
 
 ## Linux
 
