@@ -58,6 +58,10 @@ jobs:
       - run: uv sync --locked
       - name: license allow-list (runtime dependencies)
         run: uv run python scripts/check_licenses.py
+      - name: THIRD_PARTY_NOTICES is current
+        run: |
+          uv run python scripts/check_licenses.py --notices
+          git diff --exit-code -- THIRD_PARTY_NOTICES
       - name: build and hash
         run: |
           uv build -o dist
