@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## ms-v1.6-gmail (not yet tagged)
+## ms-v1.6-gmail (2026-10-06)
 
 - On a mailbox that can't keep ecf's labels (e.g. Proton Bridge), ecf can't tell it handled an email before, so the check that refuses a reply or forward for an email ecf already handled doesn't work there (OD-439).
 - Backups and exports leave out the Gmail download counts (OD-440).
