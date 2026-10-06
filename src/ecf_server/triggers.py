@@ -39,7 +39,7 @@ from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "regulator", "injection")
+GROUPS = ("bank", "change", "payment", "gift_card", "regulator", "injection")
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
 # each sends from (OD-203).
@@ -147,6 +147,7 @@ class Triggers:
         return {
             "keywords": self.keywords,
             "payment_keyword": bool(self.keywords["payment"]),
+            "gift_card_keyword": bool(self.keywords["gift_card"]),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,
@@ -195,7 +196,8 @@ def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     t.fraud, t.fraud_weak = _money_triggers(keywords, found, bool(t.lookalikes))
     t.fraud += _other_triggers(parsed, found, t.lookalikes, duplicate_message_id, payment)
     t.impersonation = impersonation(parsed, found, org_domains, org_addresses, public_domains)
-    (t.fraud if payment else t.fraud_weak).extend(t.impersonation)  # module docstring
+    money = payment or bool(keywords["gift_card"])  # gift cards: money only here (OD-457)
+    (t.fraud if money else t.fraud_weak).extend(t.impersonation)  # module docstring
     if keywords.get("injection"):  # 10 (OD-252)
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 

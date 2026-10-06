@@ -12,9 +12,12 @@ rules:
             - {fact: sender_origin, eq: external}
             - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
-        - and:                           # impersonating someone internal, about money (OD-436)
-            - {fact: impersonates_internal, eq: true}
-            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
+        - and:                           # impersonating someone internal, about money (OD-436);
+            - {fact: impersonates_internal, eq: true}   # gift cards count here only (OD-457)
+            - or:
+                - {field: payment_related, eq: true}
+                - {fact: payment_keyword, eq: true}
+                - {fact: gift_card_keyword, eq: true}
         - {trigger: fraud}
     then: [{label: suspicious}, flag, escalate]
     actor: none

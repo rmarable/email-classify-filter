@@ -415,6 +415,14 @@ def test_the_impersonation_reason_names_the_listed_person_and_the_sender(
 def test_impersonation_about_money_is_a_fraud_trigger() -> None:
     t = fire("", **gmail('"Pat Lee" <random123@gmail.com>', "Please buy 5 gift cards today."))
     assert t.impersonation and set(t.impersonation) <= set(t.fraud)  # OD-436, gift card keyword
+    assert not t.facts()["payment_keyword"] and t.facts()["gift_card_keyword"]  # OD-457
+
+
+def test_gift_cards_alone_are_not_a_payment_keyword() -> None:
+    """OD-457: a gift-card balance or receipt isn't money talk; only impersonation counts it."""
+    t = fire("Your gift card balance is 12.50. Enjoy your next coffee.")
+    assert t.facts()["gift_card_keyword"] and not t.facts()["payment_keyword"]
+    assert t.fraud == [] and t.fraud_weak == []
 
 
 @pytest.mark.parametrize(

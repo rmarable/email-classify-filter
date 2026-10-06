@@ -34,7 +34,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 - New `org_addresses` section in `ecf config apply`: the exact addresses (a personal Gmail too) of people you work with, each with an optional name of at least two words. Mail from a listed address that passes DMARC counts as internal; one that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to yourself (OD-431, OD-446; ADR 0021).
 - Mail pretending to be someone in `org_addresses` (their name or address in the display name, a one-letter Gmail typo of their address, or their address at another provider) is labelled suspicious and flagged, and escalated when it is about money (OD-433, OD-436, OD-448, OD-453).
 - An internal forward may go to an address in `org_addresses`; the step-up dialog names a personal account your organization doesn't control. Removing an org domain or address a forward needs is refused until the forward goes too (OD-437, OD-452). `org_domains` may be empty when you watch only addresses at public providers (OD-441).
-- "gift card", "gift cards", "giftcard" and "giftcards" now count as payment keywords (OD-436).
+- "gift card", "gift cards", "giftcard" and "giftcards" count as money only when the email pretends to be someone in `org_addresses`; an ordinary gift-card receipt or balance notice is no longer marked suspicious (OD-436, OD-457).
+- `ecf init`'s checklist says a Gmail mailbox needs no IMAP server and that org domains aren't needed when every mailbox is at a public provider.
 - Lookalikes of the mail provider you watch an address at (`gmai1.com` for gmail.com) count as lookalike domains (OD-434).
 - Backups and exports now use data format 2: an older ecf refuses them instead of dropping `org_addresses` silently (OD-442).
 - Gmail test run done: ecf's labels on Gmail stay hidden keywords, as elsewhere (OD-445); results recorded in SPEC.

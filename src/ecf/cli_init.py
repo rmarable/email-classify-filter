@@ -41,8 +41,9 @@ CHECKLIST = """Have ready:
   - a Slack workspace where you can click "Install to Workspace", and a Slack configuration
     token (api.slack.com/apps, Your App Configuration Tokens; it expires after 12 hours)
   - your Slack member ID (your profile, the ... menu, Copy member ID)
-  - each mailbox's IMAP server and an app password for it
-  - your organization's domains, and whether each mailbox is standard or high (finance)
+  - an app password for each mailbox, and its IMAP server unless it's Gmail (docs/gmail-setup.md)
+  - your organization's domains (none needed if every mailbox is at a public provider such as
+    gmail.com), and whether each mailbox is standard or high (finance)
   - whether this install is prod (your real mail) or test
   - for presets A and B, Ollama (macOS: brew install ollama && brew pin ollama mlx-c); ecf runs
     it from its own login item and downloads the pinned model (about 8 GB)

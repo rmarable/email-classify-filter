@@ -65,7 +65,12 @@ payment:
     - purchase order
     - please pay
     - pay now
-    # gift-card scams (V1.6, OD-436); noise measured in V1.6 steps 7 and 9
+
+# Gift cards (V1.6, OD-436, OD-457): money only for the impersonation rules. As payment keywords
+# they marked every ordinary gift-card email suspicious (eval: 4 of 4; closing run: 1 of 1) and
+# changed no fraud decision, so they count only when the mail impersonates someone internal.
+gift_card:
+  phrases:
     - gift card
     - gift cards
     - giftcard
