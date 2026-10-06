@@ -13,7 +13,7 @@ from ecf_server import claude_batch, claude_queue, settings, stepup
 from ecf_server.clock import FakeClock
 from ecf_server.notify import FakeNotifier
 from ecf_server.stepper import FakeStepper
-from tests.test_claude_review import REQUEST, add, queue, waiting_item
+from tests.test_claude_review import REQUEST, add, drain, waiting_item
 from tests.test_decide import KNOWN_BULK
 
 
@@ -86,13 +86,13 @@ def test_classifier_high_items_share_spawns_up_to_the_setting_per_address(
     new_sender = KNOWN_BULK | {"sender_seen_before": False}  # high risk: ecf-actor-high
     b1, b2 = (waiting_item(conn, clock, "b", n, classification=REQUEST, facts=new_sender)
               for n in range(2))  # fmt: skip
-    q = queue(conn, clock)
-    spawn = {i["id"]: i["spawn"] for i in q["items"]}
+    items = drain(conn, clock)
+    spawn = {i["id"]: i["spawn"] for i in items}
     assert len({spawn[s] for s in hs[:3]}) == 1  # three of h's in one spawn
     assert spawn[hs[3]] != spawn[hs[0]]  # the fourth in the next
     assert spawn[g1] not in {spawn[s] for s in hs}  # g's (setting 1) never with h's
     assert spawn[b1] != spawn[b2]  # ecf-actor-high: still one item per spawn
-    assert all(i["agent"] == "ecf-actor-high" for i in q["items"] if i["id"] in (b1, b2))
+    assert all(i["agent"] == "ecf-actor-high" for i in items if i["id"] in (b1, b2))
     assert _batches(conn) == [sorted(hs[:3])]  # one spawn, one batch for the hide guard
     assert claude_queue.batch_risky(conn, hs[0])  # its others aren't classified yet
     assert not claude_queue.batch_risky(conn, hs[3])  # alone in its spawn
@@ -105,8 +105,7 @@ def test_with_the_default_each_classifier_high_item_has_its_own_spawn(
     add(conn, clock, "c", "C")
     hs = [waiting_item(conn, clock, "h", n) for n in range(2)]
     cs = [waiting_item(conn, clock, "c", n) for n in range(2)]
-    q = queue(conn, clock)
-    spawn = {i["id"]: i["spawn"] for i in q["items"]}
+    spawn = {i["id"]: i["spawn"] for i in drain(conn, clock)}
     assert spawn[hs[0]] != spawn[hs[1]]
     assert spawn[cs[0]] == spawn[cs[1]] == "ecf-classifier"  # the batched agent: one spawn a round
     assert _batches(conn) == [sorted(cs)]

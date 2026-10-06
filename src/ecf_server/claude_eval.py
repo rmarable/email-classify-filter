@@ -483,6 +483,15 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
             run.sessions.append(session_id)
         free = [w for w in run.works if w.stage in ("classify", "act", "repeat")
                 and w.claim == "free"]  # fmt: skip
+        # One agent type per round, and none while this session's claims for another are out:
+        # the model check can't tell overlapping work of two models apart (telemetry.py), so the
+        # service keeps them apart instead of relying on the session to (V1.0.0 run 6cea77b1).
+        out_agents = {w.agent for w in run.works
+                      if w.session == session_id and w.claim != "free"}  # fmt: skip
+        agent = _agent_of(run, free[0]) if free else None
+        if agent is not None and out_agents - {agent}:
+            free = []
+        free = [w for w in free if _agent_of(run, w) == agent]
         out = [_claim(run, w, session_id, now) for w in free[:limit]]
         _spawns(run, out)
         busy = sum(w.claim != "free" for w in run.works)
@@ -490,16 +499,21 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
                        "preparing": run.state == "preparing", "in_progress": busy}  # fmt: skip
 
 
-def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
-    need = "act" if w.stage == "act" else "classify"
-    if need == "classify":
+def _agent_of(run: Run, w: Work) -> str:
+    """The agent a case's next step needs: by sensitivity to classify, by risk to act."""
+    if w.stage != "act":
         role = "classifier_high" if run.opts.sensitivity == "high" else "classifier"
     else:
         role = "actor_high" if w.plan is not None and w.plan.high_risk else "actor"
+    return agent_name(role, run.pinned)
+
+
+def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
+    need = "act" if w.stage == "act" else "classify"
     w.fence += 1
     token = f"{w.fence}.{secrets.token_urlsafe(24)}"
     w.session, w.token_hash, w.expires = session_id, _hash(token), now + claude_review.CLAIM_TTL
-    w.claim, w.need, w.agent, w.invalid = "claimed", need, agent_name(role, run.pinned), 0
+    w.claim, w.need, w.agent, w.invalid = "claimed", need, _agent_of(run, w), 0
     return {"id": w.ref, "need": need, "agent": w.agent, "claim_token": token}
 
 

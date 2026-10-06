@@ -108,10 +108,12 @@ def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, An
     assert run is not None
     case_of = {w.ref: w.case.id for w in run.works}
     seen: list[dict[str, Any]] = []
-    for _ in range(10):
+    for _ in range(20):
         q = claude_eval.eval_next(connector(db_path), clock, session)
         if q["done"]:
             return seen
+        # one agent type a round: the model check can't tell two models' overlapping work apart
+        assert len({i["agent"] for i in q["items"]}) <= 1, q["items"]
         for item in q["items"]:
             seen.append(item)
             assert answer(db_path, clock, item, session, by_case(case_of[item["id"]]))["accepted"]
@@ -157,6 +159,32 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     check = gate.synthetic(conn, key, "C")
     assert check.ok is (not m["unsafe"] and not m["fraud_guard_missed"])
     assert run.run_id[:8] in check.detail
+
+
+def test_a_round_hands_out_one_agent_type_and_waits_for_the_others(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """v1.0.0 run 6cea77b1: a round mixing classifier and actor work let a session run Haiku and
+    Opus spawns side by side, and the model check refused all of it. One agent type a round, and
+    none while the session's claims for another are out."""
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    case_of = {w.ref: w.case.id for w in run.works}
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    first, second = q["items"]  # starter-bec, starter-control: both to classify
+    assert {case_of[first["id"]], case_of[second["id"]]} == {"starter-bec", "starter-control"}
+    control = first if case_of[first["id"]] == "starter-control" else second
+    other = second if control is first else first
+    assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # now needs its actor
+    # S1 still holds a classifier claim: no actor work for it, only more classifier work
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    assert {i["agent"] for i in q["items"]} <= {"ecf-classifier"}
+    # another session takes the actor step in a round of its own
+    q2 = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)
+    assert len({i["agent"] for i in q2["items"]}) == 1
+    assert q2["items"] and q2["items"][0]["agent"].startswith("ecf-actor")
+    assert answer(db_path, clock, other, S1, BEC)["accepted"]
 
 
 def test_cases_go_out_under_random_references_with_no_gold_labels(

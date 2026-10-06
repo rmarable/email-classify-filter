@@ -82,6 +82,16 @@ def queue(conn: sqlite3.Connection, clock: FakeClock, session: str = S1,
     return claude_review.review_queue(conn, clock, session, **kw)
 
 
+def drain(conn: sqlite3.Connection, clock: FakeClock) -> list[dict[str, Any]]:
+    """Every round until the queue is empty, each by a new session (a round hands out one agent
+    type, and a session gets no other type while its claims are out); the rounds' items."""
+    rounds: list[list[dict[str, Any]]] = []
+    while items := queue(conn, clock, f"session-drain-{len(rounds)}")["items"]:
+        rounds.append(items)
+    assert all(len({i["agent"] for i in r}) == 1 for r in rounds)  # one agent type a round
+    return [i for r in rounds for i in r]
+
+
 def token_for(q: dict[str, Any], sid: str) -> str:
     return next(i["claim_token"] for i in q["items"] if i["id"] == sid)
 
@@ -134,14 +144,32 @@ def test_the_queue_claims_waiting_items_and_names_their_agent(
     b2 = waiting_item(conn, clock, "b", 1, classification=REQUEST,
                       facts=KNOWN_BULK | {"sender_seen_before": False})  # fmt: skip
     q = queue(conn, clock)
-    got = {i["id"]: (i["need"], i["agent"]) for i in q["items"]}
+    assert [i["id"] for i in q["items"]] == [c1]  # the oldest item's agent type, only that
+    items = q["items"] + drain(conn, clock)
+    got = {i["id"]: (i["need"], i["agent"]) for i in items}
     assert got == {c1: ("classify", "ecf-classifier"), h1: ("classify", "ecf-classifier-high"),
                    b1: ("act", "ecf-actor"), b2: ("act", "ecf-actor-high")}  # fmt: skip
-    assert [i["id"] for i in q["items"]] == [c1, h1, b1, b2]  # oldest first
+    assert [i["id"] for i in items] == [c1, h1, b1, b2]  # oldest first
     assert q["more"] is False and q["results"] == []
-    assert all(i["claim_token"].startswith("1.") for i in q["items"])
+    assert all(i["claim_token"].startswith("1.") for i in items)
     assert queue(conn, clock)["items"] == []  # claimed: not handed out again
     assert queue(conn, clock, S2)["items"] == []  # nor to another session
+
+
+def test_a_session_gets_one_agent_type_at_a_time(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """The model check can't tell overlapping work of two models apart (telemetry.py): while a
+    session's classifier claims are out it gets no actor work; another session can."""
+    add(conn, clock, "c", "C")
+    add(conn, clock, "b", "B")
+    c1 = waiting_item(conn, clock, "c")
+    b1 = waiting_item(conn, clock, "b", classification=REQUEST)
+    assert [i["id"] for i in queue(conn, clock)["items"]] == [c1]
+    assert queue(conn, clock)["items"] == []  # b1 needs ecf-actor: not while c1 is out
+    assert [i["id"] for i in queue(conn, clock, S2)["items"]] == [b1]
+    clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)  # c1's claim expires
+    assert [i["id"] for i in queue(conn, clock)["items"]] == [c1]  # S1 may take any type now
 
 
 def test_limit_more_address_and_paused(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -216,7 +244,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     add(conn, clock, "b", "B")
     c1 = waiting_item(conn, clock, "c")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
-    q = queue(conn, clock)
+    q, q2 = queue(conn, clock), queue(conn, clock, S2)  # one agent type a round
     m = read_msg(conn, clock, S1, c1, token_for(q, c1))
     assert m["notice"] == claude_review.NOTICE and m["need"] == "classify"
     assert m["untrusted_email"] == {
@@ -228,7 +256,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     flat = json.dumps(m)
     for fact in ("sender_seen_before", "auth_result", "bulk_corroborates", "triggers"):
         assert fact not in flat  # §7.2: computed facts never go to a model
-    a = read_msg(conn, clock, S1, b1, token_for(q, b1))
+    a = read_msg(conn, clock, S2, b1, token_for(q2, b1))
     assert a["untrusted_email"]["text"].startswith("Please send the W-9")  # the actor excerpt
     assert a["classification"] == REQUEST
     assert "archive" not in a["actions"] and "needs_clarification" in a["actions"]  # OD-250
