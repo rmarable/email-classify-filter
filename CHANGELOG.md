@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- Roadmap: GitHub Copilot in VS Code is dropped; Microsoft Copilot stays in M3 (OD-456).
 - New Gmail setup guide (`docs/gmail-setup.md`): 2-Step Verification, creating and revoking an app password, accounts that can't have one, the Gmail settings ecf needs, and watching someone else's account only with its owner's agreement. The admin guide gains a Gmail section, the operator guide explains cards for mail pretending to be someone you work with, and the README names Gmail as supported (OD-425, OD-427).
 - Cards and `ecf item show` name the listed address when mail claims to be one of your org addresses: an unauthenticated message from it (trigger 6) or a display name matching a listed person (trigger 7).
 - Mail pretending to be someone you work with, escalated without payment wording, is titled "Possible fraud", not "Regulatory mail"; the digest lists such mail in its own section.
