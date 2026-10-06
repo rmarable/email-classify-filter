@@ -5,6 +5,11 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- On a mailbox that can't keep ecf's labels (e.g. Proton Bridge), ecf can't tell it handled an email before, so the check that refuses a reply or forward for an email ecf already handled doesn't work there (OD-439).
+- Backups and exports leave out the Gmail download counts (OD-440).
+- `ecf address add` for an address at a public provider (gmail.com and the like) suggests listing the people you work with in `org_addresses` when none are listed.
+- On Gmail, archiving fails with "Gmail's All Mail isn't shown over IMAP" when All Mail is hidden from IMAP; the probe no longer warns about a missing Archive folder on Gmail, which has none (OD-438).
+- Mail pretending to be someone in `org_addresses` counts as a fraud signal everywhere: it is treated as high risk, and ecf neither hides it (mark read, archive, move, junk) nor sends a reply or forward for it (OD-449, OD-453).
 - Roadmap: GitHub Copilot in VS Code is dropped; Microsoft Copilot stays in M3 (OD-456).
 - New Gmail setup guide (`docs/gmail-setup.md`): 2-Step Verification, creating and revoking an app password, accounts that can't have one, the Gmail settings ecf needs, and watching someone else's account only with its owner's agreement. The admin guide gains a Gmail section, the operator guide explains cards for mail pretending to be someone you work with, and the README names Gmail as supported (OD-425, OD-427).
 - Cards and `ecf item show` name the listed address when mail claims to be one of your org addresses: an unauthenticated message from it (trigger 6) or a display name matching a listed person (trigger 7).
@@ -21,21 +26,20 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 - Archive works on Gmail: the email leaves the inbox and stays in All Mail; Undo puts it back. Undo on Gmail finds the email by Gmail's own ID, which a sender can't copy. ecf never moves anything out of, or deletes anything in, Gmail's All Mail or Trash (OD-438).
 - On Gmail, ecf stops downloading for an address before it passes 2,500 MB in 24 hours (Google limits IMAP downloads; the exact limit for personal accounts is unverified): new mail waits and is read later, nothing is skipped, and an Operator Input Needed alert says so (OD-440). Database migration 0032.
 - Gmail is recognised by its IMAP capability, not its server name. `ecf doctor` warns when Gmail hides All Mail from IMAP or limits how many inbox messages IMAP shows, and names the Gmail setting to change. ecf no longer tries to save or count its own copy of sent mail on Gmail, which saves sent mail itself (OD-438, OD-440).
-- On Gmail, your own notes to yourself no longer raise a fraud alert when your address is in `org_addresses`; a forged copy of your address still does (OD-446).
+- On Gmail, your own notes to yourself no longer raise a fraud alert when your address is in `org_addresses`, and no longer count as an unsigned payment sender (rule 1a); a forged copy of your address still raises the alert (OD-446).
 - `ecf address add` for a Gmail address needs no `--imap-host` and doesn't ask for org domains; it starts with a limit of 100 sends a day (Google allows 500). `ecf init` asks for the IMAP server only when ecf doesn't know it (OD-441).
 - `ecf doctor` now warns when there are neither org domains nor org addresses (impersonation of people you work with isn't detected), instead of "org domains not set"; `ecf address list` and `ecf init` show the org addresses count.
-- New `org_addresses` section in `ecf config apply`: the exact addresses (a personal Gmail too) of people you work with, each with an optional name of at least two words. Mail from a listed address that passes DMARC counts as internal; one that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to yourself (OD-431, OD-446).
+- New `org_addresses` section in `ecf config apply`: the exact addresses (a personal Gmail too) of people you work with, each with an optional name of at least two words. Mail from a listed address that passes DMARC counts as internal; one that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to yourself (OD-431, OD-446; ADR 0021).
 - Mail pretending to be someone in `org_addresses` (their name or address in the display name, a one-letter Gmail typo of their address, or their address at another provider) is labelled suspicious and flagged, and escalated when it is about money (OD-433, OD-436, OD-448, OD-453).
 - An internal forward may go to an address in `org_addresses`; the step-up dialog names a personal account your organization doesn't control. Removing an org domain or address a forward needs is refused until the forward goes too (OD-437, OD-452). `org_domains` may be empty when you watch only addresses at public providers (OD-441).
-- "gift card" and "gift cards" now count as payment keywords (OD-436).
+- "gift card", "gift cards", "giftcard" and "giftcards" now count as payment keywords (OD-436).
 - Lookalikes of the mail provider you watch an address at (`gmai1.com` for gmail.com) count as lookalike domains (OD-434).
 - Backups and exports now use data format 2: an older ecf refuses them instead of dropping `org_addresses` silently (OD-442).
-- Designed (not built yet): a new config list, `org_addresses`, of the people you work with (including personal Gmail addresses), with names, so ecf can flag email that pretends to be one of them, and escalate it when it's about money; your own notes to yourself on Gmail don't raise a fraud alert (ADR 0021, OD-446 to OD-452).
 - Gmail test run done: ecf's labels on Gmail stay hidden keywords, as elsewhere (OD-445); results recorded in SPEC.
 - V1.6 plan reviewed and approved: how ecf decides who counts as your organization without an org domain, colleague impersonation, forwards to a personal account, Gmail's labels and archive, and the eval for personal mail (OD-431 to OD-444).
 - Fixed: mail from one public mail provider (for example ymail.com or mail.com) no longer raises a lookalike fraud alert because you've had mail from another one with a similar name (gmail.com) (OD-430).
 - V1.6 Gmail is the next milestone; the remaining `v1.0.0` work (Claude eval gates, third-party notices, release build) follows it (OD-429).
-- Planned: `v1.0.0` will watch personal Gmail accounts (gmail.com) over IMAP with an app password, with a setup guide for non-technical users; this is new milestone V1.6 Gmail. Another person's account may be watched only when its owner creates the app password and agrees. Google Workspace accounts wait for the Gmail API, roadmap milestone M6 (OD-425 to OD-427). One install may watch Gmail only, its own-domain IMAP mailboxes only, or both (OD-428).
+- `v1.0.0` will watch personal Gmail accounts (gmail.com) over IMAP with an app password, set up by following `docs/gmail-setup.md`; this is milestone V1.6 Gmail. Another person's account may be watched only when its owner creates the app password and agrees. Google Workspace accounts wait for the Gmail API, roadmap milestone M6 (OD-425 to OD-427). One install may watch Gmail only, its own-domain IMAP mailboxes only, or both (OD-428).
 - Planned: model-written replies (Later) now list their prerequisites, starting with an eval of draft quality (OD-424).
 - `v1.0.0` will support macOS only. Linux verification, planned as V1.6, is now roadmap milestone M5, after M4; until then `ecf doctor` warns that Linux isn't supported yet (OD-421, OD-422, ADR 0020).
 
