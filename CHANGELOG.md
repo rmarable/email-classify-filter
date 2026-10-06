@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- Changed: the Claude session and the `standard` classifier use Sonnet instead of Haiku (Haiku didn't reliably follow ecf's instructions, and Sonnet classified significantly better); `ecf claude` lets the session start only ecf's own agents (OD-461).
 - Fixed: `/ecf-eval` no longer stops every few rounds: submissions waiting for their model check don't hold back other work, and an empty reply waits a few seconds while work is still out. `ecf claude` turns off Claude Code's prompt suggestions and away summaries, which spent plan usage on nothing.
 - Fixed: `ecf claude` also denies Claude Code's built-in `claude` agent, and `/ecf-eval` and `/ecf-review` stop if any built-in agent runs in the session, naming it; a Claude eval had spent about half its plan usage on one doing no eval work.
 - Fixed: `/ecf-eval` and `/ecf-review` hand out one kind of agent work at a time, so classifier and actor subagents on different models no longer overlap and get refused by the model check; the first Claude eval stopped this way after 23 of 184 cases.

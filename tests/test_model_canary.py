@@ -60,28 +60,39 @@ def test_a_pin_that_gets_a_retirement_date_fails_until_models_lock_records_it(
     canary: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     page = DEPRECATIONS.replace(
+        "| claude-sonnet-5-5          | Active        | N/A                | Not sooner than"
+        " September 28, 2027 |",
+        "| claude-sonnet-5-5          | Deprecated    | October 1, 2026    | December 1, 2026"
+        "                   |",
+    )
+    page += (
+        "\n| Retirement date | Deprecated model | Recommended replacement |\n| --- | --- | ---"
+        " |\n| December 1, 2026 | `claude-sonnet-5-5` | `claude-sonnet-6` |\n"
+    )
+    rep = canary.check(page, OVERVIEW, TAGS)
+    assert rep.failures == [
+        "claude-sonnet-5-5: state Deprecated on the page, Active in models.lock",
+        "claude-sonnet-5-5: retirement 2026-12-01 on the page, not set in models.lock",
+        "claude-sonnet-5-5: 'not sooner than' not set on the page, 2027-09-28 in models.lock",
+    ]
+    assert "claude-sonnet-5-5: Anthropic recommends claude-sonnet-6" in rep.notes
+    life = claude_pins.lifecycle()
+    life["claude-sonnet-5-5"] = claude_pins.Lifecycle(
+        "Deprecated", date(2026, 12, 1), None, "claude-sonnet-6"
+    )
+    monkeypatch.setattr(claude_pins, "lifecycle", lambda: life)
+    assert canary.check(page, OVERVIEW, TAGS).failures == []
+
+
+def test_a_model_ecf_doesnt_pin_can_change_without_a_failure(canary: ModuleType) -> None:
+    """Haiku isn't pinned (OD-461): its row on the page may change freely."""
+    page = DEPRECATIONS.replace(
         "| claude-haiku-4-5-20251001  | Active        | N/A                | Not sooner than"
         " October 15, 2026   |",
         "| claude-haiku-4-5-20251001  | Deprecated    | October 1, 2026    | December 1, 2026"
         "                   |",
     )
-    page += (
-        "\n| Retirement date | Deprecated model | Recommended replacement |\n| --- | --- | ---"
-        " |\n| December 1, 2026 | `claude-haiku-4-5-20251001` | `claude-haiku-5` |\n"
-    )
-    rep = canary.check(page, OVERVIEW, TAGS)
-    assert rep.failures == [
-        "claude-haiku-4-5-20251001: state Deprecated on the page, Active in models.lock",
-        "claude-haiku-4-5-20251001: retirement 2026-12-01 on the page, not set in models.lock",
-        "claude-haiku-4-5-20251001: 'not sooner than' not set on the page, 2026-10-15 in"
-        " models.lock",
-    ]
-    assert "claude-haiku-4-5-20251001: Anthropic recommends claude-haiku-5" in rep.notes
-    life = claude_pins.lifecycle()
-    life["claude-haiku-4-5-20251001"] = claude_pins.Lifecycle(
-        "Deprecated", date(2026, 12, 1), None, "claude-haiku-5"
-    )
-    monkeypatch.setattr(claude_pins, "lifecycle", lambda: life)
+    assert page != DEPRECATIONS
     assert canary.check(page, OVERVIEW, TAGS).failures == []
 
 

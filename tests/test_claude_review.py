@@ -279,7 +279,8 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     r = row(conn, sid)
     assert r["status"] == "awaiting_claude"  # the rule continues to the actor (OD-269)
     pinned = json.loads(r["pinned_models"])
-    assert pinned["classifier"].startswith("claude-haiku-") and pinned["agent"] == "ecf-classifier"
+    assert pinned["classifier"] == claude_pins.load_lock()["classifier"]
+    assert pinned["agent"] == "ecf-classifier"
     with pytest.raises(ConflictError):  # one submission per claim
         submit_classification(conn, clock, S1, sid, tok, REQUEST)
     q = queue(conn, clock)

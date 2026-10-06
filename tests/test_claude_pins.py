@@ -48,8 +48,8 @@ def _override(conn: sqlite3.Connection, clock: FakeClock, value: str) -> dict[st
 def test_the_lock_names_every_role_with_a_claude_id() -> None:
     lock = claude_pins.load_lock()
     assert set(lock) == set(claude_pins.ROLES)
-    assert lock["classifier"] == lock["main_session"] == "claude-haiku-4-5-20251001"
-    assert {claude_pins.family(i) for i in lock.values()} == {"haiku", "sonnet", "opus"}
+    assert lock["classifier"] == lock["main_session"] == "claude-sonnet-5-5"
+    assert {claude_pins.family(i) for i in lock.values()} == {"sonnet", "opus"}  # no Haiku, OD-461
     assert claude_pins.family("gpt-5") is None
     assert claude_pins.family("claude-sonnet-5-5; rm") is None
 
@@ -98,6 +98,8 @@ def test_none_clears_and_bad_ids_are_refused(conn: sqlite3.Connection, clock: Fa
     for bad in ("gpt-5", "claude-3", ""):
         with pytest.raises(InvalidInputError):
             claude_pins.set_override(conn, clock, FakeNotifier(), bad, nonce=None)
+    with pytest.raises(InvalidInputError, match="ecf pins no haiku model"):  # OD-461
+        claude_pins.set_override(conn, clock, FakeNotifier(), "claude-haiku-4-6", nonce=None)
 
 
 def test_a_step_up_is_bound_to_the_override_it_was_issued_for(
@@ -147,7 +149,7 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     assert gate.stored_key(row) == g.digest
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"  # unchanged pins
-    _override(conn, clock, "claude-haiku-4-6")
+    _override(conn, clock, "claude-opus-5-6")  # actor_high: a C pin
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
 

@@ -43,12 +43,12 @@ from ecf.paths import Paths
 
 MIN_CLAUDE = (2, 1, 242)
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
-MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results", "Agent"]
+MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results"]
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
 # `claude` appeared in a later Claude Code (2.1.291): the first /ecf-eval run handed its loop to
 # it (v1.0.0, 2026-10-06). Claude Code can deny agents only by name, so the service also stops a
 # session that runs any built-in agent (telemetry.stopped).
-BUILTIN_AGENTS = ("general-purpose", "claude", "Explore", "Plan", "statusline-setup",
+BUILTIN_AGENTS = ("general-purpose", "claude", "fork", "Explore", "Plan", "statusline-setup",
                   "claude-code-guide")  # fmt: skip
 DENIED_TOOLS = [
     "Bash",
@@ -84,7 +84,12 @@ def agent_tools(name: str) -> list[str]:
     return [f"mcp__{name}__get_message", f"mcp__{name}__{submit}"]
 
 
-ALLOWED_TOOLS = [*MAIN_TOOLS, *(t for n in (*AGENTS, *EVAL_AGENTS) for t in agent_tools(n))]
+# Only ecf's own agents may be spawned, by name (OD-461): under dontAsk anything not allowed is
+# refused, so a built-in agent Claude Code adds later is refused without ecf naming it (`fork` ran
+# in a B eval session, 2026-10-06); the deny list stays as a second layer.
+SPAWNABLE = [f"Agent({n})" for n in (*AGENTS, *EVAL_AGENTS)]
+ALLOWED_TOOLS = [*MAIN_TOOLS, *SPAWNABLE,
+                 *(t for n in (*AGENTS, *EVAL_AGENTS) for t in agent_tools(n))]  # fmt: skip
 # Only these variables are passed from the user's environment (plus LC_*); everything else,
 # e.g. ANTHROPIC_* (API keys, base URLs), provider switches and OTEL exporters, is dropped.
 ENV_ALLOW = frozenset(

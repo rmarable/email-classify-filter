@@ -92,7 +92,9 @@ def _alerts(conn: sqlite3.Connection) -> dict[str, str]:
 def test_every_pin_has_a_lifecycle_entry_and_none_retires_yet() -> None:
     life = claude_pins.lifecycle()
     assert set(claude_pins.load_lock().values()) <= set(life)
-    assert life[HAIKU] == claude_pins.Lifecycle("Active", None, date(2026, 10, 15))
+    assert life[SONNET] == claude_pins.Lifecycle("Active", None, date(2027, 9, 28))
+    assert life[OPUS] == claude_pins.Lifecycle("Active", None, date(2027, 9, 22))
+    assert HAIKU not in claude_pins.load_lock().values()  # OD-461: no Haiku pins
     assert all(e.retires is None for e in life.values())  # verified 2026-10-02
 
 
@@ -103,15 +105,15 @@ def test_a_retiring_pin_is_announced_then_30_and_7_days_before(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     n = FakeNotifier()
-    _retiring(monkeypatch, HAIKU, clock.now().date() + timedelta(days=45), "claude-haiku-5")
+    _retiring(monkeypatch, OPUS, clock.now().date() + timedelta(days=45), "claude-opus-6")
     assert model_watch.retirement_tick(conn, clock, n) == 0  # no address uses Claude
     add(conn, clock, "c", "C")
     assert model_watch.retirement_tick(conn, clock, n) == 1
     head, text = n.sent[-1]
     assert head == "[ecf-alert] Model Retirement Scheduled"
-    assert text.startswith(f"{HAIKU} (main_session, classifier) retires on 2026-11-15 (in 45 days)")
+    assert text.startswith(f"{OPUS} (actor_high) retires on 2026-11-15 (in 45 days)")
     assert "No ecf release that moves this pin is known yet" in text
-    assert "(Anthropic recommends claude-haiku-5)" in text
+    assert "(Anthropic recommends claude-opus-6)" in text
     assert model_watch.retirement_tick(conn, clock, n) == 0  # once per stage
     clock.advance(15 * DAY)  # 30 days left
     assert model_watch.retirement_tick(conn, clock, n) == 1 and "in 30 days" in n.sent[-1][1]
@@ -132,7 +134,7 @@ def test_first_seen_inside_30_days_sends_one_alert(
     add(conn, clock, "b", "B")
     _retiring(monkeypatch, SONNET, clock.now().date() + timedelta(days=20))
     assert model_watch.retirement_tick(conn, clock, n) == 1
-    assert "(classifier_high, actor) retires" in n.sent[-1][1]
+    assert f"{SONNET} (main_session, classifier, classifier_high, actor) retires" in n.sent[-1][1]
     clock.advance(12 * DAY)  # 8 days left: d30 already counted
     assert model_watch.retirement_tick(conn, clock, n) == 0
 
@@ -140,16 +142,16 @@ def test_first_seen_inside_30_days_sends_one_alert(
 def test_ecf_claude_refuses_a_pin_past_its_date_until_an_override_replaces_it(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _retiring(monkeypatch, HAIKU, clock.now().date() + timedelta(days=1), "claude-haiku-5")
+    _retiring(monkeypatch, OPUS, clock.now().date() + timedelta(days=1), "claude-opus-6")
     model_watch.refuse_retired(conn, clock)  # not yet
     clock.advance(DAY)
     with pytest.raises(ConflictError, match="retired on 2026-10-02; upgrade ecf, or run `ecf"
-                       " settings set claude_model_override claude-haiku-5`"):  # fmt: skip
+                       " settings set claude_model_override claude-opus-6`"):  # fmt: skip
         model_watch.refuse_retired(conn, clock)
     with write_tx(conn):
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
-                     " 'os_user')", (claude_pins.OVERRIDE_KEY, json.dumps({"haiku":
-                     "claude-haiku-5"}), to_ts(clock.now())))  # fmt: skip
+                     " 'os_user')", (claude_pins.OVERRIDE_KEY, json.dumps({"opus":
+                     "claude-opus-6"}), to_ts(clock.now())))  # fmt: skip
     model_watch.refuse_retired(conn, clock)
     assert model_watch.retiring(conn) == []
 
@@ -321,7 +323,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
                                  monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
     st = model_watch.status(conn)
     lines = watch_lines(st)
-    assert f"  {HAIKU}: Active, retirement not before 2026-10-15 (models.lock)" in lines
+    assert f"  {SONNET}: Active, retirement not before 2027-09-28 (models.lock)" in lines
     assert lines[-1] == (
         "model watch: no Models API key (optional: ecf models api-key set);"
         " next run within a minute"
