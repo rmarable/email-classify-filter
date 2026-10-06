@@ -144,7 +144,8 @@ def test_a_gmail_address_needs_no_org_domains_or_imap_host(env: Env) -> None:
 def test_address_add_help_says_what_a_gmail_address_needs() -> None:
     """V1.6 step 8: no --imap-host, an app password (2-Step Verification), the send default."""
     r = CliRunner().invoke(app, ["address", "add", "--help"])
-    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─]", " ", r.output).split())  # Rich boxes
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # Rich colors help on GitHub Actions
+    plain = " ".join(re.sub(r"[│╭╮╰╯─]", " ", plain).split())  # Rich boxes
     assert r.exit_code == 0
     assert "(gmail.com or googlemail.com) needs no --imap-host and a Google app password" in plain
     assert "2-Step Verification" in plain
