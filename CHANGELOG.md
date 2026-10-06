@@ -8,6 +8,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 - On a mailbox that can't keep ecf's labels (e.g. Proton Bridge), ecf can't tell it handled an email before, so the check that refuses a reply or forward for an email ecf already handled doesn't work there (OD-439).
 - Backups and exports leave out the Gmail download counts (OD-440).
 - `ecf address add` for an address at a public provider (gmail.com and the like) suggests listing the people you work with in `org_addresses` when none are listed.
+- Probe warnings and `ecf doctor` now say correctly that archive, junk and move actions fail and leave the email in the inbox when the folder is missing, Gmail's All Mail is hidden, or the server lacks MOVE or UIDPLUS (they said "held for a person"); the failed item is listed in `ecf inbox`.
+- `ecf address add` no longer says a Slack channel is coming unless Slack is fully set up (app installed, both tokens stored, your member ID confirmed).
 - On Gmail, archiving fails with "Gmail's All Mail isn't shown over IMAP" when All Mail is hidden from IMAP; the probe no longer warns about a missing Archive folder on Gmail, which has none (OD-438).
 - Mail pretending to be someone in `org_addresses` counts as a fraud signal everywhere: it is treated as high risk, and ecf neither hides it (mark read, archive, move, junk) nor sends a reply or forward for it (OD-449, OD-453).
 - Roadmap: GitHub Copilot in VS Code is dropped; Microsoft Copilot stays in M3 (OD-456).
