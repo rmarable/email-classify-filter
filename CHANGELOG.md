@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v1.0.0 (not yet tagged)
+
+- Fixed: the source archive (sdist) now holds only the source, tests, scripts and top-level documents; it had also packaged local caches and agent work folders, and the large on-demand eval files.
+
 ## ms-v1.6-gmail (2026-10-06)
 
 - On a mailbox that can't keep ecf's labels (e.g. Proton Bridge), ecf can't tell it handled an email before, so the check that refuses a reply or forward for an email ecf already handled doesn't work there (OD-439).

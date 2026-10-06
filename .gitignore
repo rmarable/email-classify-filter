@@ -41,3 +41,8 @@ tests/eval/synthetic/.build/
 /build/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
+.import_linter_cache/
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

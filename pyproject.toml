@@ -62,7 +62,15 @@ path = "src/ecf/__init__.py"
 packages = ["src/ecf", "src/ecf_server"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["docs/", "tests/eval/synthetic/.build/"]
+# An allow-list: hatch reads only this project's .gitignore, so untracked local folders (agent
+# worktrees, test caches) were packaged before (V1.6 closing run, 2026-10-06).
+# tests/test_sdist_contents.py checks it.
+only-include = [
+    "src", "tests", "scripts", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md", "SECURITY.md",
+    "CONTRIBUTING.md", "GENERATE-FAKE-TESTING-EMAILS.md", "pyproject.toml", "uv.lock",
+    ".python-version",
+]
+exclude = ["tests/eval/synthetic/.build/*"]  # built on demand, up to 66 MB each
 
 [tool.ruff]
 line-length = 100
