@@ -6,14 +6,22 @@ file and SPEC differ, SPEC is right.
 
 ## Reporting a vulnerability
 
-Vulnerability reports aren't accepted until `v1.0.0` is released (operator decision 2026-10-03,
-OD-406). ecf is not ready for anyone else to use yet, and the repository is private. This section
-will say where to send reports once `v1.0.0` ships.
+Email reports to **rodney.marable@gmail.com**. Don't open a public issue, pull request or
+discussion for a vulnerability. Include:
+
+- the ecf version (`ecf version`) and macOS version;
+- what an attacker can do, and what they need first (for example a Slack account, a sent email,
+  or code running as you);
+- steps or a proof of concept that reproduce it;
+- whether it is already public, and how you'd like to be credited.
+
+Check SPEC §12.2 (summarized under "Stated limits" below) first: those are known limits, not
+vulnerabilities.
 
 ## Supported versions
 
-None yet (OD-407). Milestone tags (`ms-…`) record internal progress and are not releases. `v1.0.0`
-will be the first supported version.
+From `v1.0.0`, the latest release only; fixes ship as a new release. Milestone tags (`ms-…`) and
+release candidates (`v1.0.0-rcN`) record progress and are not supported. Nothing is released yet.
 
 ## The security model in brief
 
