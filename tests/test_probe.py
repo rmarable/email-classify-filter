@@ -56,6 +56,8 @@ def test_missing_features_become_warnings() -> None:
     text = " ".join(r.warnings)
     for needle in ("custom keywords", "no Archive", "no Junk", "no Sent", "no Drafts", "MOVE"):
         assert needle in text, needle
+    # a refused move fails the item and leaves the email in the inbox; nothing is "held"
+    assert "held" not in text and text.count("will fail and leave the email in the inbox") == 3
 
 
 def test_first_folder_with_a_role_wins() -> None:
@@ -85,6 +87,7 @@ def test_gmail_warns_when_all_mail_is_hidden_or_the_inbox_is_limited() -> None:
     hidden = tuple(f for f in GMAIL_FOLDERS if "\\All" not in f.roles)
     r = probe.probe(GmailFakeSource(folders=hidden), "imap.gmail.com")
     assert probe.GMAIL_NO_ALL_MAIL in r.warnings and r.gmail_inbox is None
+    assert "will fail and leave the email in the inbox" in probe.GMAIL_NO_ALL_MAIL
     src = GmailFakeSource(folders=GMAIL_FOLDERS)
     for i in range(30):
         src.deliver(message(i))

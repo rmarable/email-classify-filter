@@ -13,7 +13,7 @@ import pytest
 
 from ecf.errors import MailUnavailableError
 from ecf.ids import AddressId, StableId
-from ecf_server import decide, digests, execute, items, jobs, mailbox_actions, probe
+from ecf_server import decide, digests, execute, inbox, items, jobs, mailbox_actions, probe
 from ecf_server.actions import MessageChangedError, keyword
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -371,13 +371,18 @@ def test_gmail_archive_goes_to_all_mail_and_undo_copies_it_back(
 def test_gmail_archive_is_refused_without_all_mail(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    """R12: All Mail hidden from IMAP; there is no Archive folder to fall back on."""
+    """R12: All Mail hidden from IMAP; there is no Archive folder to fall back on. The item fails,
+    the email stays in the inbox untouched, and `ecf inbox` lists it (what the probe warning and
+    doctor row say)."""
     src = _gmail(conn, clock, tuple(f for f in GMAIL_FOLDERS if f.name != ALL))
     sid = _mail_item(conn, clock, src, 0, MARKETING, KNOWN_BULK, src.deliver)
     decide.apply(conn, clock, sid)
     _run(conn, clock, src)
     row = item_row(conn, sid)
     assert row["status"] == "failed" and len(src.uids_after(0)) == 1
+    [uid] = src.uids_after(0)
+    assert src.flags([uid])[uid] == frozenset()  # refused before anything was written
+    assert [i["status"] for i in inbox.inbox(conn) if i["id"] == sid] == ["failed"]
 
 
 def test_gmail_junk_undo_moves_it_back_by_gmail_id(

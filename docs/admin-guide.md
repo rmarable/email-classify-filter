@@ -132,7 +132,7 @@ forward another person's watched mail to a personal address without that owner's
 
 | Row | Warning | Fix |
 |---|---|---|
-| `gmail <id>` | All Mail isn't shown over IMAP: archive is held for you | Gmail settings, Labels: Show in IMAP for All Mail; then `ecf address set <id> --app-password` (probes again) |
+| `gmail <id>` | All Mail isn't shown over IMAP: archive fails and the email stays in the inbox | Gmail settings, Labels: Show in IMAP for All Mail; then `ecf address set <id> --app-password` (probes again) |
 | `gmail <id>` | IMAP shows N of M inbox messages | Gmail settings, Forwarding and POP/IMAP: Folder size limits, Do not limit |
 | `org domains` | no org domains or org addresses: mail pretending to be people you work with isn't detected | list them in `org_addresses`, or your domains in `org_domains` |
 

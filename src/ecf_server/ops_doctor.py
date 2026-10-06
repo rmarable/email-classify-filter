@@ -101,7 +101,8 @@ def gmail(conn: sqlite3.Connection) -> list[dict[str, str]]:
         stored: list[int] | None = caps.get("gmail_inbox")
         counts = (stored[0], stored[1]) if stored else None
         if "\\All" not in (p.get("roles") or {}):
-            out.append(_c(name, WARN, "All Mail isn't shown over IMAP: archive is held for you",
+            out.append(_c(name, WARN, "All Mail isn't shown over IMAP: archive fails and the email"
+                          " stays in the inbox",
                           "Gmail settings, Labels: Show in IMAP for All Mail; then ecf address set"
                           f" {a['address_id']} --app-password (probes again)"))  # fmt: skip
         elif counts is not None and probe.inbox_limited(counts):

@@ -62,6 +62,9 @@ def test_gmail_rows(conn: sqlite3.Connection) -> None:
     assert set(got) == {"gmail ok", "gmail hidden", "gmail limited"}
     assert got["gmail ok"]["level"] == "ok"
     assert got["gmail hidden"]["level"] == "warn" and "Show in IMAP" in got["gmail hidden"]["fix"]
+    assert got["gmail hidden"]["detail"] == (
+        "All Mail isn't shown over IMAP: archive fails and the email stays in the inbox"
+    )
     assert got["gmail limited"]["detail"] == "IMAP shows 1000 of 4211 inbox messages"
 
 
