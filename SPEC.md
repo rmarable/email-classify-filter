@@ -1271,7 +1271,7 @@ Slack (2FA, private channels, restricted app installs, membership reviews); mail
 
 ### 13.1 `ecf init --mode local`
 
-1. **"Have ready" checklist:** Slack configuration token and a workspace where you can click "Install to Workspace"; your Slack member ID; the app password for each mailbox; your org domains and the sensitivity for each address; Ollama if using A or B (or C with the fallback); Claude Code and a separate Claude login for `ecf claude` if using B or C; Python ≥ 3.12 and uv; whether this install is `prod` or `test`; a password manager for the backup key; an email address if you want email alerts.
+1. **"Have ready" checklist:** Slack configuration token and a workspace where you can click "Install to Workspace"; your Slack member ID; the app password for each mailbox, and its IMAP server unless it's Gmail (V1.6); your org domains (none needed when every mailbox is at a public provider, OD-441) and the sensitivity for each address; Ollama if using A or B (or C with the fallback); Claude Code and a separate Claude login for `ecf claude` if using B or C; Python ≥ 3.12 and uv; whether this install is `prod` or `test`; a password manager for the backup key; an email address if you want email alerts.
 2. The service: started first (the unit installed, or started if installed), since it stores every later step; an unconfigured service idles (§11.1).
 3. Full-disk-encryption check and secret-store check.
 4. The install role, `prod` or `test`, set once.
