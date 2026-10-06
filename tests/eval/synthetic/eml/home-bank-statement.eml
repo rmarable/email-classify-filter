@@ -1,0 +1,21 @@
+Received: from mail.harbor-savings.example (mail.harbor-savings.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id home-bank-statement; Fri, 09
+ Oct 2026 06:00:00 +0000
+From: Harbor Savings <statements@harbor-savings.example>
+To: pat-lee@freemail.example
+Subject: Your October statement is ready
+Date: Fri, 09 Oct 2026 06:00:00 +0000
+Message-ID: <home-bank-statement.d29ee9c694@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Your statement for the checking account ending 0003 is ready. Sign in to onli=
+ne banking
+or our app as you usually do to view it.
+
+We will never ask for your password or a code by email.
+
+Harbor Savings

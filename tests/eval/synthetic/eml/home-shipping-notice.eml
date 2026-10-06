@@ -1,0 +1,18 @@
+Received: from mail.parcel-co.example (mail.parcel-co.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id home-shipping-notice; Wed, 14 Oct 2026 11:00:00
+ +0000
+From: Parcel Co Updates <tracking@parcel-co.example>
+To: pat-lee@freemail.example
+Subject: Your package is on its way
+Date: Wed, 14 Oct 2026 11:00:00 +0000
+Message-ID: <home-shipping-notice.79ef259e7f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your package from Corner Books has shipped.
+
+Tracking number 7710 2245 0091
+Expected delivery: Friday 2026-10-16, before 6 pm.
+
+No signature is needed. You can follow the delivery in the Parcel Co app.

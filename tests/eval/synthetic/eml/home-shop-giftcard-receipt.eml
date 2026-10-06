@@ -1,0 +1,24 @@
+Received: from mail.corner-books.example (mail.corner-books.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id home-shop-giftcard-receipt;
+ Thu, 08 Oct 2026 12:20:00 +0000
+From: Corner Books Orders <orders@corner-books.example>
+To: pat-lee@freemail.example
+Subject: Your receipt - order 4471
+Date: Thu, 08 Oct 2026 12:20:00 +0000
+Message-ID: <home-shop-giftcard-receipt.9c8563c440@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thanks for shopping at Corner Books.
+
+Order 4471, picked up in store on 2026-10-08.
+
+1 x Field Guide to Garden Birds 18.50
+1 x gift card 25.00 (wrapped, with a card for a birthday)
+
+Total 43.50, paid by card ending 0002.
+
+Keep this receipt for returns within 30 days.
