@@ -131,8 +131,10 @@ Details, rules and the card format: `GENERATE-FAKE-TESTING-EMAILS.md`.
 - A tag is created and pushed only after the operator approves both.
 - `CHANGELOG.md` is kept as you go: each behavior-changing commit adds a line under the next
   tag's heading; at tagging the heading gets the tag's date. The full rule is in `CLAUDE.md`.
-- Publishing (PyPI trusted publishing, the plugin marketplace, `THIRD_PARTY_NOTICES`) is built with
-  the first release.
+- Releases are published only as GitHub Releases on this repository (wheel, sdist, `SHA256SUMS`,
+  `release-manifest.json`); there is no PyPI package for `v1.0.0`. The Claude Code plugin ships
+  inside the wheel, and `ecf claude` loads it from there (OD-271, OD-283; this replaced the plugin
+  marketplace). The release workflow and `THIRD_PARTY_NOTICES` are built with the first release.
 
 ## Third-party licenses
 
