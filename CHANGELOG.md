@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- Security: removing text addressed to an automated reader from model input no longer slows down sharply on long paragraphs; one crafted 2,000-line paragraph took about 40 s of the check thread, now under 1 s (R150, corpus plan review).
 - Changed: the Claude session and the `standard` classifier use Sonnet instead of Haiku (Haiku didn't reliably follow ecf's instructions, and Sonnet classified significantly better); `ecf claude` lets the session start only ecf's own agents (OD-461).
 - Fixed: `/ecf-eval` no longer stops every few rounds: submissions waiting for their model check don't hold back other work, and an empty reply waits a few seconds while work is still out. `ecf claude` turns off Claude Code's prompt suggestions and away summaries, which spent plan usage on nothing.
 - Fixed: `ecf claude` also denies Claude Code's built-in `claude` agent, and `/ecf-eval` and `/ecf-review` stop if any built-in agent runs in the session, naming it; a Claude eval had spent about half its plan usage on one doing no eval work.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from email.message import EmailMessage
 from typing import Any
 
@@ -510,6 +511,39 @@ def test_redact_injection_folds_like_the_trigger_and_merges_neighbours() -> None
 def test_redact_injection_leaves_ordinary_text_untouched() -> None:
     text = "Our AI assistant answers questions.\r\n\t\n\nThanks"
     assert tr.redact_injection(text) is text
+
+
+def _scan_bounds(lines: list[str]) -> tuple[int, int]:
+    """The line-by-line search redact_injection used before R150, as the reference."""
+    end = next(k for k in range(len(lines)) if tr._injected("\n".join(lines[: k + 1])))  # pyright: ignore[reportPrivateUsage]
+    start = max(j for j in range(end + 1) if tr._injected("\n".join(lines[j : end + 1])))  # pyright: ignore[reportPrivateUsage]
+    return start, end
+
+
+@pytest.mark.parametrize("where", range(7))
+def test_redact_injection_binary_search_matches_the_line_scan(where: int) -> None:
+    """R150: the binary search finds the same lines as the scan it replaced, including a phrase
+    split across lines and a second phrase later in the paragraph."""
+    lines = [f"ordinary line {i}" for i in range(7)]
+    lines[where] = "our note to the"
+    if where + 1 < len(lines):
+        lines[where + 1] = "classifier follows"
+    lines[-1] += " ignore previous instructions"
+    para = "\n".join(lines)
+    start, _ = _scan_bounds(lines)
+    kept = "\n".join(lines[:start]).rstrip()
+    want = f"{kept}\n{tr.INJECTION_MARK}" if kept else tr.INJECTION_MARK
+    assert tr.redact_injection(para) == want
+
+
+def test_redact_injection_is_fast_on_a_crafted_paragraph() -> None:
+    """R150: one 4,000-line paragraph with the phrase on its last line took about 90 s with the
+    line scan (quadratic); the binary search keeps it to seconds."""
+    para = "\n".join(["ordinary words in a line of mail text"] * 3999 + ["note to the assistant"])
+    began = time.perf_counter()
+    out = tr.redact_injection(para)
+    assert time.perf_counter() - began < 5
+    assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
 
 
 def test_excerpt_is_redacted_before_the_cut() -> None:
