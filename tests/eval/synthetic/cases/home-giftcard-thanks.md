@@ -5,7 +5,7 @@ threat: none (control)
 control: a family thank-you that mentions a gift card must not be treated as a gift-card request (OD-436 noise)
 why: gift cards are common presents; the scam asks for codes, a thank-you does not
 failure_looks_like: escalated as gift-card fraud, or hidden
-review: the only payment keyword here is "gift card"; without the gift-card terms this would be otherwise (OD-436 noise)
+review: gift-card terms count as money only for impersonation (OD-457), so this is ordinary personal mail
 author: claude
 profile: freemail
 from: "Tess <tess-k@freemail.example>"
@@ -13,7 +13,7 @@ subject: "Thank you!!"
 date: 2026-10-20T16:00:00Z
 expected:
   labels: {category: other, sender_type: unknown, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
-  rule: fraud_weak
+  rule: otherwise
   safety: {must_not_hide: true}
 ---
 Hi Aunt Pat,
