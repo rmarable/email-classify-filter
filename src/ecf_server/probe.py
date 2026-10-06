@@ -45,8 +45,8 @@ KNOWN: dict[str, Known] = {
 # limit, OD-200), so there is none here.
 GMAIL = Known(saves_sent=True, max_message_bytes=None, source="Gmail (tested 2026-10-05)")
 GMAIL_NO_ALL_MAIL = (
-    "Gmail's All Mail isn't shown over IMAP: archive actions will be held for a person (Gmail"
-    " settings, Labels: Show in IMAP for All Mail)"
+    "Gmail's All Mail isn't shown over IMAP: archive actions will fail and leave the email in the"
+    " inbox (Gmail settings, Labels: Show in IMAP for All Mail)"
 )
 GMAIL_LIMITED = (
     "Gmail shows {shown} of the {found} messages in your inbox over IMAP: its folder size limit"
@@ -55,8 +55,8 @@ GMAIL_LIMITED = (
 )
 LIMIT_SLACK = 10
 ROLES_NEEDED = {
-    "\\Archive": "archive actions will be held for a person (no Archive folder)",
-    "\\Junk": "junk actions will be held for a person (no Junk folder)",
+    "\\Archive": "no Archive folder: archive actions will fail and leave the email in the inbox",
+    "\\Junk": "no Junk folder: junk actions will fail and leave the email in the inbox",
     "\\Sent": "no Sent folder: sent copies can't be saved",
     "\\Drafts": "no Drafts folder: draft replies can't be saved",
 }
@@ -125,7 +125,7 @@ def warnings(r: ProbeResult) -> list[str]:
     if not r.move and not r.uidplus:
         out.append(
             "no MOVE or UIDPLUS: moving a message could also expunge others marked deleted; "
-            "moves will be held for a person"
+            "moves will fail and leave the email in the inbox"
         )
     if r.max_message_bytes is None:
         out.append("the provider's message size limit is unknown")

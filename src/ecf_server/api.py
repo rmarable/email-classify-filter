@@ -1940,14 +1940,24 @@ def _remove_address(state: ServiceState, ref: str, nonce: str | None) -> dict[st
 
 
 def _planned_channel(state: ServiceState, address_id: str) -> str | None:
-    """The channel name an added address will get once Slack is installed and you're confirmed
-    (the Slack thread creates it within a minute; the name may gain a suffix if taken)."""
+    """The channel name an added address gets within a minute (the name may gain a suffix if
+    taken), or None when the Slack thread won't create it: Slack counts as installed only with its
+    IDs and both tokens (as the runtime starts it), and channels wait for your confirmed member ID
+    (slack_routes.ensure)."""
     conn = state.connect()
     try:
-        installed = slack_admin.identity(conn) is not None
+        ident = slack_admin.identity(conn)
     finally:
         conn.close()
-    return slack_routes.channel_name(state.install, address_id) if installed else None
+    store = state.secrets
+    ready = (
+        ident is not None
+        and bool(ident.member)
+        and store is not None
+        and bool(store.get(slack_admin.BOT_SECRET))
+        and bool(store.get(slack_admin.APP_SECRET))
+    )
+    return slack_routes.channel_name(state.install, address_id) if ready else None
 
 
 MAX_BODY = 64 * 1024

@@ -343,7 +343,7 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
     }
     r = call(st, "POST", "/v1/addresses", body)
     assert r.status_code == 201, r.text
-    assert GOOD not in r.text
+    assert GOOD not in r.text and r.json()["slack_channel"] is None  # no Slack: none coming
     listed = call(st, "GET", "/v1/addresses").json()
     assert listed["org_domains"] == ["acme.example"] and len(listed["addresses"]) == 1
     assert listed["org_addresses"] == 0 and "gmail.com" in listed["public_domains"]
@@ -362,7 +362,10 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
 def test_api_names_the_slack_channel_and_archives_it_on_removal(
     conn: sqlite3.Connection, db_path: Path
 ) -> None:
-    st = make_state(db_path, MemorySecretStore())
+    secrets = MemorySecretStore()
+    secrets.set(slack_admin.BOT_SECRET, "xoxb-test")
+    secrets.set(slack_admin.APP_SECRET, "xapp-test")
+    st = make_state(db_path, secrets)
     now = "2026-10-01T12:00:00.000000Z"
     with write_tx(conn):
         for k, v in (("slack_app_id", "A1"), ("slack_team_id", "T1"),
@@ -378,6 +381,32 @@ def test_api_names_the_slack_channel_and_archives_it_on_removal(
     assert r.status_code == 200 and r.json()["slack_channel_archived"] == "ecf-t-ap"
     job = conn.execute("SELECT payload FROM jobs WHERE queue = 'slack_out'").fetchone()
     assert json.loads(job["payload"])["op"] == "archive"
+
+
+@pytest.mark.parametrize("missing", ["tokens", "member"])
+def test_api_names_no_slack_channel_when_slack_cant_create_it(
+    conn: sqlite3.Connection, db_path: Path, missing: str
+) -> None:
+    """V1.6 closing run: `address add` said a channel was coming on an install whose database still
+    had Slack's IDs but whose tokens were gone. The channel is named only when the Slack thread
+    would create it: IDs, both tokens and a confirmed member ID."""
+    secrets = MemorySecretStore()
+    if missing != "tokens":
+        secrets.set(slack_admin.BOT_SECRET, "xoxb-test")
+        secrets.set(slack_admin.APP_SECRET, "xapp-test")
+    st = make_state(db_path, secrets)
+    now = "2026-10-01T12:00:00.000000Z"
+    rows = [("slack_app_id", "A1"), ("slack_team_id", "T1")]
+    if missing != "member":
+        rows.append(("slack_member_id", "U0ME1"))
+    with write_tx(conn):
+        for k, v in rows:
+            slack_admin.put_setting(conn, k, v, now, actor="test")
+    body = {"email": "ap@acme.example", "imap_host": "imap.acme.example",
+            "sensitivity": "standard", "preset": "A", "app_password": GOOD,
+            "org_domains": ["acme.example"]}  # fmt: skip
+    r = call(st, "POST", "/v1/addresses", body)
+    assert r.status_code == 201 and r.json()["slack_channel"] is None
 
 
 def test_api_rejects_bad_bodies_and_non_cli_callers(
