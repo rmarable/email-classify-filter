@@ -58,7 +58,13 @@ jobs:
       - run: uv sync --locked
       - name: license allow-list (runtime dependencies)
         run: uv run python scripts/check_licenses.py
-      - name: build and hash
+      # Reproducible build (SPEC §17.4, §1.5 item 6): two builds from this commit must match.
+      - name: build twice and compare hashes
         run: |
-          uv build -o dist
-          sha256sum dist/* | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run python scripts/release_build.py --out "$RUNNER_TEMP/build-a"
+          uv run python scripts/release_build.py --out "$RUNNER_TEMP/build-b"
+          cmp "$RUNNER_TEMP/build-a/SHA256SUMS" "$RUNNER_TEMP/build-b/SHA256SUMS"
+          cmp "$RUNNER_TEMP/build-a/release-manifest.json" "$RUNNER_TEMP/build-b/release-manifest.json"
+          (cd "$RUNNER_TEMP/build-a" && sha256sum --check --strict SHA256SUMS)
+          (cd "$RUNNER_TEMP/build-b" && sha256sum --check --strict SHA256SUMS)
+          cat "$RUNNER_TEMP/build-a/SHA256SUMS" | tee -a "$GITHUB_STEP_SUMMARY"
