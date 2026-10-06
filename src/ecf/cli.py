@@ -863,7 +863,9 @@ RootOpt = Annotated[Path, typer.Option("--root", help="The synthetic set folder.
 @eval_app.command("new-case")
 def eval_new_case(
     case_id: Annotated[str, typer.Argument(help="Card id, e.g. bec-002.")],
-    template: Annotated[str, typer.Option("--template", help="bec, injection, header or control.")],
+    template: Annotated[
+        str, typer.Option("--template", help="bec, injection, header, control or freemail.")
+    ],
     root: RootOpt = EVAL_ROOT,
 ) -> None:
     """Write a new case card from a template (edit it, then `ecf eval build`)."""

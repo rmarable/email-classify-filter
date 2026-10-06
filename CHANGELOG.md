@@ -5,6 +5,12 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## ms-v1.6-gmail (not yet tagged)
 
+- New Gmail setup guide (`docs/gmail-setup.md`): 2-Step Verification, creating and revoking an app password, accounts that can't have one, the Gmail settings ecf needs, and watching someone else's account only with its owner's agreement. The admin guide gains a Gmail section, the operator guide explains cards for mail pretending to be someone you work with, and the README names Gmail as supported (OD-425, OD-427).
+- Cards and `ecf item show` name the listed address when mail claims to be one of your org addresses: an unauthenticated message from it (trigger 6) or a display name matching a listed person (trigger 7).
+- Mail pretending to be someone you work with, escalated without payment wording, is titled "Possible fraud", not "Regulatory mail"; the digest lists such mail in its own section.
+- A forward target that isn't internal is refused with "must be in org_domains or exactly in org_addresses"; a public provider domain in `org_domains` points you to `org_addresses` (OD-437, OD-441).
+- For a Gmail address, `ecf destroy` and the Mailbox Login Rejected alert point to Google's app passwords page, and the alert says a password change revokes app passwords and 2-Step Verification must stay on; `ecf address add --help` describes Gmail.
+- `ecf eval new-case --template freemail` writes a card for the freemail profile; the synthetic set gains 26 personal-mail cards (12 impersonation, 14 ordinary), waiting for your labels (OD-443).
 - Country domains of the big mail providers (`outlook.fr`, `hotmail.de`, `yahoo.co.uk`, `gmx.de`, …) and a few more providers (`web.de`, `tuta.com`, `laposte.net`, …) now count as public mail providers: mail from them is no longer flagged as a lookalike of `outlook.com` or `yahoo.com`, and none can be an org domain. `yandex.com` is no longer on the list (OD-455).
 - Eval cards can now be addressed to a personal free-mail account (`profile: freemail`) as well as the fictitious organization; `ecf rules test`, `ecf eval run` and `/ecf-eval` set up each profile's org addresses, so impersonation counts toward the fraud-guard gate. A card can no longer set the internal-set facts itself (OD-443).
 - Changed: ecf now needs Python 3.12.6 or newer (was 3.12). Earlier 3.12 releases parse some malformed email addresses differently (CVE-2023-27043); `ecf doctor` fails the python check on them (OD-454).
