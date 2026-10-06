@@ -311,7 +311,7 @@ def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
     mine, forged = facts_of
     assert mine["self_sent"] and mine["from_org_address"] and mine["triggers"]["fraud"] == []
     assert not forged["self_sent"]
-    why = "From is one of your org addresses but isn't authenticated"
+    why = f"From is {me}, one of your org addresses, but isn't authenticated"
     assert why in forged["triggers"]["fraud"]
 
 

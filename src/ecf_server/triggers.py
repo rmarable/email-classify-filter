@@ -275,7 +275,7 @@ def _other_triggers(
             and found.get("from_org_address")
             and auth != "pass"
             and not found.get("self_sent"),
-            "From is one of your org addresses but isn't authenticated",
+            f"From is {parsed.from_addr}, one of your org addresses, but isn't authenticated",
         ),
         (display is not None, f"display name shows {display}"),  # 7
         (parsed.from_count > 1, "more than one From header"),  # 8
@@ -316,8 +316,8 @@ def impersonation(
     for e in entries:  # 1. a listed name, every word in any order (OD-433)
         need = internal.name_words(e.name or "")
         if len(need) >= 2 and words.issuperset(need):  # names have at least 2 words
-            out.append(f"display name matches {e.name}, one of your org addresses,"
-                       f" but the sender is {sender}")  # fmt: skip
+            out.append(f"display name matches {e.name} ({e.address}), one of your org"
+                       f" addresses, but the sender is {sender}")  # fmt: skip
             break
     shown = _display_addresses(parsed.from_name)  # 2. an internal address in the display name
     inside = [a for a in shown if internal.listed(a, entries)

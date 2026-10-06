@@ -145,6 +145,16 @@ def test_severity_puts_a_known_sender_with_a_bank_change_first() -> None:
     assert cards.severity(FRAUD | {"quarantined": True}) == 1
 
 
+def test_impersonation_without_a_payment_keyword_is_a_fraud_card() -> None:
+    """V1.6: rule 1 escalates it on payment_related alone, with `fraud` empty; the card said
+    "Regulatory mail"."""
+    why = "display name matches Pat Lee (patlee@gmail.com), one of your org addresses, but ..."
+    imp = REGULATOR | {"triggers": {"fraud": [], "fraud_weak": [why], "regulator": [],
+                                    "impersonation": [why]}}  # fmt: skip
+    assert cards.kind(imp) == "fraud" and cards.severity(imp) == 1
+    assert cards.kind(REGULATOR) == "regulator"
+
+
 # ---- posting --------------------------------------------------------------------------------
 
 

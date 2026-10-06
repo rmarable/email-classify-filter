@@ -255,10 +255,11 @@ def _forwards(
         local, domain = addresses.parse_email(str(addr))
         email = f"{local}@{domain}"
         if domain not in org and email.lower() not in {x["address"] for x in listed}:
-            raise InvalidInputError(f"config: forward_allow_list: {addr} isn't in org_domains or"
-                                    " org_addresses (forwards stay with people you work with;"
-                                    " to remove an org domain or address a forward needs,"
-                                    " remove the forward too)")  # fmt: skip
+            raise InvalidInputError(f"config: forward_allow_list: {addr} must be in org_domains"
+                                    " or exactly in org_addresses (forwards stay with people you"
+                                    " work with; a Gmail address with other dots or a +tag"
+                                    " doesn't match; to remove an org domain or address a"
+                                    " forward needs, remove the forward too)")  # fmt: skip
         if email.lower() in monitored:
             raise InvalidInputError(f"config: forward_allow_list: {addr} is a monitored address"
                                     " (a forward there would be fetched again)")  # fmt: skip

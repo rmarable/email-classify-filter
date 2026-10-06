@@ -97,6 +97,31 @@ def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.
     assert card["note"].startswith("This acts on the email only.")
 
 
+def test_impersonation_without_money_has_its_own_digest_section(conn: sqlite3.Connection) -> None:
+    """V1.6: it was listed as "first-time sender asking for payment"."""
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    assert digests.run(conn, clock) == 0
+    clock.advance(600)
+    why = "display name matches Pat Lee (patlee@gmail.com), one of your org addresses, but ..."
+    _item(conn, clock, "e" * 64, WEAK | {"triggers": {"fraud_weak": [why],
+                                                      "impersonation": [why]}})  # fmt: skip
+    _item(conn, clock, "a" * 64, WEAK)
+    clock.advance(3000)
+    assert digests.run(conn, clock) == 1
+    card = _posts(conn)[0]["card"]
+    text = card["text"].splitlines()
+    assert text[2:7] == [
+        "Pretending to be someone you work with (no payment wording found):",
+        text[3],
+        "",
+        "Weak fraud signals (first-time sender asking for payment):",
+        text[6],
+    ]
+    assert text[3].startswith("eeeeeeee") and text[6].startswith("aaaaaaaa")
+    assert card["note"].startswith("This acts on the email only.")
+
+
 def test_the_digest_and_daily_summary_say_an_eval_holds_the_model(
     conn: sqlite3.Connection,
 ) -> None:

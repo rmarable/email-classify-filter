@@ -362,7 +362,7 @@ def gmail(sender: str, body: str = "Can you help me with something?") -> dict[st
 def test_an_unauthenticated_org_address_is_trigger_6_unless_gmail_says_it_sent_it() -> None:
     """OD-446: gmail.com is p=none, so a forged listed address arrives `none`; the account's own
     note to itself (Gmail's Sent label) is the exception."""
-    why = "From is one of your org addresses but isn't authenticated"
+    why = "From is patlee@gmail.com, one of your org addresses, but isn't authenticated"
     kw: dict[str, Any] = gmail("patlee@gmail.com") | {"from_org_address": True}
     assert why in fire("", auth_result="none", **kw).fraud
     assert why not in fire("", **kw).fraud  # pass
@@ -390,6 +390,26 @@ def test_impersonation(sender: str, matched: str) -> None:
     # no money: weak, rule 1b (OD-436); another domain in the display name is also trigger 7's
     # domain clause, a fraud trigger as before (OD-205)
     assert t.fraud_weak == t.impersonation and not set(t.impersonation) & set(t.fraud)
+
+
+@pytest.mark.parametrize(
+    ("sender", "why"),
+    [
+        ('"Pat Lee" <random123@gmail.com>', "display name matches Pat Lee (patlee@gmail.com), one"
+         " of your org addresses, but the sender is random123@gmail.com"),
+        ('"patlee@gmail.com" <random123@gmail.com>', "display name shows patlee@gmail.com, an"
+         " internal address, but the sender is random123@gmail.com"),
+        ("Someone <patlea@gmail.com>",
+         "patlea@gmail.com looks like patlee@gmail.com, one of your org addresses"),
+        ("Someone <pat.lee@outlook.com>",
+         "pat.lee@outlook.com looks like patlee@gmail.com, one of your org addresses"),
+    ],
+)  # fmt: skip
+def test_the_impersonation_reason_names_the_listed_person_and_the_sender(
+    sender: str, why: str
+) -> None:
+    """The card's "Why:" and `ecf item show` say what matched (V1.6 step 8)."""
+    assert fire("", **gmail(sender)).impersonation == [why]
 
 
 def test_impersonation_about_money_is_a_fraud_trigger() -> None:

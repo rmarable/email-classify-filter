@@ -22,6 +22,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+from ecf_server import internal
 from ecf_server.checks import CheckReport
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -114,7 +115,7 @@ def after_check(
                 "login_rejected",
                 aid,
                 f"{aid}: the provider rejected the app password {failures} times; retrying "
-                f"hourly. Fix: ecf address set {aid} --app-password",
+                f"hourly. Fix: ecf address set {aid} --app-password" + _gmail_hint(conn, aid),
             )
     elif report.status == "error":
         since = since or now
@@ -156,6 +157,16 @@ def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def _running(conn: sqlite3.Connection, aid: str) -> bool:
     row = conn.execute("SELECT paused FROM addresses WHERE address_id = ?", (aid,)).fetchone()
     return row is not None and not row["paused"]
+
+
+def _gmail_hint(conn: sqlite3.Connection, aid: str) -> str:
+    """What to check before making a new Google app password (V1.6, §13.3)."""
+    row = conn.execute("SELECT email FROM addresses WHERE address_id = ?", (aid,)).fetchone()
+    if row is None or not internal.is_gmail(internal.split(row["email"])[1]):
+        return ""
+    return (" (Gmail: Google revokes app passwords when the account's password changes, and they"
+            " work only while 2-Step Verification is on; check both, then make a new one at"
+            f" {internal.GOOGLE_APP_PASSWORDS})")  # fmt: skip
 
 
 def _download_budget(
