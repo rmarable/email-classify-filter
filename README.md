@@ -62,6 +62,9 @@ where you can install an app; an IMAP mailbox with app passwords (Purelymail is 
 365 isn't supported, as it needs OAuth); Ollama for presets A and B; Claude Code and a separate
 Claude login for presets B and C.
 
+Personal Gmail accounts (gmail.com) are supported over IMAP with an app password; Google
+Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
+
 The supported install will be:
 
 ```sh
@@ -147,6 +150,7 @@ SPEC §12; [`SECURITY.md`](SECURITY.md) summarizes it. We recommend:
 - [`SPEC.md`](SPEC.md): the v1 specification (authoritative).
 - [`docs/adr/`](docs/adr/): decision records.
 - [`CHANGELOG.md`](CHANGELOG.md): changes, newest first.
+- [`docs/gmail-setup.md`](docs/gmail-setup.md): setting up a personal Gmail account for ecf.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how to work on ecf.
 - [`docs/CURRENT-DESIGN-PLAN.md`](docs/CURRENT-DESIGN-PLAN.md): the latest design plan, including
   the roadmap (AWS mode, teams, remote access, always-on).
