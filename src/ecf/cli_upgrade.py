@@ -1,16 +1,24 @@
-"""`ecf upgrade` (SPEC §11.10; OD-310, OD-374 to OD-382; V1.5 step 11a: the checks).
+"""`ecf upgrade` (SPEC §11.10; OD-310, OD-374 to OD-382; V1.5 step 11a: the checks; release source
+per operator decision D7, 2026-10-06).
 
-Until the first release publishes an index (OD-272), `ecf upgrade` with no arguments refuses and
-`--wheel <file>` upgrades a test install (a `prod` install refuses `--wheel`; OD-374). Before
-anything stops, `--check` (and from step 11b every upgrade) checks: this ecf runs from a `uv tool`
-environment whose wheel is still there (OD-380); the wheel's `release.json` against this install
-(OD-375); nothing executing, no lease held, no `ecf claude` session and no `ecf watch` (OD-379);
-and lists model pins that change and the addresses that will drop to `assist` (OD-381).
+**Where the new version comes from:** `ecf upgrade` with no arguments takes the newest stable
+GitHub release newer than this one, and `ecf upgrade --to vX.Y.Z[-rcN]` a named one (release
+candidates only by name); both download it with `gh` and verify it (release_source.py) into
+`<data>/releases/<tag>/`, where it stays as the installed wheel. `--to` with an *older* version
+goes back to this install's snapshot from that upgrade (step 11c), never to a download.
+`--wheel <file>` upgrades a test install from a local file (a `prod` install refuses it; OD-374),
+optionally checked against a `SHA256SUMS` file (`--sha256sums`; an integrity check only, so prod
+still refuses it). Before anything stops, `--check` (and every upgrade) checks: this ecf runs from
+a `uv tool` environment whose wheel is still there (OD-380); the wheel's `release.json` against
+this install (OD-375), and for a release, that it names the release's version; nothing
+executing, no lease held, no `ecf claude` session and no `ecf watch` (OD-379); and lists model
+pins that change and the addresses that will drop to `assist` (OD-381).
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -18,13 +26,16 @@ from typing import Annotated, Any
 
 import typer
 
-from ecf import __version__, upgrade_check, upgrade_run, watch
+from ecf import __version__, release_source, upgrade_check, upgrade_run, watch
 from ecf.client import LocalClient
+from ecf.errors import InvalidInputError
 from ecf.paths import Paths
 from ecf.service_unit import manager_for
 
-NO_INDEX = ("no ecf release index exists yet, so there's nothing to upgrade to: test installs"
-            " can use ecf upgrade --wheel <file>")  # fmt: skip
+
+def _gh() -> release_source.Gh:
+    """The GitHub CLI; tests replace this."""
+    return release_source.Gh()
 
 
 def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
@@ -33,23 +44,47 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         wheel: Annotated[
             str | None, typer.Option("--wheel", help="A wheel file (test installs).")
         ] = None,
+        sums: Annotated[
+            str | None,
+            typer.Option("--sha256sums", help="Check --wheel against this SHA256SUMS file."),
+        ] = None,
         to: Annotated[
-            str | None, typer.Option("--to", help="Go back to an earlier version.")
+            str | None,
+            typer.Option(
+                "--to", help="A release tag (vX.Y.Z), or an earlier version to go back to."
+            ),
         ] = None,
         check: Annotated[bool, typer.Option("--check", help="Only run the checks.")] = False,
         cont: Annotated[bool, typer.Option("--continue", hidden=True)] = False,
     ) -> None:
-        """Upgrade ecf from a wheel file (test installs), or go back with --to."""
+        """Upgrade ecf to the newest release (or --to a named one), or go back with --to."""
         if cont:  # phase 2, run by the new version (upgrade_run.py)
             _continue(paths())
             return
-        if to is not None:
-            _back(paths(), to)
-            return
-        if wheel is None:
-            typer.echo(NO_INDEX, err=True)
-            raise typer.Exit(1)
-        rel, report, problems = preflight(paths(), Path(os.path.expanduser(wheel)).absolute())
+        if sums is not None and wheel is None:
+            raise InvalidInputError("--sha256sums checks a --wheel file")
+        if wheel is not None and to is not None:
+            raise InvalidInputError("use --wheel or --to, not both")
+        tag: str | None = None
+        if wheel is not None:
+            new = Path(os.path.expanduser(wheel)).absolute()
+            if sums is not None:
+                release_source.check_sums_file(new, Path(os.path.expanduser(sums)))
+                typer.echo(f"{new.name} matches {Path(sums).name}")
+        else:
+            back, tag = _target(to)
+            if back is not None:
+                _back(paths(), back)
+                return
+            got = _download(paths(), tag)
+            if got is None:
+                return
+            new, tag = got
+        rel, report, problems = preflight(paths(), new,
+                                          source="wheel" if tag is None else "release")  # fmt: skip
+        if tag is not None and rel.version != release_source.tag_version(tag):
+            problems.append(f"the wheel's release.json says {rel.version}, not"
+                            f" {release_source.tag_version(tag)}")  # fmt: skip
         _print(rel, report, problems)
         if problems:
             raise typer.Exit(1)
@@ -66,8 +101,62 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                           affected=report.affected)  # fmt: skip
 
 
+def _target(to: str | None) -> tuple[str | None, str | None]:
+    """(an older version to go back to, None) or (None, the release tag to fetch; None for the
+    newest). Going back takes a tag or a version (snapshot folders are named by version); going
+    forward takes only a release tag."""
+    if to is None:
+        return None, None
+    version = release_source.tag_version(to) if to.startswith("v") else to
+    order, now = upgrade_check.version_key(version), upgrade_check.version_key(__version__)
+    if order < now:
+        return version, None
+    if order == now:
+        raise InvalidInputError(f"ecf {__version__} is already installed")
+    if not release_source.is_tag(to):
+        want = release_source.version_tag(version)
+        raise InvalidInputError(
+            "--to takes a release tag to upgrade to"
+            + (f" ({want})" if want else "; use --wheel for a build")
+        )
+    return None, to
+
+
+def _download(p: Paths, tag: str | None) -> tuple[Path, str] | None:
+    """Pick (when `tag` is None), download and verify a release; None when nothing is newer."""
+    gh = _gh()
+    if tag is None:
+        found = release_source.newest(release_source.list_releases(gh), __version__)
+        if found is None:
+            typer.echo(f"ecf {__version__} is the newest release; nothing to upgrade to")
+            return None
+        tag = found.tag
+    typer.echo(f"downloading {tag} from {gh.repo}")
+    releases = p.data_dir / "releases"
+    _prune(releases, keep=tag)
+    wheel = release_source.fetch(gh, tag, releases / tag)
+    typer.echo(f"{wheel.name}: sha256 matches the release's manifest and SHA256SUMS")
+    return wheel, tag
+
+
+def _prune(releases: Path, *, keep: str) -> None:
+    """Earlier downloads, except the one this ecf was installed from (kept for a rollback)."""
+    if not releases.is_dir():
+        return
+    installed = upgrade_check.this_install().wheel
+    for d in releases.iterdir():
+        if d.name == keep or (installed is not None and installed.parent == d):
+            continue
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def preflight(
-    paths: Paths, wheel: Path, *, install: upgrade_check.Install | None = None
+    paths: Paths,
+    wheel: Path,
+    *,
+    install: upgrade_check.Install | None = None,
+    source: str = "wheel",
 ) -> tuple[upgrade_check.Release, upgrade_check.Report, list[str]]:
     """Every check that comes before stopping anything; returns the problems (empty: go)."""
     problems: list[str] = []
@@ -77,9 +166,9 @@ def preflight(
     rel = upgrade_check.read_wheel(wheel)
     with LocalClient(paths) as c:
         state: dict[str, Any] = c.get("/v1/upgrade/state")
-    if state.get("install_role") == "prod":
-        problems.append("a prod install upgrades only from published releases (none yet);"
-                        " --wheel is for test installs")  # fmt: skip
+    if source == "wheel" and state.get("install_role") == "prod":
+        problems.append("a prod install upgrades only from published releases (ecf upgrade, or"
+                        " ecf upgrade --to vX.Y.Z); --wheel is for test installs")  # fmt: skip
     report = upgrade_check.compare(state, rel, __version__)
     problems += report.problems + busy_problems(paths, state)
     return rel, report, problems

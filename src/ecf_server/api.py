@@ -170,6 +170,8 @@ class ServiceState:
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
     watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
+    # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
+    watch_releases: model_watch.Releases | None = field(default=None, repr=False)
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)

@@ -42,12 +42,15 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "dev":
             raise SystemExit(_run_dev(args))
         if args.command == "local":
+            from ecf_server import model_watch  # noqa: PLC0415
             from ecf_server.service import Options, Service  # noqa: PLC0415
 
             opts = Options()
             if args.tick_seconds is not None:
                 opts = Options(args.tick_seconds, args.watchdog_seconds or opts.watchdog_seconds)
-            raise SystemExit(Service(paths, opts=opts).run())
+            svc = Service(paths, opts=opts)
+            svc.state.watch_releases = model_watch.gh_releases  # tests' services don't run gh
+            raise SystemExit(svc.run())
         if args.command in ("snapshot", "downgrade-prepare"):
             sys.stdout.write(f"{_upgrade_files(args.command, paths, args.label)}\n")
             return

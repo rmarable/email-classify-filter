@@ -355,7 +355,8 @@ class Service:
         (SPEC §7.6; V1.4 step 10)."""
         if model_watch.due(conn, self.clock):
             model_watch.start(self.state.connect, self.clock, self.state.notifier,
-                              self.state.secrets, self.state.watch_http)  # fmt: skip
+                              self.state.secrets, self.state.watch_http,
+                              releases=self.state.watch_releases)  # fmt: skip
 
     def _export(self, conn: sqlite3.Connection) -> None:
         """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""

@@ -4,6 +4,7 @@ from `models.lock`, the optional Models API, the Ollama library's tags, the dail
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
 from collections.abc import Callable
@@ -14,9 +15,11 @@ from typing import Any
 import httpx
 import pytest
 
+from ecf import __version__
 from ecf.cli_models import watch_lines
 from ecf.doctor import Level, judge_model_watch
 from ecf.errors import ConflictError, InvalidInputError
+from ecf.release_source import ReleaseError, ReleaseInfo
 from ecf_server import claude_pins, daily, db, health, model_watch
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -340,3 +343,41 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
     assert any(c.detail == "the Models API failed: HTTP 503"
                for c in judge_model_watch({"model_watch": st}, today))  # fmt: skip
     assert datetime.fromisoformat(str(st["next_at"]).replace("Z", "+00:00")) > clock.now()
+
+
+# ---- ecf releases (operator decision D7, 2026-10-06) -------------------------------------------
+
+
+def test_a_newer_release_goes_on_the_daily_summary_once(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def never(_r: httpx.Request) -> httpx.Response:
+        raise AssertionError("no request expected")
+
+    found = [ReleaseInfo("v1.0.0", False), ReleaseInfo("v1.1.0-rc1", True)]
+    run = functools.partial(model_watch.run, conn, clock, FakeNotifier(), _store(None),
+                            _http(never))  # fmt: skip
+    st = run(releases=lambda: found)
+    assert st["release"]["newest"] == "v1.0.0" and st["release"]["error"] is None
+    line = f"ecf 1.0.0 is out (this is {__version__}): `ecf upgrade` checks it, then asks."
+    assert line in model_watch.daily_lines(conn)
+    assert "  ecf releases: v1.0.0 is out (ecf upgrade), read 2026-10-01" in watch_lines(st)
+    with write_tx(conn):
+        model_watch.mark_reported(conn, to_ts(clock.now()))
+    run(releases=lambda: found)
+    assert model_watch.daily_lines(conn) == []  # once
+    found.append(ReleaseInfo("v1.0.1", False))
+    run(releases=lambda: found)
+    assert any("ecf 1.0.1 is out" in x for x in model_watch.daily_lines(conn))
+
+    def signed_out() -> list[ReleaseInfo]:
+        raise ReleaseError("gh isn't signed in to GitHub; run gh auth login")
+
+    st = run(releases=signed_out)
+    assert st["release"]["error"].startswith("gh isn't signed in") and _alerts(conn) == {}
+    assert "  ecf releases: couldn't list them (gh isn't signed in" in watch_lines(st)[-1]
+    monkeypatch.setattr(health, "resolves", _resolves(False))
+    st = run(releases=lambda: pytest.fail("not called offline"))
+    assert st["next_at"] == to_ts(clock.now() + timedelta(hours=1))
+    st = run()  # no lister (tests' services, `ecf-server dev`): nothing about releases
+    assert st["next_at"] == to_ts(clock.now() + timedelta(days=7))

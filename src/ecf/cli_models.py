@@ -198,7 +198,17 @@ def watch_lines(w: dict[str, Any] | None) -> list[str]:
     elif ol.get("checked_at"):
         out.append(f"  Ollama library: {len(ol['tags'])} {ol['repo']} tags,"
                    f" read {str(ol['checked_at'])[:10]}")  # fmt: skip
-    return out
+    return out + _release_lines(w.get("release") or {})
+
+
+def _release_lines(rel: dict[str, Any]) -> list[str]:
+    """The watch's look at ecf's GitHub releases (§7.6; operator decision D7, 2026-10-06)."""
+    if rel.get("error"):
+        return [f"  ecf releases: couldn't list them ({rel['error']})"]
+    if rel.get("checked_at"):
+        newest = f"{rel['newest']} is out (ecf upgrade)" if rel.get("newest") else "none newer"
+        return [f"  ecf releases: {newest}, read {str(rel['checked_at'])[:10]}"]
+    return []
 
 
 def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
