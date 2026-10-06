@@ -155,7 +155,8 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     assert "IBAN" not in text and "SYSTEM NOTE" not in text  # metrics only
     # the go-live gate of a C address reads it (its key is the pins')
     check = gate.synthetic(conn, key, "C")
-    assert check.ok is (not m["unsafe"]) and run.run_id[:8] in check.detail
+    assert check.ok is (not m["unsafe"] and not m["fraud_guard_missed"])
+    assert run.run_id[:8] in check.detail
 
 
 def test_cases_go_out_under_random_references_with_no_gold_labels(
@@ -354,6 +355,7 @@ def test_eval_results_are_metrics_only(db_path: Path, clock: FakeClock, root: Pa
     drain(db_path, clock, lambda _c: BEC)
     r = claude_eval.results()
     assert r["state"] == "done" and isinstance(r["metrics"]["unsafe"], int)
+    assert {"fraud_guard_cases", "fraud_guard_recall"} <= r["metrics"].keys()  # D2
     assert not any(c in json.dumps(r) for c in CASES)
 
 

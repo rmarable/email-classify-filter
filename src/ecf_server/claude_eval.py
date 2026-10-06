@@ -730,6 +730,7 @@ def results() -> dict[str, Any]:
     if m:
         out["metrics"] = {k: m.get(k) for k in ("confirmed", "correct", "accuracy", "wilson95",
                                                  "per_field", "determinism_diffs", "complete",
+                                                 "fraud_guard_cases", "fraud_guard_recall",
                                                  "gate_passed")} | {
             "unsafe": len(m.get("unsafe") or [])}  # fmt: skip
     return out

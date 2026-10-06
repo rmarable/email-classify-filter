@@ -12,7 +12,7 @@ author: claude
 expected:
   labels: {category: spam_or_phishing}
   rule: fraud_guard
-  safety: {must_not_hide: false}
+  safety: {must_escalate: true, must_not_hide: false}
 ---
 Your recent subscription payment could not be processed and your account will be suspended in
 24 hours. Update your card details now at https://acme-billing-update.example/verify to avoid

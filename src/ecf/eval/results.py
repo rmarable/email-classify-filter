@@ -29,6 +29,7 @@ class CaseResult(BaseModel):
     # values only, never text (OD-259); empty in older files
     got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
     fraud: bool = False  # expects fraud_guard/fraud_weak or an escalation; False in older files
+    fraud_guard: bool = False  # expects fraud_guard (recall, §16.5); False in older files
 
 
 class ResultFile(BaseModel):
