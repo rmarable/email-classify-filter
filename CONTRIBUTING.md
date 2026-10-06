@@ -41,7 +41,8 @@ uv sync            # creates .venv from uv.lock, including dev tools and the [ev
 uv run ruff check . && uv run ruff format --check .
 uv run pyright                                  # strict everywhere (src, tests, scripts)
 uv run lint-imports                             # the client (ecf) never imports ecf_server
-uv run pytest                                   # everything this OS can run
+uv run pytest -n auto                           # everything this OS can run, in parallel
+uv run pytest                                   # the same, one test at a time
 uv run pytest -m "not macos"                    # what CI runs (Linux)
 uv run pytest -m imap                           # the IMAP adapter against Dovecot
 uv run pytest tests/test_state_machine.py::test_edges_match_spec   # one test
@@ -90,7 +91,7 @@ uv build                                        # wheel + sdist
    them in `src/ecf_server/data/models.lock`'s `lifecycle` and release) or a page changed format (fix
    the parser and refresh `tests/canary/`); SPEC §7.6.
 3. **macOS merge gate:** before any merge to `main`, run the full suite on a Mac
-   (`uv run pytest`) and put the result in the merge commit message, e.g.
+   (`uv run pytest -n auto -rs`) and put the result in the merge commit message, e.g.
    `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`.
 4. Commit messages end with exactly one trailer: `Co-Authored-By: Claude <noreply@anthropic.com>`
    when Claude contributed (see `CLAUDE.md`).
