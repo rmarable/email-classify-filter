@@ -45,7 +45,11 @@ MIN_CLAUDE = (2, 1, 242)
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
 MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results", "Agent"]
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
-BUILTIN_AGENTS = ("general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide")
+# `claude` appeared in a later Claude Code (2.1.291): the first /ecf-eval run handed its loop to
+# it (v1.0.0, 2026-10-06). Claude Code can deny agents only by name, so the service also stops a
+# session that runs any built-in agent (telemetry.stopped).
+BUILTIN_AGENTS = ("general-purpose", "claude", "Explore", "Plan", "statusline-setup",
+                  "claude-code-guide")  # fmt: skip
 DENIED_TOOLS = [
     "Bash",
     "WebFetch",

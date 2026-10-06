@@ -80,7 +80,7 @@ def test_settings_document() -> None:
     assert not any(t.startswith("mcp__ecf__") and t.endswith(("get_message", "propose_action"))
                    for t in allow)  # fmt: skip
     for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
-                 "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
+                 "Agent(claude)", "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
     assert "hooks" not in d
 

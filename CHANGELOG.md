@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- Fixed: `ecf claude` also denies Claude Code's built-in `claude` agent, and `/ecf-eval` and `/ecf-review` stop if any built-in agent runs in the session, naming it; a Claude eval had spent about half its plan usage on one doing no eval work.
 - Fixed: `/ecf-eval` and `/ecf-review` hand out one kind of agent work at a time, so classifier and actor subagents on different models no longer overlap and get refused by the model check; the first Claude eval stopped this way after 23 of 184 cases.
 - Releases are GitHub Releases on this repository only (wheel, source archive, `SHA256SUMS`, `release-manifest.json`), built reproducibly by CI from a `vX.Y.Z` or `vX.Y.Z-rcN` tag; there is no PyPI package. Install the release wheel with `uv tool install` (OD-458).
 - `ecf upgrade` installs the newest stable release through your signed-in `gh`, and `ecf upgrade --to vX.Y.Z[-rcN]` a named one (release candidates only by name); it refuses unless the release's manifest and `SHA256SUMS` agree and the wheel matches them. A prod install upgrades from verified releases; `--wheel` stays for test installs, optionally checked with `--sha256sums` (OD-458).

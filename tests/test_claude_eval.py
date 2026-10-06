@@ -240,6 +240,18 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     assert item["id"] in {i["id"] for i in again["items"]}
 
 
+def test_a_built_in_agent_in_the_session_stops_it() -> None:
+    """Claude Code can deny agents only by name; a built-in one ecf doesn't know yet (the first
+    /ecf-eval run handed its loop to `claude`, v1.0.0) stops the session instead of spending."""
+    tel = Telemetry()
+    tel.open(S1)
+    tel.add(S1, [ApiCall(1.0, "claude-haiku-4-5-20251001", SUBAGENT)], [])
+    assert tel.stopped(S1) is None  # ecf's own agents are fine
+    tel.add(S1, [ApiCall(2.0, "claude-haiku-4-5-20251001", "agent:builtin:claude")], [])
+    stopped = tel.stopped(S1)
+    assert stopped is not None and "(claude)" in stopped and "update ecf" in stopped
+
+
 def test_three_invalid_tries_score_the_case_as_a_failure(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
