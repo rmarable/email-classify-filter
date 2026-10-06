@@ -23,6 +23,10 @@ from ecf_server.skeleton import fold_ci
 
 ORG_ADDRESSES_KEY = "config.org_addresses"
 GMAIL_DOMAINS = ("gmail.com", "googlemail.com")
+# where a Google account's app passwords are made and removed; they need 2-Step Verification and
+# Google revokes them when the account password changes (support.google.com/accounts/answer/185833,
+# fetched 2026-10-05)
+GOOGLE_APP_PASSWORDS = "https://myaccount.google.com/apppasswords"
 MIN_LOCAL = 5  # local parts compared for impersonation have at least this many characters
 _WORD = re.compile(r"[^\W_]+")
 

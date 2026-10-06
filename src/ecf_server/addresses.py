@@ -107,7 +107,8 @@ def check_org_domains(domains: list[str]) -> list[str]:
     if public:
         raise InvalidInputError(
             f"public mailbox domains can't be org domains (anyone can get an address there): "
-            f"{', '.join(public)}"
+            f"{', '.join(public)}; list the people you work with there, one address each, in"
+            " org_addresses (ecf config apply)"
         )
     return out
 

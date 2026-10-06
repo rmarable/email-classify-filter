@@ -71,8 +71,8 @@ V = "version: 1\n"
         ("version: 1\nnonsense: 1", "unknown section"),
         ("version: 1\nexport_schedule: hourly", "daily, weekly or off"),
         ("version: 1\nalerts: {routes: [email]}", "ecf alerts set"),
-        ("version: 1\norg_domains: [gmail.com]", "public mailbox"),
-        (V + "forward_allow_list: [{id: x, address: boss@else.example}]", "isn't in org_domains"),
+        ("version: 1\norg_domains: [gmail.com]", "gmail.com; list the people .* in org_addresses"),
+        (V + "forward_allow_list: [{id: x, address: boss@else.example}]", "must be in org_domains"),
         ("version: 1\nforward_allow_list: [{id: x, address: ap@acme.example}]", "monitored"),
         ("version: 1\nforward_allow_list: [{id: X!, address: a@acme.example}]", "id"),
         ("version: 1\nmove_folders: [INBOX]", "INBOX"),
@@ -424,7 +424,7 @@ def test_a_forward_to_a_listed_personal_account_is_allowed_and_named_in_the_dial
     assert issued.prompt.startswith(want + " doesn't control; forward_allow_list:")
     stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
     assert config.apply(conn, clock, n, text, dry_run=False, nonce=issued.nonce_id).applied
-    with pytest.raises(InvalidInputError, match="isn't in org_domains or org_addresses"):
+    with pytest.raises(InvalidInputError, match=r"or exactly in org_addresses .* other dots"):
         config.parse(conn, V + "forward_allow_list: [{id: x, address: patlee@gmail.com}]")  # exact
     # OD-452: removing the address a forward needs is refused until the forward goes too
     with pytest.raises(InvalidInputError, match="remove the forward too"):

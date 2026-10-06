@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -13,7 +14,9 @@ from typing import Any
 import anyio
 import httpx
 import pytest
+from typer.testing import CliRunner
 
+from ecf.cli import app
 from ecf.errors import (
     ConflictError,
     InvalidInputError,
@@ -105,8 +108,8 @@ def test_first_address_must_set_org_domains(env: Env) -> None:
 
 @pytest.mark.parametrize("domain", ["gmail.com", "Outlook.com", "purelymail.com"])
 def test_public_mail_domains_are_refused(env: Env, domain: str) -> None:
-    with pytest.raises(InvalidInputError, match="public mailbox domains"):
-        add(env, req(org_domains=["acme.example", domain]))
+    with pytest.raises(InvalidInputError, match=r"public mailbox domains.* in org_addresses"):
+        add(env, req(org_domains=["acme.example", domain]))  # pointed to org_addresses (V1.6)
     assert env[2].get("mailbox/ap") is None
 
 
@@ -136,6 +139,16 @@ def test_a_gmail_address_needs_no_org_domains_or_imap_host(env: Env) -> None:
         add(env, req(org_domains=None))
     assert add(env, req())["max_sends_per_day"] is None  # the usual default
     assert ad.get_org_domains(conn) == ["acme.example"]
+
+
+def test_address_add_help_says_what_a_gmail_address_needs() -> None:
+    """V1.6 step 8: no --imap-host, an app password (2-Step Verification), the send default."""
+    r = CliRunner().invoke(app, ["address", "add", "--help"])
+    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─]", " ", r.output).split())  # Rich boxes
+    assert r.exit_code == 0
+    assert "(gmail.com or googlemail.com) needs no --imap-host and a Google app password" in plain
+    assert "2-Step Verification" in plain
+    assert f"at most {ad.GMAIL_SENDS_PER_DAY} emails a day" in plain
 
 
 def test_an_unknown_providers_imap_server_is_needed(env: Env) -> None:

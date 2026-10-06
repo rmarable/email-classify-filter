@@ -621,8 +621,10 @@ def address_add(
 ) -> None:
     """Add a mailbox: checks the app password by logging in (IMAP, and SMTP without sending),
     then stores it in the OS secret store. It starts in shadow (watch only) with outbound off.
-    A Gmail address (gmail.com) needs a Google app password (docs/gmail-setup.md) and no
-    --imap-host. Needs a real terminal."""
+    A Gmail address (gmail.com or googlemail.com) needs no --imap-host and a Google app password,
+    which needs 2-Step Verification on the account (docs/gmail-setup.md); it sends at most 100
+    emails a day once outbound is on (change: ecf address set --max-sends-per-day). Needs a real
+    terminal."""
     require_terminal()
     with LocalClient(_paths()) as c:
         add_address(c, email, imap_host, sensitivity, preset, address_id,

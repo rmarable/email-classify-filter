@@ -38,7 +38,9 @@ def kind(facts: dict[str, Any]) -> str:
     t: dict[str, Any] = facts.get("triggers") or {}
     if facts.get("quarantined"):
         return "quarantine"
-    return "fraud" if t.get("fraud") else "regulator"
+    # impersonation is in `fraud` only with a payment keyword; rule 1 also escalates it on the
+    # classifier's payment_related alone (OD-436), so it counts here either way (V1.6)
+    return "fraud" if t.get("fraud") or t.get("impersonation") else "regulator"
 
 
 def severity(facts: dict[str, Any]) -> int:
