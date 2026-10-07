@@ -33,6 +33,10 @@ class CaseResult(BaseModel):
     # a decision model's per-field probabilities (SPEC §7.8; calibration only, never routing)
     probabilities: dict[str, dict[str, float]] | None = None
     classifier_ms: int | None = None  # the classifier call's wall time (§7.8 latency rule)
+    # what the plan did, by action name, the actor's proposal included (R53, R138): so a corpus
+    # result can be re-scored against new labels without running the models again
+    actions: list[str] = Field(default_factory=list[str])
+    scored: bool = True  # False: no labels to score against (an unlabelled corpus message, R157)
 
 
 class ResultFile(BaseModel):
@@ -73,11 +77,12 @@ class Comparison:
 
 
 def compare(a: ResultFile, b: ResultFile) -> Comparison:
-    """Paired comparison of B against A on the cases both ran (SPEC §16.5)."""
+    """Paired comparison of B against A on the confirmed cases both ran and scored (SPEC §16.5,
+    R157)."""
     if a.set_version != b.set_version:
         raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version}")
-    bm = {c.id: c.correct for c in b.cases}
-    pairs = [(c.correct, bm[c.id]) for c in a.cases if c.id in bm]
+    bm = {c.id: c.correct for c in b.cases if _counts(c)}
+    pairs = [(c.correct, bm[c.id]) for c in a.cases if _counts(c) and c.id in bm]
     if not pairs:
         raise InvalidInputError("no cases in common")
     n = len(pairs)
@@ -127,11 +132,11 @@ class FieldComparison:
 
 def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
-    §16.5, secondary). A field counts on a case only when both runs scored it there."""
-    bm = {c.id: c.fields for c in b.cases}
+    §16.5, secondary). A field counts on a confirmed case only when both runs scored it there."""
+    bm = {c.id: c.fields for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
     for c in a.cases:
-        other = bm.get(c.id)
+        other = bm.get(c.id) if _counts(c) else None
         if other is None:
             continue
         for name, ok in c.fields.items():
@@ -172,6 +177,14 @@ def _show(v: object) -> str:
 
 
 def summary(r: ResultFile) -> str:
-    k, n = sum(c.correct for c in r.cases), len(r.cases)
+    """The A/B headline: confirmed, scored cases only (R157)."""
+    counted = [c for c in r.cases if _counts(c)]
+    k, n = sum(c.correct for c in counted), len(counted)
+    if not n:
+        return f"{r.pair}: no confirmed cases to score"
     lo, hi = wilson(k, n)
     return f"{r.pair}: {k}/{n} correct ({100 * k / n:.1f}%, 95% CI {100 * lo:.1f}-{100 * hi:.1f})"
+
+
+def _counts(c: CaseResult) -> bool:
+    return c.confirmed and c.scored

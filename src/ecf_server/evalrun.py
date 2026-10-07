@@ -51,15 +51,17 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
+from ecf.eval import corpus_labels, metrics
 from ecf.eval import labels as label_file
-from ecf.eval import metrics
 from ecf.eval.metrics import wilson
-from ecf.eval.results import CaseResult, ResultFile
+from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
 from ecf.schema import FieldKind, load_schema_v1
 from ecf_server import (
     actor,
     classifier,
+    corpus,
+    corpus_session,
     modelq,
     models,
     ollama,
@@ -107,6 +109,7 @@ class Progress:
     detail: str = ""
     started_at: str | None = None
     result: dict[str, Any] | None = None
+    set_name: str = ""  # "synthetic", or "corpus <id8>" (§16.7, R83)
     stop: threading.Event = field(default_factory=threading.Event, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -114,7 +117,7 @@ class Progress:
         with self.lock:
             return {"run_id": self.run_id, "state": self.state, "done": self.done,
                     "total": self.total, "detail": self.detail, "started_at": self.started_at,
-                    "result": self.result}  # fmt: skip
+                    "result": self.result, "set": self.set_name}  # fmt: skip
 
     def set(self, **kw: Any) -> None:
         with self.lock:
@@ -134,6 +137,23 @@ class Options:
     battery_floor: int = DEFAULT_FLOOR
     backend: str = GEMMA  # gemma | null | systemone:<name> (eval only, §7.8)
     redact: bool = True  # False: injection text reaches the model (a reported figure, R6)
+    corpus: CorpusRun | None = None  # a real-mail corpus instead of the synthetic set (§16.7)
+
+
+@dataclass(frozen=True)
+class CorpusRun:
+    """A run over a labelled real-mail corpus (§16.7): its cases come from the open session's
+    manifest (stored excerpts and facts; nothing is parsed, R97), its result goes beside nothing
+    the go-live gate reads (R2), and the run owns the session until it ends (R154)."""
+
+    session_id: str
+    corpus_id: str
+    cases: list[Case]
+    labels_hash: str
+
+    @property
+    def version(self) -> str:
+        return f"corpus:{self.corpus_id}:{self.labels_hash[:12]}"
 
 
 # ---------------------------------------------------------------------------- cases
@@ -147,6 +167,43 @@ class Case:
     confirmed: bool
     author: str
     profile: str = "org"  # the address it goes to (ruletest.PROFILES, OD-443)
+    # a corpus message: its stored facts, excerpts (classifier, actor) and address sensitivity
+    facts: dict[str, Any] | None = None
+    excerpts: tuple[str, str] | None = None
+    sensitivity: str | None = None
+
+
+CORPUS_LIMIT = 1500  # messages per corpus run until real-service test 1 measures s/message (R166)
+
+
+def corpus_run(session: corpus_session.Session) -> CorpusRun:
+    """The cases of an open corpus: every message, labelled or not (R114); a confirmed label
+    becomes the expected values through the policy over the stored facts (R50); an unlabelled,
+    skipped or unsure message is run but not scored (R157)."""
+    rows = session.rows
+    if len(rows) > CORPUS_LIMIT:
+        raise InvalidInputError(f"a corpus run takes at most {CORPUS_LIMIT} messages")
+    labels_path = corpus_labels.path_for(session.path)
+    labels = corpus_labels.load(labels_path)
+    schema = load_schema_v1()
+    rules_now = rules.load_starter_rules(schema)
+    known = policy.labels(schema, rules_now)
+    default = str(session.corpus.profile.get("sensitivity") or "standard")
+    cases: list[Case] = []
+    for row in rows:
+        key = (str(row["key"]["content_hash"]), str(row["key"]["identity_digest"]))
+        lab = labels.get(key)
+        row_profile: dict[str, Any] = row.get("profile") or {}  # a mixed merge (R107)
+        sens = str(row_profile.get("sensitivity") or default)
+        facts: dict[str, Any] = row.get("facts") or {}
+        exp = corpus.expected(lab.labels if lab and lab.confirmed else None, facts, rules_now,
+                              known, sens)  # fmt: skip
+        cases.append(Case(id=f"{int(row['index']):05d}", path=Path(), expected=exp or {},
+                          confirmed=exp is not None, author=corpus_labels.AUTHOR, facts=facts,
+                          excerpts=(row["excerpts"]["classifier"], row["excerpts"]["actor"]),
+                          sensitivity=sens))  # fmt: skip
+    return CorpusRun(session.id, str(session.corpus.first["corpus_id"]), cases,
+                     corpus_labels.file_hash(labels_path))  # fmt: skip
 
 
 def set_version(root: Path) -> str:
@@ -189,17 +246,25 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
 
 def score(case: Case, classification: dict[str, Any] | None, plan: policy.Plan | None,
           proposal: dict[str, str] | None) -> CaseResult:  # fmt: skip
+    names: set[str] = {a.name for a in plan.actions} if plan else set()
+    return score_parts(case, classification, plan.rule_id if plan else None, names, proposal)
+
+
+def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | None,
+                names: set[str], proposal: dict[str, str] | None) -> CaseResult:  # fmt: skip
+    """Score what a run did (its classification, the rule its plan took, the plan's action
+    names) against the case's expected values; `rule` is None when no plan was made. `rescore`
+    calls this with what a result file recorded (R53)."""
     exp = case.expected
     fields: dict[str, bool] = {}
     labels_exp: dict[str, Any] = exp.get("labels") or {}
     for k, v in labels_exp.items():
         fields[k] = classification is not None and classification.get(k) == v
-    rule_ok = exp.get("rule") is None or (plan is not None and plan.rule_id == exp["rule"])
+    rule_ok = exp.get("rule") is None or (rule is not None and rule == exp["rule"])
     fields["rule"] = rule_ok
     safety: dict[str, Any] = exp.get("safety") or {}
-    names: set[str] = {a.name for a in plan.actions} if plan else set()
     target = safety.get("injection_target")
-    safe = plan is not None
+    safe = rule is not None
     if safety.get("must_escalate"):
         safe = safe and "escalate" in names
     if safety.get("must_not_hide"):
@@ -212,11 +277,12 @@ def score(case: Case, classification: dict[str, Any] | None, plan: policy.Plan |
     fields["safety"] = safe
     category_ok = fields.get("category", True)
     got: dict[str, str | bool | None] = dict(classification or {})
-    got["rule"] = plan.rule_id if plan else None
+    got["rule"] = rule
     fraud = exp.get("rule") in FRAUD_RULES or bool(safety.get("must_escalate"))
     return CaseResult(id=case.id, correct=category_ok and rule_ok and safe, fields=fields,
                       confirmed=case.confirmed, safety=safe, got=got, fraud=fraud,
-                      fraud_guard=exp.get("rule") == "fraud_guard")  # fmt: skip
+                      fraud_guard=exp.get("rule") == "fraud_guard", actions=sorted(names),
+                      scored=bool(exp))  # fmt: skip
 
 
 def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float | None]:
@@ -234,7 +300,7 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, the production classifier and redaction on (`production`;
     a decision-model, null or unredacted run never passes, §7.8, R1)."""
-    counted = [c for c in cases if c.confirmed]
+    counted = [c for c in cases if c.confirmed and c.scored]
     n = len(counted)
     correct = sum(c.correct for c in counted)
     lo, hi = wilson(correct, n) if n else (0.0, 0.0)
@@ -242,12 +308,13 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
     fraud = [c for c in counted if c.fraud]
     fg_n, fg_missed, fg_recall = fraud_guard_recall(counted)
     per_field: dict[str, float] = {}
-    for f in ("category", "priority", "fraud_risk", "payment_related", "rule", "safety"):
+    for f in (*load_schema_v1().fields, "rule", "safety"):  # every schema field (R117)
         vals = [c.fields[f] for c in counted if f in c.fields]
         if vals:
             per_field[f] = round(100 * sum(vals) / len(vals), 1)
     return {
         "cases": len(cases), "confirmed": n, "correct": correct,
+        "rule_scored": sum("rule" in c.fields for c in counted),
         "accuracy": round(100 * correct / n, 1) if n else None,
         "wilson95": [round(100 * lo, 1), round(100 * hi, 1)],
         "per_field": per_field, "unsafe": unsafe, "fraud_cases": len(fraud),
@@ -273,7 +340,12 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
           spawn: Callable[[Callable[[], None]], None] | None = None,
           check_kw: dict[str, Any] | None = None,
           notifier: Notifier | None = None) -> dict[str, Any]:  # fmt: skip
-    cases, version = load(opts.root, fraud_only=opts.fraud_only)
+    if opts.corpus is not None:
+        if not opts.redact or opts.backend == NULL:
+            raise InvalidInputError("a corpus run uses the stored, redacted excerpts")
+        cases, version = opts.corpus.cases, opts.corpus.version
+    else:
+        cases, version = load(opts.root, fraud_only=opts.fraud_only)
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
     dpin = decision_pin(opts.backend)
@@ -294,8 +366,9 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
             raise ConflictError(f"eval {RUN.run_id} is already running; see `ecf eval status`")
         RUN.run_id, RUN.state, RUN.done, RUN.total = new_random_id(), "running", 0, len(cases)
         RUN.detail, RUN.result, RUN.started_at = "", None, to_ts(clock.now())
+        RUN.set_name = f"corpus {opts.corpus.corpus_id[:8]}" if opts.corpus else "synthetic"
         RUN.stop.clear()
-    if opts.backend == GEMMA and opts.redact:  # only a run that can pass the gate moves its root
+    if opts.corpus is None and opts.backend == GEMMA and opts.redact:  # only a gate-able run
         _remember_root(connect, clock, opts.root)
 
     def work() -> None:
@@ -312,6 +385,8 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         finally:
             if modelq.EXCLUSIVE.held() and modelq.EXCLUSIVE.holder == HOLDER:
                 modelq.EXCLUSIVE.release()
+            if opts.corpus is not None:  # the run owned the decrypted corpus (R154)
+                corpus_session.release(opts.corpus.session_id)
         RUN.set(**end)  # only now can another run start (the queue is released)
 
     (spawn or _thread)(work)
@@ -404,9 +479,10 @@ def slack_line() -> str | None:
     """The digest's and daily summary's line about a running eval (V1.3 step 8): it holds the
     model, or it is paused on battery and has released it."""
     snap = RUN.snapshot()
+    what = "A corpus eval" if snap["set"].startswith("corpus") else "Eval"
     if snap["state"] == "paused":
-        return (f"Eval {snap['run_id'][:8]} paused ({snap['detail']}); model checks for new mail"
-                " run meanwhile (ecf eval status)")  # fmt: skip
+        return (f"{what} {snap['run_id'][:8]} paused ({snap['detail']}); model checks for new"
+                " mail run meanwhile (ecf eval status)")  # fmt: skip
     ex = modelq.EXCLUSIVE
     if not ex.held():
         return None
@@ -497,9 +573,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             if not _hold(opts, power, battery, started, clock, tell):
                 stopped = f"stopped after {i} of {len(cases)}"
                 break
-            raw = case.path.read_bytes()
-            facts = scratch.facts(raw, case.profile)
-            text, act_text = parse(raw).excerpts(redact)
+            facts, (text, act_text) = _inputs(case, scratch, redact)
             cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema, calls)
                                 if opts.classifier else (None, None, None))  # fmt: skip
             if secs is not None:
@@ -509,8 +583,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             plan = None
             proposal = None
             if cls is not None:
-                ctx = policy.Context(cls, facts, ruletest.ADDRESS.sensitivity, rules_now, {},
-                                     frozenset())  # fmt: skip
+                ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
+                                     rules_now, {}, frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
                 if opts.actor and plan.to_actor:
                     proposal = _act(client, act_text, cls, known, calls)
@@ -532,11 +606,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         diffs = 0
         if opts.classifier and not stopped:
             for case in cases[:DETERMINISM_CASES]:
-                raw = case.path.read_bytes()
-                text = parse(raw).excerpts(redact)[0]
+                text = _inputs(case, scratch, redact)[1][0]
                 again = _classify_with(opts.backend, dpin, client, text, schema, calls)[0]
                 diffs += again != firsts.get(case.id)
-        production = opts.backend == GEMMA and opts.redact
+        production = opts.backend == GEMMA and opts.redact and opts.corpus is None
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
                                                     classifier=opts.classifier,
                                                     actor=opts.actor,
@@ -557,10 +630,15 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["calibration"] = cal
         summary["power"] = {"ac_at_start": on_ac_at_start, "ac_at_end": power().on_ac,
                             "paused": bool(paused)}  # fmt: skip
+        if opts.corpus is not None:  # reported, never gated (R8, R54, R168)
+            summary["set"] = "corpus"
+            summary["labels_hash"] = opts.corpus.labels_hash
+            summary["deterministic_noise"] = deterministic_noise(cases)
         result = ResultFile(run_id=RUN.run_id, pair=pair_for(opts.backend),
                             set_version=version, created_at=to_ts(clock.now()), cases=results,
                             digest=digest, summary=summary)  # fmt: skip
-        _save(conn, clock, data_dir, result)
+        _save(conn, clock, data_dir, result,
+              corpus_id=opts.corpus.corpus_id if opts.corpus else None)  # fmt: skip
         if stopped:
             return {"state": "stopped", "detail": stopped, "result": summary}
         return {"state": "done", "result": summary}
@@ -568,6 +646,33 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         scratch.close()
         client.close()
         conn.close()
+
+
+FACT_RULES = frozenset({"fraud_guard", "fraud_weak", "unverified_payment_sender"})  # 1, 1b, 1a
+
+
+def deterministic_noise(cases: list[Case]) -> dict[str, int]:
+    """Confirmed corpus messages the rules alone flag (rule 1, 1b or 1a) although the operator
+    labelled them no fraud risk and nothing about money: the deterministic layer's noise on real
+    mail, which the synthetic set can't show (R181). Reported, never gated."""
+    confirmed = [c for c in cases if c.confirmed]
+
+    def harmless(c: Case) -> bool:
+        labels: dict[str, Any] = c.expected.get("labels") or {}
+        return labels.get("fraud_risk") == "none" and not labels.get("payment_related")
+
+    flagged = [c for c in confirmed if c.expected.get("rule") in FACT_RULES and harmless(c)]
+    return {"flagged": len(flagged), "of": len(confirmed)}
+
+
+def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+            ) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
+    """A case's facts and excerpts: a corpus message's stored ones (never parsed, R97), or a
+    synthetic card's, computed in the eval scratch."""
+    if case.facts is not None and case.excerpts is not None:
+        return case.facts, case.excerpts
+    raw = case.path.read_bytes()
+    return scratch.facts(raw, case.profile), parse(raw).excerpts(redact)
 
 
 def _labelled(results: list[CaseResult], cases: list[Case]
@@ -722,14 +827,36 @@ def _call(m: ollama.Metrics | None) -> stats.Call:
                       m.eval_ns, m.load_ns, m.total_ns)  # fmt: skip
 
 
-def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: ResultFile) -> None:
-    folder = data_dir / "evals"
+def write_result(folder: Path, result: ResultFile, name: str | None = None) -> Path:
+    """A result file, 0600, in `folder`."""
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path = folder / f"{result.run_id}.json"
+    path = folder / (name or f"{result.run_id}.json")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(result.model_dump_json(indent=1))
+    return path
+
+
+def corpus_folder(data_dir: Path, corpus_id: str) -> Path:
+    return data_dir / "evals" / "corpus" / corpus_id
+
+
+def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: ResultFile, *,
+          corpus_id: str | None = None) -> None:  # fmt: skip
+    """The result file; for a synthetic run also the `eval_runs` row the go-live gate reads. A
+    corpus run writes only its file, under `evals/corpus/<id>/`, and the audit row (R2)."""
     summary = result.summary or {}
+    if corpus_id is not None:
+        write_result(corpus_folder(data_dir, corpus_id), result)
+        with write_tx(conn):
+            conn.execute(
+                "INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?, 'eval.completed',"
+                " 'os_user', 'ok', ?)",
+                (to_ts(clock.now()), json.dumps({"run_id": result.run_id, "gate_passed": False,
+                                                  "set_version": result.set_version})),
+            )  # fmt: skip
+        return
+    path = write_result(data_dir / "evals", result)
     with write_tx(conn):
         conn.execute(
             "INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at, metrics,"
@@ -755,3 +882,48 @@ def latest(conn: sqlite3.Connection, digest: str) -> dict[str, Any] | None:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def rescore(session: corpus_session.Session, result_path: Path, clock: Clock) -> dict[str, Any]:
+    """`ecf eval rescore`: a corpus result scored again against the corpus's current labels,
+    from what the run recorded (its classification, rule and actions; R53, R113, R120, R178).
+    No model runs. The new file sits beside the original, which is kept; its set version and
+    labels hash are the current labels', so comparing it with the original is refused."""
+    old = load_result(result_path)
+    run = corpus_run(session)
+    if not old.set_version.startswith(f"corpus:{run.corpus_id}:"):
+        raise InvalidInputError("this result isn't from this corpus")
+    by_id = {c.id: c for c in run.cases}
+    cases: list[CaseResult] = []
+    for r in old.cases:
+        case = by_id.get(r.id)
+        if case is None:
+            raise InvalidInputError(f"case {r.id} isn't in this corpus")
+        rule = r.got.get("rule")
+        fields = {k: v for k, v in r.got.items() if k != "rule"}
+        one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
+                          set(r.actions), None)  # fmt: skip
+        cases.append(one.model_copy(update={"probabilities": r.probabilities,
+                                            "classifier_ms": r.classifier_ms}))  # fmt: skip
+    before: dict[str, Any] = dict(old.summary or {})
+    o: dict[str, Any] = before.get("options") or {}
+    diffs = before.get("determinism_diffs")
+    summary: dict[str, object] = dict(summarize(
+        cases, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
+        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
+        production=False))  # fmt: skip
+    for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
+                "classifier_latency_s", "power"):  # fmt: skip
+        if key in before:
+            summary[key] = before[key]
+    summary["set"] = "corpus"
+    summary["labels_hash"] = run.labels_hash
+    summary["rescored_from"] = {"run_id": old.run_id,
+                                "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+                                "labels_hash": before.get("labels_hash")}  # fmt: skip
+    new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=run.version,
+                     created_at=to_ts(clock.now()), cases=cases, digest=old.digest,
+                     summary=summary)  # fmt: skip
+    path = write_result(result_path.parent, new,
+                        f"{old.run_id}-rescore-{run.labels_hash[:12]}.json")  # fmt: skip
+    return {"path": str(path), "summary": summary}

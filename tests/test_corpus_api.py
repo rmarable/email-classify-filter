@@ -25,7 +25,10 @@ from tests.test_corpus import server_with
 
 AUTH = {"Authorization": "Bearer secret-token"}
 CORPUS_ROUTES = ("/v1/corpus/preflight", "/v1/corpus/fetch", "/v1/corpus", "/v1/corpus/stop",
-                 "/v1/corpus/info", "/v1/corpus/merge")  # fmt: skip
+                 "/v1/corpus/info", "/v1/corpus/merge", "/v1/corpus/session",
+                 "/v1/corpus/session/{session_id}/keys",
+                 "/v1/corpus/session/{session_id}/items/{index}",
+                 "/v1/corpus/session/{session_id}")  # fmt: skip
 
 
 def call(state: ServiceState, method: str, path: str, headers: dict[str, str]) -> httpx.Response:
@@ -45,7 +48,8 @@ def test_every_corpus_route_needs_the_cli_token() -> None:
                     if str(getattr(r, "path", "")).startswith("/v1/corpus")})  # fmt: skip
     assert paths == sorted(CORPUS_ROUTES)
     for p in CORPUS_ROUTES:
-        method = "GET" if p == "/v1/corpus" else "POST"
+        method = "GET" if p == "/v1/corpus" or p.endswith(("keys", "{index}")) else "POST"
+        method = "DELETE" if p == "/v1/corpus/session/{session_id}" else method
         r = call(state, method, p, {})
         assert r.status_code == 401 and r.json()["code"] == "unauthorized", p
 

@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- `ecf eval run --corpus <file>` runs a labelled real-mail corpus through the local model: reported only, never counted for the go-live gate; `ecf eval rescore <result> --corpus <file>` re-scores a corpus result after labels change, without running the models (OD-466; SPEC §16.7).
+- Changed: eval results score all eight classifier fields and record the actions each plan took; `ecf eval compare` counts only confirmed cases, for the synthetic set too (recorded figures aren't recomputed).
+- `ecf eval label --corpus <file>` labels a real-mail corpus blind: one message at a time from the stored headers and excerpt, never a model's answer, every field from its list or skip/unsure, saved beside the corpus after each message so you can stop and resume (OD-466; SPEC §16.7).
 - `ecf corpus fetch` writes each failed fetch and reconnect attempt to the service log (no message content), so an interrupted run can be explained afterwards.
 
 ## v1.0.0-rc5 (2026-10-07)

@@ -40,6 +40,7 @@ from ecf_server import (
     checks,
     claude_queue,
     claude_review,
+    corpus_session,
     daily,
     db,
     decide,
@@ -230,6 +231,7 @@ class Service:
 
     def tick(self) -> None:
         mono, wall = self.clock.monotonic(), self.clock.now()
+        corpus_session.expire_idle(mono)  # a decrypted corpus nobody used for 15 min (§16.7)
         awake = mono - self._last_tick_mono  # the monotonic clock stops during sleep (§5.5)
         slept = (wall - self._last_tick_wall).total_seconds() - awake > SLEEP_GAP_S
         self._last_tick_mono, self._last_tick_wall = mono, wall
