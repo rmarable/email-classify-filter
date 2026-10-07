@@ -982,7 +982,7 @@ An **Answer** button opens a Slack modal; answers are authorized to you; first a
 | settings | `settings show|set` (install defaults and per-address keys, incl. `slack_member_id`, `--claude-model-override`, `claude_queue_timeout`, `approval_ttl_days(_send)`, `catch_up*`, `classifier_high_batch`, `resident`; `install_role` fixed at init), `config apply <file>`, `rules test <file>` |
 | data | `logs`, `export --to <file>` (step-up), `export status|now`, `export keys show|rotate` (rotate: step-up), `export dir set <path>` (step-up), `import <bundle> [--dry-run] [--replace]`, `restore <bundle>`, `retention show|set`, `replay <eml-dir> [--via append|smtp]` (dev only; refuses production) |
 | eval | `eval run [--root <set>] [--classifier/--no-classifier] [--actor/--no-actor] [--fraud-only] [--battery-floor <percent>]`, `eval status|stop`, `eval compare`, `eval label [--status] [--results <file>] [--show-flags]`, `eval new-case|build|show`; not built yet (§16.7): `eval label --corpus <file>`, `eval run --corpus <file>` (preset A only), `eval rescore <result> --corpus <file>` |
-| corpus | not built yet (§16.7): `corpus fetch` (step-up), `corpus status|stop`, `corpus info <file>`, `corpus merge` (step-up), `corpus replay` (`ecf-server dev` only) |
+| corpus | `corpus fetch --out <file> [--total] [--chunk] [--sleep] [--max-mib] [--order] [--folder] [--address] [--include-own] [--allow-spam] [--own-passphrase]` (step-up), `corpus status|stop`, `corpus info <file>` (built 2026-10-07, §16.7); not built yet: `corpus merge` (step-up), `corpus replay` (`ecf-server dev` only) |
 | integration | `slack install|status|set-tokens|set-member|reauthorize`, `alerts set|show|test`, `models status|install`, `models serve install|uninstall|status` (OD-246), `claude` |
 
 Notes:
@@ -1598,6 +1598,11 @@ Callers: **CLI** (token file), **MCP-W** (WORK profile token), **MCP-O** (OBSERV
 | GET | `/v1/addresses/{id}/gate` (V1.3) | CLI | → the go-live gate's checks for the pinned digest (§9.3) |
 | POST | `/v1/statusline` | status-line script (WORK token) | `{five_hour, seven_day, five_hour_resets_at, seven_day_resets_at}` (the session is the token's) → `{recorded}` (V1.4 step 6) |
 | GET | `/v1/health` | any | → `{ok}` (no data) |
+| POST | `/v1/corpus/preflight` | CLI | the fetch request (`address` or `email`, `host`, `app_password`; `owner_email`; `out` and limits) → resolved folder, size, estimates; refused on `ecf-server dev` (§16.7) |
+| POST | `/v1/corpus/fetch` | CLI | the same plus `expect_folder`, `nonce_id`, `passphrase?` → step-up first (`corpus_fetch`), then the run starts; the generated passphrase is in this answer only |
+| GET | `/v1/corpus` | CLI | none → the run's state and counts (never the passphrase) |
+| POST | `/v1/corpus/stop` | CLI | none → stops the run; what was fetched is written, marked incomplete |
+| POST | `/v1/corpus/info` | CLI | `path` → the file's clear header (unverified) and the labels count |
 
 **As built through V1.2** (review 2026-09-30; code: `ecf_server/api.py` and the route modules): the service accepts two callers, the CLI token and a WORK session token (`/v1/sessions`, V1.0); OBSERVE arrives with the MCP server in V1.4, so `/v1/status` and `/v1/counts` answer CLI and MCP-W only for now, and no CLI command calls `/v1/counts` yet (it is for MCP). Not yet built: `/v1/addresses/{id}/outbound` (V1.5), `/v1/secrets/{name}` (app passwords go through `/v1/addresses`), `/v1/export`, `/v1/import`, `/v1/restore` (V1.5), `/v1/eval/runs/{id}/…` and `/v1/statusline` (V1.4). **Added in V1.4** (step 3): OBSERVE (no token: `/v1/status`, `/v1/counts`; OD-280), `/v1/review-queue` and `/v1/claims/…` (WORK only); (step 6) `/v1/statusline` (WORK only), the telemetry fields of `/v1/sessions`, `claude` in `/v1/status` (the last review, for `doctor`) and in `/v1/stats`. **Added in V1.3:** `/v1/models`, `/v1/models/install`, `/v1/stats`, `/v1/eval/runs` (start, status) and `/v1/eval/runs/stop`, `/v1/addresses/{id}/gate`, all CLI only. `ecf-server dev` alone also serves `/v1/dev/clock` (GET, POST: read or move the fake clock) and `/v1/dev/chat/posts` (GET, DELETE: the fake Slack's recorded posts); a production service answers `not_found`.
 
@@ -1702,7 +1707,7 @@ Real mail enters a dev service only by replaying a corpus into a loopback Doveco
 
 `ecf-server dev` (§17.3). `ecf replay <eml-dir>` (dev only) has `--via append` (default; IMAP APPEND into Dovecot, test senders signed by OpenDKIM) and `--via smtp` (through Postfix + OpenDMARC into Dovecot, for the authentication-path subset: forged Authentication-Results ignored; ecf's own DMARC yields pass/fail; not built: SMTP is tested with an in-process server, `aiosmtpd`, operator decision 2026-10-02, OD-308). Load-test replay uses fresh Message-IDs. `ecf replay` is built in V1.3 for the 150-email load test (operator decision 2026-09-30, OD-238).
 
-### 16.7 Real-mail corpus [not built yet]
+### 16.7 Real-mail corpus [fetch built 2026-10-07; labelling, eval runs, merge and replay not yet]
 
 Operator decisions 2026-10-07 (OD-466 to OD-468; ADR 0022), after six review rounds of `planning-docs/GENERATE-EMAIL-CORPUS-PLAN.md` (draft 7, `a654074`), which holds the design detail until this section is updated as built.
 
@@ -1715,6 +1720,7 @@ Operator decisions 2026-10-07 (OD-466 to OD-468; ADR 0022), after six review rou
 - **Limits of the facts:** sender history, org sets and DNS are as at fetch, not at arrival; a one-off source has no history and is analysed against this install's org sets; `confirmed_category` isn't used in eval.
 - **Replay** (OD-468): `ecf corpus replay` works only on `ecf-server dev`, to an IPv4 loopback Dovecot whose mail home is on tmpfs, with the dev data folder on a RAM disk. It checks mechanics only and is outside the `v1.0.0` gate.
 - **Gating:** the corpus gates `v1.0.0` only through the decision-model experiment's recorded decision (`planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md`).
+- **As built, fetch** (Phase 1, 2026-10-07; code: `ecf_server/corpus.py`, `ecf_server/mail/corpus_reader.py`, `ecf/cli_corpus.py`): the byte cap is `--max-mib` (whole MiB; the plan's `--max-bytes`); the CLI needs a terminal for input and output (a passphrase or excerpt never goes to a file or pipe), asks you to type the mailbox's address, runs the preflight, confirms, steps up, shows a generated passphrase once and follows the run. The service refuses a one-off email that a watched address folds to (use `--address`) and checks step-up before it logs in. File: `ECFCORPUS 1`, one clear JSON header line, then the age ciphertext; the manifest's first line holds the header's sha256, and opening a file checks it and every message's sha256.
 
 ## 17. Code, packaging, testing and release [v1]
 

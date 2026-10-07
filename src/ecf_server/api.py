@@ -41,6 +41,7 @@ from ecf.errors import (
     InternalError,
     InvalidInputError,
     NotFoundError,
+    PolicyDeniedError,
     ServiceUnavailableError,
     UnauthorizedError,
 )
@@ -62,6 +63,7 @@ from ecf_server import (
     claude_review,
     claude_usage,
     config,
+    corpus,
     db,
     destroy,
     digests,
@@ -347,6 +349,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
             *_export_routes(state, allow),
+            *_corpus_routes(state, allow),
             *_upgrade_routes(state, allow),
             *_destroy_routes(state, allow),
             *_stage_routes(state, allow),
@@ -1504,6 +1507,73 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/import/inspect", inspect, methods=["POST"]),
         Route("/v1/import", import_, methods=["POST"]),
         Route("/v1/restore", restore_, methods=["POST"]),
+    ]
+
+
+def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §16.7 (OD-466 to OD-468): `ecf corpus`; CLI only, never on `ecf-server dev`, whose
+    step-up is a fake (R56, R106)."""
+
+    def data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    def not_dev() -> None:
+        if state.dev is not None:
+            raise PolicyDeniedError("corpus commands don't run on ecf-server dev: its step-up is"
+                                    " a fake (SPEC §16.7)")  # fmt: skip
+
+    def secret(name: str) -> str | None:
+        return state.store().get(name)
+
+    @allow(Caller.CLI)
+    def preflight(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        conn = state.connect()
+        try:
+            req, password = corpus.from_body(conn, body, secret)
+            corpus.check_request(req, data_dir())
+            reader = corpus.CorpusReader(req.host, req.email, password, port=req.port)
+            try:
+                return JSONResponse(corpus.preflight(conn, state.clock, req, reader))
+            finally:
+                reader.close()
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def fetch_(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        conn = state.connect()
+        try:
+            req, password = corpus.from_body(conn, body, secret)
+        finally:
+            conn.close()
+        return JSONResponse(corpus.begin(state.connect, state.clock, state.notifier, data_dir(),
+                                         req, password, nonce=_opt_str(body, "nonce_id"),
+                                         own_passphrase=_opt_str(body, "passphrase")))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def status(_request: Request) -> JSONResponse:
+        return JSONResponse(corpus.RUN.snapshot())
+
+    @allow(Caller.CLI)
+    def stop(_request: Request) -> JSONResponse:
+        return JSONResponse(corpus.stop())
+
+    @allow(Caller.CLI)
+    def info(request: Request) -> JSONResponse:
+        return JSONResponse(corpus.info(_str(_body(request), "path")))
+
+    return [
+        Route("/v1/corpus/preflight", preflight, methods=["POST"]),
+        Route("/v1/corpus/fetch", fetch_, methods=["POST"]),
+        Route("/v1/corpus", status, methods=["GET"]),
+        Route("/v1/corpus/stop", stop, methods=["POST"]),
+        Route("/v1/corpus/info", info, methods=["POST"]),
     ]
 
 

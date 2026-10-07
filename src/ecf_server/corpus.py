@@ -44,8 +44,9 @@ from ecf_server import (
     passphrase,
     stepup,
 )
-from ecf_server.addresses import get_org_domains
+from ecf_server.addresses import get_address, get_org_domains, secret_name
 from ecf_server.analysis import MessageAnalyzer
+from ecf_server.checks import SecretUnavailableError
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.dnscache import DnsCache
@@ -97,6 +98,7 @@ class Request:
     include_own: bool = False
     allow_spam: bool = False
     address_id: str | None = None
+    expect_folder: str | None = None  # what the preflight resolved; compared, never trusted (R123)
 
     def target(self, out: Path) -> dict[str, Any]:
         """The step-up target: never the password (R18), the folder as requested (R201)."""
@@ -192,10 +194,6 @@ def stop() -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------- preflight
-
-
-def mailbox_gmail(reader: CorpusReader) -> bool:
-    return reader.gmail
 
 
 def budget_share(
@@ -345,6 +343,8 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
     reader.open()
     name = resolve_folder(reader.folders(), req.folder, gmail=reader.gmail,
                           allow_spam=req.allow_spam)  # fmt: skip
+    if req.expect_folder is not None and name != req.expect_folder:
+        raise InvalidInputError(f"--folder now names {name}, not {req.expect_folder}; run again")
     folder = reader.examine(name)
     gmail = reader.gmail
     share = budget_share(conn, clock, req, gmail=gmail)
@@ -690,3 +690,107 @@ def open_corpus(path: Path, secret: str) -> Corpus:
             raise InvalidInputError(f"message {row['index']} doesn't match its manifest row")
     profile: dict[str, Any] = json.loads(files["profile.json"])
     return Corpus(json.loads(clear), first, rows, profile, tar_gz)
+
+
+# ------------------------------------------------------------------------------------- the routes
+
+
+def from_body(
+    conn: sqlite3.Connection, body: dict[str, Any], secret: Callable[[str], str | None]
+) -> tuple[Request, Callable[[], str]]:
+    """The request and its password from a route body. With `address`, a watched address and its
+    Keychain password; else a one-off email, host and `app_password`, never stored. Either way
+    the operator types the mailbox's address to say it's theirs (R45, R103)."""
+
+    def num(key: str, default: int) -> int:
+        v = body.get(key, default)
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise InvalidInputError(f"{key} must be a whole number")
+        return v
+
+    common: dict[str, Any] = {
+        "folder": str(body.get("folder") or "default"), "out": str(body.get("out") or ""),
+        "total": num("total", TOTAL), "chunk": num("chunk", CHUNK),
+        "sleep_s": num("sleep_s", SLEEP_S), "max_bytes": num("max_bytes", MAX_BYTES),
+        "order": str(body.get("order") or "most-recent"),
+        "include_own": body.get("include_own") is True,
+        "allow_spam": body.get("allow_spam") is True,
+        "expect_folder": expect if isinstance(expect := body.get("expect_folder"), str) else None,
+    }  # fmt: skip
+    ref = body.get("address")
+    if isinstance(ref, str) and ref:
+        a = get_address(conn, ref)
+        aid, email = str(a["address_id"]), str(a["email"])
+        req = Request(email=email, host=str(a["imap_host"] or ""), port=993, address_id=aid,
+                      **common)  # fmt: skip
+
+        def keychain() -> str:
+            pw = secret(secret_name(aid))
+            if not pw:
+                raise SecretUnavailableError(f"no app password stored for {aid}")
+            return pw
+
+        password: Callable[[], str] = keychain
+    else:
+        email, host = str(body.get("email") or ""), str(body.get("host") or "")
+        pw = body.get("app_password")
+        if not isinstance(pw, str) or not pw:
+            raise InvalidInputError("give the app password, or --address for a watched one")
+        watched = [str(r[0]) for r in conn.execute(
+            "SELECT address_id, email FROM addresses WHERE removed_at IS NULL")
+            if internal.fold(str(r[1])) == internal.fold(email)]  # fmt: skip
+        if watched:
+            raise InvalidInputError(f"{email} is watched here: use --address {watched[0]}")
+        req = Request(email=email, host=host, port=num("port", 993), **common)
+
+        def typed() -> str:
+            return pw
+
+        password = typed
+    owner = body.get("owner_email")
+    if not isinstance(owner, str) or internal.fold(owner) != internal.fold(req.email):
+        raise InvalidInputError("type the mailbox's own address to confirm it's a mailbox you own")
+    return req, password
+
+
+def begin(  # noqa: PLR0913 - the service's collaborators, then the request
+    connect: Callable[[], sqlite3.Connection],
+    clock: Clock,
+    notifier: Notifier,
+    data_dir: Path,
+    req: Request,
+    password: Callable[[], str],
+    *,
+    nonce: str | None,
+    own_passphrase: str | None,
+    reader_factory: Callable[[Request, Callable[[], str]], CorpusReader] | None = None,
+    spawn: Spawn = _thread,
+) -> dict[str, Any]:
+    """`POST /v1/corpus/fetch`: step-up for this exact request before anything touches the mailbox,
+    then the passphrase, then the job (R175, R198). The generated passphrase is in this response
+    only, before any byte is fetched (R105)."""
+    conn = connect()
+    try:
+        where = check_request(req, data_dir)
+        stepup.consume(conn, clock, "corpus_fetch", req.target(where), nonce)
+    finally:
+        conn.close()
+    secret = new_passphrase(own_passphrase)
+    make = reader_factory or _reader
+    got = start(connect, clock, notifier, data_dir, req, lambda: make(req, password), secret,
+                spawn=spawn)  # fmt: skip
+    return got | {"passphrase": secret if own_passphrase is None else None}
+
+
+def _reader(req: Request, password: Callable[[], str]) -> CorpusReader:
+    return CorpusReader(req.host, req.email, password, port=req.port)
+
+
+def info(path: str) -> dict[str, Any]:
+    """`ecf corpus info`: the clear header (unverified) and how many labels sit beside it."""
+    p = Path(path).expanduser()
+    if p.suffix != SUFFIX or not p.is_file():
+        raise InvalidInputError(f"no corpus file at {p}")
+    labels = p.with_name(p.name + ".labels.jsonl")
+    count = sum(1 for line in labels.read_text().splitlines() if line) if labels.exists() else 0
+    return {"header": read_header(p), "verified": False, "labels": count}
