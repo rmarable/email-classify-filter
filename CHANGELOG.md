@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- `ecf eval label --corpus <file>` labels a real-mail corpus blind: one message at a time from the stored headers and excerpt, never a model's answer, every field from its list or skip/unsure, saved beside the corpus after each message so you can stop and resume (OD-466; SPEC §16.7).
 - `ecf corpus fetch` writes each failed fetch and reconnect attempt to the service log (no message content), so an interrupted run can be explained afterwards.
 
 ## v1.0.0-rc5 (2026-10-07)

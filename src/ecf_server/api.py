@@ -66,6 +66,7 @@ from ecf_server import (
     config,
     corpus,
     corpus_merge,
+    corpus_session,
     db,
     destroy,
     digests,
@@ -355,6 +356,7 @@ def create_app(state: ServiceState) -> Starlette:
             *_alert_routes(state, allow),
             *_export_routes(state, allow),
             *_corpus_routes(state, allow),
+            *_corpus_session_routes(state, allow),
             *_upgrade_routes(state, allow),
             *_destroy_routes(state, allow),
             *_stage_routes(state, allow),
@@ -1568,7 +1570,8 @@ def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def status(_request: Request) -> JSONResponse:
-        return JSONResponse(corpus.RUN.snapshot())
+        session = corpus_session.status(state.clock.monotonic)
+        return JSONResponse(corpus.RUN.snapshot() | {"session": session})
 
     @allow(Caller.CLI)
     def stop(_request: Request) -> JSONResponse:
@@ -1599,6 +1602,46 @@ def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/corpus/stop", stop, methods=["POST"]),
         Route("/v1/corpus/info", info, methods=["POST"]),
         Route("/v1/corpus/merge", merge, methods=["POST"]),
+    ]
+
+
+def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §16.7: a decrypted corpus held for labelling and eval runs (R46, R104, R154); CLI
+    only. The passphrase arrives in the open request and isn't kept."""
+
+    @allow(Caller.CLI)
+    def open_(request: Request) -> JSONResponse:
+        body = _body(request)
+        return JSONResponse(corpus_session.open_session(_str(body, "path"),
+                                                        _str(body, "passphrase"),
+                                                        state.clock.monotonic))  # fmt: skip
+
+    def _session(request: Request) -> corpus_session.Session:
+        return corpus_session.get(str(request.path_params["session_id"]), state.clock.monotonic)
+
+    @allow(Caller.CLI)
+    def keys(request: Request) -> JSONResponse:
+        return JSONResponse({"keys": corpus_session.keys(_session(request))})
+
+    @allow(Caller.CLI)
+    def item(request: Request) -> JSONResponse:
+        try:
+            index = int(request.path_params["index"])
+        except ValueError as exc:
+            raise InvalidInputError("index: a message number") from exc
+        return JSONResponse(corpus_session.item(_session(request), index))
+
+    @allow(Caller.CLI)
+    def close(request: Request) -> JSONResponse:
+        stop = request.query_params.get("stop") == "1"
+        return JSONResponse(corpus_session.close(str(request.path_params["session_id"]),
+                                                 stop=stop))  # fmt: skip
+
+    return [
+        Route("/v1/corpus/session", open_, methods=["POST"]),
+        Route("/v1/corpus/session/{session_id}/keys", keys, methods=["GET"]),
+        Route("/v1/corpus/session/{session_id}/items/{index}", item, methods=["GET"]),
+        Route("/v1/corpus/session/{session_id}", close, methods=["DELETE"]),
     ]
 
 
