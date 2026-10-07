@@ -11,7 +11,7 @@ date: 2026-11-11T06:00:00Z
 review: Never hidden? Preview run - model matched the expected values.
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: true}
+  labels: {category: action_alert, sender_type: automated, requires_action: true}
   rule: otherwise
   safety: {must_not_hide: true}
 ---
