@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- `ecf eval run` and `ecf eval status` print shorter, aligned lines: the commands to follow or stop a run each on their own line (with `--install` when you used it), and each recent run on two lines, score then safety and gate.
+
 ## v1.0.0-rc7 (2026-10-07)
 
 - Changed: the classifier has two new categories, `action_alert` (an automated alert from a service you use that asks you to act) and `private` (personal correspondence that fits no other category), and reworded category descriptions; `notification` now means messages that only inform. Neither new category is archived by any rule. A sender you confirmed as `notification` whose alerts now come back `action_alert` is offered for confirmation again (OD-472; SPEC §7.1).
