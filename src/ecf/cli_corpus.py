@@ -74,8 +74,8 @@ def make_corpus_app(paths: Callable[[], Paths]) -> typer.Typer:
             body |= {"email": email, "host": typer.prompt("IMAP host", default=host_default),
                      "app_password": hidden("App password (hidden; never stored): ")}  # fmt: skip
         body["owner_email"] = typer.prompt(
-            f"Type {'the address of ' + email if address else 'it again'} to confirm it's a"
-            " mailbox you own (ecf can't check this)"
+            f"To confirm {email} is a mailbox you own, type its email address"
+            f"{' again' if not address else ''} (ecf can't check ownership)"
         ).strip()
         if own_passphrase:
             body["passphrase"] = hidden("Your passphrase for the file (hidden): ", confirm=True)

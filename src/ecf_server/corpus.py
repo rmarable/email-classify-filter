@@ -770,7 +770,10 @@ def from_body(
         password = typed
     owner = body.get("owner_email")
     if not isinstance(owner, str) or internal.fold(owner) != internal.fold(req.email):
-        raise InvalidInputError("type the mailbox's own address to confirm it's a mailbox you own")
+        raise InvalidInputError(
+            "the confirmation didn't match: type the mailbox's email address exactly (such as"
+            " pat@example.com) to confirm it's a mailbox you own"
+        )
     return req, password
 
 
