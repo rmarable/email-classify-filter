@@ -74,7 +74,8 @@ The plan is a working document; SPEC stays authoritative.
   - License layers: Apache-2.0, and MIT ("Copyright (c) 2026 open-jev contributors"). Both permit this use.
     Together's Hugging Face card (`togethercomputer/Tev1-4B-experimental`, read 2026-10-07) states **no licence**
     and publishes only safetensors, so the GGUF is Ollama's conversion and no publisher hash exists to compare.
-    The pin is Ollama's manifest digest. The licence question is open (OD-470).
+    The pin is Ollama's manifest digest. Ollama's Apache-2.0 and MIT layers are accepted as the licence (operator
+    decision 2026-10-07).
   - Training data (ollama.com/library/tev1, read 2026-10-07): MultiNLI, BoolQ, Banking77, AG News, SST-5 and
     synthetic policy, routing and taxonomy sets, 37,840 examples; no phishing corpus named. Published accuracy
     (Bespoke Labs' 13 public datasets): 73.3%. Vendor figure; says nothing about email.
@@ -104,7 +105,7 @@ The plan is a working document; SPEC stays authoritative.
     13.3 s / 17.0 s).
   - `footprint` on the runners doesn't count the GPU-wired model weights; free memory and swap are the measures.
   - Phase 0 ran with the shadow ecf-server up (another session's), its 10-minute Gemma checks included.
-- **Still open from Phase 0:** battery latency, the injection preamble test, and the weights licence (see Phase 0).
+- **Still open from Phase 0:** battery latency and the injection preamble test (see Phase 0).
 
 ## Design of the experiment
 
@@ -192,8 +193,8 @@ about 8-17 h per 500 (corpus plan). [R3]
    plus the synthetic fraud subset) that completes on one charge. Per-email time is reported, not gated. A run that
    paused for power doesn't count. [R12]
 7. **Provenance and license:** `library/` namespace (holds); the pin is Ollama's manifest digest (no publisher GGUF
-   exists); the weights licence is accepted by the operator (Ollama's layers are Apache-2.0 and MIT; Together's card
-   states none; open). [R15]
+   exists); the weights licence: Ollama's Apache-2.0 and MIT layers, accepted (operator decision 2026-10-07;
+   Together's card states none). [R15]
 
 **Also reported, not gating** (calibration doesn't enter the decision; a stated choice): [R20]
 - Calibration per field: ECE on the argmax probability (5-10 equal-mass bins, bootstrap CIs), ranked probability score
@@ -225,8 +226,6 @@ Throwaway, scratchpad only. Results are in "Facts" above and go into SPEC §21.2
   the login item's environment plus `LLAMA_ARG_CACHE_RAM=1024`, and restored the login item afterwards (Claude's
   permission mode blocks `launchctl`). Every Ollama outage is announced to the other sessions first.
 - **Still open** (operator go-ahead, a quiet Ollama window):
-  - the weights licence: Together's card states none; the operator decides whether Ollama's Apache-2.0/MIT layers
-    suffice; [R15]
   - classifier-call latency on battery; [R12]
   - the injection preamble: injection subset, redaction off, with and without the OD-255 text prepended to
     `state`; [R6]

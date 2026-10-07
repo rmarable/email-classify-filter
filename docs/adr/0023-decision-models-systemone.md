@@ -49,7 +49,7 @@ test.
 - A second local model and a cache cap are possible later, at a cost listed in the plan's Phase 4:
   preset A's pin key becomes a pin-set hash (review counts restart, `live` drops to `assist`),
   install, upgrade and doctor handle two pins, and Gemma's prompt cache is capped in production too.
-- The model's weights licence is only what Ollama's package carries (Apache-2.0, MIT); Together's
-  model card states none. Recorded as open in §21.2.
+- The model's weights licence is what Ollama's package carries (Apache-2.0, MIT); Together's model
+  card states none. The operator accepted Ollama's layers (2026-10-07, §21.2).
 - The decision-model defense against prompt injection is weaker than Gemma's: the API has no
   instruction field, so the "email is data" text sits in `state` beside the email.
