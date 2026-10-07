@@ -1,7 +1,7 @@
 {
   "_comment": "What `ecf upgrade` checks before it stops anything (SPEC §11.10; OD-375). tests/test_release.py keeps each field equal to the code: version to ecf.__version__, schema_version to the newest migration, data_format to export_bundle.DATA_FORMAT, api_version to api.API_VERSION. min_client is the oldest ecf whose `ecf upgrade` may start this upgrade.",
   "product": "email-classify-filter",
-  "version": "1.0.0rc6",
+  "version": "1.0.0rc7",
   "api_version": 1,
   "data_format": 2,
   "schema_version": 33,
