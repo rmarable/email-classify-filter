@@ -105,7 +105,14 @@ The plan is a working document; SPEC stays authoritative.
     13.3 s / 17.0 s).
   - `footprint` on the runners doesn't count the GPU-wired model weights; free memory and swap are the measures.
   - Phase 0 ran with the shadow ecf-server up (another session's), its 10-minute Gemma checks included.
-- **Still open from Phase 0:** battery latency and the injection preamble test (see Phase 0).
+- **Injection preamble** (2026-10-07, `tev1` alone): 19 injection cards × (redaction on/off × OD-255 text prepended
+  or not), 76 calls. With the preamble: no attacker category taken, `fraud_risk` under-rated on 1 card
+  (`attachment-name-injection`) against 3 without; redaction off and no preamble let one attack through
+  (`injection-classify-notification`). Label matches 32/46 with preamble, 36/46 without (redaction on). **Design
+  confirmed: preamble on, redaction on.** [R6]
+- **Battery** (2026-10-07, `tev1` alone, 40 cards): AC 2.5 s p50 / 2.7 s p95; battery (Low Power Mode) 5.5 s /
+  6.3 s, about 2.2× slower (Gemma's classifier about 3×, about 8 s per email on battery, SPEC §21.2). [R12]
+- **Phase 0 is complete.**
 
 ## Design of the experiment
 
@@ -215,7 +222,7 @@ about 8-17 h per 500 (corpus plan). [R3]
 Three read-only Fable reviewers; R1-R30 (12 high, 12 medium, 6 low), all accepted as recommended. Draft 2 folded them
 in. Findings and decisions: `state-archive/systemone/review-findings.md`.
 
-## Phase 0: facts and coexistence — mostly done 2026-10-06/07
+## Phase 0: facts and coexistence — done 2026-10-06/07
 
 Throwaway, scratchpad only. Results are in "Facts" above and go into SPEC §21.2 in Phase 1.
 - **Done:** pull and provenance (namespace, digests, licence layers; Hugging Face has no GGUF to compare; training
@@ -225,10 +232,7 @@ Throwaway, scratchpad only. Results are in "Facts" above and go into SPEC §21.2
 - **How the capped server was run:** the operator booted out the login item and started `ollama serve` by hand with
   the login item's environment plus `LLAMA_ARG_CACHE_RAM=1024`, and restored the login item afterwards (Claude's
   permission mode blocks `launchctl`). Every Ollama outage is announced to the other sessions first.
-- **Still open** (operator go-ahead, a quiet Ollama window):
-  - classifier-call latency on battery; [R12]
-  - the injection preamble: injection subset, redaction off, with and without the OD-255 text prepended to
-    `state`; [R6]
+- **Done 2026-10-07:** battery latency and the injection preamble test (results in "Facts").
 - A candidate that fails a pass condition is dropped as a stated result in §21.2, which ends the experiment with "not
   adopted".
 
