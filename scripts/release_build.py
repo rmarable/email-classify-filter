@@ -109,7 +109,9 @@ def git(*args: str) -> str:
 
 def build(out: Path, epoch: str) -> None:
     env = {**os.environ, "SOURCE_DATE_EPOCH": epoch}
-    subprocess.run(["uv", "build", "--out-dir", str(out)], cwd=ROOT, env=env, check=True)
+    subprocess.run(["uv", "build", "--out-dir", str(out),
+                    "--build-constraint", str(ROOT / "build-constraints.txt")],
+                   cwd=ROOT, env=env, check=True)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
