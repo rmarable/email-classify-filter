@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+## v1.0.0-rc3 (2026-10-07)
+
 - `ecf corpus merge` combines corpora into a new encrypted one for a top-up: duplicates dropped, labels merged, conflicting labels or different mailboxes refused (OD-466).
 - `ecf doctor` checks that swap is encrypted and core dumps are off, and `ecf destroy` reminds you that corpus files are kept (OD-466).
 - `ecf corpus fetch` copies real mail from a mailbox you own into one encrypted file, after step-up, with a Security Notice; `ecf corpus status`, `stop` and `info` follow and describe it. Gmail's download budget is shared, at most half of what's left (OD-466, OD-467; SPEC §16.7).
