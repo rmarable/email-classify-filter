@@ -53,6 +53,7 @@ from ecf_server.dnscache import DnsCache
 from ecf_server.facts import AddressInfo
 from ecf_server.fetch import DEFAULT_SCAN, LARGE_BYTES, address_config
 from ecf_server.isolate import Isolated, IsolationError, Isolator, subprocess_isolator
+from ecf_server.log_bridge import log
 from ecf_server.mail.corpus_reader import (
     WINDOW,
     CorpusReader,
@@ -432,8 +433,8 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
                         reader.noop()
                     except UidValidityChangedError:
                         raise
-                    except MailUnavailableError:
-                        pass  # the next fetch reconnects, with its back-off (R136)
+                    except MailUnavailableError as exc:  # the next fetch reconnects (R136)
+                        log.info("corpus.noop_failed", error_type=type(exc).__name__)
             if reason or len(out.rows) >= req.total:
                 break
         else:
@@ -478,9 +479,13 @@ def _fetch(
             raw = reader.fetch(uid)
         except UidValidityChangedError:
             raise
-        except MailUnavailableError:
+        except MailUnavailableError as exc:
             tries.failures += 1
+            log.warning("corpus.fetch_failed", uid=uid, failures=tries.failures,
+                        error_type=type(exc).__name__)  # fmt: skip
         else:
+            if tries.failures:
+                log.info("corpus.fetch_resumed", uid=uid)
             tries.failures = 0
             note("")
             return raw
@@ -488,15 +493,20 @@ def _fetch(
             if tries.failures >= TRIES:
                 return "mail_unavailable"
             note(f"reconnecting (attempt {tries.failures} of {TRIES - 1})")
-            if sleep(BACKOFF_S[min(tries.failures, len(BACKOFF_S)) - 1]):
+            wait = BACKOFF_S[min(tries.failures, len(BACKOFF_S)) - 1]
+            log.info("corpus.reconnecting", attempt=tries.failures, of=TRIES - 1, wait_s=wait)
+            if sleep(wait):
                 return "stopped"
             try:
                 reader.reconnect()
+                log.info("corpus.reconnected", attempt=tries.failures)
                 break
             except UidValidityChangedError:
                 raise
-            except MailUnavailableError:
+            except MailUnavailableError as exc:
                 tries.failures += 1
+                log.warning("corpus.reconnect_failed", failures=tries.failures,
+                            error_type=type(exc).__name__)  # fmt: skip
     return "timeout"
 
 

@@ -331,8 +331,17 @@ def test_a_dropped_noop_between_chunks_does_not_end_the_run(
 @pytest.mark.parametrize(("down", "fetched", "reason"), [(6, 4, ""), (9, 1, "mail_unavailable")])
 def test_a_long_outage_is_survived_within_the_back_off(
     conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out_dir: Path,
-    down: int, fetched: int, reason: str,
+    down: int, fetched: int, reason: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:  # fmt: skip
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    class Recorder:
+        def info(self, event: str, **kw: Any) -> None:
+            events.append((event, kw))
+
+        warning = info
+
+    monkeypatch.setattr(corpus, "log", Recorder())
     """Real-service test 1 (rc4): Wi-Fi off past 75 s ended the run. Now seven waits (about four
     minutes) pass before it gives up; the progress says it is reconnecting meanwhile."""
     s = server_with(4)
@@ -358,5 +367,10 @@ def test_a_long_outage_is_survived_within_the_back_off(
     corpus.run(conn, clock, FakeNotifier(), data_dir, req(out_dir / "c.ecfcorpus", total=4,
                chunk=1), r, SECRET, progress, isolator=inline, sleep=note)  # fmt: skip
     assert progress.fetched == fetched and progress.reason == reason
+    names = [e for e, _kw in events]
+    assert "corpus.noop_failed" in names and "corpus.reconnecting" in names
+    assert ("corpus.reconnected" in names) == (reason == "")
+    logged = str(events)
+    assert "ap@acme.example" not in logged and "Invoice" not in logged  # no content
     assert notes and notes[0] == f"reconnecting (attempt 1 of {corpus.TRIES - 1})"
     assert progress.retrying == ""
