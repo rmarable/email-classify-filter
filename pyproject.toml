@@ -59,6 +59,10 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 path = "src/ecf/__init__.py"
 
+# Rebuild when the version changes, not only pyproject.toml (the self-hosted runner keeps its uv cache).
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/ecf/__init__.py" }]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ecf", "src/ecf_server"]
 
