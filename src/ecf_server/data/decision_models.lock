@@ -1,0 +1,16 @@
+{
+  "_comment": "Decision models for the eval-only experiment (SPEC §7.8; OD-470, OD-471). Never used by the service's classifier; only `ecf eval run --classifier-backend systemone:<name>` reads this file. Measured 2026-10-06/07 (SPEC §21.2). Only an ecf release changes this file.",
+  "models": {
+    "tev1-4b": {
+      "tag": "tev1:4b",
+      "digest": "9b5bb969e46c4b776826d6f2d401e22893205693f172653af6254897255025b8",
+      "ecf_name": "ecf/tev1-4b",
+      "role": "classifier",
+      "eval_only": true,
+      "blob_sha256": "35f9281a3df58b566b24091572467001906a5a6aac879fe8005c4db19c8d4a2e",
+      "license": "Apache-2.0 AND MIT (Ollama package layers; accepted by the operator 2026-10-07)",
+      "source_url": "https://ollama.com/library/tev1",
+      "verified": "2026-10-06"
+    }
+  }
+}

@@ -25,11 +25,13 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass
+from importlib import resources
 from typing import Any, cast
 
+from ecf.errors import InvalidInputError
 from ecf.schema import CompiledSchema, FieldKind
 from ecf_server import classifier
-from ecf_server.ollama import Client, OllamaError
+from ecf_server.ollama import Client, OllamaError, Pin
 
 NOUL_TRUE = 0.5
 # the classifier's instructions up to its JSON-answer line: the untrusted-data text (OD-255)
@@ -41,6 +43,40 @@ class Answer:
     classification: dict[str, Any] | None  # None: a failed attempt
     probabilities: dict[str, dict[str, float]]  # field -> option -> p (noul: {"true": p})
     input_tokens: int | None
+
+
+LOCK = "decision_models.lock"
+
+
+def load_pins() -> dict[str, Pin]:
+    """The eval-only decision models (`data/decision_models.lock`), by ecf's short name. Only
+    entries in the classifier role and marked eval-only are read (OD-470)."""
+    raw = json.loads(resources.files("ecf_server.data").joinpath(LOCK).read_text("utf-8"))
+    out: dict[str, Pin] = {}
+    for name, m in cast("dict[str, dict[str, Any]]", raw["models"]).items():
+        if m.get("role") == "classifier" and m.get("eval_only") is True:
+            out[name] = Pin(tag=m["tag"], digest=m["digest"], ecf_name=m["ecf_name"])
+    return out
+
+
+def pin(name: str) -> Pin:
+    """The pin for `name`; an unknown name is refused (never an arbitrary Ollama model)."""
+    pins = load_pins()
+    if name not in pins:
+        known = ", ".join(sorted(pins)) or "none"
+        raise InvalidInputError(f"no decision model {name!r} in {LOCK} (known: {known})")
+    return pins[name]
+
+
+def verify(client: Client, p: Pin) -> str:
+    """ecf's copy of the decision model carries the pinned digest; returns it. Raises
+    OllamaError (`model_missing` or `digest_mismatch`) otherwise."""
+    got = client.digests().get(p.ecf_tag)
+    if got is None:
+        raise OllamaError("model_missing", p.ecf_tag)
+    if got != p.digest:
+        raise OllamaError("digest_mismatch", f"{p.ecf_tag} is {got[:12]}, pinned {p.digest[:12]}")
+    return got
 
 
 def questions(schema: CompiledSchema) -> dict[str, Any]:

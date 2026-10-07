@@ -6,14 +6,20 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import re
+import sqlite3
 from collections.abc import Callable
+from importlib import resources
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from ecf.errors import InvalidInputError
 from ecf.schema import load_schema_v1
-from ecf_server import systemone
+from ecf_server import db, modelq, models, ollama, systemone
+from ecf_server.clock import FakeClock
 from ecf_server.ollama import Client, OllamaError
 
 SCHEMA = load_schema_v1()
@@ -184,3 +190,135 @@ def test_the_service_classifier_path_never_imports_systemone() -> None:
                  for a in n.names}  # fmt: skip
         mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
         assert "systemone" not in names and "ecf_server.systemone" not in mods, mod
+
+
+# ---- the eval-only lock and `ecf models install --decision` (Phase 2b) -------------------------
+
+
+TEV = systemone.pin("tev1-4b")
+
+
+class FakeOllama:
+    """Tags, pull (of any tag, to `upstream`), copy and delete."""
+
+    def __init__(self, upstream: str = TEV.digest) -> None:
+        self.models: dict[str, str] = {}
+        self.upstream = upstream
+        self.pulled: list[str] = []
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path == "/api/tags":
+            listed = [{"name": k, "digest": v} for k, v in self.models.items()]
+            return httpx.Response(200, json={"models": listed})
+        if path == "/api/pull":
+            tag = json.loads(req.content)["model"]
+            self.pulled.append(tag)
+            self.models[tag] = self.upstream
+            return httpx.Response(200, content=json.dumps({"status": "success"}).encode())
+        if path == "/api/copy":
+            body = json.loads(req.content)
+            self.models[body["destination"]] = self.models[body["source"]]
+            return httpx.Response(200)
+        if path == "/api/delete":
+            self.models.pop(json.loads(req.content)["model"], None)
+            return httpx.Response(200)
+        return httpx.Response(404, json={"error": "not found"})
+
+    def client(self) -> Client:
+        return Client(transport=httpx.MockTransport(self.handler))
+
+
+@pytest.fixture(autouse=True)
+def _idle() -> None:
+    models.INSTALLS.set(state="idle", status="", error="", completed=0, total=0)
+
+
+def test_the_lock_holds_only_eval_only_classifiers() -> None:
+    raw = json.loads(resources.files("ecf_server.data").joinpath(systemone.LOCK).read_text("utf-8"))
+    assert raw["models"], "the lock names at least one model"
+    for m in raw["models"].values():
+        assert m["role"] == "classifier" and m["eval_only"] is True
+        assert re.fullmatch(r"[0-9a-f]{64}", m["digest"])
+        assert m["license"] and m["source_url"].startswith("https://")
+    assert TEV.tag == "tev1:4b"
+    assert TEV.digest == "9b5bb969e46c4b776826d6f2d401e22893205693f172653af6254897255025b8"
+
+
+def test_the_production_pin_stays_gemma() -> None:
+    assert ollama.load_pin().tag == "gemma4:12b"
+    assert all(p.ecf_name != ollama.load_pin().ecf_name for p in systemone.load_pins().values())
+
+
+def test_an_unknown_decision_model_is_refused() -> None:
+    with pytest.raises(InvalidInputError, match="no decision model"):
+        systemone.pin("qwen3:32b")
+
+
+def test_verify_checks_ecfs_copy() -> None:
+    fake = FakeOllama()
+    with pytest.raises(OllamaError) as err:
+        systemone.verify(fake.client(), TEV)
+    assert err.value.cause == "model_missing"
+    fake.models[TEV.ecf_tag] = "c" * 64
+    with pytest.raises(OllamaError) as err:
+        systemone.verify(fake.client(), TEV)
+    assert err.value.cause == "digest_mismatch"
+    fake.models[TEV.ecf_tag] = TEV.digest
+    assert systemone.verify(fake.client(), TEV) == TEV.digest
+
+
+def _inline(work: Callable[[], None]) -> None:
+    work()
+
+
+def test_decision_install_copies_without_marking_ecfs_model_installed(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    fake = FakeOllama()
+    fake.models[f"{TEV.ecf_name}:0.0.1"] = TEV.digest  # an earlier release's copy
+    fake.models["ecf/gemma4-12b:0.0.1"] = "a" * 64  # not this model's prefix: left alone
+    got = models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline,
+                               decision="tev1-4b")  # fmt: skip
+    assert got["state"] == "done", got
+    assert fake.pulled == ["tev1:4b"]
+    assert fake.models[TEV.ecf_tag] == TEV.digest
+    assert f"{TEV.ecf_name}:0.0.1" not in fake.models
+    assert "ecf/gemma4-12b:0.0.1" in fake.models
+    assert not models.installed(conn)  # no INSTALLED_KEY (R13)
+    [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.installed'").fetchall()
+    assert json.loads(row[0]) == {"tag": TEV.ecf_tag, "digest": TEV.digest, "decision": 1}
+
+
+def test_decision_install_never_retries_held_work(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[bool] = []
+
+    def retry_all(*_a: object, **_k: object) -> None:
+        called.append(True)
+
+    monkeypatch.setattr(modelq, "retry_all", retry_all)
+    models.start_install(lambda: db.connect(db_path), clock, FakeOllama().client, spawn=_inline,
+                         decision="tev1-4b")  # fmt: skip
+    assert called == []
+
+
+def test_decision_install_refuses_a_moved_tag(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    fake = FakeOllama(upstream="c" * 64)
+    models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline,
+                         decision="tev1-4b")  # fmt: skip
+    snap = models.INSTALLS.snapshot()
+    assert snap["state"] == "failed" and "no ecf release moves the pin" in snap["error"]
+    assert TEV.ecf_tag not in fake.models
+
+
+def test_decision_install_refuses_an_unknown_name_before_starting(
+    db_path: Path, clock: FakeClock
+) -> None:
+    with pytest.raises(InvalidInputError):
+        models.start_install(lambda: db.connect(db_path), clock, FakeOllama().client,
+                             spawn=_inline, decision="nope")  # fmt: skip
+    assert models.INSTALLS.snapshot()["state"] == "idle"
