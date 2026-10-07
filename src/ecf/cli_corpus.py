@@ -96,6 +96,8 @@ def make_corpus_app(paths: Callable[[], Paths]) -> typer.Typer:
                 _show_passphrase(str(got["passphrase"]))
             _follow(c)
 
+    _merge_command(corpus_app, paths)
+
     @corpus_app.command("status")
     def status() -> None:
         """The corpus fetch in progress, or the last one."""
@@ -120,6 +122,38 @@ def make_corpus_app(paths: Callable[[], Paths]) -> typer.Typer:
         typer.echo(f"labels beside it: {r['labels']}")
 
     return corpus_app
+
+
+def _merge_command(corpus_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    @corpus_app.command("merge")
+    def merge(
+        files: Annotated[
+            list[str], typer.Argument(help="Two or more .ecfcorpus files.", metavar="FILE...")
+        ],
+        out: Annotated[str, typer.Option("--out", help="A new .ecfcorpus file.")],
+        allow_mixed: Annotated[bool, typer.Option(help="Allow different mailboxes.")] = False,
+        own_passphrase: Annotated[bool, typer.Option(help="Type your own passphrase.")] = False,
+    ) -> None:
+        """Merge corpora into a new one (a top-up): duplicates dropped, labels merged. (step-up)"""
+        require_terminal()
+        require_tty_output()
+        sources = [{"path": str(Path(f).expanduser().absolute()),
+                    "passphrase": hidden(f"Passphrase for {Path(f).name} (hidden): ")}
+                   for f in files]  # fmt: skip
+        body: dict[str, Any] = {"sources": sources, "allow_mixed": allow_mixed,
+                                "out": str(Path(out).expanduser().absolute())}  # fmt: skip
+        if own_passphrase:
+            body["passphrase"] = hidden("Your passphrase for the new file (hidden): ",
+                                        confirm=True)  # fmt: skip
+        with LocalClient(paths()) as c:
+            got: dict[str, Any] = with_step_up(
+                c, lambda n: c.request("POST", "/v1/corpus/merge", body | {"nonce_id": n},
+                                       timeout=PREFLIGHT_TIMEOUT_S),
+                echo=typer.echo,
+            )  # fmt: skip
+        typer.echo(f"written: {got['out']} ({got['count']} messages; {got['labels']} labels)")
+        if got.get("passphrase"):
+            _show_passphrase(str(got["passphrase"]))
 
 
 def _print_preflight(pre: dict[str, Any], total: int) -> None:

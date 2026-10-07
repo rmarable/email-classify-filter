@@ -25,7 +25,7 @@ from tests.test_corpus import server_with
 
 AUTH = {"Authorization": "Bearer secret-token"}
 CORPUS_ROUTES = ("/v1/corpus/preflight", "/v1/corpus/fetch", "/v1/corpus", "/v1/corpus/stop",
-                 "/v1/corpus/info")  # fmt: skip
+                 "/v1/corpus/info", "/v1/corpus/merge")  # fmt: skip
 
 
 def call(state: ServiceState, method: str, path: str, headers: dict[str, str]) -> httpx.Response:
@@ -54,7 +54,7 @@ def test_a_dev_service_refuses_corpus_preflight_and_fetch() -> None:
     """R56, R106: a dev service's step-up is a fake."""
     state = ServiceState(install="t", token="secret-token", started_at="2026-10-01T12:00:00Z",
                          dev=cast(Any, object()))  # fmt: skip
-    for p in ("/v1/corpus/preflight", "/v1/corpus/fetch"):
+    for p in ("/v1/corpus/preflight", "/v1/corpus/fetch", "/v1/corpus/merge"):
         r = call(state, "POST", p, AUTH)
         assert r.json()["code"] == "policy_denied", p
         assert "ecf-server dev" in r.json()["detail"]

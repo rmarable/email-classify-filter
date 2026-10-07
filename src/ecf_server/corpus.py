@@ -121,7 +121,12 @@ def check_request(req: Request, data_dir: Path) -> Path:
             raise InvalidInputError(f"{name} must be between {lo} and {hi}")
     if "@" not in req.email or not req.host:
         raise InvalidInputError("give the mailbox's email and IMAP host")
-    where = manual_export.check_path(req.out, data_dir, suffix=SUFFIX, what="a corpus")
+    return check_out(req.out, data_dir)
+
+
+def check_out(path: str, data_dir: Path) -> Path:
+    """A new corpus file's path: outside the data folder, any git work tree and iCloud Drive."""
+    where = manual_export.check_path(path, data_dir, suffix=SUFFIX, what="a corpus")
     if in_git_tree(where.parent):
         raise InvalidInputError("a corpus can't go inside a git work tree")
     if any(p.name == "Mobile Documents" and p.parent.name == "Library" for p in where.parents):
@@ -269,7 +274,7 @@ def _windows(reader: CorpusReader, req: Request) -> Iterator[list[LeanMeta]]:
 
 
 @dataclass
-class _Output:
+class Output:
     """The tar.gz grows in memory as messages arrive; raw bytes are dropped once added."""
 
     buf: io.BytesIO = field(default_factory=io.BytesIO)
@@ -352,7 +357,7 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
     mine = (install_identity.install_id(conn), install_identity.generation(conn))
     analyzer, scan, profile = _analysis(conn, clock, req, gmail)
     iso = isolator or _isolator(conn)
-    out, reason, in_chunk = _Output(), "", 0
+    out, reason, in_chunk = Output(), "", 0
     tries = _Tries()
     try:
         for batch in _windows(reader, req):
@@ -429,8 +434,9 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
         progress.set(state="stopped" if reason == "stopped" else "failed",
                      reason=reason or "nothing_fetched", ended_at=to_ts(clock.now()))  # fmt: skip
         return None
-    final = _seal(conn, clock, notifier, req, where, out, profile, secret,
-                  name=name, complete=complete, reason=reason)  # fmt: skip
+    final = _seal(conn, clock, notifier, req, where, out, profile, secret, name=name,
+                  complete=complete, reason=reason,
+                  skipped=progress.snapshot()["skipped"])  # fmt: skip
     progress.set(state="done" if complete else "stopped", reason=reason, out=str(final),
                  ended_at=to_ts(clock.now()))  # fmt: skip
     return final
@@ -551,13 +557,14 @@ def _seal(  # noqa: PLR0913
     notifier: Notifier,
     req: Request,
     where: Path,
-    out: _Output,
+    out: Output,
     profile: dict[str, Any],
     secret: str,
     *,
     name: str,
     complete: bool,
     reason: str,
+    skipped: dict[str, int],
 ) -> Path:
     corpus_id = uuid.uuid4().hex
     preset = None
@@ -565,26 +572,15 @@ def _seal(  # noqa: PLR0913
         row = conn.execute("SELECT preset FROM addresses WHERE address_id = ?",
                            (req.address_id,)).fetchone()  # fmt: skip
         preset = row["preset"] if row else None
-    skipped = RUN.snapshot()["skipped"]
     header = {"format": FORMAT, "corpus_id": corpus_id, "created_at": to_ts(clock.now()),
               "ecf_version": __version__, "source_domain": internal.split(req.email)[1],
               "folder": req.folder or "default", "order": req.order, "count": len(out.rows),
               "bytes": sum(r["size"] for r in out.rows), "skipped": skipped,
               "complete": complete, "reason": reason, "source_preset": preset,
               "none_reasons": dict(out.none_reasons)}  # fmt: skip
-    clear = json.dumps(header, sort_keys=True).encode()
-    first = {"header_sha256": hashlib.sha256(clear).hexdigest(), "corpus_id": corpus_id,
-             "install_id": install_identity.install_id(conn), "folder": name}  # fmt: skip
-    lines = [json.dumps(first, sort_keys=True), *(json.dumps(r, sort_keys=True) for r in out.rows)]
-    out.add("manifest.jsonl", ("\n".join(lines) + "\n").encode())
-    out.add("profile.json", json.dumps(profile, sort_keys=True).encode())
-    out.tar.close()
-    plaintext = out.buf.getvalue()
-    out.buf.close()
-    sealed = MAGIC + clear + b"\n" + _age.encrypt_passphrase(plaintext, secret)
-    del plaintext
-    final = export_bundle.write_atomic(where.parent, where.name, sealed)
-    sha = hashlib.sha256(sealed).hexdigest()
+    first = {"corpus_id": corpus_id, "install_id": install_identity.install_id(conn),
+             "folder": name}  # fmt: skip
+    final, sha = write_sealed(where, out, header, first, profile, secret)
     mailbox = hashlib.sha256(internal.fold(req.email).encode()).hexdigest()[:12]
     source: dict[str, Any] = (
         {"address_id": req.address_id}
@@ -605,6 +601,31 @@ def _seal(  # noqa: PLR0913
                        f"A real-mail corpus of {len(out.rows)} messages from {req.email} was"
                        f" written to {final} (encrypted; SPEC §16.7)")  # fmt: skip
     return final
+
+
+def write_sealed(
+    where: Path,
+    out: Output,
+    header: dict[str, Any],
+    first: dict[str, Any],
+    profile: dict[str, Any],
+    secret: str,
+) -> tuple[Path, str]:
+    """Close the tar with its manifest and profile, encrypt it whole and write the file (0600,
+    never over an existing one); returns the path and the file's sha256. The manifest's first line
+    carries the clear header's sha256 (R91)."""
+    clear = json.dumps(header, sort_keys=True).encode()
+    first = {"header_sha256": hashlib.sha256(clear).hexdigest(), **first}
+    lines = [json.dumps(first, sort_keys=True), *(json.dumps(r, sort_keys=True) for r in out.rows)]
+    out.add("manifest.jsonl", ("\n".join(lines) + "\n").encode())
+    out.add("profile.json", json.dumps(profile, sort_keys=True).encode())
+    out.tar.close()
+    plaintext = out.buf.getvalue()
+    out.buf.close()
+    sealed = MAGIC + clear + b"\n" + _age.encrypt_passphrase(plaintext, secret)
+    del plaintext
+    final = export_bundle.write_atomic(where.parent, where.name, sealed)
+    return final, hashlib.sha256(sealed).hexdigest()
 
 
 def new_passphrase(own: str | None) -> str:

@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- `ecf corpus merge` combines corpora into a new encrypted one for a top-up: duplicates dropped, labels merged, conflicting labels or different mailboxes refused (OD-466).
+- `ecf doctor` checks that swap is encrypted and core dumps are off, and `ecf destroy` reminds you that corpus files are kept (OD-466).
 - `ecf corpus fetch` copies real mail from a mailbox you own into one encrypted file, after step-up, with a Security Notice; `ecf corpus status`, `stop` and `info` follow and describe it. Gmail's download budget is shared, at most half of what's left (OD-466, OD-467; SPEC §16.7).
 - Security: the excerpts a model reads are now cut in the same time-limited child process that parses each message, so a message whose cleanup runs too long is quarantined instead of slowing the check (SPEC §5.1).
 - `ecf-server dev` refuses a `--home` inside ecf's default data folder or holding an install set up with `ecf init`, since a dev service approves every step-up (OD-468).

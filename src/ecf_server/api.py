@@ -64,6 +64,7 @@ from ecf_server import (
     claude_usage,
     config,
     corpus,
+    corpus_merge,
     db,
     destroy,
     digests,
@@ -1568,12 +1569,27 @@ def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def info(request: Request) -> JSONResponse:
         return JSONResponse(corpus.info(_str(_body(request), "path")))
 
+    @allow(Caller.CLI)
+    def merge(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        return _with_conn(lambda c: corpus_merge.from_body(c, state.clock, state.notifier,
+                                                           data_dir(), body))  # fmt: skip
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
     return [
         Route("/v1/corpus/preflight", preflight, methods=["POST"]),
         Route("/v1/corpus/fetch", fetch_, methods=["POST"]),
         Route("/v1/corpus", status, methods=["GET"]),
         Route("/v1/corpus/stop", stop, methods=["POST"]),
         Route("/v1/corpus/info", info, methods=["POST"]),
+        Route("/v1/corpus/merge", merge, methods=["POST"]),
     ]
 
 

@@ -12,10 +12,12 @@ from ecf.cli import app
 from ecf.client import NOT_RUNNING, LocalClient
 from ecf.doctor import (
     Level,
+    check_core_dumps,
     check_data_dir,
     check_database,
     check_disk_encryption,
     check_python,
+    check_swap,
     check_unit,
     judge_status,
     run_checks,
@@ -228,3 +230,19 @@ def test_sizes_print_in_ecf_megabytes() -> None:
 
     assert cli._mb(51_200_000) == "48.8 MB"  # pyright: ignore[reportPrivateUsage]
     assert cli._mb(64 * 1_048_576) == "64.0 MB"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_swap_and_core_dump_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SPEC §12.2 (OD-466): what a corpus relies on."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    def reply(out: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 0, out, "")
+
+    on = "vm.swapusage: total = 5120.00M  used = 3.00M  free = 5117.00M  (encrypted)"
+    assert check_swap(lambda _a: reply(on)).level is Level.OK
+    off = check_swap(lambda _a: reply("vm.swapusage: total = 0.00M"))
+    assert off.level is Level.WARN and "corpus" in off.fix
+    assert check_core_dumps(lambda: 0).level is Level.OK
+    allowed = check_core_dumps(lambda: 1 << 20)
+    assert allowed.level is Level.WARN and "ulimit -c 0" in allowed.fix
