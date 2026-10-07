@@ -49,7 +49,7 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
       - name: tests (excluding macos)
-        run: uv run pytest -m "not macos"
+        run: uv run pytest -n auto -m "not macos"
 
   licenses-and-build:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
