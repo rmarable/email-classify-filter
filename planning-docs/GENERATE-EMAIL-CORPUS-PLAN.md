@@ -1,15 +1,20 @@
 # Plan: `ecf corpus`: real-mail test corpus (fetch, replay, eval)
 
-Draft 5 (2026-10-06). It folds in four adversarial reviews, recorded in
+Draft 6 (2026-10-06). It folds in five adversarial reviews, recorded in
 `state-archive/corpus/corpus-review-findings.md` (gitignored):
 - Phase R: R1-R44
 - Phase R2: R45-R96
 - Phase R3: R97-R146
 - Phase R4: R147-R177
+- Phase R5: R178-R200
 
-Tags like [R147] point to them.
+Tags like [R178] point to them.
 
-R150, a production defect in `redact_injection` that R4 found, is being fixed on its own branch (`fix-redact-injection`) and is not part of this plan.
+Two production defects in `redact_injection` were found by these reviews and fixed outside this plan:
+- **R150:** a quadratic search, fixed in `b86db77`.
+- **R180:** a 10 MiB paragraph still took 65-76 s per excerpt. The fix is on branch `fix-excerpt-bound` (`c514f44`):
+  it searches only the first 64 K characters of a long paragraph, and adds the `message.excerpts(redact)` helper,
+  which gives both excerpts from one redaction. It is not merged yet.
 
 ## Context
 
@@ -112,8 +117,9 @@ ecf eval run --corpus FILE --classifier … --actor …   # Phase B, preset A on
 ecf eval rescore RESULT --corpus FILE
 ```
 
-- **Terminal** [R57]: every `ecf corpus` subcommand, and `eval label/run/rescore --corpus`, calls
-  `require_terminal()` first. The passphrase belongs in a password manager only, never in a state, plan or
+- **Terminal** [R57, R184]: every `ecf corpus` subcommand, and `eval label/run/rescore --corpus`, calls
+  `require_terminal()` first. Fetch, merge and label also require `sys.stdout.isatty()`, so `> file` and `| tee` can't
+  capture the passphrase or the excerpts (tested). The passphrase belongs in a password manager only, never in a state, plan or
   scratchpad file.
 - **Default order:** `most-recent` [R62].
 - **Folder** [R26, R37, R73, R134]:
@@ -127,11 +133,17 @@ ecf eval rescore RESULT --corpus FILE
     that a Gmail folder size limit caps what is visible.
 - **Own mail** [R22, R63, R137]: these are skipped and counted as `skipped_own`:
   - `\Draft`;
-  - an `X-ECF-Install:` line in the returned header block (key looked up by the prefix `BODY[HEADER.FIELDS`)
-    [R132, R148];
-  - `\Sent` mail, **except** messages that also carry `\Inbox` and whose From (from the same header block, parsed
-    with `email.parser`/`getaddresses`) matches the source address after `internal.fold`. These are notes to self,
-    kept so `self_sent` stays measurable [R148].
+  - an `X-ECF-Install:` value in the returned header block (key looked up by the prefix `BODY[HEADER.FIELDS`) equal
+    to **this install's** identity (`install_identity.parse_header`) [R132, R148, R191]:
+    - other values are kept and counted, because they are forged or another install's (trigger 9);
+  - `\Sent` mail, **except** notes to self, which are kept so `self_sent` stays measurable [R148, R192]:
+    - a note to self also carries `\Inbox`, and its From matches the source address after `internal.fold`;
+    - the From is parsed from the same header block with `BytesHeaderParser` and strict `getaddresses` over every
+      From header; any address that matches counts;
+    - a missing or malformed From is not a match.
+
+  `\Draft` (Gmail label) and `\Drafts` (LIST role) are both skipped. Which spelling Gmail uses in `X-GM-LABELS`
+  is unverified.
 
   `--include-own` keeps them all.
 - **Gmail mode** comes from `capabilities().gmail` after login (OD-438) [R42].
@@ -144,14 +156,19 @@ ecf eval rescore RESULT --corpus FILE
     real mail (two model calls each); the limit is then set from that rate within the 8 h `RUNTIME_CAP_S` [R143,
     R166].
   - A run that hits the cap is still usable: `compare` pairs the cases both runs completed.
-  - Power: n=500 at 20% discordance gives a paired SE of about 2 points. The gating N is set by systemone's OD-465.
+  - Power: n=500 at 20% discordance gives a paired SE of about 2 points. The gating N is set by systemone's experiment-design OD.
 - **`--max-bytes`:** default 256 MiB, maximum 512 MiB.
   - The run **stops** at the cap (reason `byte_cap`). It never skips large messages, which would bias the sample.
   - The preflight shows how many messages fit within the cap [R128].
 - **Gmail budget share** [R24, R64, R129]:
   - At preflight, S = floor(L0/2) is fixed and shown.
   - Before each message, the run stops if `corpus_bytes + next > min(max-bytes, S)` or `next > left()`. Bytes are
-    recorded per message.
+    recorded per message, in **one** table only [R182]:
+    - `--address` → `downloads(address_id)`;
+    - one-off → `corpus_downloads(email_norm)`.
+  - `left(address)` = budget − `downloads(address_id)` − `corpus_downloads(fold(email))`.
+  - Listing and lean-meta bytes are not recorded. They are bounded: ≤ 50,000 UIDs per window, about 15 MB for a full
+    window of meta [R194].
   - The preflight warns that live checks may stop on the budget until a stated time.
   - Off Gmail, `left()` is None.
   - `left()` for an address also sums `corpus_downloads` for its folded email.
@@ -211,13 +228,16 @@ Each fetched message is handled in this order:
 1. **Isolated parse, auth and excerpts:** the bytes go to the OD-204 child,
    `isolate.subprocess_isolator(path, dns_cap_s=600, dns_budget=lambda: 10.0)` [R147, R152].
    - `max_scan_bytes` is `address_config(...).max_scan_bytes` with `--address`, otherwise `DEFAULT_SCAN`.
-   - The child returns the `ParsedMessage`, the `AuthOutcome` and the **excerpts**, computed inside the child under
-     its timeout by a new shared helper, `message.excerpts(parsed)`:
-     - the redacted classifier and actor excerpts;
-     - the unredacted cuts at the same limits, for "show redacted".
+   - The child returns the `ParsedMessage`, the `AuthOutcome` and the **excerpts**, all computed inside the child
+     under its timeout:
+     - the redacted classifier and actor excerpts, from `parsed.excerpts(triggers.redact_injection)` (R180's
+       helper);
+     - the unredacted cuts at the same limits (`parsed.excerpt(limit)`), for "show redacted".
    - `isolate.encode` gains the excerpts.
-   - Fetch, evalrun, `claude_eval` and the corpus all call that helper. The parent never calls `excerpt(...,
-     redact_injection)`.
+   - Live fetch also moves to the child's excerpts. With R180's bounded search, a 10 MiB paragraph costs about 1.6 s,
+     well inside the child limit. A message that still times out is quarantined after two crashes (§5.1); §5.1 and
+     the CHANGELOG say so [R180].
+   - evalrun and `claude_eval` call the helper in-process, on synthetic cards, which are trusted input [R193].
    - If isolation fails or times out, the message is **dropped** (`skipped_facts`) and never enters the tar.
 2. **Analysis in the parent, as live fetch does it:** `MessageAnalyzer(conn, clock, AddressInfo, dns).analyze(parsed,
    raw, auth=…, gmail_labels=…)` runs against the install's **real** state.
@@ -265,10 +285,12 @@ goes through the isolator again.
     - returns an informational summary;
     - not `login_and_probe`: no read-write SELECT, no SMTP [R72].
   - `POST /v1/corpus/fetch`:
-    - gets the raw inputs and the nonce, logs in, **resolves the folder again**, and builds its own step-up target;
-      no preflight output is trusted;
-    - its order is resolve → `stepup.consume` → generate the passphrase → spawn the job → respond. A call without a
-      nonce stops at `consume`, returns no passphrase and starts nothing (tested) [R175];
+    - gets the raw inputs and the nonce. Its step-up target binds the folder **as requested** (role or name), plus
+      email, host, port, path and limits, so `consume` runs before any login [R198];
+    - its order is `stepup.consume` → login → resolve the folder → generate the passphrase → spawn the job → respond.
+      A call without a nonce stops at `consume`: no login, no passphrase, nothing started (tested) [R175, R198];
+    - after the login, it refuses if the resolved folder differs from the preflight's, which the CLI sends for
+      comparison only. No preflight output is trusted [R123];
     - its **immediate response returns the generated passphrase**, before any byte is fetched [R105];
     - the one-off password field is named `app_password`, so log redaction applies;
     - the job keeps the passphrase in its closure until encryption, never in `Progress` or status.
@@ -286,9 +308,13 @@ goes through the isolator again.
 - **Dev refusals:** `ecf-server dev` refuses corpus **preflight, fetch and merge** (`state.dev is not None`) [R56,
   R106].
 - **Dev service hardening** [R106]:
-  - Before constructing `Service`, `_run_dev` checks the `--home`. If `<install>/ecf.db` exists, it opens it read-only
-    and refuses when the `install_role` setting (`initsetup.ROLE_KEY`) is set at all, whether prod or test. Dev homes
-    are never `ecf init`ed [R153].
+  - Before constructing `Service`, `_run_dev` checks the `--home` [R153, R183]:
+    - it refuses any `--home` that resolves to, or inside, `paths.data_root()`;
+    - if `<install>/ecf.db` exists, it opens it with `sqlite3.connect("file:…?mode=ro", uri=True)`. No such opener
+      exists today; this adds one;
+    - it refuses when the `install_role` setting (`initsetup.ROLE_KEY`) is set at all;
+    - any `sqlite3.Error`, an unknown schema included, is also a refusal (fail closed);
+    - dev homes are never `ecf init`ed.
   - With `--imap-cafile` set, the dev service refuses every mail connection whose host fails the replay host check.
     The CA is never trusted for a real provider.
 - **Replay controls** (dev only): the dev step-up is a fake (FakeStepper). Replay's real controls are:
@@ -360,13 +386,25 @@ goes through the isolator again.
   - Injection-redacted spans show `INJECTION_MARK`. A "show redacted" key shows the stored **unredacted cut** at the
     same limit. Its end may differ from the redacted cut's. Reveals are counted [R147].
   - The label UI runs on the terminal's alternate screen (`\x1b[?1049h` … `\x1b[?1049l`, as `less` does), so the
-    excerpts stay out of scrollback and are cleared on exit [R155].
+    excerpts stay out of scrollback and are cleared on exit [R155, R197]:
+    - the UI is wrapped in `try/finally`, with `atexit` and SIGTERM/SIGHUP handlers, so it always leaves the
+      alternate screen;
+    - exceptions are printed only after leaving it;
+    - unverified: iTerm2's per-profile "Save lines to scrollback in alternate screen mode" option defeats this. It is
+      named in the §12.2 residual;
+    - test 1 checks scrollback in Terminal.app and iTerm2.
   - The CLI says to label in Terminal, not in a Claude session, and advises turning off "Restore windows" for that
     terminal.
   - The saved-state and scrollback residual goes in §12.2.
 - **Other housekeeping:**
   - `ecf destroy` reminds that `.ecfcorpus` and labels files are kept [R93].
   - `corpus_downloads` is listed in `export_bundle.EXCLUDED` and pruned like `downloads` [R89].
+  - New manifest and case fields are named with existing `log.CONTENT_KEYS` (`excerpt`, `text`), or `excerpts`,
+    `unredacted` and `display` are added to them. The "subject never reaches the files" test also covers the corpus
+    job's log [R199].
+  - The replay host check accepts any `127/8` literal. TLS `check_hostname` against the `127.0.0.1` SAN refuses the
+    rest [R200].
+  - The merge dialog shows the sources' clear-header `corpus_id`s [R200].
 
 The reveal works without reparsing because the manifest stores the unredacted cut, inside the encrypted payload. That
 adds nothing beyond the raw `.eml` already in the same tar [R147].
@@ -409,23 +447,25 @@ adds nothing beyond the raw `.eml` already in the same tar [R147].
 - **Phase R3** (draft 3): 50 findings, of which 6 high.
 - **Phase R4** (draft 4): 31 findings, of which 4 high. One of the four, R150, is a production defect and is fixed
   separately.
+- **Phase R5** (draft 5): 23 findings, of which 2 high, both wording. R180 is a production defect and is fixed
+  separately.
 
 The operator decided every finding, and this draft carries the fixes.
 
-## Phase R5: full review of draft 5 (before any code or SPEC commit)
+## Phase R6: targeted check of draft 6 (before any code or SPEC commit)
 
-The operator chose a full three-lens review, under the same rules as before.
-- **Reviewers:** read-only, `model: "fable"`. Each checks that every R1-R177 fix is present and correct.
-- **Findings:** numbered from R178.
+The operator chose a targeted check:
+- **Reviewer:** one read-only `model: "fable"` reviewer. It checks that every R178-R200 fix is present and correct,
+  and that nothing else in draft 6 broke.
+- **Findings:** numbered from R201.
 - **Gate:** every critical and high finding is fixed in the next draft (the operator confirms) or rejected by the
-  operator with a recorded reason. Medium and low findings go to the operator. A material change triggers another
-  round.
+  operator with a recorded reason. Medium and low findings go to the operator.
 - **Then:** Phase 0, then code, each started when the operator names it.
 
 ## Phase 0: decision and SPEC (first commit, after operator OK)
 
 **OD numbers:** OD-C1, OD-C2 and OD-C3 are provisional. They are numbered at the Phase 0 commit from the next free OD,
-because OD-461 is already taken (No Haiku pins, `684427a`). The systemone plan's provisional OD-464 onward must be
+because OD-461 to OD-465 are already taken (`684427a`, `b98e8ce`). The systemone plan's provisional OD-464 onward must be
 checked against the same list.
 
 - **OD-C1:** the §12.4 exception.
@@ -435,7 +475,8 @@ checked against the same list.
   - Phase A excerpts only on a RAM-disk dev home.
   - No Anthropic in v1.
 - **OD-C2:** limits, defaults, selection, the budget share, `corpus_downloads`, the facts DNS budget, windows,
-  retries, the 2,000 loader limit, and the power statement.
+  retries, the provisional 1,500 loader limit (set from test 1's measured rate), the uncounted listing bytes, and the
+  power statement [R185].
 - **OD-C3:** replay to IPv4 loopback Dovecot only, from `ecf-server dev`:
   - tmpfs mail home and `--rm`;
   - a RAM-disk `--home`;
@@ -473,8 +514,12 @@ checked against the same list.
   The items cite anchor text, not line numbers [R170].
   - "after the corpus plan's Phases 0, 1, A and B" → "Phases 0, 1 and B".
   - "(requirements on the corpus plan's Phase B; that plan's Phase R takes them as input)" → point to this draft.
-  - Renumber OD-467 or state the gap.
-  - OD-465 names the gating mailbox and requires `--address` on an install with history [R67].
+  - Its provisional OD-464 to OD-467 are renumbered from the next free OD; OD-462 to OD-465 are taken (`b98e8ce`).
+  - Its experiment-design OD (provisionally OD-465, a number now taken) names the gating mailbox, requires `--address` on an install with history, and the address should be
+    `standard`: a `high` address refuses every hide, so `must_not_hide` could never fail [R67, R187].
+  - "OD numbers follow the corpus plan's OD-461-463, so they are provisionally OD-464 onward" → numbered from the
+    next free OD at commit time [R190].
+  - "from the excerpt only" → the corpus display (headers, auth, attachments, excerpt) [R66, R190].
   - "derived from the labels by `ecf rules test`" → `corpus.expected` (through `policy.plan`).
   - "their hash becomes the set version" → `set_version` = `corpus:<id>:<labels hash12>`.
   - "a second fetch … tops the corpus up" → `ecf corpus merge`.
@@ -558,7 +603,8 @@ checked against the same list.
 
 **Expected values: `corpus.expected(row, labels)`** [R50, R100, R101]:
 - Runs the pipeline's own path over the **stored facts**, with the labels as the classification:
-  `policy.plan(policy.Context(labels, facts, sensitivity, rules, {}, frozenset()), known)`, as evalrun does [R165].
+  `policy.plan(policy.Context(labels, facts, sensitivity, rules, {}, frozenset()), known)`, as evalrun does, where
+  `known` = `policy.labels(schema, rules_now)` [R165, R186].
   - Returns `rule` (including `alert_echo`) and actions.
   - `hide: never` comes from `rules.evaluate(...).hide`.
 - `must_escalate` = the derived rule is `fraud_guard` or `regulatory`, or the actions include escalate.
@@ -571,14 +617,31 @@ checked against the same list.
   - `requires_reply` (OD-250);
   - `requires_action` (OD-250).
 
-  Checked against the 185 synthetic labels, the formula disagrees with 1 card (`home-giftcard-thanks`). The Phase B
-  test asserts that count.
+  Checked through the real pipeline over the **184 loadable** synthetic cards (`scanned-invoice-17mb` exceeds
+  `MAX_CASE_BYTES`; loaded as `evalrun.load` does) [R179, R189]:
+  - it **misses 1** card the operator marked `must_not_hide` (`home-giftcard-thanks`);
+  - it is **stricter on 19** cards the operator marked hideable, mostly `requires_reply`/`requires_action` and
+    `must_escalate` cards.
+
+  The Phase B test asserts both numbers. §16.1 records this trade-off next to the non-comparability sentence.
 - `injection_target` is never set (a stated limit).
 - Derived only when every field the policy reads is labelled.
+- **What corpus scoring tests** [R181]: the expected rule and safety come from the same `policy.plan` and stored facts
+  as the run, so on the corpus they test **only the classifier's fields**. The rules and facts are identical on both
+  sides and are not under test. The plan and §16.1 say so.
+  - A reported figure, never gated, shows the deterministic layer's noise on real mail: the count of confirmed
+    messages whose derived rule comes from a fact or trigger clause (rule 1 fact clauses, 1b, 1a) while the labels
+    say `fraud_risk: none` and `payment_related: false`.
+- **Blind spots, stated in §16.1** [R187]: `confirmed_category` is never passed in the eval path, so hides the live
+  service allows through a person-confirmed category can't appear.
 - **End-to-end correctness** is computed only over confirmed cases with a derived rule (`rule_scored` in the summary).
+  Today `rule_scored` equals `confirmed`, because the rules read every field. It is kept for a future per-field `u`
+  [R188].
   A category-only figure is reported alongside. `compare` pairs cases that both runs scored.
-- **Unlabelled cases** get `confirmed=False` and `scored: false`. `results.summary()` (the A/B headline of
-  `ecf eval compare`) joins `compare` and `compare_fields` in counting confirmed labels only [R157].
+- **Unlabelled cases** get `confirmed=False` and `scored: false`. `scored` is a declared `CaseResult` field, since
+  `extra="forbid"` [R186]. `results.summary()` (the A/B headline of
+  `ecf eval compare`) joins `compare` and `compare_fields` in counting confirmed labels only. It handles 0 confirmed
+  cases without dividing by zero [R157, R186].
 
 **`ecf eval run --corpus FILE --classifier … --actor …`:**
 - **Scope:** preset A only; `--claude` is refused. It runs **every** message in the corpus, labelled or not, and
@@ -604,8 +667,9 @@ checked against the same list.
 - Refuses a result whose `corpus_id` differs.
 - Recomputes the expected values from the current labels and scores from `got` and `actions`. No model re-runs.
 - Writes `<run_id>-rescore-<labels hash12>.json` beside the original and keeps the original.
-- Copies `digest`, `pair` and `labels_hash`, forces `gate_passed` false, and records `rescored_from: {run_id,
-  sha256}`.
+- Its `set_version` and `labels_hash` are **those of the labels used for the rescore**. It copies `digest` and `pair`,
+  forces `gate_passed` false, and records `rescored_from: {run_id, sha256, labels_hash}` [R178].
+- So `compare(original, rescored)` is refused (tested).
 - After adjudication **every** arm is rescored before `compare`.
 
 **`ecf eval compare`** takes result paths. It, `compare_fields` and `results.summary()` score confirmed labels only.
@@ -708,7 +772,13 @@ Phase A checks mechanics only.
   - the generator's top-up;
   - each skip counter: own (labels, header, notes-to-self kept), gone, duplicate, timeout, facts.
 - **Caps:** count; `byte_cap` (a stop, not a skip); the S rule, including `next > left_now`; the budget recorded per
-  message under both keys; `left()` including `corpus_downloads`.
+  message in one table only (a 1-byte `--address` fetch moves `used()` by exactly 1); `left()` including
+  `corpus_downloads` [R182].
+- **Test double:** the window tests use a fake `lib.Conn` (search, fetch, select, noop, capabilities, list_folders)
+  with a 1 MB line refusal and the upper-cased `BODY[HEADER.FIELDS …]` key. The `-m imap` Dovecot test is the real
+  check [R195].
+- **Empty folder:** EXISTS == 0 is refused at preflight as empty. The preflight candidate pass is limited to one
+  window [R194].
 - **Retries:** the counters; LoginError on reconnect; a NOOP before each batch; a partial corpus on stop and on a
   UIDVALIDITY change.
 - **Analysis:**
@@ -777,15 +847,18 @@ before asking to commit (`uv run pytest -n auto -rs`, 0 skipped).
 
 **Real-service test 1** (gating mechanics) [R79, R110, R145]:
 - **Conditions:** needs the operator's go-ahead at the time. Its code is throwaway, kept in the scratchpad.
-- **Install:** a test install that watches `ecf-test-gmail` with `--address`. The operator names or creates it at
-  the time; the shadow unit is uninstalled.
+- **Install** [R196]:
+  - A test install, named or created by the operator at the time; the shadow unit is uninstalled.
+  - The test Google account is added with `ecf address add`, and the operator re-enters the app password.
+  - The `ecf-test-gmail` Keychain entry is not used.
 - **Message count:** the preflight checks EXISTS first. Below 40 messages, either APPEND synthetic mail with fresh
   Message-IDs (`ecf.replay.fresh_message_id`), so EXISTS actually grows (allowed by §17.3), or accept
   `folder_exhausted` as a pass [R161].
 - **Rate:** measure seconds per message for `eval run --corpus` and set the loader limit from it [R166].
 - **Fetch:** 20 messages most-recent, then 20 random.
 - **Forced disconnect:** an outage of 70 s or more, recording which path ran.
-- **Budget:** a throwaway script pre-seeds `downloads` by address_id, so the half rule binds. Live checks of that
+- **Budget:** a throwaway script pre-seeds `downloads` by address_id, leaving L0 small but non-zero, so the half rule
+  binds after a few messages [R196]. Live checks of that
   address stop while it is in place, and the "Gmail download limit reached" alert is expected. The rows are removed
   afterwards, which clears the alert [R161].
 - **Also exercised:**
