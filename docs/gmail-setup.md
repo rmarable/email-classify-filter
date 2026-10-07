@@ -81,6 +81,9 @@ classifications go to your Slack, and on presets B and C email content goes to A
 run `/ecf-review` (SPEC §12.4, OD-427). Ask them to read this guide first. ecf can't check that
 they agreed; that is your responsibility (SPEC §12.2).
 
+A real-mail test corpus (`ecf corpus fetch`, not built yet) may be made only from a mailbox you own,
+never from someone else's account you watch (SPEC §16.7, OD-466).
+
 ## What ecf does and doesn't do on Gmail
 
 - It reads your **inbox only**. Mail Gmail puts in Spam is never checked (SPEC §12.2).

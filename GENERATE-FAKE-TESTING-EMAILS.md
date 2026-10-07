@@ -16,7 +16,7 @@ mail ever enters the repository. The rules below are also enforced for Claude by
   checksums.
 - **People:** no real names.
 - **No real mail or real phishing text.** Published fraud and injection patterns are paraphrased
-  into the fictitious organisation.
+  into the fictitious organisation. Real-mail corpus content (SPEC §16.7) never feeds cards.
 - **Nobody writes `.eml` or MIME by hand.** Cards describe the message; the builder writes it.
 - **Size:** files over 1 MB are never committed; they are built into `.build/` (gitignored).
 

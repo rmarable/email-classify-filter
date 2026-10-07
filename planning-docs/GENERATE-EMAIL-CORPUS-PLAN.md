@@ -152,7 +152,7 @@ ecf eval rescore RESULT --corpus FILE
   `--include-own` keeps them all.
 - **Gmail mode** comes from `capabilities().gmail` after login (OD-438) [R42].
 
-## Limits (recorded in OD-C2)
+## Limits (recorded in OD-467)
 
 - **`--total`:**
   - Default 500, maximum 5,000.
@@ -186,7 +186,7 @@ ecf eval rescore RESULT --corpus FILE
     rejected.
 - **Windows** [R133]: at most 50,000 UIDs per SEARCH window. Most-recent and oldest windows are sized from density
   (`2N × UIDNEXT / EXISTS`).
-- **Facts:** each isolated child gets a DNS budget of 10 s (OD-C2) and the timeout `30 s + 3 s/MB`, with no retry.
+- **Facts:** each isolated child gets a DNS budget of 10 s (OD-467) and the timeout `30 s + 3 s/MB`, with no retry.
 - **Preflight figures are estimates** [R127]. The fetch call re-selects.
 - **Run time** [R158]:
   - The preflight prints an estimate: `N × (sleep/chunk + about 1 s)`.
@@ -470,20 +470,20 @@ gate to Phase 0 is passed. Its 9 wording fixes (R201-R209) are in this draft.
 
 ## Phase 0: decision and SPEC (first commit, after operator OK)
 
-**OD numbers:** OD-C1, OD-C2 and OD-C3 are provisional. They are numbered at the Phase 0 commit from the next free OD,
-because OD-461 to OD-465 are already taken (`684427a`, `b98e8ce`). The systemone plan's provisional OD-464 onward must be
+**OD numbers:** OD-466, OD-467 and OD-468, assigned at the Phase 0 commit (OD-461 to OD-465 were taken by
+`684427a` and `b98e8ce`). The systemone plan's provisional OD-464 onward must be
 checked against the same list.
 
-- **OD-C1:** the §12.4 exception.
+- **OD-466:** the §12.4 exception.
   - Encrypted corpus files.
   - Operator-owned mailboxes as the operator's condition, which ecf can't check.
   - Prod or test installs, never dev; step-up and a Security Notice.
   - Phase A excerpts only on a RAM-disk dev home.
   - No Anthropic in v1.
-- **OD-C2:** limits, defaults, selection, the budget share, `corpus_downloads`, the facts DNS budget, windows,
+- **OD-467:** limits, defaults, selection, the budget share, `corpus_downloads`, the facts DNS budget, windows,
   retries, the provisional 1,500 loader limit (set from test 1's measured rate), the uncounted listing bytes, and the
   power statement [R185].
-- **OD-C3:** replay to IPv4 loopback Dovecot only, from `ecf-server dev`:
+- **OD-468:** replay to IPv4 loopback Dovecot only, from `ecf-server dev`:
   - tmpfs mail home and `--rm`;
   - a RAM-disk `--home`;
   - `--imap-cafile` dev-only and loopback-only;
@@ -535,7 +535,7 @@ checked against the same list.
   - Label wording matches the display above [R66].
   - Its schedule ("Schedule estimate") gets the build effort above.
   - A §21.1 row for the gating 500+ fetch.
-- **CHANGELOG**, one line per change, each citing OD-C1 to OD-C3 [R30, R84, R142]:
+- **CHANGELOG**, one line per change, each citing OD-466 to OD-468 [R30, R84, R142]:
   - `ecf corpus fetch/status/stop/info/merge`;
   - the §12.4 exception;
   - Gmail budget sharing;
