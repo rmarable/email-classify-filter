@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+## v1.0.0-rc2 (2026-10-07)
+
 - Added: `ecf slack remove [--config-token]` (step-up) takes Slack off an install whose app was deleted in Slack or whose tokens are gone: it deletes the app (with a configuration token) or revokes its bot token, forgets the tokens, member ID and channels, and `ecf slack install` then starts again from scratch (OD-469).
 - Decided, not built yet: a real-mail test corpus. Real messages from a mailbox you own can be kept only in one encrypted file, labelled blind and used to compare classifiers; results are reported, never gated, and a corpus never goes to Anthropic in v1 (OD-466 to OD-468, ADR 0022).
 
