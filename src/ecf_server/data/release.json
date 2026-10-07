@@ -4,6 +4,6 @@
   "version": "1.0.0rc1",
   "api_version": 1,
   "data_format": 2,
-  "schema_version": 32,
+  "schema_version": 33,
   "min_client": "0.1.0.dev0"
 }

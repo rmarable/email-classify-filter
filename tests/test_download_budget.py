@@ -77,3 +77,30 @@ def test_the_alert_opens_and_resolves(setup: sqlite3.Connection, clock: FakeCloc
     assert n.sent[-1][0] == "[ecf-alert] Operator Input Needed: Gmail download limit reached"
     health.after_check(setup, clock, n, CheckReport(ADDR, "ok", "t"), resolve=lambda _h: True)
     assert n.sent[-1][0].startswith("[ecf-alert] Resolved: Operator Input Needed: Gmail download")
+
+
+def test_a_one_off_corpus_fetch_counts_once_against_the_mailbox(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-467 (R182): a one-off corpus fetch records by folded email only; the watched address's
+    budget includes it, and each byte is counted exactly once."""
+    download_budget.record(setup, clock, ADDR, 100)  # live fetch of ap@acme.example
+    download_budget.record_email(setup, clock, "AP@acme.example", 1)  # one-off, other spelling
+    assert download_budget.used(setup, clock, ADDR) == 101
+    assert download_budget.used_email(setup, clock, "ap@acme.example") == 101
+    assert setup.execute("SELECT count(*) FROM downloads").fetchone()[0] == 1  # not both tables
+    left = download_budget.left_email(setup, clock, "ap@acme.example", gmail=True)
+    assert left == download_budget.GMAIL_BYTES_PER_DAY - 101
+    assert download_budget.left_email(setup, clock, "ap@acme.example", gmail=False) is None
+
+
+def test_corpus_bytes_for_an_unwatched_mailbox_fold_gmail_spellings(
+    setup: sqlite3.Connection, clock: FakeClock
+) -> None:
+    download_budget.record_email(setup, clock, "Pat.Lee+news@googlemail.com", 40)
+    download_budget.record_email(setup, clock, "patlee@gmail.com", 2)
+    assert download_budget.used_email(setup, clock, "pat.lee@gmail.com") == 42
+    assert download_budget.used(setup, clock, ADDR) == 0  # another mailbox
+    clock.advance(3 * 86400)
+    download_budget.record_email(setup, clock, "patlee@gmail.com", 1)
+    assert setup.execute("SELECT count(*) FROM corpus_downloads").fetchone()[0] == 1  # pruned

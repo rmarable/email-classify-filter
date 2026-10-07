@@ -19,6 +19,11 @@ SUN_PATH_MAX = 104 if sys.platform == "darwin" else 108
 def data_root() -> Path:
     if home := os.environ.get("ECF_HOME"):
         return Path(home).expanduser()
+    return default_root()
+
+
+def default_root() -> Path:
+    """Where installs live when `ECF_HOME` isn't set."""
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "ecf"
     xdg = os.environ.get("XDG_DATA_HOME")

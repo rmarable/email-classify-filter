@@ -16,6 +16,10 @@ The child opens its own connection to the service database for the DNS cache, wi
 budget, which starts at what is left of the check's. Its output is JSON, never pickle, so a child
 subverted by a crafted message can't run code in the service. Its stderr is discarded: a
 traceback could quote message text.
+
+The child also cuts the excerpts (SPEC §5.1 step 4), so removing text addressed to an automated
+reader (OD-254) runs under the same time limit; it returns them redacted, for the models, and
+unredacted, for the corpus label screen (SPEC §16.7, OD-466).
 """
 
 from __future__ import annotations
@@ -26,9 +30,17 @@ import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
-from ecf_server.message import Attachment, ParsedMessage, TextPart, parse
+from ecf_server import triggers
+from ecf_server.message import (
+    ACTOR_CHARS,
+    CLASSIFIER_CHARS,
+    Attachment,
+    ParsedMessage,
+    TextPart,
+    parse,
+)
 from ecf_server.senderauth import AuthOutcome, SigResult
 
 # parse and DKIM on a 64.6 MB message took 7-10 s on this Mac (2026-09-29); a small one, 0.15 s
@@ -41,8 +53,15 @@ def timeout_for(size: int) -> float:
     return TIMEOUT_BASE_S + TIMEOUT_PER_MB_S * size / (1024 * 1024)
 
 
-# (raw, max_scan_bytes) -> parsed message and its sender-authentication outcome
-Isolator = Callable[[bytes, int], tuple[ParsedMessage, AuthOutcome]]
+class Isolated(NamedTuple):
+    parsed: ParsedMessage
+    auth: AuthOutcome
+    excerpts: tuple[str, str]  # classifier, actor; injection text removed (OD-254)
+    plain: tuple[str, str]  # the same cuts, not redacted
+
+
+# (raw, max_scan_bytes) -> the parsed message, its sender-authentication outcome and its excerpts
+Isolator = Callable[[bytes, int], Isolated]
 
 
 class IsolationError(RuntimeError):
@@ -54,7 +73,7 @@ def subprocess_isolator(
 ) -> Isolator:
     """`dns_budget` gives the seconds of the check's DNS budget left when a message starts."""
 
-    def run(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
+    def run(raw: bytes, max_scan_bytes: int) -> Isolated:
         args = [sys.executable, "-m", "ecf_server.isolate", str(db_path), str(max_scan_bytes)]
         args += [str(dns_cap_s), f"{dns_budget():.3f}"]
         limit = timeout_for(len(raw))
@@ -74,11 +93,18 @@ def subprocess_isolator(
     return run
 
 
-def encode(parsed: ParsedMessage, auth: AuthOutcome) -> dict[str, Any]:
-    return {"parsed": asdict(parsed), "auth": asdict(auth)}
+def isolated(parsed: ParsedMessage, auth: AuthOutcome) -> Isolated:
+    """The result for a parsed and verified message: its excerpts are cut here."""
+    plain = (parsed.excerpt(CLASSIFIER_CHARS), parsed.excerpt(ACTOR_CHARS))
+    return Isolated(parsed, auth, parsed.excerpts(triggers.redact_injection), plain)
 
 
-def decode(data: dict[str, Any]) -> tuple[ParsedMessage, AuthOutcome]:
+def encode(result: Isolated) -> dict[str, Any]:
+    return {"parsed": asdict(result.parsed), "auth": asdict(result.auth),
+            "excerpts": list(result.excerpts), "plain": list(result.plain)}  # fmt: skip
+
+
+def decode(data: dict[str, Any]) -> Isolated:
     p: dict[str, Any] = data["parsed"]
     parsed = ParsedMessage(
         message_id=p["message_id"],
@@ -108,7 +134,11 @@ def decode(data: dict[str, Any]) -> tuple[ParsedMessage, AuthOutcome]:
         signatures=[SigResult(**s) for s in a["signatures"]],
         mime_headers_signed=a["mime_headers_signed"],
     )
-    return parsed, auth
+    excerpts = tuple(str(x) for x in data["excerpts"])
+    plain = tuple(str(x) for x in data["plain"])
+    if len(excerpts) != 2 or len(plain) != 2:
+        raise ValueError("two excerpts expected")
+    return Isolated(parsed, auth, (excerpts[0], excerpts[1]), (plain[0], plain[1]))
 
 
 def _reason(stdout: bytes) -> str:
@@ -137,7 +167,7 @@ def main(argv: list[str]) -> int:
             else DnsCache(conn, clock, cap_s=cap_s)
         )
         auth = senderauth.evaluate(raw, parsed, dns)
-        out = json.dumps(encode(parsed, auth))
+        out = json.dumps(encode(isolated(parsed, auth)))
     except Exception as exc:  # any failure: reported by type only, never by message
         sys.stdout.write(json.dumps({"error": type(exc).__name__}))
         return EXIT_ERROR

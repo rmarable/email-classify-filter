@@ -55,9 +55,9 @@ INCLUDED = (
     "probe", "routes", "schema_migrations", "senders", "sent", "settings", "threads",
 )  # fmt: skip
 EXCLUDED = (
-    "alert_outbox", "check_state", "claim_batches", "claims", "delays", "dns_cache", "downloads",
-    "fallback_shadow", "grants", "heartbeats", "jobs", "leases", "nonces", "processing", "rate",
-    "slack_dedupe", "slack_messages",
+    "alert_outbox", "check_state", "claim_batches", "claims", "corpus_downloads", "delays",
+    "dns_cache", "downloads", "fallback_shadow", "grants", "heartbeats", "jobs", "leases",
+    "nonces", "processing", "rate", "slack_dedupe", "slack_messages",
 )  # fmt: skip
 SETTINGS_LEFT_OUT = (INTERPRETER_KEY,)  # this computer's interpreter; restore resets it
 

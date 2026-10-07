@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- Security: the excerpts a model reads are now cut in the same time-limited child process that parses each message, so a message whose cleanup runs too long is quarantined instead of slowing the check (SPEC §5.1).
+- `ecf-server dev` refuses a `--home` inside ecf's default data folder or holding an install set up with `ecf init`, since a dev service approves every step-up (OD-468).
 - Decided, not built yet: a real-mail test corpus. Real messages from a mailbox you own can be kept only in one encrypted file, labelled blind and used to compare classifiers; results are reported, never gated, and a corpus never goes to Anthropic in v1 (OD-466 to OD-468, ADR 0022).
 
 ## v1.0.0-rc1 (2026-10-07)
