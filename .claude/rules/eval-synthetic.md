@@ -10,7 +10,7 @@ Full spec: `GENERATE-FAKE-TESTING-EMAILS.md`. Build with `uv run ecf eval build`
 - Domains: only RFC 2606 / reserved TLDs (`acme.example`, `vendor-a.example`, `*.test`); never a registrable lookalike.
 - Regulators are named in text only, never as real sender domains.
 - Phones 555-01xx only; IBANs and routing numbers are published examples or fail their checksum; no real names.
-- No real mail ever enters the generation directory, and no real phishing text is copied: published patterns are paraphrased into the fictitious org.
+- No real mail ever enters the generation directory, and no real phishing text is copied: published patterns are paraphrased into the fictitious org. Real-mail corpus content (SPEC §16.7) never feeds cards.
 - Nobody writes raw `.eml` or MIME by hand: cases are `.md` cards under `cases/`, built by the deterministic builder; evasions are builder options.
 - Files over 1 MB are not committed; they are built on demand into `.build/` (gitignored).
 - Generated PDFs contain no JavaScript, forms, embedded files or links.
