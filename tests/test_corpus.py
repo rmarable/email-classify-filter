@@ -326,3 +326,37 @@ def test_a_dropped_noop_between_chunks_does_not_end_the_run(
                       isolator=inline)  # fmt: skip
     assert path is not None and progress.fetched == 4 and progress.state == "done"
     assert s.logins >= 2  # it reconnected
+
+
+@pytest.mark.parametrize(("down", "fetched", "reason"), [(6, 4, ""), (9, 1, "mail_unavailable")])
+def test_a_long_outage_is_survived_within_the_back_off(
+    conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out_dir: Path,
+    down: int, fetched: int, reason: str,
+) -> None:  # fmt: skip
+    """Real-service test 1 (rc4): Wi-Fi off past 75 s ended the run. Now seven waits (about four
+    minutes) pass before it gives up; the progress says it is reconnecting meanwhile."""
+    s = server_with(4)
+    notes: list[str] = []
+
+    class Outage(FakeConn):
+        def noop(self) -> None:
+            if not getattr(Outage, "started", False):
+                Outage.started = True  # type: ignore[attr-defined]
+                self.s.drops = down  # every command fails until `down` have
+            super().noop()
+
+    r = CorpusReader("imap.example", "ap@acme.example", lambda: "pw", connect=lambda: Outage(s))
+    progress = corpus.Progress()
+    waits: list[float] = []
+
+    def note(w: float) -> bool:
+        waits.append(w)
+        if progress.retrying:
+            notes.append(progress.retrying)
+        return False
+
+    corpus.run(conn, clock, FakeNotifier(), data_dir, req(out_dir / "c.ecfcorpus", total=4,
+               chunk=1), r, SECRET, progress, isolator=inline, sleep=note)  # fmt: skip
+    assert progress.fetched == fetched and progress.reason == reason
+    assert notes and notes[0] == f"reconnecting (attempt 1 of {corpus.TRIES - 1})"
+    assert progress.retrying == ""

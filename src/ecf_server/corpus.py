@@ -76,8 +76,10 @@ SLEEP_S, SLEEP_RANGE = 10, (0, 600)
 DNS_BUDGET_S = 10.0  # per message, in the isolated child (OD-467)
 DNS_CAP_S = 600
 OVERSAMPLE = 1.2
-TRIES = 5  # consecutive failures before the run stops (R131)
-BACKOFF_S = (5, 10, 20, 40, 60)
+# consecutive failures before the run stops (R131): about 4 minutes of back-off, so a network gap
+# of a minute or two survives (real-service test 1 lost a run to 75 s of patience)
+TRIES = 8
+BACKOFF_S = (5, 10, 20, 40, 60, 60, 60)
 UID_TRIES = 2  # a UID that fails this many times is skipped (R77)
 ATTACHMENTS_SHOWN = 20
 ONE_OFF = "corpus-oneoff"
@@ -166,6 +168,7 @@ class Progress:
     total: int = 0
     skipped: dict[str, int] = field(default_factory=dict[str, int])
     reason: str = ""
+    retrying: str = ""  # shown while the run waits to reconnect
     out: str = ""
     started_at: str | None = None
     ended_at: str | None = None
@@ -176,7 +179,7 @@ class Progress:
         with self.lock:
             return {"state": self.state, "fetched": self.fetched, "bytes": self.bytes,
                     "total": self.total, "skipped": dict(self.skipped), "reason": self.reason,
-                    "out": self.out, "started_at": self.started_at,
+                    "retrying": self.retrying, "out": self.out, "started_at": self.started_at,
                     "ended_at": self.ended_at}  # fmt: skip
 
     def set(self, **kw: Any) -> None:
@@ -315,7 +318,7 @@ def start(  # noqa: PLR0913 - the service's collaborators, then the request
         if RUN.state == "running":
             raise ConflictError("a corpus fetch is already running; see `ecf corpus status`")
         RUN.state, RUN.fetched, RUN.bytes, RUN.total = "running", 0, 0, req.total
-        RUN.skipped, RUN.reason, RUN.out = {}, "", ""
+        RUN.skipped, RUN.reason, RUN.out, RUN.retrying = {}, "", "", ""
         RUN.started_at, RUN.ended_at = to_ts(clock.now()), None
     STOP.clear()
     pause = sleep or STOP.wait
@@ -382,7 +385,8 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
                 if left is not None and meta.size > left:
                     reason = "download_budget"
                     break
-                got_raw = _fetch(reader, meta.uid, tries, sleep)
+                got_raw = _fetch(reader, meta.uid, tries, sleep,
+                                 lambda text: progress.set(retrying=text))  # fmt: skip
                 if isinstance(got_raw, str):
                     if got_raw == "timeout":
                         progress.skip("timeout")
@@ -441,14 +445,14 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
     complete = reason in ("", "folder_exhausted", "byte_cap", "download_budget")
     if not out.rows:
         out.tar.close()
-        progress.set(state="stopped" if reason == "stopped" else "failed",
+        progress.set(state="stopped" if reason == "stopped" else "failed", retrying="",
                      reason=reason or "nothing_fetched", ended_at=to_ts(clock.now()))  # fmt: skip
         return None
     final = _seal(conn, clock, notifier, req, where, out, profile, secret, name=name,
                   complete=complete, reason=reason,
                   skipped=progress.snapshot()["skipped"])  # fmt: skip
     progress.set(state="done" if complete else "stopped", reason=reason, out=str(final),
-                 ended_at=to_ts(clock.now()))  # fmt: skip
+                 retrying="", ended_at=to_ts(clock.now()))  # fmt: skip
     return final
 
 
@@ -460,7 +464,11 @@ class _Tries:
 
 
 def _fetch(
-    reader: CorpusReader, uid: int, tries: _Tries, sleep: Callable[[float], bool]
+    reader: CorpusReader,
+    uid: int,
+    tries: _Tries,
+    sleep: Callable[[float], bool],
+    note: Callable[[str], None] = lambda _s: None,
 ) -> bytes | str | None:
     """The message, None when it's gone, "timeout" when this UID failed UID_TRIES times (R77),
     or why the run stops: "mail_unavailable" after TRIES failures in a row, or "stopped".
@@ -474,10 +482,12 @@ def _fetch(
             tries.failures += 1
         else:
             tries.failures = 0
+            note("")
             return raw
         while True:  # back off, then reconnect; a failed reconnect counts too (R130)
             if tries.failures >= TRIES:
                 return "mail_unavailable"
+            note(f"reconnecting (attempt {tries.failures} of {TRIES - 1})")
             if sleep(BACKOFF_S[min(tries.failures, len(BACKOFF_S)) - 1]):
                 return "stopped"
             try:
