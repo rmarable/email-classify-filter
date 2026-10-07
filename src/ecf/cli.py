@@ -1029,6 +1029,24 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     batch: Annotated[
         int, typer.Option("--batch", help="With --claude: items per -high spawn (1-5).")
     ] = 1,
+    classifier_backend: Annotated[
+        str,
+        typer.Option(
+            "--classifier-backend",
+            help="gemma (default), null, or"
+            " systemone:<name> from decision_models.lock (eval only, SPEC §7.8;"
+            " never counts for the go-live gate).",
+        ),
+    ] = "gemma",
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact/--no-redact",
+            help="With --fraud-only: --no-redact lets"
+            " injection text reach the model (a reported figure; never counts"
+            " for the go-live gate).",
+        ),
+    ] = True,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
@@ -1037,13 +1055,16 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
+        if classifier_backend != "gemma" or not redact:
+            raise InvalidInputError("--classifier-backend and --no-redact are for the local model")
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
-            "fraud_only": fraud_only, "battery_floor": battery_floor})  # fmt: skip
+            "fraud_only": fraud_only, "battery_floor": battery_floor,
+            "backend": classifier_backend, "redact": redact})  # fmt: skip
     typer.echo(f"eval {r['run_id'][:8]} started: {r['total']} cases; follow it with"
                " `ecf eval status`, stop it with `ecf eval stop`")  # fmt: skip
     if r.get("on_battery"):

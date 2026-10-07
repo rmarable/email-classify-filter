@@ -30,6 +30,9 @@ class CaseResult(BaseModel):
     got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
     fraud: bool = False  # expects fraud_guard/fraud_weak or an escalation; False in older files
     fraud_guard: bool = False  # expects fraud_guard (recall, §16.5); False in older files
+    # a decision model's per-field probabilities (SPEC §7.8; calibration only, never routing)
+    probabilities: dict[str, dict[str, float]] | None = None
+    classifier_ms: int | None = None  # the classifier call's wall time (§7.8 latency rule)
 
 
 class ResultFile(BaseModel):

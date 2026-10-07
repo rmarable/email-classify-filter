@@ -186,8 +186,8 @@ def check_listener(listener: Listener) -> None:
 
 
 def server_env(pid: int, run: Runner = _run, platform: str = sys.platform) -> dict[str, str]:
-    """The server's `OLLAMA_*` environment. Raises OllamaError("unconfirmed") when it can't be read,
-    e.g. the server runs as another user (OD-245)."""
+    """The server's `OLLAMA_*` and `LLAMA_ARG_*` environment. Raises OllamaError("unconfirmed")
+    when it can't be read, e.g. the server runs as another user (OD-245)."""
     try:
         if platform == "darwin":
             out = run(["/bin/ps", "-E", "-ww", "-o", "command=", "-p", str(pid)])
@@ -202,7 +202,7 @@ def server_env(pid: int, run: Runner = _run, platform: str = sys.platform) -> di
     env: dict[str, str] = {}
     for t in tokens:
         k, sep, v = t.partition("=")
-        if sep and k.startswith("OLLAMA_"):
+        if sep and k.startswith(("OLLAMA_", "LLAMA_ARG_")):
             env[k] = v
     return env
 

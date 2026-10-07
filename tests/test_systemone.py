@@ -7,8 +7,10 @@ import ast
 import importlib.util
 import json
 import re
+import shutil
 import sqlite3
 from collections.abc import Callable
+from datetime import date
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -16,11 +18,16 @@ from typing import Any
 import httpx
 import pytest
 
-from ecf.errors import InvalidInputError
+from ecf.errors import InvalidInputError, ServiceUnavailableError
+from ecf.eval import labels
+from ecf.eval.builder import build_all
 from ecf.schema import load_schema_v1
-from ecf_server import db, modelq, models, ollama, systemone
+from ecf_server import claude_eval, db, evalrun, fallback, gate, modelq, models, ollama, systemone
 from ecf_server.clock import FakeClock
 from ecf_server.ollama import Client, OllamaError
+from tests.test_classifier import ChatOllama
+from tests.test_evalrun import AC, BEC, SYNTHETIC
+from tests.test_models import PS_ENV, check_kw
 
 SCHEMA = load_schema_v1()
 CANARY = "CANARY-7f3a"
@@ -268,10 +275,6 @@ def test_verify_checks_ecfs_copy() -> None:
     assert systemone.verify(fake.client(), TEV) == TEV.digest
 
 
-def _inline(work: Callable[[], None]) -> None:
-    work()
-
-
 def test_decision_install_copies_without_marking_ecfs_model_installed(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:
@@ -322,3 +325,153 @@ def test_decision_install_refuses_an_unknown_name_before_starting(
         models.start_install(lambda: db.connect(db_path), clock, FakeOllama().client,
                              spawn=_inline, decision="nope")  # fmt: skip
     assert models.INSTALLS.snapshot()["state"] == "idle"
+
+
+# ---- `ecf eval run --classifier-backend` (Phase 2c) --------------------------------------------
+
+
+CAPPED_ENV = PS_ENV + " LLAMA_ARG_CACHE_RAM=1024"
+
+
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    r = tmp_path / "synthetic"
+    (r / "cases").mkdir(parents=True)
+    for name in ("starter-bec.md", "starter-control.md", "starter-injection.md"):
+        shutil.copy(SYNTHETIC / "cases" / name, r / "cases" / name)
+    assert not build_all(r).findings
+    labels.confirm(r, "starter-bec", date(2026, 10, 1))
+    labels.confirm(r, "starter-injection", date(2026, 10, 1))
+    return r
+
+
+@pytest.fixture(autouse=True)
+def _reset_run() -> None:
+    evalrun.RUN.set(state="idle", run_id="", done=0, total=0, result=None, detail="")
+    evalrun.RUN.stop.clear()
+    if modelq.EXCLUSIVE.held():
+        modelq.EXCLUSIVE.release()
+
+
+def _inline(work: Callable[[], None]) -> None:
+    work()
+
+
+class DecisionOllama(ChatOllama):
+    """Gemma's chat (the actor) plus a decision model on `/v1/systemone`."""
+
+    def __init__(self, decision_digest: str = TEV.digest) -> None:
+        super().__init__(json.dumps(BEC))
+        self.models[TEV.ecf_tag] = decision_digest
+        self.decision_calls = 0
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/v1/systemone":
+            self.decision_calls += 1
+            return httpx.Response(200, json=_answers())
+        return super().handler(req)
+
+
+def _start(db_path: Path, clock: FakeClock, root: Path, fake: ChatOllama,
+           ps: str = CAPPED_ENV, **opts: Any) -> dict[str, Any]:  # fmt: skip
+    return evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
+                         evalrun.Options(root, **opts), power=lambda: AC, battery=lambda: 90,
+                         spawn=_inline, check_kw=check_kw(ps=ps))  # fmt: skip
+
+
+def test_a_decision_model_run_never_reads_as_gemmas(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    gemma = ollama.load_pin().digest
+    before = (gate.inputs(conn, "a1", gemma), fallback.inputs(conn, "a1", gemma))
+    fake = DecisionOllama()
+    _start(db_path, clock, root, fake, backend="systemone:tev1-4b")
+    snap = evalrun.RUN.snapshot()
+    assert snap["state"] == "done", snap
+    assert fake.decision_calls >= 3  # every case, then the determinism re-run
+    row = conn.execute("SELECT pair, digest, gate_passed, path FROM eval_runs").fetchone()
+    assert (row["pair"], row["digest"], row["gate_passed"]) == (
+        "systemone-tev1-4b/local",
+        TEV.digest,
+        0,
+    )
+    summary = json.loads(Path(row["path"]).read_text())["summary"]
+    assert summary["backend"] == "systemone:tev1-4b"
+    assert summary["classifier_digest"] == TEV.digest and summary["actor_digest"] == gemma
+    assert summary["gate_passed"] is False
+    assert summary["classifier_latency_s"]["p50"] is not None
+    assert summary["power"] == {"ac_at_start": True, "ac_at_end": True, "paused": False}
+    case = json.loads(Path(row["path"]).read_text())["cases"][0]
+    assert case["probabilities"]["fraud_risk"]["high"] == 0.45
+    assert isinstance(case["classifier_ms"], int)
+    # no gate reader takes it for Gemma's (R1)
+    assert evalrun.latest(conn, gemma) is None
+    assert "no synthetic-set result" in gate.synthetic(conn, gemma).detail
+    assert (gate.inputs(conn, "a1", gemma), fallback.inputs(conn, "a1", gemma)) == before
+    with pytest.raises(InvalidInputError, match="there is none"):
+        claude_eval._a_run(conn, evalrun.set_version(root))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_decision_model_run_needs_the_cache_cap(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    for ps in (PS_ENV, PS_ENV + " LLAMA_ARG_CACHE_RAM=8192", PS_ENV + " LLAMA_ARG_CACHE_RAM=-1"):
+        with pytest.raises(ServiceUnavailableError, match="LLAMA_ARG_CACHE_RAM"):
+            _start(db_path, clock, root, DecisionOllama(), ps=ps, backend="systemone:tev1-4b")
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
+
+
+def test_a_decision_model_run_refuses_a_changed_copy(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    with pytest.raises(ServiceUnavailableError, match="pinned one"):
+        _start(db_path, clock, root, DecisionOllama("c" * 64), backend="systemone:tev1-4b")
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("backend", ["systemone:qwen3-32b", "llama", "systemone:"])
+def test_an_unknown_backend_is_refused(db_path: Path, clock: FakeClock, root: Path,
+                                       backend: str) -> None:  # fmt: skip
+    with pytest.raises(InvalidInputError):
+        _start(db_path, clock, root, DecisionOllama(), backend=backend)
+    assert evalrun.RUN.snapshot()["state"] == "idle"
+
+
+def test_the_null_arm_runs_without_the_classifier_model(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    fake = DecisionOllama()
+    _start(db_path, clock, root, fake, ps=PS_ENV, backend="null")
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    assert fake.decision_calls == 0
+    assert all(b["options"]["num_predict"] == ollama.NUM_PREDICT["actor"] for b in fake.bodies)
+    row = conn.execute("SELECT pair, digest, gate_passed FROM eval_runs").fetchone()
+    assert (row["pair"], row["digest"], row["gate_passed"]) == ("null/local", "null", 0)
+
+
+def test_the_null_classification_is_the_least_risky() -> None:
+    assert evalrun.null_classification(SCHEMA) == {
+        "category": "other", "priority": "low", "requires_action": False,
+        "requires_reply": False, "payment_related": False, "deadline_mentioned": False,
+        "sender_type": "unknown", "fraud_risk": "none"}  # fmt: skip
+
+
+def test_no_redact_runs_only_on_the_fraud_subset_and_never_passes(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    with pytest.raises(InvalidInputError, match="--fraud-only"):
+        _start(db_path, clock, root, ChatOllama(json.dumps(BEC)), ps=PS_ENV, redact=False)
+    _start(db_path, clock, root, ChatOllama(json.dumps(BEC)), ps=PS_ENV, redact=False,
+           fraud_only=True)  # fmt: skip
+    row = conn.execute("SELECT pair, gate_passed, metrics FROM eval_runs").fetchone()
+    assert row["pair"] == "gemma4-12b/local" and row["gate_passed"] == 0
+    assert json.loads(row["metrics"])["redact"] is False
+
+
+def test_a_gemma_run_still_records_preset_as_pair(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    _start(db_path, clock, root, ChatOllama(json.dumps(BEC)), ps=PS_ENV)
+    row = conn.execute("SELECT pair, digest, metrics FROM eval_runs").fetchone()
+    assert row["pair"] == "gemma4-12b/local" and row["digest"] == ollama.load_pin().digest
+    assert json.loads(row["metrics"])["backend"] == "gemma"

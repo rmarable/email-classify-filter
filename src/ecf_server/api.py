@@ -960,7 +960,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
                                actor=body.get("actor") is not False,
                                fraud_only=body.get("fraud_only") is True,
-                               battery_floor=floor)  # fmt: skip
+                               battery_floor=floor,
+                               backend=_opt_str(body, "backend") or evalrun.GEMMA,
+                               redact=body.get("redact") is not False)  # fmt: skip
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
         run = evalrun.start(state.connect, state.clock, state.model_client,
