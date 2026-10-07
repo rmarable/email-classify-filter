@@ -72,3 +72,11 @@ jobs:
           (cd "$RUNNER_TEMP/build-a" && sha256sum --check --strict SHA256SUMS)
           (cd "$RUNNER_TEMP/build-b" && sha256sum --check --strict SHA256SUMS)
           cat "$RUNNER_TEMP/build-a/SHA256SUMS" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Keep one build, so its bytes can be compared with a local build of the same commit
+      # (they differed at v1.0.0-rc1; SPEC §17.4).
+      - name: keep the build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-${{ github.sha }}
+          path: ${{ runner.temp }}/build-a
+          retention-days: 30
