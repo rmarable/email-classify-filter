@@ -417,6 +417,13 @@ def judge_models(st: dict[str, Any]) -> list[Check]:
     if "*" in env.get("OLLAMA_ORIGINS", ""):
         out.append(Check("ollama settings", Level.WARN, "OLLAMA_ORIGINS allows any web page",
                          "unset OLLAMA_ORIGINS for Ollama"))  # fmt: skip
+    decision: list[dict[str, Any]] = st.get("decision") or []
+    for d in decision:  # eval-only decision models (SPEC §7.8), when installed
+        if d["pinned"]:
+            out.append(Check("decision model", Level.OK, f"{d['ecf_tag']}, for evaluation only"))
+        else:
+            out.append(Check("decision model", Level.WARN, f"{d['ecf_tag']} isn't the pinned model",
+                             f"ecf models install --decision {d['name']}"))  # fmt: skip
     return out
 
 

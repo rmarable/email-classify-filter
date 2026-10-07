@@ -39,7 +39,8 @@ ALERT = "local_model"  # System Error; not running, missing or changed
 LOUD = "local_model_unsafe"  # System Error with a mention; can't be confirmed safe
 LOUD_CAUSES = frozenset({"not_loopback", "unconfirmed", "logs_requests", "digest_mismatch"})
 SHOWN_ENV = ("OLLAMA_NUM_PARALLEL", "OLLAMA_ORIGINS", "OLLAMA_NO_CLOUD", "OLLAMA_FLASH_ATTENTION",
-             "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG", "OLLAMA_DEBUG_LOG_REQUESTS")  # fmt: skip
+             "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG", "OLLAMA_DEBUG_LOG_REQUESTS",
+             "LLAMA_ARG_CACHE_RAM")  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- the check
@@ -170,7 +171,21 @@ def status(conn: sqlite3.Connection, client: Client, **kw: Any) -> dict[str, Any
                                                 "summary": fault_summary(e)}}  # fmt: skip
     env = {k: ready.env[k] for k in SHOWN_ENV if k in ready.env}
     return out | {"ready": True, "version": ready.version, "digest": ready.digest,
-                  "listener": list(ready.listener.addresses), "env": env}  # fmt: skip
+                  "listener": list(ready.listener.addresses), "env": env,
+                  "decision": decision_status(client)}  # fmt: skip
+
+
+def decision_status(client: Client) -> list[dict[str, Any]]:
+    """The eval-only decision models whose ecf copy is installed (§7.8): name, tag and whether
+    it is the pinned one. Empty when none is, or Ollama can't list its models."""
+    from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
+
+    try:
+        have = client.digests()
+    except OllamaError:
+        return []
+    return [{"name": name, "ecf_tag": p.ecf_tag, "pinned": have[p.ecf_tag] == p.digest}
+            for name, p in sorted(systemone.load_pins().items()) if p.ecf_tag in have]  # fmt: skip
 
 
 def _setting(conn: sqlite3.Connection, key: str) -> str | None:

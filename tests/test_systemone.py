@@ -17,10 +17,14 @@ from typing import Any
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
+from ecf.cli import app
+from ecf.doctor import Level, judge_models
 from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
+from ecf.eval.results import CaseResult, ResultFile
 from ecf.schema import load_schema_v1
 from ecf_server import claude_eval, db, evalrun, fallback, gate, modelq, models, ollama, systemone
 from ecf_server.clock import FakeClock
@@ -503,3 +507,72 @@ def test_a_gemma_run_has_no_calibration_but_reports_under_rating(
     summary = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
     assert "calibration" not in summary
     assert summary["fraud_under"]["of"] >= 1
+
+
+# ---- `ecf eval compare`, `ecf models status`, doctor (Phase 2e) --------------------------------
+
+
+def _file(tmp: Path, name: str, backend: str, correct: list[bool], **extra: Any) -> Path:
+    cases = [CaseResult(id=f"c{i}", correct=c, fields={"category": c})
+             for i, c in enumerate(correct)]  # fmt: skip
+    summary: dict[str, object] = {"backend": backend, "redact": True, **extra}
+    r = ResultFile(run_id=name, pair=evalrun.pair_for(backend), set_version="v",
+                   created_at="t", cases=cases, summary=summary)  # fmt: skip
+    path = tmp / f"{name}.json"
+    path.write_text(r.model_dump_json())
+    return path
+
+
+def test_compare_shows_the_experiment_figures(tmp_path: Path) -> None:
+    g = _file(tmp_path, "g", "gemma", [True, False] * 10,
+              fraud_under={"under": 2, "of": 6})  # fmt: skip
+    d = _file(tmp_path, "d", "systemone:tev1-4b", [True] * 20,
+              fraud_under={"under": 1, "of": 6},
+              classifier_latency_s={"p50": 2.5, "p95": 3.1},
+              power={"ac_at_start": True, "ac_at_end": True, "paused": False},
+              calibration={"category": {"n": 20, "accuracy": 1.0, "ece": 0.04,
+                                        "ece_ci95": [0.01, 0.08], "ece_baseline": 0.0,
+                                        "reliability": []}})  # fmt: skip
+    out = CliRunner().invoke(app, ["eval", "compare", str(g), str(d)])
+    assert out.exit_code == 0, out.output
+    text = out.output
+    assert "score interval (Newcombe form" in text
+    assert "confirmatory (exact McNemar, Holm over the two): end-to-end p =" in text
+    assert "B  classifier systemone:tev1-4b" in text
+    assert "B  fraud risk under-rated on 1 of 6" in text
+    assert "A  fraud risk under-rated on 2 of 6" in text
+    assert "B  classifier call 2.5 s median, 3.1 s p95" in text
+    assert "B  calibration category: ECE 0.040 (0.010-0.080" in text
+
+
+def test_compare_of_two_gemma_runs_is_unchanged(tmp_path: Path) -> None:
+    a = _file(tmp_path, "a", "gemma", [True, False] * 5)
+    b = _file(tmp_path, "b", "gemma", [True] * 10)
+    out = CliRunner().invoke(app, ["eval", "compare", str(a), str(b)])
+    assert out.exit_code == 0
+    assert "score interval" not in out.output and "confirmatory" not in out.output
+
+
+def test_models_status_lists_an_installed_decision_model() -> None:
+    fake = FakeOllama()
+    assert models.decision_status(fake.client()) == []
+    fake.models[TEV.ecf_tag] = TEV.digest
+    assert models.decision_status(fake.client()) == [
+        {"name": "tev1-4b", "ecf_tag": TEV.ecf_tag, "pinned": True}
+    ]
+    fake.models[TEV.ecf_tag] = "c" * 64
+    assert models.decision_status(fake.client())[0]["pinned"] is False
+
+
+def test_doctor_shows_a_decision_model_only_when_installed() -> None:
+    base: dict[str, Any] = {
+        "pin": {"tag": "gemma4:12b", "digest": "a" * 64, "ecf_tag": "ecf/gemma4-12b:1"},
+        "installed_at": "t", "ready": True, "version": "0.35.0", "listener": ["127.0.0.1:11434"],
+        "env": {"OLLAMA_NUM_PARALLEL": "1", "OLLAMA_NO_CLOUD": "1"}}  # fmt: skip
+    assert [c.name for c in judge_models(base)] == ["local model"]
+    ok = judge_models(base | {"decision": [{"name": "tev1-4b", "ecf_tag": "ecf/tev1-4b:1",
+                                            "pinned": True}]})  # fmt: skip
+    assert ok[-1].name == "decision model" and ok[-1].level is Level.OK
+    bad = judge_models(base | {"decision": [{"name": "tev1-4b", "ecf_tag": "ecf/tev1-4b:1",
+                                             "pinned": False}]})  # fmt: skip
+    assert bad[-1].level is Level.WARN and "--decision tev1-4b" in (bad[-1].fix or "")

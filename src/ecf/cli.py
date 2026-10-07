@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 from urllib.parse import urlencode
 
 import typer
@@ -37,6 +37,9 @@ from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 from ecf.status import CHECK_FAILED
 from ecf.stepup import step_up, with_step_up
+
+if TYPE_CHECKING:
+    from ecf.eval.results import ResultFile
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -1159,7 +1162,13 @@ def eval_stop() -> None:
 def eval_compare(a: Path, b: Path) -> None:
     """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
     with Holm)."""
-    from ecf.eval.results import compare, compare_fields, load_result, summary  # noqa: PLC0415
+    from ecf.eval.results import (  # noqa: PLC0415
+        compare,
+        compare_endpoints,
+        compare_fields,
+        load_result,
+        summary,
+    )
 
     ra, rb = load_result(a), load_result(b)
     c = compare(ra, rb)
@@ -1171,6 +1180,16 @@ def eval_compare(a: Path, b: Path) -> None:
         f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
+        lo, hi = c.diff_ci_score
+        typer.echo(f"score interval (Newcombe form, for non-inferiority): {lo:+.1f} to {hi:+.1f}")
+        ends = compare_endpoints(ra, rb)
+        typer.echo(
+            "confirmatory (exact McNemar, Holm over the two): "
+            + "; ".join(
+                f"{k.replace('_', '-')} p = {p:.3g}, Holm p = {h:.3g}" for k, (p, h) in ends.items()
+            )
+        )
     for name, run in (("A", ra), ("B", rb)):
         if recall := _recall(dict(run.summary or {})):
             typer.echo(f"{name} {recall.rstrip(',')}")
@@ -1179,6 +1198,8 @@ def eval_compare(a: Path, b: Path) -> None:
             typer.echo(f"{name}  model: {line}")
         for line in _claude_figures(run.summary, len(run.cases)):
             typer.echo(f"{name}  {line}")
+        for line in _decision_figures(run.summary):
+            typer.echo(f"{name}  {line}")
     fields = compare_fields(ra, rb)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
@@ -1186,6 +1207,46 @@ def eval_compare(a: Path, b: Path) -> None:
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+
+
+def _decision_run(r: ResultFile) -> bool:
+    backend = (r.summary or {}).get("backend")
+    return isinstance(backend, str) and backend != "gemma"
+
+
+def _decision_figures(summary: dict[str, object] | None) -> list[str]:
+    """The decision-model experiment's figures (SPEC §7.8): backend, fraud-risk under-rating,
+    classifier-call latency, power, calibration. Absent in older results."""
+    s = cast(dict[str, Any], summary or {})
+    out: list[str] = []
+    if "backend" in s:
+        redact = "" if s.get("redact", True) else ", injection text not redacted"
+        out.append(f"classifier {s['backend']}{redact}")
+    under = s.get("fraud_under")
+    u = cast(dict[str, int], under) if isinstance(under, dict) else {}
+    if u.get("of"):
+        out.append(f"fraud risk under-rated on {u['under']} of {u['of']} cases labelled medium"
+                   " or high")  # fmt: skip
+    lat = s.get("classifier_latency_s")
+    lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
+    if lt.get("p50") is not None:
+        out.append(f"classifier call {lt['p50']:.1f} s median, {lt['p95']:.1f} s p95")
+    power = s.get("power")
+    if isinstance(power, dict):
+        pw = cast(dict[str, bool], power)
+        where = "AC" if pw.get("ac_at_start") and pw.get("ac_at_end") else "battery for part"
+        out.append(f"power: {where}" + ("; paused on battery (latency doesn't count)"
+                                        if pw.get("paused") else ""))  # fmt: skip
+    cal = s.get("calibration")
+    if isinstance(cal, dict):
+        for field, e in sorted(cast(dict[str, dict[str, Any]], cal).items()):
+            lo, hi = e["ece_ci95"]
+            extra = (f", RPS {e['rps']:.3f}" if "rps" in e else
+                     f", Brier {e['brier']:.3f} (baseline {e['brier_baseline']:.3f})"
+                     if "brier" in e else "")  # fmt: skip
+            out.append(f"calibration {field}: ECE {e['ece']:.3f} ({lo:.3f}-{hi:.3f}; baseline"
+                       f" {e['ece_baseline']:.3f}), n={e['n']}{extra}")  # fmt: skip
+    return out
 
 
 def _model_figures(summary: dict[str, object] | None) -> str | None:
