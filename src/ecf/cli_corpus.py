@@ -186,6 +186,8 @@ def _follow(c: LocalClient) -> None:
         while True:
             st: dict[str, Any] = c.get("/v1/corpus")
             line = f"{st['state']}: {st['fetched']}/{st['total']} messages"
+            if st.get("retrying"):
+                line += f"; {st['retrying']}"
             if line != last:
                 typer.echo(line)
                 last = line
