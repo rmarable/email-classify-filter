@@ -11,7 +11,7 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import holm, mcnemar_exact, wilson
+from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, wilson
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 NON_INFERIORITY_POINTS = 3.0
@@ -63,6 +63,9 @@ class Comparison:
     p_value: float
     diff_points: float
     diff_ci: tuple[float, float]
+    # Newcombe's paired score interval (§16.5, R2): for the decision-model experiment's
+    # non-inferiority; unlike Wald it doesn't collapse to [0, 0] without discordant pairs
+    diff_ci_score: tuple[float, float] = (0.0, 0.0)
 
     @property
     def b_non_inferior(self) -> bool:
@@ -84,6 +87,8 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
     # 95% CI for a paired difference in proportions (Wald on discordant pairs)
     se = ((b_only + a_only) / n - diff * diff) ** 0.5 / n**0.5
     ci = (100 * (diff - 1.96 * se), 100 * (diff + 1.96 * se))
+    both = sum(x and y for x, y in pairs)
+    lo, hi = newcombe_paired(both, b_only, a_only, n - both - b_only - a_only)
     return Comparison(
         n=n,
         a_correct=sum(x for x, _ in pairs),
@@ -93,7 +98,17 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
         p_value=mcnemar_exact(b_only, a_only),
         diff_points=100 * diff,
         diff_ci=ci,
+        diff_ci_score=(100 * lo, 100 * hi),
     )
+
+
+def compare_endpoints(a: ResultFile, b: ResultFile) -> dict[str, tuple[float, float]]:
+    """The decision-model experiment's confirmatory tests (§7.8, R17): exact McNemar on end-to-end
+    correctness and on category, each with its Holm-adjusted p-value over the two."""
+    e2e = compare(a, b).p_value
+    cat = next((f.p_value for f in compare_fields(a, b) if f.field == "category"), 1.0)
+    adjusted = holm({"end_to_end": e2e, "category": cat})
+    return {"end_to_end": (e2e, adjusted["end_to_end"]), "category": (cat, adjusted["category"])}
 
 
 @dataclass(frozen=True)

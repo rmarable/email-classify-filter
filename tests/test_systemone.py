@@ -475,3 +475,31 @@ def test_a_gemma_run_still_records_preset_as_pair(
     row = conn.execute("SELECT pair, digest, metrics FROM eval_runs").fetchone()
     assert row["pair"] == "gemma4-12b/local" and row["digest"] == ollama.load_pin().digest
     assert json.loads(row["metrics"])["backend"] == "gemma"
+
+
+# ---- run figures (Phase 2d) --------------------------------------------------------------------
+
+
+def test_a_decision_model_run_reports_calibration_and_under_rating(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    _start(db_path, clock, root, DecisionOllama(), backend="systemone:tev1-4b")
+    summary = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
+    under = summary["fraud_under"]
+    assert under["of"] >= 1 and 0 <= under["under"] <= under["of"]
+    cal = summary["calibration"]
+    assert "category" in cal
+    cat = cal["category"]
+    assert cat["n"] >= 1 and 0 <= cat["ece"] <= 1
+    assert sum(b["n"] for b in cat["reliability"]) == cat["n"]
+    if "fraud_risk" in cal:
+        assert "rps" in cal["fraud_risk"]
+
+
+def test_a_gemma_run_has_no_calibration_but_reports_under_rating(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    _start(db_path, clock, root, ChatOllama(json.dumps(BEC)), ps=PS_ENV)
+    summary = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
+    assert "calibration" not in summary
+    assert summary["fraud_under"]["of"] >= 1

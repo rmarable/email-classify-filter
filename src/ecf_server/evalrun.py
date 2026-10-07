@@ -52,6 +52,7 @@ from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels as label_file
+from ecf.eval import metrics
 from ecf.eval.metrics import wilson
 from ecf.eval.results import CaseResult, ResultFile
 from ecf.ids import new_random_id
@@ -550,6 +551,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             "p50": stats.percentile(classifier_s, 50),
             "p95": stats.percentile(classifier_s, 95),
         }
+        summary["fraud_under"] = fraud_under(results, cases, schema)
+        cal = calibration(results, cases, schema)
+        if cal:
+            summary["calibration"] = cal
         summary["power"] = {"ac_at_start": on_ac_at_start, "ac_at_end": power().on_ac,
                             "paused": bool(paused)}  # fmt: skip
         result = ResultFile(run_id=RUN.run_id, pair=pair_for(opts.backend),
@@ -563,6 +568,77 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         scratch.close()
         client.close()
         conn.close()
+
+
+def _labelled(results: list[CaseResult], cases: list[Case]
+              ) -> list[tuple[CaseResult, dict[str, Any]]]:  # fmt: skip
+    by_id = {c.id: c for c in cases}
+    return [(r, dict(by_id[r.id].expected.get("labels") or {})) for r in results
+            if r.confirmed and r.id in by_id]  # fmt: skip
+
+
+def fraud_under(results: list[CaseResult], cases: list[Case], schema: Any) -> dict[str, int]:
+    """Confirmed cases labelled `fraud_risk` medium or high, and how many the classification put
+    lower or failed on (§7.8, R5): reported for every backend, so arms compare."""
+    levels = schema.fields["fraud_risk"].values
+    pairs = [(lab["fraud_risk"], r.got.get("fraud_risk")) for r, lab in _labelled(results, cases)
+             if lab.get("fraud_risk") in levels]  # fmt: skip
+    if not pairs:
+        return {"under": 0, "of": 0}
+    under, n = metrics.under_rated([g for g, _ in pairs],
+                                   [p if isinstance(p, str) else None for _, p in pairs],
+                                   levels, "medium")  # fmt: skip
+    return {"under": under, "of": n}
+
+
+def calibration(results: list[CaseResult], cases: list[Case], schema: Any) -> dict[str, Any]:
+    """Per labelled field, for a run with probabilities: ECE on the answer's probability (equal-
+    mass bins, bootstrap interval), a reliability table, RPS for ordinals, Brier for booleans,
+    and the constant-predictor baseline (§16.4). Reported, never gated (§7.8)."""
+    out: dict[str, Any] = {}
+    rows = [(r, lab) for r, lab in _labelled(results, cases) if r.probabilities]
+    for f in schema.fields.values():
+        conf: list[float] = []
+        ok: list[bool] = []
+        ordinal: list[tuple[list[float], int]] = []
+        boolean: list[tuple[float, bool]] = []
+        for r, lab in rows:
+            gold, got = lab.get(f.name), r.got.get(f.name)
+            probs = (r.probabilities or {}).get(f.name)
+            if gold is None or got is None or not probs:
+                continue
+            if f.kind is FieldKind.BOOLEAN:
+                p_true = probs.get("true")
+                if p_true is None:
+                    continue
+                conf.append(p_true if got else 1 - p_true)
+                boolean.append((p_true, bool(gold)))
+            else:
+                if not isinstance(got, str) or got not in probs:
+                    continue
+                conf.append(probs[got])
+                if f.kind is FieldKind.ORDINAL and gold in f.values:
+                    ordinal.append(([probs.get(v, 0.0) for v in f.values], f.values.index(gold)))
+            ok.append(got == gold)
+        if not conf:
+            continue
+        acc = sum(ok) / len(ok)
+        entry: dict[str, Any] = {
+            "n": len(conf), "accuracy": round(acc, 4),
+            "ece": round(metrics.ece(conf, ok), 4),
+            "ece_ci95": [round(x, 4) for x in metrics.bootstrap_ece(conf, ok)],
+            "ece_baseline": round(metrics.ece([acc] * len(ok), ok), 4),
+            "reliability": metrics.reliability(conf, ok)}  # fmt: skip
+        if ordinal:
+            entry["rps"] = round(metrics.rps([p for p, _ in ordinal], [g for _, g in ordinal]), 4)
+        if boolean:
+            entry["brier"] = round(metrics.brier([p for p, _ in boolean],
+                                                 [g for _, g in boolean]), 4)  # fmt: skip
+            base = sum(g for _, g in boolean) / len(boolean)
+            entry["brier_baseline"] = round(metrics.brier([base] * len(boolean),
+                                                          [g for _, g in boolean]), 4)  # fmt: skip
+        out[f.name] = entry
+    return out
 
 
 def pair_for(backend: str) -> str:
