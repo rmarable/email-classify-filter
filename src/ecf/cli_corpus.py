@@ -161,12 +161,14 @@ def _print_preflight(pre: dict[str, Any], total: int) -> None:
     typer.echo(f"first window: {pre['candidates']} candidates; {pre['fit_in_cap']} of the first"
                f" {total} fit within {pre['byte_cap'] / MIB:.0f} MiB")  # fmt: skip
     if pre["budget_share"] is not None:
-        typer.echo(f"Gmail: this run uses at most {pre['budget_share'] / MIB:.0f} MiB, half of"
-                   " today's download budget left; live checks of this mailbox may then stop on"
-                   " the budget for up to a day")  # fmt: skip
-    minutes = pre["estimate_s"] / 60
-    typer.echo(f"{pre['batches']} batches, about {minutes:.0f} min; keep the Mac on AC power and"
-               " awake (a sleep or a service restart ends the run)")  # fmt: skip
+        typer.echo(f"Gmail: this run downloads at most {pre['byte_cap'] / MIB:.0f} MiB (the lower"
+                   f" of --max-mib and half of today's download budget left,"
+                   f" {pre['budget_share'] / MIB:.0f} MiB); live checks of this mailbox may then"
+                   " stop on the budget for up to a day")  # fmt: skip
+    secs = int(pre["estimate_s"])
+    took = f"{secs // 60} min" if secs >= 120 else f"{secs} s"
+    typer.echo(f"{pre['batches']} batch(es), about {took}; keep the Mac on AC power and awake"
+               " (a sleep or a service restart ends the run)")  # fmt: skip
 
 
 def _show_passphrase(secret: str) -> None:

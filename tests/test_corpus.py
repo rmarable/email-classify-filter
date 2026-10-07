@@ -303,3 +303,26 @@ def test_preflight_estimates_and_refuses_an_empty_folder(
     assert got["batches"] == 2 and got["budget_share"] is None
     with pytest.raises(InvalidInputError, match="empty"):
         corpus.preflight(conn, clock, req(out_dir / "c.ecfcorpus"), reader(server_with(0)))
+
+
+def test_a_dropped_noop_between_chunks_does_not_end_the_run(
+    conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out_dir: Path
+) -> None:
+    """Real-service test 1: a connection that died during the sleep fails the NOOP; the next fetch
+    reconnects instead of the run stopping."""
+    s = server_with(4)
+
+    class NoopDropper(FakeConn):
+        def noop(self) -> None:
+            if not getattr(NoopDropper, "done", False):
+                NoopDropper.done = True  # type: ignore[attr-defined]
+                raise OSError("connection reset during the sleep")
+
+    r = CorpusReader("imap.example", "ap@acme.example", lambda: "pw",
+                     connect=lambda: NoopDropper(s))  # fmt: skip
+    progress = corpus.Progress()
+    path = corpus.run(conn, clock, FakeNotifier(), data_dir,
+                      req(out_dir / "c.ecfcorpus", total=4, chunk=1), r, SECRET, progress,
+                      isolator=inline)  # fmt: skip
+    assert path is not None and progress.fetched == 4 and progress.state == "done"
+    assert s.logins >= 2  # it reconnected

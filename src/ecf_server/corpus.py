@@ -144,10 +144,15 @@ def _describe(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     del conn
     out = str(target.get("out", ""))
     shown = out if len(out) <= 80 else f"{out[:30]}…{out[-45:]}"
-    text = (f"ecf: copy up to {target.get('total')} messages from {target.get('email')}"
-            f" ({target.get('folder')}, a mailbox you own) on {target.get('host')} into an"
-            f" encrypted corpus at {shown}")  # fmt: skip
+    where = _folder_words(str(target.get("folder")))
+    text = (f"ecf: copy up to {target.get('total')} messages from {target.get('email')} ({where},"
+            f" a mailbox you own) on {target.get('host')} into an encrypted corpus at"
+            f" {shown}")  # fmt: skip
     return stepup.Bound(stepup.digest("corpus_fetch", target), text)
+
+
+def _folder_words(folder: str) -> str:
+    return "its default folder" if folder == "default" else f"folder {folder}"
 
 
 # ------------------------------------------------------------------------------------- progress
@@ -419,7 +424,12 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
                     if sleep(req.sleep_s):
                         reason = "stopped"
                         break
-                    reader.noop()
+                    try:
+                        reader.noop()
+                    except UidValidityChangedError:
+                        raise
+                    except MailUnavailableError:
+                        pass  # the next fetch reconnects, with its back-off (R136)
             if reason or len(out.rows) >= req.total:
                 break
         else:
