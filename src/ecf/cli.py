@@ -1122,8 +1122,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
             "fraud_only": fraud_only, "battery_floor": battery_floor,
             "backend": classifier_backend, "redact": redact})  # fmt: skip
-    typer.echo(f"eval {r['run_id'][:8]} started: {r['total']} cases; follow it with"
-               " `ecf eval status`, stop it with `ecf eval stop`")  # fmt: skip
+    typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
+    _follow_hints()
     if r.get("on_battery"):
         typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
                    " resumes on AC power.")  # fmt: skip
@@ -1147,10 +1147,20 @@ def _eval_corpus(corpus: Path, classifier: bool, actor: bool, floor: int, backen
         except Exception:
             c.request("DELETE", f"/v1/corpus/session/{opened['session_id']}")
             raise
-    typer.echo(f"corpus eval {r['run_id'][:8]} started: {r['total']} messages of corpus"
-               f" {str(opened['corpus_id'])[:8]}; reported only, never counted for the go-live"
-               " gate. Follow it with `ecf eval status`; stop it with"
-               " `ecf eval stop`.")  # fmt: skip
+    typer.echo(f"Corpus eval {r['run_id'][:8]} started: {r['total']} messages from corpus"
+               f" {str(opened['corpus_id'])[:8]}.")  # fmt: skip
+    typer.echo("Reported only; never counts toward the go-live gate.")
+    _follow_hints()
+
+
+def _ecf(rest: str) -> str:
+    """A command to copy, naming the install when it isn't the default."""
+    return "ecf " + ("" if STATE.install == "default" else f"--install {STATE.install} ") + rest
+
+
+def _follow_hints() -> None:
+    typer.echo(f"  Progress:  {_ecf('eval status')}")
+    typer.echo(f"  Stop:      {_ecf('eval stop')}")
 
 
 def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
@@ -1207,30 +1217,43 @@ def eval_status() -> None:
     """The running eval's progress and the latest results."""
     with LocalClient(_paths()) as c:
         st = c.get("/v1/eval/runs")
-    cur = st["current"]
-    cl: dict[str, Any] | None = st.get("claude")
+    for line in status_lines(st):
+        typer.echo(line)
+
+
+def status_lines(st: dict[str, Any]) -> list[str]:
+    """`ecf eval status`: the running evals, then each recent synthetic run on two lines (its
+    score, then its safety checks and gate). Corpus runs are never listed as recent (§16.7)."""
+    cur, cl = st["current"], st.get("claude")
+    out: list[str] = []
     if cl is not None:
-        typer.echo(f"Claude eval {cl['run_id'][:8]} (preset {cl['preset']}, {cl['sensitivity']},"
-                   f" {'pinned models' if cl['pinned'] else 'comparison'}): {cl['state']},"
-                   f" {cl['done']}/{cl['total']} cases scored"
-                   + (f", {cl['prepared']}/{cl['total']} prepared"
-                      if cl["state"] == "preparing" else "")
-                   + (f" ({cl['detail']})" if cl["detail"] else ""))  # fmt: skip
+        prepared = (f", {cl['prepared']}/{cl['total']} prepared"
+                    if cl["state"] == "preparing" else "")  # fmt: skip
+        out += [f"Claude eval {cl['run_id'][:8]}: {cl['state']}, {cl['done']}/{cl['total']}"
+                f" cases scored{prepared}" + (f" ({cl['detail']})" if cl["detail"] else ""),
+                f"  preset {cl['preset']}, {cl['sensitivity']},"
+                f" {'pinned models' if cl['pinned'] else 'comparison'}"]  # fmt: skip
     if cur["state"] != "idle":
-        corpus = str(cur.get("set", "")).startswith("corpus")  # §16.7: never the gate
-        label = f"{cur['set']} eval" if corpus else "eval"
-        typer.echo(f"{label} {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+        s = str(cur.get("set", ""))
+        what = f"Corpus {re.split(r'[: ]', s)[1][:8]} eval" if s.startswith("corpus") else "Eval"
+        out.append(f"{what} {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
+    if st["recent"]:
+        out += [""] if out else []
+        out.append("Recent runs (synthetic set):")
     for r in st["recent"]:
         m = r["metrics"]
-        typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
-                   f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
-                   f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
-                   + _recall(m)
-                   + f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
-                   + _run_caveat(m))  # fmt: skip
-    if cur["state"] == "idle" and cl is None and not st["recent"]:
-        typer.echo("no eval has run yet: ecf eval run")
+        safety = (
+            f"unsafe {len(m.get('unsafe', []))},{_recall(m)}"
+            f" gate {'passed' if r['gate_passed'] else 'NOT passed'}{_run_caveat(m)}"
+        )
+        out += [f"  {r['created_at'][:10]} {r['created_at'][11:16]}  {r['run_id'][:8]}"
+                f"  {m.get('correct')}/{m.get('confirmed')} confirmed cases correct"
+                f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
+                f"{'':30}{safety}"]  # fmt: skip
+    if not out:
+        out.append(f"No eval has run yet: {_ecf('eval run')}")
+    return out
 
 
 def _recall(m: dict[str, Any]) -> str:

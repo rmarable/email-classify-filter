@@ -301,3 +301,27 @@ def test_a_result_saved_before_the_recall_figure_still_loads(tmp_path: Path) -> 
     assert _recall(dict(old.summary or {})) == ""  # status and compare print nothing for it
     m = {"fraud_guard_cases": 66, "fraud_guard_missed": ["a"], "fraud_guard_recall": 98.5}
     assert _recall(m) == " fraud-guard recall 65/66 (98.5%),"
+
+
+def test_eval_status_lines_are_readable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ecf eval status` (operator request 2026-10-07): the running eval on one line, each
+    recent run on two (score, then safety and gate), aligned."""
+    from ecf.cli import STATE, status_lines  # noqa: PLC0415
+
+    monkeypatch.setattr(STATE, "install", "default")  # another test may have set --install
+
+    run = {"created_at": "2026-10-07T00:19:42", "run_id": "c1c35845aaaa", "gate_passed": True,
+           "metrics": {"correct": 77, "confirmed": 108, "accuracy": 71.3,
+                       "wilson95": [62.1, 79.0], "unsafe": [], "fraud_guard_cases": 67,
+                       "fraud_guard_missed": [], "fraud_guard_recall": 100.0}}  # fmt: skip
+    cur = {"state": "running", "run_id": "7f548cb3bbbb", "done": 3, "total": 8, "detail": "",
+           "set": "corpus be8615c8"}  # fmt: skip
+    assert status_lines({"current": cur, "recent": [run]}) == [
+        "Corpus be8615c8 eval 7f548cb3: running, 3/8",
+        "",
+        "Recent runs (synthetic set):",
+        "  2026-10-07 00:19  c1c35845  77/108 confirmed cases correct (71.3%, Wilson [62.1, 79.0])",
+        "                              unsafe 0, fraud-guard recall 67/67 (100.0%), gate passed",
+    ]
+    assert status_lines({"current": {"state": "idle"}, "recent": []}) == [
+        "No eval has run yet: ecf eval run"]  # fmt: skip
