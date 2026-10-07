@@ -465,7 +465,7 @@ Indexes: a partial index `items(address_id, updated_at) WHERE status IN (<open s
 
 ## 7. Classification and sender authentication [v1]
 
-### 7.1 Schema v1 (final)
+### 7.1 Schema v1 (changed 2026-10-07, OD-472)
 
 Enum, ordinal and boolean fields only; one schema per install.
 
@@ -476,19 +476,21 @@ fields:
     type: enum
     description: What this email is primarily about.
     values:
-      invoice:               A bill or invoice requesting payment from us.
+      invoice:               Bill or invoice requesting payment from us.
       payment_confirmation:  Confirmation that a payment was sent or received.
       remittance:            Remittance advice or payment details from a customer.
-      vendor_change_request: A request to change a vendor's bank, payment, or contact details.
-      billing_inquiry:       A question or dispute about a charge, invoice, or account balance.
-      customer_request:      A customer asking for help, service, or information.
-      sales_inquiry:         A prospective customer asking about buying or pricing.
+      vendor_change_request: Request to change a vendor's bank, payment, or contact details.
+      billing_inquiry:       Question or dispute about a charge, invoice, or account balance.
+      customer_request:      Customer asking for help, service, or information.
+      sales_inquiry:         Prospective customer asking about buying or pricing.
       partnership:           Partnership proposals, vendor pitches, collaboration.
-      bug_report:            A report of a bug, defect, outage, or incident in our product or service.
+      bug_report:            Report of a bug, defect, outage, or incident.
       regulatory:            Anything involving a regulator or regulation (e.g. FDA, SEC, FTC, IRS, state agencies, compliance notices, audits, filings).
       marketing:             Newsletters, promotions, cold outreach, advertising.
-      notification:          Automated system messages (receipts, alerts, shipping, account activity).
-      spam_or_phishing:      Unsolicited junk or an attempt to deceive.
+      notification:          Automated messages that only inform (receipts, shipping, account activity).
+      action_alert:          Automated alert from a service we use that asks someone to act (expiring certificate or domain, security warning, quota reached, backup failed).
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including fake alerts that push you to a link or a payment.
+      private:               Personal correspondence from a person, not about the business, that fits no other value.
       other:                 None of the above.
   priority:
     type: ordinal
@@ -505,16 +507,16 @@ fields:
     description: Money moving or owed (a payment sent, received or requested, an amount owed, or payment instructions); not a question about prices, plans or quotes.
   deadline_mentioned:
     type: boolean
-    description: A specific due date or time limit is stated or implied.
+    description: States or implies a specific due date or time limit.
   sender_type:
     type: enum
     description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
     values:
-      vendor:     A supplier or service provider.
+      vendor:     Supplier or service provider.
       customer:   Someone we sell to or serve.
-      regulator:  A government agency or regulatory body.
-      staff:      A colleague acting in an internal role.
-      automated:  A system or no-reply sender.
+      regulator:  Government agency or regulatory body.
+      staff:      Colleague acting in an internal role.
+      automated:  System or no-reply sender.
       unknown:    Cannot tell.
   fraud_risk:
     type: ordinal
@@ -523,6 +525,8 @@ fields:
       Likelihood of fraud or impersonation (changed bank details, unusual urgency,
       pressure to bypass process, sender not matching the claimed organization).
 ```
+
+Categories `action_alert` and `private` added, and the descriptions reworded, without a new schema version (operator decision 2026-10-07, OD-472). `action_alert` is anchored on a service we use and on the message asking for action, so a vendor's outage is not a `bug_report` (now about any bug, outage or incident, by operator choice) and a fake "payment failed" alert stays `spam_or_phishing`; `private` is personal correspondence that fits no other value, so a personal bill stays `invoice`. Neither new value is matched by any starter rule: they fall to rules 9 and 10 (kept in the inbox), so they can't hide mail. Both become labels ecf may write. Eval results and labels before OD-472 used the 14-value prompt; a result file doesn't record the schema text, so they are not comparable with later runs, and every §1.5 eval is re-run on the relabelled set.
 
 `payment_related` excludes questions about prices, plans or quotes (operator decision 2026-10-01, OD-256): in the V1.3 eval three such questions came back `true`, so rule 1a flagged them as unverified payments instead of rule 9 sending them for a reply. The pre-check's payment keywords still count for I3 whatever the model says.
 
@@ -2795,6 +2799,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-469 | 2026-10-07 | (v1.0.0 Slack run) | SPEC §10.1 | `ecf slack remove` (step-up) takes Slack off an install without `ecf destroy`: the app deleted (configuration token) or its bot token revoked as destroy does, tokens and Slack records forgotten; channels kept, not archived; only awaiting-approval cards re-posted after a new install |
 | OD-470 | 2026-10-07 | (operator decision; ADR 0023) | SPEC §7.8, §21.2; CLAUDE.md | Qwen exception: Qwen-based decision models only in the local classifier role, only through Ollama on 127.0.0.1, pinned by manifest digest, eval-only until the decision; never the actor or a Claude role. Co-residence with Gemma needs `LLAMA_ARG_CACHE_RAM=1024` on `ollama serve` (for the experiment; in the login item only if adopted) |
 | OD-471 | 2026-10-07 | (operator decision; ADR 0023) | SPEC §7.8, §16.3-16.5, §21.1 | Decision-model experiment: `tev1:4b` against Gemma as the local classifier; question mapping; arms G, D and a null arm; synthetic set for safety only, correctness on the blind-labelled corpus from a named `standard` mailbox; corpus size and non-inferiority margin set from the synthetic disagreement; adoption rule; any adoption after `v1.0.0` |
+| OD-472 | 2026-10-07 | (operator decision; corpus labelling) | SPEC §7.1 | Schema v1 changed in place (no v2): categories `action_alert` (automated alert from a service we use that asks someone to act) and `private` (personal correspondence that fits no other value) added; `notification` informational only; fake alerts named under `spam_or_phishing`; `bug_report` drops "in our product or service"; leading articles dropped. No rule change; every §1.5 eval re-run |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
