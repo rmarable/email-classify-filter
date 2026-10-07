@@ -128,6 +128,7 @@ def test_whole_run(st: ServiceState, env: Env, paths: Paths) -> None:
     assert rec is not None and rec["phase"] == cli_destroy.DONE
     assert rec["cli"] == {"unit": "removed", "claude_logout": "ok", "data_dir": "deleted"}
     assert rec["steps"]["secrets"]["deleted"]
+    assert ".ecfcorpus files you made" in f.text()  # kept; the operator deletes them (R93)
     out = f.text()
     assert "This deletes the ecf install t (role not set: init wasn't run)" in out
     assert "watching ap@acme.example" in out

@@ -240,3 +240,17 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, out: Path,
     r = runner.invoke(app, ["--install", "t", "export"])
     plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)  # Rich colors help on GitHub Actions
     assert r.exit_code == 0 and "--to" in plain
+
+
+def test_check_path_takes_another_suffix_for_corpus_files(tmp_path: Path) -> None:
+    """The corpus file uses the same checks with its own suffix (SPEC §16.7)."""
+    data_dir, out = tmp_path / "data", tmp_path / "out"
+    data_dir.mkdir()
+    out.mkdir()
+    got = manual_export.check_path(str(out / "c.ecfcorpus"), data_dir, suffix=".ecfcorpus")
+    assert got == out.resolve() / "c.ecfcorpus"
+    with pytest.raises(InvalidInputError, match=r"end in \.ecfcorpus"):
+        manual_export.check_path(str(out / "c.ecfb"), data_dir, suffix=".ecfcorpus")
+    with pytest.raises(InvalidInputError, match="a corpus can't go inside"):
+        manual_export.check_path(str(data_dir / "c.ecfcorpus"), data_dir, suffix=".ecfcorpus",
+                                 what="a corpus")  # fmt: skip
