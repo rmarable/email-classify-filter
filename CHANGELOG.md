@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+## v1.0.0-rc4 (2026-10-07)
+
 - Fixed: `ecf corpus fetch` recovers when the connection drops between chunks instead of stopping; a refused login shows the mail server's reason; the confirmation prompt says to type the mailbox's email address, and the preflight shows the real byte cap (real-service test 1).
 - Decided, not built yet: a decision-model experiment compares Ollama's `tev1:4b` with Gemma as the local classifier, safety on the synthetic set and correctness on the real-mail corpus; its recorded decision gates `v1.0.0`, and any adoption ships after it. Qwen-based models are allowed for this classifier role only, through Ollama (OD-470, OD-471, ADR 0023; SPEC §7.8).
 
