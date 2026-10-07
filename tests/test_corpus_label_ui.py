@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from ecf import cli_corpus_label as ui
+from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
 from ecf.schema import load_schema_v1
 from ecf_server import corpus_session as cs
@@ -120,3 +121,37 @@ def test_each_field_is_shown_with_its_meaning_and_numbered_choices() -> None:
     assert "Type the number or the name." in cat
     yn = "\n".join(ui.field_block(f["requires_reply"], 4, 8))
     assert "y  yes" in yn and "Type y or n." in yn
+
+
+def test_again_and_marked_offer_messages_a_second_time(made: Path) -> None:
+    """Operator request during test 1: relabel a message, or go back to skipped and unsure ones."""
+    first = ui.label(FakeClient(), made, SECRET, read=script("", *ANSWERS, "s", "u"),
+                     write=lambda _s: None, today=date(2026, 10, 7),
+                     shuffle=lambda _x: None)  # fmt: skip
+    assert (first.labelled, first.skipped, first.unsure) == (1, 1, 1)
+    screen: list[str] = []
+    back = ui.label(FakeClient(), made, SECRET, read=script(*["", *ANSWERS] * 2),
+                    write=screen.append, today=date(2026, 10, 8), marked=True,
+                    shuffle=lambda _x: None)  # fmt: skip
+    assert back.labelled == 2 and "relabelling; was skipped" in "".join(screen)
+    labels = cl.load(cl.path_for(made))
+    assert all(lab.confirmed for lab in labels.values())
+    changed = [*ANSWERS[:6], "2", "4"]  # sender_type customer, fraud_risk high
+    ui.label(FakeClient(), made, SECRET, read=script("", *changed), write=lambda _s: None,
+             today=date(2026, 10, 9), again=frozenset({3}), shuffle=lambda _x: None)  # fmt: skip
+    after = cl.load(cl.path_for(made))
+    three = cs_key(made, 3)
+    relabelled = after[three].labels
+    assert relabelled is not None and relabelled["fraud_risk"] == "high"
+    with pytest.raises(InvalidInputError, match="no message 9"):
+        ui.label(FakeClient(), made, SECRET, read=script(), write=lambda _s: None,
+                 today=date(2026, 10, 9), again=frozenset({9}))  # fmt: skip
+
+
+def cs_key(corpus: Path, index: int) -> cl.Key:
+    opened = cs.open_session(str(corpus), SECRET, lambda: 0.0)
+    try:
+        row = cs.get(opened["session_id"], lambda: 0.0).rows[index - 1]
+        return (str(row["key"]["content_hash"]), str(row["key"]["identity_digest"]))
+    finally:
+        cs.release(opened["session_id"])

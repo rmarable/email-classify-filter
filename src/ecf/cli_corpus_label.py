@@ -152,7 +152,7 @@ def _view(item: dict[str, Any], heading: str, read: Callable[[str], str],
     """Show the message until the operator labels it (""), marks it (s/u) or quits (q)."""
     more = reveal = False
     while True:
-        write(CLEAR + "\n".join(render(item, more=more, reveal=reveal)) + "\n")
+        write(CLEAR + heading + "\n" + "\n".join(render(item, more=more, reveal=reveal)) + "\n")
         a = read(f"{heading} Enter to label, m more, r show redacted text, s skip, u unsure,"
                  " q quit > ").strip().lower()  # fmt: skip
         if a == "m":
@@ -193,7 +193,7 @@ def _count(tally: Tally, item: dict[str, Any], values: dict[str, Any] | None,
             tally.keyword_hits_payment += bool(values and values["payment_related"])
 
 
-def label(
+def label(  # noqa: PLR0913 - the client, the file, the terminal and what to offer
     c: Client,
     corpus: Path,
     secret: str,
@@ -202,8 +202,12 @@ def label(
     write: Callable[[str], None],
     today: date,
     shuffle: Callable[[list[Any]], None] | None = None,
+    again: frozenset[int] = frozenset(),
+    marked: bool = False,
 ) -> Tally:
-    """Label the corpus's unlabelled messages in random order (R6); returns the tally."""
+    """Label the corpus's unlabelled messages in random order (R6); returns the tally. `again`
+    offers those message numbers once more, labelled or not; `marked` offers the ones skipped or
+    marked unsure. A new answer replaces the old one."""
     opened = c.request("POST", "/v1/corpus/session", {"path": str(corpus), "passphrase": secret},
                        timeout=600)  # fmt: skip
     del secret
@@ -214,11 +218,11 @@ def label(
     leave = _screen_guard(write)
     try:
         keys = c.request("GET", f"/v1/corpus/session/{sid}/keys")["keys"]
-        todo = [k for k in keys if _key(k) not in labels]
+        todo = _choose(keys, labels, again, marked)
         (shuffle or secrets.SystemRandom().shuffle)(todo)
         for n, k in enumerate(todo, 1):
             item = c.request("GET", f"/v1/corpus/session/{sid}/items/{k['index']}")
-            a = _view(item, f"[{n}/{len(todo)}]", read, write, tally)
+            a = _view(item, f"[{n}/{len(todo)}]{_was(labels.get(_key(k)))}", read, write, tally)
             if a == QUIT:
                 break
             try:
@@ -232,6 +236,27 @@ def label(
         leave()
         c.request("DELETE", f"/v1/corpus/session/{sid}")
     return tally
+
+
+def _was(before: cl.Label | None) -> str:
+    if before is None:
+        return ""
+    state = {"s": "skipped", "u": "unsure"}.get(before.mark or "", "labelled")
+    return f" (relabelling; was {state})"
+
+
+def _choose(keys: list[dict[str, Any]], labels: dict[cl.Key, cl.Label], again: frozenset[int],
+            marked: bool) -> list[dict[str, Any]]:  # fmt: skip
+    """Which messages to offer: the numbers asked for again, the skipped or unsure ones, or (by
+    default) the unlabelled ones."""
+    if again:
+        known = {int(k["index"]) for k in keys}
+        if missing := sorted(again - known):
+            raise InvalidInputError(f"no message {', '.join(map(str, missing))} in this corpus")
+        return [k for k in keys if int(k["index"]) in again]
+    if marked:
+        return [k for k in keys if (lab := labels.get(_key(k))) is not None and lab.mark]
+    return [k for k in keys if _key(k) not in labels]
 
 
 def _key(k: dict[str, Any]) -> cl.Key:

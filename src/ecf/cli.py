@@ -909,12 +909,14 @@ def _out(text: str) -> None:
     sys.stdout.flush()
 
 
-def _label_corpus(corpus: Path) -> None:
+def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> None:
     from datetime import date  # noqa: PLC0415
 
     from ecf import cli_corpus_label  # noqa: PLC0415
     from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
 
+    if corpus is None:
+        raise InvalidInputError("--again and --marked go with --corpus")
     require_terminal()
     cli_corpus_label.require_output_terminal()
     where = corpus.expanduser().absolute()
@@ -923,7 +925,8 @@ def _label_corpus(corpus: Path) -> None:
                " Restore windows setting (SPEC §12.2).")  # fmt: skip
     with LocalClient(_paths()) as c:
         tally = cli_corpus_label.label(c, where, secret, read=input, write=_out,
-                                       today=date.today())  # fmt: skip
+                                       today=date.today(), again=again,
+                                       marked=marked)  # fmt: skip
     for line in cli_corpus_label.summary(tally, cli_corpus_label.cl.path_for(where)):
         typer.echo(line)
 
@@ -953,13 +956,21 @@ def eval_label(
         Path | None,
         typer.Option("--corpus", help="Label a real-mail corpus file instead (blind; §16.7)."),
     ] = None,
+    again: Annotated[
+        list[int] | None,
+        typer.Option("--again", help="With --corpus: label message N again (repeatable)."),
+    ] = None,
+    marked: Annotated[
+        bool,
+        typer.Option("--marked", help="With --corpus: go back to skipped or unsure messages."),
+    ] = False,
 ) -> None:
     """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
     toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
     note are flagged: the note says what to judge. With --corpus: label a real-mail corpus,
     without seeing any model's answer."""
-    if corpus is not None:
-        _label_corpus(corpus)
+    if corpus is not None or again or marked:
+        _label_corpus(corpus, frozenset(again or ()), marked)
         return
     from datetime import UTC, datetime  # noqa: PLC0415
 
