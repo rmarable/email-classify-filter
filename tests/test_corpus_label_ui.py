@@ -109,3 +109,14 @@ def test_the_screen_hides_injection_text_until_revealed() -> None:
     hidden = "\n".join(ui.render(item, more=False, reveal=False))
     shown = "\n".join(ui.render(item, more=True, reveal=True))
     assert "assistant" not in hidden and "assistant" in shown and "\x1b" not in hidden
+
+
+def test_each_field_is_shown_with_its_meaning_and_numbered_choices() -> None:
+    """Operator feedback during test 1: the one-line prompt was too terse."""
+    f = load_schema_v1().fields
+    cat = "\n".join(ui.field_block(f["category"], 1, 8))
+    assert "Field 1 of 8: category" in cat and "What this email is primarily about." in cat
+    assert "12  notification" in cat and "account activity" in cat
+    assert "Type the number or the name." in cat
+    yn = "\n".join(ui.field_block(f["requires_reply"], 4, 8))
+    assert "y  yes" in yn and "Type y or n." in yn

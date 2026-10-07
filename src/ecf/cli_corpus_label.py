@@ -87,19 +87,37 @@ def parse_answer(spec: FieldSpec, answer: str) -> str | bool | None:
     return a if a in spec.values else None
 
 
-def _ask_field(spec: FieldSpec, read: Callable[[str], str]) -> str | bool:
-    """Returns the value, or raises for a mark (s/u) or quit."""
+def field_block(spec: FieldSpec, number: int, of: int) -> list[str]:
+    """How a field is asked: its name and meaning, then each choice on its own line with its
+    number and what it means (from the schema), then what to type."""
+    lines = ["", f"Field {number} of {of}: {spec.name}", f"  {spec.description}"]
     if spec.kind is FieldKind.BOOLEAN:
-        prompt = f"{spec.name} (y/n)"
+        lines += ["  y  yes", "  n  no", "Type y or n."]
     else:
-        prompt = f"{spec.name}: " + "  ".join(f"{i}={v}" for i, v in enumerate(spec.values, 1))
+        width = max(len(v) for v in spec.values)
+        descs = spec.value_descriptions or ("",) * len(spec.values)
+        lines += [f"  {i:>2}  {v:<{width}}  {d}".rstrip()
+                  for i, (v, d) in enumerate(zip(spec.values, descs, strict=False), 1)]  # fmt: skip
+        lines.append("Type the number or the name.")
+    lines.append(
+        "(or: s skip this message, u unsure; both are saved and left unscored."
+        " q quits; nothing is saved for this message)"
+    )
+    return lines
+
+
+def _ask_field(spec: FieldSpec, number: int, of: int, read: Callable[[str], str],
+               write: Callable[[str], None]) -> str | bool:  # fmt: skip
+    """Returns the value, or raises for a mark (s/u) or quit."""
+    write("\n".join(plain(x) for x in field_block(spec, number, of)) + "\n")
     while True:
-        a = read(prompt + "  [s skip, u unsure, q quit] > ").strip().lower()
+        a = read(f"{spec.name} > ").strip().lower()
         if a in (*cl.MARKS, QUIT):
             raise _Mark(a)
         v = parse_answer(spec, a)
         if v is not None:
             return v
+        write(f"Not one of the choices above for {spec.name}: type a number or a name.\n")
 
 
 class _Mark(Exception):
@@ -146,12 +164,14 @@ def _view(item: dict[str, Any], heading: str, read: Callable[[str], str],
             return a
 
 
-def _author(read: Callable[[str], str]) -> tuple[dict[str, Any] | None, str | None]:
+def _author(read: Callable[[str], str], write: Callable[[str], None]
+            ) -> tuple[dict[str, Any] | None, str | None]:  # fmt: skip
     """Every field's value, or (None, mark); raises _Mark(q) to quit."""
     values: dict[str, Any] = {}
+    fields = list(load_schema_v1().fields.values())
     try:
-        for spec in load_schema_v1().fields.values():
-            values[spec.name] = _ask_field(spec, read)
+        for n, spec in enumerate(fields, 1):
+            values[spec.name] = _ask_field(spec, n, len(fields), read, write)
     except _Mark as m:
         if m.mark == QUIT:
             raise
@@ -202,7 +222,7 @@ def label(
             if a == QUIT:
                 break
             try:
-                values, mark = (None, a) if a in cl.MARKS else _author(read)
+                values, mark = (None, a) if a in cl.MARKS else _author(read, write)
             except _Mark:
                 break
             cl.put(labels, cl.make(_key(k), corpus_id, values, mark, today))
