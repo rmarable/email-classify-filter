@@ -1,20 +1,23 @@
 # Plan: `ecf corpus`: real-mail test corpus (fetch, replay, eval)
 
-Draft 6 (2026-10-06). It folds in five adversarial reviews, recorded in
+Draft 7 (2026-10-07). It folds in six adversarial reviews, recorded in
 `state-archive/corpus/corpus-review-findings.md` (gitignored):
 - Phase R: R1-R44
 - Phase R2: R45-R96
 - Phase R3: R97-R146
 - Phase R4: R147-R177
 - Phase R5: R178-R200
+- Phase R6: R201-R209
 
 Tags like [R178] point to them.
 
 Two production defects in `redact_injection` were found by these reviews and fixed outside this plan:
 - **R150:** a quadratic search, fixed in `b86db77`.
-- **R180:** a 10 MiB paragraph still took 65-76 s per excerpt. The fix is on branch `fix-excerpt-bound` (`c514f44`):
-  it searches only the first 64 K characters of a long paragraph, and adds the `message.excerpts(redact)` helper,
-  which gives both excerpts from one redaction. It is not merged yet.
+- **R180:** a 10 MiB paragraph still took 65-76 s per excerpt. Fixed in `c514f44`, merged as `171f46f` for rc1
+  [R204]:
+  - it searches only the first 64 K characters of a long paragraph;
+  - it adds the `parsed.excerpts(redact)` method, which gives both excerpts from one redaction;
+  - fetch, evalrun and `claude_eval` already use it.
 
 ## Context
 
@@ -134,7 +137,8 @@ ecf eval rescore RESULT --corpus FILE
 - **Own mail** [R22, R63, R137]: these are skipped and counted as `skipped_own`:
   - `\Draft`;
   - an `X-ECF-Install:` value in the returned header block (key looked up by the prefix `BODY[HEADER.FIELDS`) equal
-    to **this install's** identity (`install_identity.parse_header`) [R132, R148, R191]:
+    to **this install's** identity: the `(install_id, generation)` pair from `install_identity.parse_header`, compared
+    as `own_mail.classify` compares it [R132, R148, R191, R208]:
     - other values are kept and counted, because they are forged or another install's (trigger 9);
   - `\Sent` mail, **except** notes to self, which are kept so `self_sent` stays measurable [R148, R192]:
     - a note to self also carries `\Inbox`, and its From matches the source address after `internal.fold`;
@@ -171,7 +175,6 @@ ecf eval rescore RESULT --corpus FILE
     window of meta [R194].
   - The preflight warns that live checks may stop on the budget until a stated time.
   - Off Gmail, `left()` is None.
-  - `left()` for an address also sums `corpus_downloads` for its folded email.
 - **`--chunk`:** default 10, range 1-100.
 - **`--sleep`:** default 10 s, range 0-600. A NOOP is sent before each batch [R136]. The byte caps are what protect
   the account.
@@ -285,8 +288,9 @@ goes through the isolator again.
     - returns an informational summary;
     - not `login_and_probe`: no read-write SELECT, no SMTP [R72].
   - `POST /v1/corpus/fetch`:
-    - gets the raw inputs and the nonce. Its step-up target binds the folder **as requested** (role or name), plus
-      email, host, port, path and limits, so `consume` runs before any login [R198];
+    - gets the raw inputs and the nonce. Its step-up target binds the folder **as requested** (the role, the name, or
+      `"default"` when `--folder` is omitted), plus email, host, port, path, total, max-bytes and order, so `consume`
+      runs before any login [R198, R201, R203];
     - its order is `stepup.consume` → login → resolve the folder → generate the passphrase → spawn the job → respond.
       A call without a nonce stops at `consume`: no login, no passphrase, nothing started (tested) [R175, R198];
     - after the login, it refuses if the resolved folder differs from the preflight's, which the CLI sends for
@@ -298,7 +302,8 @@ goes through the isolator again.
   - `_check_password` validates a typed password.
 - **Step-up purposes:**
   - **`corpus_fetch`:**
-    - bound to `{source email, resolved folder, host, port, out path, total, max-bytes, order}`, never the password;
+    - bound to `{source email, folder as requested (role, name or "default"), host, port, out path, total, max-bytes,
+      order}`, never the password [R201];
     - dialog order: count, source, host, then the path (head…tail); the CLI prints the full path first [R95];
     - every input is collected before the first step-up action [R33].
   - **`corpus_merge`** [R107, R173]:
@@ -309,9 +314,11 @@ goes through the isolator again.
   R106].
 - **Dev service hardening** [R106]:
   - Before constructing `Service`, `_run_dev` checks the `--home` [R153, R183]:
-    - it refuses any `--home` that resolves to, or inside, `paths.data_root()`;
-    - if `<install>/ecf.db` exists, it opens it with `sqlite3.connect("file:…?mode=ro", uri=True)`. No such opener
-      exists today; this adds one;
+    - it refuses any `--home` that resolves to, or inside, `ecf.paths.data_root()` **or** the platform default root.
+      `data_root()` returns `ECF_HOME` when that is set, so the default root is checked as well [R206];
+    - if `<install>/ecf.db` exists, it opens it with `sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)`.
+      `as_uri()` percent-encodes the space in "Application Support". No such opener exists today; this adds one.
+      WAL plus `mode=ro` works (SQLite ≥ 3.22) [R206];
     - it refuses when the `install_role` setting (`initsetup.ROLE_KEY`) is set at all;
     - any `sqlite3.Error`, an unknown schema included, is also a refusal (fail closed);
     - dev homes are never `ecf init`ed.
@@ -399,8 +406,8 @@ goes through the isolator again.
 - **Other housekeeping:**
   - `ecf destroy` reminds that `.ecfcorpus` and labels files are kept [R93].
   - `corpus_downloads` is listed in `export_bundle.EXCLUDED` and pruned like `downloads` [R89].
-  - New manifest and case fields are named with existing `log.CONTENT_KEYS` (`excerpt`, `text`), or `excerpts`,
-    `unredacted` and `display` are added to them. The "subject never reaches the files" test also covers the corpus
+  - `ecf.log.CONTENT_KEYS` gains `excerpts`, `unredacted` and `display`, the names of the new manifest and case
+    fields [R207]. The "subject never reaches the files" test also covers the corpus
     job's log [R199].
   - The replay host check accepts any `127/8` literal. TLS `check_hostname` against the `127.0.0.1` SAN refuses the
     rest [R200].
@@ -449,18 +456,17 @@ adds nothing beyond the raw `.eml` already in the same tar [R147].
   separately.
 - **Phase R5** (draft 5): 23 findings, of which 2 high, both wording. R180 is a production defect and is fixed
   separately.
+- **Phase R6** (draft 6, targeted): 9 findings, none high, all wording. This draft applies them. The gate to Phase 0
+  is passed.
 
 The operator decided every finding, and this draft carries the fixes.
 
-## Phase R6: targeted check of draft 6 (before any code or SPEC commit)
+## Phase R6: targeted check of draft 6 (done 2026-10-07)
 
-The operator chose a targeted check:
-- **Reviewer:** one read-only `model: "fable"` reviewer. It checks that every R178-R200 fix is present and correct,
-  and that nothing else in draft 6 broke.
-- **Findings:** numbered from R201.
-- **Gate:** every critical and high finding is fixed in the next draft (the operator confirms) or rejected by the
-  operator with a recorded reason. Medium and low findings go to the operator.
-- **Then:** Phase 0, then code, each started when the operator names it.
+One read-only Fable reviewer checked the R178-R200 fixes and the draft 6 edits. It found 0 high findings, so the
+gate to Phase 0 is passed. Its 9 wording fixes (R201-R209) are in this draft.
+
+**Next:** Phase 0, then code, each started when the operator names it.
 
 ## Phase 0: decision and SPEC (first commit, after operator OK)
 
@@ -725,8 +731,8 @@ Phase A checks mechanics only.
   - `api.py`
   - `__main__.py` and `service.py` (the dev options and refusals)
   - `evalrun.py` (case source, `_save` split, `gate_passed`, `actions`, `per_field`, unlabelled cases)
-  - `isolate.py` (excerpts in the child's output) and `message.py` (`excerpts` helper); `fetch.py` and
-    `claude_eval.py` switch to the helper
+  - `isolate.py` (excerpts in the child's output, `encode` gains them); `fetch.py` moves to the child's excerpts. The
+    `excerpts` method and the switch-over of fetch, evalrun and `claude_eval` are already done by R180 [R204].
   - `manual_export.py` (`check_path` suffix parameter)
   - `src/ecf/eval/results.py`
   - `src/ecf/cli.py`
@@ -785,7 +791,8 @@ Phase A checks mechanics only.
   - A crafted message times out in the child and is dropped.
   - A crafted injection paragraph is redacted inside the child, never in the parent.
   - Stored facts equal live analysis on the same bytes and install state.
-  - Stored excerpts equal `message.excerpts(parsed)` [R171].
+  - Stored excerpts equal `parsed.excerpts(triggers.redact_injection)`, and the unredacted cuts equal
+    `parsed.excerpt(limit)` [R171, R205].
   - `gmail_labels` → `self_sent` [R171].
   - The one-off address info is used for one-off sources.
   - Own-mail detection from the `X-ECF-Install` line, and notes to self kept by From [R148].
@@ -814,7 +821,8 @@ Phase A checks mechanics only.
 **Phase B** [R70]:
 - `corpus.expected`:
   - with perfect labels it equals the pipeline's rule, including an alert-echo row [R171];
-  - `must_not_hide` agrees with all but 1 of the 185 synthetic labels.
+  - `must_not_hide` over the 184 loadable cards: misses 1 (`home-giftcard-thanks`) and is stricter on 19; both
+    numbers are asserted [R179, R202].
 - Unlabelled cases are not scored, and `results.summary()` counts confirmed labels only.
 - `rule_scored` and end-to-end are computed over scored cases only.
 - A run covers every message.
