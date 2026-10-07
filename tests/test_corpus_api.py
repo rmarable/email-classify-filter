@@ -76,7 +76,7 @@ def test_the_body_needs_the_owner_typed_and_a_one_off_for_an_unwatched_mailbox(
 ) -> None:
     req, password = corpus.from_body(conn, body(tmp_path / "c.ecfcorpus"), no_secret)
     assert req.email == "pat@acme.example" and req.address_id is None and password() == "pw"
-    with pytest.raises(InvalidInputError, match="mailbox you own"):
+    with pytest.raises(InvalidInputError, match="type the mailbox's email address exactly"):
         corpus.from_body(conn, body(tmp_path / "c.ecfcorpus", owner_email="x@y.example"),
                          no_secret)  # fmt: skip
     with pytest.raises(InvalidInputError, match="app password"):

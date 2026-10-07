@@ -182,14 +182,17 @@ class CorpusReader:
             conn = self._new()
         except (OSError, lib.IMAPClientError, imaplib.IMAP4.error) as exc:
             raise MailUnavailableError(f"cannot connect to {self._host}: {_why(exc)}") from None
+        secret = ""
         try:
-            conn.login(self._user, self._password())
-        except lib.LoginError:
+            secret = self._password()
+            conn.login(self._user, secret)
+        except lib.LoginError as exc:
             _quiet(conn.logout)
+            why = server_reason(exc, secret)
             if self._logged_in_once:  # it worked before: a provider limit, not the password
-                raise MailUnavailableError(f"{self._host} refused a new login") from None
+                raise MailUnavailableError(f"{self._host} refused a new login{why}") from None
             raise MailLoginRejectedError(
-                f"{self._host} rejected the login for {self._user}"
+                f"{self._host} rejected the login for {self._user}{why}"
             ) from None
         except (OSError, lib.IMAPClientError, imaplib.IMAP4.error) as exc:
             _quiet(conn.logout)
@@ -198,6 +201,11 @@ class CorpusReader:
             _quiet(conn.logout)
             raise
         self._conn, self._logged_in_once = conn, True
+        if self._folder is not None:  # a fresh connection after a drop: the same folder again
+            before = self._folder
+            self._folder = None
+            if self.examine(before.name).uidvalidity != before.uidvalidity:
+                raise UidValidityChangedError(f"{before.name} was renumbered (UIDVALIDITY changed)")
         return conn
 
     def _call[T](self, fn: Callable[[], T]) -> T:
@@ -219,13 +227,10 @@ class CorpusReader:
 
     def reconnect(self) -> None:
         """A fresh connection after a drop (R80): log in, read capabilities, EXAMINE the same
-        folder and refuse to go on if UIDVALIDITY changed (R25)."""
-        before = self.folder
+        folder and refuse to go on if UIDVALIDITY changed (R25). Any call after a drop does the
+        same through `_connect`."""
         self.drop()
         self.open()
-        now = self.examine(before.name)
-        if now.uidvalidity != before.uidvalidity:
-            raise UidValidityChangedError(f"{before.name} was renumbered (UIDVALIDITY changed)")
 
     def noop(self) -> None:
         conn = self._connect()
@@ -315,6 +320,22 @@ def _by_octets(uids: Sequence[int]) -> Iterable[list[int]]:
         size += n
     if chunk:
         yield chunk
+
+
+REASON_CHARS = 160
+
+
+def server_reason(exc: BaseException, secret: str) -> str:
+    """The server's own words for a refused login (such as Gmail's `[AUTHENTICATIONFAILED]
+    Invalid credentials`), as `": <text>"`: printable characters only, capped, and never the
+    password even if a server echoed it."""
+    text = str(exc)
+    if "b'" in text:  # imapclient wraps imaplib's bytes repr
+        text = text[text.index("b'") + 2 :].rstrip("'")
+    if secret:
+        text = text.replace(secret, "[password removed]")
+    text = "".join(c for c in text if c.isprintable()).strip()[:REASON_CHARS]
+    return f": {text}" if text else ""
 
 
 def _why(exc: BaseException) -> str:

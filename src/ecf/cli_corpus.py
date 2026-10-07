@@ -74,8 +74,8 @@ def make_corpus_app(paths: Callable[[], Paths]) -> typer.Typer:
             body |= {"email": email, "host": typer.prompt("IMAP host", default=host_default),
                      "app_password": hidden("App password (hidden; never stored): ")}  # fmt: skip
         body["owner_email"] = typer.prompt(
-            f"Type {'the address of ' + email if address else 'it again'} to confirm it's a"
-            " mailbox you own (ecf can't check this)"
+            f"To confirm {email} is a mailbox you own, type its email address"
+            f"{' again' if not address else ''} (ecf can't check ownership)"
         ).strip()
         if own_passphrase:
             body["passphrase"] = hidden("Your passphrase for the file (hidden): ", confirm=True)
@@ -161,12 +161,14 @@ def _print_preflight(pre: dict[str, Any], total: int) -> None:
     typer.echo(f"first window: {pre['candidates']} candidates; {pre['fit_in_cap']} of the first"
                f" {total} fit within {pre['byte_cap'] / MIB:.0f} MiB")  # fmt: skip
     if pre["budget_share"] is not None:
-        typer.echo(f"Gmail: this run uses at most {pre['budget_share'] / MIB:.0f} MiB, half of"
-                   " today's download budget left; live checks of this mailbox may then stop on"
-                   " the budget for up to a day")  # fmt: skip
-    minutes = pre["estimate_s"] / 60
-    typer.echo(f"{pre['batches']} batches, about {minutes:.0f} min; keep the Mac on AC power and"
-               " awake (a sleep or a service restart ends the run)")  # fmt: skip
+        typer.echo(f"Gmail: this run downloads at most {pre['byte_cap'] / MIB:.0f} MiB (the lower"
+                   f" of --max-mib and half of today's download budget left,"
+                   f" {pre['budget_share'] / MIB:.0f} MiB); live checks of this mailbox may then"
+                   " stop on the budget for up to a day")  # fmt: skip
+    secs = int(pre["estimate_s"])
+    took = f"{secs // 60} min" if secs >= 120 else f"{secs} s"
+    typer.echo(f"{pre['batches']} batch(es), about {took}; keep the Mac on AC power and awake"
+               " (a sleep or a service restart ends the run)")  # fmt: skip
 
 
 def _show_passphrase(secret: str) -> None:

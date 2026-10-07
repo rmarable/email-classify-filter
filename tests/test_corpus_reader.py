@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 
 from ecf.errors import InvalidInputError, MailUnavailableError
+from ecf_server.mail import _imapclient as lib
 from ecf_server.mail import corpus_reader as cr
 from ecf_server.mail.corpus_reader import CorpusReader, LeanMeta, UidValidityChangedError
 from ecf_server.mail.imap import MailLoginRejectedError
@@ -185,3 +186,16 @@ def test_against_dovecot_reads_without_marking_seen(dovecot_server: dovecot.Dove
     finally:
         r.close()
         admin.logout()
+
+
+def test_a_refused_login_carries_the_servers_reason_never_the_password() -> None:
+    """Real-service test 1: Gmail's reason helps tell a wrong app password from a block."""
+    exc = lib.LoginError("login failed: b'[AUTHENTICATIONFAILED] Invalid credentials (Failure)'")
+    assert cr.server_reason(exc, "pw") == ": [AUTHENTICATIONFAILED] Invalid credentials (Failure)"
+    echoed = lib.LoginError("b'NO bad password sekret-123 \\x1b[31m'")
+    got = cr.server_reason(echoed, "sekret-123")
+    assert "sekret-123" not in got and "[password removed]" in got and "\x1b" not in got
+    assert cr.server_reason(lib.LoginError(""), "pw") == ""
+    server = FakeServer(login_errors=1)
+    with pytest.raises(MailLoginRejectedError, match="too many connections"):
+        reader(server).open()
