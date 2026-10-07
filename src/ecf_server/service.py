@@ -666,6 +666,7 @@ class Service:
                              install=self.paths.install)  # fmt: skip
         self.state.slack = slack.status  # the same dict: status shows it live
         self.state.slack_reload = slack.reload
+        self.state.slack_hold = slack.held
         approvals.desktop = self.state.notifier  # Slack clicks queued for step-up notify here
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread

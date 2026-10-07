@@ -21,6 +21,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import StrEnum
@@ -96,6 +97,7 @@ from ecf_server import (
     settings,
     slack_admin,
     slack_doctor,
+    slack_remove,
     slack_routes,
     stages,
     stats,
@@ -169,6 +171,8 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    # the runtime's `held`: keeps the Slack thread idle while `ecf slack remove` runs
+    slack_hold: Callable[[], AbstractContextManager[None]] = field(default=nullcontext, repr=False)
     watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
@@ -1751,6 +1755,19 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def refresh(_request: Request) -> JSONResponse:
         return _with_conn(lambda c: {"queued": slack_admin.refresh(c, state.clock)})
 
+    @allow(Caller.CLI)
+    def remove(request: Request) -> JSONResponse:
+        body = _body(request)
+        typed, token = _str(body, "install"), _opt_str(body, "config_token")
+        token = token.strip() if token else None
+        with state.slack_hold():
+            r = _with_conn(lambda c: slack_remove.run(
+                c, state.clock, state.store(), state.slack_web, state.notifier,
+                install=state.install, typed=typed, config_token=token,
+                nonce=_nonce(body)))  # fmt: skip
+        log.info("slack.removed")
+        return r
+
     return [
         Route("/v1/slack", show, methods=["GET"]),
         Route("/v1/slack/app", create, methods=["POST"]),
@@ -1759,6 +1776,7 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/slack/member", member, methods=["POST"]),
         Route("/v1/slack/reauthorize", reauthorize, methods=["POST"]),
         Route("/v1/slack/refresh", refresh, methods=["POST"]),
+        Route("/v1/slack/remove", remove, methods=["POST"]),
     ]
 
 
