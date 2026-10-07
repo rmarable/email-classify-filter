@@ -38,8 +38,6 @@ from ecf_server.isolate import Isolator
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource, MessageMeta
 from ecf_server.message import (
-    ACTOR_CHARS,
-    CLASSIFIER_CHARS,
     ParsedMessage,
     identity_digest,
     parse,
@@ -579,11 +577,7 @@ def _store(
         _fence(c, clock, lease)
         c.execute(
             "INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
-            (
-                sid,
-                parsed.excerpt(CLASSIFIER_CHARS, triggers.redact_injection),
-                parsed.excerpt(ACTOR_CHARS, triggers.redact_injection),
-            ),
+            (sid, *parsed.excerpts(triggers.redact_injection)),
         )
         if pg.analyzer is not None:
             pg.analyzer.record(c, parsed, facts)

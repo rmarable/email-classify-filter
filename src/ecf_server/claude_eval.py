@@ -67,7 +67,7 @@ from ecf_server import (
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
-from ecf_server.message import CLASSIFIER_CHARS, parse
+from ecf_server.message import parse
 from ecf_server.notify import Notifier
 from ecf_server.telemetry import Hold, Seen, Telemetry
 
@@ -315,8 +315,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 "attachments_meta": [{"name": a.name, "type": a.content_type, "size": a.size}
                                      for a in msg.attachments if not a.inline or a.name],
             }  # fmt: skip
-            cls_text = msg.excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
-            act_text = msg.excerpt(ACTOR_CHARS, triggers.redact_injection)
+            cls_text, act_text = msg.excerpts(triggers.redact_injection)
             with run.lock:
                 if not run.open:
                     return

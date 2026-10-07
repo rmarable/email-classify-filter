@@ -123,6 +123,22 @@ def _match_start(lines: list[str]) -> int:
     return end - _first(end, lambda d: _injected("\n".join(lines[end - d : end + 1])))
 
 
+# In a longer paragraph, only this head is searched for the line where the match starts; a match
+# that starts later removes the paragraph from the end of the head (more, never less). A crafted
+# 10 MiB paragraph took over a minute to search whole (R180).
+SEARCH_CHARS = 65_536
+
+
+def _head(lines: list[str]) -> list[str]:
+    """The paragraph's leading lines up to SEARCH_CHARS characters (at least one line)."""
+    size = 0
+    for k, line in enumerate(lines):
+        size += len(line) + 1
+        if size > SEARCH_CHARS:
+            return lines[: max(k, 1)]
+    return lines
+
+
 def redact_injection(text: str) -> str:
     """Model input without what fraud trigger 10 matched (OD-254): in each paragraph where a
     phrase matched, the line where the first match starts and every line after it in that
@@ -137,7 +153,11 @@ def redact_injection(text: str) -> str:
             continue
         removed = True
         lines = para.split("\n")
-        start = _match_start(lines)
+        head = _head(lines)
+        if head is lines:
+            start = _match_start(lines)
+        else:
+            start = _match_start(head) if _injected("\n".join(head)) else len(head)
         kept = "\n".join(lines[:start]).rstrip()
         if kept:
             out.append(f"{kept}\n{INJECTION_MARK}")
