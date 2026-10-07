@@ -1082,11 +1082,22 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " for the go-live gate).",
         ),
     ] = True,
+    corpus: Annotated[
+        Path | None,
+        typer.Option("--corpus", help="Run a labelled real-mail corpus instead (§16.7)."),
+    ] = None,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
     (OD-230). With --claude, register a run for Claude instead: open `ecf claude` and type
-    /ecf-eval (it uses your Claude plan)."""
+    /ecf-eval (it uses your Claude plan). With --corpus, run a real-mail corpus with preset A:
+    reported, never counted for the go-live gate."""
+    if corpus is not None:
+        if claude or fraud_only or not redact or classifier_backend == "null":
+            raise InvalidInputError("--corpus runs the local model only (no --claude, null"
+                                    " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
+        _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
+        return
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
@@ -1105,6 +1116,30 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if r.get("on_battery"):
         typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
                    " resumes on AC power.")  # fmt: skip
+
+
+def _eval_corpus(corpus: Path, classifier: bool, actor: bool, floor: int, backend: str) -> None:
+    """Open the corpus in the service and hand it to an eval run, which owns it until it ends."""
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    require_terminal()
+    where = corpus.expanduser().absolute()
+    secret = hidden(f"Passphrase for {where.name} (hidden): ")
+    with LocalClient(_paths()) as c:
+        body = {"path": str(where), "passphrase": secret}
+        opened = c.request("POST", "/v1/corpus/session", body, timeout=600)
+        del secret, body
+        try:
+            r = c.request("POST", "/v1/eval/runs", {
+                "corpus_session": opened["session_id"], "classifier": classifier,
+                "actor": actor, "battery_floor": floor, "backend": backend})  # fmt: skip
+        except Exception:
+            c.request("DELETE", f"/v1/corpus/session/{opened['session_id']}")
+            raise
+    typer.echo(f"corpus eval {r['run_id'][:8]} started: {r['total']} messages of corpus"
+               f" {str(opened['corpus_id'])[:8]}; reported only, never counted for the go-live"
+               " gate. Follow it with `ecf eval status`; stop it with"
+               " `ecf eval stop`.")  # fmt: skip
 
 
 def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
@@ -1127,6 +1162,35 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
         typer.echo("For a first run, `--fraud-only` uses less of the plan.")
 
 
+@eval_app.command("rescore")
+def eval_rescore(
+    result: Annotated[Path, typer.Argument(help="A corpus eval result file.")],
+    corpus: Annotated[Path, typer.Option("--corpus", help="The corpus it ran on.")],
+) -> None:
+    """Score a corpus result again against the corpus's current labels, without running the
+    models; the new file sits beside the original (§16.7)."""
+    from ecf.eval.results import load_result as load  # noqa: PLC0415
+    from ecf.eval.results import summary  # noqa: PLC0415
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    require_terminal()
+    where = corpus.expanduser().absolute()
+    secret = hidden(f"Passphrase for {where.name} (hidden): ")
+    with LocalClient(_paths()) as c:
+        body = {"path": str(where), "passphrase": secret}
+        opened = c.request("POST", "/v1/corpus/session", body, timeout=600)
+        del secret, body
+        sid = opened["session_id"]
+        try:
+            r = c.request("POST", "/v1/eval/rescore", {
+                "result": str(result.expanduser().absolute()), "corpus_session": sid},
+                timeout=600)  # fmt: skip
+        finally:
+            c.request("DELETE", f"/v1/corpus/session/{sid}")
+    typer.echo(f"written: {r['path']}")
+    typer.echo(summary(load(Path(r["path"]))))
+
+
 @eval_app.command("status")
 def eval_status() -> None:
     """The running eval's progress and the latest results."""
@@ -1142,7 +1206,9 @@ def eval_status() -> None:
                       if cl["state"] == "preparing" else "")
                    + (f" ({cl['detail']})" if cl["detail"] else ""))  # fmt: skip
     if cur["state"] != "idle":
-        typer.echo(f"eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+        corpus = str(cur.get("set", "")).startswith("corpus")  # §16.7: never the gate
+        label = f"{cur['set']} eval" if corpus else "eval"
+        typer.echo(f"{label} {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
     for r in st["recent"]:
         m = r["metrics"]

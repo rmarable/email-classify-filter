@@ -96,6 +96,9 @@ def close(session_id: str, *, stop: bool = False) -> dict[str, Any]:
             if not stop:
                 raise ConflictError("an eval run is using this corpus; `ecf eval stop` first")
             s.stop.set()
+            from ecf_server import evalrun  # noqa: PLC0415 - evalrun imports this module
+
+            evalrun.stop()
             return {"closed": False, "stopping": True}
         _current = None
     return {"closed": True}
