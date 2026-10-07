@@ -1,10 +1,15 @@
-# Linux-only CI (free minutes). macOS tests run locally before merging to main (CLAUDE.md, merge gate).
+# Linux-only CI. macOS tests run locally before merging to main (CLAUDE.md, merge gate).
+# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-latest. While the repo is private it
+# names the self-hosted Linux runner in the Colima `ci` VM (operator decision 2026-10-07: no paid
+# minutes); at v1.0.0 the variable is deleted and the runner unregistered (SPEC §17.4).
 name: ci
 
 on:
   push:
+    paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
   pull_request:
     branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
 
 permissions:
   contents: read
@@ -18,12 +23,15 @@ env:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # a pull request from a branch of this repo already ran on its push; only a fork's runs here
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12.6", "3.13"]
+        # both versions on main and pull requests; the floor version alone on other branches
+        python: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && '["3.12.6", "3.13"]' || '["3.12.6"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +52,8 @@ jobs:
         run: uv run pytest -m "not macos"
 
   licenses-and-build:
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
