@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+## v1.0.0-rc5 (2026-10-07)
+
 - Fixed: `ecf corpus fetch` keeps trying to reconnect for about four minutes before it gives up (it gave up after about 75 s, too soon for a Wi-Fi gap in real-service test 1), and its progress shows when it is reconnecting.
 
 ## v1.0.0-rc4 (2026-10-07)
