@@ -94,6 +94,7 @@ All must hold:
 5. No open critical findings (security or data loss) in this document's open items or the issue tracker.
 6. CI green on Linux and the full test suite passing on macOS (the merge gate, OD-180), license check passing, release artifacts reproducible and hash-verified.
 7. Operator sign-off.
+8. The decision-model experiment's adopt or not-adopt decision is recorded (operator decision 2026-10-06, `planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md`; confirmed as a release criterion 2026-10-07). The experiment runs on the real-mail corpus (§16.7), so the corpus is built first; any adoption ships after `v1.0.0`.
 
 Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list), 5 (what "critical" means: a finding that could cause mail loss, an unauthorized send or action, or a missed fraud escalation) and 6 were accepted as written (operator decision 2026-10-07, OD-462). A release candidate (`v1.0.0-rcN`) comes before `v1.0.0` (OD-465), and a Slack real-service run covering Undo on real Gmail is required before `v1.0.0` (OD-464).
 
@@ -105,6 +106,7 @@ Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list)
 5. Met, by judgement: no open critical finding; the `rfc822` hash item is deferred (OD-463) and Gmail's Spam folder is a stated limit (§12.2).
 6. Built: CI green on Linux, the macOS gate, the license check, reproducible builds (Linux CI and macOS byte-identical), `release.yml` and `ecf upgrade`'s hash checks (OD-458); proven by the release candidate.
 7. Pending: operator sign-off.
+8. Pending: the corpus (§16.7, not built yet), the decision-model experiment on it, and its recorded decision. `v1.0.0-rc2` (2026-10-07) stays the candidate until then.
 
 ### 1.6 Documents
 
