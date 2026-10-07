@@ -118,17 +118,28 @@ class ParsedMessage:
     def excerpt(self, limit: int, redact: Callable[[str], str] | None = None) -> str:
         """Plain text preferred, else visible HTML text; `redact` applied before the cut at a
         word boundary."""
+        text = self._body_text()
+        return _cut(text if redact is None else redact(text), limit)
+
+    def excerpts(self, redact: Callable[[str], str]) -> tuple[str, str]:
+        """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction."""
+        text = redact(self._body_text())
+        return _cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)
+
+    def _body_text(self) -> str:
         body = [t for t in self.texts if not t.attachment and t.visible]
         plain = [t.visible for t in body if t.content_type == "text/plain"]
         html = [t.visible for t in body if t.content_type == "text/html"]
-        text = (plain or html or [""])[0]
-        if redact is not None:
-            text = redact(text)
-        if len(text) <= limit:
-            return text
-        cut = text[:limit]
-        space = cut.rfind(" ")
-        return (cut[:space] if space > limit * 0.8 else cut).rstrip() + "…"
+        return (plain or html or [""])[0]
+
+
+def _cut(text: str, limit: int) -> str:
+    """`text` cut at a word boundary to at most `limit` characters, with an ellipsis."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > limit * 0.8 else cut).rstrip() + "…"
 
 
 def normalize_message_id(value: str | None) -> str | None:

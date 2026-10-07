@@ -76,7 +76,7 @@ from ecf_server.cards import Card
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
-from ecf_server.message import CLASSIFIER_CHARS, parse
+from ecf_server.message import parse
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.rules import HIDE_ACTIONS
@@ -432,7 +432,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
                 break
             raw = case.path.read_bytes()
             facts = scratch.facts(raw, case.profile)
-            text = parse(raw).excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
+            text, act_text = parse(raw).excerpts(triggers.redact_injection)
             cls = _classify(client, text, schema, calls) if opts.classifier else None
             if i < DETERMINISM_CASES:
                 firsts[case.id] = cls
@@ -443,8 +443,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
                                      frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
                 if opts.actor and plan.to_actor:
-                    proposal = _act(client, parse(raw).excerpt(4000, triggers.redact_injection),
-                                    cls, known, calls)  # fmt: skip
+                    proposal = _act(client, act_text, cls, known, calls)
                     if proposal is not None and proposal["action"] != "needs_clarification":
                         one = policy.proposal(ctx, plan, proposal["action"],
                                               proposal["target"] or None, known)  # fmt: skip
@@ -456,8 +455,7 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - the run's collaborators and optio
         if opts.classifier and not stopped:
             for case in cases[:DETERMINISM_CASES]:
                 raw = case.path.read_bytes()
-                again = _classify(client, parse(raw).excerpt(CLASSIFIER_CHARS,
-                                                             triggers.redact_injection),
+                again = _classify(client, parse(raw).excerpts(triggers.redact_injection)[0],
                                   schema, calls)  # fmt: skip
                 diffs += again != firsts.get(case.id)
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
