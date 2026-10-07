@@ -33,7 +33,7 @@ Operator decisions (2026-10-06, 2026-10-07):
 - **Cache cap:** 1,024 MiB, not 2 GB (operator decision 2026-10-07).
 
 **OD numbers:** this plan uses placeholders **OD-S1** (Qwen exception), **OD-S2** (experiment design) and **OD-S3**
-(the decision). Each gets the next free OD number when it is committed; OD-461 to OD-469 are taken as of 2026-10-07
+(the decision). Phase 1 numbered them: OD-S1 = **OD-470**, OD-S2 = **OD-471**; OD-S3 is numbered when recorded. Each gets the next free OD number when it is committed; OD-461 to OD-469 are taken as of 2026-10-07
 (`684427a`, `b98e8ce`, `1a8fd1a` and the v1.0.0 release work). The corpus size is the corpus plan's (OD-467), so this
 plan has no corpus-size OD.
 
@@ -72,8 +72,12 @@ The plan is a working document; SPEC stays authoritative.
     `sha256:35f9281a3df58b566b24091572467001906a5a6aac879fe8005c4db19c8d4a2e` (4,482,403,072 bytes, Q8_0, 4.2B
     parameters, architecture `qwen35`, requires Ollama 0.35.0).
   - License layers: Apache-2.0, and MIT ("Copyright (c) 2026 open-jev contributors"). Both permit this use.
-    **Unverified:** the publisher's own Hugging Face file hash (not yet cross-checked).
-  - Published accuracy (Ollama's 13-dataset set, datasets not named): 73.3%. Vendor figure; says nothing about email.
+    Together's Hugging Face card (`togethercomputer/Tev1-4B-experimental`, read 2026-10-07) states **no licence**
+    and publishes only safetensors, so the GGUF is Ollama's conversion and no publisher hash exists to compare.
+    The pin is Ollama's manifest digest. The licence question is open (OD-470).
+  - Training data (ollama.com/library/tev1, read 2026-10-07): MultiNLI, BoolQ, Banking77, AG News, SST-5 and
+    synthetic policy, routing and taxonomy sets, 37,840 examples; no phishing corpus named. Published accuracy
+    (Bespoke Labs' 13 public datasets): 73.3%. Vendor figure; says nothing about email.
     Training overlap with public phishing sets is **unverifiable**; correctness claims are made on the corpus only.
     [R26]
 - **Dropped:**
@@ -100,8 +104,7 @@ The plan is a working document; SPEC stays authoritative.
     13.3 s / 17.0 s).
   - `footprint` on the runners doesn't count the GPU-wired model weights; free memory and swap are the measures.
   - Phase 0 ran with the shadow ecf-server up (another session's), its 10-minute Gemma checks included.
-- **Still open from Phase 0:** the Hugging Face hash cross-check, battery latency, the injection preamble test, and
-  naming the vendor datasets (see Phase 0).
+- **Still open from Phase 0:** battery latency, the injection preamble test, and the weights licence (see Phase 0).
 
 ## Design of the experiment
 
@@ -188,8 +191,9 @@ about 8-17 h per 500 (corpus plan). [R3]
    co-resident under the cap: D ≤ G on AC over the corpus, and on battery over a fixed subset (first 50 corpus messages
    plus the synthetic fraud subset) that completes on one charge. Per-email time is reported, not gated. A run that
    paused for power doesn't count. [R12]
-7. **Provenance and license:** `library/` namespace (holds); licenses Apache-2.0 and MIT (hold); the publisher's
-   Hugging Face hash matches the blob where published (Phase 0, open). [R15]
+7. **Provenance and license:** `library/` namespace (holds); the pin is Ollama's manifest digest (no publisher GGUF
+   exists); the weights licence is accepted by the operator (Ollama's layers are Apache-2.0 and MIT; Together's card
+   states none; open). [R15]
 
 **Also reported, not gating** (calibration doesn't enter the decision; a stated choice): [R20]
 - Calibration per field: ECE on the argmax probability (5-10 equal-mass bins, bootstrap CIs), ranked probability score
@@ -213,18 +217,19 @@ in. Findings and decisions: `state-archive/systemone/review-findings.md`.
 ## Phase 0: facts and coexistence — mostly done 2026-10-06/07
 
 Throwaway, scratchpad only. Results are in "Facts" above and go into SPEC §21.2 in Phase 1.
-- **Done:** pull and provenance (namespace, digests, licenses); API shape; context and fail-closed overflow; error and
+- **Done:** pull and provenance (namespace, digests, licence layers; Hugging Face has no GGUF to compare; training
+  data named); API shape; context and fail-closed overflow; error and
   log canary; `keep_alive`; determinism (3 repeats); coexistence uncapped (fails) and capped at 1,024 MiB (passes);
   latency on AC.
 - **How the capped server was run:** the operator booted out the login item and started `ollama serve` by hand with
   the login item's environment plus `LLAMA_ARG_CACHE_RAM=1024`, and restored the login item afterwards (Claude's
   permission mode blocks `launchctl`). Every Ollama outage is announced to the other sessions first.
 - **Still open** (operator go-ahead, a quiet Ollama window):
-  - cross-check the model blob's sha256 against the publisher's Hugging Face file; [R15]
+  - the weights licence: Together's card states none; the operator decides whether Ollama's Apache-2.0/MIT layers
+    suffice; [R15]
   - classifier-call latency on battery; [R12]
   - the injection preamble: injection subset, redaction off, with and without the OD-255 text prepended to
     `state`; [R6]
-  - name the vendor's 13 datasets if published. [R26]
 - A candidate that fails a pass condition is dropped as a stated result in §21.2, which ends the experiment with "not
   adopted".
 
