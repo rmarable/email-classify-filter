@@ -10,7 +10,7 @@ subject: "New sign-in to your admin account"
 date: 2026-10-02T21:40:00Z
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: true}
+  labels: {category: action_alert, sender_type: automated, requires_action: true}
   rule: otherwise
   safety: {must_not_hide: true}
 ---

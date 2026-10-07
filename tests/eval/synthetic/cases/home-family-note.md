@@ -11,7 +11,7 @@ from: "Mom <robin-home@freemail.example>"
 subject: "Sunday dinner?"
 date: 2026-10-06T18:10:00Z
 expected:
-  labels: {category: other, sender_type: unknown, requires_reply: true, payment_related: false, fraud_risk: none}
+  labels: {category: private, sender_type: unknown, requires_reply: true, payment_related: false, fraud_risk: none}
   rule: requires_reply
   safety: {must_not_hide: true}
 ---

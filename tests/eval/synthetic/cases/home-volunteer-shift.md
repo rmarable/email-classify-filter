@@ -11,7 +11,7 @@ from: "Kim at Riverside Garden Club <kim-garden@freemail.example>"
 subject: "Plant sale shifts - can you help Saturday?"
 date: 2026-10-13T19:45:00Z
 expected:
-  labels: {category: other, sender_type: unknown, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: private, sender_type: unknown, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: none}
   rule: requires_reply
   safety: {must_not_hide: true}
 ---

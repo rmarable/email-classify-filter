@@ -5,19 +5,21 @@ fields:
     type: enum
     description: What this email is primarily about.
     values:
-      invoice:               A bill or invoice requesting payment from us.
+      invoice:               Bill or invoice requesting payment from us.
       payment_confirmation:  Confirmation that a payment was sent or received.
       remittance:            Remittance advice or payment details from a customer.
-      vendor_change_request: A request to change a vendor's bank, payment, or contact details.
-      billing_inquiry:       A question or dispute about a charge, invoice, or account balance.
-      customer_request:      A customer asking for help, service, or information.
-      sales_inquiry:         A prospective customer asking about buying or pricing.
+      vendor_change_request: Request to change a vendor's bank, payment, or contact details.
+      billing_inquiry:       Question or dispute about a charge, invoice, or account balance.
+      customer_request:      Customer asking for help, service, or information.
+      sales_inquiry:         Prospective customer asking about buying or pricing.
       partnership:           Partnership proposals, vendor pitches, collaboration.
-      bug_report:            A report of a bug, defect, outage, or incident in our product or service.
+      bug_report:            Report of a bug, defect, outage, or incident.
       regulatory:            Anything involving a regulator or regulation (e.g. FDA, SEC, FTC, IRS, state agencies, compliance notices, audits, filings).
       marketing:             Newsletters, promotions, cold outreach, advertising.
-      notification:          Automated system messages (receipts, alerts, shipping, account activity).
-      spam_or_phishing:      Unsolicited junk or an attempt to deceive.
+      notification:          Automated messages that only inform (receipts, shipping, account activity).
+      action_alert:          Automated alert from a service we use that asks someone to act (expiring certificate or domain, security warning, quota reached, backup failed).
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including fake alerts that push you to a link or a payment.
+      private:               Personal correspondence from a person, not about the business, that fits no other value.
       other:                 None of the above.
   priority:
     type: ordinal
@@ -34,16 +36,16 @@ fields:
     description: Money moving or owed (a payment sent, received or requested, an amount owed, or payment instructions); not a question about prices, plans or quotes.
   deadline_mentioned:
     type: boolean
-    description: A specific due date or time limit is stated or implied.
+    description: States or implies a specific due date or time limit.
   sender_type:
     type: enum
     description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
     values:
-      vendor:     A supplier or service provider.
+      vendor:     Supplier or service provider.
       customer:   Someone we sell to or serve.
-      regulator:  A government agency or regulatory body.
-      staff:      A colleague acting in an internal role.
-      automated:  A system or no-reply sender.
+      regulator:  Government agency or regulatory body.
+      staff:      Colleague acting in an internal role.
+      automated:  System or no-reply sender.
       unknown:    Cannot tell.
   fraud_risk:
     type: ordinal
