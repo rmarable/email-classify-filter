@@ -1,7 +1,7 @@
 # The build backend and its dependencies, pinned so a release builds the same bytes anywhere
 # (scripts/release_build.py passes this to `uv build --build-constraint`). hatchling is also
-# pinned in pyproject's [build-system]; CI built different bytes from the same commit while only
-# hatchling was pinned (v1.0.0-rc1, 2026-10-07). Update together, then check a two-way build.
+# pinned in pyproject's [build-system]. Update together, then compare a local build with CI's
+# artifact for the same commit (the push run, not a pull request's merge run).
 hatchling==1.32.4
 packaging==26.3
 pathspec==1.1.1
