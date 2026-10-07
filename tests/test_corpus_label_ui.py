@@ -136,9 +136,16 @@ def test_again_and_marked_offer_messages_a_second_time(made: Path) -> None:
     assert back.labelled == 2 and "relabelling; was skipped" in "".join(screen)
     labels = cl.load(cl.path_for(made))
     assert all(lab.confirmed for lab in labels.values())
-    changed = [*ANSWERS[:6], "2", "4"]  # sender_type customer, fraud_risk high
-    ui.label(FakeClient(), made, SECRET, read=script("", *changed), write=lambda _s: None,
+    prompts: list[str] = []
+    answers = ["", "", "", "", "", "", "", "", "4"]  # Enter keeps each saved value; fraud_risk high
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return answers.pop(0)
+
+    ui.label(FakeClient(), made, SECRET, read=read, write=lambda _s: None,
              today=date(2026, 10, 9), again=frozenset({3}), shuffle=lambda _x: None)  # fmt: skip
+    assert "category [invoice] > " in prompts and "requires_reply [n] > " in prompts
     after = cl.load(cl.path_for(made))
     three = cs_key(made, 3)
     relabelled = after[three].labels

@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v1.0.0 (not yet tagged)
 
+- `ecf eval label --corpus <file> --again N` relabels message N, and `--marked` relabels the skipped and unsure ones; when relabelling, each field shows its saved value in brackets (`category [invoice] >`), and Enter keeps it.
+
 ## v1.0.0-rc6 (2026-10-07)
 
 - `ecf eval run --corpus <file>` runs a labelled real-mail corpus through the local model: reported only, never counted for the go-live gate; `ecf eval rescore <result> --corpus <file>` re-scores a corpus result after labels change, without running the models (OD-466; SPEC §16.7).

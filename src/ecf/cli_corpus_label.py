@@ -107,17 +107,28 @@ def field_block(spec: FieldSpec, number: int, of: int) -> list[str]:
 
 
 def _ask_field(spec: FieldSpec, number: int, of: int, read: Callable[[str], str],
-               write: Callable[[str], None]) -> str | bool:  # fmt: skip
-    """Returns the value, or raises for a mark (s/u) or quit."""
+               write: Callable[[str], None], current: str | bool | None = None
+               ) -> str | bool:  # fmt: skip
+    """Returns the value, or raises for a mark (s/u) or quit. When relabelling, the saved value
+    is shown in brackets and Enter keeps it."""
     write("\n".join(plain(x) for x in field_block(spec, number, of)) + "\n")
+    shown = "" if current is None else f" [{_answer(current)}]"
     while True:
-        a = read(f"{spec.name} > ").strip().lower()
+        a = read(f"{spec.name}{shown} > ").strip().lower()
+        if a == "" and current is not None:
+            return current
         if a in (*cl.MARKS, QUIT):
             raise _Mark(a)
         v = parse_answer(spec, a)
         if v is not None:
             return v
         write(f"Not one of the choices above for {spec.name}: type a number or a name.\n")
+
+
+def _answer(value: str | bool) -> str:
+    if isinstance(value, bool):
+        return "y" if value else "n"
+    return value
 
 
 class _Mark(Exception):
@@ -164,14 +175,17 @@ def _view(item: dict[str, Any], heading: str, read: Callable[[str], str],
             return a
 
 
-def _author(read: Callable[[str], str], write: Callable[[str], None]
+def _author(read: Callable[[str], str], write: Callable[[str], None],
+            before: dict[str, str | bool] | None = None
             ) -> tuple[dict[str, Any] | None, str | None]:  # fmt: skip
-    """Every field's value, or (None, mark); raises _Mark(q) to quit."""
+    """Every field's value, or (None, mark); raises _Mark(q) to quit. `before` is the saved
+    label when relabelling."""
     values: dict[str, Any] = {}
     fields = list(load_schema_v1().fields.values())
     try:
         for n, spec in enumerate(fields, 1):
-            values[spec.name] = _ask_field(spec, n, len(fields), read, write)
+            current = (before or {}).get(spec.name)
+            values[spec.name] = _ask_field(spec, n, len(fields), read, write, current)
     except _Mark as m:
         if m.mark == QUIT:
             raise
@@ -226,7 +240,9 @@ def label(  # noqa: PLR0913 - the client, the file, the terminal and what to off
             if a == QUIT:
                 break
             try:
-                values, mark = (None, a) if a in cl.MARKS else _author(read, write)
+                values, mark = (
+                    (None, a) if a in cl.MARKS else _author(read, write, _saved(labels, k))
+                )
             except _Mark:
                 break
             cl.put(labels, cl.make(_key(k), corpus_id, values, mark, today))
@@ -236,6 +252,11 @@ def label(  # noqa: PLR0913 - the client, the file, the terminal and what to off
         leave()
         c.request("DELETE", f"/v1/corpus/session/{sid}")
     return tally
+
+
+def _saved(labels: dict[cl.Key, cl.Label], k: dict[str, Any]) -> dict[str, str | bool] | None:
+    lab = labels.get(_key(k))
+    return lab.labels if lab is not None else None
 
 
 def _was(before: cl.Label | None) -> str:
