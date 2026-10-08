@@ -125,7 +125,8 @@ The plan is a working document; SPEC stays authoritative.
 - **`requires_action`, `requires_reply`, `payment_related` and `deadline_mentioned`:** `noul`; true when p ≥ 0.5.
 - **Instructions:** each question's `instructions` is the schema field description, byte-identical to
   `schema.prompt_block`. The exact text, option order and `state` layout are fixed in OD-S2 before any run. [R19]
-- **`state`:** the same excerpt Gemma gets (`CLASSIFIER_CHARS` 1500, capped at 3000 bytes, `message.py`), after the
+- **`state`:** the excerpt Gemma gets (`CLASSIFIER_CHARS` 1500), capped at 2,400 bytes instead of 3,000 (operator decision
+  2026-10-08: a 2,800-byte CJK excerpt overflowed the context on the 16-category schema, SPEC §21.2), after the
   same `redact_injection`, inside the same random-token delimiters. The API has no instruction field, so the OD-255
   text is prepended to `state`; the model's own system prompt already says to treat `state` as data. SPEC says this
   defense is weaker than Gemma's (it sits beside the attacker's text). [R6]
@@ -138,7 +139,9 @@ The plan is a working document; SPEC stays authoritative.
 rule 1 all-OR). Probabilities are recorded for calibration only. No confidence-based routing (OD-054 wording).
 
 **Arms:**
-- **G:** the current Gemma pin. Synthetic: `e04fac92` plus a re-run in the co-resident configuration. Corpus: a new run.
+- **G:** the current Gemma pin. Synthetic: `f357108a`, the §1.5 item 3 run on set `7c51dced` (rc7, OD-472 schema; operator
+  decision 2026-10-08: Gemma's answers don't depend on the cache cap at temperature 0, and the latency gate is measured on
+  the corpus and the battery subset). Corpus: a new run, co-resident and capped.
 - **D:** `tev1:4b`.
 - **N (synthetic only):** a null classifier answering every field at its least risky value; measures how many
   `fraud_guard` cards the deterministic path carries without any model. Reported, not gating. [R5]

@@ -83,10 +83,12 @@ def test_state_carries_the_untrusted_data_text_and_delimiters() -> None:
     assert s.endswith("<<<EMAIL abc123>>>\nhello\n<<<END EMAIL abc123>>>")
 
 
-def test_state_cuts_the_excerpt_like_the_classifier() -> None:
+def test_state_cuts_the_excerpt_below_the_classifiers_cap() -> None:
     s = systemone.state("é" * 5000, "t")
     body = s.split("<<<EMAIL t>>>\n")[1].split("\n<<<END")[0]
-    assert len(body.encode()) <= 3000
+    assert len(body.encode()) <= systemone.MAX_STATE_BYTES == 2400
+    assert body == "é" * 1200  # never a split character
+    assert systemone.state("short", "t").endswith("\nshort\n<<<END EMAIL t>>>")
 
 
 def test_answers_map_to_a_valid_classification() -> None:

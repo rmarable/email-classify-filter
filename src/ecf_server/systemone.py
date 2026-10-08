@@ -12,8 +12,9 @@ through the same strict `parse` as Gemma's, so rules, policy and the actor see n
   higher one (fails toward more risk; the endpoint's own `score` is an expected value); a `noul` is
   true at p >= 0.5.
 - **State:** the endpoint has no instruction field, so the classifier's untrusted-data text (OD-255)
-  is prepended to the delimited excerpt (measured 2026-10-07: it stopped the one category hijack and
-  cut fraud-risk under-rating from 3 cards to 1, §21.2).
+  is prepended to the delimited excerpt (measured 2026-10-07: it stopped the one category hijack
+  and cut fraud-risk under-rating from 3 cards to 1, §21.2). The excerpt is cut at 2,400 bytes,
+  not the classifier's 3,000, so a multibyte email fits the model's context.
 - **Failures:** an answer that doesn't map, or a request over the model's context (HTTP 400; the
   endpoint never truncates), is a failed attempt like a Gemma schema failure. Probabilities are
   returned for calibration only, never for routing (OD-054 wording).
@@ -34,6 +35,11 @@ from ecf_server import classifier
 from ecf_server.ollama import Client, OllamaError, Pin
 
 NOUL_TRUE = 0.5
+# the excerpt's cap in `state`, below the classifier's 3,000: in an eight-question request the first
+# prompt carries about 500 tokens more than alone, and with the 16-value schema and the preamble a
+# 2,800-byte CJK excerpt overflowed the model's 2,050-token context; 2,600 fit (measured
+# 2026-10-08, operator decision: 2,400, SPEC §21.2)
+MAX_STATE_BYTES = 2400
 # the classifier's instructions up to its JSON-answer line: the untrusted-data text (OD-255)
 PREAMBLE = classifier.INSTRUCTIONS.split("\n\nAnswer with")[0]
 
@@ -94,7 +100,7 @@ def questions(schema: CompiledSchema) -> dict[str, Any]:
 
 
 def state(text: str, token: str) -> str:
-    return (f"{PREAMBLE}\n\n<<<EMAIL {token}>>>\n{classifier.fit(text)}\n"
+    return (f"{PREAMBLE}\n\n<<<EMAIL {token}>>>\n{classifier.fit(text, MAX_STATE_BYTES)}\n"
             f"<<<END EMAIL {token}>>>")  # fmt: skip
 
 
