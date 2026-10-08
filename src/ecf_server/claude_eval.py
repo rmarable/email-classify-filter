@@ -35,6 +35,7 @@ import json
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -66,7 +67,7 @@ from ecf_server import (
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
-from ecf_server.message import CLASSIFIER_CHARS, parse
+from ecf_server.message import parse
 from ecf_server.notify import Notifier
 from ecf_server.telemetry import Hold, Seen, Telemetry
 
@@ -314,8 +315,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 "attachments_meta": [{"name": a.name, "type": a.content_type, "size": a.size}
                                      for a in msg.attachments if not a.inline or a.name],
             }  # fmt: skip
-            cls_text = msg.excerpt(CLASSIFIER_CHARS, triggers.redact_injection)
-            act_text = msg.excerpt(ACTOR_CHARS, triggers.redact_injection)
+            cls_text, act_text = msg.excerpts(triggers.redact_injection)
             with run.lock:
                 if not run.open:
                     return
@@ -483,6 +483,18 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
             run.sessions.append(session_id)
         free = [w for w in run.works if w.stage in ("classify", "act", "repeat")
                 and w.claim == "free"]  # fmt: skip
+        # One agent type per round, and none while this session's claims for another are out:
+        # the model check can't tell overlapping work of two models apart (telemetry.py), so the
+        # service keeps them apart instead of relying on the session to (V1.0.0 run 6cea77b1).
+        # only claims still being worked on: a held submission's window has closed (its spawn
+        # finished), so new work on another model can't overlap it (C high run 9e745b99 ended
+        # its loop on empty rounds while holds settled)
+        out_agents = {w.agent for w in run.works
+                      if w.session == session_id and w.claim == "claimed"}  # fmt: skip
+        agent = _agent_of(run, free[0]) if free else None
+        if agent is not None and out_agents - {agent}:
+            free = []
+        free = [w for w in free if _agent_of(run, w) == agent]
         out = [_claim(run, w, session_id, now) for w in free[:limit]]
         _spawns(run, out)
         busy = sum(w.claim != "free" for w in run.works)
@@ -490,16 +502,43 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
                        "preparing": run.state == "preparing", "in_progress": busy}  # fmt: skip
 
 
-def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
-    need = "act" if w.stage == "act" else "classify"
-    if need == "classify":
+def _agent_of(run: Run, w: Work) -> str:
+    """The agent a case's next step needs: by sensitivity to classify, by risk to act."""
+    if w.stage != "act":
         role = "classifier_high" if run.opts.sensitivity == "high" else "classifier"
     else:
         role = "actor_high" if w.plan is not None and w.plan.high_risk else "actor"
+    return agent_name(role, run.pinned)
+
+
+WAIT_S = 6.0  # under ecf-mcp's 10 s request limit (§15.4)
+POLL_S = 2.0
+
+
+def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str,
+                      *, limit: int = claude_review.LIMIT_DEFAULT, stopped: str | None = None,
+                      sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
+    """`eval_next`, but a reply that would be empty only because work is still out or being
+    prepared waits up to `WAIT_S` for some: the session can't pause itself (`ecf claude` denies
+    every tool that could), and gives up after 5 empty replies (C high run 9e745b99)."""
+    waited = 0.0
+    while True:
+        got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped)
+        busy = got.get("in_progress", 0) or got.get("preparing")
+        if got.get("items") or got.get("done") or got.get("stopped") or not busy:
+            return got
+        if waited >= WAIT_S:
+            return got
+        sleep(POLL_S)
+        waited += POLL_S
+
+
+def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
+    need = "act" if w.stage == "act" else "classify"
     w.fence += 1
     token = f"{w.fence}.{secrets.token_urlsafe(24)}"
     w.session, w.token_hash, w.expires = session_id, _hash(token), now + claude_review.CLAIM_TTL
-    w.claim, w.need, w.agent, w.invalid = "claimed", need, agent_name(role, run.pinned), 0
+    w.claim, w.need, w.agent, w.invalid = "claimed", need, _agent_of(run, w), 0
     return {"id": w.ref, "need": need, "agent": w.agent, "claim_token": token}
 
 
@@ -730,6 +769,7 @@ def results() -> dict[str, Any]:
     if m:
         out["metrics"] = {k: m.get(k) for k in ("confirmed", "correct", "accuracy", "wilson95",
                                                  "per_field", "determinism_diffs", "complete",
+                                                 "fraud_guard_cases", "fraud_guard_recall",
                                                  "gate_passed")} | {
             "unsafe": len(m.get("unsafe") or [])}  # fmt: skip
     return out

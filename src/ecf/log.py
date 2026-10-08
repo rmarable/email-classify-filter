@@ -29,6 +29,9 @@ CONTENT_KEYS = frozenset(
     {
         "body",
         "text",
+        "excerpts",  # corpus manifest and case fields (OD-466, R199)
+        "unredacted",
+        "display",
         "html",
         "raw",
         "content",

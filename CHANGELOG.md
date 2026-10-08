@@ -3,6 +3,64 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v1.0.0 (2026-10-08)
+
+- Decided: the decision model `tev1:4b` is not adopted for now; it rated too much ordinary mail as fraud risk compared with Gemma on the synthetic set, so Gemma stays the local classifier (OD-473; SPEC §7.8).
+- `ecf eval run` and `ecf eval status` print shorter, aligned lines: the commands to follow or stop a run each on their own line (with `--install` when you used it), and each recent run on two lines, score then safety and gate.
+
+## v1.0.0-rc7 (2026-10-07)
+
+- Changed: the classifier has two new categories, `action_alert` (an automated alert from a service you use that asks you to act) and `private` (personal correspondence that fits no other category), and reworded category descriptions; `notification` now means messages that only inform. Neither new category is archived by any rule. A sender you confirmed as `notification` whose alerts now come back `action_alert` is offered for confirmation again (OD-472; SPEC §7.1).
+- `ecf eval label --corpus <file> --again N` relabels message N, and `--marked` relabels the skipped and unsure ones; when relabelling, each field shows its saved value in brackets (`category [invoice] >`), and Enter keeps it.
+
+## v1.0.0-rc6 (2026-10-07)
+
+- `ecf eval run --corpus <file>` runs a labelled real-mail corpus through the local model: reported only, never counted for the go-live gate; `ecf eval rescore <result> --corpus <file>` re-scores a corpus result after labels change, without running the models (OD-466; SPEC §16.7).
+- Changed: eval results score all eight classifier fields and record the actions each plan took; `ecf eval compare` counts only confirmed cases, for the synthetic set too (recorded figures aren't recomputed).
+- `ecf eval label --corpus <file>` labels a real-mail corpus blind: one message at a time from the stored headers and excerpt, never a model's answer, every field from its list or skip/unsure, saved beside the corpus after each message so you can stop and resume (OD-466; SPEC §16.7).
+- `ecf corpus fetch` writes each failed fetch and reconnect attempt to the service log (no message content), so an interrupted run can be explained afterwards.
+
+## v1.0.0-rc5 (2026-10-07)
+
+- Fixed: `ecf corpus fetch` keeps trying to reconnect for about four minutes before it gives up (it gave up after about 75 s, too soon for a Wi-Fi gap in real-service test 1), and its progress shows when it is reconnecting.
+
+## v1.0.0-rc4 (2026-10-07)
+
+- Fixed: `ecf corpus fetch` recovers when the connection drops between chunks instead of stopping; a refused login shows the mail server's reason; the confirmation prompt says to type the mailbox's email address, and the preflight shows the real byte cap (real-service test 1).
+- Decided, not built yet: a decision-model experiment compares Ollama's `tev1:4b` with Gemma as the local classifier, safety on the synthetic set and correctness on the real-mail corpus; its recorded decision gates `v1.0.0`, and any adoption ships after it. Qwen-based models are allowed for this classifier role only, through Ollama (OD-470, OD-471, ADR 0023; SPEC §7.8).
+
+## v1.0.0-rc3 (2026-10-07)
+
+- `ecf corpus merge` combines corpora into a new encrypted one for a top-up: duplicates dropped, labels merged, conflicting labels or different mailboxes refused (OD-466).
+- `ecf doctor` checks that swap is encrypted and core dumps are off, and `ecf destroy` reminds you that corpus files are kept (OD-466).
+- `ecf corpus fetch` copies real mail from a mailbox you own into one encrypted file, after step-up, with a Security Notice; `ecf corpus status`, `stop` and `info` follow and describe it. Gmail's download budget is shared, at most half of what's left (OD-466, OD-467; SPEC §16.7).
+- Security: the excerpts a model reads are now cut in the same time-limited child process that parses each message, so a message whose cleanup runs too long is quarantined instead of slowing the check (SPEC §5.1).
+- `ecf-server dev` refuses a `--home` inside ecf's default data folder or holding an install set up with `ecf init`, since a dev service approves every step-up (OD-468).
+
+## v1.0.0-rc2 (2026-10-07)
+
+- Added: `ecf slack remove [--config-token]` (step-up) takes Slack off an install whose app was deleted in Slack or whose tokens are gone: it deletes the app (with a configuration token) or revokes its bot token, forgets the tokens, member ID and channels, and `ecf slack install` then starts again from scratch (OD-469).
+- Decided, not built yet: a real-mail test corpus. Real messages from a mailbox you own can be kept only in one encrypted file, labelled blind and used to compare classifiers; results are reported, never gated, and a corpus never goes to Anthropic in v1 (OD-466 to OD-468, ADR 0022).
+
+## v1.0.0-rc1 (2026-10-07)
+
+- Security: in a very long paragraph, removing text addressed to an automated reader now searches only its first 64 K characters for where that text starts, and removes the rest of the paragraph when it starts later; a crafted 10 MiB paragraph took over a minute per excerpt and now takes under 2 s. Both excerpts come from one redaction (R180, corpus plan review).
+- Security: removing text addressed to an automated reader from model input no longer slows down sharply on long paragraphs; one crafted 2,000-line paragraph took about 40 s of the check thread, now under 1 s (R150, corpus plan review).
+- Changed: the Claude session and the `standard` classifier use Sonnet instead of Haiku (Haiku didn't reliably follow ecf's instructions, and Sonnet classified significantly better); `ecf claude` lets the session start only ecf's own agents (OD-461).
+- Fixed: `/ecf-eval` no longer stops every few rounds: submissions waiting for their model check don't hold back other work, and an empty reply waits a few seconds while work is still out. `ecf claude` turns off Claude Code's prompt suggestions and away summaries, which spent plan usage on nothing.
+- Fixed: `ecf claude` also denies Claude Code's built-in `claude` agent, and `/ecf-eval` and `/ecf-review` stop if any built-in agent runs in the session, naming it; a Claude eval had spent about half its plan usage on one doing no eval work.
+- Fixed: `/ecf-eval` and `/ecf-review` hand out one kind of agent work at a time, so classifier and actor subagents on different models no longer overlap and get refused by the model check; the first Claude eval stopped this way after 23 of 184 cases.
+- Releases are GitHub Releases on this repository only (wheel, source archive, `SHA256SUMS`, `release-manifest.json`), built reproducibly by CI from a `vX.Y.Z` or `vX.Y.Z-rcN` tag; there is no PyPI package. Install the release wheel with `uv tool install` (OD-458).
+- `ecf upgrade` installs the newest stable release through your signed-in `gh`, and `ecf upgrade --to vX.Y.Z[-rcN]` a named one (release candidates only by name); it refuses unless the release's manifest and `SHA256SUMS` agree and the wheel matches them. A prod install upgrades from verified releases; `--wheel` stays for test installs, optionally checked with `--sha256sums` (OD-458).
+- The weekly model watch also lists ecf's releases and puts a newer stable release on the daily summary once (OD-458).
+- `THIRD_PARTY_NOTICES` lists every runtime dependency with its license and notice texts; it ships in the source archive and the wheel, and CI fails when it is out of date.
+- Dependabot proposes `uv.lock` and GitHub Actions updates weekly, grouped, with a cooldown.
+- The eval's go-live gate also needs 100% fraud-guard recall: every confirmed case that expects the fraud guard must end there; `ecf eval status` and `ecf eval compare` show it, and a run saved before this no longer passes the synthetic check (OD-460).
+- Six synthetic cases that expect the fraud guard now also require an escalation, and `sales-urgent-po-forwarder` expects what ecf guarantees (labelled and flagged, never hidden); these labels need confirming again (OD-460).
+- Security reports go to rodney.marable@gmail.com, accepted now; from `v1.0.0` the latest release is supported (OD-459).
+- The README status and install sections describe the GitHub Release install.
+- Fixed: the source archive (sdist) now holds only the source, tests, scripts and top-level documents; it had also packaged local caches and agent work folders, and the large on-demand eval files.
+
 ## ms-v1.6-gmail (2026-10-06)
 
 - On a mailbox that can't keep ecf's labels (e.g. Proton Bridge), ecf can't tell it handled an email before, so the check that refuses a reply or forward for an email ecf already handled doesn't work there (OD-439).

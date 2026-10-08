@@ -8,9 +8,9 @@ Claude, and needs no cloud infrastructure.
 
 ## Status
 
-Milestones V1.0 to V1.4 are done; V1.5 (sending, alerts by email, backups, upgrades) is being
-finished. **Not ready for anyone else to use yet:** milestone tags (`ms-…`) record internal
-progress, not releases. The first release will be `v1.0.0` (SPEC §1.5 lists what it needs).
+`v1.0.0` (2026-10-08) is the first release: macOS only, single-user local mode, with milestones
+V1.0 to V1.6, including personal Gmail accounts (V1.6). Milestone tags (`ms-…`) and release
+candidates (`v1.0.0-rcN`) record internal progress, not releases.
 
 ## What it does
 
@@ -65,13 +65,21 @@ Claude login for presets B and C.
 Personal Gmail accounts (gmail.com) are supported over IMAP with an app password; Google
 Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
 
-The supported install will be:
+From `v1.0.0`, each release is published only as a GitHub Release on this repository (wheel,
+sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. The repository is private,
+so downloading needs access to it. Download the release's files and install the wheel:
 
 ```sh
-uv tool install email-classify-filter
+gh release download v1.0.0 --repo rmarable/email-classify-filter
+shasum -a 256 email_classify_filter-*.whl   # compare with the wheel's line in SHA256SUMS
+uv tool install ./email_classify_filter-*.whl
 ```
 
-Nothing is published yet. Until `v1.0.0`, build the wheel from a checkout and install that:
+`uv tool install` also accepts a URL to the wheel, if your download can authenticate to the
+repository. From `v1.0.0`, `ecf upgrade` checks what it downloads against the release's
+`SHA256SUMS`.
+
+To build the wheel from a checkout instead:
 
 ```sh
 uv build

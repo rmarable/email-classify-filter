@@ -3,6 +3,8 @@
 - idle until Slack is installed (`ecf slack install` stores the bot and app-level tokens in the
   secret store and the app and workspace IDs in settings; `slack_admin`);
 - reconnects at once when `reload` is called (after an install or new tokens);
+- `held` (for `ecf slack remove`) waits for the current pass to end, disconnects, and keeps the
+  thread idle while Slack is removed; afterwards it connects only if Slack is still installed;
 - then connects Socket Mode, and runs the output queue (`slack_out`) and the click queue
   (`slack_in`) one job at a time;
 - keeps "connected" and "last connected" for `ecf status` and the "Needs you" header (OD-118);
@@ -14,7 +16,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, cast
 
@@ -86,6 +89,7 @@ class SlackRuntime:
         self._receiver = SlackReceiver(clock)
         self._web: Any = None
         self._reload = threading.Event()
+        self._pass = threading.Lock()  # one pass at a time; `held` takes it to keep the thread idle
         self._lost_at: datetime | None = None  # when a live connection dropped
         self._down_since: datetime | None = None  # first failed connect in a row
         self._failures = 0  # consecutive failed passes of the loop
@@ -163,19 +167,20 @@ class SlackRuntime:
         waited = 0.0
         while not stop.is_set():
             try:
-                if self._reload.is_set():
-                    self._reload.clear()
-                    self.close()
-                    self._sender = None
-                    last_try = waited - RETRY_S  # connect now
-                if self._socket is None and waited - last_try >= RETRY_S:
-                    last_try = waited
-                    self.start()
-                did = self.run_once()
-                if waited - last_prune >= PRUNE_EVERY_S:
-                    last_prune = waited
-                    self._prune()
-                self._pass_ok()
+                with self._pass:
+                    if self._reload.is_set():
+                        self._reload.clear()
+                        self.close()
+                        self._sender = None
+                        last_try = waited - RETRY_S  # connect now
+                    if self._socket is None and waited - last_try >= RETRY_S:
+                        last_try = waited
+                        self.start()
+                    did = self.run_once()
+                    if waited - last_prune >= PRUNE_EVERY_S:
+                        last_prune = waited
+                        self._prune()
+                    self._pass_ok()
             except Exception as exc:  # never let one bad pass end Slack for the process
                 self._pass_failed(exc)
                 stop.wait(RETRY_S)
@@ -290,6 +295,23 @@ class SlackRuntime:
     def reload(self) -> None:
         """Called from the API thread: reconnect with the stored tokens on the next pass."""
         self._reload.set()
+
+    @contextmanager
+    def held(self) -> Generator[None]:
+        """Called from the API thread (`ecf slack remove`): wait for the current pass to end,
+        disconnect, and keep the thread idle inside the block; then reconnect on the next pass,
+        which connects only if Slack is still installed (a removal that stopped partway)."""
+        with self._pass:
+            self.close()
+            self._sender, self._web = None, None
+            self._was_connected, self._lost_at, self._down_since = False, None, None
+            self._problem = ""
+            self.status.update(installed=False, last_connected_at=None, channels=None,
+                               connect_error=None, error=None)  # fmt: skip
+            try:
+                yield
+            finally:
+                self._reload.set()
 
     def close(self, *, clean_stop: bool = False) -> None:
         """`clean_stop` (the service stopping on purpose) also deletes the dead-man's message."""

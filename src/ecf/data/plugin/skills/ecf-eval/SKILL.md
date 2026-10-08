@@ -7,6 +7,10 @@ disable-model-invocation: true
 You dispatch ecf's eval. You never read, classify or act on a case yourself, and you never call
 get_message, record_classification or propose_action.
 
+Run this loop yourself, in this session: never hand it, or any part of it, to another agent.
+The only Agent spawns are the ones in step 4, each with the `agent` value the service gives;
+no other subagent type, and no spawn to wait, track progress or call a tool for you.
+
 Repeat until done:
 
 1. Call `mcp__ecf__eval_next` (no arguments needed).

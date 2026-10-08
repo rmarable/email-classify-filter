@@ -200,6 +200,7 @@ def _show(p: Paths, t: Tools, pre: dict[str, Any]) -> None:
                " off")  # fmt: skip
     if pre.get("export_dir"):
         t.echo(f"Backups in {pre['export_dir']} are kept.")
+    t.echo("Any .ecfcorpus files you made, and their labels files, are kept: delete them yourself.")
 
 
 def _offer_export(p: Paths, t: Tools, pre: dict[str, Any]) -> bool:

@@ -108,10 +108,12 @@ def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, An
     assert run is not None
     case_of = {w.ref: w.case.id for w in run.works}
     seen: list[dict[str, Any]] = []
-    for _ in range(10):
+    for _ in range(20):
         q = claude_eval.eval_next(connector(db_path), clock, session)
         if q["done"]:
             return seen
+        # one agent type a round: the model check can't tell two models' overlapping work apart
+        assert len({i["agent"] for i in q["items"]}) <= 1, q["items"]
         for item in q["items"]:
             seen.append(item)
             assert answer(db_path, clock, item, session, by_case(case_of[item["id"]]))["accepted"]
@@ -155,7 +157,34 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     assert "IBAN" not in text and "SYSTEM NOTE" not in text  # metrics only
     # the go-live gate of a C address reads it (its key is the pins')
     check = gate.synthetic(conn, key, "C")
-    assert check.ok is (not m["unsafe"]) and run.run_id[:8] in check.detail
+    assert check.ok is (not m["unsafe"] and not m["fraud_guard_missed"])
+    assert run.run_id[:8] in check.detail
+
+
+def test_a_round_hands_out_one_agent_type_and_waits_for_the_others(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """v1.0.0 run 6cea77b1: a round mixing classifier and actor work let a session run Haiku and
+    Opus spawns side by side, and the model check refused all of it. One agent type a round, and
+    none while the session's claims for another are out."""
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    case_of = {w.ref: w.case.id for w in run.works}
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    first, second = q["items"]  # starter-bec, starter-control: both to classify
+    assert {case_of[first["id"]], case_of[second["id"]]} == {"starter-bec", "starter-control"}
+    control = first if case_of[first["id"]] == "starter-control" else second
+    other = second if control is first else first
+    assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # now needs its actor
+    # S1 still holds a classifier claim: no actor work for it, only more classifier work
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    assert {i["agent"] for i in q["items"]} <= {"ecf-classifier"}
+    # another session takes the actor step in a round of its own
+    q2 = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)
+    assert len({i["agent"] for i in q2["items"]}) == 1
+    assert q2["items"] and q2["items"][0]["agent"].startswith("ecf-actor")
+    assert answer(db_path, clock, other, S1, BEC)["accepted"]
 
 
 def test_cases_go_out_under_random_references_with_no_gold_labels(
@@ -209,6 +238,53 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     # the case waits for another session
     again = claude_eval.eval_next(connector(db_path), clock, S2)
     assert item["id"] in {i["id"] for i in again["items"]}
+
+
+def test_a_held_submission_doesnt_block_the_next_agent_type(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """A submission waiting for telemetry has finished its spawn: the session may take other
+    agents' work meanwhile, or its loop sees empty rounds and ends (run 9e745b99)."""
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    case_of = {w.ref: w.case.id for w in run.works}
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    control = next(i for i in q["items"] if case_of[i["id"]] == "starter-control")
+    other = next(i for i in q["items"] if i is not control)
+    assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # needs its actor now
+    ref, token, agent = other["id"], other["claim_token"], other["agent"]
+    claude_eval.get_message(clock, S1, ref, token, agent)
+    held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    assert isinstance(held, Hold)  # submitted, waiting for telemetry: not "claimed" any more
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    assert any(i["agent"].startswith("ecf-actor") for i in q["items"])
+
+
+def test_an_empty_reply_waits_briefly_while_work_is_out(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The session can't pause and gives up after 5 empty replies; the service waits up to
+    WAIT_S (polling) while work is out, and returns at once when there's nothing to wait for."""
+    start(db_path, clock, root)
+    slept: list[float] = []
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, limit=10, sleep=slept.append)
+    assert q["items"] and slept == []  # work to hand out: no wait
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, sleep=slept.append)
+    assert q["items"] == [] and q["in_progress"] > 0
+    assert sum(slept) == claude_eval.WAIT_S and claude_eval.WAIT_S < 10  # under ecf-mcp's limit
+
+
+def test_a_built_in_agent_in_the_session_stops_it() -> None:
+    """Claude Code can deny agents only by name; a built-in one ecf doesn't know yet (the first
+    /ecf-eval run handed its loop to `claude`, v1.0.0) stops the session instead of spending."""
+    tel = Telemetry()
+    tel.open(S1)
+    tel.add(S1, [ApiCall(1.0, "claude-haiku-4-5-20251001", SUBAGENT)], [])
+    assert tel.stopped(S1) is None  # ecf's own agents are fine
+    tel.add(S1, [ApiCall(2.0, "claude-haiku-4-5-20251001", "agent:builtin:claude")], [])
+    stopped = tel.stopped(S1)
+    assert stopped is not None and "(claude)" in stopped and "update ecf" in stopped
 
 
 def test_three_invalid_tries_score_the_case_as_a_failure(
@@ -354,6 +430,7 @@ def test_eval_results_are_metrics_only(db_path: Path, clock: FakeClock, root: Pa
     drain(db_path, clock, lambda _c: BEC)
     r = claude_eval.results()
     assert r["state"] == "done" and isinstance(r["metrics"]["unsafe"], int)
+    assert {"fraud_guard_cases", "fraud_guard_recall"} <= r["metrics"].keys()  # D2
     assert not any(c in json.dumps(r) for c in CASES)
 
 

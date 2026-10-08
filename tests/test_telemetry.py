@@ -28,7 +28,8 @@ from ecf_server.notify import FakeNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Swap, Telemetry
 from tests.test_claude_review import REQUEST, add, waiting_item
 
-HAIKU = "claude-haiku-4-5-20251001"
+HAIKU = "claude-haiku-4-5-20251001"  # any model ID: parsing and judging don't look at the pins
+CLASSIFIER = claude_pins.load_lock()["classifier"]  # what the model check expects of ecf-classifier
 
 
 def attr(key: str, value: Any) -> dict[str, Any]:
@@ -60,7 +61,7 @@ def iso(offset_s: float = 0.0) -> str:
     return (NOW + timedelta(seconds=offset_s)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def api_request(end_s: float = 1.0, model: str = HAIKU, source: str = SUBAGENT,
+def api_request(end_s: float = 1.0, model: str = CLASSIFIER, source: str = SUBAGENT,
                 duration_ms: int = 3000, **more: Any) -> dict[str, Any]:  # fmt: skip
     """An API request ending `end_s` seconds after FakeClock's start."""
     return record(event__name="claude_code.api_request", event__timestamp=iso(end_s), model=model,
@@ -91,7 +92,7 @@ def test_only_numbers_models_times_and_codes_are_kept() -> None:
                 record(event__name="api_request", model="evil model\nname", query_source=7),
                 {"attributes": "not a list"})  # fmt: skip
     calls, swaps = telemetry.parse_logs(body)
-    assert calls[0] == ApiCall(at(1), HAIKU, SUBAGENT, 1200, 80, 900, None, 2100, 0.0123)
+    assert calls[0] == ApiCall(at(1), CLASSIFIER, SUBAGENT, 1200, 80, 900, None, 2100, 0.0123)
     assert calls[0].start == pytest.approx(at(1) - 2.1)
     assert calls[1].model == "unknown" and calls[1].source == "unknown" and calls[1].end is None
     assert swaps == [Swap(at(5), at(9), "claude-sonnet-5-5")]  # only the swapped run
@@ -207,7 +208,7 @@ def test_the_receiver_takes_only_a_sessions_json(conn: sqlite3.Connection,
     assert export(state, bearer, {}, path="/v1/metrics").status_code == 200  # accepted, dropped
     assert export(state, bearer, body).status_code == 200
     rows = conn.execute("SELECT session_id, model, source, input_tokens FROM claude_calls")
-    assert [tuple(r) for r in rows] == [(made["session_id"], HAIKU, "main", 10)]
+    assert [tuple(r) for r in rows] == [(made["session_id"], CLASSIFIER, "main", 10)]
     assert api(state, "DELETE", f"/v1/sessions/{made['session_id']}").status_code == 200
     assert export(state, bearer, body).status_code == 401  # revoked with the session
 
@@ -282,13 +283,13 @@ def test_work_on_another_model_is_refused_and_stops_the_review(
     assert [t for t, _ in notifier.sent] == ["[ecf-alert] System Error"]
     q = api(state, "POST", "/v1/review-queue", {}, work).json()
     assert q["results"] == [{"id": sid, "outcome": "model_refused"}] and q["items"] == []
-    assert q["stopped"] == f"1 refused (model claude-opus-5-5, expected {HAIKU})"
+    assert q["stopped"] == f"1 refused (model claude-opus-5-5, expected {CLASSIFIER})"
     api(state, "DELETE", f"/v1/sessions/{session}")
     st = api(state, "GET", "/v1/status").json()
     checks = {c.name: c for c in doctor.judge_claude(st)}
     check = checks["claude model check"]
     assert check.level is Level.WARN and "1 refused" in check.detail
-    assert "expected claude-haiku" in check.detail
+    assert f"expected {CLASSIFIER}" in check.detail
     assert checks["claude pins"].level is Level.OK  # an address uses B or C (step 11)
     refused = conn.execute("SELECT data FROM audit WHERE event = 'claude.refused'").fetchone()[0]
     assert json.loads(refused)["model_check"] == "model"
@@ -358,8 +359,8 @@ def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
     assert stats["sessions"] == 2 and stats["items"] == 1 and stats["refused"] == 0
     assert stats["all"]["input_tokens"] == 2100 and stats["tokens_per_item"] == 2160
     by = {(g["model"], g["source"]): g for g in stats["groups"]}
-    assert by[(HAIKU, "agent")]["api_equivalent_usd"] == 0.01
-    assert by[(HAIKU, "main")]["seconds"] == {"median": 1.0, "p95": 1.0}
+    assert by[(CLASSIFIER, "agent")]["api_equivalent_usd"] == 0.01
+    assert by[(CLASSIFIER, "main")]["seconds"] == {"median": 1.0, "p95": 1.0}
     assert "claude" not in api(state, "GET", "/v1/stats?hours=24&preset=A").json()
     clock = state.clock
     line = claude_usage.daily_line(conn, clock.now() - timedelta(days=1))

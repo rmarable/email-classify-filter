@@ -14,7 +14,8 @@ executing or undoing, a lease is held or an `ecf claude` session is open (OD-388
 5. deletes the Slack app with `apps.manifest.delete` when a configuration token is given;
    otherwise, or if that fails, revokes the bot token with `auth.revoke`, which "will not
    uninstall the bot user or the app" but deactivates the bot and removes its channel
-   memberships (docs.slack.dev, verified 2026-10-03; OD-385);
+   memberships (docs.slack.dev, verified 2026-10-03; OD-385). `slack_remove.remove_app`, shared
+   with `ecf slack remove`;
 6. deletes every secret ecf keeps (`regrant.names`).
 
 Each step's outcome goes into `<data root>/destroyed/<install>.json` (0600, no secrets) as it
@@ -47,6 +48,7 @@ from ecf_server import (
     regrant,
     scheduled_export,
     slack_admin,
+    slack_remove,
     slack_routes,
     stepup,
 )
@@ -64,8 +66,6 @@ STARTED = "destroy.started"  # settings: when the destroy began
 SERVICE_DONE, DONE = "service_done", "done"  # the record's phases after "started"
 # a channel already archived, deleted, or one ecf was removed from: nothing left to archive
 GONE = frozenset({"already_archived", "channel_not_found", "is_archived", "not_in_channel"})
-# the bot token is already unusable: nothing left to revoke
-REVOKED = frozenset({"token_revoked", "invalid_auth", "account_inactive", "not_authed"})
 
 
 @dataclass(frozen=True)
@@ -218,14 +218,8 @@ def residue(rec: dict[str, Any]) -> list[str]:
     out: list[str] = []
     steps = rec.get("steps", {})
     app = steps.get("slack_app", {})
-    if app.get("result") != "deleted" and rec.get("slack_app_id"):
-        aid = rec["slack_app_id"]
-        how = "its bot token is revoked" if app.get("result") == "revoked" else (
-            "its bot token may still work")  # fmt: skip
-        out.append(
-            f"Slack app {aid} still exists ({how}): delete it at"
-            f" https://api.slack.com/apps/{aid} (Settings, Basic Information, Delete App)"
-        )
+    if left := slack_remove.app_left(rec.get("slack_app_id"), app.get("result")):
+        out.append(left)
     for ch in steps.get("channels", {}).get("failed", []):
         out.append(f"Slack channel {ch['name'] or ch['channel']} wasn't archived"
                    f" ({ch['code']}): archive it in Slack")  # fmt: skip
@@ -326,28 +320,10 @@ def _slack_app(conn: sqlite3.Connection, ctx: Context, bot: str | None,
     app_id = slack_admin.setting(conn, slack_admin.APP_ID) or slack_admin.setting(
         conn, slack_admin.PENDING_APP
     )
-    out: dict[str, Any] = {"app_id": app_id or None}
-    if app_id and config_token:
-        try:
-            ctx.make_web(config_token).call("apps.manifest.delete", app_id=app_id)
-        except SlackNetworkError as exc:
-            raise _unreachable() from exc
-        except SlackError as exc:
-            if exc.code in {"app_not_found", "invalid_app_id"}:
-                return out | {"result": "deleted", "note": exc.code}
-            out["delete_failed"] = exc.code  # e.g. an expired token: fall back to revoking
-        else:
-            return out | {"result": "deleted"}
-    if not bot:
-        return out | {"result": "no_token" if app_id else "no_slack"}
     try:
-        ctx.make_web(bot).call("auth.revoke")
+        return slack_remove.remove_app(app_id, ctx.make_web, bot, config_token)
     except SlackNetworkError as exc:
         raise _unreachable() from exc
-    except SlackError as exc:
-        if exc.code not in REVOKED:
-            return out | {"result": "failed", "code": exc.code}
-    return out | {"result": "revoked"}
 
 
 def _secrets(conn: sqlite3.Connection, ctx: Context) -> dict[str, Any]:

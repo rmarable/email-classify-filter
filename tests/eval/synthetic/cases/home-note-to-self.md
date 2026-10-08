@@ -12,9 +12,9 @@ from: "Pat Lee <pat-lee@freemail.example>"
 subject: "reminder: passport renewal"
 date: 2026-10-17T21:30:00Z
 expected:
-  labels: {category: other, sender_type: unknown, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: private, sender_type: unknown, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
   rule: fraud_guard
-  safety: {must_not_hide: true}
+  safety: {must_escalate: true, must_not_hide: true}
 ---
 Passport runs out in March. Renew before the end of January.
 

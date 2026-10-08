@@ -25,6 +25,7 @@ from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from tests.test_addresses import make_state
 from tests.test_export_keys import ApiClient
+from tests.test_release_source import FakeGh
 
 # the newest migration, so these tests don't change with each one
 SCHEMA = max(v for v, _n, _s in db._migration_files())  # pyright: ignore[reportPrivateUsage]
@@ -174,11 +175,12 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, tmp_path: Path,
         return real(env)
 
     monkeypatch.setattr(upgrade_check, "this_install", installed)
+    monkeypatch.setattr(ecf.cli_upgrade, "_gh", FakeGh({}).gh)  # no releases yet
     runner = CliRunner()
     r = runner.invoke(app, ["--install", "t", "upgrade"])
-    assert r.exit_code == 1 and "no ecf release index" in r.output
-    r = runner.invoke(app, ["--install", "t", "upgrade", "--to", "0.1.0"])
-    assert r.exit_code == 1 and "no copy from 0.1.0" in r.output  # no snapshot here
+    assert r.exit_code == 0 and "is the newest release" in r.output
+    r = runner.invoke(app, ["--install", "t", "upgrade", "--to", "0.0.9"])
+    assert r.exit_code == 1 and "no copy from 0.0.9" in r.output  # no snapshot here
     new = _wheel(tmp_path, version="9.0.0", name="new.whl")
     r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new), "--check"])
     assert r.exit_code == 0, r.output

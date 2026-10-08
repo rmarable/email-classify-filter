@@ -28,6 +28,7 @@ for alert mail arrives with email alerts.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
 from importlib import resources
@@ -100,6 +101,44 @@ def _injected(text: str) -> bool:
     return any(p.regex.search(cs if p.case_sensitive else ci) for p in _patterns()["injection"])
 
 
+def _first(hi: int, test: Callable[[int], bool]) -> int:
+    """The least i in [0, hi] with test(i), for a test that stays True once True and is True at
+    hi."""
+    lo = 0
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if test(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _match_start(lines: list[str]) -> int:
+    """The line where the paragraph's first injection match starts. Binary searches, not scans:
+    a match in a prefix or suffix stays a match when lines are added, so each bound is the first
+    True of a monotone test, and a crafted paragraph of many lines costs O(n log n) instead of
+    O(n^2) (R150)."""
+    end = _first(len(lines) - 1, lambda k: _injected("\n".join(lines[: k + 1])))
+    return end - _first(end, lambda d: _injected("\n".join(lines[end - d : end + 1])))
+
+
+# In a longer paragraph, only this head is searched for the line where the match starts; a match
+# that starts later removes the paragraph from the end of the head (more, never less). A crafted
+# 10 MiB paragraph took over a minute to search whole (R180).
+SEARCH_CHARS = 65_536
+
+
+def _head(lines: list[str]) -> list[str]:
+    """The paragraph's leading lines up to SEARCH_CHARS characters (at least one line)."""
+    size = 0
+    for k, line in enumerate(lines):
+        size += len(line) + 1
+        if size > SEARCH_CHARS:
+            return lines[: max(k, 1)]
+    return lines
+
+
 def redact_injection(text: str) -> str:
     """Model input without what fraud trigger 10 matched (OD-254): in each paragraph where a
     phrase matched, the line where the first match starts and every line after it in that
@@ -114,8 +153,11 @@ def redact_injection(text: str) -> str:
             continue
         removed = True
         lines = para.split("\n")
-        end = next(k for k in range(len(lines)) if _injected("\n".join(lines[: k + 1])))
-        start = max(j for j in range(end + 1) if _injected("\n".join(lines[j : end + 1])))
+        head = _head(lines)
+        if head is lines:
+            start = _match_start(lines)
+        else:
+            start = _match_start(head) if _injected("\n".join(head)) else len(head)
         kept = "\n".join(lines[:start]).rstrip()
         if kept:
             out.append(f"{kept}\n{INJECTION_MARK}")

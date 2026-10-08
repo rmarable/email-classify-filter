@@ -52,17 +52,35 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# Pinned so a rebuild of a tag gives the same bytes (scripts/release_build.py; SPEC §17.4).
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "src/ecf/__init__.py"
 
+# Rebuild when the version changes, not only pyproject.toml (the self-hosted runner keeps its uv cache).
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/ecf/__init__.py" }]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ecf", "src/ecf_server"]
 
+[tool.hatch.build.targets.wheel.extra-metadata]
+# Dependency license texts (SPEC §1.5 item 4), at .dist-info/extra_metadata/ in the wheel.
+"THIRD_PARTY_NOTICES" = "THIRD_PARTY_NOTICES"
+
 [tool.hatch.build.targets.sdist]
-exclude = ["docs/", "tests/eval/synthetic/.build/"]
+# An allow-list: hatch reads only this project's .gitignore, so untracked local folders (agent
+# worktrees, test caches) were packaged before (V1.6 closing run, 2026-10-06).
+# tests/test_sdist_contents.py checks it.
+only-include = [
+    "src", "tests", "scripts", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md", "SECURITY.md",
+    "CONTRIBUTING.md", "GENERATE-FAKE-TESTING-EMAILS.md", "pyproject.toml", "uv.lock",
+    "build-constraints.txt",
+    ".python-version", "THIRD_PARTY_NOTICES",
+]
+exclude = ["tests/eval/synthetic/.build/*"]  # built on demand, up to 66 MB each
 
 [tool.ruff]
 line-length = 100

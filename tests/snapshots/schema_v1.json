@@ -15,7 +15,9 @@
         "regulatory",
         "marketing",
         "notification",
+        "action_alert",
         "spam_or_phishing",
+        "private",
         "other"
       ],
       "title": "Category",

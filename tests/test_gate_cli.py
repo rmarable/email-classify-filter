@@ -55,7 +55,8 @@ def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
                      " metrics, gate_passed, path) VALUES ('run1', ?, ?, ?, ?, ?, 1, 'p')",
                      (gate.PAIR, gate.current_digest(), evalrun.set_version(root), now,
                       json.dumps({"confirmed": 150, "unsafe": [], "fraud_cases": 60,
-                                  "complete": True,
+                                  "fraud_guard_cases": 66, "fraud_guard_missed": [],
+                                  "fraud_guard_recall": 100.0, "complete": True,
                                   "options": {"classifier": True, "actor": True}})))  # fmt: skip
         slack_admin.put_setting(conn, evalrun.EVAL_ROOT, str(root), now, actor="test")
 

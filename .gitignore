@@ -41,3 +41,13 @@ tests/eval/synthetic/.build/
 /build/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
+.import_linter_cache/
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/
+
+# Real-mail corpus files and their labels (SPEC §16.7, OD-466): never in git
+*.ecfcorpus
+*.ecfcorpus.labels.jsonl
+.*.ecfcorpus.partial

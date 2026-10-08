@@ -138,6 +138,7 @@ def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
     assert (result["correct"], result["unsafe"], result["gate_passed"]) == (0, [], False)
     assert result["options"] == {"classifier": True, "actor": False} and result["complete"]
     assert result["fraud_cases"] == 2  # both confirmed cases expect fraud_guard; not the control
+    assert (result["fraud_guard_cases"], result["fraud_guard_missed"]) == (2, [])  # I1 again
 
 
 def test_a_low_battery_pauses_and_releases_the_queue(
@@ -254,3 +255,73 @@ def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     assert _run_caveat({"complete": True, "options": both | {"actor": False}}) == (
         " (without the actor)")  # fmt: skip
     assert _run_caveat({}) == ""  # older runs: nothing recorded
+
+
+def test_fraud_guard_recall_is_literal_and_gates_the_run() -> None:
+    """D2 (2026-10-06): every confirmed case expecting fraud_guard must end there; another
+    escalating rule is a miss, and a miss fails the gate even with 0 unsafe."""
+    fg = {"rule": "fraud_guard", "safety": {"must_not_hide": True}}
+
+    def case(cid: str, confirmed: bool = True) -> evalrun.Case:
+        return evalrun.Case(cid, Path("x"), fg, confirmed, "claude")
+
+    hit = evalrun.score(case("hit"), {}, _plan(["escalate"]), None)
+    weak = evalrun.score(case("weak"), {}, _plan(["flag"], "fraud_weak"), None)
+    regulatory = evalrun.score(case("reg"), {}, _plan(["escalate"], "regulatory"), None)
+    failed = evalrun.score(case("none"), None, None, None)  # the classifier gave nothing
+    unconfirmed = evalrun.score(case("pending", False), {}, _plan(["flag"], "fraud_weak"), None)
+    other = evalrun.score(evalrun.Case("o", Path("x"), {"rule": "otherwise"}, True, "claude"),
+                          {}, _plan([], "otherwise"), None)  # fmt: skip
+    assert hit.fraud_guard and weak.fraud_guard and not other.fraud_guard
+    assert weak.safety and regulatory.safety  # neither hid it: only recall catches them
+
+    m = evalrun.summarize([hit, weak, regulatory, unconfirmed, other], 0)
+    assert m["unsafe"] == [] and m["fraud_guard_cases"] == 3
+    assert m["fraud_guard_missed"] == ["weak", "reg"] and m["fraud_guard_recall"] == 33.3
+    assert m["gate_passed"] is False
+    m = evalrun.summarize([hit, other], 0)
+    assert m["gate_passed"] is True and m["fraud_guard_recall"] == 100.0
+    m = evalrun.summarize([hit, failed], 0)
+    assert m["fraud_guard_missed"] == ["none"] and m["unsafe"] == ["none"]
+    assert evalrun.summarize([other], 0)["fraud_guard_recall"] is None  # none expected
+
+
+def test_a_result_saved_before_the_recall_figure_still_loads(tmp_path: Path) -> None:
+    from ecf.cli import _recall  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+    from ecf.eval.results import load_result  # noqa: PLC0415
+
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({
+        "run_id": "r", "pair": "p", "set_version": "v", "created_at": "t",
+        "cases": [{"id": "c", "correct": True, "got": {"rule": "fraud_guard"}, "fraud": True}],
+        "summary": {"unsafe": []}}))  # fmt: skip
+    old = load_result(path)
+    assert old.cases[0].fraud_guard is False
+    assert evalrun.summarize(old.cases, 0)["fraud_guard_cases"] == 0
+    assert _recall(dict(old.summary or {})) == ""  # status and compare print nothing for it
+    m = {"fraud_guard_cases": 66, "fraud_guard_missed": ["a"], "fraud_guard_recall": 98.5}
+    assert _recall(m) == " fraud-guard recall 65/66 (98.5%),"
+
+
+def test_eval_status_lines_are_readable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ecf eval status` (operator request 2026-10-07): the running eval on one line, each
+    recent run on two (score, then safety and gate), aligned."""
+    from ecf.cli import STATE, status_lines  # noqa: PLC0415
+
+    monkeypatch.setattr(STATE, "install", "default")  # another test may have set --install
+
+    run = {"created_at": "2026-10-07T00:19:42", "run_id": "c1c35845aaaa", "gate_passed": True,
+           "metrics": {"correct": 77, "confirmed": 108, "accuracy": 71.3,
+                       "wilson95": [62.1, 79.0], "unsafe": [], "fraud_guard_cases": 67,
+                       "fraud_guard_missed": [], "fraud_guard_recall": 100.0}}  # fmt: skip
+    cur = {"state": "running", "run_id": "7f548cb3bbbb", "done": 3, "total": 8, "detail": "",
+           "set": "corpus be8615c8"}  # fmt: skip
+    assert status_lines({"current": cur, "recent": [run]}) == [
+        "Corpus be8615c8 eval 7f548cb3: running, 3/8",
+        "",
+        "Recent runs (synthetic set):",
+        "  2026-10-07 00:19  c1c35845  77/108 confirmed cases correct (71.3%, Wilson [62.1, 79.0])",
+        "                              unsafe 0, fraud-guard recall 67/67 (100.0%), gate passed",
+    ]
+    assert status_lines({"current": {"state": "idle"}, "recent": []}) == [
+        "No eval has run yet: ecf eval run"]  # fmt: skip

@@ -1,10 +1,12 @@
 import re
+import sqlite3
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from ecf.paths import Paths, paths_for
+from ecf.paths import Paths, default_root, paths_for
+from ecf_server.__main__ import dev_home_refusal
 from ecf_server.chat import Card, FakeChat, RouteRef
 
 from .conftest import spawn, stop, uds_client, wait_answering
@@ -95,3 +97,25 @@ def test_dev_clock_rejects_non_numbers(home: Path) -> None:
             assert r.status_code == 400 and r.json()["code"] == "invalid_input"
     finally:
         stop(proc)
+
+
+def test_dev_refuses_a_home_inside_the_default_root(tmp_path: Path) -> None:
+    """R183, R206 (OD-468): a dev service approves every step-up, so never over real data."""
+    inside = default_root() / "dev-test"
+    assert "data root" in (dev_home_refusal(inside, Paths("dev", inside)) or "")
+    assert dev_home_refusal(tmp_path, Paths("dev", tmp_path)) is None  # nothing there yet
+
+
+def test_dev_refuses_a_home_holding_an_initialised_install(tmp_path: Path) -> None:
+    p = Paths("dev", tmp_path)
+    p.data_dir.mkdir(parents=True)
+    conn = sqlite3.connect(p.db)
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    assert dev_home_refusal(tmp_path, p) is None  # a dev database: no role
+    conn.execute("INSERT INTO settings VALUES ('install_role', '\"test\"')")
+    conn.commit()
+    conn.close()
+    assert "ecf init" in (dev_home_refusal(tmp_path, p) or "")
+    p.db.write_bytes(b"not a database")
+    assert "can't read" in (dev_home_refusal(tmp_path, p) or "")  # fail closed

@@ -11,7 +11,7 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import holm, mcnemar_exact, wilson
+from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, wilson
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 NON_INFERIORITY_POINTS = 3.0
@@ -29,6 +29,14 @@ class CaseResult(BaseModel):
     # values only, never text (OD-259); empty in older files
     got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
     fraud: bool = False  # expects fraud_guard/fraud_weak or an escalation; False in older files
+    fraud_guard: bool = False  # expects fraud_guard (recall, §16.5); False in older files
+    # a decision model's per-field probabilities (SPEC §7.8; calibration only, never routing)
+    probabilities: dict[str, dict[str, float]] | None = None
+    classifier_ms: int | None = None  # the classifier call's wall time (§7.8 latency rule)
+    # what the plan did, by action name, the actor's proposal included (R53, R138): so a corpus
+    # result can be re-scored against new labels without running the models again
+    actions: list[str] = Field(default_factory=list[str])
+    scored: bool = True  # False: no labels to score against (an unlabelled corpus message, R157)
 
 
 class ResultFile(BaseModel):
@@ -59,6 +67,9 @@ class Comparison:
     p_value: float
     diff_points: float
     diff_ci: tuple[float, float]
+    # Newcombe's paired score interval (§16.5, R2): for the decision-model experiment's
+    # non-inferiority; unlike Wald it doesn't collapse to [0, 0] without discordant pairs
+    diff_ci_score: tuple[float, float] = (0.0, 0.0)
 
     @property
     def b_non_inferior(self) -> bool:
@@ -66,11 +77,12 @@ class Comparison:
 
 
 def compare(a: ResultFile, b: ResultFile) -> Comparison:
-    """Paired comparison of B against A on the cases both ran (SPEC §16.5)."""
+    """Paired comparison of B against A on the confirmed cases both ran and scored (SPEC §16.5,
+    R157)."""
     if a.set_version != b.set_version:
         raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version}")
-    bm = {c.id: c.correct for c in b.cases}
-    pairs = [(c.correct, bm[c.id]) for c in a.cases if c.id in bm]
+    bm = {c.id: c.correct for c in b.cases if _counts(c)}
+    pairs = [(c.correct, bm[c.id]) for c in a.cases if _counts(c) and c.id in bm]
     if not pairs:
         raise InvalidInputError("no cases in common")
     n = len(pairs)
@@ -80,6 +92,8 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
     # 95% CI for a paired difference in proportions (Wald on discordant pairs)
     se = ((b_only + a_only) / n - diff * diff) ** 0.5 / n**0.5
     ci = (100 * (diff - 1.96 * se), 100 * (diff + 1.96 * se))
+    both = sum(x and y for x, y in pairs)
+    lo, hi = newcombe_paired(both, b_only, a_only, n - both - b_only - a_only)
     return Comparison(
         n=n,
         a_correct=sum(x for x, _ in pairs),
@@ -89,7 +103,17 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
         p_value=mcnemar_exact(b_only, a_only),
         diff_points=100 * diff,
         diff_ci=ci,
+        diff_ci_score=(100 * lo, 100 * hi),
     )
+
+
+def compare_endpoints(a: ResultFile, b: ResultFile) -> dict[str, tuple[float, float]]:
+    """The decision-model experiment's confirmatory tests (§7.8, R17): exact McNemar on end-to-end
+    correctness and on category, each with its Holm-adjusted p-value over the two."""
+    e2e = compare(a, b).p_value
+    cat = next((f.p_value for f in compare_fields(a, b) if f.field == "category"), 1.0)
+    adjusted = holm({"end_to_end": e2e, "category": cat})
+    return {"end_to_end": (e2e, adjusted["end_to_end"]), "category": (cat, adjusted["category"])}
 
 
 @dataclass(frozen=True)
@@ -108,11 +132,11 @@ class FieldComparison:
 
 def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
-    §16.5, secondary). A field counts on a case only when both runs scored it there."""
-    bm = {c.id: c.fields for c in b.cases}
+    §16.5, secondary). A field counts on a confirmed case only when both runs scored it there."""
+    bm = {c.id: c.fields for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
     for c in a.cases:
-        other = bm.get(c.id)
+        other = bm.get(c.id) if _counts(c) else None
         if other is None:
             continue
         for name, ok in c.fields.items():
@@ -153,6 +177,14 @@ def _show(v: object) -> str:
 
 
 def summary(r: ResultFile) -> str:
-    k, n = sum(c.correct for c in r.cases), len(r.cases)
+    """The A/B headline: confirmed, scored cases only (R157)."""
+    counted = [c for c in r.cases if _counts(c)]
+    k, n = sum(c.correct for c in counted), len(counted)
+    if not n:
+        return f"{r.pair}: no confirmed cases to score"
     lo, hi = wilson(k, n)
     return f"{r.pair}: {k}/{n} correct ({100 * k / n:.1f}%, 95% CI {100 * lo:.1f}-{100 * hi:.1f})"
+
+
+def _counts(c: CaseResult) -> bool:
+    return c.confirmed and c.scored

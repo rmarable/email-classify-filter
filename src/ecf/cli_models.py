@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import typer
 
@@ -67,22 +67,32 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
             raise typer.Exit(1)
 
     @models_app.command("install")
-    def install() -> None:
+    def install(
+        decision: Annotated[
+            str | None,
+            typer.Option(
+                "--decision",
+                help="Install an eval-only decision model from decision_models.lock"
+                " (e.g. tev1-4b; SPEC §7.8) instead of the local model.",
+            ),
+        ] = None,
+    ) -> None:
         """Pull the pinned model into Ollama, check its digest and copy it to ecf's own name.
         Starts ecf's Ollama login item first when nothing else serves Ollama."""
         with LocalClient(paths()) as c:
-            ok = run_install(c, paths().root)
+            ok = run_install(c, paths().root, decision=decision)
         if not ok:
             raise typer.Exit(1)
 
     return models_app
 
 
-def run_install(c: LocalClient, root: Path) -> bool:
+def run_install(c: LocalClient, root: Path, *, decision: str | None = None) -> bool:
     """`ecf models install` (also `ecf init`'s model step): start Ollama if needed, then pull,
-    check and copy the pinned model, printing progress. True when it's installed."""
+    check and copy the pinned model, printing progress. True when it's installed. With
+    `decision`, an eval-only decision model (SPEC §7.8)."""
     _ensure_ollama(c, root)
-    c.request("POST", "/v1/models/install", {})
+    c.request("POST", "/v1/models/install", {"decision": decision} if decision else {})
     last = ""
     while True:
         p: dict[str, Any] = c.get("/v1/models")["install"]
@@ -99,6 +109,10 @@ def run_install(c: LocalClient, root: Path) -> bool:
     if p["state"] == "failed":
         typer.echo(f"install failed: {p['error']}", err=True)
         return False
+    if decision:  # eval only: the local model's readiness doesn't apply
+        typer.echo(f"{decision} installed for evaluation only (ecf eval run"
+                   f" --classifier-backend systemone:{decision})")  # fmt: skip
+        return True
     st: dict[str, Any] = c.get("/v1/models")
     if not st["ready"]:  # installed, but something else stops model work (e.g. the listener)
         typer.echo(f"installed, but not ready: {st['fault']['text']}", err=True)
@@ -198,7 +212,17 @@ def watch_lines(w: dict[str, Any] | None) -> list[str]:
     elif ol.get("checked_at"):
         out.append(f"  Ollama library: {len(ol['tags'])} {ol['repo']} tags,"
                    f" read {str(ol['checked_at'])[:10]}")  # fmt: skip
-    return out
+    return out + _release_lines(w.get("release") or {})
+
+
+def _release_lines(rel: dict[str, Any]) -> list[str]:
+    """The watch's look at ecf's GitHub releases (§7.6; operator decision D7, 2026-10-06)."""
+    if rel.get("error"):
+        return [f"  ecf releases: couldn't list them ({rel['error']})"]
+    if rel.get("checked_at"):
+        newest = f"{rel['newest']} is out (ecf upgrade)" if rel.get("newest") else "none newer"
+        return [f"  ecf releases: {newest}, read {str(rel['checked_at'])[:10]}"]
+    return []
 
 
 def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:

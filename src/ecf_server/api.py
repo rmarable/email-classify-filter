@@ -21,6 +21,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import StrEnum
@@ -41,6 +42,7 @@ from ecf.errors import (
     InternalError,
     InvalidInputError,
     NotFoundError,
+    PolicyDeniedError,
     ServiceUnavailableError,
     UnauthorizedError,
 )
@@ -62,6 +64,9 @@ from ecf_server import (
     claude_review,
     claude_usage,
     config,
+    corpus,
+    corpus_merge,
+    corpus_session,
     db,
     destroy,
     digests,
@@ -96,6 +101,7 @@ from ecf_server import (
     settings,
     slack_admin,
     slack_doctor,
+    slack_remove,
     slack_routes,
     stages,
     stats,
@@ -169,7 +175,11 @@ class ServiceState:
     slack: dict[str, Any] = field(default_factory=lambda: {"installed": False})  # live, runtime's
     slack_web: Callable[[str], Any] = field(default=_slack.Web, repr=False)  # a fake in tests
     slack_reload: Callable[[], None] = field(default=lambda: None, repr=False)  # the runtime's
+    # the runtime's `held`: keeps the Slack thread idle while `ecf slack remove` runs
+    slack_hold: Callable[[], AbstractContextManager[None]] = field(default=nullcontext, repr=False)
     watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
+    # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
+    watch_releases: model_watch.Releases | None = field(default=None, repr=False)
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
@@ -345,6 +355,8 @@ def create_app(state: ServiceState) -> Starlette:
             *_pause_routes(state, allow),
             *_alert_routes(state, allow),
             *_export_routes(state, allow),
+            *_corpus_routes(state, allow),
+            *_corpus_session_routes(state, allow),
             *_upgrade_routes(state, allow),
             *_destroy_routes(state, allow),
             *_stage_routes(state, allow),
@@ -933,7 +945,21 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
+def _corpus_run(sid: str | None, *, fraud_only: bool) -> evalrun.CorpusRun | None:
+    """The open corpus session an eval run takes over (R154); None for the synthetic set."""
+    if not sid:
+        return None
+    if fraud_only:
+        raise InvalidInputError("--fraud-only is for the synthetic set")
+    session = corpus_session.set_busy(sid, True)
+    try:
+        return evalrun.corpus_run(session)
+    except Exception:
+        corpus_session.set_busy(sid, False)
+        raise
+
+
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - route table
     """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
     also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
     `_review_routes`)."""
@@ -941,21 +967,31 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
         body = _body(request)
-        root = Path(_str(body, "root")).expanduser()
-        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+        sid = _opt_str(body, "corpus_session")  # a real-mail corpus instead (§16.7)
+        root = Path(_str(body, "root")).expanduser() if not sid else Path("/")
+        if not sid and (not root.is_absolute() or not (root / "labels.jsonl").is_file()):
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
         if isinstance(floor, bool) or not isinstance(floor, int) or not 0 <= floor <= 100:
             raise InvalidInputError("battery_floor: a percent from 0 to 100")
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True)
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
                                actor=body.get("actor") is not False,
                                fraud_only=body.get("fraud_only") is True,
-                               battery_floor=floor)  # fmt: skip
-        if state.db_path is None:
-            raise ServiceUnavailableError("the service has no database yet")
-        run = evalrun.start(state.connect, state.clock, state.model_client,
-                            state.db_path.parent, opts, power=state.power,
-                            check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
+                               battery_floor=floor,
+                               backend=_opt_str(body, "backend") or evalrun.GEMMA,
+                               redact=body.get("redact") is not False,
+                               corpus=corpus_run)  # fmt: skip
+        try:
+            run = evalrun.start(state.connect, state.clock, state.model_client,
+                                state.db_path.parent, opts, power=state.power,
+                                check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
+        except Exception:
+            if sid:
+                corpus_session.set_busy(sid, False)
+            raise
         evalrun.note(state.connect, state.clock,
                      f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
                      " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
@@ -1103,8 +1139,8 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise InvalidInputError("limit must be a whole number")
         stopped = state.telemetry.stopped(sid)
-        return JSONResponse(claude_eval.eval_next(state.connect, state.clock, sid, limit=limit,
-                                                  stopped=stopped))  # fmt: skip
+        return JSONResponse(claude_eval.eval_next_waiting(
+            state.connect, state.clock, sid, limit=limit, stopped=stopped))  # fmt: skip
 
     @allow(Caller.WORK)
     def eval_results(_request: Request) -> JSONResponse:
@@ -1188,8 +1224,11 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
-    def install_models(_request: Request) -> JSONResponse:
-        return JSONResponse(models.start_install(state.connect, state.clock, state.model_client))
+    def install_models(request: Request) -> JSONResponse:
+        """`ecf models install`; with `decision`, an eval-only decision model (SPEC §7.8)."""
+        decision = _opt_str(_body(request), "decision")
+        return JSONResponse(models.start_install(state.connect, state.clock, state.model_client,
+                                                 decision=decision))  # fmt: skip
 
     @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
@@ -1505,6 +1544,142 @@ def _export_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
+def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §16.7 (OD-466 to OD-468): `ecf corpus`; CLI only, never on `ecf-server dev`, whose
+    step-up is a fake (R56, R106)."""
+
+    def data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    def not_dev() -> None:
+        if state.dev is not None:
+            raise PolicyDeniedError("corpus commands don't run on ecf-server dev: its step-up is"
+                                    " a fake (SPEC §16.7)")  # fmt: skip
+
+    def secret(name: str) -> str | None:
+        return state.store().get(name)
+
+    @allow(Caller.CLI)
+    def preflight(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        conn = state.connect()
+        try:
+            req, password = corpus.from_body(conn, body, secret)
+            corpus.check_request(req, data_dir())
+            reader = corpus.CorpusReader(req.host, req.email, password, port=req.port)
+            try:
+                return JSONResponse(corpus.preflight(conn, state.clock, req, reader))
+            finally:
+                reader.close()
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def fetch_(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        conn = state.connect()
+        try:
+            req, password = corpus.from_body(conn, body, secret)
+        finally:
+            conn.close()
+        return JSONResponse(corpus.begin(state.connect, state.clock, state.notifier, data_dir(),
+                                         req, password, nonce=_opt_str(body, "nonce_id"),
+                                         own_passphrase=_opt_str(body, "passphrase")))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def status(_request: Request) -> JSONResponse:
+        session = corpus_session.status(state.clock.monotonic)
+        return JSONResponse(corpus.RUN.snapshot() | {"session": session})
+
+    @allow(Caller.CLI)
+    def stop(_request: Request) -> JSONResponse:
+        return JSONResponse(corpus.stop())
+
+    @allow(Caller.CLI)
+    def info(request: Request) -> JSONResponse:
+        return JSONResponse(corpus.info(_str(_body(request), "path")))
+
+    @allow(Caller.CLI)
+    def merge(request: Request) -> JSONResponse:
+        not_dev()
+        body = _body(request)
+        return _with_conn(lambda c: corpus_merge.from_body(c, state.clock, state.notifier,
+                                                           data_dir(), body))  # fmt: skip
+
+    def _with_conn(fn: Callable[[sqlite3.Connection], dict[str, Any]]) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(fn(conn))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/corpus/preflight", preflight, methods=["POST"]),
+        Route("/v1/corpus/fetch", fetch_, methods=["POST"]),
+        Route("/v1/corpus", status, methods=["GET"]),
+        Route("/v1/corpus/stop", stop, methods=["POST"]),
+        Route("/v1/corpus/info", info, methods=["POST"]),
+        Route("/v1/corpus/merge", merge, methods=["POST"]),
+    ]
+
+
+def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §16.7: a decrypted corpus held for labelling and eval runs (R46, R104, R154); CLI
+    only. The passphrase arrives in the open request and isn't kept."""
+
+    @allow(Caller.CLI)
+    def open_(request: Request) -> JSONResponse:
+        body = _body(request)
+        return JSONResponse(corpus_session.open_session(_str(body, "path"),
+                                                        _str(body, "passphrase"),
+                                                        state.clock.monotonic))  # fmt: skip
+
+    def _session(request: Request) -> corpus_session.Session:
+        return corpus_session.get(str(request.path_params["session_id"]), state.clock.monotonic)
+
+    @allow(Caller.CLI)
+    def keys(request: Request) -> JSONResponse:
+        return JSONResponse({"keys": corpus_session.keys(_session(request))})
+
+    @allow(Caller.CLI)
+    def item(request: Request) -> JSONResponse:
+        try:
+            index = int(request.path_params["index"])
+        except ValueError as exc:
+            raise InvalidInputError("index: a message number") from exc
+        return JSONResponse(corpus_session.item(_session(request), index))
+
+    @allow(Caller.CLI)
+    def close(request: Request) -> JSONResponse:
+        stop = request.query_params.get("stop") == "1"
+        return JSONResponse(corpus_session.close(str(request.path_params["session_id"]),
+                                                 stop=stop))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def rescore(request: Request) -> JSONResponse:
+        """`ecf eval rescore`: a corpus result against the session's current labels (R53)."""
+        body = _body(request)
+        s = corpus_session.get(_str(body, "corpus_session"), state.clock.monotonic)
+        if s.busy:
+            raise InvalidInputError("an eval run is using this corpus; wait for it to end")
+        path = Path(_str(body, "result")).expanduser()
+        if path.suffix != ".json" or not path.is_file():
+            raise InvalidInputError(f"no result file at {path}")
+        return JSONResponse(evalrun.rescore(s, path, state.clock))
+
+    return [
+        Route("/v1/eval/rescore", rescore, methods=["POST"]),
+        Route("/v1/corpus/session", open_, methods=["POST"]),
+        Route("/v1/corpus/session/{session_id}/keys", keys, methods=["GET"]),
+        Route("/v1/corpus/session/{session_id}/items/{index}", item, methods=["GET"]),
+        Route("/v1/corpus/session/{session_id}", close, methods=["DELETE"]),
+    ]
+
+
 def _destroy_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §11.11 (V1.5 step 12a): `ecf destroy`'s preview and the service's part; after the
     service's part the service stops, as a stop you asked for (OD-222)."""
@@ -1749,6 +1924,19 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def refresh(_request: Request) -> JSONResponse:
         return _with_conn(lambda c: {"queued": slack_admin.refresh(c, state.clock)})
 
+    @allow(Caller.CLI)
+    def remove(request: Request) -> JSONResponse:
+        body = _body(request)
+        typed, token = _str(body, "install"), _opt_str(body, "config_token")
+        token = token.strip() if token else None
+        with state.slack_hold():
+            r = _with_conn(lambda c: slack_remove.run(
+                c, state.clock, state.store(), state.slack_web, state.notifier,
+                install=state.install, typed=typed, config_token=token,
+                nonce=_nonce(body)))  # fmt: skip
+        log.info("slack.removed")
+        return r
+
     return [
         Route("/v1/slack", show, methods=["GET"]),
         Route("/v1/slack/app", create, methods=["POST"]),
@@ -1757,6 +1945,7 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/slack/member", member, methods=["POST"]),
         Route("/v1/slack/reauthorize", reauthorize, methods=["POST"]),
         Route("/v1/slack/refresh", refresh, methods=["POST"]),
+        Route("/v1/slack/remove", remove, methods=["POST"]),
     ]
 
 

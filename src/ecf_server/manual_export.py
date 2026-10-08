@@ -29,20 +29,24 @@ from ecf_server.notify import Notifier
 from ecf_server.secretstore import SecretStore
 
 
-def check_path(path: str, data_dir: Path) -> Path:
+def check_path(
+    path: str, data_dir: Path, *, suffix: str = export_bundle.SUFFIX, what: str = "an export"
+) -> Path:
+    """An absolute path for a new file with `suffix`, in an existing folder outside the data
+    directory; also used for corpus files (SPEC §16.7)."""
     if not path or any(ord(c) < 32 or ord(c) == 127 for c in path):
         raise InvalidInputError("a file path")
     p = Path(path)
     if not p.is_absolute():
         raise InvalidInputError("give the full path of the file")
-    if p.suffix != export_bundle.SUFFIX:
-        raise InvalidInputError(f"the file name must end in {export_bundle.SUFFIX}")
+    if p.suffix != suffix:
+        raise InvalidInputError(f"the file name must end in {suffix}")
     folder = p.parent.resolve()
     if not folder.is_dir():
         raise InvalidInputError(f"{folder} isn't an existing folder; create it first")
     data = data_dir.resolve()
     if folder == data or folder.is_relative_to(data):
-        raise InvalidInputError("an export can't go inside ecf's own data directory")
+        raise InvalidInputError(f"{what} can't go inside ecf's own data directory")
     where = folder / p.name
     if where.exists() or where.is_symlink():
         raise ConflictError(f"{where} already exists; choose another name")

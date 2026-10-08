@@ -1,0 +1,98 @@
+# Release (SPEC §17.4; operator decision D7, 2026-10-06): a pushed vX.Y.Z or vX.Y.Z-rcN tag runs
+# the Linux checks, builds the wheel and sdist reproducibly (scripts/release_build.py, which
+# refuses a tag whose version isn't the package's), and creates a GitHub Release on this repository
+# with the wheel, the sdist, SHA256SUMS and release-manifest.json. Nothing is published to PyPI.
+# The macOS merge gate still runs locally before the tag (CLAUDE.md).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.15"
+
+jobs:
+  # The same checks as ci.yml's, run here so the release never depends on another workflow's
+  # timing. Keep the two in step.
+  checks:
+    if: github.ref_type == 'tag'
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        python: ["3.12.6", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+          enable-cache: false # no cache restored into a release run
+      - run: uv sync --locked
+      - name: ruff
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: pyright
+        run: uv run pyright
+      - name: import-linter
+        run: uv run lint-imports
+      - name: license allow-list (runtime dependencies)
+        run: uv run python scripts/check_licenses.py
+      - name: tests (excluding macos)
+        run: uv run pytest -n auto -m "not macos"
+
+  release:
+    needs: checks
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the GitHub Release and upload its files; nothing else
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12.6"
+          enable-cache: false
+      - run: uv sync --locked
+      - name: build twice, compare, check the tag against the version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          uv run python scripts/release_build.py --tag "$TAG" --out "$RUNNER_TEMP/release"
+          uv run python scripts/release_build.py --tag "$TAG" --out "$RUNNER_TEMP/again"
+          cmp "$RUNNER_TEMP/release/SHA256SUMS" "$RUNNER_TEMP/again/SHA256SUMS"
+          cmp "$RUNNER_TEMP/release/release-manifest.json" "$RUNNER_TEMP/again/release-manifest.json"
+          (cd "$RUNNER_TEMP/release" && sha256sum --check --strict SHA256SUMS)
+          cat "$RUNNER_TEMP/release/SHA256SUMS" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd "$RUNNER_TEMP/release"
+          version="$(jq -r .version release-manifest.json)"
+          prerelease=()
+          if [[ "$TAG" == *-rc* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes "ecf $version. Changes: CHANGELOG.md at this tag. Check the files with \`sha256sum --check SHA256SUMS\`." \
+            "${prerelease[@]}" \
+            "email_classify_filter-${version}-py3-none-any.whl" \
+            "email_classify_filter-${version}.tar.gz" \
+            SHA256SUMS \
+            release-manifest.json

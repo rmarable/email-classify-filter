@@ -186,8 +186,8 @@ def check_listener(listener: Listener) -> None:
 
 
 def server_env(pid: int, run: Runner = _run, platform: str = sys.platform) -> dict[str, str]:
-    """The server's `OLLAMA_*` environment. Raises OllamaError("unconfirmed") when it can't be read,
-    e.g. the server runs as another user (OD-245)."""
+    """The server's `OLLAMA_*` and `LLAMA_ARG_*` environment. Raises OllamaError("unconfirmed")
+    when it can't be read, e.g. the server runs as another user (OD-245)."""
     try:
         if platform == "darwin":
             out = run(["/bin/ps", "-E", "-ww", "-o", "command=", "-p", str(pid)])
@@ -202,7 +202,7 @@ def server_env(pid: int, run: Runner = _run, platform: str = sys.platform) -> di
     env: dict[str, str] = {}
     for t in tokens:
         k, sep, v = t.partition("=")
-        if sep and k.startswith("OLLAMA_"):
+        if sep and k.startswith(("OLLAMA_", "LLAMA_ARG_")):
             env[k] = v
     return env
 
@@ -343,6 +343,19 @@ class Client:
         r = self._call("POST", "/api/chat", body)
         message = cast("dict[str, Any]", r.get("message") or {})
         return Reply(str(message.get("content", "")), Metrics.of(r), r.get("done_reason"))
+
+    def systemone(self, model: str, state: str, questions: dict[str, Any], *,
+                  keep_alive: str = KEEP_ALIVE) -> dict[str, Any]:  # fmt: skip
+        """A decision model's answers (`/v1/systemone`, eval only; SPEC §7.8). An HTTP error keeps
+        only its status: this route's error text may quote the request (R16)."""
+        body = {"model": model, "state": state, "questions": questions, "keep_alive": keep_alive}
+        try:
+            return self._call("POST", "/v1/systemone", body)
+        except OllamaError as e:
+            if e.cause in ("http", "server"):
+                status = re.match(r"HTTP \d{3}", e.detail)
+                raise OllamaError(e.cause, status.group(0) if status else "") from None
+            raise
 
     def unload(self, model: str) -> None:
         """Ask Ollama to unload the model now (`keep_alive: 0`)."""

@@ -1,10 +1,15 @@
-# Linux-only CI (free minutes). macOS tests run locally before merging to main (CLAUDE.md, merge gate).
+# Linux-only CI. macOS tests run locally before merging to main (CLAUDE.md, merge gate).
+# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-latest. While the repo is private it
+# names the self-hosted Linux runner in the Colima `ci` VM (operator decision 2026-10-07: no paid
+# minutes); at v1.0.0 the variable is deleted and the runner unregistered (SPEC §17.4).
 name: ci
 
 on:
   push:
+    paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
   pull_request:
     branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
 
 permissions:
   contents: read
@@ -18,12 +23,15 @@ env:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # a pull request from a branch of this repo already ran on its push; only a fork's runs here
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12.6", "3.13"]
+        # both versions on main and pull requests; the floor version alone on other branches
+        python: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && '["3.12.6", "3.13"]' || '["3.12.6"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,10 +49,11 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
       - name: tests (excluding macos)
-        run: uv run pytest -m "not macos"
+        run: uv run pytest -n auto -m "not macos"
 
   licenses-and-build:
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,7 +67,25 @@ jobs:
       - run: uv sync --locked
       - name: license allow-list (runtime dependencies)
         run: uv run python scripts/check_licenses.py
-      - name: build and hash
+      - name: THIRD_PARTY_NOTICES is current
         run: |
-          uv build -o dist
-          sha256sum dist/* | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run python scripts/check_licenses.py --notices
+          git diff --exit-code -- THIRD_PARTY_NOTICES
+      # Reproducible build (SPEC §17.4, §1.5 item 6): two builds from this commit must match.
+      - name: build twice and compare hashes
+        run: |
+          uv run python scripts/release_build.py --out "$RUNNER_TEMP/build-a"
+          uv run python scripts/release_build.py --out "$RUNNER_TEMP/build-b"
+          cmp "$RUNNER_TEMP/build-a/SHA256SUMS" "$RUNNER_TEMP/build-b/SHA256SUMS"
+          cmp "$RUNNER_TEMP/build-a/release-manifest.json" "$RUNNER_TEMP/build-b/release-manifest.json"
+          (cd "$RUNNER_TEMP/build-a" && sha256sum --check --strict SHA256SUMS)
+          (cd "$RUNNER_TEMP/build-b" && sha256sum --check --strict SHA256SUMS)
+          cat "$RUNNER_TEMP/build-a/SHA256SUMS" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Keep one build, so its bytes can be compared with a local build of the same commit
+      # (they differed at v1.0.0-rc1; SPEC §17.4).
+      - name: keep the build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-${{ github.sha }}
+          path: ${{ runner.temp }}/build-a
+          retention-days: 30

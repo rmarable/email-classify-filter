@@ -9,13 +9,14 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 from urllib.parse import urlencode
 
 import typer
 
 from ecf import __version__, service_unit, watch
 from ecf.cli_admin import make_commands as make_admin_commands
+from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
 from ecf.cli_export import make_commands as make_export_commands
 from ecf.cli_import import make_commands as make_import_commands
@@ -36,6 +37,9 @@ from ecf.prompts import hidden, require_terminal
 from ecf.service_unit import manager_for
 from ecf.status import CHECK_FAILED
 from ecf.stepup import step_up, with_step_up
+
+if TYPE_CHECKING:
+    from ecf.eval.results import ResultFile
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="email-classify-filter")
 service_app = typer.Typer(no_args_is_help=True, help="Install and control the background service.")
@@ -87,6 +91,7 @@ make_import_commands(app, _paths)
 make_upgrade_commands(app, _paths)
 make_destroy_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
+app.add_typer(make_corpus_app(_paths), name="corpus")
 make_stats_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
@@ -899,6 +904,33 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
     typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
 
 
+def _out(text: str) -> None:
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> None:
+    from datetime import date  # noqa: PLC0415
+
+    from ecf import cli_corpus_label  # noqa: PLC0415
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    if corpus is None:
+        raise InvalidInputError("--again and --marked go with --corpus")
+    require_terminal()
+    cli_corpus_label.require_output_terminal()
+    where = corpus.expanduser().absolute()
+    secret = hidden(f"Passphrase for {where.name} (hidden): ")
+    typer.echo("Label in Terminal, not in a Claude session; consider turning off this terminal's"
+               " Restore windows setting (SPEC §12.2).")  # fmt: skip
+    with LocalClient(_paths()) as c:
+        tally = cli_corpus_label.label(c, where, secret, read=input, write=_out,
+                                       today=date.today(), again=again,
+                                       marked=marked)  # fmt: skip
+    for line in cli_corpus_label.summary(tally, cli_corpus_label.cl.path_for(where)):
+        typer.echo(line)
+
+
 @eval_app.command("label")
 def eval_label(
     case_id: Annotated[
@@ -920,10 +952,26 @@ def eval_label(
             " newest in this install's evals folder).",
         ),
     ] = None,
+    corpus: Annotated[
+        Path | None,
+        typer.Option("--corpus", help="Label a real-mail corpus file instead (blind; §16.7)."),
+    ] = None,
+    again: Annotated[
+        list[int] | None,
+        typer.Option("--again", help="With --corpus: label message N again (repeatable)."),
+    ] = None,
+    marked: Annotated[
+        bool,
+        typer.Option("--marked", help="With --corpus: go back to skipped or unsure messages."),
+    ] = False,
 ) -> None:
     """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
     toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
-    note are flagged: the note says what to judge."""
+    note are flagged: the note says what to judge. With --corpus: label a real-mail corpus,
+    without seeing any model's answer."""
+    if corpus is not None or again or marked:
+        _label_corpus(corpus, frozenset(again or ()), marked)
+        return
     from datetime import UTC, datetime  # noqa: PLC0415
 
     from ecf.eval import labels  # noqa: PLC0415
@@ -1027,26 +1075,92 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     batch: Annotated[
         int, typer.Option("--batch", help="With --claude: items per -high spawn (1-5).")
     ] = 1,
+    classifier_backend: Annotated[
+        str,
+        typer.Option(
+            "--classifier-backend",
+            help="gemma (default), null, or"
+            " systemone:<name> from decision_models.lock (eval only, SPEC §7.8;"
+            " never counts for the go-live gate).",
+        ),
+    ] = "gemma",
+    redact: Annotated[
+        bool,
+        typer.Option(
+            "--redact/--no-redact",
+            help="With --fraud-only: --no-redact lets"
+            " injection text reach the model (a reported figure; never counts"
+            " for the go-live gate).",
+        ),
+    ] = True,
+    corpus: Annotated[
+        Path | None,
+        typer.Option("--corpus", help="Run a labelled real-mail corpus instead (§16.7)."),
+    ] = None,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
     (OD-230). With --claude, register a run for Claude instead: open `ecf claude` and type
-    /ecf-eval (it uses your Claude plan)."""
+    /ecf-eval (it uses your Claude plan). With --corpus, run a real-mail corpus with preset A:
+    reported, never counted for the go-live gate."""
+    if corpus is not None:
+        if claude or fraud_only or not redact or classifier_backend == "null":
+            raise InvalidInputError("--corpus runs the local model only (no --claude, null"
+                                    " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
+        _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
+        return
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
+        if classifier_backend != "gemma" or not redact:
+            raise InvalidInputError("--classifier-backend and --no-redact are for the local model")
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
-            "fraud_only": fraud_only, "battery_floor": battery_floor})  # fmt: skip
-    typer.echo(f"eval {r['run_id'][:8]} started: {r['total']} cases; follow it with"
-               " `ecf eval status`, stop it with `ecf eval stop`")  # fmt: skip
+            "fraud_only": fraud_only, "battery_floor": battery_floor,
+            "backend": classifier_backend, "redact": redact})  # fmt: skip
+    typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
+    _follow_hints()
     if r.get("on_battery"):
         typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
                    " resumes on AC power.")  # fmt: skip
+
+
+def _eval_corpus(corpus: Path, classifier: bool, actor: bool, floor: int, backend: str) -> None:
+    """Open the corpus in the service and hand it to an eval run, which owns it until it ends."""
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    require_terminal()
+    where = corpus.expanduser().absolute()
+    secret = hidden(f"Passphrase for {where.name} (hidden): ")
+    with LocalClient(_paths()) as c:
+        body = {"path": str(where), "passphrase": secret}
+        opened = c.request("POST", "/v1/corpus/session", body, timeout=600)
+        del secret, body
+        try:
+            r = c.request("POST", "/v1/eval/runs", {
+                "corpus_session": opened["session_id"], "classifier": classifier,
+                "actor": actor, "battery_floor": floor, "backend": backend})  # fmt: skip
+        except Exception:
+            c.request("DELETE", f"/v1/corpus/session/{opened['session_id']}")
+            raise
+    typer.echo(f"Corpus eval {r['run_id'][:8]} started: {r['total']} messages from corpus"
+               f" {str(opened['corpus_id'])[:8]}.")  # fmt: skip
+    typer.echo("Reported only; never counts toward the go-live gate.")
+    _follow_hints()
+
+
+def _ecf(rest: str) -> str:
+    """A command to copy, naming the install when it isn't the default."""
+    return "ecf " + ("" if STATE.install == "default" else f"--install {STATE.install} ") + rest
+
+
+def _follow_hints() -> None:
+    typer.echo(f"  Progress:  {_ecf('eval status')}")
+    typer.echo(f"  Stop:      {_ecf('eval stop')}")
 
 
 def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
@@ -1069,32 +1183,87 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
         typer.echo("For a first run, `--fraud-only` uses less of the plan.")
 
 
+@eval_app.command("rescore")
+def eval_rescore(
+    result: Annotated[Path, typer.Argument(help="A corpus eval result file.")],
+    corpus: Annotated[Path, typer.Option("--corpus", help="The corpus it ran on.")],
+) -> None:
+    """Score a corpus result again against the corpus's current labels, without running the
+    models; the new file sits beside the original (§16.7)."""
+    from ecf.eval.results import load_result as load  # noqa: PLC0415
+    from ecf.eval.results import summary  # noqa: PLC0415
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    require_terminal()
+    where = corpus.expanduser().absolute()
+    secret = hidden(f"Passphrase for {where.name} (hidden): ")
+    with LocalClient(_paths()) as c:
+        body = {"path": str(where), "passphrase": secret}
+        opened = c.request("POST", "/v1/corpus/session", body, timeout=600)
+        del secret, body
+        sid = opened["session_id"]
+        try:
+            r = c.request("POST", "/v1/eval/rescore", {
+                "result": str(result.expanduser().absolute()), "corpus_session": sid},
+                timeout=600)  # fmt: skip
+        finally:
+            c.request("DELETE", f"/v1/corpus/session/{sid}")
+    typer.echo(f"written: {r['path']}")
+    typer.echo(summary(load(Path(r["path"]))))
+
+
 @eval_app.command("status")
 def eval_status() -> None:
     """The running eval's progress and the latest results."""
     with LocalClient(_paths()) as c:
         st = c.get("/v1/eval/runs")
-    cur = st["current"]
-    cl: dict[str, Any] | None = st.get("claude")
+    for line in status_lines(st):
+        typer.echo(line)
+
+
+def status_lines(st: dict[str, Any]) -> list[str]:
+    """`ecf eval status`: the running evals, then each recent synthetic run on two lines (its
+    score, then its safety checks and gate). Corpus runs are never listed as recent (§16.7)."""
+    cur, cl = st["current"], st.get("claude")
+    out: list[str] = []
     if cl is not None:
-        typer.echo(f"Claude eval {cl['run_id'][:8]} (preset {cl['preset']}, {cl['sensitivity']},"
-                   f" {'pinned models' if cl['pinned'] else 'comparison'}): {cl['state']},"
-                   f" {cl['done']}/{cl['total']} cases scored"
-                   + (f", {cl['prepared']}/{cl['total']} prepared"
-                      if cl["state"] == "preparing" else "")
-                   + (f" ({cl['detail']})" if cl["detail"] else ""))  # fmt: skip
+        prepared = (f", {cl['prepared']}/{cl['total']} prepared"
+                    if cl["state"] == "preparing" else "")  # fmt: skip
+        out += [f"Claude eval {cl['run_id'][:8]}: {cl['state']}, {cl['done']}/{cl['total']}"
+                f" cases scored{prepared}" + (f" ({cl['detail']})" if cl["detail"] else ""),
+                f"  preset {cl['preset']}, {cl['sensitivity']},"
+                f" {'pinned models' if cl['pinned'] else 'comparison'}"]  # fmt: skip
     if cur["state"] != "idle":
-        typer.echo(f"eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+        s = str(cur.get("set", ""))
+        what = f"Corpus {re.split(r'[: ]', s)[1][:8]} eval" if s.startswith("corpus") else "Eval"
+        out.append(f"{what} {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
+    if st["recent"]:
+        out += [""] if out else []
+        out.append("Recent runs (synthetic set):")
     for r in st["recent"]:
         m = r["metrics"]
-        typer.echo(f"{r['created_at'][:16]} {r['run_id'][:8]}: {m.get('correct')}/"
-                   f"{m.get('confirmed')} confirmed cases correct ({m.get('accuracy')}%, Wilson"
-                   f" {m.get('wilson95')}), unsafe {len(m.get('unsafe', []))},"
-                   f" gate {'passed' if r['gate_passed'] else 'NOT passed'}"
-                   + _run_caveat(m))  # fmt: skip
-    if cur["state"] == "idle" and cl is None and not st["recent"]:
-        typer.echo("no eval has run yet: ecf eval run")
+        safety = (
+            f"unsafe {len(m.get('unsafe', []))},{_recall(m)}"
+            f" gate {'passed' if r['gate_passed'] else 'NOT passed'}{_run_caveat(m)}"
+        )
+        out += [f"  {r['created_at'][:10]} {r['created_at'][11:16]}  {r['run_id'][:8]}"
+                f"  {m.get('correct')}/{m.get('confirmed')} confirmed cases correct"
+                f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
+                f"{'':30}{safety}"]  # fmt: skip
+    if not out:
+        out.append(f"No eval has run yet: {_ecf('eval run')}")
+    return out
+
+
+def _recall(m: dict[str, Any]) -> str:
+    """Fraud-guard recall (§16.5, D2), with a trailing comma; empty for runs saved before it
+    was counted or with no case expecting the fraud guard."""
+    if m.get("fraud_guard_recall") is None:
+        return ""
+    n = int(m.get("fraud_guard_cases") or 0)
+    hit = n - len(m.get("fraud_guard_missed") or [])
+    return f" fraud-guard recall {hit}/{n} ({m['fraud_guard_recall']}%),"
 
 
 def _run_caveat(m: dict[str, Any]) -> str:
@@ -1125,7 +1294,13 @@ def eval_stop() -> None:
 def eval_compare(a: Path, b: Path) -> None:
     """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
     with Holm)."""
-    from ecf.eval.results import compare, compare_fields, load_result, summary  # noqa: PLC0415
+    from ecf.eval.results import (  # noqa: PLC0415
+        compare,
+        compare_endpoints,
+        compare_fields,
+        load_result,
+        summary,
+    )
 
     ra, rb = load_result(a), load_result(b)
     c = compare(ra, rb)
@@ -1137,11 +1312,25 @@ def eval_compare(a: Path, b: Path) -> None:
         f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
     typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
+        lo, hi = c.diff_ci_score
+        typer.echo(f"score interval (Newcombe form, for non-inferiority): {lo:+.1f} to {hi:+.1f}")
+        ends = compare_endpoints(ra, rb)
+        typer.echo(
+            "confirmatory (exact McNemar, Holm over the two): "
+            + "; ".join(
+                f"{k.replace('_', '-')} p = {p:.3g}, Holm p = {h:.3g}" for k, (p, h) in ends.items()
+            )
+        )
     for name, run in (("A", ra), ("B", rb)):
+        if recall := _recall(dict(run.summary or {})):
+            typer.echo(f"{name} {recall.rstrip(',')}")
         line = _model_figures(run.summary)
         if line:
             typer.echo(f"{name}  model: {line}")
         for line in _claude_figures(run.summary, len(run.cases)):
+            typer.echo(f"{name}  {line}")
+        for line in _decision_figures(run.summary):
             typer.echo(f"{name}  {line}")
     fields = compare_fields(ra, rb)
     if fields:
@@ -1150,6 +1339,46 @@ def eval_compare(a: Path, b: Path) -> None:
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+
+
+def _decision_run(r: ResultFile) -> bool:
+    backend = (r.summary or {}).get("backend")
+    return isinstance(backend, str) and backend != "gemma"
+
+
+def _decision_figures(summary: dict[str, object] | None) -> list[str]:
+    """The decision-model experiment's figures (SPEC §7.8): backend, fraud-risk under-rating,
+    classifier-call latency, power, calibration. Absent in older results."""
+    s = cast(dict[str, Any], summary or {})
+    out: list[str] = []
+    if "backend" in s:
+        redact = "" if s.get("redact", True) else ", injection text not redacted"
+        out.append(f"classifier {s['backend']}{redact}")
+    under = s.get("fraud_under")
+    u = cast(dict[str, int], under) if isinstance(under, dict) else {}
+    if u.get("of"):
+        out.append(f"fraud risk under-rated on {u['under']} of {u['of']} cases labelled medium"
+                   " or high")  # fmt: skip
+    lat = s.get("classifier_latency_s")
+    lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
+    if lt.get("p50") is not None:
+        out.append(f"classifier call {lt['p50']:.1f} s median, {lt['p95']:.1f} s p95")
+    power = s.get("power")
+    if isinstance(power, dict):
+        pw = cast(dict[str, bool], power)
+        where = "AC" if pw.get("ac_at_start") and pw.get("ac_at_end") else "battery for part"
+        out.append(f"power: {where}" + ("; paused on battery (latency doesn't count)"
+                                        if pw.get("paused") else ""))  # fmt: skip
+    cal = s.get("calibration")
+    if isinstance(cal, dict):
+        for field, e in sorted(cast(dict[str, dict[str, Any]], cal).items()):
+            lo, hi = e["ece_ci95"]
+            extra = (f", RPS {e['rps']:.3f}" if "rps" in e else
+                     f", Brier {e['brier']:.3f} (baseline {e['brier_baseline']:.3f})"
+                     if "brier" in e else "")  # fmt: skip
+            out.append(f"calibration {field}: ECE {e['ece']:.3f} ({lo:.3f}-{hi:.3f}; baseline"
+                       f" {e['ece_baseline']:.3f}), n={e['n']}{extra}")  # fmt: skip
+    return out
 
 
 def _model_figures(summary: dict[str, object] | None) -> str | None:

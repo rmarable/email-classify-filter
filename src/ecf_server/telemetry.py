@@ -41,6 +41,7 @@ from datetime import datetime
 from typing import Any, cast
 
 SUBAGENT = "agent:custom"  # query_source of an ecf agent (tested 2026-10-02)
+BUILTIN = "agent:builtin:"  # query_source prefix of a built-in agent (seen 2026-10-06)
 SLACK_S = 0.5  # timestamps from Claude Code and the service's clock, same computer
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/\[\]-]{0,99}$")
 _SOURCE = re.compile(r"^[A-Za-z][A-Za-z0-9._:-]{0,63}$")
@@ -253,12 +254,23 @@ class Telemetry:
             return t.refused == 1
 
     def stopped(self, session_id: str) -> str | None:
-        """`/ecf-review` stops once the model check has refused anything (SPEC §7.5)."""
+        """`/ecf-review` and `/ecf-eval` stop once the model check has refused anything (SPEC
+        §7.5), or once a built-in Claude Code agent has run in the session: ecf denies them by
+        name, and a new one would otherwise spend the plan unseen (v1.0.0, 2026-10-06)."""
         with self._cond:
             t = self._sessions.get(session_id)
-            if t is None or not t.refused:
+            if t is None:
                 return None
-            return refusal_line(t.refused, t.refused_model, t.expected_model)
+            if t.refused:
+                return refusal_line(t.refused, t.refused_model, t.expected_model)
+            builtin = sorted({c.source.removeprefix(BUILTIN) for c in t.requests
+                              if c.source.startswith(BUILTIN)})  # fmt: skip
+            if builtin:
+                return (
+                    f"a built-in Claude Code agent ran in this session ({', '.join(builtin)});"
+                    " ecf doesn't deny it yet, so this session stops here: update ecf"
+                )
+            return None
 
 
 def refusal_line(n: int, model: str | None, expected: str | None) -> str:

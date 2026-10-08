@@ -1,13 +1,14 @@
 """The pinned Claude models and what an address's go-live gate is bound to (SPEC §7.5, §9.3;
-OD-014, OD-273; V1.4 step 2).
+OD-014, OD-273, OD-461; V1.4 step 2).
 
-- **`data/models.lock`** names the Claude model for each role: the main session, `classifier`
-  (Haiku family), `classifier_high` and `actor` (Sonnet), `actor_high` (Opus). It ships in the
-  wheel, like `ollama.lock`; only an ecf release changes it. Its `lifecycle` records each pinned
-  ID's state and retirement date from Anthropic's deprecations page (V1.4 step 10; OD-299), which
-  the weekly model watch (`model_watch.py`) announces and the CI canary keeps current.
+- **`data/models.lock`** names the Claude model for each role: the main session, `classifier`,
+  `classifier_high` and `actor` (Sonnet), `actor_high` (Opus); no Haiku from v1.0.0 (OD-461). It
+  ships in the wheel, like `ollama.lock`; only an ecf release changes it. Its `lifecycle` records
+  each pinned ID's state and retirement date from Anthropic's deprecations page (V1.4 step 10;
+  OD-299), which the weekly model watch (`model_watch.py`) announces and the CI canary keeps
+  current.
 - **Override** (`ecf settings set claude_model_override <id>|none`; operator decision 2026-10-02):
-  an ID replaces every pin in its family (a `claude-haiku-*` ID replaces the Haiku pins), one
+  an ID replaces every pin in its family (a `claude-sonnet-*` ID replaces the Sonnet pins), one
   override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused. It
   needs step-up and sends a Security Notice, and changes the pins of every B and C address, which
   drop to assist until their gate passes again (§7.5).

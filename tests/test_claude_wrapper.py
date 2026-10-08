@@ -70,17 +70,22 @@ MODELS = {"main_session": "claude-haiku-x", "classifier": "claude-haiku-x",
 def test_settings_document() -> None:
     d = cw.settings_doc("claude-haiku-x", "status-cmd")
     assert d["cleanupPeriodDays"] == 1 and d["model"] == "claude-haiku-x"
+    assert d["promptSuggestionEnabled"] is False and d["awaySummaryEnabled"] is False
     assert d["statusLine"] == {"type": "command", "command": "status-cmd"}
     assert d["permissions"]["defaultMode"] == "dontAsk"
     allow = d["permissions"]["allow"]
-    assert allow[:4] == ["mcp__ecf__review_queue", "mcp__ecf__eval_next",
-                         "mcp__ecf__eval_results", "Agent"]  # fmt: skip
+    assert allow[:3] == ["mcp__ecf__review_queue", "mcp__ecf__eval_next",
+                         "mcp__ecf__eval_results"]  # fmt: skip
+    # only ecf's agents, by name: no bare "Agent", so any other type is refused (OD-461)
+    assert "Agent" not in allow
+    assert {"Agent(ecf-classifier)", "Agent(ecf-actor-high)", "Agent(ecf-eval-actor)"} <= set(allow)
+    assert not any(a.startswith("Agent(") and not a.startswith("Agent(ecf-") for a in allow)
     assert "mcp__ecf-actor-high__propose_action" in allow  # each agent's own server (OD-307)
     assert "mcp__ecf-eval-classifier__record_classification" in allow
     assert not any(t.startswith("mcp__ecf__") and t.endswith(("get_message", "propose_action"))
                    for t in allow)  # fmt: skip
     for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
-                 "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
+                 "Agent(claude)", "Agent(fork)", "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
     assert "hooks" not in d
 

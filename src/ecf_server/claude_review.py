@@ -147,10 +147,21 @@ def review_queue(
     with write_tx(conn):  # the pick and the claims in one transaction: no item claimed twice
         rows = conn.execute(sql + " ORDER BY i.updated_at, i.stable_id LIMIT ?",
                             (*args, limit + 1)).fetchall()  # fmt: skip
-        for item in rows[:limit]:
+        # One agent type per round, and none while this session's claims for another are out:
+        # the model check can't tell overlapping work of two models apart (telemetry.py), so the
+        # service keeps them apart instead of relying on the session to (v1.0.0 eval run).
+        out_agents = {str(r["agent"]) for r in conn.execute(
+            "SELECT agent FROM claims WHERE session_id = ? AND state = 'claimed'"
+            " AND expires_at > ?", (session_id, to_ts(now)))}  # fmt: skip
+        picked = [(item, need_of(item)) for item in rows]
+        picked = [(item, need, agent_for(conn, item, need)) for item, need in picked]
+        first = picked[0][2] if picked else None
+        if first is not None and out_agents - {first}:
+            picked = []
+        same = [p for p in picked if p[2] == first]
+        rows = [p[0] for p in same]
+        for item, need, agent in same[:limit]:
             sid = str(item["stable_id"])
-            need = need_of(item)
-            agent = agent_for(conn, item, need)
             spawn = _spawn(conn, agent, str(item["address_id"]), sid, batches)
             batch = f"claude:{round_id}:{spawn}"
             token = _claim(conn, now, session_id, item, need, agent, batch)

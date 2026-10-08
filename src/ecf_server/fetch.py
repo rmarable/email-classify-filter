@@ -38,8 +38,6 @@ from ecf_server.isolate import Isolator
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource, MessageMeta
 from ecf_server.message import (
-    ACTOR_CHARS,
-    CLASSIFIER_CHARS,
     ParsedMessage,
     identity_digest,
     parse,
@@ -461,8 +459,8 @@ def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
         pg.fetch_s += clock.monotonic() - t0
         pg.downloaded(len(raw))
         if pg.isolator is not None:  # every message, with a time limit (OD-204)
-            parsed, auth = pg.isolator(raw, cfg.max_scan_bytes)
-            _store(pg, uid, parsed, raw, {}, internaldate, auth)
+            got = pg.isolator(raw, cfg.max_scan_bytes)
+            _store(pg, uid, got.parsed, raw, {}, internaldate, got.auth, got.excerpts)
         else:
             _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
     except (LeaseLostError, MailUnavailableError):  # not the message's fault
@@ -521,9 +519,10 @@ def _store(
     extra: dict[str, Any],
     internaldate: datetime | None = None,
     auth: AuthOutcome | None = None,
+    excerpts: tuple[str, str] | None = None,
 ) -> None:
     """Create the item for a read message, re-point a known one after a mailbox reset, or record
-    a repeat delivery (§6.3, §6.4)."""
+    a repeat delivery (§6.3, §6.4). `excerpts` come from the isolated child when there is one."""
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
     sid = stable_id(cfg.address_id, parsed.message_id, parsed.content_hash, uv, uid)
     when = internaldate.isoformat() if internaldate else None
@@ -579,11 +578,7 @@ def _store(
         _fence(c, clock, lease)
         c.execute(
             "INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
-            (
-                sid,
-                parsed.excerpt(CLASSIFIER_CHARS, triggers.redact_injection),
-                parsed.excerpt(ACTOR_CHARS, triggers.redact_injection),
-            ),
+            (sid, *(excerpts or parsed.excerpts(triggers.redact_injection))),
         )
         if pg.analyzer is not None:
             pg.analyzer.record(c, parsed, facts)

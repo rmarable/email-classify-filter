@@ -43,15 +43,18 @@ def root(tmp_path: Path) -> Path:
 
 def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,
           unsafe: list[str] | None = None, version: str | None = None,
-          complete: bool = True, actor: bool = True) -> None:  # fmt: skip
+          complete: bool = True, actor: bool = True,
+          missed: list[str] | None = None) -> None:  # fmt: skip
     metrics = {"confirmed": 150, "unsafe": unsafe or [], "fraud_cases": 60, "complete": complete,
+               "fraud_guard_cases": 66, "fraud_guard_missed": missed or [],
+               "fraud_guard_recall": round(100 * (66 - len(missed or [])) / 66, 1),
                "options": {"classifier": True, "actor": actor}}  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at,"
                      " metrics, gate_passed, path) VALUES (?, ?, ?, ?, ?, ?, ?, 'p')",
                      (f"run{now}", gate.PAIR, DIGEST, version or evalrun.set_version(root), now,
-                      json.dumps(metrics), int(not unsafe)))  # fmt: skip
+                      json.dumps(metrics), int(not unsafe and not missed)))  # fmt: skip
         slack_admin.put_setting(conn, evalrun.EVAL_ROOT, str(root), now, actor="test")
 
 
@@ -149,6 +152,28 @@ def test_the_synthetic_run_must_be_safe_and_on_the_current_set(
     assert gate.synthetic(conn, DIGEST).ok
     (root / "labels.jsonl").write_text('{"id": "y"}\n')  # a card changed since
     assert not gate.synthetic(conn, DIGEST).ok
+
+
+def test_the_synthetic_run_needs_full_fraud_guard_recall(
+    conn: sqlite3.Connection, clock: FakeClock, root: Path
+) -> None:
+    """D2 (2026-10-06): a case expecting fraud_guard that ended elsewhere fails the check, even
+    with 0 unsafe; a run saved before the figure existed fails closed."""
+    make_address(conn, clock, "assist")
+    _eval(conn, clock, root, missed=["sales-urgent-po-forwarder"])
+    check = gate.synthetic(conn, DIGEST)
+    assert not check.ok
+    assert "missed the fraud guard on 1 of 66 case(s): sales-urgent-po-forwarder" in check.detail
+    clock.advance(60)
+    _eval(conn, clock, root)
+    with write_tx(conn):  # a run saved before the recall figure
+        conn.execute("UPDATE eval_runs SET metrics = json_remove(metrics,"
+                     " '$.fraud_guard_missed')")  # fmt: skip
+    assert "predates the fraud-guard recall check" in gate.synthetic(conn, DIGEST).detail
+    clock.advance(60)
+    _eval(conn, clock, root)
+    check = gate.synthetic(conn, DIGEST)
+    assert check.ok and "fraud-guard recall 100%" in check.detail
 
 
 def test_only_a_complete_run_with_both_models_passes_the_synthetic_check(

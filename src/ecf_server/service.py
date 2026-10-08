@@ -40,6 +40,7 @@ from ecf_server import (
     checks,
     claude_queue,
     claude_review,
+    corpus_session,
     daily,
     db,
     decide,
@@ -230,6 +231,7 @@ class Service:
 
     def tick(self) -> None:
         mono, wall = self.clock.monotonic(), self.clock.now()
+        corpus_session.expire_idle(mono)  # a decrypted corpus nobody used for 15 min (§16.7)
         awake = mono - self._last_tick_mono  # the monotonic clock stops during sleep (§5.5)
         slept = (wall - self._last_tick_wall).total_seconds() - awake > SLEEP_GAP_S
         self._last_tick_mono, self._last_tick_wall = mono, wall
@@ -355,7 +357,8 @@ class Service:
         (SPEC §7.6; V1.4 step 10)."""
         if model_watch.due(conn, self.clock):
             model_watch.start(self.state.connect, self.clock, self.state.notifier,
-                              self.state.secrets, self.state.watch_http)  # fmt: skip
+                              self.state.secrets, self.state.watch_http,
+                              releases=self.state.watch_releases)  # fmt: skip
 
     def _export(self, conn: sqlite3.Connection) -> None:
         """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""
@@ -665,6 +668,7 @@ class Service:
                              install=self.paths.install)  # fmt: skip
         self.state.slack = slack.status  # the same dict: status shows it live
         self.state.slack_reload = slack.reload
+        self.state.slack_hold = slack.held
         approvals.desktop = self.state.notifier  # Slack clicks queued for step-up notify here
         thread = threading.Thread(target=slack.run, args=(self.stop,), name="slack", daemon=True)
         return slack, thread

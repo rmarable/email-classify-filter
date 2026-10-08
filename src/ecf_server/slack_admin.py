@@ -116,7 +116,8 @@ def create_app(
     conn: sqlite3.Connection, clock: Clock, make_web: WebFactory, config_token: str, install: str
 ) -> dict[str, Any]:
     if identity(conn) is not None:
-        raise ConflictError("Slack is already installed; use `ecf slack reauthorize`")
+        raise ConflictError("Slack is already installed; use `ecf slack reauthorize`, or `ecf slack"
+                            " remove` to start again")  # fmt: skip
     r = _call(make_web(config_token), "apps.manifest.create",
               manifest=json.dumps(manifest(install)))  # fmt: skip
     app_id = str(r.get("app_id", ""))  # the returned credentials are dropped here, unread
@@ -144,7 +145,8 @@ def install(
     member: str,
 ) -> dict[str, Any]:
     if identity(conn) is not None:
-        raise ConflictError("Slack is already installed; use `ecf slack set-tokens`")
+        raise ConflictError("Slack is already installed; use `ecf slack set-tokens`, or `ecf slack"
+                            " remove` to start again")  # fmt: skip
     # tokens stored without an install recorded are left from one that stopped halfway: the new
     # ones, checked with Slack below, replace them (V1.2 review, 2026-09-30)
     _check_member(member)

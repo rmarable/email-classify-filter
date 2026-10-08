@@ -8,6 +8,7 @@ Each check returns ok / warn / fail with the command that fixes it. Doctor reads
 from __future__ import annotations
 
 import os
+import resource
 import shutil
 import sqlite3
 import stat
@@ -416,6 +417,13 @@ def judge_models(st: dict[str, Any]) -> list[Check]:
     if "*" in env.get("OLLAMA_ORIGINS", ""):
         out.append(Check("ollama settings", Level.WARN, "OLLAMA_ORIGINS allows any web page",
                          "unset OLLAMA_ORIGINS for Ollama"))  # fmt: skip
+    decision: list[dict[str, Any]] = st.get("decision") or []
+    for d in decision:  # eval-only decision models (SPEC §7.8), when installed
+        if d["pinned"]:
+            out.append(Check("decision model", Level.OK, f"{d['ecf_tag']}, for evaluation only"))
+        else:
+            out.append(Check("decision model", Level.WARN, f"{d['ecf_tag']} isn't the pinned model",
+                             f"ecf models install --decision {d['name']}"))  # fmt: skip
     return out
 
 
@@ -511,6 +519,30 @@ def check_disk_encryption(run: Run = _run) -> Check:
     )
 
 
+CORPUS_NOTE = "a real-mail corpus holds mail in memory while it is built or read (SPEC §12.2)"
+
+
+def check_swap(run: Run = _run) -> Check:
+    """SPEC §12.2 (OD-466): memory a corpus uses may be swapped; macOS encrypts swap."""
+    if sys.platform != "darwin":
+        return Check("swap encryption", Level.WARN, "not checked on this platform", CORPUS_NOTE)
+    out = run(["sysctl", "vm.swapusage"])
+    on = "(encrypted)" in out.stdout
+    return Check("swap encryption", Level.OK if on else Level.WARN,
+                 "encrypted" if on else (out.stdout.strip() or "sysctl unavailable"),
+                 "" if on else f"swap isn't reported encrypted; {CORPUS_NOTE}")  # fmt: skip
+
+
+def check_core_dumps(limit: Callable[[], int] | None = None) -> Check:
+    """SPEC §12.2 (OD-466): a core dump would write process memory, mail included, to disk.
+    Checked for this shell; launchd starts the service with core dumps off by default."""
+    soft = limit() if limit else resource.getrlimit(resource.RLIMIT_CORE)[0]
+    off = soft == 0
+    return Check("core dumps", Level.OK if off else Level.WARN,
+                 "off" if off else f"allowed here (limit {soft})",
+                 "" if off else f"run `ulimit -c 0` in this shell; {CORPUS_NOTE}")  # fmt: skip
+
+
 def claude_used(paths: Paths) -> bool | None:
     """Whether any address uses preset B or C; None when the service doesn't answer."""
     try:
@@ -601,6 +633,7 @@ def run_checks(
     checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))
+    checks += [check_swap(run), check_core_dumps()]
     checks += check_claude(paths, claude_used(paths))
     if sys.platform.startswith("linux"):
         checks.append(Check("platform", Level.WARN, "Linux isn't supported yet (milestone M5)"))

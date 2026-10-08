@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from ecf import __version__
 from ecf.errors import EcfError
@@ -42,12 +43,15 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "dev":
             raise SystemExit(_run_dev(args))
         if args.command == "local":
+            from ecf_server import model_watch  # noqa: PLC0415
             from ecf_server.service import Options, Service  # noqa: PLC0415
 
             opts = Options()
             if args.tick_seconds is not None:
                 opts = Options(args.tick_seconds, args.watchdog_seconds or opts.watchdog_seconds)
-            raise SystemExit(Service(paths, opts=opts).run())
+            svc = Service(paths, opts=opts)
+            svc.state.watch_releases = model_watch.gh_releases  # tests' services don't run gh
+            raise SystemExit(svc.run())
         if args.command in ("snapshot", "downgrade-prepare"):
             sys.stdout.write(f"{_upgrade_files(args.command, paths, args.label)}\n")
             return
@@ -112,10 +116,37 @@ def _upgrade_files(command: str, paths: Paths, label: str) -> object:
     return downgrade.prepare(paths, label)
 
 
+def dev_home_refusal(root: Path, paths: Paths) -> str | None:
+    """Why a dev service mustn't use this `--home` (R153, R183, R206; OD-468): a dev service
+    approves every step-up (FakeStepper), so it never runs over a real data root or an install
+    that `ecf init` set up, wherever `ECF_HOME` points. The database is opened read-only, before
+    any migration."""
+    import sqlite3  # noqa: PLC0415
+
+    from ecf.paths import default_root  # noqa: PLC0415
+    from ecf_server.initsetup import ROLE_KEY  # noqa: PLC0415
+
+    home, real = root.expanduser().resolve(), default_root().resolve()
+    if home == real or home.is_relative_to(real):  # not ECF_HOME: dev roots are given that way
+        return f"--home {root} is inside ecf's data root {real}; use a throwaway folder"
+    if not paths.db.exists():
+        return None
+    try:
+        conn = sqlite3.connect(paths.db.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (ROLE_KEY,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return f"can't read {paths.db} to check it isn't a real install; use a throwaway folder"
+    if row is not None:
+        return f"{paths.db} belongs to an install set up with `ecf init`; use a throwaway folder"
+    return None
+
+
 def _run_dev(args: argparse.Namespace) -> int:
     import shutil  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
 
     from ecf.paths import Paths  # noqa: PLC0415
     from ecf_server.clock import FakeClock  # noqa: PLC0415
@@ -123,6 +154,9 @@ def _run_dev(args: argparse.Namespace) -> int:
 
     root = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="ecf-dev", dir="/tmp"))
     paths = Paths(args.install, root, honor_ecf_socket=False)
+    if args.home and (refusal := dev_home_refusal(root, paths)):
+        sys.stderr.write(f"ecf-server dev: {refusal}\n")
+        return 2
     sys.stderr.write(
         f"ecf-server dev: data in {paths.data_dir}\n"
         f"  point the CLI at it:  export ECF_SOCKET={paths.socket}\n"

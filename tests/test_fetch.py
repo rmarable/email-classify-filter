@@ -21,7 +21,7 @@ from ecf_server.fetch import (
     fetch_page,
     load_cursor,
 )
-from ecf_server.isolate import IsolationError
+from ecf_server.isolate import Isolated, IsolationError
 from ecf_server.mail import MailSource
 from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
 from ecf_server.message import ParsedMessage, parse
@@ -349,14 +349,17 @@ def test_every_message_goes_to_the_isolator(
     src.deliver(message(1, multipart=True))  # large: after the page, still isolated (OD-204)
     sizes: list[int] = []
 
-    def isolator(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
+    def isolator(raw: bytes, max_scan_bytes: int) -> Isolated:
         sizes.append(len(raw))
-        return parse(raw, max_scan_bytes=max_scan_bytes), AuthOutcome("none", "isolated")
+        parsed = parse(raw, max_scan_bytes=max_scan_bytes)
+        return Isolated(parsed, AuthOutcome("none", "isolated"), ("cls cut", "actor cut"), ("", ""))
 
     analyzer = Fn(lambda _p, _r: {})
     r = run(setup, clock, src, analyzer=analyzer, isolator=isolator)
     assert len(r.created) == 2 and r.large_done == [2] and len(sizes) == 2 and sizes[1] > 600
     assert analyzer.auths == [AuthOutcome("none", "isolated")] * 2
+    rows = setup.execute("SELECT classifier_text, actor_text FROM excerpts").fetchall()
+    assert [tuple(r) for r in rows] == [("cls cut", "actor cut")] * 2  # the child's excerpts
 
 
 def test_an_isolator_failure_counts_as_a_crash(
@@ -367,7 +370,7 @@ def test_an_isolator_failure_counts_as_a_crash(
     started(setup, clock, src)
     src.deliver(message(0, multipart=True))
 
-    def broken(raw: bytes, max_scan_bytes: int) -> tuple[ParsedMessage, AuthOutcome]:
+    def broken(raw: bytes, max_scan_bytes: int) -> Isolated:
         raise IsolationError("child exited 3: MemoryError")
 
     for _ in range(fetch.QUARANTINE_AFTER):
