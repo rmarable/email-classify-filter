@@ -7,6 +7,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Changed
 
+- The admin guide explains upgrading to v2.0.0 (schema v2) and that one install can watch both work and personal addresses (OD-475).
 - Classification schema v2: one schema for work and personal mail. New categories `account_security`, `shipping`, `appointment`, `travel`, `finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and `regulatory` also cover personal bills, receipts, account changes and government mail; sender types `company`, `friend`, `family` and `person` are added and `staff` is now `team` (OD-475; SPEC §7.1).
 - New starter rules label the new categories and flag account-security mail and dated appointments or school and family mail; none of them hides mail (OD-475; SPEC §8.6).
 - Rules files written for schema v1 still apply: `staff` is read as `team`, and the rules that did are named (OD-475).
