@@ -35,6 +35,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Changed
 
+- Schema v2 passed its evaluation on the synthetic set on every preset (A, B, and C at standard and high): 0 unsafe proposals and every fraud case caught (SPEC §21.2).
+- `school_or_family` stays one category rather than separate school and family categories; a relative's news is sometimes still classed there instead of private (operator decision 2026-10-08; SPEC §7.1).
 - Security and sign-in alerts that ask you to send a code or password, click to verify or call a number are now classed as phishing, and a relative's note that only shares news or thanks is private rather than family logistics (operator decision 2026-10-08, OD-475; SPEC §7.1, §21.2).
 - An email that opens like an executive-impersonation scam ("Are you at your desk? I need a quick favour handled discreetly… email only") is escalated as possible fraud when it comes from outside and uses two or more such phrases, even with no money mentioned yet and whatever fraud risk the model gives it (OD-479; SPEC §8.5, §8.6).
 - The Haiku 5.5 main session passed its acceptance runs (two C, one B; no skill deviations) and is adopted (OD-474; SPEC §7.5, §21.2).
