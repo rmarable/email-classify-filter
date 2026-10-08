@@ -37,7 +37,7 @@ from ecf_server.modelq import ItemResult
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.state_machine import Status, TransitionContext
 
-MAX_INPUT_BYTES = 3000  # of UTF-8: worst case 3,816 tokens with v1's prompt (rare CJK; §21.2)
+MAX_INPUT_BYTES = 3000  # of UTF-8: worst case ~4,000 tokens with v2's prompt (rare CJK; §21.2)
 NEAR_CTX = ollama.NUM_CTX - ollama.NUM_PREDICT["classifier"] - 64
 
 INSTRUCTIONS = """You classify one business email for a mailbox-monitoring system.

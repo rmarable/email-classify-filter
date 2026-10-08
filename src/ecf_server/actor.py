@@ -11,7 +11,7 @@ answer one of its questions (`clarified`). One request per item:
   `needs_clarification`; `target` is one of the known label names or `move_folders`, or empty; and
   `reason`, capped, with links, addresses and phone numbers removed before it is stored or shown
   (§8.5), and labelled as model output; `text`, empty except for `draft_reply`, where it holds the
-  draft (asked for at most 1,500 characters here, which fits the 4,096-token context; Claude's
+  draft (asked for at most 1,500 characters here, which fits the 6,144-token context; Claude's
   may be 4,000).
 - **Drafts and sends** (V1.5, OD-317): `draft_reply` is offered when the email needs a reply;
   `reply_template` too when a template is enabled, and `forward_internal` when the forward
