@@ -1539,7 +1539,7 @@ Origin: OD = operator decision (date); RR = reviewer recommendation confirmed by
 | DNS budget per check | 30 s (built in V1.1, `dnscache.BUDGET_S`) |
 | dead-man's switch lead | 3 intervals (built in V1.2) |
 | attachment name cap | 100 characters |
-| Gemma `num_ctx`; `keep_alive` | 4096; 5m per request |
+| Gemma `num_ctx`; `keep_alive` | 6144 (4096 until OD-477); 5m per request |
 | `ecf-classifier` batch | 10-20 messages within one address |
 | Slack pacing | ≤ 1 post/s/channel |
 | corpus `--total` (OD-467) | default 500, maximum 5,000; the eval loader takes 1,500 until a larger corpus run measures whole-run seconds per message (test 1's 8 messages measured only the classifier) |
@@ -1960,6 +1960,7 @@ Each needs the operator's go-ahead and credentials; code is throwaway in the ses
 - **Open (minor): status-line disconnects logged as errors** (2026-10-06): `/v1/statusline` logs `ClientDisconnect` as `api.unhandled` when the status-line script hangs up first; harmless, but noise in the error log.
 
 - **Open (after v1.0.0, usability): the digest's Undo buttons name the item ID** (`Undo 7fbf7921`), not the email; found in the v1.0.0 Slack run (2026-10-07). Showing the subject (shortened) or the sender would let a person tell them apart.
+- **Gemma `num_ctx` for schema v2** (measured 2026-10-08 on the development Mac, local Ollama, pinned Gemma 4 12B; scratchpad scripts, not in the repo; operator decision OD-477): worst-case prompt tokens with v1's prompt and a 3,000-byte excerpt: rare CJK (Extension B) 3,816, rare symbols 3,250, random ASCII 3,148, emoji 2,728, common CJK 1,349, against `NEAR_CTX` 3,872 at 4,096. v2's prompt adds about 170 tokens and a maximal extension (about 4,000 characters) about 770 more, so at 4,096 v2 would fail the rare-CJK case. Resident size in `ollama ps` 1.1 GB at 4,096 and 1.4 GB at 6,144 and 8,192. Classifier latency on 20 synthetic cards in one run: p50 7.9 s, p95 9.1 s at 4,096; p50 11.3 s, p95 13.2 s at 6,144 (about 43% slower; other work ran on the Mac at the same time, so the absolute figures are noisy). Decided: 6,144 (OD-477). `MAX_INPUT_BYTES` stays 3,000. A preset A run on schema v1 at 6,144 against one at 4,096 on the same set is to confirm the classifications don't change.
 
 ### 21.3 Operator review
 
@@ -2819,6 +2820,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-472 | 2026-10-07 | (operator decision; corpus labelling) | SPEC §7.1 | Schema v1 changed in place (no v2): categories `action_alert` (automated alert from a service we use that asks someone to act) and `private` (personal correspondence that fits no other value) added; `notification` informational only; fake alerts named under `spam_or_phishing`; `bug_report` drops "in our product or service"; leading articles dropped. No rule change; every §1.5 eval re-run |
 | OD-473 | 2026-10-08 | (operator decision; decision-model experiment) | SPEC §7.8, §1.5 | `tev1:4b` is not adopted for now as the local classifier: on the synthetic set it was 15.9 points worse end to end than Gemma (101/189 against 131/189), mostly by over-rating fraud risk on benign mail; 0 unsafe and full fraud-guard recall. Gemma stays. Recorded on the synthetic comparison without the corpus runs; release criterion 8 is met |
 | OD-474 | 2026-10-08 | (operator decision) | SPEC §7.5, §10.3; ADR 0016 | The `ecf claude` main session moves to `claude-haiku-5-5` for presets B and C; every classifying or acting role keeps its OD-461 pin; a Haiku override moves no address to assist; adopted only after two C runs and one B run with no skill deviation (amends OD-461 for the session only) |
+| OD-477 | 2026-10-08 | (operator decision; schema v2 plan step 2) | SPEC §14.3, §21.2 | Gemma's `num_ctx` goes from 4,096 to 6,144: schema v2 and its extensions overflow 4,096 on worst-case input; about 43% slower classifier calls (measured, noisy) and 0.3 GB more accepted |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
