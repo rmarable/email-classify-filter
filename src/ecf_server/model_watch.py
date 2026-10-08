@@ -139,10 +139,12 @@ def retirement_text(r: dict[str, Any], today: date) -> str:
     days = (date.fromisoformat(r["retires"]) - today).days
     when = "today" if days == 0 else f"in {days} days" if days > 0 else f"{-days} days ago"
     instead = f" (Anthropic recommends {r['replacement']})" if r.get("replacement") else ""
+    gate = ("" if set(r["roles"]) <= {"main_session"} else  # not a gate pin (OD-474)
+            "; B and C addresses then go back to assist until their gate passes again")  # fmt: skip
     return (f"{r['id']} ({', '.join(r['roles'])}) retires on {r['retires']} ({when}). No ecf"
             " release that moves this pin is known yet; upgrade ecf when one is out. Until then"
-            f" `ecf settings set claude_model_override <id>`{instead} keeps reviews going; B and"
-            " C addresses then go back to assist until their gate passes again.")  # fmt: skip
+            f" `ecf settings set claude_model_override <id>`{instead} keeps reviews"
+            f" going{gate}.")  # fmt: skip
 
 
 def retirement_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int:

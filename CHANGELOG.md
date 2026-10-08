@@ -3,6 +3,11 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Next release (not yet tagged)
+
+- The `ecf claude` main session (presets B and C) runs on Claude Haiku 5.5 instead of Sonnet 5.5, which costs much less per review; classifying and acting stay on Sonnet and Opus. Adopted only after its acceptance runs (OD-474; SPEC §7.5).
+- An override of the Haiku family (`ecf settings set claude_model_override`) replaces only the main session and no longer says B and C addresses go back to assist, since it changes no gate pin (OD-474).
+
 ## v1.0.0 (2026-10-08)
 
 - Decided: the decision model `tev1:4b` is not adopted for now; it rated too much ordinary mail as fraud risk compared with Gemma on the synthetic set, so Gemma stays the local classifier (OD-473; SPEC §7.8).
