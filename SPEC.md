@@ -101,7 +101,7 @@ Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list)
 **Status for `v1.0.0`** (2026-10-07; the execution plan is `docs/history/release-plan-v1.0.0-2026-10-06.md`):
 1. Met: `ms-v1.0-foundations` to `ms-v1.6-gmail`.
 2. Met: including Undo of archive, junk and a draft on real Gmail from Slack (OD-464, 2026-10-07, §21.1).
-3. Met: preset A (`e04fac92`, `f188c336`) and every shipped Claude pin (C `standard` `3afe3da5`, C `high` `b96c6c79`, B `standard` `4ee7b883`, B `high` `c1c35845`): 0 unsafe, fraud-guard recall 67/67, injection cases safe (§16.2; OD-460, OD-461).
+3. Met on the final set (`7c51dced`, after OD-472; rc7): preset A (`f357108a`) and every shipped Claude pin (C `standard` `d055af53`, C `high` `3aef858d`, B `standard` `c0b141e5`, B `high` `f1d8931d`): 0 unsafe, fraud-guard recall 71/71, injection cases safe (§16.2; OD-460, OD-461, OD-472).
 4. Met: the listed documents exist; `THIRD_PARTY_NOTICES` is generated and checked in CI.
 5. Met, by judgement: no open critical finding; the `rfc822` hash item is deferred (OD-463) and Gmail's Spam folder is a stated limit (§12.2).
 6. Built: CI green on Linux, the macOS gate, the license check, reproducible builds (Linux CI and macOS byte-identical), `release.yml` and `ecf upgrade`'s hash checks (OD-458); proven by the release candidate.
@@ -1715,6 +1715,18 @@ One hierarchy with a generated table: stable `code` → HTTP status (RFC 9457 pr
 | `c1c35845` | B, `high`, fraud cases | 77/108 (71.3%) | 0 | 67/67 | passed | under $1 |
 
 C `standard` per field: category 83.1%, fraud risk 81.4%, priority 91.7%, payment 95.8%, rule 93.5% (against 68.9%, 74.4%, 100%, 94.7%, 89.7% on Haiku); C `high`: category 83.6%, fraud risk 65.1%; 4 and 5 of 10 re-classifications differed. In B, 104 of the 108 fraud cases are decided before any Claude work (Gemma's classifications send them to the fraud guard), so only the actor runs on a few. **Cost finding:** in C `high`, the Sonnet session's own dispatch loop was $9.23 of about $13.50 (203 calls re-reading a growing conversation, 36.7 million cached tokens), because `high` spawns one case each and so runs many short rounds; the case work was about $4.30. Fewer, larger rounds and a smaller `eval_next` reply would cut it (an open item, §21.2); it doesn't affect the gate. With preset A (`e04fac92` and `f188c336`), §1.5 item 3 is met: every shipped pin's safety gates hold.
+
+**The v1.0.0 synthetic checks after OD-472** (set `7c51dced`: 190 cards, the systemone injection cards and the OD-472 categories and relabels; `v1.0.0-rc7` on the shadow install; same pins; 2026-10-07/08 UTC). The schema changed in place, so the runs above (set `37055dcf`) no longer count for the gate; these do. B runs the fraud, injection and escalation cases only (`--fraud-only`), as before:
+
+| Run | Preset, sensitivity | Correct | Unsafe | Fraud-guard recall | Gate |
+|---|---|---|---|---|---|
+| `f357108a` | A (Gemma; B reads it) | 131/189 (69.3%, Wilson 62.4-75.4) | 0 | 71/71 | passed |
+| `d055af53` | C, `standard` | 140/189 (74.1%, Wilson 67.4-79.8) | 0 | 71/71 | passed |
+| `3aef858d` | C, `high` | 143/189 (75.7%, Wilson 69.1-81.2) | 0 | 71/71 | passed |
+| `c0b141e5` | B, `standard`, fraud cases | 78/113 (69.0%, Wilson 60.0-76.8) | 0 | 71/71 | passed |
+| `f1d8931d` | B, `high`, fraud cases | 78/113 (69.0%) | 0 | 71/71 | passed |
+
+As on the earlier set, 189 of the 190 cards run (the 17 MB scanned invoice is left out by size). With these five runs, §1.5 item 3 is met on the final set.
 
 ### 16.3 Required comparisons
 
