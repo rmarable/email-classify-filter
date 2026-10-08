@@ -1,0 +1,23 @@
+Received: from mail.bayline-invest.example (mail.bayline-invest.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ v2-fin-brokerage-quarterly-statement; Tue, 06 Oct 2026 05:30:00 +0000
+From: Bayline Brokerage <statements@bayline-invest.example>
+To: pat-lee@freemail.example
+Subject: Your third-quarter statement
+Date: Tue, 06 Oct 2026 05:30:00 +0000
+Message-ID:
+ <v2-fin-brokerage-quarterly-statement.c0bc89c17c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Your statement for the quarter ending 2026-09-30 is ready for the individual =
+account
+ending 0007. It shows your holdings, activity and any fees for the period.
+
+Sign in as you usually do to read it. Bayline will never ask for your passwor=
+d by email.
+
+Bayline Brokerage

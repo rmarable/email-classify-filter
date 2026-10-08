@@ -32,7 +32,6 @@ from typing import Any
 
 from ecf.errors import InvalidInputError, PolicyDeniedError
 from ecf.ids import StableId
-from ecf.schema import load_schema_v1
 from ecf_server import (
     addresses,
     claude_pins,
@@ -231,7 +230,7 @@ def _held_plan(conn: sqlite3.Connection, item: sqlite3.Row) -> policy.Plan:
         ctx = decide.context(conn, item)
         fixed = replace(ctx, classification=ctx.classification
                         | json.loads(item["human_correction"]))  # fmt: skip
-        p = policy.plan(fixed, policy.labels(load_schema_v1(), fixed.rules))
+        p = policy.plan(fixed, policy.labels(fixed.rules.schema, fixed.rules))
         p.to_actor = False
         return p
     doc: dict[str, Any] = json.loads(item["proposal"] or "{}").get("plan") or {}
@@ -261,8 +260,9 @@ SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the gate inputs last compute
 
 
 def tick(conn: sqlite3.Connection, clock: Clock) -> None:
-    """Announce a newly met gate once; drop `live` to `assist` when a pinned model changed
-    (§9.3): the Ollama digest, a `models.lock` ID or a Claude model override."""
+    """Announce a newly met gate once; drop `live` to `assist` when a pinned model or the schema
+    changed (§9.3): the Ollama digest, a `models.lock` ID, a Claude model override or the
+    effective schema's digest."""
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
         digest = claude_pins.address_key(conn, aid)
@@ -270,8 +270,8 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
         if a["stage"] == "live":
             if row is None or gate.stored_key(row) != digest:
                 set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
-                          reason="a pinned model changed; back to assist until its gate"
-                                 " passes (§9.3)")  # fmt: skip
+                          reason="a pinned model or the classification schema changed; back"
+                                 " to assist until its gate passes (§9.3)")  # fmt: skip
             continue
         if row is not None and row["passed_at"] is not None and gate.stored_key(row) == digest:
             continue  # announced for this model already (`stage set live` computes afresh)
@@ -286,6 +286,32 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
             post(conn, clock, aid, "Ready for live",
                   f"{a['email']} meets its go-live gate ({g.reviewed} reviewed). When you're ready:"
                   f" ecf stage set {aid} live")  # fmt: skip
+
+
+SCHEMA_REASON = ("the classification schema changed (ecf config apply); back to assist until its"
+                 " gate passes (§9.3)")  # fmt: skip
+
+
+def demote_live(conn: sqlite3.Connection, now: str, actor: str, reason: str) -> list[str]:
+    """Drop every live address to assist inside the caller's write transaction (a config change
+    that changes the gate key); returns their ids for `announce_demoted`."""
+    aids = [str(r[0]) for r in conn.execute(
+        "SELECT address_id FROM addresses WHERE stage = 'live' AND removed_at IS NULL"
+        " ORDER BY address_id")]  # fmt: skip
+    for aid in aids:
+        conn.execute("UPDATE addresses SET stage = 'assist' WHERE address_id = ?", (aid,))
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+            " VALUES (?, ?, 'stage.changed', ?, 'ok', ?)",
+            (now, aid, actor, json.dumps({"from": "live", "to": "assist", "reason": reason})),
+        )
+    return aids
+
+
+def announce_demoted(conn: sqlite3.Connection, clock: Clock, aids: list[str], reason: str) -> None:
+    for aid in aids:
+        post(conn, clock, aid, f"Stage: assist ({LABELS['assist']})",
+             _stage_text("live", "assist", reason))  # fmt: skip
 
 
 def _stage_text(frm: str, to: str, reason: str) -> str:

@@ -1,0 +1,18 @@
+Received: from mail.parcelwise.example (mail.parcelwise.example [192.0.2.10])
+ by mx.example.net with ESMTPS id v2-ship-shipped-tracking; Mon, 05 Oct 2026
+ 16:20:00 +0000
+From: Parcelwise Tracking <tracking@parcelwise.example>
+To: pat-lee@freemail.example
+Subject: Your parcel has shipped
+Date: Mon, 05 Oct 2026 16:20:00 +0000
+Message-ID: <v2-ship-shipped-tracking.21d73d142d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Good news, Pat. Your order from Lantern Outfitters is on its way.
+
+Tracking number PW 4408 1173 26
+Expected delivery: Thursday 8 October.
+
+You can follow it in the Parcelwise app.

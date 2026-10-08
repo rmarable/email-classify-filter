@@ -22,7 +22,7 @@ from ecf.cli import app
 from ecf.errors import InvalidInputError
 from ecf.paths import Paths
 from ecf.release_source import Gh, ReleaseError, ReleaseInfo, VerifyError
-from ecf_server import db
+from ecf_server import db, export_bundle
 from ecf_server.db import write_tx
 from tests.test_addresses import make_state
 from tests.test_export_keys import ApiClient
@@ -36,7 +36,8 @@ COMMIT = "a" * 40
 
 def wheel_bytes(version: str) -> bytes:
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
-            "data_format": 2, "schema_version": SCHEMA, "min_client": "0.1.0.dev0"}  # fmt: skip
+            "data_format": export_bundle.DATA_FORMAT, "schema_version": SCHEMA,
+            "min_client": "0.1.0.dev0", "classifier_schema": 2}  # fmt: skip
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))

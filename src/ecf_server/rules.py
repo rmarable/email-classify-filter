@@ -3,6 +3,12 @@
 A rule set is an ordered list; the first rule whose `when` matches decides. A condition is a
 Pydantic discriminated union: a comparison on an operand (`field`, `fact`, `trigger`, `address`)
 with `eq`, `in`, `gte` or `lte` (ordinals by level order), or `and` / `or` / `not`.
+
+A comparison is unknown (None) when the classification lacks an extension field (an item
+classified before the extension, OD-478) or holds a level the ordinal no longer has. Unknown
+propagates (Kleene logic: `not` unknown is unknown; `and` is false if any part is false, `or`
+true if any part is true), and a condition matches only when it is true, so `not` over a missing
+field can't match old mail.
 Rules may only emit non-sending actions; sends and drafts come from actor proposals (OD-170).
 """
 
@@ -26,7 +32,7 @@ from pydantic import (
 )
 
 from ecf.errors import InvalidInputError
-from ecf.schema import CompiledSchema, FieldKind
+from ecf.schema import V1_VALUE_ALIASES, CompiledSchema, FieldKind
 from ecf.yamlio import load_yaml
 
 FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
@@ -221,17 +227,20 @@ class Decision:
 class CompiledRules:
     rules: tuple[Rule, ...]
     schema: CompiledSchema
+    aliased: tuple[str, ...] = ()  # rule ids that used a schema v1 value (V1_ALIASES)
 
     def evaluate(self, inp: RuleInput) -> Decision:
         for rule in self.rules:
-            if rule.when is None or _eval(rule.when, inp, self.schema):
+            if rule.when is None or _eval(rule.when, inp, self.schema) is True:
                 actions = tuple(
-                    Action(a.action, _target(a.target, inp))
+                    Action(a.action, t)
                     for a in rule.then
-                    if a.if_ is None or _eval(a.if_, inp, self.schema)
+                    if a.if_ is None or _eval(a.if_, inp, self.schema) is True
+                    for t in [_target(a.target, inp)]
+                    if t is not None or a.action not in TARGET_ACTIONS
                 )
                 if isinstance(rule.actor, ContinueIf):
-                    to_actor = _eval(rule.actor.continue_if, inp, self.schema)
+                    to_actor = _eval(rule.actor.continue_if, inp, self.schema) is True
                 else:
                     to_actor = rule.actor == "continue"
                 return Decision(rule.id, actions, to_actor, rule.hide)
@@ -239,27 +248,34 @@ class CompiledRules:
 
 
 def _target(t: str | LabelFrom | None, inp: RuleInput) -> str | None:
+    """A label from a field the classification lacks (an item classified before that field
+    existed) is None, and the action is dropped."""
     if isinstance(t, LabelFrom):
-        if t.field not in inp.classification:
-            raise InvalidInputError(f"label from field {t.field!r}, which the classification lacks")
-        return str(inp.classification[t.field])
+        value = inp.classification.get(t.field)
+        return None if value is None else str(value)
     return t
 
 
-def _eval(c: Compare | And | Or | Not, inp: RuleInput, schema: CompiledSchema) -> bool:
-    if isinstance(c, And):
-        return all(_eval(x, inp, schema) for x in c.and_)
-    if isinstance(c, Or):
-        return any(_eval(x, inp, schema) for x in c.or_)
+def _eval(c: Compare | And | Or | Not, inp: RuleInput, schema: CompiledSchema) -> bool | None:
+    """True, False or None (unknown); see the module docstring."""
+    if isinstance(c, And | Or):
+        parts = [_eval(x, inp, schema) for x in (c.and_ if isinstance(c, And) else c.or_)]
+        decisive = isinstance(c, Or)  # or: any true decides; and: any false
+        if decisive in parts:
+            return decisive
+        return None if None in parts else not decisive
     if isinstance(c, Not):
-        return not _eval(c.not_, inp, schema)
+        inner = _eval(c.not_, inp, schema)
+        return None if inner is None else not inner
     return _compare(c, inp, schema)
 
 
-def _compare(c: Compare, inp: RuleInput, schema: CompiledSchema) -> bool:
+def _compare(c: Compare, inp: RuleInput, schema: CompiledSchema) -> bool | None:  # noqa: PLR0911
     if c.trigger is not None:
         return c.trigger in inp.triggers
     if c.field is not None:
+        if c.field not in inp.classification and c.field in schema.extension_fields:
+            return None  # classified before the extension: unknown, never a match
         value = inp.classification.get(c.field)
     elif c.fact is not None:
         value = inp.facts.get(c.fact)
@@ -272,15 +288,49 @@ def _compare(c: Compare, inp: RuleInput, schema: CompiledSchema) -> bool:
     spec = schema.fields[cast(str, c.field)]
     if value is None:
         return False
+    bound = c.gte if c.gte is not None else cast(str, c.lte)
+    if str(value) not in spec.values or bound not in spec.values:
+        return None  # a level the ordinal no longer has (its extension changed): unknown
     rank = spec.rank(str(value))
-    return rank >= spec.rank(c.gte) if c.gte is not None else rank <= spec.rank(cast(str, c.lte))
+    return rank >= spec.rank(bound) if c.gte is not None else rank <= spec.rank(bound)
 
 
 # ---------------------------------------------------------------------------- compile
 
 
+# Schema v1 values a rules file may still use; read as their v2 value (OD-475). Stored and
+# applied rules are never rewritten: the compiler maps them and names the rules that did.
+V1_ALIASES = {(f, v): new for f, renames in V1_VALUE_ALIASES.items()
+              for v, new in renames.items()}  # fmt: skip
+
+
+def _alias_v1(node: Any, schema: CompiledSchema, hits: set[str], rule: str = "") -> Any:
+    if isinstance(node, list):
+        return [_alias_v1(x, schema, hits, rule) for x in cast(list[Any], node)]
+    if not isinstance(node, dict):
+        return node
+    d = dict(cast(dict[str, Any], node))
+    rule = str(d["id"]) if isinstance(d.get("id"), str) and "rules" not in d else rule
+    field_name = d.get("field")
+    for op in ("eq", "in", "gte", "lte"):
+        if op not in d or not isinstance(field_name, str):
+            continue
+        vals = cast(list[Any], d[op] if isinstance(d[op], list) else [d[op]])
+        spec = schema.fields.get(field_name)
+        mapped: list[Any] = []
+        for v in vals:
+            new = V1_ALIASES.get((field_name, v)) if isinstance(v, str) else None
+            use = new is not None and spec is not None and v not in spec.values
+            if use:
+                hits.add(rule)
+            mapped.append(new if use else v)
+        d[op] = mapped if isinstance(d[op], list) else mapped[0]
+    return {k: _alias_v1(v, schema, hits, rule) if k != "id" else v for k, v in d.items()}
+
+
 def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -> CompiledRules:
-    raw = load_yaml(text, source=source)
+    hits: set[str] = set()
+    raw = _alias_v1(load_yaml(text, source=source), schema, hits)
     try:
         rs = RuleSet.model_validate(raw)
     except ValidationError as exc:
@@ -290,11 +340,26 @@ def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -
     ids = [r.id for r in rs.rules]
     if len(set(ids)) != len(ids):
         raise InvalidInputError(f"{source}: duplicate rule ids")
+    added = added_values(schema)
     for r in rs.rules:
+        if r.id in added:  # a rule id may name a label; an added value would too (S8)
+            raise InvalidInputError(f"{source}: rule id {r.id} is a value the schema extension"
+                                    " adds; rename the rule")  # fmt: skip
         _check_rule(r, schema, source)
     if rs.rules[-1].when is not None:
         raise InvalidInputError(f"{source}: the last rule must have no `when` (a catch-all)")
-    return CompiledRules(tuple(rs.rules), schema)
+    return CompiledRules(tuple(rs.rules), schema, tuple(sorted(hits)))
+
+
+def added_values(schema: CompiledSchema) -> set[str]:
+    """The `category` values and extension enum values the install's extension adds."""
+    ext: dict[str, Any] = schema.extension or {}
+    out = set(cast(dict[str, Any], ext.get("category_values") or {}))
+    for name in schema.extension_fields:
+        f = schema.fields[name]
+        if f.kind is FieldKind.ENUM:
+            out |= set(f.values)
+    return out
 
 
 def _check_rule(r: Rule, schema: CompiledSchema, source: str) -> None:

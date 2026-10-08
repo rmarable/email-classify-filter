@@ -1,0 +1,22 @@
+Received: from mail.willowthread-salon.example
+ (mail.willowthread-salon.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id v2-appt-salon-confirmed; Fri, 09 Oct 2026 10:20:00 +0000
+From: Willow and Thread Salon <bookings@willowthread-salon.example>
+To: pat-lee@freemail.example
+Subject: Booking confirmed: Saturday 2026-10-24, 11:00
+Date: Fri, 09 Oct 2026 10:20:00 +0000
+Message-ID: <v2-appt-salon-confirmed.0174b09c2d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Your booking is confirmed.
+
+Service: cut and blow-dry with Remy
+When: Saturday 2026-10-24 at 11:00
+
+We look forward to seeing you.
+
+Willow and Thread Salon

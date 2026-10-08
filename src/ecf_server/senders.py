@@ -27,8 +27,8 @@ import sqlite3
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.schema import load_schema_v1
-from ecf_server import addresses, stepup
+from ecf.schema import CompiledSchema
+from ecf_server import addresses, config, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.facts import SHARED_PLATFORMS, domain_of, in_domains, sender_hash
@@ -85,18 +85,18 @@ def _bound(conn: sqlite3.Connection, name: str, target: dict[str, Any], what: st
     a = addresses.get_address(conn, str(target.get("address_id", "")))
     email, _ = _sender(str(target.get("sender", "")))
     state = _state(_row(conn, a["address_id"], email))
-    value = _checked(name, target.get("value"))
+    value = _checked(name, target.get("value"), config.current_schema(conn))
     return stepup.Bound(
         stepup.digest(name, a["address_id"], sender_hash(email), value, state),
         f"ecf: {what.format(value=value)} for {email} at {a['email']}",
     )
 
 
-def _checked(name: str, value: Any) -> Any:
+def _checked(name: str, value: Any, schema: CompiledSchema) -> Any:
     """The value as the change itself would accept it, before it reaches the dialog (V1.2
     review, 2026-09-30)."""
     if name == "sender_confirm":
-        values = load_schema_v1().fields["category"].values or ()
+        values = schema.fields["category"].values or ()
         if value not in values:
             raise InvalidInputError(f"category is one of {', '.join(values)}")
         return value
@@ -165,7 +165,7 @@ def confirm(
     nonce: str | None,
     actor: str = "os_user",
 ) -> dict[str, Any]:
-    values = load_schema_v1().fields["category"].values or ()
+    values = config.current_schema(conn).fields["category"].values or ()
     if category not in values:
         raise InvalidInputError(f"category is one of {', '.join(values)}")
     a = _address(conn, address)

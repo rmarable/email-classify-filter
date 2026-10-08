@@ -63,6 +63,7 @@ CLASS_OF = {
     "model_retirement": "system",
     "alert_email": "system",
     "export_failed": "system",
+    "schema_extension": "system",
     "operator_input": "operator",
     "claude_review": "operator",
     "second_install": "operator",

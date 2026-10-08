@@ -7,8 +7,8 @@ rules:
       or:
         - {field: fraud_risk, in: [medium, high]}
         - {field: category, eq: vendor_change_request}
-        - and:                           # "staff" from outside, about money (OD-262)
-            - {field: sender_type, eq: staff}
+        - and:                           # "team" from outside, about money (OD-262;
+            - {field: sender_type, eq: team}   # "staff" in schema v1)
             - {fact: sender_origin, eq: external}
             - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
@@ -36,11 +36,15 @@ rules:
     hide: never
 
   - id: fraud_weak                       # 1b: first-time + payment, no second signal; or a lone
-    when:                                # Reply-To mismatch on a payment item; or "staff" from
+    when:                                # Reply-To mismatch on a payment item; or "team" from
       or:                                # outside with no money (OD-262). Digest section.
         - {trigger: fraud_weak}
-        - and: [{field: sender_type, eq: staff}, {fact: sender_origin, eq: external}]
+        - and: [{field: sender_type, eq: team}, {fact: sender_origin, eq: external}]
         - {fact: impersonates_internal, eq: true}   # without money (OD-436)
+        - and:                           # a "person" from outside about money: a colleague on a
+            - {field: sender_type, eq: person}   # personal address the model can't place (OD-476)
+            - {fact: sender_origin, eq: external}
+            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
     then: [{label: suspicious}, flag]
     actor: none
     hide: never
@@ -74,6 +78,28 @@ rules:
 
   - id: payment_confirmation_remittance  # 5
     when: {field: category, in: [payment_confirmation, remittance]}
+    then: [{label: {field: category}}]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: account_security                 # 5a-5d: schema v2's personal categories (OD-475);
+    when: {field: category, eq: account_security}   # none of them hides mail
+    then: [{label: account_security}, flag]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: shipping                         # 5b
+    when: {field: category, eq: shipping}
+    then: [{label: shipping}, leave]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: appointment_school_family        # 5c
+    when: {field: category, in: [appointment, school_or_family]}
+    then:
+      - {label: {field: category}}
+      - {flag: true, if: {field: deadline_mentioned, eq: true}}
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: travel_finance                   # 5d
+    when: {field: category, in: [travel, finance]}
     then: [{label: {field: category}}]
     actor: {continue_if: {field: requires_reply, eq: true}}
 

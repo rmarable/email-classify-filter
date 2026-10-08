@@ -10,7 +10,7 @@ from: "Dana Chief <dana-chief-exec@freemail.example>"
 subject: "Need the staff tax forms today"
 date: 2026-10-05T09:30:00Z
 expected:
-  labels: {category: spam_or_phishing, payment_related: false, fraud_risk: high, sender_type: staff, deadline_mentioned: true, requires_reply: true}
+  labels: {category: spam_or_phishing, payment_related: false, fraud_risk: high, sender_type: team, deadline_mentioned: true, requires_reply: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

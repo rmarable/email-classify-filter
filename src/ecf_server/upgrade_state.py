@@ -16,6 +16,7 @@ from typing import Any
 
 from ecf import __version__
 from ecf.errors import InvalidInputError
+from ecf.schema import load_schema
 from ecf_server import claude_pins, export_bundle, initsetup, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -44,6 +45,7 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
     return {
         "version": __version__, "schema_version": schema,
         "data_format": export_bundle.DATA_FORMAT, "api_version": api_version,
+        "classifier_schema": load_schema().version,
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
         "upgrade": current(conn),

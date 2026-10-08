@@ -1,0 +1,23 @@
+Received: from mail.northwindair.example (mail.northwindair.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-travel-flight-itinerary;
+ Fri, 02 Oct 2026 16:45:00 +0000
+From: Northwind Air <itinerary@northwindair.example>
+To: pat-lee@freemail.example
+Subject: Your trip to Port Halden: booking 4471
+Date: Fri, 02 Oct 2026 16:45:00 +0000
+Message-ID: <v2-travel-flight-itinerary.0040cc289c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat Lee,
+
+Thank you for flying with Northwind Air. Here is your itinerary for booking 4=
+471.
+
+Outbound: flight NW 412, Thursday 2026-10-29, departs 07:40, arrives 09:55
+Return: flight NW 417, Monday 2026-11-02, departs 18:10, arrives 20:20
+
+Checked bags: 1. Online check-in opens 24 hours before each flight.
+
+Northwind Air

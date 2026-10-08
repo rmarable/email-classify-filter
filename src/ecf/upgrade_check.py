@@ -150,4 +150,7 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
     r.pin_changes = sorted(f for f, v in rel.pins.items() if pins.get(f) != v)
     uses: dict[str, list[str]] = now["pin_users"]  # family -> addresses
     r.affected = sorted({a for f in r.pin_changes for a in uses.get(f, [])})
+    if int(new.get("classifier_schema", 1)) != int(now.get("classifier_schema", 1)):
+        r.pin_changes.append("schema")  # every address is asked differently (OD-475)
+        r.affected = sorted({a for addrs in uses.values() for a in addrs})
     return r

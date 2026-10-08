@@ -138,3 +138,39 @@ def test_0015_carries_v11_pending_escalations_over(
     rows = c.execute("SELECT stable_id, state, created_at FROM escalations").fetchall()
     assert [tuple(r) for r in rows] == [("s1", "v1.1", "2026-09-29T10:00:00.000000Z")]
     c.close()
+
+
+def test_0034_moves_stored_classifications_to_schema_v2(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OD-475: `staff` becomes `team` in classifications, corrections and fallback shadow runs;
+    `items.schema_version` goes 1 -> 2, so the mapping runs once (C3)."""
+    every = db._migration_files()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < 34])
+    c = db.connect(db_path)
+    db.migrate(c)
+    c.execute(
+        "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+        " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')"
+    )
+    staff = json.dumps({"category": "other", "sender_type": "staff", "fraud_risk": "none"})
+    vendor = json.dumps({"category": "invoice", "sender_type": "vendor", "fraud_risk": "low"})
+    for sid, cls, fix in (("s1", staff, staff), ("s2", vendor, None), ("s3", None, None)):
+        create_item(c, FakeClock(), stable_id=StableId(sid), address_id=AddressId("ap"),
+                    content_hash=sid, classification=cls, human_correction=fix)  # fmt: skip
+    c.execute("INSERT INTO fallback_shadow (stable_id, address_id, digest, outcome,"
+              " classification, created_at) VALUES ('s1', 'ap', 'd', 'ok', ?, 't')",
+              (staff,))  # fmt: skip
+    monkeypatch.setattr(db, "_migration_files", lambda: every)
+    assert db.migrate(c) == ["0034_schema_v2.sql"]
+    rows = {r[0]: r for r in c.execute("SELECT stable_id, classification, human_correction,"
+                                       " schema_version FROM items")}  # fmt: skip
+    assert json.loads(rows["s1"][1])["sender_type"] == "team"
+    assert json.loads(rows["s1"][2])["sender_type"] == "team"
+    assert json.loads(rows["s2"][1]) == json.loads(vendor)  # nothing else is mapped
+    assert rows["s3"][1] is None
+    assert {r[3] for r in rows.values()} == {2}
+    shadow = c.execute("SELECT classification FROM fallback_shadow").fetchone()[0]
+    assert json.loads(shadow)["sender_type"] == "team"
+    assert db.migrate(c) == []
+    c.close()

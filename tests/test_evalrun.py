@@ -17,6 +17,8 @@ import pytest
 from ecf.errors import ConflictError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
+from ecf.eval.results import CaseResult, ResultFile, compare, load_result
+from ecf.schema import load_schema
 from ecf_server import evalrun, modelq, policy, schedule
 from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
@@ -110,13 +112,14 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     result = snap["result"]
     assert result["confirmed"] == 2 and result["cases"] == 3
     row = conn.execute("SELECT digest, gate_passed, path FROM eval_runs").fetchone()
-    assert row["digest"] == evalrun.ollama.load_pin().digest
+    assert row["digest"] == evalrun.claude_pins.local_key()  # digest + schema (OD-475)
     path = Path(row["path"])
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     text = path.read_text()
     assert "bank has changed" not in text and "SYSTEM NOTE" not in text  # no message text (I5)
     summary = json.loads(text)["summary"]
     assert summary["determinism_diffs"] == 0
+    assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None
@@ -325,3 +328,33 @@ def test_eval_status_lines_are_readable(monkeypatch: pytest.MonkeyPatch) -> None
     ]
     assert status_lines({"current": {"state": "idle"}, "recent": []}) == [
         "No eval has run yet: ecf eval run"]  # fmt: skip
+
+
+def test_a_pre_v2_result_is_rescored_with_its_answers_mapped(
+    root: Path, tmp_path: Path, clock: FakeClock
+) -> None:
+    """E1 (OD-475): a v1 result's `staff` is read as `team`; the new file carries the set's
+    current version, so `ecf eval compare` pairs it with a v2 run."""
+    cases, version = evalrun.load(root, fraud_only=False)
+    bec = next(c for c in cases if c.id == "starter-bec")
+    want = dict(bec.expected["labels"]) | {"sender_type": "team"}
+    v1 = want | {"sender_type": "staff"}
+    got = [CaseResult(id=c.id, correct=False, got=(v1 if c.id == "starter-bec" else {}) |
+                      {"rule": c.expected.get("rule")}, actions=["escalate", "flag"])
+           for c in cases]  # fmt: skip
+    old = ResultFile(
+        run_id="r" * 32,
+        pair="gemma4-12b/local",
+        set_version="old-set",
+        created_at="2026-10-01T00:00:00Z",
+        cases=got,
+        digest="d",
+        summary={},
+    )
+    path = evalrun.write_result(tmp_path, old, "old.json")
+    out = evalrun.rescore_synthetic(root, path, clock)
+    new = load_result(Path(out["path"]))
+    assert new.set_version == version and out["summary"]["rescored_from"]["values_mapped"] == 1
+    case = next(c for c in new.cases if c.id == "starter-bec")
+    assert case.got["sender_type"] == "team"
+    assert compare(new, new).n >= 1  # same set version: comparable

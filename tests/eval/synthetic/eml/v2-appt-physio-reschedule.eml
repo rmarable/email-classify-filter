@@ -1,0 +1,23 @@
+Received: from mail.elmgrove-physio.example (mail.elmgrove-physio.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-appt-physio-reschedule;
+ Thu, 15 Oct 2026 09:10:00 +0000
+From: Elmgrove Physio Front Desk <frontdesk@elmgrove-physio.example>
+To: pat-lee@freemail.example
+Subject: Your session on 2026-10-19 is cancelled - please choose a new time
+Date: Thu, 15 Oct 2026 09:10:00 +0000
+Message-ID: <v2-appt-physio-reschedule.75fb622014@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+I'm sorry, but your physio session on Monday 2026-10-19 has to be cancelled b=
+ecause
+your therapist is off sick.
+
+We can offer Tuesday 2026-10-20 at 16:00 or Thursday 2026-10-22 at 09:30. Ple=
+ase reply
+with your choice by Friday so we can hold it for you.
+
+Tara, Elmgrove Physio

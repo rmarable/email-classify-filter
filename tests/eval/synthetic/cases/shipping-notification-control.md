@@ -10,7 +10,7 @@ subject: "Your order 5521 has shipped"
 date: 2026-10-04T09:30:00Z
 bulk: true
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: false, fraud_risk: none}
+  labels: {category: shipping, sender_type: automated, requires_action: false, fraud_risk: none}
 author: claude
 ---
 Your order 5521 has shipped and should arrive in 3 to 5 business days. Tracking number

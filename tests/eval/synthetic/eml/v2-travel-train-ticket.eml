@@ -1,0 +1,22 @@
+Received: from mail.coastline-rail.example (mail.coastline-rail.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-travel-train-ticket; Thu,
+ 08 Oct 2026 21:00:00 +0000
+From: Coastline Rail <tickets@coastline-rail.example>
+To: pat-lee@freemail.example
+Subject: Your e-ticket: Easthaven to Port Halden, 2026-10-22
+Date: Thu, 08 Oct 2026 21:00:00 +0000
+Message-ID: <v2-travel-train-ticket.db997d428a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Here is your e-ticket. Show it on your phone or print it.
+
+Journey: Easthaven to Port Halden
+Date: Thursday 2026-10-22, departs 08:05, coach C, seat 42
+
+Have a good trip.
+
+Coastline Rail

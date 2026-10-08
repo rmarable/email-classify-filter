@@ -18,7 +18,9 @@
   counts as risky, operator decision 2026-10-02).
 - **`get_message`** returns the stored excerpt (about 1,500 characters to classify, 4,000 to act,
   both with OD-254's redaction) inside the untrusted-data wrapper. No computed facts (§7.2;
-  operator decision 2026-10-02): Claude gets what the local model gets. To act it also gets the
+  operator decision 2026-10-02): Claude gets what the local model gets. To classify it also gets
+  the effective schema (with any extension) as a JSON schema and as `schema_text`, the meaning of
+  each field and value, a separate trusted field (SCHEMA-V2-PLAN 4.3). To act it also gets the
   classification, the actions and targets it may choose, and your earlier answers.
 - **Submissions** are checked like the local model's output: a classification against the schema
   (§7.4); a proposal by `actor.problem` with OD-250's no-hiding rule, its reason cleaned and capped
@@ -56,7 +58,7 @@ from pydantic import ValidationError
 
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import new_random_id
-from ecf.schema import load_schema_v1
+from ecf.schema import CompiledSchema
 from ecf_server import (
     actor,
     addresses,
@@ -66,6 +68,7 @@ from ecf_server import (
     claude_batch,
     claude_pins,
     claude_queue,
+    config,
     decide,
     health,
     policy,
@@ -295,8 +298,9 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
     }  # fmt: skip
     out: dict[str, Any] = {"id": sid, "need": claim["need"],
                            "untrusted_email": email, "notice": NOTICE}  # fmt: skip
+    schema = config.current_schema(conn)
     if claim["need"] == "classify":
-        out["schema"] = load_schema_v1().json_schema()
+        out |= schema_fields(schema)
     else:
         ctx, p = decide.plan_for(conn, item)
         state: dict[str, Any] = json.loads(item["proposal"] or "{}")
@@ -304,7 +308,7 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
         out |= {
             "classification": ctx.classification,
             "actions": list(acts),
-            "labels": sorted(policy.labels(load_schema_v1(), ctx.rules)),
+            "labels": sorted(policy.labels(schema, ctx.rules)),
             "move_folders": sorted(ctx.move_folders),
             "templates": sorted(ctx.templates) if "reply_template" in acts else [],
             "forward_to": sorted(ctx.forwards) if "forward_internal" in acts else [],
@@ -325,17 +329,28 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
                           agent: str) -> dict[str, Any] | Hold:  # fmt: skip
     """Check the classification; a valid one is held until telemetry shows its model."""
     claim = _claimed(conn, clock, session_id, sid, token, agent, "classify")
-    result, errors = check_classification(classification)
+    schema = config.current_schema(conn)
+    result, errors = check_classification(classification, schema)
     if result is None:
         return _invalid(conn, clock, claim, errors)
-    return _hold(conn, claim, session_id, {"classification": result})
+    return _hold(conn, claim, session_id, {"classification": result, "schema": schema.digest})
 
 
-def check_classification(classification: Any) -> tuple[dict[str, Any] | None, list[str]]:
-    """The classification checked against the schema, or the errors: each names the field and the
-    kind of problem, never the submitted value (`/ecf-review` and `/ecf-eval` alike)."""
+def schema_fields(schema: CompiledSchema) -> dict[str, Any]:
+    """What a classifier gets besides the email: the JSON schema it must match (names and values
+    only) and `schema_text`, ecf's own description of each field and value (the operator's for
+    an extension; SPEC §10.3). Trusted text from ecf, never from the email."""
+    return {"schema": schema.json_schema(), "schema_text": schema.prompt_block}
+
+
+def check_classification(
+    classification: Any, schema: CompiledSchema
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """The classification checked against the effective schema, or the errors: each names the
+    field and the kind of problem, never the submitted value (`/ecf-review` and `/ecf-eval`
+    alike)."""
     try:
-        return load_schema_v1().validate(classification).model_dump(mode="json"), []
+        return schema.validate(classification).model_dump(mode="json"), []
     except ValidationError as e:
         errors = [f"{'.'.join(str(x) for x in err['loc']) or 'classification'}: "
                   f"{_PROBLEMS.get(err['type'], err['type'])}" for err in e.errors()]  # fmt: skip
@@ -363,7 +378,7 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
 def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
                       proposal: dict[str, Any]) -> str | None:  # fmt: skip
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema_v1(), ctx.rules)
+    labels = policy.labels(config.current_schema(conn), ctx.rules)
     return check_proposal(proposal, labels, ctx.move_folders, actor.offered(ctx, p),
                           templates=ctx.templates, forwards=ctx.forwards)  # fmt: skip
 
@@ -418,6 +433,13 @@ def settle(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Tele
     expected = claude_pins.effective(conn)[ROLE[hold.agent]]
     if seen is None or seen.model != expected:
         return _refuse(conn, clock, notifier, tel, claim, seen, expected)
+    asked = hold.payload.get("schema")
+    if (
+        hold.need == "classify"
+        and asked is not None
+        and asked != config.current_schema(conn).digest
+    ):
+        return _schema_changed(conn, clock, claim, hold.session_id)
     with write_tx(conn):
         conn.execute("UPDATE claims SET state = 'done' WHERE stable_id = ? AND fence = ?",
                      (hold.stable_id, hold.fence))  # fmt: skip
@@ -427,7 +449,8 @@ def settle(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Tele
             classifier.store(conn, clock, hold.stable_id, hold.payload["classification"],
                              {"classifier": seen.model, "agent": hold.agent},
                              expected=Status.AWAITING_CLAUDE, batch_id=claim["batch_id"],
-                             actor=f"mcp:{hold.session_id[:8]}")  # fmt: skip
+                             actor=f"mcp:{hold.session_id[:8]}",
+                             schema_digest=asked)  # fmt: skip
         else:
             _apply_proposal(conn, clock, item, hold, seen.model)
     finally:
@@ -444,7 +467,7 @@ def _apply_proposal(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, h
     if _proposal_problem(conn, item, proposal) is not None:
         return  # the rules changed while it was held; the item waits for the next round
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema_v1(), ctx.rules)
+    labels = policy.labels(config.current_schema(conn), ctx.rules)
     action = proposal["action"]
     got = {
         "action": str(action),
@@ -486,6 +509,22 @@ def _refuse(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Tel
         "tries_left": 0,
         "errors": [f"refused: the call came from {model}; this agent's model is {expected}"],
     }
+
+
+def _schema_changed(conn: sqlite3.Connection, clock: Clock, claim: sqlite3.Row,
+                    session_id: str) -> dict[str, Any]:  # fmt: skip
+    """The effective schema changed while the classification was held (`ecf config apply`):
+    release the claim, so the item is classified again with the new schema (OD-478)."""
+    with write_tx(conn):
+        conn.execute("UPDATE claims SET state = 'released', outcome = 'schema_changed',"
+                     " reported = 0 WHERE stable_id = ? AND fence = ?",
+                     (claim["stable_id"], claim["fence"]))  # fmt: skip
+    _audit(conn, clock, _item(conn, claim["stable_id"]), "claude.refused", session_id,
+           {"need": claim["need"], "agent": claim["agent"], "schema_changed": True},
+           outcome="denied")  # fmt: skip
+    return {"accepted": False, "tries_left": 0,
+            "errors": ["the classification schema changed while this was held; the item will"
+                       " be offered again with the new schema"]}  # fmt: skip
 
 
 def _done(conn: sqlite3.Connection, claim: sqlite3.Row) -> None:

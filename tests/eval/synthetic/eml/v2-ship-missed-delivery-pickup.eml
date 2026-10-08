@@ -1,0 +1,20 @@
+Received: from mail.northgate-post.example (mail.northgate-post.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ v2-ship-missed-delivery-pickup; Fri, 09 Oct 2026 15:05:00 +0000
+From: Northgate Post <notices@northgate-post.example>
+To: pat-lee@freemail.example
+Subject: We missed you: parcel held at your local depot
+Date: Fri, 09 Oct 2026 15:05:00 +0000
+Message-ID: <v2-ship-missed-delivery-pickup.d100a160f5@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+We tried to deliver a parcel today but it needed a signature.
+
+It is now at the Elm Row depot. Collect it with photo ID by Friday 16 October=
+, or choose a new delivery day in the Northgate Post app. There is no charge.
+
+Northgate Post

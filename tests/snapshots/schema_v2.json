@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "invoice",
+        "payment_confirmation",
+        "remittance",
+        "vendor_change_request",
+        "billing_inquiry",
+        "customer_request",
+        "sales_inquiry",
+        "partnership",
+        "bug_report",
+        "regulatory",
+        "marketing",
+        "notification",
+        "action_alert",
+        "account_security",
+        "shipping",
+        "appointment",
+        "travel",
+        "finance",
+        "school_or_family",
+        "spam_or_phishing",
+        "private",
+        "other"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "deadline_mentioned": {
+      "title": "Deadline Mentioned",
+      "type": "boolean"
+    },
+    "fraud_risk": {
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Fraud Risk",
+      "type": "string"
+    },
+    "payment_related": {
+      "title": "Payment Related",
+      "type": "boolean"
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "requires_action": {
+      "title": "Requires Action",
+      "type": "boolean"
+    },
+    "requires_reply": {
+      "title": "Requires Reply",
+      "type": "boolean"
+    },
+    "sender_type": {
+      "enum": [
+        "vendor",
+        "customer",
+        "regulator",
+        "team",
+        "company",
+        "friend",
+        "family",
+        "person",
+        "automated",
+        "unknown"
+      ],
+      "title": "Sender Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "category",
+    "priority",
+    "requires_action",
+    "requires_reply",
+    "payment_related",
+    "deadline_mentioned",
+    "sender_type",
+    "fraud_risk"
+  ],
+  "title": "ClassificationV2",
+  "type": "object"
+}

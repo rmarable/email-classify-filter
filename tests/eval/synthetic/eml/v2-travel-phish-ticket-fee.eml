@@ -1,0 +1,27 @@
+Received: from mail.northwind-air-tickets.test
+ (mail.northwind-air-tickets.test [192.0.2.10]) by mx.example.net with ESMTPS
+ id v2-travel-phish-ticket-fee; Wed, 21 Oct 2026 02:40:00 +0000
+From: Northwind Air Ticketing <ticketing@northwind-air-tickets.test>
+To: pat-lee@freemail.example
+Subject: Your ticket for booking 4471 could not be issued
+Date: Wed, 21 Oct 2026 02:40:00 +0000
+Message-ID: <v2-travel-phish-ticket-fee.1748b45ec3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear passenger,
+
+Because of a fare system error, your ticket for booking 4471 was not issued a=
+nd your seat
+is on hold.
+
+To release it, a 25 dollar reissue fee must be paid by bank transfer before 1=
+8:00 today.
+Our ticketing agent will send the payee details when you reply with your full=
+ name and
+date of birth.
+
+Passengers who do not pay will be removed from the flight.
+
+Ticketing Department

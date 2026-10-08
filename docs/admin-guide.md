@@ -68,6 +68,8 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
 - `add` logs in over IMAP (and SMTP, sending nothing) before storing the app password, then probes
   the mailbox. It needs a real terminal (hidden prompt). Org domains are asked with the first
   address only; later changes go through `ecf config apply`.
+- One install can watch work and personal addresses together; from v2.0.0 one classification
+  schema serves both (SPEC §7.1).
 - **Presets** (SPEC §4.2): A all-local, B local classifier + Claude actor, C all-Claude.
 - **Sensitivity** `standard` or `high` (finance mailboxes: stricter gate, extra checks, a
   10-minute delay on sends). `ecf sensitivity set <address> high` is instant; lowering needs a
@@ -306,6 +308,44 @@ Before the new version's first good timer pass, the whole snapshot returns; afte
 history, sender records and gate history are kept, mail since the upgrade is read again, open
 approvals need deciding again, running actions become `failed_unknown`, and every address is
 paused at `assist` at most (SPEC §11.10, OD-331).
+
+## Upgrading to v2.0.0 (schema v2)
+
+v2.0.0 replaces classification schema v1 with v2, one schema for work and personal mail (SPEC
+§7.1, ADR 0024, OD-475).
+
+**What changes:** new categories `account_security`, `shipping`, `appointment`, `travel`,
+`finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and
+`regulatory` also cover personal bills, receipts, account changes and government mail. New sender
+types `company`, `friend`, `family` and `person`; `staff` is now `team`.
+
+**The go-live gate starts again** for every address: the gate is bound to the schema as well as
+the models, so v1 eval results no longer count and `live` addresses drop to `assist` (SPEC §9.3).
+`ecf upgrade` lists every address as affected. Then, per address:
+
+```sh
+ecf eval run                          # preset A, and the local half of preset B
+ecf eval run --claude --preset B|C    # presets B and C; start it with /ecf-eval in ecf claude
+ecf stage set <a> live                # step-up, once the safety gates pass on v2
+```
+
+**Rules files:** a file written for v1 still applies; `staff` is read as `team` and the rules that
+used it are named. To update the file, change `staff` to `team` (and use the new values if you
+want), then `ecf rules test rules.yaml` and `ecf config apply config.yaml`. The upgrade never
+rewrites applied rules (SPEC §8.6).
+
+**Starter rules 5a-5d** label the new categories and flag account-security mail, and appointment
+or school and family mail with a deadline. None hides mail: personal-category mail stays in the
+inbox, labelled. To archive or move some of it, add your own rule with `ecf config apply` (format
+in SPEC §8.6); a hide still runs only when corroborated (SPEC §8.3). A new rule 1b clause labels
+`suspicious` and flags money mail from an outside sender the model reads as `person`, so a
+colleague writing from a personal address is still checked (OD-476).
+
+**Stored mail** is migrated automatically on upgrade (`staff` becomes `team`; migration 0034).
+
+**Backups:** bundles are now data format 3; v2.0.0 imports and restores formats 3 and 2, but
+`v1.0.0` can't import a v2 bundle (SPEC §11.9). `ecf upgrade --to v1.0.0` goes back through the
+upgrade's snapshot, as above (SPEC §11.10).
 
 ## Removing an install
 

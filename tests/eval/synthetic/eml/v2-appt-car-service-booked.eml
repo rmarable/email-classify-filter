@@ -1,0 +1,21 @@
+Received: from mail.fernbrook-auto.example (mail.fernbrook-auto.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-appt-car-service-booked;
+ Wed, 14 Oct 2026 15:50:00 +0000
+From: Fernbrook Auto Care <service@fernbrook-auto.example>
+To: pat-lee@freemail.example
+Subject: Service booked for Wednesday 2026-10-21
+Date: Wed, 14 Oct 2026 15:50:00 +0000
+Message-ID: <v2-appt-car-service-booked.62411e26ec@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Your car is booked in for its yearly service on Wednesday 2026-10-21. Drop-of=
+f is from
+07:30 and we will text you when it is ready.
+
+The courtesy shuttle runs every hour if you need a ride.
+
+Fernbrook Auto Care

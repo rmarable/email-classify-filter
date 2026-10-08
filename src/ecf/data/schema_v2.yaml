@@ -1,0 +1,65 @@
+# Classification schema v2 (SPEC §7.1). Must match SPEC exactly; tests/test_schema.py checks.
+version: 2
+fields:
+  category:
+    type: enum
+    description: What this email is primarily about.
+    values:
+      invoice:               Bill or invoice requesting payment, business or personal (utilities, credit card, rent, medical, renewals).
+      payment_confirmation:  Confirmation that a payment was sent or received, or a receipt or order confirmation.
+      remittance:            Remittance advice or payment details from a customer.
+      vendor_change_request: Request to change a vendor's or an account's bank, payment, login, or contact details, or to send money a new way.
+      billing_inquiry:       Question or dispute about a charge, invoice, or account balance.
+      customer_request:      Customer asking for help, service, or information.
+      sales_inquiry:         Prospective customer asking about buying or pricing.
+      partnership:           Partnership proposals, vendor pitches, collaboration.
+      bug_report:            Report of a bug, defect, outage, or incident.
+      regulatory:            Anything involving a regulator, regulation, government agency, court, or tax authority (e.g. FDA, SEC, FTC, IRS, state agencies, compliance notices, audits, filings).
+      marketing:             Newsletters, promotions, cold outreach, advertising.
+      notification:          Automated message that only informs and fits no other value.
+      action_alert:          Automated alert from a service we use that asks someone to act (expiring certificate or domain, quota reached, backup failed).
+      account_security:      Sign-in alert, password reset, verification code, or security warning from a service we use.
+      shipping:              Delivery, tracking, or return update.
+      appointment:           Appointment, booking, reservation, or invitation, or a reminder for one.
+      travel:                Itinerary, ticket, check-in, or travel change.
+      finance:               Bank, brokerage, insurance, or tax statement or notice that is not a bill.
+      school_or_family:      School, childcare, activities, or family logistics.
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including fake alerts that push you to a link or a payment.
+      private:               Personal correspondence from a person, not about the business, that fits no other value.
+      other:                 None of the above.
+  priority:
+    type: ordinal
+    levels: [low, medium, high, urgent]
+    description: How soon a human should look at this.
+  requires_action:
+    type: boolean
+    description: Someone on our side must do something.
+  requires_reply:
+    type: boolean
+    description: The sender expects a written reply from us.
+  payment_related:
+    type: boolean
+    description: Money moving or owed (a payment sent, received or requested, an amount owed, or payment instructions); not a question about prices, plans or quotes.
+  deadline_mentioned:
+    type: boolean
+    description: States or implies a specific due date or time limit.
+  sender_type:
+    type: enum
+    description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
+    values:
+      vendor:     Supplier or service provider.
+      customer:   Someone we sell to or serve.
+      regulator:  Government agency or regulatory body.
+      team:       Colleague acting in an internal role.
+      company:    A business that is neither a vendor nor a customer (e.g. a store, bank, or service used personally).
+      friend:     Someone the recipient knows personally.
+      family:     A relative.
+      person:     An individual writing personally whom you can't place.
+      automated:  System or no-reply sender.
+      unknown:    Cannot tell.
+  fraud_risk:
+    type: ordinal
+    levels: [none, low, medium, high]
+    description: >
+      Likelihood of fraud or impersonation (changed bank details, unusual urgency,
+      pressure to bypass process, sender not matching the claimed organization).

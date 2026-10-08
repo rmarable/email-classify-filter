@@ -1,0 +1,23 @@
+Received: from mail.harbor-savings.example (mail.harbor-savings.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-acct-new-signin-genuine;
+ Sat, 03 Oct 2026 19:12:00 +0000
+From: Harbor Savings <alerts@harbor-savings.example>
+To: pat-lee@freemail.example
+Subject: New sign-in to your Harbor Savings account
+Date: Sat, 03 Oct 2026 19:12:00 +0000
+Message-ID: <v2-acct-new-signin-genuine.be600b7dc2@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+Someone signed in to your online banking from a new device on 3 October at 19=
+:08.
+
+If this was you, there is nothing to do. If it was not, sign in as you usuall=
+y do and change your password, or call the number on the back of your card.
+
+We will never ask for your password or a code by email.
+
+Harbor Savings

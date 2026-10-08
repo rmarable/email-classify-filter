@@ -1,0 +1,21 @@
+Received: from mail.parcel-customs.example (mail.parcel-customs.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ v2-ship-phish-customs-giftcard; Wed, 21 Oct 2026 13:25:00 +0000
+From: Customs Clearance Office <clearance-desk@parcel-customs.example>
+To: pat-lee@freemail.example
+Subject: Parcel held at customs: payment required
+Date: Wed, 21 Oct 2026 13:25:00 +0000
+Message-ID: <v2-ship-phish-customs-giftcard.4d6f95f036@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear recipient,
+
+A parcel addressed to you is held at customs. A clearance fee of 95.00 must b=
+e paid before release.
+
+Buy two store gift cards and reply to this email with the card numbers and PI=
+Ns by Friday 23 October, or the parcel will be destroyed.
+
+Customs Clearance Office

@@ -20,7 +20,7 @@ from ecf import __version__, upgrade_check
 from ecf.cli import app
 from ecf.errors import InvalidInputError
 from ecf.paths import Paths
-from ecf_server import db, upgrade_snapshot, upgrade_state
+from ecf_server import db, export_bundle, upgrade_snapshot, upgrade_state
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from tests.test_addresses import make_state
@@ -28,6 +28,7 @@ from tests.test_export_keys import ApiClient
 from tests.test_release_source import FakeGh
 
 # the newest migration, so these tests don't change with each one
+FORMAT = export_bundle.DATA_FORMAT
 SCHEMA = max(v for v, _n, _s in db._migration_files())  # pyright: ignore[reportPrivateUsage]
 LOCK = {"main_session": "claude-haiku-4-5-20251001", "classifier": "claude-haiku-4-5-20251001",
         "classifier_high": "claude-sonnet-5-5", "actor": "claude-sonnet-5-5",
@@ -41,12 +42,13 @@ def test_version_order() -> None:
         upgrade_check.version_key("1.0")
 
 
-def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int | None = None, data_format: int = 2,
-           min_client: str = "0.1.0.dev0", lock: dict[str, str] | None = None,
-           digest: str = "d" * 64, name: str = "w.whl") -> Path:  # fmt: skip
+def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int | None = None,  # noqa: PLR0913
+           data_format: int = FORMAT, min_client: str = "0.1.0.dev0",
+           lock: dict[str, str] | None = None, digest: str = "d" * 64, name: str = "w.whl",
+           classifier_schema: int = 2) -> Path:  # fmt: skip
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
             "data_format": data_format, "schema_version": SCHEMA if schema is None else schema,
-            "min_client": min_client}  # fmt: skip
+            "min_client": min_client, "classifier_schema": classifier_schema}  # fmt: skip
     path = tmp / name
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))
@@ -92,7 +94,8 @@ def test_install_detection(tmp_path: Path) -> None:
 
 
 def _state(**over: Any) -> dict[str, Any]:
-    return {"version": "0.1.0", "schema_version": SCHEMA, "data_format": 1, "api_version": 1,
+    return {"version": "0.1.0", "schema_version": SCHEMA, "data_format": FORMAT - 1,
+            "api_version": 1, "classifier_schema": 2,
             "pins": LOCK | {"local": "d" * 64}, "pin_users": {"local": ["ap"], "actor": ["b"]},
             "install_role": "test",
             "busy": {"executing": 0, "leases": 0, "claude_sessions": 0}} | over  # fmt: skip
@@ -104,7 +107,7 @@ def test_compare(tmp_path: Path) -> None:
     cases = [
         (_wheel(tmp_path, version="0.1.0", name="a.whl"), "isn't newer"),
         (_wheel(tmp_path, schema=30, name="b.whl"), "schema (30) is older"),
-        (_wheel(tmp_path, data_format=3, name="c.whl"), "data format 3"),
+        (_wheel(tmp_path, data_format=FORMAT + 1, name="c.whl"), f"data format {FORMAT + 1}"),
         (_wheel(tmp_path, min_client="0.2.0", name="d.whl"), "needs ecf 0.2.0"),
     ]
     for wheel, why in cases:
@@ -115,6 +118,15 @@ def test_compare(tmp_path: Path) -> None:
                                                   lock=LOCK | {"actor": "claude-sonnet-5-6"},
                                                   name="e.whl")), "0.1.0")  # fmt: skip
     assert pins.pin_changes == ["actor", "local"] and pins.affected == ["ap", "b"]
+
+
+def test_a_new_classifier_schema_affects_every_address(tmp_path: Path) -> None:
+    """OD-475: the schema digest is part of every gate key; a v1.0.0 service reports none (1)."""
+    v1 = {k: v for k, v in _state().items() if k != "classifier_schema"}
+    r = upgrade_check.compare(v1, upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
+    assert r.pin_changes == ["schema"] and r.affected == ["ap", "b"]
+    same = upgrade_check.compare(_state(), upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
+    assert same.pin_changes == []
 
 
 def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:

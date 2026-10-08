@@ -11,8 +11,8 @@ from: "Parcel Co Updates <tracking@parcel-co.example>"
 subject: "Your package is on its way"
 date: 2026-10-14T11:00:00Z
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
-  rule: automated_notification
+  labels: {category: shipping, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
+  rule: shipping
 ---
 Your package from Corner Books has shipped.
 

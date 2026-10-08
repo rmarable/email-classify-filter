@@ -1,0 +1,17 @@
+Received: from mail.parcelwise.example (mail.parcelwise.example [192.0.2.10])
+ by mx.example.net with ESMTPS id v2-ship-delivered-porch; Thu, 08 Oct 2026
+ 11:47:00 +0000
+From: Parcelwise Tracking <tracking@parcelwise.example>
+To: pat-lee@freemail.example
+Subject: Delivered
+Date: Thu, 08 Oct 2026 11:47:00 +0000
+Message-ID: <v2-ship-delivered-porch.616a2fe205@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your parcel PW 4408 1173 26 was delivered at 11:45 and left at the front door.
+
+If you can't find it, report a problem in the Parcelwise app within 7 days.
+
+Parcelwise

@@ -28,8 +28,8 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf.schema import CompiledSchema, load_schema_v1
-from ecf_server import claude_pins, decide, items, ollama
+from ecf.schema import CompiledSchema
+from ecf_server import claude_pins, config, decide, items, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -37,7 +37,7 @@ from ecf_server.modelq import ItemResult
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.state_machine import Status, TransitionContext
 
-MAX_INPUT_BYTES = 3000  # of UTF-8: worst case 3,816 tokens with v1's prompt (rare CJK; §21.2)
+MAX_INPUT_BYTES = 3000  # of UTF-8: worst case ~4,000 tokens with v2's prompt (rare CJK; §21.2)
 NEAR_CTX = ollama.NUM_CTX - ollama.NUM_PREDICT["classifier"] - 64
 
 INSTRUCTIONS = """You classify one business email for a mailbox-monitoring system.
@@ -113,7 +113,7 @@ def classify_item(
 ) -> ItemResult:
     """The model queue's `Work` for preset A (V1.3 step 3); also a C item the local fallback
     took at `awaiting_claude` (`expected`, with `pins` naming its key; V1.4 step 8)."""
-    schema = schema or load_schema_v1()
+    schema = schema or config.current_schema(conn)
     pin = ollama.load_pin()
     addr = conn.execute("SELECT preset, stage FROM addresses WHERE address_id = ?",
                         (item["address_id"],)).fetchone()  # fmt: skip
@@ -142,13 +142,14 @@ def classify_item(
         return ItemResult("failed", m)
     ollama.record_call(conn, clock, role="classifier", outcome="ok", digest=ready.digest,
                        metrics=m, **tags)  # fmt: skip
-    store(conn, clock, item["stable_id"], result,
-          {"classifier": pin.ecf_tag, "digest": ready.digest} | (pins or {}),
-          expected=expected)  # fmt: skip
+    if not store(conn, clock, item["stable_id"], result,
+                 {"classifier": pin.ecf_tag, "digest": ready.digest} | (pins or {}),
+                 expected=expected, schema_digest=schema.digest):  # fmt: skip
+        return ItemResult("skipped", m)  # the schema changed during the call: asked again
     return ItemResult("ok", m)
 
 
-def store(
+def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schema
     conn: sqlite3.Connection,
     clock: Clock,
     stable_id: str,
@@ -158,24 +159,33 @@ def store(
     expected: Status = Status.NEW,
     batch_id: str | None = None,
     actor: str = "classifier",
-) -> None:
+    schema_digest: str | None = None,
+) -> bool:
     """Record a classification and move the item to `classified`, then apply the policy (the
-    local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3)."""
+    local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3).
+    `schema_digest` is the schema the model was asked with: when the effective schema changed
+    since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
+    item is asked again with the new one (OD-478)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
-    pinned = {
-        "schema": 1,
-        "pin_key": claude_pins.address_key(conn, aid),
-    } | models  # the gate's key (V1.4 step 2), unless the caller names one (the fallback)
-    with write_tx(conn):
+    with write_tx(conn):  # read and record in one transaction: the schema can't move between
+        schema = config.current_schema(conn)
+        if schema_digest is not None and schema_digest != schema.digest:
+            log.info("classifier.schema_changed", stable_id=stable_id[:8])
+            return False
+        pinned = {
+            "schema": schema.digest,  # was the integer 1 before v2 (S16)
+            "pin_key": claude_pins.address_key(conn, aid),
+        } | models  # the gate's key (V1.4 step 2), unless the caller names one (the fallback)
         conn.execute(
-            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?"
-            " WHERE stable_id = ? AND status = ?",
+            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"
+            " schema_version = ? WHERE stable_id = ? AND status = ?",
             (
                 json.dumps(classification, sort_keys=True),
                 json.dumps(pinned, sort_keys=True),
                 batch_id or f"single:{stable_id[:16]}",
                 to_ts(clock.now()),
+                schema.version,
                 stable_id,
                 expected.value,
             ),
@@ -185,8 +195,9 @@ def store(
                          actor=actor, expected=expected)  # fmt: skip
     except ConflictError:
         log.info("classifier.item_moved_on", stable_id=stable_id[:8])  # resolved meanwhile
-        return
+        return True
     try:
         decide.apply(conn, clock, stable_id)
     except Exception as exc:  # the tick's sweep tries again; the classification is kept
         log.error("policy.apply_failed", stable_id=stable_id[:8], error_type=type(exc).__name__)
+    return True

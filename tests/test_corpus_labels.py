@@ -13,7 +13,9 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.eval import corpus_labels as cl
+from ecf.schema import extend_schema, load_schema
 from ecf_server.clock import FakeClock
+from tests.test_claude_review import EXT
 
 KEY = ("a" * 64, "b" * 16)
 VALUES: dict[str, Any] = {"category": "invoice", "priority": "medium", "requires_action": True,
@@ -32,6 +34,46 @@ def test_a_label_is_every_field_or_a_mark() -> None:
         cl.make(KEY, "c1", VALUES | {"priority": "soon"}, None, date(2026, 10, 7))
     with pytest.raises(InvalidInputError, match="values or a mark"):
         cl.make(KEY, "c1", VALUES, "s", date(2026, 10, 7))
+
+
+def test_a_v1_label_file_reads_staff_as_team(tmp_path: Path) -> None:
+    path = cl.path_for(tmp_path / "c.ecfcorpus")
+    row = {"key": {"content_hash": KEY[0], "identity_digest": KEY[1]}, "corpus_id": "c1",
+           "labels": VALUES | {"sender_type": "staff"}, "mark": None, "confirmed": True,
+           "author": "operator", "date": "2026-10-07"}  # fmt: skip
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    labels = cl.load(path)[KEY].labels
+    assert labels is not None and labels["sender_type"] == "team"
+    with pytest.raises(InvalidInputError, match="isn't one of"):  # only on load, not new labels
+        cl.make(KEY, "c1", VALUES | {"sender_type": "staff"}, None, date(2026, 10, 8))
+
+
+def test_extension_fields_are_optional_and_unknown_fields_refused(tmp_path: Path) -> None:
+    schema = extend_schema(load_schema(), EXT)
+    assert cl.check_values(VALUES, schema) == VALUES  # a label made before the extension
+    full = VALUES | {"category": "legal_notice", "contract_stage": "draft",
+                     "lawyer_involved": False}  # fmt: skip
+    assert cl.check_values(full, schema) == full
+    assert cl.check_values(VALUES | {"lawyer_involved": True}, schema)["lawyer_involved"] is True
+    with pytest.raises(InvalidInputError, match="exactly the schema"):
+        cl.check_values(VALUES | {"mood": "calm"}, schema)  # unknown field
+    with pytest.raises(InvalidInputError, match="exactly the schema"):
+        cl.check_values({k: v for k, v in full.items() if k != "priority"}, schema)  # base field
+    with pytest.raises(InvalidInputError, match="isn't one of"):
+        cl.check_values(VALUES | {"contract_stage": "signed"}, schema)
+    with pytest.raises(InvalidInputError, match="exactly the schema"):
+        cl.check_values(full, load_schema())  # extension fields without the extension
+    # a file written before the extension loads under it; one using it needs it
+    path = cl.path_for(tmp_path / "c.ecfcorpus")
+    labels: dict[cl.Key, cl.Label] = {}
+    cl.put(labels, cl.make(KEY, "c1", VALUES, None, date(2026, 10, 7)))
+    cl.save(path, labels)
+    assert cl.load(path, schema)[KEY].confirmed
+    cl.put(labels, cl.make(KEY, "c1", full, None, date(2026, 10, 8), schema))
+    cl.save(path, labels)
+    assert cl.load(path, schema)[KEY].labels == full
+    with pytest.raises(InvalidInputError, match="exactly the schema"):
+        cl.load(path)
 
 
 def test_the_file_is_sorted_0600_and_its_hash_moves_only_with_labels(tmp_path: Path) -> None:

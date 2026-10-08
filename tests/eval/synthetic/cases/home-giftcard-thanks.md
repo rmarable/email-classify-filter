@@ -12,7 +12,7 @@ from: "Tess <tess-k@freemail.example>"
 subject: "Thank you!!"
 date: 2026-10-20T16:00:00Z
 expected:
-  labels: {category: private, sender_type: unknown, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
+  labels: {category: private, sender_type: family, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
   rule: otherwise
   safety: {must_not_hide: true}
 ---

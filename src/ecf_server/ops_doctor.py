@@ -18,6 +18,8 @@ slack_doctor's (`{name, level, detail, fix}`):
 - **Backups**: set up or not, the schedule, `export_dir` writable (a test file) and off the data
   directory's disk, and the last backup's age: fine to one period plus 2 h, a warning to two
   periods, then a failure; a first backup is "due" for one period plus 2 h after setup (OD-398).
+- **Schema** (v2.1.0, OD-478): the install's schema extension against its caps (the budget line
+  `ecf config apply` prints); a warning from 80% of any cap.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf_server import addresses, alert_mail, alerts, export_keys, probe, scheduled_export
+from ecf.schema import extension_budget, load_schema
+from ecf_server import addresses, alert_mail, alerts, config, export_keys, probe, scheduled_export
 from ecf_server.clock import Clock, from_ts
 
 OK, WARN, FAIL = "ok", "warn", "FAIL"
@@ -50,7 +53,29 @@ def checks(
         *alert_email(conn, now),
         *reach(conn, notifier),
         *backups(conn, now, data_dir),
+        schema(conn),
     ]
+
+
+# ---- schema -------------------------------------------------------------------------------------
+
+
+def schema(conn: sqlite3.Connection) -> dict[str, str]:
+    ext = config.current(conn)["schema"]
+    v = load_schema().version
+    if ext is None:
+        return _c("schema", OK, f"v{v}, built in (no extension)")
+    problem = config.extension_problem(conn)  # re-checked: a new release may clash with it
+    if problem is not None:
+        return _c("schema", FAIL, f"v{v}; the extension no longer compiles ({problem[:200]}),"
+                  " so the built-in schema is used", "change the extension, or `schema:"
+                  " default`, with ecf config apply")  # fmt: skip
+    budget = extension_budget(load_schema(), ext)
+    detail = f"v{v} with an extension; {budget['line'].removeprefix('schema: ')}"
+    if budget["near"]:
+        return _c("schema", WARN, detail, "shorten descriptions or remove a field before adding"
+                  " more (ecf config apply)")  # fmt: skip
+    return _c("schema", OK, detail)
 
 
 # ---- SMTP ---------------------------------------------------------------------------------------

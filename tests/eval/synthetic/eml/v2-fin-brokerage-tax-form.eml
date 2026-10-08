@@ -1,0 +1,22 @@
+Received: from mail.bayline-invest.example (mail.bayline-invest.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-fin-brokerage-tax-form;
+ Fri, 02 Oct 2026 06:15:00 +0000
+From: Bayline Brokerage <statements@bayline-invest.example>
+To: pat-lee@freemail.example
+Subject: Your consolidated tax form is available
+Date: Fri, 02 Oct 2026 06:15:00 +0000
+Message-ID: <v2-fin-brokerage-tax-form.b8c1c9a8e6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat Lee,
+
+The consolidated tax form for your brokerage account ending 0007 is now avail=
+able.
+Sign in to your account as you usually do to view or download it.
+
+If we receive corrected information from a fund company, we will send a revis=
+ed form.
+
+Bayline Brokerage

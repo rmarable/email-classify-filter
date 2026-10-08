@@ -36,11 +36,11 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import load_schema_v1
 from ecf_server import (
     actor,
     addresses,
     classifier,
+    claude_pins,
     config,
     decide,
     evalrun,
@@ -163,8 +163,10 @@ def needs_ollama(conn: sqlite3.Connection) -> bool:
 # ---------------------------------------------------------------------------- its own gate
 
 
-def digest() -> str:
-    return ollama.load_pin().digest
+def digest(conn: sqlite3.Connection) -> str:
+    """The fallback's gate key: the local model's digest and the effective schema (OD-475,
+    OD-478)."""
+    return claude_pins.local_key(config.current_schema(conn))
 
 
 def stored(conn: sqlite3.Connection, address_id: str, preset: str) -> sqlite3.Row | None:
@@ -174,18 +176,18 @@ def stored(conn: sqlite3.Connection, address_id: str, preset: str) -> sqlite3.Ro
 
 def passed(conn: sqlite3.Connection, address_id: str, preset: str, d: str | None = None) -> bool:
     row = stored(conn, address_id, preset)
-    return bool(row and row["passed_at"] and row["ollama_digest"] == (d or digest()))
+    return bool(row and row["passed_at"] and row["ollama_digest"] == (d or digest(conn)))
 
 
 def compute(conn: sqlite3.Connection, address_id: str) -> gate.Gate:
     a = conn.execute("SELECT sensitivity, preset FROM addresses WHERE address_id = ?",
                      (address_id,)).fetchone()  # fmt: skip
-    sens, preset, d = str(a["sensitivity"]), str(a["preset"]), digest()
+    sens, preset, d = str(a["sensitivity"]), str(a["preset"]), digest(conn)
     rows = conn.execute(
         "SELECT i.*, s.classification AS s_cls, s.plan AS s_plan FROM items i"
         " JOIN fallback_shadow s USING (stable_id) WHERE i.address_id = ? AND s.digest = ?"
         " AND s.outcome = 'ok'", (address_id, d)).fetchall()  # fmt: skip
-    labels = policy.labels(load_schema_v1(), config.current_rules(conn))
+    labels = policy.labels(config.current_schema(conn), config.current_rules(conn))
     n = ok = misses = unsafe = 0
     for r in rows:
         unsafe += gate.unsafe(json.loads(r["s_plan"] or "{}"), fallback=True)
@@ -243,7 +245,7 @@ SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the inputs last computed (th
 
 def tick(conn: sqlite3.Connection, clock: Clock) -> None:
     """Record and announce the fallback's gate once it is met for the digest."""
-    d = digest()
+    d = digest(conn)
     for aid, preset in _on(conn):
         if passed(conn, aid, preset, d):
             continue
@@ -290,7 +292,7 @@ def _on(conn: sqlite3.Connection) -> list[tuple[str, str]]:
 def hand_off(conn: sqlite3.Connection, clock: Clock) -> int:
     """Each tick: hand items that waited too long to the local model; returns how many."""
     now = clock.now()
-    d = digest()
+    d = digest(conn)
     moved = 0
     for aid, preset in _on(conn):
         h = hours(conn, aid)
@@ -344,7 +346,7 @@ SHADOW = (
 
 def shadow_addresses(conn: sqlite3.Connection) -> list[str]:
     """Addresses with shadow work waiting (not paused), oldest work first."""
-    d = digest()
+    d = digest(conn)
     out: list[str] = []
     for aid, preset in _on(conn):
         paused = conn.execute("SELECT paused FROM addresses WHERE address_id = ?",
@@ -374,7 +376,7 @@ def shadow_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: o
                      (item["address_id"],)).fetchone()  # fmt: skip
     tags = {"address_id": item["address_id"], "preset": a["preset"], "stage": a["stage"]}
     sid = str(item["stable_id"])
-    schema = load_schema_v1()
+    schema = config.current_schema(conn)
     ex = conn.execute("SELECT classifier_text, actor_text FROM excerpts WHERE stable_id = ?",
                       (sid,)).fetchone()  # fmt: skip
     metrics = None
@@ -411,7 +413,8 @@ def shadow_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: o
                        metrics=metrics, **tags)  # fmt: skip
     plan = {"rule": p.rule_id, "to_actor": p.to_actor, "high_risk": p.high_risk,
             "payment_or_fraud": p.payment_or_fraud, "actor": proposed}  # fmt: skip
-    _store(conn, clock, item, ready.digest, "ok", cls, plan)
+    # keyed by the schema it was asked with, not one applied during the call (OD-478)
+    _store(conn, clock, item, claude_pins.local_key(schema), "ok", cls, plan)
     return ItemResult("ok", metrics)
 
 
@@ -420,7 +423,7 @@ def _failed(conn: sqlite3.Connection, clock: Clock, ready: ollama.Ready, item: s
             outcome: ollama.Outcome) -> ItemResult:  # fmt: skip
     ollama.record_call(conn, clock, role="fallback_shadow", outcome=outcome, digest=ready.digest,
                        metrics=metrics, **tags)  # fmt: skip
-    _store(conn, clock, item, ready.digest, "failed", None, None)
+    _store(conn, clock, item, digest(conn), "failed", None, None)
     return ItemResult("failed", metrics)
 
 
@@ -446,4 +449,4 @@ def classify(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
     (so it counts toward neither gate)."""
     return classifier.classify_item(conn, clock, client, ready, item,
                                     expected=Status.AWAITING_CLAUDE,
-                                    pins={"pin_key": ready.digest, "fallback": True})  # fmt: skip
+                                    pins={"pin_key": digest(conn), "fallback": True})  # fmt: skip

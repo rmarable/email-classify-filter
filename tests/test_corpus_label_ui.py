@@ -13,9 +13,10 @@ import pytest
 from ecf import cli_corpus_label as ui
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
-from ecf.schema import load_schema_v1
+from ecf.schema import extend_schema, load_schema
 from ecf_server import corpus_session as cs
 from ecf_server.clock import FakeClock
+from tests.test_claude_review import EXT
 from tests.test_corpus import SECRET, fetch, req, server_with
 
 ANSWERS = ["1", "2", "y", "n", "y", "y", "1", "1"]  # invoice, medium, ..., vendor, none
@@ -24,14 +25,19 @@ ANSWERS = ["1", "2", "y", "n", "y", "y", "1", "1"]  # invoice, medium, ..., vend
 class FakeClient:
     """Routes the label screen's requests to the service's session code, in-process."""
 
-    def __init__(self) -> None:
+    def __init__(self, extension: dict[str, Any] | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.extension = extension  # the applied schema extension `GET /v1/schema` reports
 
     def request(self, method: str, path: str, json: Any = None, *, auth: bool = True,
                 timeout: float | None = None) -> Any:  # fmt: skip
         del auth, timeout
         self.calls.append((method, path))
         parts = path.strip("/").split("/")
+        if path == "/v1/schema":
+            schema = extend_schema(load_schema(), self.extension)
+            return {"version": schema.version, "extension": self.extension,
+                    "digest": schema.digest}  # fmt: skip
         if method == "POST" and path == "/v1/corpus/session":
             return cs.open_session(json["path"], json["passphrase"], lambda: 0.0)
         s = cs.get(parts[3], lambda: 0.0)
@@ -94,7 +100,7 @@ def test_quitting_in_the_middle_of_a_message_saves_nothing_for_it(made: Path) ->
 
 
 def test_answers_take_numbers_values_or_yes_no() -> None:
-    f = load_schema_v1().fields
+    f = load_schema().fields
     assert ui.parse_answer(f["category"], "1") == "invoice"
     assert ui.parse_answer(f["category"], "bug_report") == "bug_report"
     assert ui.parse_answer(f["category"], "99") is None
@@ -114,10 +120,11 @@ def test_the_screen_hides_injection_text_until_revealed() -> None:
 
 def test_each_field_is_shown_with_its_meaning_and_numbered_choices() -> None:
     """Operator feedback during test 1: the one-line prompt was too terse."""
-    f = load_schema_v1().fields
+    f = load_schema().fields
     cat = "\n".join(ui.field_block(f["category"], 1, 8))
     assert "Field 1 of 8: category" in cat and "What this email is primarily about." in cat
-    assert "12  notification" in cat and "account activity" in cat
+    assert "12  notification" in cat and "fits no other value" in cat
+    assert "14  account_security" in cat
     assert "Type the number or the name." in cat
     yn = "\n".join(ui.field_block(f["requires_reply"], 4, 8))
     assert "y  yes" in yn and "Type y or n." in yn
@@ -162,3 +169,30 @@ def cs_key(corpus: Path, index: int) -> cl.Key:
         return (str(row["key"]["content_hash"]), str(row["key"]["identity_digest"]))
     finally:
         cs.release(opened["session_id"])
+
+
+def test_every_effective_field_is_asked_and_extension_fields_are_optional(made: Path) -> None:
+    """Schema extensions (SCHEMA-V2-PLAN 4.3): the screen asks the extension fields after the
+    shipped ones; a label saved before the extension still loads, and relabelling adds them."""
+    ui.label(FakeClient(), made, SECRET, read=script("", *ANSWERS, "q"), write=lambda _s: None,
+             today=date(2026, 10, 7), shuffle=lambda _x: None)  # fmt: skip
+    screen: list[str] = []
+    prompts: list[str] = []
+    answers = ["", *[""] * 8, "2", "y"]  # keep each saved value; contract_stage draft; lawyer yes
+
+    def read(prompt: str) -> str:
+        prompts.append(prompt)
+        return answers.pop(0)
+
+    [done] = cl.load(cl.path_for(made)).values()
+    index = next(i for i in (1, 2, 3) if cs_key(made, i) == done.key)
+    ui.label(FakeClient(EXT), made, SECRET, read=read, write=screen.append,
+             today=date(2026, 10, 8), again=frozenset({index}),
+             shuffle=lambda _x: None)  # fmt: skip
+    assert prompts[-2:] == ["contract_stage > ", "lawyer_involved > "]
+    assert "Field 9 of 10: contract_stage" in "".join(screen)
+    assert "legal_notice" in "".join(screen)  # the added category value is offered
+    schema = extend_schema(load_schema(), EXT)
+    [after] = cl.load(cl.path_for(made), schema).values()
+    assert after.labels is not None and after.labels["contract_stage"] == "draft"
+    assert after.labels["lawyer_involved"] is True and after.labels["category"] == "invoice"

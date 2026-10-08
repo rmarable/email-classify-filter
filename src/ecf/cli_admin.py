@@ -164,6 +164,18 @@ STEP_UP_KEYS: dict[str, Callable[[LocalClient, str, str | None], None]] = {
 }
 
 
+def _echo_schema(preview: dict[str, Any] | None) -> None:
+    """The extension's budget and the prompt lines it adds or drops (OD-478)."""
+    if not preview:
+        return
+    typer.echo(preview["budget"])
+    lines: list[str] = preview["prompt_diff"]
+    if lines:
+        typer.echo("classifier prompt:")
+        for line in lines:
+            typer.echo(f"  {line}")
+
+
 def _config_commands(
     config_app: typer.Typer, rules_app: typer.Typer, paths: Callable[[], Paths]
 ) -> None:
@@ -181,6 +193,7 @@ def _config_commands(
                 return
             for ch in plan["changes"]:
                 typer.echo(f"{ch['section']}: {ch['change']}")
+            _echo_schema(plan.get("schema"))
             if not yes and not typer.confirm("Apply these changes?", default=False):
                 raise typer.Exit(1)
             with_step_up(c, lambda n: c.request("POST", "/v1/config/apply",

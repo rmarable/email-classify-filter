@@ -11,7 +11,7 @@ from: "Sam Ortiz <sam-ortiz@freemail.example>"
 subject: "Book club moved to Thursday"
 date: 2026-10-02T17:00:00Z
 expected:
-  labels: {category: other, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none, sender_type: unknown}
+  labels: {category: other, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none, sender_type: person}
   rule: otherwise
 ---
 Hi all, book club is on Thursday this month instead of Wednesday. Same time, same room

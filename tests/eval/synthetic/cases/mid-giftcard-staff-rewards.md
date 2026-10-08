@@ -11,7 +11,7 @@ date: 2026-11-11T12:00:00Z
 review: Escalate, as spam_or_phishing? Preview run - category expected spam_or_phishing, model customer_request; fraud_risk expected medium, model low.
 author: claude
 expected:
-  labels: {category: spam_or_phishing, sender_type: staff, fraud_risk: medium}
+  labels: {category: spam_or_phishing, sender_type: team, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -5,6 +5,7 @@ leases and pause, unloading, eval exclusivity, round scheduling."""
 from __future__ import annotations
 
 import itertools
+import json
 import os
 import sqlite3
 import subprocess
@@ -180,6 +181,40 @@ def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
     _items(conn, clock, "hr", 1)
     _round(conn, clock, Work(), notifier=n)
     assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
+
+
+def test_the_failure_alert_names_the_schema_extension_when_prompts_were_cut(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    ext = {"fields": {"legal_risk": {"type": "boolean", "description": "A legal risk."}}}
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.schema', ?, ?, 'test')",
+                     (json.dumps(ext), to_ts(clock.now())))  # fmt: skip
+    for _ in range(2):
+        ollama.record_call(conn, clock, role="classifier", outcome="truncated", digest="d",
+                           metrics=None)  # fmt: skip
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", modelq.FAILED_ALERT_AFTER)
+    n = FakeNotifier()
+    for _ in range(modelq.MAX_ATTEMPTS):
+        _round(conn, clock, Work(outcome="failed"), notifier=n)
+    assert any("2 classifier prompts came near the context window; the schema extension" in body
+               for _t, body in n.sent)  # fmt: skip
+
+
+def test_the_failure_alert_says_nothing_of_an_extension_without_one(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    ollama.record_call(conn, clock, role="classifier", outcome="truncated", digest="d",
+                       metrics=None)  # fmt: skip
+    add_address(conn, clock, "ap")
+    _items(conn, clock, "ap", modelq.FAILED_ALERT_AFTER)
+    n = FakeNotifier()
+    for _ in range(modelq.MAX_ATTEMPTS):
+        _round(conn, clock, Work(outcome="failed"), notifier=n)
+    assert any("failed on 5 items" in body for _t, body in n.sent)
+    assert not any("schema extension" in body for _t, body in n.sent)
 
 
 def test_a_server_fault_mid_round_stops_without_counting_an_attempt(

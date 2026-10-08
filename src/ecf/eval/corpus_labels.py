@@ -3,9 +3,11 @@
 They sit beside the corpus file as `<corpus>.labels.jsonl` (0600, never in git), one row per
 message, keyed by the message's `content_hash` and `identity_digest` (which survive a re-fetch or a
 merge). A row holds the schema's field values, or a mark: `s` (skipped) or `u` (unsure), both left
-out of scoring. Nothing in a row comes from the message's text. Rows are written sorted by key and
-`date` changes only when the label does, so the file's hash, which becomes part of a run's set
-version, moves only with the labels.
+out of scoring. Against the effective schema, every shipped field is required, an extension
+field is optional (labels made before the extension still load) and an unknown field is refused.
+Nothing in a row comes from the message's text. Rows are written sorted by key and `date` changes
+only when the label does, so the file's hash, which becomes part of a run's set version, moves
+only with the labels.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FieldKind, load_schema_v1
+from ecf.schema import CompiledSchema, FieldKind, load_schema, v1_values
 
 SUFFIX = ".labels.jsonl"
 MARKS = ("s", "u")
@@ -32,7 +34,7 @@ Key = tuple[str, str]  # (content_hash, identity_digest)
 class Label:
     key: Key
     corpus_id: str
-    labels: dict[str, str | bool] | None  # every schema field, or None with a mark
+    labels: dict[str, str | bool] | None  # the schema's fields, or None with a mark
     mark: str | None  # "s" skipped, "u" unsure
     date: str
 
@@ -52,13 +54,17 @@ def path_for(corpus: Path) -> Path:
     return corpus.with_name(corpus.name + SUFFIX)
 
 
-def check_values(values: dict[str, Any]) -> dict[str, str | bool]:
-    """Every schema field, each a value from its closed vocabulary."""
-    schema = load_schema_v1()
-    if set(values) != set(schema.fields):
-        raise InvalidInputError("a label needs exactly the schema's fields")
+def check_values(values: dict[str, Any], schema: CompiledSchema) -> dict[str, str | bool]:
+    """Every shipped field and any extension fields of `schema`, each a value from its closed
+    vocabulary; no other field."""
+    optional = set(schema.extension_fields)
+    if not set(schema.fields) - optional <= set(values) <= set(schema.fields):
+        raise InvalidInputError("a label needs exactly the schema's fields (extension fields"
+                                " may be left out)")  # fmt: skip
     out: dict[str, str | bool] = {}
     for name, spec in schema.fields.items():
+        if name not in values:
+            continue
         v = values[name]
         ok = isinstance(v, bool) if spec.kind is FieldKind.BOOLEAN else v in spec.values
         if not ok:
@@ -68,16 +74,20 @@ def check_values(values: dict[str, Any]) -> dict[str, str | bool]:
 
 
 def make(key: Key, corpus_id: str, values: dict[str, Any] | None, mark: str | None,
-         today: date) -> Label:  # fmt: skip
+         today: date, schema: CompiledSchema | None = None) -> Label:  # fmt: skip
+    """A label checked against `schema`, the effective one (default: the shipped one)."""
     if (values is None) == (mark is None):
         raise InvalidInputError("a label is either values or a mark (s or u)")
     if mark is not None and mark not in MARKS:
         raise InvalidInputError("a mark is s (skip) or u (unsure)")
-    return Label(key, corpus_id, check_values(values) if values is not None else None, mark,
-                 today.isoformat())  # fmt: skip
+    checked = check_values(values, schema or load_schema()) if values is not None else None
+    return Label(key, corpus_id, checked, mark, today.isoformat())
 
 
-def load(path: Path) -> dict[Key, Label]:
+def load(path: Path, schema: CompiledSchema | None = None) -> dict[Key, Label]:
+    """The labels file, each row checked against `schema` (default: the shipped one); a v1 value
+    is read as its v2 value (`ecf.schema.V1_VALUE_ALIASES`)."""
+    schema = schema or load_schema()
     if not path.exists():
         return {}
     out: dict[Key, Label] = {}
@@ -88,7 +98,8 @@ def load(path: Path) -> dict[Key, Label]:
             r = json.loads(line)
             key = (str(r["key"]["content_hash"]), str(r["key"]["identity_digest"]))
             raw = r.get("labels")
-            values = check_values(raw) if raw is not None else None
+            # a label made under schema v1 reads its v1 values as v2's (`staff` -> `team`)
+            values = check_values(v1_values(raw, schema), schema) if raw is not None else None
             out[key] = Label(key, str(r["corpus_id"]), values, r.get("mark"), str(r["date"]))
         except (ValueError, KeyError, TypeError) as exc:
             raise InvalidInputError(f"{path}: line {n} isn't a label row") from exc

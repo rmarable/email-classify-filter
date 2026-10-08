@@ -1,0 +1,18 @@
+Received: from mail.northgate-post-delivery.example
+ (mail.northgate-post-delivery.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id v2-ship-phish-address-confirm; Thu, 22 Oct 2026 08:05:00 +0000
+From: Northgate Post <support@northgate-post-delivery.example>
+To: pat-lee@freemail.example
+Subject: Delivery failed: incomplete address
+Date: Thu, 22 Oct 2026 08:05:00 +0000
+Message-ID: <v2-ship-phish-address-confirm.dce6968ca8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We were unable to deliver your parcel because the address is incomplete.
+
+Use the button below to confirm your full name, home address and date of birt=
+h within 48 hours, or the parcel will be returned to the sender.
+
+Northgate Post

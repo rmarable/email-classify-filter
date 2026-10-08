@@ -1,0 +1,20 @@
+Received: from mail.maple-market.example (mail.maple-market.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-acct-two-step-enabled; Sun,
+ 11 Oct 2026 15:30:00 +0000
+From: Maple Market Account Team <security@maple-market.example>
+To: pat-lee@freemail.example
+Subject: Two-step verification is on
+Date: Sun, 11 Oct 2026 15:30:00 +0000
+Message-ID: <v2-acct-two-step-enabled.0281451465@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+Two-step verification is now on for your Maple Market account. From now on we=
+ will send a code to your phone ending 0142 when you sign in on a new device.
+
+You can change this in your account settings at any time.
+
+Maple Market

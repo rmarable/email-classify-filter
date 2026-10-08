@@ -4,7 +4,8 @@ R66, R68, R71, R122, R141, R155, R197).
 The service opens the corpus (one decrypted session) and serves one message at a time: headers,
 authentication, attachment names, a few facts and keyword hits, and the stored excerpt with text
 addressed to an automated reader removed. No model output is ever shown or loaded. You author
-every schema field from its closed list, or mark the message `s` (skip) or `u` (unsure); both are
+every field of the effective schema (the shipped one plus any extension, from `GET /v1/schema`)
+from its closed list, or mark the message `s` (skip) or `u` (unsure); both are
 left out of scoring. Labels are saved after each message, beside the corpus, so you can stop with
 `q` and resume. The screen is the terminal's alternate screen, left on every exit path, so the mail
 stays out of the scrollback (a terminal set to keep alternate-screen lines still keeps them; SPEC
@@ -22,11 +23,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from types import FrameType
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
-from ecf.schema import FieldKind, FieldSpec, load_schema_v1
+from ecf.schema import CompiledSchema, FieldKind, FieldSpec, extend_schema, load_schema
 from ecf.text import plain
 
 ALT_ON, ALT_OFF, CLEAR = "\x1b[?1049h", "\x1b[?1049l", "\x1b[H\x1b[2J"
@@ -175,13 +176,19 @@ def _view(item: dict[str, Any], heading: str, read: Callable[[str], str],
             return a
 
 
+def effective_schema(c: Client) -> CompiledSchema:
+    """The service's effective schema: the shipped one plus the applied extension."""
+    ext: Any = c.request("GET", "/v1/schema").get("extension")
+    return extend_schema(load_schema(), cast(dict[str, Any], ext) if ext else None)
+
+
 def _author(read: Callable[[str], str], write: Callable[[str], None],
-            before: dict[str, str | bool] | None = None
+            before: dict[str, str | bool] | None = None, schema: CompiledSchema | None = None
             ) -> tuple[dict[str, Any] | None, str | None]:  # fmt: skip
     """Every field's value, or (None, mark); raises _Mark(q) to quit. `before` is the saved
     label when relabelling."""
     values: dict[str, Any] = {}
-    fields = list(load_schema_v1().fields.values())
+    fields = list((schema or load_schema()).fields.values())
     try:
         for n, spec in enumerate(fields, 1):
             current = (before or {}).get(spec.name)
@@ -227,7 +234,12 @@ def label(  # noqa: PLR0913 - the client, the file, the terminal and what to off
     del secret
     sid, corpus_id = str(opened["session_id"]), str(opened["corpus_id"])
     path = cl.path_for(corpus)
-    labels = cl.load(path)
+    try:
+        schema = effective_schema(c)
+        labels = cl.load(path, schema)
+    except BaseException:
+        c.request("DELETE", f"/v1/corpus/session/{sid}")
+        raise
     tally = Tally()
     leave = _screen_guard(write)
     try:
@@ -241,11 +253,12 @@ def label(  # noqa: PLR0913 - the client, the file, the terminal and what to off
                 break
             try:
                 values, mark = (
-                    (None, a) if a in cl.MARKS else _author(read, write, _saved(labels, k))
-                )
+                    (None, a) if a in cl.MARKS
+                    else _author(read, write, _saved(labels, k), schema)
+                )  # fmt: skip
             except _Mark:
                 break
-            cl.put(labels, cl.make(_key(k), corpus_id, values, mark, today))
+            cl.put(labels, cl.make(_key(k), corpus_id, values, mark, today, schema))
             cl.save(path, labels)
             _count(tally, item, values, mark)
     finally:
@@ -285,8 +298,13 @@ def _key(k: dict[str, Any]) -> cl.Key:
 
 
 def summary(t: Tally, labels_path: Path) -> list[str]:
+    rows = (
+        sum(1 for x in labels_path.read_text(encoding="utf-8").splitlines() if x.strip())
+        if labels_path.exists()
+        else 0
+    )  # one row per message, written by `cl.save`
     lines = [f"labelled {t.labelled}, skipped {t.skipped}, unsure {t.unsure}; labels in"
-             f" {labels_path} ({len(cl.load(labels_path))} in all)"]  # fmt: skip
+             f" {labels_path} ({rows} in all)"]  # fmt: skip
     if t.reveals:
         lines.append(f"redacted text shown {t.reveals} time(s)")
     if t.keyword_hits:

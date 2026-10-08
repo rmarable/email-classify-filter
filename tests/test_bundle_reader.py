@@ -46,6 +46,8 @@ KEY_TEXT = backup_key.key_text(ROOT)
 OTHER = bytes([5]) * 32
 PASS = "maple orbit candle river stone"
 LABEL = json.dumps({"actions": [{"name": "label", "target": "invoice"}]})
+OLDER = export_bundle.DATA_FORMAT - 1  # the oldest format import still reads
+NEWER = export_bundle.DATA_FORMAT + 1
 
 
 @pytest.fixture
@@ -165,7 +167,7 @@ def _manifest(conn: sqlite3.Connection, files: dict[str, bytes], **over: Any) ->
     schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
     m: dict[str, Any] = {
         "install_id": "a" * 32, "kind": "scheduled", "created_at": "2026-10-03T00:00:00.000000Z",
-        "seq": 1, "data_format": 1, "schema_version": schema,
+        "seq": 1, "data_format": OLDER, "schema_version": schema,
         "files": {n: hashlib.sha256(b).hexdigest() for n, b in files.items()},
         "counts": {n.removeprefix("tables/").removesuffix(".jsonl"): len(b.splitlines())
                    for n, b in files.items()},
@@ -177,7 +179,7 @@ def _bundle(conn: sqlite3.Connection, out: Path, plaintext: bytes, **header: Any
     d = backup_key.derive(OTHER)
     schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
     h = {"install_id": "a" * 32, "kind": "scheduled", "created_at": "2026-10-03T00:00:00.000000Z",
-         "seq": 1, "data_format": 1, "schema_version": schema} | header  # fmt: skip
+         "seq": 1, "data_format": OLDER, "schema_version": schema} | header  # fmt: skip
     data = export_bundle.seal(_age.encrypt(plaintext, d.public.recipient), h, d.signing_seed)
     path = out / f"crafted-{hashlib.sha256(data).hexdigest()[:8]}.ecfb"
     path.write_bytes(data)
@@ -288,7 +290,7 @@ def test_versions(conn: sqlite3.Connection, out: Path) -> None:
     files = {"tables/addresses.jsonl": ROWS}
     schema = int(conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0])
     for over, why in (({"schema_version": schema + 1}, "newer ecf"),
-                      ({"data_format": 3}, "data format 3"),
+                      ({"data_format": NEWER}, f"data format {NEWER}"),
                       ({"seq": 9}, "disagree on seq")):  # fmt: skip
         header = {k: v for k, v in over.items() if k != "seq"}
         m = _manifest(conn, files, **over)

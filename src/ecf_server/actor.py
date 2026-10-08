@@ -11,7 +11,7 @@ answer one of its questions (`clarified`). One request per item:
   `needs_clarification`; `target` is one of the known label names or `move_folders`, or empty; and
   `reason`, capped, with links, addresses and phone numbers removed before it is stored or shown
   (§8.5), and labelled as model output; `text`, empty except for `draft_reply`, where it holds the
-  draft (asked for at most 1,500 characters here, which fits the 4,096-token context; Claude's
+  draft (asked for at most 1,500 characters here, which fits the 6,144-token context; Claude's
   may be 4,000).
 - **Drafts and sends** (V1.5, OD-317): `draft_reply` is offered when the email needs a reply;
   `reply_template` too when a template is enabled, and `forward_internal` when the forward
@@ -36,7 +36,6 @@ import sqlite3
 from typing import Any
 
 from ecf.ids import StableId
-from ecf.schema import load_schema_v1
 from ecf_server import answers, decide, items, ollama, outbound_plan, policy
 from ecf_server.classifier import fit
 from ecf_server.clock import Clock
@@ -232,7 +231,7 @@ def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
              item: sqlite3.Row) -> ItemResult:  # fmt: skip
     """The model queue's `Work` for items waiting for the actor."""
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema_v1(), ctx.rules)
+    labels = policy.labels(ctx.rules.schema, ctx.rules)
     folders = ctx.move_folders
     state: dict[str, Any] = json.loads(item["proposal"] or "{}")
     answered: list[dict[str, Any]] = [r for r in state.get("answers", []) if r.get("answer")]

@@ -15,15 +15,15 @@ import httpx
 import pytest
 
 from ecf.ids import AddressId, StableId
-from ecf.schema import load_schema_v1
-from ecf_server import classifier, items, modelq, ollama
+from ecf.schema import load_schema
+from ecf_server import classifier, claude_pins, items, modelq, ollama
 from ecf_server.clock import FakeClock
 from ecf_server.notify import FakeNotifier
 from ecf_server.ollama import Client
 from tests.test_modelq import add_address
 from tests.test_models import PIN, FakeOllama, check_kw
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 GOOD = {"category": "invoice", "priority": "medium", "requires_action": True,
         "requires_reply": False, "payment_related": True, "deadline_mentioned": False,
@@ -112,7 +112,9 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
     assert json.loads(row["classification"]) == GOOD
     assert json.loads(row["pinned_models"]) == {"classifier": PIN.ecf_tag, "digest": PIN.digest,
-                                                "schema": 1, "pin_key": PIN.digest}  # fmt: skip
+                                                "schema": SCHEMA.digest,
+                                                "pin_key": claude_pins.local_key()}  # fmt: skip
+    assert row["schema_version"] == 2
     assert row["batch_id"].startswith("single:")
     [body] = fake.bodies
     assert body["model"] == PIN.ecf_tag and body["format"] == SCHEMA.json_schema()
@@ -214,3 +216,31 @@ def test_the_real_model_classifies_the_starter_cards(
     client.close()
     outcomes = {r[0] for r in conn.execute("SELECT outcome FROM model_calls")}
     assert outcomes == {"ok"}
+
+
+def test_a_schema_change_during_the_call_asks_again_instead_of_recording(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """`ecf config apply` changes the schema while the model answers: the answer (to the old
+    schema) isn't recorded under the new key; the item stays new and is asked again (OD-478)."""
+    from ecf_server.clock import to_ts  # noqa: PLC0415
+    from ecf_server.db import write_tx  # noqa: PLC0415
+
+    class Applying(ChatOllama):
+        def handler(self, req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/api/chat":
+                with write_tx(conn):
+                    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                                 " VALUES ('config.schema', ?, ?, 'test')",
+                                 (json.dumps({"category_values": {"legal_notice": "Legal."}}),
+                                  to_ts(clock.now())))  # fmt: skip
+            return super().handler(req)
+
+    add_address(conn, clock, "ap")
+    sid = _item(conn, clock, "i1", "Invoice 4471 for $4,200 is due Friday.")
+    fake = Applying(json.dumps(GOOD))
+    result = classifier.classify_item(conn, clock, fake.client(), _ready(), _row(conn, sid))
+    assert result.outcome == "skipped"
+    row = _row(conn, sid)
+    assert row["status"] == "new" and row["classification"] is None
+    assert classifier.store(conn, clock, sid, GOOD, {}, schema_digest=SCHEMA.digest) is False

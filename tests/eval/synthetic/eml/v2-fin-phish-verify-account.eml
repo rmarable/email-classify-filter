@@ -1,0 +1,22 @@
+Received: from mail.harbor-savings-verify.example
+ (mail.harbor-savings-verify.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id v2-fin-phish-verify-account; Tue, 06 Oct 2026 03:12:00 +0000
+From: Harbor Savings Security <alerts@harbor-savings-verify.example>
+To: pat-lee@freemail.example
+Subject: Action required: verify your account within 24 hours
+Date: Tue, 06 Oct 2026 03:12:00 +0000
+Message-ID: <v2-fin-phish-verify-account.5b4c494c34@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear customer,
+
+We noticed unusual activity and have limited the checking account ending 0003.
+To restore access, reply to this message within 24 hours with your online ban=
+king
+user name, password and the debit card number.
+
+If we do not hear from you, the account will be closed and the balance held.
+
+Harbor Savings Security Team

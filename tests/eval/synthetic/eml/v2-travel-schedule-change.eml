@@ -1,0 +1,22 @@
+Received: from mail.northwindair.example (mail.northwindair.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-travel-schedule-change;
+ Mon, 19 Oct 2026 06:20:00 +0000
+From: Northwind Air <changes@northwindair.example>
+To: pat-lee@freemail.example
+Subject: Schedule change to your booking 4471
+Date: Mon, 19 Oct 2026 06:20:00 +0000
+Message-ID: <v2-travel-schedule-change.ab9c4c43f8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+Your return flight NW 417 on Monday 2026-11-02 now departs at 21:35 instead o=
+f 18:10.
+
+Please accept the new time, or choose another flight at no charge, in Manage =
+booking by
+2026-10-23. If we hear nothing, we will keep you on the new time.
+
+Northwind Air

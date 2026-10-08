@@ -1,0 +1,18 @@
+Received: from mail.maple-market-security.example
+ (mail.maple-market-security.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id v2-acct-phish-callback-signin; Thu, 15 Oct 2026 22:40:00 +0000
+From: Maple Market Security <alerts@maple-market-security.example>
+To: pat-lee@freemail.example
+Subject: Sign-in from a new location
+Date: Thu, 15 Oct 2026 22:40:00 +0000
+Message-ID: <v2-acct-phish-callback-signin.8a073424e3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+A sign-in to your Maple Market account was made from a new location.
+
+If this was not you, call our security line on 555-0188 straight away so an a=
+gent can secure your account.
+
+Maple Market Security

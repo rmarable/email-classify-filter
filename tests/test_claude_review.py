@@ -16,8 +16,16 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import AddressId, StableId
-from ecf.schema import load_schema_v1
-from ecf_server import claude_pins, claude_queue, claude_review, decide, items, policy
+from ecf.schema import load_schema
+from ecf_server import (
+    claude_pins,
+    claude_queue,
+    claude_review,
+    config,
+    decide,
+    items,
+    policy,
+)
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -31,6 +39,24 @@ REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires
                                        "requires_action": True}  # fmt: skip
 ROUTINE: dict[str, Any] = REQUEST | {"requires_reply": False, "requires_action": False}
 S1, S2 = "session-one", "session-two"
+# a schema extension (SCHEMA-V2-PLAN step 4): one enum field, one boolean, one category value
+EXT: dict[str, Any] = {
+    "fields": {
+        "contract_stage": {"type": "enum", "description": "Where a contract discussed stands.",
+                           "values": {"none": "No contract discussed.",
+                                      "draft": "A draft is being exchanged."}},
+        "lawyer_involved": {"type": "boolean", "description": "A lawyer writes or is copied."},
+    },
+    "category_values": {"legal_notice": "Letter from a lawyer or court about us."},
+}  # fmt: skip
+
+
+def extend(conn: sqlite3.Connection, clock: FakeClock, ext: dict[str, Any] | None = None) -> None:
+    """Apply a schema extension (as `ecf config apply` would store it)."""
+    with write_tx(conn):
+        conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at, updated_by)"
+                     " VALUES ('config.schema', ?, ?, 'test')",
+                     (config.ordered_json(ext or EXT), to_ts(clock.now())))  # fmt: skip
 
 
 def add(conn: sqlite3.Connection, clock: FakeClock, aid: str, preset: str,
@@ -253,6 +279,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
         "attachments_meta": [{"name": "w9.pdf", "type": "application/pdf", "size": 1200}],
     }  # fmt: skip
     assert "category" in json.dumps(m["schema"])
+    assert m["schema_text"] == load_schema().prompt_block  # each field's and value's meaning
     flat = json.dumps(m)
     for fact in ("sender_seen_before", "auth_result", "bulk_corroborates", "triggers"):
         assert fact not in flat  # §7.2: computed facts never go to a model
@@ -267,6 +294,34 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
 
 
 # ---- submitting ------------------------------------------------------------------------------
+
+
+def test_the_classifier_gets_the_effective_schema_and_is_checked_against_it(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    sid = waiting_item(conn, clock, "c")
+    extend(conn, clock)
+    tok = token_for(queue(conn, clock), sid)
+    m = read_msg(conn, clock, S1, sid, tok)
+    assert m["schema_text"] == config.current_schema(conn).prompt_block
+    assert "Where a contract discussed stands." in m["schema_text"]
+    assert "legal_notice: Letter from a lawyer" in m["schema_text"]
+    assert {"contract_stage", "lawyer_involved"} <= set(m["schema"]["properties"])
+    assert "Where a contract" not in json.dumps(m["schema"])  # meanings only in schema_text
+    first = submit_classification(conn, clock, S1, sid, tok, REQUEST)
+    assert sorted(first["errors"]) == ["contract_stage: missing", "lawyer_involved: missing"]
+    full = REQUEST | {"category": "legal_notice", "contract_stage": "draft",
+                      "lawyer_involved": True}  # fmt: skip
+    assert submit_classification(conn, clock, S1, sid, tok, full)["accepted"] is True
+    assert json.loads(row(conn, sid)["classification"])["contract_stage"] == "draft"
+
+
+def test_check_classification_takes_the_schema() -> None:
+    base = load_schema()
+    assert claude_review.check_classification(REQUEST, base) == (REQUEST, [])
+    _, errors = claude_review.check_classification(REQUEST | {"contract_stage": "draft"}, base)
+    assert errors == ["contract_stage: not a field of the schema"]
 
 
 def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection,
@@ -286,6 +341,24 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     q = queue(conn, clock)
     assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}]
     assert [(i["id"], i["need"]) for i in q["items"]] == [(sid, "act")]
+
+
+def test_a_schema_change_while_held_releases_the_claim_for_a_new_classification(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    sid = waiting_item(conn, clock, "c")
+    tok = token_for(queue(conn, clock), sid)
+    held = claude_review.record_classification(conn, clock, S1, sid, tok, REQUEST,
+                                               agent_of(conn, sid))  # fmt: skip
+    assert isinstance(held, Hold)
+    extend(conn, clock)  # `ecf config apply` while the classification waits for telemetry
+    got = settled(conn, clock, held)
+    assert got["accepted"] is False and "schema changed" in got["errors"][0]
+    r = row(conn, sid)
+    assert r["status"] == "awaiting_claude" and r["classification"] is None
+    q = queue(conn, clock, "session-2")
+    assert [(i["id"], i["need"]) for i in q["items"]] == [(sid, "classify")]
 
 
 def test_an_invalid_classification_keeps_the_claim_three_times(
@@ -400,7 +473,7 @@ def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
 
 def test_a_hide_in_a_risky_batch_needs_approval() -> None:
     ctx = policy.Context(classification=ROUTINE | {"category": "marketing"}, facts=KNOWN_BULK,
-                         sensitivity="standard", rules=load_starter_rules(load_schema_v1()),
+                         sensitivity="standard", rules=load_starter_rules(load_schema()),
                          action_policy={}, move_folders=frozenset())  # fmt: skip
     labels = frozenset({"marketing"})
     plain = policy.proposal(ctx, policy.plan(ctx, labels), "archive", None, labels)

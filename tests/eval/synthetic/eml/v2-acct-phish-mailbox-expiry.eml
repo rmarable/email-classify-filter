@@ -1,0 +1,21 @@
+Received: from mail.freemail-accounts.example (mail.freemail-accounts.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-acct-phish-mailbox-expiry;
+ Tue, 13 Oct 2026 07:05:00 +0000
+From: Freemail Account Support <support@freemail-accounts.example>
+To: pat-lee@freemail.example
+Subject: Your password expires today
+Date: Tue, 13 Oct 2026 07:05:00 +0000
+Message-ID: <v2-acct-phish-mailbox-expiry.00448bf8e0@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear user,
+
+Your mailbox password expires today. To keep your current password and avoid =
+losing your messages, confirm it on the form linked in this email before midn=
+ight.
+
+Accounts not confirmed today will be suspended.
+
+Freemail Account Support
