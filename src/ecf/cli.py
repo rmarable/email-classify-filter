@@ -1185,17 +1185,36 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
 
 @eval_app.command("rescore")
 def eval_rescore(
-    result: Annotated[Path, typer.Argument(help="A corpus eval result file.")],
-    corpus: Annotated[Path, typer.Option("--corpus", help="The corpus it ran on.")],
+    result: Annotated[Path, typer.Argument(help="An eval result file.")],
+    corpus: Annotated[Path | None, typer.Option("--corpus", help="The corpus it ran on.")] = None,
+    synthetic: Annotated[
+        Path | None,
+        typer.Option(
+            "--synthetic",
+            help="The synthetic set folder: score a result made before schema v2"
+            " against its current labels, answers mapped to v2.",
+        ),
+    ] = None,
 ) -> None:
-    """Score a corpus result again against the corpus's current labels, without running the
-    models; the new file sits beside the original (§16.7)."""
+    """Score a corpus result again against the corpus's current labels, or a pre-v2 synthetic
+    result against the set's current labels, without running the models; the new file sits
+    beside the original (§16.7, §16.5)."""
     from ecf.eval.results import load_result as load  # noqa: PLC0415
     from ecf.eval.results import summary  # noqa: PLC0415
     from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
 
+    if (corpus is None) == (synthetic is None):
+        raise typer.BadParameter("give --corpus or --synthetic")
+    if synthetic is not None:
+        with LocalClient(_paths()) as c:
+            r = c.request("POST", "/v1/eval/rescore", {
+                "result": str(result.expanduser().absolute()),
+                "synthetic_root": str(synthetic.expanduser().absolute())}, timeout=600)  # fmt: skip
+        typer.echo(f"written: {r['path']}")
+        typer.echo(summary(load(Path(r["path"]))))
+        return
     require_terminal()
-    where = corpus.expanduser().absolute()
+    where = cast(Path, corpus).expanduser().absolute()
     secret = hidden(f"Passphrase for {where.name} (hidden): ")
     with LocalClient(_paths()) as c:
         body = {"path": str(where), "passphrase": secret}

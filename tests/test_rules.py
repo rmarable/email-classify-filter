@@ -3,10 +3,10 @@ from typing import Any
 import pytest
 
 from ecf.errors import InvalidInputError
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server.rules import Action, Hide, RuleInput, compile_rules, load_starter_rules
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 RULES = load_starter_rules(SCHEMA)
 BASE: dict[str, Any] = {
     "category": "other",
@@ -35,8 +35,8 @@ def names(d: Any) -> list[tuple[str, str | None]]:
         {"fraud_risk": "medium"},
         {"fraud_risk": "high"},
         {"category": "vendor_change_request"},
-        {"sender_type": "staff", "payment_related": True},  # "staff" from outside, about money
-        {"sender_type": "staff", "_facts": {"payment_keyword": True}},
+        {"sender_type": "team", "payment_related": True},  # "team" from outside, about money
+        {"sender_type": "team", "_facts": {"payment_keyword": True}},
         {"payment_related": True, "_facts": {"auth_result": "fail"}},
         {"_triggers": {"fraud"}},
         {"payment_related": True, "_facts": {"impersonates_internal": True}},  # OD-436
@@ -53,12 +53,13 @@ def test_fraud_guard(case: dict[str, Any]) -> None:
 
 
 def test_staff_internal_is_not_fraud() -> None:
-    assert run(facts={"sender_origin": "internal"}, sender_type="staff").rule_id == "otherwise"
+    assert run(facts={"sender_origin": "internal"}, sender_type="team").rule_id == "otherwise"
 
 
 def test_staff_from_outside_without_money_is_only_flagged() -> None:
-    """OD-262 (V1.3 step 12a): a list email the model called "staff" escalated as fraud."""
-    d = run(sender_type="staff")
+    """OD-262 (V1.3 step 12a): a list email the model called "staff" (v1; "team" in v2) escalated
+    as fraud."""
+    d = run(sender_type="team")
     assert d.rule_id == "fraud_weak"
     assert names(d) == [("label", "suspicious"), ("flag", None)] and d.hide is Hide.NEVER
 
@@ -195,9 +196,20 @@ def test_strict_values() -> None:
             compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
 
 
-def test_label_from_missing_field_is_a_clear_error() -> None:
+def test_label_from_a_field_the_item_lacks_is_dropped() -> None:
+    """An item classified before a field existed is still planned, without that label (C2)."""
     rules = compile_rules(
-        "version: 1\nrules:\n  - {id: a, then: [{label: {field: category}}]}\n", SCHEMA
+        "version: 1\nrules:\n  - {id: a, then: [{label: {field: category}}, flag]}\n", SCHEMA
     )
-    with pytest.raises(InvalidInputError, match="lacks"):
-        rules.evaluate(RuleInput({}, FACTS))
+    d = rules.evaluate(RuleInput({}, FACTS))
+    assert [a.name for a in d.actions] == ["flag"]
+
+
+def test_v1_values_in_a_rules_file_are_read_as_v2_and_named() -> None:
+    """A rules file written for schema v1 still applies (OD-475): `staff` is read as `team`."""
+    text = ("version: 1\nrules:\n  - {id: old, when: {field: sender_type, in: [staff]},"
+            " then: [flag]}\n  - {id: rest, actor: continue}\n")  # fmt: skip
+    rules = compile_rules(text, SCHEMA)
+    assert rules.aliased == ("old",)
+    assert rules.evaluate(RuleInput({"sender_type": "team"}, FACTS)).rule_id == "old"
+    assert compile_rules(text.replace("staff", "team"), SCHEMA).aliased == ()

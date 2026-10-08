@@ -10,12 +10,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ecf.schema import FieldKind, load_schema_v1
+from ecf.schema import FieldKind, load_schema
 from ecf_server import policy, precheck
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 STARTER = load_starter_rules(SCHEMA)
 LABELS = policy.labels(SCHEMA, STARTER)
 FOLDERS = frozenset({"Receipts"})

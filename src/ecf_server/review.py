@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     cards,
     claude_pins,
@@ -255,7 +255,7 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
 
 
 def _choices(field: str) -> list[str]:
-    spec = load_schema_v1().fields[field]
+    spec = load_schema().fields[field]
     return ["true", "false"] if spec.kind.value == "boolean" else list(spec.values)
 
 

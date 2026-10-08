@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import db, facts, precheck, rules, senders, stepup
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock, to_ts
@@ -147,7 +147,7 @@ def test_human_verified_turns_off_rule_1a_but_not_fraud_triggers(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     _setup(conn, clock)
-    starter = rules.load_starter_rules(load_schema_v1())
+    starter = rules.load_starter_rules(load_schema())
 
     def outcome(body: str) -> tuple[set[str], str]:
         found = _analyze(conn, clock, _mail(body))

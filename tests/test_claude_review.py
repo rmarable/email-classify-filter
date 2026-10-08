@@ -16,7 +16,7 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import AddressId, StableId
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import claude_pins, claude_queue, claude_review, decide, items, policy
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
@@ -400,7 +400,7 @@ def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
 
 def test_a_hide_in_a_risky_batch_needs_approval() -> None:
     ctx = policy.Context(classification=ROUTINE | {"category": "marketing"}, facts=KNOWN_BULK,
-                         sensitivity="standard", rules=load_starter_rules(load_schema_v1()),
+                         sensitivity="standard", rules=load_starter_rules(load_schema()),
                          action_policy={}, move_folders=frozenset())  # fmt: skip
     labels = frozenset({"marketing"})
     plain = policy.proposal(ctx, policy.plan(ctx, labels), "archive", None, labels)

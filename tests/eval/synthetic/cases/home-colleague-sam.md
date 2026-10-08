@@ -12,7 +12,7 @@ from: "Sam Rivera <sam-rivera@freemail.example>"
 subject: "Notes from Thursday's planning call"
 date: 2026-10-16T17:05:00Z
 expected:
-  labels: {category: other, sender_type: staff, requires_action: false, requires_reply: true, payment_related: false, fraud_risk: none}
+  labels: {category: other, sender_type: team, requires_action: false, requires_reply: true, payment_related: false, fraud_risk: none}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf.yamlio import load_yaml
 from ecf_server import addresses, internal, rules, slack_admin, stepup, templates
 from ecf_server.clock import Clock, to_ts
@@ -80,7 +80,7 @@ def current(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
     """The applied rules, or the starter rules when none were applied."""
-    schema = load_schema_v1()
+    schema = load_schema()
     stored = current(conn)["rules"]
     if stored is None:
         return rules.load_starter_rules(schema)
@@ -289,7 +289,7 @@ def _policy(v: Any) -> dict[str, dict[str, str]]:
 
 
 def _rules(v: Any, folders: list[str]) -> Any:
-    compiled = rules.compile_rules(canonical_json(v), load_schema_v1(), source="rules")
+    compiled = rules.compile_rules(canonical_json(v), load_schema(), source="rules")
     for r in compiled.rules:
         for a in r.then:
             if a.action == "move" and (not isinstance(a.target, str) or a.target not in folders):

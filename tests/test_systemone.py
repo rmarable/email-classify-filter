@@ -25,15 +25,26 @@ from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile
-from ecf.schema import load_schema_v1
-from ecf_server import claude_eval, db, evalrun, fallback, gate, modelq, models, ollama, systemone
+from ecf.schema import load_schema
+from ecf_server import (
+    claude_eval,
+    claude_pins,
+    db,
+    evalrun,
+    fallback,
+    gate,
+    modelq,
+    models,
+    ollama,
+    systemone,
+)
 from ecf_server.clock import FakeClock
 from ecf_server.ollama import Client, OllamaError
 from tests.test_classifier import ChatOllama
 from tests.test_evalrun import AC, BEC, SYNTHETIC
 from tests.test_models import PS_ENV, check_kw
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 CANARY = "CANARY-7f3a"
 
 
@@ -479,7 +490,7 @@ def test_a_gemma_run_still_records_preset_as_pair(
 ) -> None:
     _start(db_path, clock, root, ChatOllama(json.dumps(BEC)), ps=PS_ENV)
     row = conn.execute("SELECT pair, digest, metrics FROM eval_runs").fetchone()
-    assert row["pair"] == "gemma4-12b/local" and row["digest"] == ollama.load_pin().digest
+    assert row["pair"] == "gemma4-12b/local" and row["digest"] == claude_pins.local_key()
     assert json.loads(row["metrics"])["backend"] == "gemma"
 
 

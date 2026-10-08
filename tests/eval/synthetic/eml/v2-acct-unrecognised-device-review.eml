@@ -1,0 +1,24 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id v2-acct-unrecognised-device-review; Mon, 12 Oct
+ 2026 02:15:00 +0000
+From: Freemail Accounts <no-reply@freemail.example>
+To: pat-lee@freemail.example
+Subject: We blocked a sign-in attempt
+Date: Mon, 12 Oct 2026 02:15:00 +0000
+Message-ID:
+ <v2-acct-unrecognised-device-review.b9fe5eb77f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+We blocked a sign-in attempt on your account from a device we don't recognise=
+. The correct password was used.
+
+Next time you sign in as you usually do, please change your password and revi=
+ew the devices list in your security settings.
+
+We will never ask you to reply with your password or a code.
+
+Freemail Accounts

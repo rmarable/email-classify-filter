@@ -56,7 +56,7 @@ from pydantic import ValidationError
 
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import new_random_id
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     actor,
     addresses,
@@ -296,7 +296,7 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
     out: dict[str, Any] = {"id": sid, "need": claim["need"],
                            "untrusted_email": email, "notice": NOTICE}  # fmt: skip
     if claim["need"] == "classify":
-        out["schema"] = load_schema_v1().json_schema()
+        out["schema"] = load_schema().json_schema()
     else:
         ctx, p = decide.plan_for(conn, item)
         state: dict[str, Any] = json.loads(item["proposal"] or "{}")
@@ -304,7 +304,7 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
         out |= {
             "classification": ctx.classification,
             "actions": list(acts),
-            "labels": sorted(policy.labels(load_schema_v1(), ctx.rules)),
+            "labels": sorted(policy.labels(load_schema(), ctx.rules)),
             "move_folders": sorted(ctx.move_folders),
             "templates": sorted(ctx.templates) if "reply_template" in acts else [],
             "forward_to": sorted(ctx.forwards) if "forward_internal" in acts else [],
@@ -335,7 +335,7 @@ def check_classification(classification: Any) -> tuple[dict[str, Any] | None, li
     """The classification checked against the schema, or the errors: each names the field and the
     kind of problem, never the submitted value (`/ecf-review` and `/ecf-eval` alike)."""
     try:
-        return load_schema_v1().validate(classification).model_dump(mode="json"), []
+        return load_schema().validate(classification).model_dump(mode="json"), []
     except ValidationError as e:
         errors = [f"{'.'.join(str(x) for x in err['loc']) or 'classification'}: "
                   f"{_PROBLEMS.get(err['type'], err['type'])}" for err in e.errors()]  # fmt: skip
@@ -363,7 +363,7 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
 def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
                       proposal: dict[str, Any]) -> str | None:  # fmt: skip
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema_v1(), ctx.rules)
+    labels = policy.labels(load_schema(), ctx.rules)
     return check_proposal(proposal, labels, ctx.move_folders, actor.offered(ctx, p),
                           templates=ctx.templates, forwards=ctx.forwards)  # fmt: skip
 
@@ -444,7 +444,7 @@ def _apply_proposal(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, h
     if _proposal_problem(conn, item, proposal) is not None:
         return  # the rules changed while it was held; the item waits for the next round
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema_v1(), ctx.rules)
+    labels = policy.labels(load_schema(), ctx.rules)
     action = proposal["action"]
     got = {
         "action": str(action),

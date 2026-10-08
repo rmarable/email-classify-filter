@@ -26,7 +26,7 @@ from typing import Any, Protocol
 
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
-from ecf.schema import FieldKind, FieldSpec, load_schema_v1
+from ecf.schema import FieldKind, FieldSpec, load_schema
 from ecf.text import plain
 
 ALT_ON, ALT_OFF, CLEAR = "\x1b[?1049h", "\x1b[?1049l", "\x1b[H\x1b[2J"
@@ -181,7 +181,7 @@ def _author(read: Callable[[str], str], write: Callable[[str], None],
     """Every field's value, or (None, mark); raises _Mark(q) to quit. `before` is the saved
     label when relabelling."""
     values: dict[str, Any] = {}
-    fields = list(load_schema_v1().fields.values())
+    fields = list(load_schema().fields.values())
     try:
         for n, spec in enumerate(fields, 1):
             current = (before or {}).get(spec.name)

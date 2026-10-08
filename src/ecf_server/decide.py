@@ -30,7 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 from ecf.ids import AddressId, StableId, new_grant_id
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     approvals,
     claude_queue,
@@ -96,7 +96,7 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
 
 def plan_for(conn: sqlite3.Connection, item: sqlite3.Row) -> tuple[Context, Plan]:
     ctx = context(conn, item)
-    return ctx, policy.plan(ctx, policy.labels(load_schema_v1(), ctx.rules))
+    return ctx, policy.plan(ctx, policy.labels(load_schema(), ctx.rules))
 
 
 def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = None,

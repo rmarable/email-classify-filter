@@ -45,7 +45,7 @@
             "type": "string"
           },
           "classification": {
-            "description": "The classification (schema v1).",
+            "description": "The classification, in the schema get_message gave.",
             "type": "object"
           },
           "id": {

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FieldKind, load_schema_v1
+from ecf.schema import FieldKind, load_schema
 
 SUFFIX = ".labels.jsonl"
 MARKS = ("s", "u")
@@ -54,7 +54,7 @@ def path_for(corpus: Path) -> Path:
 
 def check_values(values: dict[str, Any]) -> dict[str, str | bool]:
     """Every schema field, each a value from its closed vocabulary."""
-    schema = load_schema_v1()
+    schema = load_schema()
     if set(values) != set(schema.fields):
         raise InvalidInputError("a label needs exactly the schema's fields")
     out: dict[str, str | bool] = {}

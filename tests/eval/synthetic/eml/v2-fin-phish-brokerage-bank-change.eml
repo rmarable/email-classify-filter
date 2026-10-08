@@ -1,0 +1,26 @@
+Received: from mail.bayline-invest-help.example
+ (mail.bayline-invest-help.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id v2-fin-phish-brokerage-bank-change; Thu, 08 Oct 2026 05:40:00 +0000
+From: Bayline Brokerage Support <support@bayline-invest-help.example>
+To: pat-lee@freemail.example
+Subject: Update your linked bank account before Friday
+Date: Thu, 08 Oct 2026 05:40:00 +0000
+Message-ID:
+ <v2-fin-phish-brokerage-bank-change.2be0ed88a0@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Bayline is moving to a new clearing bank. Withdrawals to your current linked =
+bank
+account will stop after Friday.
+
+To keep receiving funds, reply with the new account you want linked: bank nam=
+e,
+account number, routing number and the account holder's name. Our team will m=
+ake the
+change for you, so there is no need to sign in.
+
+Bayline Brokerage Support

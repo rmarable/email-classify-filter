@@ -35,13 +35,12 @@ from pathlib import Path
 from typing import Any
 
 from ecf.eval.metrics import wilson
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     claude_pins,
     config,
     decide,
     evalrun,
-    ollama,
     policy,
     review,
     slack_admin,
@@ -105,8 +104,8 @@ class Gate:
 
 
 def current_digest() -> str:
-    """Preset A's key: the pinned Ollama digest."""
-    return ollama.load_pin().digest
+    """Preset A's key: the pinned Ollama digest and the schema digest (OD-475)."""
+    return claude_pins.local_key()
 
 
 def pair_key(preset: str) -> str:
@@ -174,7 +173,7 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
 
 def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
     """OD-069: Fixes whose corrected labels reach a fraud or regulatory rule the model's didn't."""
-    labels = policy.labels(load_schema_v1(), config.current_rules(conn))
+    labels = policy.labels(load_schema(), config.current_rules(conn))
     n = 0
     for item in _items(conn, address_id, digest):
         if (

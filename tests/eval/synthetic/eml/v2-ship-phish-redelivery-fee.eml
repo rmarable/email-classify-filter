@@ -1,0 +1,18 @@
+Received: from mail.parcelwise-redeliver.example
+ (mail.parcelwise-redeliver.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id v2-ship-phish-redelivery-fee; Sat, 10 Oct 2026 06:35:00 +0000
+From: Parcelwise Delivery <redelivery@parcelwise-redeliver.example>
+To: pat-lee@freemail.example
+Subject: Parcel on hold: unpaid redelivery fee
+Date: Sat, 10 Oct 2026 06:35:00 +0000
+Message-ID: <v2-ship-phish-redelivery-fee.6bb85f7e8b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your parcel could not be delivered because a redelivery fee of 1.99 is unpaid.
+
+To release it, enter your card details on the payment page linked below withi=
+n 24 hours. Unclaimed parcels are destroyed after 3 days.
+
+Parcelwise Delivery Services

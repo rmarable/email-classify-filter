@@ -43,8 +43,10 @@ from ecf_server.stepup import person
 MAGIC = b"ECFB\x01"
 FORMAT = 1
 # the tables' JSON-lines layout; import accepts this and the one before (§11.9). 2 (V1.6): the
-# settings carry `config.org_addresses`, which a version on 1 would drop silently (OD-442)
-DATA_FORMAT = 2
+# settings carry `config.org_addresses`, which a version on 1 would drop silently (OD-442). 3
+# (v2.0.0): classifications follow schema v2 (`team`, the new values), which a version on 2
+# would misread as unknown values; a format-2 bundle is migrated on import (0034; OD-475)
+DATA_FORMAT = 3
 SIG_BYTES = 64
 MAX_HEADER = 16 * 1024
 SUFFIX = ".ecfb"

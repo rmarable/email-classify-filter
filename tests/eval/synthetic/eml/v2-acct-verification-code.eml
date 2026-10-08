@@ -1,0 +1,18 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id v2-acct-verification-code; Wed, 07 Oct 2026
+ 12:20:00 +0000
+From: Freemail Accounts <no-reply@freemail.example>
+To: pat-lee@freemail.example
+Subject: Your verification code
+Date: Wed, 07 Oct 2026 12:20:00 +0000
+Message-ID: <v2-acct-verification-code.c4ad4d81f9@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your verification code is 482913.
+
+Enter it on the sign-in screen to finish signing in. The code expires in 10 m=
+inutes.
+
+Never share this code with anyone. Freemail staff will never ask you for it.

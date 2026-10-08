@@ -28,7 +28,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf.schema import CompiledSchema, load_schema_v1
+from ecf.schema import CompiledSchema, load_schema
 from ecf_server import claude_pins, decide, items, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -113,7 +113,7 @@ def classify_item(
 ) -> ItemResult:
     """The model queue's `Work` for preset A (V1.3 step 3); also a C item the local fallback
     took at `awaiting_claude` (`expected`, with `pins` naming its key; V1.4 step 8)."""
-    schema = schema or load_schema_v1()
+    schema = schema or load_schema()
     pin = ollama.load_pin()
     addr = conn.execute("SELECT preset, stage FROM addresses WHERE address_id = ?",
                         (item["address_id"],)).fetchone()  # fmt: skip
@@ -163,19 +163,21 @@ def store(
     local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
+    schema = load_schema()
     pinned = {
-        "schema": 1,
+        "schema": schema.digest,  # was the integer 1 before v2 (S16)
         "pin_key": claude_pins.address_key(conn, aid),
     } | models  # the gate's key (V1.4 step 2), unless the caller names one (the fallback)
     with write_tx(conn):
         conn.execute(
-            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?"
-            " WHERE stable_id = ? AND status = ?",
+            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"
+            " schema_version = ? WHERE stable_id = ? AND status = ?",
             (
                 json.dumps(classification, sort_keys=True),
                 json.dumps(pinned, sort_keys=True),
                 batch_id or f"single:{stable_id[:16]}",
                 to_ts(clock.now()),
+                schema.version,
                 stable_id,
                 expected.value,
             ),

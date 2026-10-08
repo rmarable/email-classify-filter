@@ -30,6 +30,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
+from ecf.schema import load_schema
 from ecf_server import addresses, ollama, slack_admin, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -102,11 +103,19 @@ def in_use(conn: sqlite3.Connection) -> bool:
                         " ('B', 'C') LIMIT 1").fetchone() is not None  # fmt: skip
 
 
+def local_key() -> str:
+    """The local model's gate and eval key: its pinned Ollama digest and the schema it is asked
+    with (the schema digest joins the gate key, OD-475): a new schema is a new gate."""
+    return f"{ollama.load_pin().digest}+{load_schema().digest}"
+
+
 def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
     eff = effective(conn)
     out = {r: eff[r] for r in GATE_ROLES[preset]}
     if preset in LOCAL_PRESETS:
-        out["digest"] = ollama.load_pin().digest
+        out["digest"] = local_key()
+    else:
+        out["schema"] = load_schema().digest  # Claude classifies with it too (OD-475)
     return out
 
 

@@ -3,6 +3,20 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.0.0 (not yet tagged)
+
+### Changed
+
+- Classification schema v2: one schema for work and personal mail. New categories `account_security`, `shipping`, `appointment`, `travel`, `finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and `regulatory` also cover personal bills, receipts, account changes and government mail; sender types `company`, `friend`, `family` and `person` are added and `staff` is now `team` (OD-475; SPEC §7.1).
+- New starter rules label the new categories and flag account-security mail and dated appointments or school and family mail; none of them hides mail (OD-475; SPEC §8.6).
+- Rules files written for schema v1 still apply: `staff` is read as `team`, and the rules that did are named (OD-475).
+- Stored classifications are moved to schema v2 on upgrade (`staff` becomes `team`); export bundles are data format 3, which `v1.0.0` can't import (OD-475; SPEC §11.9).
+
+### Security
+
+- The go-live gate is bound to the classification schema as well as the models: upgrading to v2.0.0 starts every address's gate again and moves live addresses back to assist until the safety gates pass on the new schema; `ecf upgrade` says so (OD-475; SPEC §9.3).
+- Mail from a sender the model reads as an unplaced `person` outside your organization that is about money is labelled `suspicious` and flagged, so a colleague writing from a personal address still gets checked (OD-476; SPEC §8.6, §12.1).
+
 ## v1.0.0 (2026-10-08)
 
 - Decided: the decision model `tev1:4b` is not adopted for now; it rated too much ordinary mail as fraud risk compared with Gemma on the synthetic set, so Gemma stays the local classifier (OD-473; SPEC §7.8).

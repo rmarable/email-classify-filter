@@ -1,0 +1,26 @@
+Received: from mail.harborline-stays-hold.test
+ (mail.harborline-stays-hold.test [192.0.2.10]) by mx.example.net with ESMTPS
+ id v2-travel-phish-hotel-hold; Tue, 20 Oct 2026 03:12:00 +0000
+From: Harborline Stays Reservations <holds@harborline-stays-hold.test>
+To: pat-lee@freemail.example
+Reply-To: harborline-desk@freemail.example
+Subject: Action needed: your stay 2026-10-29 is on hold
+Date: Tue, 20 Oct 2026 03:12:00 +0000
+Message-ID: <v2-travel-phish-hotel-hold.7aa9a5d691@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear guest,
+
+We could not verify the card on your reservation, so your stay from 2026-10-2=
+9 is on hold.
+
+To keep the room, a 39 dollar verification fee must be paid within 12 hours. =
+Reply to this
+message with your card number, expiry date and security code, or call our des=
+k on 555-0188.
+
+If the fee is not received, the booking will be cancelled without a refund.
+
+Reservations Team

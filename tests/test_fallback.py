@@ -15,6 +15,7 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.ids import StableId
+from ecf.schema import load_schema
 from ecf_server import (
     claude_queue,
     claude_review,
@@ -39,6 +40,7 @@ from tests.test_gate import _eval, make_address  # pyright: ignore[reportPrivate
 from tests.test_models import PIN, check_kw
 
 DIGEST = PIN.digest
+KEY = f"{DIGEST}+{load_schema().digest}"  # the fallback's gate key (OD-475)
 REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True,
                                        "requires_action": True}  # fmt: skip
 PAYMENT: dict[str, Any] = REQUEST | {"category": "invoice", "payment_related": True}
@@ -116,7 +118,7 @@ def _passed(conn: sqlite3.Connection, preset: str) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO gate (address_id, pair_key, reviewed, correct, fraud_misses,"
                      " unsafe, ollama_digest, passed_at) VALUES ('ap', ?, 100, 100, 0, 0, ?,"
-                     " '2026-10-01T00:00:00Z')", (fallback.PAIR[preset], DIGEST))  # fmt: skip
+                     " '2026-10-01T00:00:00Z')", (fallback.PAIR[preset], KEY))  # fmt: skip
 
 
 @pytest.fixture
@@ -196,7 +198,7 @@ def test_a_c_shadow_run_classifies_and_acts_and_changes_nothing(
     r = fallback.shadow_item(conn, clock, fake.client(), _ready(), item_row(conn, sid))
     assert r.outcome == "ok" and len(fake.bodies) == 2
     row = conn.execute("SELECT * FROM fallback_shadow").fetchone()
-    assert row["outcome"] == "ok" and row["digest"] == DIGEST
+    assert row["outcome"] == "ok" and row["digest"] == KEY
     assert json.loads(row["classification"])["category"] == "invoice"
     plan = json.loads(row["plan"])
     assert plan["actor"] == {"action": "flag", "target": None, "fallback": True}
@@ -261,7 +263,7 @@ def test_shadow_runs_come_after_all_other_local_work(
     def shadow(conn: sqlite3.Connection, clock: Any, client: Any, ready: Any,
                item: sqlite3.Row) -> modelq.ItemResult:  # fmt: skip
         order.append("shadow:" + item["stable_id"][:5])
-        fallback._store(conn, clock, item, DIGEST, "ok", {}, {})  # pyright: ignore[reportPrivateUsage]
+        fallback._store(conn, clock, item, KEY, "ok", {}, {})  # pyright: ignore[reportPrivateUsage]
         return modelq.ItemResult("ok")
 
     fake = ChatOllama("")
@@ -313,7 +315,7 @@ def _shadowed(conn: sqlite3.Connection, clock: FakeClock, n: int, *, shadow: dic
             conn.execute("UPDATE items SET classification = ?, review = ? WHERE stable_id = ?",
                          (json.dumps(REQUEST), json.dumps({"verdict": verdict,
                                                            "category_ok": True}), sid))  # fmt: skip
-        fallback._store(conn, clock, item_row(conn, sid), DIGEST, "ok", shadow,  # pyright: ignore[reportPrivateUsage]
+        fallback._store(conn, clock, item_row(conn, sid), KEY, "ok", shadow,  # pyright: ignore[reportPrivateUsage]
                         plan or {"payment_or_fraud": False, "actor": None})  # fmt: skip
 
 
@@ -372,7 +374,7 @@ def test_unsafe_shadow_proposals_and_fraud_misses_fail_the_gate(
                 sid,
             ),
         )
-    fallback._store(conn, clock, item_row(conn, sid), DIGEST, "ok", REQUEST,  # pyright: ignore[reportPrivateUsage]
+    fallback._store(conn, clock, item_row(conn, sid), KEY, "ok", REQUEST,  # pyright: ignore[reportPrivateUsage]
                     {"payment_or_fraud": False, "actor": None})  # fmt: skip
     assert fallback.compute(conn, "ap").fraud_misses == 1
 
@@ -429,7 +431,7 @@ def test_c_handed_off_the_local_model_classifies_then_acts_under_local_high_risk
     assert pipeline.work(conn, clock, fake.client(), _ready(), item_row(conn, sid)).outcome == "ok"
     it = item_row(conn, sid)
     pins = json.loads(it["pinned_models"])
-    assert it["status"] == "classified" and pins["pin_key"] == DIGEST and pins["fallback"]
+    assert it["status"] == "classified" and pins["pin_key"] == KEY and pins["fallback"]
     assert modelq.waiting(conn) == {"ap": 1}  # for the local actor, not Claude
     assert pipeline.work(conn, clock, fake.client(), _ready(), item_row(conn, sid)).outcome == "ok"
     it = item_row(conn, sid)

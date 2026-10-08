@@ -32,7 +32,7 @@ from typing import Any
 
 from ecf.errors import InvalidInputError, PolicyDeniedError
 from ecf.ids import StableId
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     addresses,
     claude_pins,
@@ -231,7 +231,7 @@ def _held_plan(conn: sqlite3.Connection, item: sqlite3.Row) -> policy.Plan:
         ctx = decide.context(conn, item)
         fixed = replace(ctx, classification=ctx.classification
                         | json.loads(item["human_correction"]))  # fmt: skip
-        p = policy.plan(fixed, policy.labels(load_schema_v1(), fixed.rules))
+        p = policy.plan(fixed, policy.labels(load_schema(), fixed.rules))
         p.to_actor = False
         return p
     doc: dict[str, Any] = json.loads(item["proposal"] or "{}").get("plan") or {}

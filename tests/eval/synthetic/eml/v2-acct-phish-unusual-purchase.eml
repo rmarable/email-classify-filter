@@ -1,0 +1,21 @@
+Received: from mail.lantern-orders.example (mail.lantern-orders.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ v2-acct-phish-unusual-purchase; Sat, 17 Oct 2026 10:10:00 +0000
+From: Lantern Outfitters Security <security-check@lantern-orders.example>
+To: pat-lee@freemail.example
+Subject: Unusual purchase on your account
+Date: Sat, 17 Oct 2026 10:10:00 +0000
+Message-ID: <v2-acct-phish-unusual-purchase.0203236057@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+A purchase of 349.99 was just placed on your Lantern Outfitters account from =
+a new device.
+
+If you did not make it, reply today with your full name, card number, expiry =
+date and the 3-digit security code so we can cancel the order and refund you.
+
+Lantern Outfitters Account Protection

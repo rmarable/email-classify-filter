@@ -1,0 +1,22 @@
+Received: from mail.harbor-help.example (mail.harbor-help.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-acct-phish-code-readback;
+ Wed, 07 Oct 2026 12:25:00 +0000
+From: Harbor Savings Fraud Team <fraud-desk@harbor-help.example>
+To: pat-lee@freemail.example
+Subject: Confirm it's you
+Date: Wed, 07 Oct 2026 12:25:00 +0000
+Message-ID: <v2-acct-phish-code-readback.6fae6b3cf6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+This is Jordan from the Harbor Savings fraud team. To stop a suspicious trans=
+fer we are sending a 6-digit code to your phone now.
+
+Please reply to this email with the code within 15 minutes so we can confirm =
+you are the account holder.
+
+Jordan Vale
+Harbor Savings Fraud Team

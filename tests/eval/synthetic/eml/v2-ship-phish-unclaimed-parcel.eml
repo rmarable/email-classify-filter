@@ -1,0 +1,22 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id v2-ship-phish-unclaimed-parcel; Mon, 26 Oct
+ 2026 18:50:00 +0000
+From: Robin Ashdale <robin-ashdale-dispatch@freemail.example>
+To: pat-lee@freemail.example
+Subject: Unclaimed package in your name
+Date: Mon, 26 Oct 2026 18:50:00 +0000
+Message-ID: <v2-ship-phish-unclaimed-parcel.fd83a249d4@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+I work in dispatch and have a package with your name on it that the courier c=
+ould not deliver.
+
+Reply with your full name, home address and a phone number and I will arrange=
+ for it to reach you.
+
+Regards,
+Robin

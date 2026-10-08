@@ -220,14 +220,17 @@ class Decision:
 class CompiledRules:
     rules: tuple[Rule, ...]
     schema: CompiledSchema
+    aliased: tuple[str, ...] = ()  # rule ids that used a schema v1 value (V1_ALIASES)
 
     def evaluate(self, inp: RuleInput) -> Decision:
         for rule in self.rules:
             if rule.when is None or _eval(rule.when, inp, self.schema):
                 actions = tuple(
-                    Action(a.action, _target(a.target, inp))
+                    Action(a.action, t)
                     for a in rule.then
                     if a.if_ is None or _eval(a.if_, inp, self.schema)
+                    for t in [_target(a.target, inp)]
+                    if t is not None or a.action not in TARGET_ACTIONS
                 )
                 if isinstance(rule.actor, ContinueIf):
                     to_actor = _eval(rule.actor.continue_if, inp, self.schema)
@@ -238,10 +241,11 @@ class CompiledRules:
 
 
 def _target(t: str | LabelFrom | None, inp: RuleInput) -> str | None:
+    """A label from a field the classification lacks (an item classified before that field
+    existed) is None, and the action is dropped."""
     if isinstance(t, LabelFrom):
-        if t.field not in inp.classification:
-            raise InvalidInputError(f"label from field {t.field!r}, which the classification lacks")
-        return str(inp.classification[t.field])
+        value = inp.classification.get(t.field)
+        return None if value is None else str(value)
     return t
 
 
@@ -278,8 +282,38 @@ def _compare(c: Compare, inp: RuleInput, schema: CompiledSchema) -> bool:
 # ---------------------------------------------------------------------------- compile
 
 
+# Schema v1 values a rules file may still use; read as their v2 value (OD-475). Stored and
+# applied rules are never rewritten: the compiler maps them and names the rules that did.
+V1_ALIASES = {("sender_type", "staff"): "team"}
+
+
+def _alias_v1(node: Any, schema: CompiledSchema, hits: set[str], rule: str = "") -> Any:
+    if isinstance(node, list):
+        return [_alias_v1(x, schema, hits, rule) for x in cast(list[Any], node)]
+    if not isinstance(node, dict):
+        return node
+    d = dict(cast(dict[str, Any], node))
+    rule = str(d["id"]) if isinstance(d.get("id"), str) and "rules" not in d else rule
+    field_name = d.get("field")
+    for op in ("eq", "in", "gte", "lte"):
+        if op not in d or not isinstance(field_name, str):
+            continue
+        vals = cast(list[Any], d[op] if isinstance(d[op], list) else [d[op]])
+        spec = schema.fields.get(field_name)
+        mapped: list[Any] = []
+        for v in vals:
+            new = V1_ALIASES.get((field_name, v)) if isinstance(v, str) else None
+            use = new is not None and spec is not None and v not in spec.values
+            if use:
+                hits.add(rule)
+            mapped.append(new if use else v)
+        d[op] = mapped if isinstance(d[op], list) else mapped[0]
+    return {k: _alias_v1(v, schema, hits, rule) if k != "id" else v for k, v in d.items()}
+
+
 def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -> CompiledRules:
-    raw = load_yaml(text, source=source)
+    hits: set[str] = set()
+    raw = _alias_v1(load_yaml(text, source=source), schema, hits)
     try:
         rs = RuleSet.model_validate(raw)
     except ValidationError as exc:
@@ -293,7 +327,7 @@ def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -
         _check_rule(r, schema, source)
     if rs.rules[-1].when is not None:
         raise InvalidInputError(f"{source}: the last rule must have no `when` (a catch-all)")
-    return CompiledRules(tuple(rs.rules), schema)
+    return CompiledRules(tuple(rs.rules), schema, tuple(sorted(hits)))
 
 
 def _check_rule(r: Rule, schema: CompiledSchema, source: str) -> None:

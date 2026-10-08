@@ -1,0 +1,21 @@
+Received: from mail.harbor-savings-verify.example
+ (mail.harbor-savings-verify.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id v2-acct-phish-account-locked; Sun, 04 Oct 2026 05:50:00 +0000
+From: Harbor Savings Security <secure-team@harbor-savings-verify.example>
+To: pat-lee@freemail.example
+Subject: Account locked: verify within 24 hours
+Date: Sun, 04 Oct 2026 05:50:00 +0000
+Message-ID: <v2-acct-phish-account-locked.82936ec85d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear customer,
+
+We noticed unusual activity and have locked your online banking. To restore a=
+ccess, use the secure button below and enter your username, password and card=
+ PIN.
+
+If you do not verify within 24 hours your account will be closed permanently.
+
+Harbor Savings Security Department

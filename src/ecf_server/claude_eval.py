@@ -50,7 +50,7 @@ from ecf.errors import (
 )
 from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import (
     actor,
     alerts,
@@ -58,7 +58,6 @@ from ecf_server import (
     claude_review,
     claude_usage,
     evalrun,
-    ollama,
     policy,
     rules,
     ruletest,
@@ -206,7 +205,9 @@ def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str],
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
     if opts.preset in claude_pins.LOCAL_PRESETS:
-        keyed["digest"] = ollama.load_pin().digest
+        keyed["digest"] = claude_pins.local_key()
+    else:
+        keyed["schema"] = claude_pins.load_schema().digest
     return models, False, "eval-" + claude_pins.key(keyed)
 
 
@@ -223,7 +224,7 @@ def agents_for(run: Run) -> dict[str, str]:
 def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[str, Any]]]:
     """Preset B (OD-289): the latest complete `ecf eval run` with the classifier, on the pinned
     digest and this version of the set: its run ID and each case's classification."""
-    digest = ollama.load_pin().digest
+    digest = claude_pins.local_key()  # Gemma's run with this schema (C5)
     rows = conn.execute("SELECT run_id, metrics, path FROM eval_runs WHERE digest = ? AND"
                         " set_version = ? ORDER BY created_at DESC",
                         (digest, version)).fetchall()  # fmt: skip
@@ -264,7 +265,7 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
         source, got = _a_run(conn, version) if opts.preset == "B" else (None, {})
     finally:
         conn.close()
-    schema = load_schema_v1()
+    schema = load_schema()
     starter = rules.load_starter_rules(schema)
     works = [Work(c, secrets.token_hex(16)) for c in cases]
     with _SLOT.lock:
@@ -597,7 +598,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
                                "untrusted_email": w.email | {"text": text},
                                "notice": claude_review.NOTICE}  # fmt: skip
         if w.need == "classify":
-            out["schema"] = load_schema_v1().json_schema()
+            out["schema"] = load_schema().json_schema()
         else:
             out |= {"classification": _cls(w),
                     "actions": list(actor.allowed(_cls(w))),

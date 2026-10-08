@@ -1,0 +1,18 @@
+Received: from mail.parcelwise.example (mail.parcelwise.example [192.0.2.10])
+ by mx.example.net with ESMTPS id v2-ship-out-for-delivery; Thu, 08 Oct 2026
+ 07:30:00 +0000
+From: Parcelwise Tracking <tracking@parcelwise.example>
+To: pat-lee@freemail.example
+Subject: Out for delivery today
+Date: Thu, 08 Oct 2026 07:30:00 +0000
+Message-ID: <v2-ship-out-for-delivery.5abe285f9d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your parcel PW 4408 1173 26 is out for delivery.
+
+Estimated window: 10 am to 2 pm. No signature is needed; if nobody is home th=
+e driver will leave it in a safe place.
+
+Parcelwise

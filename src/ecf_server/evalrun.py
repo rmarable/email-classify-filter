@@ -56,10 +56,11 @@ from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
 from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
-from ecf.schema import FieldKind, load_schema_v1
+from ecf.schema import FieldKind, load_schema
 from ecf_server import (
     actor,
     classifier,
+    claude_pins,
     corpus,
     corpus_session,
     modelq,
@@ -185,7 +186,7 @@ def corpus_run(session: corpus_session.Session) -> CorpusRun:
         raise InvalidInputError(f"a corpus run takes at most {CORPUS_LIMIT} messages")
     labels_path = corpus_labels.path_for(session.path)
     labels = corpus_labels.load(labels_path)
-    schema = load_schema_v1()
+    schema = load_schema()
     rules_now = rules.load_starter_rules(schema)
     known = policy.labels(schema, rules_now)
     default = str(session.corpus.profile.get("sensitivity") or "standard")
@@ -308,7 +309,7 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
     fraud = [c for c in counted if c.fraud]
     fg_n, fg_missed, fg_recall = fraud_guard_recall(counted)
     per_field: dict[str, float] = {}
-    for f in (*load_schema_v1().fields, "rule", "safety"):  # every schema field (R117)
+    for f in (*load_schema().fields, "rule", "safety"):  # every schema field (R117)
         vals = [c.fields[f] for c in counted if f in c.fields]
         if vals:
             per_field[f] = round(100 * sum(vals) / len(vals), 1)
@@ -551,7 +552,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             paused.append(True)
         notify(text, desktop)
 
-    schema = load_schema_v1()
+    schema = load_schema()
     dpin = decision_pin(opts.backend)
     redact = triggers.redact_injection if opts.redact else _unredacted
     on_ac_at_start = power().on_ac
@@ -634,9 +635,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["set"] = "corpus"
             summary["labels_hash"] = opts.corpus.labels_hash
             summary["deterministic_noise"] = deterministic_noise(cases)
+        key = claude_pins.local_key() if opts.backend == GEMMA else digest  # OD-475
         result = ResultFile(run_id=RUN.run_id, pair=pair_for(opts.backend),
                             set_version=version, created_at=to_ts(clock.now()), cases=results,
-                            digest=digest, summary=summary)  # fmt: skip
+                            digest=key, summary=summary)  # fmt: skip
         _save(conn, clock, data_dir, result,
               corpus_id=opts.corpus.corpus_id if opts.corpus else None)  # fmt: skip
         if stopped:
@@ -882,6 +884,58 @@ def latest(conn: sqlite3.Connection, digest: str) -> dict[str, Any] | None:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+# What a schema v1 answer means in v2 (OD-475): only `staff` was renamed. Rules: every other v1
+# value is a v2 value, and v2's new rules match only v2's new values, so the rule and actions a
+# v1 run recorded are what v2's rules give the mapped answer too.
+V1_TO_V2 = {"sender_type": {"staff": "team"}}
+
+
+def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+    """`ecf eval rescore --synthetic`: a synthetic result made before schema v2 scored against the
+    set's current labels, its answers mapped to v2 (V1_TO_V2), without running a model (E1). The
+    new file has the current set version, so `ecf eval compare` pairs it with a v2 run on the
+    cases both have; cases added since are left out, as in any comparison."""
+    old = load_result(result_path)
+    cases, version = load(root, fraud_only=False)
+    by_id = {c.id: c for c in cases}
+    out: list[CaseResult] = []
+    mapped = 0
+    for r in old.cases:
+        case = by_id.get(r.id)
+        if case is None:
+            continue  # a card since removed
+        fields = {k: v for k, v in r.got.items() if k != "rule"}
+        for name, renames in V1_TO_V2.items():
+            v = fields.get(name)
+            if isinstance(v, str) and v in renames:
+                fields[name] = renames[v]
+                mapped += 1
+        rule = r.got.get("rule")
+        one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
+                          set(r.actions), None)  # fmt: skip
+        out.append(one.model_copy(update={"probabilities": r.probabilities,
+                                          "classifier_ms": r.classifier_ms}))  # fmt: skip
+    before: dict[str, Any] = dict(old.summary or {})
+    o: dict[str, Any] = before.get("options") or {}
+    diffs = before.get("determinism_diffs")
+    summary: dict[str, object] = dict(summarize(
+        out, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
+        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
+        production=False))  # fmt: skip
+    for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
+                "classifier_latency_s", "power"):  # fmt: skip
+        if key in before:
+            summary[key] = before[key]
+    summary["rescored_from"] = {"run_id": old.run_id, "set_version": old.set_version,
+                                "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+                                "schema": "v1 mapped to v2", "values_mapped": mapped}  # fmt: skip
+    new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,
+                     created_at=to_ts(clock.now()), cases=out, digest=old.digest,
+                     summary=summary)  # fmt: skip
+    path = write_result(result_path.parent, new, f"{old.run_id}-rescore-v2-{version[:12]}.json")
+    return {"path": str(path), "summary": summary}
 
 
 def rescore(session: corpus_session.Session, result_path: Path, clock: Clock) -> dict[str, Any]:

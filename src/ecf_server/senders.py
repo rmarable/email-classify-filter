@@ -27,7 +27,7 @@ import sqlite3
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import addresses, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -96,7 +96,7 @@ def _checked(name: str, value: Any) -> Any:
     """The value as the change itself would accept it, before it reaches the dialog (V1.2
     review, 2026-09-30)."""
     if name == "sender_confirm":
-        values = load_schema_v1().fields["category"].values or ()
+        values = load_schema().fields["category"].values or ()
         if value not in values:
             raise InvalidInputError(f"category is one of {', '.join(values)}")
         return value
@@ -165,7 +165,7 @@ def confirm(
     nonce: str | None,
     actor: str = "os_user",
 ) -> dict[str, Any]:
-    values = load_schema_v1().fields["category"].values or ()
+    values = load_schema().fields["category"].values or ()
     if category not in values:
         raise InvalidInputError(f"category is one of {', '.join(values)}")
     a = _address(conn, address)

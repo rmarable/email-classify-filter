@@ -13,7 +13,7 @@ import pytest
 from ecf import cli_corpus_label as ui
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import corpus_session as cs
 from ecf_server.clock import FakeClock
 from tests.test_corpus import SECRET, fetch, req, server_with
@@ -94,7 +94,7 @@ def test_quitting_in_the_middle_of_a_message_saves_nothing_for_it(made: Path) ->
 
 
 def test_answers_take_numbers_values_or_yes_no() -> None:
-    f = load_schema_v1().fields
+    f = load_schema().fields
     assert ui.parse_answer(f["category"], "1") == "invoice"
     assert ui.parse_answer(f["category"], "bug_report") == "bug_report"
     assert ui.parse_answer(f["category"], "99") is None
@@ -114,10 +114,11 @@ def test_the_screen_hides_injection_text_until_revealed() -> None:
 
 def test_each_field_is_shown_with_its_meaning_and_numbered_choices() -> None:
     """Operator feedback during test 1: the one-line prompt was too terse."""
-    f = load_schema_v1().fields
+    f = load_schema().fields
     cat = "\n".join(ui.field_block(f["category"], 1, 8))
     assert "Field 1 of 8: category" in cat and "What this email is primarily about." in cat
-    assert "12  notification" in cat and "account activity" in cat
+    assert "12  notification" in cat and "fits no other value" in cat
+    assert "14  account_security" in cat
     assert "Type the number or the name." in cat
     yn = "\n".join(ui.field_block(f["requires_reply"], 4, 8))
     assert "y  yes" in yn and "Type y or n." in yn

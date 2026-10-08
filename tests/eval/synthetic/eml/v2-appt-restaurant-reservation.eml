@@ -1,0 +1,21 @@
+Received: from mail.copperkettle.example (mail.copperkettle.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ v2-appt-restaurant-reservation; Sun, 11 Oct 2026 17:05:00 +0000
+From: Copper Kettle Bistro <reservations@copperkettle.example>
+To: pat-lee@freemail.example
+Subject: Your table for 4 on Friday 2026-10-16
+Date: Sun, 11 Oct 2026 17:05:00 +0000
+Message-ID: <v2-appt-restaurant-reservation.36e12e69de@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear Pat Lee,
+
+Thank you for your reservation at the Copper Kettle Bistro.
+
+Party of 4, Friday 2026-10-16 at 19:30, garden room.
+
+If your plans change, just let us know. We hold tables for 15 minutes.
+
+The Copper Kettle team

@@ -1,0 +1,22 @@
+Received: from mail.tax-refund-center.example (mail.tax-refund-center.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v2-fin-phish-tax-refund; Wed,
+ 07 Oct 2026 04:50:00 +0000
+From: Refund Processing Office <refunds@tax-refund-center.example>
+To: pat-lee@freemail.example
+Subject: Tax refund pending: confirm your bank details
+Date: Wed, 07 Oct 2026 04:50:00 +0000
+Message-ID: <v2-fin-phish-tax-refund.9d53e81fd1@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear taxpayer,
+
+After the yearly review of your return, you are owed a refund of 486.20.
+The refund cannot be sent because your bank details are incomplete.
+
+Reply by 2026-10-10 with your full name, date of birth, bank account number a=
+nd routing
+number so the refund can be released. Late replies forfeit the refund.
+
+Refund Processing Office

@@ -3,10 +3,18 @@
 Enum and ordinal fields become `Literal` types, so the JSON schema is inline (no `$ref`), which
 both Ollama's `format` and `record_classification` need. Ordinal fields keep their level order.
 `prompt_block` is a stable text rendering used as an unchanging prompt prefix.
+
+The shipped schema is v2 (`load_schema`; SPEC §7.1, OD-475): one schema for work and personal
+mail. v1 stays loadable for results and labels made before it (`load_schema_v1`). The safety
+core (`SAFETY_FIELDS`, `SAFETY_VALUES`) is what policy, the fraud checks and the starter rules
+rely on; the compiler refuses a shipped schema without it.
 """
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -20,6 +28,21 @@ from ecf.yamlio import load_yaml
 
 FIELD_NAME = r"^[a-z][a-z0-9_]{0,39}$"
 VALUE_NAME = r"^[a-z][a-z0-9_]{0,39}$"
+CURRENT_VERSION = 2
+# What policy, the fraud and regulator checks and the starter rules read (SPEC §7.1, OD-475).
+SAFETY_FIELDS = {
+    "fraud_risk": ("ordinal", ("none", "low", "medium", "high")),
+    "payment_related": ("boolean", ()),
+    "priority": ("ordinal", ("low", "medium", "high", "urgent")),
+    "requires_action": ("boolean", ()),
+    "requires_reply": ("boolean", ()),
+    "deadline_mentioned": ("boolean", ()),
+}
+SAFETY_VALUES = {
+    "category": ("regulatory", "vendor_change_request", "spam_or_phishing", "notification",
+                 "action_alert"),
+    "sender_type": ("team",),
+}  # fmt: skip
 
 
 class FieldKind(StrEnum):
@@ -57,6 +80,20 @@ class CompiledSchema:
     def validate(self, data: Any) -> BaseModel:
         return self.model.model_validate(data)
 
+    @property
+    def digest(self) -> str:
+        """A short hash of what the models are asked: the version, then each field's name, kind,
+        description, values and value descriptions in order (the gate key, SPEC §9.3)."""
+        doc = [
+            self.version,
+            [
+                [f.name, f.kind.value, f.description, list(f.values), list(f.value_descriptions)]
+                for f in self.fields.values()
+            ],
+        ]
+        raw = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return "schema-" + hashlib.sha256(raw).hexdigest()[:16]
+
 
 def _field(name: str, raw: Any) -> FieldSpec:
     if not isinstance(raw, dict):
@@ -84,7 +121,12 @@ def _field(name: str, raw: Any) -> FieldSpec:
         levels = spec.get("levels")
         if not isinstance(levels, list) or len(cast(list[Any], levels)) < 2:
             raise InvalidInputError(f"field {name}: ordinal needs at least two levels")
-        return FieldSpec(name, kind, desc, tuple(str(v) for v in cast(list[Any], levels)))
+        lv = cast(list[Any], levels)
+        if any(not isinstance(v, str) or not re.fullmatch(VALUE_NAME, v) for v in lv):
+            raise InvalidInputError(f"field {name}: each level must be a lowercase name")
+        if len(set(lv)) != len(lv):
+            raise InvalidInputError(f"field {name}: levels must be unique")
+        return FieldSpec(name, kind, desc, tuple(cast(list[str], lv)))
     return FieldSpec(name, kind, desc)
 
 
@@ -129,6 +171,34 @@ def _prompt_block(version: int, fields: dict[str, FieldSpec]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def check_safety_core(schema: CompiledSchema) -> None:
+    """Refuse a schema without the fields and values ecf's safety logic reads (OD-475)."""
+    for name, (kind, levels) in SAFETY_FIELDS.items():
+        f = schema.fields.get(name)
+        if f is None or f.kind.value != kind or (levels and f.values != levels):
+            raise InvalidInputError(f"schema: {name} must be the {kind} field ecf ships")
+    for name, values in SAFETY_VALUES.items():
+        f = schema.fields.get(name)
+        missing = [v for v in values if f is None or v not in f.values]
+        if missing:
+            raise InvalidInputError(f"schema: {name} must keep {', '.join(missing)}")
+
+
+def _load(version: int) -> CompiledSchema:
+    name = f"schema_v{version}.yaml"
+    text = resources.files("ecf.data").joinpath(name).read_text(encoding="utf-8")
+    return compile_schema(text, source=name)
+
+
+@functools.cache
+def load_schema() -> CompiledSchema:
+    """The shipped schema (v2)."""
+    schema = _load(CURRENT_VERSION)
+    check_safety_core(schema)
+    return schema
+
+
+@functools.cache
 def load_schema_v1() -> CompiledSchema:
-    text = resources.files("ecf.data").joinpath("schema_v1.yaml").read_text(encoding="utf-8")
-    return compile_schema(text, source="schema_v1.yaml")
+    """Schema v1, for results and labels made before v2 (OD-475)."""
+    return _load(1)

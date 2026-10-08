@@ -22,7 +22,7 @@ from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, 
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result
-from ecf_server import claude_eval, claude_pins, db, evalrun, gate, ollama
+from ecf_server import claude_eval, claude_pins, db, evalrun, gate
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import NullNotifier
@@ -373,7 +373,7 @@ def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path
     summary = evalrun.summarize(results, 0)
     rf = ResultFile(run_id="a" * 32, pair="gemma4-12b/local", set_version=version,
                     created_at=to_ts(clock.now()), cases=results,
-                    digest=ollama.load_pin().digest, summary=summary)  # fmt: skip
+                    digest=claude_pins.local_key(), summary=summary)  # fmt: skip
     evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
     return rf.run_id
 

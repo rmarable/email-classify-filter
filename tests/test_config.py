@@ -269,9 +269,9 @@ def test_rules_test_shows_what_a_change_would_do(
 
 
 def _schema() -> Any:
-    from ecf.schema import load_schema_v1  # noqa: PLC0415
+    from ecf.schema import load_schema  # noqa: PLC0415
 
-    return load_schema_v1()
+    return load_schema()
 
 
 def _drop_rule(text: str, rule_id: str) -> str:

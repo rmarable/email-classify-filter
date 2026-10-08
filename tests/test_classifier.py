@@ -15,15 +15,15 @@ import httpx
 import pytest
 
 from ecf.ids import AddressId, StableId
-from ecf.schema import load_schema_v1
-from ecf_server import classifier, items, modelq, ollama
+from ecf.schema import load_schema
+from ecf_server import classifier, claude_pins, items, modelq, ollama
 from ecf_server.clock import FakeClock
 from ecf_server.notify import FakeNotifier
 from ecf_server.ollama import Client
 from tests.test_modelq import add_address
 from tests.test_models import PIN, FakeOllama, check_kw
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 GOOD = {"category": "invoice", "priority": "medium", "requires_action": True,
         "requires_reply": False, "payment_related": True, "deadline_mentioned": False,
@@ -112,7 +112,9 @@ def test_a_valid_reply_is_stored_and_the_item_classified(
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
     assert json.loads(row["classification"]) == GOOD
     assert json.loads(row["pinned_models"]) == {"classifier": PIN.ecf_tag, "digest": PIN.digest,
-                                                "schema": 1, "pin_key": PIN.digest}  # fmt: skip
+                                                "schema": SCHEMA.digest,
+                                                "pin_key": claude_pins.local_key()}  # fmt: skip
+    assert row["schema_version"] == 2
     assert row["batch_id"].startswith("single:")
     [body] = fake.bodies
     assert body["model"] == PIN.ecf_tag and body["format"] == SCHEMA.json_schema()

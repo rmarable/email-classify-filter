@@ -10,7 +10,7 @@ to: [payroll@acme.example]
 subject: "Direct deposit change before next payday"
 date: 2026-10-02T14:05:00Z
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high, sender_type: staff}
+  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high, sender_type: team}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

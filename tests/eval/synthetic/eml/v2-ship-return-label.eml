@@ -1,0 +1,23 @@
+Received: from mail.lantern-outfitters.example
+ (mail.lantern-outfitters.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id v2-ship-return-label; Wed, 14 Oct 2026 10:00:00 +0000
+From: Lantern Outfitters Orders <orders@lantern-outfitters.example>
+To: pat-lee@freemail.example
+Subject: Your return is approved
+Date: Wed, 14 Oct 2026 10:00:00 +0000
+Message-ID: <v2-ship-return-label.fc808506a7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Your return for the rain jacket (order LO-20417) is approved.
+
+Print the return label from your orders page as you usually do and drop the p=
+arcel at any Parcelwise point by 30 October.
+
+Once it reaches us we will refund 42.50 to your original payment card within =
+5 days.
+
+Lantern Outfitters

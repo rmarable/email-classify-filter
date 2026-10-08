@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ecf.schema import load_schema_v1
+from ecf.schema import load_schema
 from ecf_server import corpus, evalrun, policy, rules, ruletest
 from ecf_server.clock import FakeClock
 
-SCHEMA = load_schema_v1()
+SCHEMA = load_schema()
 RULES = rules.load_starter_rules(SCHEMA)
 KNOWN = policy.labels(SCHEMA, RULES)
 QUIET = {"category": "marketing", "priority": "low", "requires_action": False,
@@ -24,7 +24,14 @@ STRICTER = {"billing-plan-question", "bug-api-rate-limit", "bug-data-loss-urgent
             "fraud-crypto-extortion", "fraud-mfa-code-request", "look-acme-test-it",
             "partner-reseller-terms", "phish-payment-failed", "reg-compliance-newsletter",
             "sales-city-procurement", "sales-demo-request", "sales-quote-request",
-            "sales-reseller-volume"}  # fmt: skip
+            "sales-reseller-volume",
+            # schema v2's personal cards (OD-475): finance, account and shipping mail that asks
+            # for something, which the cards don't mark must_not_hide
+            "v2-acct-password-reset-requested", "v2-fin-dividend-reinvested",
+            "v2-fin-insurance-claim-photos", "v2-fin-insurance-policy-renewed",
+            "v2-fin-mortgage-escrow-analysis", "v2-fin-retirement-beneficiary-review",
+            "v2-fin-tax-preparer-documents", "v2-ship-missed-delivery-pickup",
+            "v2-ship-return-label"}  # fmt: skip
 
 
 def test_nothing_without_labels_or_facts() -> None:

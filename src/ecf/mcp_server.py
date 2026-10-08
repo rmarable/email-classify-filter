@@ -256,7 +256,8 @@ TOOLS: tuple[ToolDef, ...] = (
         "Submit the classification for a claimed item; it must match the schema get_message "
         "gave. Returns accepted, or the errors to fix (3 tries per claim).",
         {"id": ID, "claim_token": CLAIM,
-         "classification": {"type": "object", "description": "The classification (schema v1)."}},
+         "classification": {"type": "object",
+                            "description": "The classification, in the schema get_message gave."}},
         ("id", "claim_token", "classification"),
         read_only=False, work_only=True, handler=_record_classification, agent_tool=True,
     ),

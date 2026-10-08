@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
+from ecf.schema import load_schema
 from ecf_server import claude_pins, gate, ollama, review, stages, stepup
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
@@ -26,6 +27,7 @@ from tests.test_gate import make_address
 from .conftest import stop, wait_answering
 
 DIGEST = ollama.load_pin().digest
+LOCAL = claude_pins.local_key()  # the digest and the schema (OD-475)
 NEW_SONNET = "claude-sonnet-5-6"
 
 
@@ -57,9 +59,10 @@ def test_the_lock_names_every_role_with_a_claude_id() -> None:
 def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClock) -> None:
     lock = claude_pins.load_lock()
     a, b, c = (claude_pins.pins(conn, p) for p in "ABC")
-    assert a == {"digest": DIGEST} and claude_pins.key(a) == DIGEST  # records before V1.4 count
-    assert b == {"digest": DIGEST, "actor": lock["actor"], "actor_high": lock["actor_high"]}
-    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high"}  # no digest
+    assert a == {"digest": LOCAL} and claude_pins.key(a) == LOCAL
+    assert f"{DIGEST}+{load_schema().digest}" == LOCAL
+    assert b == {"digest": LOCAL, "actor": lock["actor"], "actor_high": lock["actor_high"]}
+    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema"}
     assert len({claude_pins.key(p) for p in (a, b, c)}) == 3
     assert claude_pins.key(b).startswith("pins-")
 
@@ -76,7 +79,7 @@ def test_the_override_replaces_its_family_with_step_up_and_a_notice(
     assert eff["actor_high"] == "claude-opus-5-5"  # other families keep their pin
     assert out["affected"] == ["ap@acme.example"]
     assert claude_pins.address_key(conn, "ap") != before
-    assert claude_pins.pins(conn, "A") == {"digest": DIGEST}  # A has no Claude pin
+    assert claude_pins.pins(conn, "A") == {"digest": LOCAL}  # A has no Claude pin
     posts = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM jobs")]
     assert any("Security Notice" in p["card"]["title"] and NEW_SONNET in p["card"]["text"]
                for p in posts)  # fmt: skip
@@ -120,7 +123,7 @@ def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -
     make_address(conn, clock, "assist")
     _preset(conn, "B")
     b_key = claude_pins.address_key(conn, "ap")
-    for i, key in enumerate((b_key, DIGEST, None)):
+    for i, key in enumerate((b_key, LOCAL, None)):
         sid = make_classified(conn, clock, MARKETING, KNOWN_BULK, sid=f"k{i}")
         pinned = {"digest": DIGEST} | ({"pin_key": key} if key else {})
         with write_tx(conn):
@@ -128,7 +131,9 @@ def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -
                          (json.dumps(pinned), json.dumps({"verdict": "correct",
                           "category_ok": True}), sid))  # fmt: skip
     assert review.reviewed(conn, "ap", b_key)["reviewed"] == 1
-    assert review.reviewed(conn, "ap", DIGEST)["reviewed"] == 2  # an A key, or no pin_key
+    assert review.reviewed(conn, "ap", LOCAL)["reviewed"] == 1  # an A key under this schema
+    assert review.reviewed(conn, "ap", DIGEST)["reviewed"] == 1  # no pin_key: before V1.4, and
+    # before v2's schema, so it no longer counts for the gate (OD-475)
     g = gate.compute(conn, "ap")
     assert (g.digest, g.reviewed, g.preset) == (b_key, 1, "B")
     assert dict(g.pins)["actor"] == "claude-sonnet-5-5"
@@ -161,7 +166,7 @@ def test_a_preset_a_gate_row_keeps_its_pre_v14_shape(
     with write_tx(conn):
         gate.record(conn, gate.compute(conn, "ap"), clock.now(), passed=True)
     row = gate.stored(conn, "ap")
-    assert row is not None and row["pinned_ids"] is None and row["ollama_digest"] == DIGEST
+    assert row is not None and row["pinned_ids"] is None and row["ollama_digest"] == LOCAL
     assert row["pair_key"] == gate.PAIR
 
 
