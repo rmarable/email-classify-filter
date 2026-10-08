@@ -76,6 +76,32 @@ gift_card:
     - giftcard
     - giftcards
 
+# Openers of an executive-impersonation (BEC) scam (operator decision 2026-10-08, OD-479): the
+# first message asks if you're free, for a quick discreet favour, by email only, with no money
+# yet. One phrase alone is ordinary mail; the fact `bec_opener` needs two different phrases, and
+# rule 1 escalates it only from an outside sender. Very common phrases on their own ("sent from
+# my phone") are not listed.
+bec_opener:
+  phrases:
+    - are you at your desk
+    - are you available
+    - are you around
+    - quick favour
+    - quick favor
+    - small favour
+    - small favor
+    - handled discreetly
+    - keep this between us
+    - keep it between us
+    - keep this confidential
+    - in meetings all day
+    - in a meeting all day
+    - email only
+    - can't take calls
+    - cannot take calls
+    - can't talk now
+    - reply as soon as you see this
+
 # Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
 # common terms; add state and non-US agencies as needed.
 regulator:
