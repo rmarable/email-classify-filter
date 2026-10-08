@@ -66,8 +66,7 @@ Personal Gmail accounts (gmail.com) are supported over IMAP with an app password
 Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
 
 From `v1.0.0`, each release is published only as a GitHub Release on this repository (wheel,
-sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. The repository is private,
-so downloading needs access to it. Download the release's files and install the wheel:
+sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. Download the release's files and install the wheel:
 
 ```sh
 gh release download v1.0.0 --repo rmarable/email-classify-filter
@@ -75,8 +74,7 @@ shasum -a 256 email_classify_filter-*.whl   # compare with the wheel's line in S
 uv tool install ./email_classify_filter-*.whl
 ```
 
-`uv tool install` also accepts a URL to the wheel, if your download can authenticate to the
-repository. From `v1.0.0`, `ecf upgrade` checks what it downloads against the release's
+`uv tool install` also accepts the wheel's URL. From `v1.0.0`, `ecf upgrade` checks what it downloads against the release's
 `SHA256SUMS`.
 
 To build the wheel from a checkout instead:
