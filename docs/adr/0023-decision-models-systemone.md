@@ -1,6 +1,7 @@
 # ADR 0023: decision models via Ollama `/v1/systemone` (Qwen exception)
 
-- **Status:** accepted (2026-10-07; OD-470, OD-471); experiment designed, not built
+- **Status:** accepted (2026-10-07; OD-470, OD-471); experiment built and run; decided 2026-10-08:
+  `tev1:4b` not adopted for now (OD-473)
 - **Context source:** SPEC §7.8, §16.3-16.5, §21.1, §21.2, §1.5 item 8;
   `planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md` (draft 3, after review round R, findings R1-R30)
 
@@ -53,3 +54,11 @@ test.
   card states none. The operator accepted Ollama's layers (2026-10-07, §21.2).
 - The decision-model defense against prompt injection is weaker than Gemma's: the API has no
   instruction field, so the "email is data" text sits in `state` beside the email.
+
+## Outcome (2026-10-08, OD-473)
+
+`tev1:4b` is not adopted for now. On the synthetic set it was 15.9 points worse end to end than
+Gemma (101/189 against 131/189, twice), mostly because it rates benign mail as risky; it had 0
+unsafe cases and full fraud-guard recall, and its classifier calls took half Gemma's time. The
+corpus runs were not needed for the decision. Gemma stays the classifier; the harness stays for
+later candidates (SPEC §1.2).

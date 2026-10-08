@@ -346,6 +346,9 @@ No live shadow-mode mix: the full corpus eval already interleaves the D classifi
 
 ## Phase 4: decision
 
+**Done 2026-10-08 (OD-473):** `tev1:4b` not adopted for now, on Phase 3 step 1 (synthetic) alone; steps 2-5 (corpus, battery) were
+not run. Results in SPEC §7.8.
+
 - Results go into SPEC §7.8 and §16 (aggregates only). [R27]
 - OD-S3 "adopt `tev1:4b`" or "not adopted", per the adoption rule. This is SPEC §1.5 item 8.
 - **If adopted, it ships after `v1.0.0`** as its own build step, scheduled by the operator. Its cost: [R23]
