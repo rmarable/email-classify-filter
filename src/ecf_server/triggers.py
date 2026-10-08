@@ -10,6 +10,9 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `regulator`: regulator keywords found (rule 2).
 - Fraud trigger 10 (OD-252): text addressed to an automated reader ("note to the classifier",
   "ignore previous instructions"); an email that tells the model what to conclude goes to a person.
+- `bec_opener` (a fact, not a trigger; OD-479): two or more different phrases from the
+  `bec_opener` list, the opening message of an executive-impersonation scam before any money is
+  named; rule 1 escalates it from an outside sender.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
@@ -40,7 +43,8 @@ from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "gift_card", "regulator", "injection")
+GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "regulator", "injection")
+BEC_OPENER_MIN = 2  # different `bec_opener` phrases for the fact (OD-479)
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
 # each sends from (OD-203).
@@ -90,6 +94,12 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
             if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded):
                 hits[group].append(p.word)
     return hits
+
+
+def bec_opener(keywords: dict[str, list[str]]) -> bool:
+    """At least two different phrases of an executive-impersonation opener ("are you at your
+    desk", "quick favour", "email only"; OD-479): one alone is ordinary mail."""
+    return len(set(keywords.get("bec_opener", []))) >= BEC_OPENER_MIN
 
 
 INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
@@ -190,6 +200,7 @@ class Triggers:
             "keywords": self.keywords,
             "payment_keyword": bool(self.keywords["payment"]),
             "gift_card_keyword": bool(self.keywords["gift_card"]),
+            "bec_opener": bec_opener(self.keywords),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,

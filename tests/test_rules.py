@@ -77,6 +77,16 @@ def test_impersonation_without_money_is_only_flagged() -> None:
     assert d.rule_id == "fraud_weak" and d.hide is Hide.NEVER
 
 
+def test_an_executive_impersonation_opener_from_outside_escalates_without_money() -> None:
+    """OD-479: "are you at your desk, quick favour, email only" escalates whatever fraud risk the
+    model gives it; not from an internal sender or the account's own note to itself."""
+    d = run(facts={"bec_opener": True}, sender_type="staff", fraud_risk="low")
+    assert d.rule_id == "fraud_guard" and ("escalate", None) in names(d)
+    assert d.hide is Hide.NEVER
+    assert run(facts={"bec_opener": True, "sender_origin": "internal"}).rule_id == "otherwise"
+    assert run(facts={"bec_opener": True, "self_sent": True}).rule_id == "otherwise"
+
+
 def test_your_own_note_to_yourself_isnt_an_unverified_payment_sender() -> None:
     """OD-446: on Gmail the account's mail to itself is unsigned; Gmail's Sent label says it's
     yours."""

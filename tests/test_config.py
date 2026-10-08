@@ -270,6 +270,22 @@ def test_rules_test_shows_what_a_change_would_do(
     assert r["expected_matched"]["proposed"] < r["expected_matched"]["current"]
 
 
+def test_the_quick_favour_opener_escalates_without_the_model(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """OD-479: `mid-exec-quick-favor` escalates through rule 1's bec_opener clause even when the
+    model rates its fraud risk low (it did once at num_ctx 6144)."""
+    (tmp_path / "eml").mkdir()
+    row = next(json.loads(line) for line in (SYNTHETIC / "labels.jsonl").read_text().splitlines()
+               if json.loads(line)["id"] == "mid-exec-quick-favor")  # fmt: skip
+    (tmp_path / row["file"]).write_bytes((SYNTHETIC / row["file"]).read_bytes())
+    row["expected"]["labels"]["fraud_risk"] = "low"
+    (tmp_path / "labels.jsonl").write_text(json.dumps(row) + "\n")
+    starter = rules.load_starter_rules(_schema())
+    [case] = ruletest.run(clock, starter, STARTER.read_text("utf-8"), tmp_path)["cases"]
+    assert case["current"]["rule"] == "fraud_guard" and "escalate" in case["current"]["actions"]
+
+
 def _schema() -> Any:
     from ecf.schema import load_schema  # noqa: PLC0415
 
