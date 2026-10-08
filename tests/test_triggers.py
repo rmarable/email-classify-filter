@@ -427,6 +427,28 @@ def test_gift_cards_alone_are_not_a_payment_keyword() -> None:
 
 
 @pytest.mark.parametrize(
+    ("subject", "body", "fires"),
+    [
+        ("Quick favour", "Are you at your desk? Reply as soon as you see this.", True),
+        ("Hello", "Are you at your desk?", False),  # one phrase is ordinary mail
+        ("Quick favor", "I need a quick favor.", False),  # the same phrase twice is one
+        ("Hello", "Sent from my phone", False),  # not listed
+        # a lookalike letter (Cyrillic a, U+0430), full-width letters and a curly apostrophe fold
+        ("Hello", "\u0430re you \u0430round? I c\u0430n\u2019t t\u0430ke c\u0430lls, so"
+         " \uff45\uff4d\uff41\uff49\uff4c only.", True),
+        ("Hello", "Are you  AVAILABLE?\nKeep it\nbetween us.", True),  # case, line breaks
+    ],
+)  # fmt: skip
+def test_the_bec_opener_fact_needs_two_different_phrases(
+    subject: str, body: str, fires: bool
+) -> None:
+    """OD-479: an executive-impersonation opener names no money; one phrase alone doesn't count."""
+    t = fire("", raw=mail(body, subject=subject))
+    assert t.facts()["bec_opener"] is fires
+    assert t.fraud == [] and t.fraud_weak == []  # a fact for rule 1, not a fraud trigger
+
+
+@pytest.mark.parametrize(
     ("sender", "extra"),
     [
         ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat

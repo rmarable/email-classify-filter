@@ -2,8 +2,9 @@
 id: mid-exec-quick-favor
 title: Message claiming to be an executive asks if the reader is at their desk
 threat: medium (the opening message of a gift-card or wire scam, with no request yet)
-control: sender_type staff from outside escalates through rule 1
-why: the first message carries no money words, so only the model can see it
+control: rule 1's bec_opener clause (two opener phrases from an outside sender, OD-479) escalates it
+  with no money words; a medium fraud risk from the model escalates it too
+why: the first message carries no money words, so no money clause or trigger can see it
 failure_looks_like: classified as other and left
 from: "Managing Director <md-acme-office@freemail.example>"
 subject: "Quick favour"

@@ -1,5 +1,6 @@
 """The weekly model canary (scripts/model_canary.py; V1.4 step 10; SPEC §7.6; OD-300), on excerpts
-of the three pages as they read on 2026-10-02."""
+of the pages as they read on 2026-10-08 (the Claude pages; Haiku 5.5, OD-474) and 2026-10-02 (the
+Ollama tags page)."""
 
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ from ecf_server import claude_pins
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = Path(__file__).parent / "canary"
-DEPRECATIONS = (PAGES / "deprecations-2026-10-02.md").read_text("utf-8")
-OVERVIEW = (PAGES / "overview-2026-10-02.md").read_text("utf-8")
+DEPRECATIONS = (PAGES / "deprecations-2026-10-08.md").read_text("utf-8")
+OVERVIEW = (PAGES / "overview-2026-10-08.md").read_text("utf-8")
 TAGS = (PAGES / "gemma4-tags-2026-10-02.html").read_text("utf-8")
 
 
@@ -44,7 +45,7 @@ def test_the_status_table_parses_every_kind_of_date(canary: ModuleType) -> None:
     assert st["claude-sonnet-4-5-20250929"] == canary.Status("Deprecated", date(2026, 11, 30),
                                                              None, False)  # fmt: skip
     assert st["claude-mythos-preview"].announced
-    assert len(st) == 22
+    assert len(st) == 23
     assert canary.parse_replacements(DEPRECATIONS) == {
         "claude-sonnet-4-5-20250929": "claude-sonnet-5-5"
     }
@@ -52,7 +53,7 @@ def test_the_status_table_parses_every_kind_of_date(canary: ModuleType) -> None:
         "claude-fable-5-1",
         "claude-opus-5-5",
         "claude-sonnet-5-5",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-5-5",
     ]
 
 

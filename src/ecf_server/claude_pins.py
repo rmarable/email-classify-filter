@@ -1,17 +1,18 @@
 """The pinned Claude models and what an address's go-live gate is bound to (SPEC §7.5, §9.3;
-OD-014, OD-273, OD-461; V1.4 step 2).
+OD-014, OD-273, OD-461, OD-474; V1.4 step 2).
 
-- **`data/models.lock`** names the Claude model for each role: the main session, `classifier`,
-  `classifier_high` and `actor` (Sonnet), `actor_high` (Opus); no Haiku from v1.0.0 (OD-461). It
-  ships in the wheel, like `ollama.lock`; only an ecf release changes it. Its `lifecycle` records
-  each pinned ID's state and retirement date from Anthropic's deprecations page (V1.4 step 10;
-  OD-299), which the weekly model watch (`model_watch.py`) announces and the CI canary keeps
-  current.
+- **`data/models.lock`** names the Claude model for each role: the main session (Haiku, OD-474;
+  Sonnet in v1.0.0, OD-461), `classifier`, `classifier_high` and `actor` (Sonnet), `actor_high`
+  (Opus). It ships in the wheel, like `ollama.lock`; only an ecf release changes it. Its
+  `lifecycle` records each pinned ID's state and retirement date from Anthropic's deprecations
+  page (V1.4 step 10; OD-299), which the weekly model watch (`model_watch.py`) announces and the
+  CI canary keeps current.
 - **Override** (`ecf settings set claude_model_override <id>|none`; operator decision 2026-10-02):
   an ID replaces every pin in its family (a `claude-sonnet-*` ID replaces the Sonnet pins), one
   override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused. It
-  needs step-up and sends a Security Notice, and changes the pins of every B and C address, which
-  drop to assist until their gate passes again (§7.5).
+  needs step-up and sends a Security Notice. An override of a gate pin changes the pins of every B
+  and C address using it, which drop to assist until their gate passes again (§7.5); a Haiku
+  override replaces only the main session, which isn't a gate pin (OD-474).
 - **Pins per address** (operator decision 2026-10-02): everything its preset uses, whatever its
   sensitivity. A: the Ollama digest; B: the digest and both actors; C: both classifiers and both
   actors. The main session classifies nothing, so it isn't a gate pin.
@@ -92,8 +93,19 @@ def overrides(conn: sqlite3.Connection) -> dict[str, str]:
 
 def effective(conn: sqlite3.Connection) -> dict[str, str]:
     """The pins in force: `models.lock` with any family override applied."""
-    over = overrides(conn)
+    return _applied(overrides(conn))
+
+
+def _applied(over: dict[str, str]) -> dict[str, str]:
     return {r: over.get(family(i) or "", i) for r, i in load_lock().items()}
+
+
+def _gate_changes(conn: sqlite3.Connection, new: dict[str, str]) -> list[str]:
+    """The B and C addresses whose gate pins the override map `new` changes. The main session
+    isn't a gate pin, so a Haiku override (OD-474) moves no address back to assist."""
+    old_pins, new_pins = effective(conn), _applied(new)
+    return [a["email"] for a in addresses.list_addresses(conn) if a["preset"] in ("B", "C")
+            and any(old_pins[r] != new_pins[r] for r in GATE_ROLES[a["preset"]])]  # fmt: skip
 
 
 def in_use(conn: sqlite3.Connection) -> bool:
@@ -162,9 +174,9 @@ def _proposed(conn: sqlite3.Connection, value: str) -> dict[str, str]:
 def _describe_override(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     new = _proposed(conn, str(target.get("value", "")))
     what = ", ".join(f"{f} -> {i}" for f, i in sorted(new.items())) or "the pinned models"
+    gate = "; live B and C addresses go back to assist" if _gate_changes(conn, new) else ""
     return stepup.Bound(stepup.digest("claude_model_override", overrides(conn), new),
-                        f"ecf: run Claude reviews with {what}; live B and C addresses go back"
-                        " to assist")  # fmt: skip
+                        f"ecf: run Claude reviews with {what}{gate}")  # fmt: skip
 
 
 def set_override(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, value: str, *,
@@ -173,6 +185,7 @@ def set_override(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, val
     if new == old:
         raise ConflictError("that is the override already in force")
     stepup.consume(conn, clock, "claude_model_override", {"value": value.strip()}, nonce)
+    affected = _gate_changes(conn, new)
     now = to_ts(clock.now())
     with write_tx(conn):
         if new:
@@ -189,7 +202,6 @@ def set_override(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, val
             " VALUES (?, NULL, 'models.override_changed', ?, 'ok', ?)",
             (now, actor, json.dumps({"from": old, "to": new})),
         )
-    affected = [a["email"] for a in addresses.list_addresses(conn) if a["preset"] in ("B", "C")]
     what = ", ".join(f"{f} -> {i}" for f, i in sorted(new.items()))
     text = (f"Claude model override: {what}." if new else
             "Claude model override cleared: the release's pinned models apply again.")  # fmt: skip

@@ -27,7 +27,7 @@ from ecf_server.notify import FakeNotifier
 from ecf_server.secretstore.memory import MemorySecretStore
 from tests.test_claude_review import add
 
-HAIKU, SONNET, OPUS = "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-opus-5-5"
+HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
 TAGS = (Path(__file__).parent / "canary" / "gemma4-tags-2026-10-02.html").read_text("utf-8")
 DAY = 86400
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -52,7 +52,7 @@ def _models(*ids: tuple[str, str], more: bool = False) -> dict[str, Any]:
             "last_id": ids[-1][0] if ids else None}  # fmt: skip
 
 
-PINNED = ((HAIKU, "2025-10-01T00:00:00Z"), (SONNET, "2026-09-28T00:00:00Z"),
+PINNED = ((HAIKU, "2026-10-07T00:00:00Z"), (SONNET, "2026-09-28T00:00:00Z"),
           (OPUS, "2026-09-22T00:00:00Z"))  # fmt: skip
 
 
@@ -94,8 +94,9 @@ def test_every_pin_has_a_lifecycle_entry_and_none_retires_yet() -> None:
     assert set(claude_pins.load_lock().values()) <= set(life)
     assert life[SONNET] == claude_pins.Lifecycle("Active", None, date(2027, 9, 28))
     assert life[OPUS] == claude_pins.Lifecycle("Active", None, date(2027, 9, 22))
-    assert HAIKU not in claude_pins.load_lock().values()  # OD-461: no Haiku pins
-    assert all(e.retires is None for e in life.values())  # verified 2026-10-02
+    assert life[HAIKU] == claude_pins.Lifecycle("Active", None, date(2027, 10, 7))
+    assert claude_pins.load_lock()["main_session"] == HAIKU  # the session only, OD-474
+    assert all(e.retires is None for e in life.values())  # verified 2026-10-08
 
 
 # ---- retirement --------------------------------------------------------------------------------
@@ -134,7 +135,7 @@ def test_first_seen_inside_30_days_sends_one_alert(
     add(conn, clock, "b", "B")
     _retiring(monkeypatch, SONNET, clock.now().date() + timedelta(days=20))
     assert model_watch.retirement_tick(conn, clock, n) == 1
-    assert f"{SONNET} (main_session, classifier, classifier_high, actor) retires" in n.sent[-1][1]
+    assert f"{SONNET} (classifier, classifier_high, actor) retires" in n.sent[-1][1]
     clock.advance(12 * DAY)  # 8 days left: d30 already counted
     assert model_watch.retirement_tick(conn, clock, n) == 0
 
@@ -383,3 +384,11 @@ def test_a_newer_release_goes_on_the_daily_summary_once(
     assert st["next_at"] == to_ts(clock.now() + timedelta(hours=1))
     st = run()  # no lister (tests' services, `ecf-server dev`): nothing about releases
     assert st["next_at"] == to_ts(clock.now() + timedelta(days=7))
+
+
+def test_a_retiring_session_pin_doesnt_say_addresses_go_back_to_assist() -> None:
+    r = {"id": HAIKU, "roles": ["main_session"], "retires": "2027-10-07", "replacement": None}
+    text = model_watch.retirement_text(r, date(2027, 10, 1))
+    assert text.endswith("keeps reviews going.")  # the session isn't a gate pin (OD-474)
+    gate = model_watch.retirement_text(r | {"roles": ["actor"]}, date(2027, 10, 1))
+    assert "go back to assist" in gate
