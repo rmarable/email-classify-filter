@@ -100,14 +100,14 @@ All must hold:
 
 Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list), 5 (what "critical" means: a finding that could cause mail loss, an unauthorized send or action, or a missed fraud escalation) and 6 were accepted as written (operator decision 2026-10-07, OD-462). A release candidate (`v1.0.0-rcN`) comes before `v1.0.0` (OD-465), and a Slack real-service run covering Undo on real Gmail is required before `v1.0.0` (OD-464).
 
-**Status for `v1.0.0`** (2026-10-07; the execution plan is `docs/history/release-plan-v1.0.0-2026-10-06.md`):
+**Status for `v1.0.0`** (2026-10-08; the execution plan is `docs/history/release-plan-v1.0.0-2026-10-06.md`):
 1. Met: `ms-v1.0-foundations` to `ms-v1.6-gmail`.
 2. Met: including Undo of archive, junk and a draft on real Gmail from Slack (OD-464, 2026-10-07, §21.1).
 3. Met on the final set (`7c51dced`, after OD-472; rc7): preset A (`f357108a`) and every shipped Claude pin (C `standard` `d055af53`, C `high` `3aef858d`, B `standard` `c0b141e5`, B `high` `f1d8931d`): 0 unsafe, fraud-guard recall 71/71, injection cases safe (§16.2; OD-460, OD-461, OD-472).
 4. Met: the listed documents exist; `THIRD_PARTY_NOTICES` is generated and checked in CI.
 5. Met, by judgement: no open critical finding; the `rfc822` hash item is deferred (OD-463) and Gmail's Spam folder is a stated limit (§12.2).
 6. Built: CI green on Linux, the macOS gate, the license check, reproducible builds (Linux CI and macOS byte-identical), `release.yml` and `ecf upgrade`'s hash checks (OD-458); proven by the release candidate.
-7. Pending: operator sign-off.
+7. Met: the operator signed off on 2026-10-08 (operator decision), after the public-readiness check (§17.4).
 8. Met: the decision is recorded (OD-473, 2026-10-08): `tev1:4b` is not adopted for now, on the synthetic comparison with Gemma (§7.8). The corpus comparison was not needed for it.
 
 ### 1.6 Documents

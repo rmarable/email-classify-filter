@@ -237,7 +237,7 @@ def cli(db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeG
         return real(env)
 
     monkeypatch.setattr(upgrade_check, "this_install", this_install)
-    fake = FakeGh({"v1.0.0": _rel("v1.0.0"), "v1.1.0-rc1": _rel("v1.1.0-rc1", prerelease=True)})
+    fake = FakeGh({"v9.0.0": _rel("v9.0.0"), "v9.1.0-rc1": _rel("v9.1.0-rc1", prerelease=True)})
     monkeypatch.setattr(ecf.cli_upgrade, "_gh", fake.gh)
     return fake
 
@@ -252,12 +252,12 @@ def test_cli_newest_stable_release(cli: FakeGh, conn: sqlite3.Connection, tmp_pa
     stale.mkdir(parents=True)
     r = _upgrade("--check")
     assert r.exit_code == 0, r.output
-    assert "downloading v1.0.0 from test/repo" in r.output and "sha256 matches" in r.output
-    assert f"ecf {__version__} → 1.0.0" in r.output and "checks passed" in r.output
+    assert "downloading v9.0.0 from test/repo" in r.output and "sha256 matches" in r.output
+    assert f"ecf {__version__} → 9.0.0" in r.output and "checks passed" in r.output
     assert not stale.exists()  # earlier downloads go; the installed one stays
     r = _upgrade()
-    assert r.exit_code == 1 and "Upgrade to 1.0.0?" in r.output  # asks before stopping anything
-    cli.releases.pop("v1.0.0")
+    assert r.exit_code == 1 and "Upgrade to 9.0.0?" in r.output  # asks before stopping anything
+    cli.releases.pop("v9.0.0")
     r = _upgrade("--check")
     assert r.exit_code == 0 and "is the newest release" in r.output  # an rc only by name
 
@@ -265,40 +265,40 @@ def test_cli_newest_stable_release(cli: FakeGh, conn: sqlite3.Connection, tmp_pa
 def test_cli_to_a_release_candidate_and_prod(cli: FakeGh, conn: sqlite3.Connection,
                                              db_path: Path, tmp_path: Path) -> None:  # fmt: skip
     del cli, conn
-    r = _upgrade("--to", "v1.1.0-rc1", "--check")
+    r = _upgrade("--to", "v9.1.0-rc1", "--check")
     assert r.exit_code == 0, r.output
-    assert "→ 1.1.0rc1" in r.output
+    assert "→ 9.1.0rc1" in r.output
     c = db.connect(db_path)
     with write_tx(c):
         c.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
                   " ('install_role', '\"prod\"', 't', 't')")  # fmt: skip
     c.close()
-    r = _upgrade("--to", "v1.0.0", "--check")
+    r = _upgrade("--to", "v9.0.0", "--check")
     assert r.exit_code == 0, r.output  # a prod install takes a verified release
     kept = Paths("t", tmp_path / "home").data_dir / "releases"
-    assert sorted(p.name for p in kept.iterdir()) == ["v1.0.0"]
-    whl = kept / "v1.0.0" / "email_classify_filter-1.0.0-py3-none-any.whl"
+    assert sorted(p.name for p in kept.iterdir()) == ["v9.0.0"]
+    whl = kept / "v9.0.0" / "email_classify_filter-9.0.0-py3-none-any.whl"
     r = _upgrade("--wheel", str(whl), "--check")
     assert r.exit_code == 1 and "--wheel is for test installs" in r.output  # even a verified one
 
 
 def test_cli_refusals(cli: FakeGh, conn: sqlite3.Connection, tmp_path: Path) -> None:
     del conn
-    rel = cli.releases["v1.0.0"]
-    rel["assets"]["email_classify_filter-1.0.0-py3-none-any.whl"] += b"x"
-    r = _upgrade("--to", "v1.0.0", "--check")
+    rel = cli.releases["v9.0.0"]
+    rel["assets"]["email_classify_filter-9.0.0-py3-none-any.whl"] += b"x"
+    r = _upgrade("--to", "v9.0.0", "--check")
     assert isinstance(r.exception, VerifyError)
-    cli.releases["v1.0.0"] = _rel("v1.0.0", wheel_version="1.0.1")  # consistent, wrong inside
-    r = _upgrade("--to", "v1.0.0", "--check")
-    assert r.exit_code == 1 and "release.json says 1.0.1, not 1.0.0" in r.output
+    cli.releases["v9.0.0"] = _rel("v9.0.0", wheel_version="9.0.1")  # consistent, wrong inside
+    r = _upgrade("--to", "v9.0.0", "--check")
+    assert r.exit_code == 1 and "release.json says 9.0.1, not 9.0.0" in r.output
     cli.exit = 4
     assert isinstance(_upgrade("--check").exception, ReleaseError)
-    r = _upgrade("--to", "1.0.0")
-    assert isinstance(r.exception, InvalidInputError) and "(v1.0.0)" in str(r.exception)
+    r = _upgrade("--to", "9.0.0")
+    assert isinstance(r.exception, InvalidInputError) and "(v9.0.0)" in str(r.exception)
     r = _upgrade("--to", __version__)
     assert isinstance(r.exception, InvalidInputError) and "already installed" in str(r.exception)
     assert isinstance(_upgrade("--sha256sums", "x").exception, InvalidInputError)
-    assert isinstance(_upgrade("--wheel", "x.whl", "--to", "v1.0.0").exception, InvalidInputError)
+    assert isinstance(_upgrade("--wheel", "x.whl", "--to", "v9.0.0").exception, InvalidInputError)
 
 
 def test_cli_to_an_older_version_goes_back(cli: FakeGh, conn: sqlite3.Connection,
@@ -318,8 +318,8 @@ def test_cli_to_an_older_version_goes_back(cli: FakeGh, conn: sqlite3.Connection
 
 def test_cli_wheel_with_sums(cli: FakeGh, conn: sqlite3.Connection, tmp_path: Path) -> None:
     del conn
-    rel = assets("v1.0.0")
-    whl = tmp_path / "email_classify_filter-1.0.0-py3-none-any.whl"
+    rel = assets("v9.0.0")
+    whl = tmp_path / "email_classify_filter-9.0.0-py3-none-any.whl"
     sums = tmp_path / "SHA256SUMS"
     whl.write_bytes(rel[whl.name])
     sums.write_bytes(rel["SHA256SUMS"])

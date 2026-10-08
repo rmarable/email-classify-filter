@@ -21,7 +21,7 @@ vulnerabilities.
 ## Supported versions
 
 From `v1.0.0`, the latest release only; fixes ship as a new release. Milestone tags (`ms-…`) and
-release candidates (`v1.0.0-rcN`) record progress and are not supported. Nothing is released yet.
+release candidates (`v1.0.0-rcN`) record progress and are not supported.
 
 ## The security model in brief
 

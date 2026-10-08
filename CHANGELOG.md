@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v1.0.0 (not yet tagged)
+## v1.0.0 (2026-10-08)
 
 - Decided: the decision model `tev1:4b` is not adopted for now; it rated too much ordinary mail as fraud risk compared with Gemma on the synthetic set, so Gemma stays the local classifier (OD-473; SPEC §7.8).
 - `ecf eval run` and `ecf eval status` print shorter, aligned lines: the commands to follow or stop a run each on their own line (with `--install` when you used it), and each recent run on two lines, score then safety and gate.

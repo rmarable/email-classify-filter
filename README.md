@@ -8,9 +8,9 @@ Claude, and needs no cloud infrastructure.
 
 ## Status
 
-Milestones V1.0 to V1.6 are done, including personal Gmail accounts (V1.6). `v1.0.0` is being
-prepared; SPEC §1.5 lists what it needs, and the first release candidate will be `v1.0.0-rc1`.
-**Not released yet:** milestone tags (`ms-…`) record internal progress, not releases.
+`v1.0.0` (2026-10-08) is the first release: macOS only, single-user local mode, with milestones
+V1.0 to V1.6, including personal Gmail accounts (V1.6). Milestone tags (`ms-…`) and release
+candidates (`v1.0.0-rcN`) record internal progress, not releases.
 
 ## What it does
 
@@ -79,7 +79,7 @@ uv tool install ./email_classify_filter-*.whl
 repository. From `v1.0.0`, `ecf upgrade` checks what it downloads against the release's
 `SHA256SUMS`.
 
-Nothing is released yet. Until `v1.0.0`, build the wheel from a checkout and install that:
+To build the wheel from a checkout instead:
 
 ```sh
 uv build

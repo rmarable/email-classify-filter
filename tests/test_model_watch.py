@@ -356,21 +356,21 @@ def test_a_newer_release_goes_on_the_daily_summary_once(
     def never(_r: httpx.Request) -> httpx.Response:
         raise AssertionError("no request expected")
 
-    found = [ReleaseInfo("v1.0.0", False), ReleaseInfo("v1.1.0-rc1", True)]
+    found = [ReleaseInfo("v9.0.0", False), ReleaseInfo("v9.1.0-rc1", True)]
     run = functools.partial(model_watch.run, conn, clock, FakeNotifier(), _store(None),
                             _http(never))  # fmt: skip
     st = run(releases=lambda: found)
-    assert st["release"]["newest"] == "v1.0.0" and st["release"]["error"] is None
-    line = f"ecf 1.0.0 is out (this is {__version__}): `ecf upgrade` checks it, then asks."
+    assert st["release"]["newest"] == "v9.0.0" and st["release"]["error"] is None
+    line = f"ecf 9.0.0 is out (this is {__version__}): `ecf upgrade` checks it, then asks."
     assert line in model_watch.daily_lines(conn)
-    assert "  ecf releases: v1.0.0 is out (ecf upgrade), read 2026-10-01" in watch_lines(st)
+    assert "  ecf releases: v9.0.0 is out (ecf upgrade), read 2026-10-01" in watch_lines(st)
     with write_tx(conn):
         model_watch.mark_reported(conn, to_ts(clock.now()))
     run(releases=lambda: found)
     assert model_watch.daily_lines(conn) == []  # once
-    found.append(ReleaseInfo("v1.0.1", False))
+    found.append(ReleaseInfo("v9.0.1", False))
     run(releases=lambda: found)
-    assert any("ecf 1.0.1 is out" in x for x in model_watch.daily_lines(conn))
+    assert any("ecf 9.0.1 is out" in x for x in model_watch.daily_lines(conn))
 
     def signed_out() -> list[ReleaseInfo]:
         raise ReleaseError("gh isn't signed in to GitHub; run gh auth login")
