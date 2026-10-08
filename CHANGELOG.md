@@ -3,6 +3,34 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.1.0 (not yet tagged)
+
+### Added
+
+- `ecf doctor` has a `schema` row: the extension's budget, a warning near a limit (OD-478; SPEC §13.2).
+- `GET /v1/schema` returns the schema version, the install's extension and its digest, for the CLI and MCP (OD-478; SPEC §15.1).
+- Schema extensions: the `schema` section of `ecf config apply` adds classifier fields and `category` values; rules can use them, and the shipped fields can't change (OD-478; ADR 0025; SPEC §7.1, §9.7).
+
+### Changed
+
+- With a schema extension applied, the "local model failed" System Error says when classifier prompts came near the context window and that the extension's text may be the cause (OD-478; SPEC §5).
+- On mail classified before an extension, a rule comparing an extension field (or a level the field no longer has) never matches, `not` included, so it can't hide old mail (OD-478; SPEC §7.4).
+- Applying a schema change moves live addresses back to assist at once, and the step-up dialog and Security Notice always lead with "changes the classifier prompt; live addresses go back to assist" (OD-478; SPEC §9.7).
+- An empty or wrong-typed `schema` section is refused (only `schema: default` removes the extension), `rule` and `safety` can't be extension field names, every bad value name is listed, and the extension keeps your order of fields and values (OD-478; SPEC §7.1).
+- Removing an added category value that confirmed senders use is refused, naming them; a rule ID can't be an added value in `ecf rules test` or `rules: default` either (OD-478; SPEC §9.7).
+- If a later release clashes with your extension, ecf classifies with the built-in schema under a new gate key, raises a System Error and fails the `ecf doctor` schema row; `schema: default` still applies (OD-478; SPEC §7.4).
+- Rules are checked against the extended schema: removing a field or value a rule uses is refused, naming the rule (OD-478; SPEC §9.7).
+- With a schema extension applied, `/ecf-review` and `/ecf-eval` give Claude the meaning of each field and value (`schema_text`, from ecf, not the email) and check its answers against the extended schema (OD-478; SPEC §10.3).
+- The Slack review Fix form offers the extension fields after the shipped ones, and each review line shows the extension values after `ext:` (OD-478; SPEC §10.1).
+- `ecf eval label --corpus` asks every field of the extended schema; corpus labels need every shipped field, may leave out extension fields and refuse unknown ones (OD-478; SPEC §16.5).
+- Eval results record the digest of the schema the models were asked with, `ecf eval compare` warns when two runs' digests differ, and preset B evals use Gemma's run only on the same schema (OD-478; SPEC §16.5).
+
+### Security
+
+- An extension change is shown as "changes the classifier prompt" in the dry run, the step-up dialog and the Security Notice, and drops live addresses to assist until their gates pass again: the schema digest with the extension is the gate key (OD-478; SPEC §9.3).
+- Extensions have fixed limits (8 fields, 16 values per field, 4 category values, 180-character descriptions, 4,000 characters of prompt text); a file over a limit is refused before step-up with every problem listed (`schema_limit`), and the dry run warns from 80% (OD-478; SPEC §7.1).
+- Privacy statement: descriptions you write for schema extensions go to Anthropic on presets B and C, and extension field and value names to Slack; neither is email content (OD-478; SPEC §12.4).
+
 ## v2.0.0 (not yet tagged)
 
 ### Changed

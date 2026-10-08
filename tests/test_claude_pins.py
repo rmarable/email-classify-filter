@@ -191,3 +191,29 @@ def test_the_override_from_the_cli(home: Path) -> None:
         assert "actor_high claude-opus-5-5" in st.output
     finally:
         stop(proc)
+
+
+def test_a_schema_extension_changes_every_key_alike(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path
+) -> None:
+    """Preset A's and the fallback's gate, the B and C pins and unpinned eval keys all move to
+    the effective schema's digest together (OD-478)."""
+    from ecf_server import claude_eval, config, fallback  # noqa: PLC0415
+    from tests.test_claude_review import extend  # noqa: PLC0415
+
+    def keys() -> list[str]:
+        unpinned = [claude_eval.Options(tmp_path, preset=p, actor_model=NEW_SONNET)
+                    for p in ("B", "C")]  # fmt: skip
+        return [gate.current_digest(conn), fallback.digest(conn),
+                *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B", "C")),
+                *(claude_eval.models_for(conn, o)[2] for o in unpinned)]  # fmt: skip
+
+    before = keys()
+    extend(conn, clock)
+    after = keys()
+    assert all(a != b for a, b in zip(before, after, strict=True))
+    effective = claude_pins.local_key(config.current_schema(conn))
+    assert effective != LOCAL
+    assert gate.current_digest(conn) == fallback.digest(conn) == effective
+    assert claude_pins.pins(conn, "B")["digest"] == effective
+    assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest

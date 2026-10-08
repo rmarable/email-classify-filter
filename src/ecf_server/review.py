@@ -7,8 +7,10 @@ each email right, which the go-live gate counts (V1.3 step 6b).
   An email left out of the sample is marked so and never offered again; one shown in a post is
   marked asked and not repeated (its buttons keep working).
 - **What each line says:** the email (ID, sender, subject), what the model said (category,
-  priority, fraud risk, payment) and what ecf would do. The model's words are labelled as such.
-- **Buttons:** ✏️ Fix on every line opens a form to correct the classification; ✅ Correct appears on
+  priority, fraud risk, payment; then `ext:` and the extension fields' values, kept short) and
+  what ecf would do. The model's words are labelled as such.
+- **Buttons:** ✏️ Fix on every line opens a form to correct the classification (the shipped
+  fields in `FIXABLE`, then each extension field); ✅ Correct appears on
   the lines "All others correct" may not confirm; **All others correct** confirms the rest of the
   post that you haven't fixed. A post holds at most 20 emails and at most 25 buttons (Slack's
   limit), so it lists fewer when many need their own button.
@@ -29,10 +31,11 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import load_schema
+from ecf.schema import CompiledSchema, FieldKind
 from ecf_server import (
     cards,
     claude_pins,
+    config,
     digests,
     schedule,
     slack_admin,
@@ -55,6 +58,8 @@ BUTTONS_MAX = 25
 GATE_COUNT = {"standard": 100, "high": 200}  # §9.3
 DEFAULT_SAMPLE = 10  # percent, after the gate count (§14)
 FIXABLE = ("category", "priority", "fraud_risk", "payment_related", "sender_type")
+OPTIONS_MAX = 100  # Slack's limit on a static select's options
+EXT_CHARS = 80  # the review line's `ext:` part
 MODEL_NOTE = "What ecf's model said (it can be wrong)."
 
 
@@ -174,12 +179,13 @@ def card(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.R
     buttons: list[Button] = []
     bulk: list[str] = []
     shown = 0
+    schema = config.current_schema(conn)
     for r in rows[:POST_MAX]:
         own = needs_own_review(conn, r)
         cost = 2 if own else 1
         if len(buttons) + cost + 1 > BUTTONS_MAX:
             break
-        lines.append(_line(r) + (" (needs its own review)" if own else ""))
+        lines.append(_line(r, schema) + (" (needs its own review)" if own else ""))
         short = r["stable_id"][: cards.SHORT_ID]
         buttons.append(Button(FIX, f"Fix {short}", r["stable_id"]))
         if own:
@@ -200,7 +206,7 @@ def card(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.R
     return Card(f"Review: {aid} ({shown})", text="\n".join(lines), buttons=tuple(buttons))
 
 
-def _line(r: sqlite3.Row) -> str:
+def _line(r: sqlite3.Row, schema: CompiledSchema) -> str:
     cls: dict[str, Any] = json.loads(r["classification"] or "{}")
     doc: dict[str, Any] = json.loads(r["proposal"] or "{}")
     facts: dict[str, Any] = json.loads(r["facts"] or "{}")
@@ -210,7 +216,21 @@ def _line(r: sqlite3.Row) -> str:
     sender = cards.short_sender(cards.sender_line(r, facts))
     return (f"{r['stable_id'][: cards.SHORT_ID]} {sender}: {cards.subject_line(r)[:50]}"
             f" → {cls.get('category')}, {cls.get('priority')}, fraud {cls.get('fraud_risk')}"
-            f"{pay}; would: {what}")  # fmt: skip
+            f"{pay}{_ext(cls, schema)}; would: {what}")  # fmt: skip
+
+
+def _ext(cls: dict[str, Any], schema: CompiledSchema) -> str:
+    """`, ext: field=value, ...` for the extension fields the classification has (an item
+    classified before the extension has none), cut to `EXT_CHARS`."""
+    parts = [f"{f}={_shown(cls[f])}" for f in schema.extension_fields if f in cls]
+    if not parts:
+        return ""
+    text = ", ".join(parts)
+    return ", ext: " + (text if len(text) <= EXT_CHARS else text[: EXT_CHARS - 1] + "…")
+
+
+def _shown(v: Any) -> str:
+    return str(v).lower() if isinstance(v, bool) else str(v)
 
 
 # ---------------------------------------------------------------------------- recording
@@ -254,20 +274,27 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
     return verdict
 
 
-def _choices(field: str) -> list[str]:
-    spec = load_schema().fields[field]
-    return ["true", "false"] if spec.kind.value == "boolean" else list(spec.values)
+def fixable(schema: CompiledSchema) -> tuple[str, ...]:
+    """The Fix form's fields: the shipped ones in `FIXABLE`, then each extension field."""
+    return (*FIXABLE, *schema.extension_fields)
 
 
-def correction_from(values: dict[str, str]) -> dict[str, Any]:
+def _choices(field: str, schema: CompiledSchema) -> list[str]:
+    spec = schema.fields[field]
+    if spec.kind is FieldKind.BOOLEAN:
+        return ["true", "false"]
+    return list(spec.values[:OPTIONS_MAX])
+
+
+def correction_from(values: dict[str, str], schema: CompiledSchema) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for f in FIXABLE:
+    for f in fixable(schema):
         v = values.get(f, "")
         if not v:
             continue
-        if v not in _choices(f):
+        if v not in _choices(f, schema):
             raise InvalidInputError(f"{f}: not one of the choices")
-        out[f] = v == "true" if _choices(f) == ["true", "false"] else v
+        out[f] = v == "true" if schema.fields[f].kind is FieldKind.BOOLEAN else v
     return out
 
 
@@ -302,11 +329,13 @@ def _fix_form(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = [
         {"type": "context", "elements": [{"type": "plain_text", "text": MODEL_NOTE}]}
     ]
-    for f in FIXABLE:
-        current = str(cls.get(f)).lower() if isinstance(cls.get(f), bool) else str(cls.get(f))
-        options = [{"text": {"type": "plain_text", "text": c}, "value": c} for c in _choices(f)]
+    schema = config.current_schema(conn)
+    for f in fixable(schema):
+        current = _shown(cls.get(f))
+        choices = _choices(f, schema)
+        options = [{"text": {"type": "plain_text", "text": c}, "value": c} for c in choices]
         element: dict[str, Any] = {"type": "static_select", "action_id": "v", "options": options}
-        if current in _choices(f):
+        if current in choices:
             element["initial_option"] = {"text": {"type": "plain_text", "text": current},
                                          "value": current}  # fmt: skip
         blocks.append({"type": "input", "block_id": f, "optional": True, "element": element,
@@ -321,8 +350,8 @@ def _fix_form(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
 def _fix_submitted(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
     if click.kind != "form":
         return
-    verdict = record(conn, clock, click.ref, actor=f"slack:{click.user}",
-                     correction=correction_from(click.values))  # fmt: skip
+    correction = correction_from(click.values, config.current_schema(conn))
+    verdict = record(conn, clock, click.ref, actor=f"slack:{click.user}", correction=correction)
     slack_out.enqueue_post(conn, clock, key=f"review-fix:{click.ref}:{to_ts(clock.now())}",
                            route=RouteRef(click.user),
                            card=Card(f"Recorded: {click.ref[:8]} {verdict}"))  # fmt: skip

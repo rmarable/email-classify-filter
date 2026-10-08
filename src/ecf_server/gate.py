@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from ecf.eval.metrics import wilson
-from ecf.schema import load_schema
 from ecf_server import (
     claude_pins,
     config,
@@ -103,9 +102,10 @@ class Gate:
             c.detail for c in self.checks if not c.ok)  # fmt: skip
 
 
-def current_digest() -> str:
-    """Preset A's key: the pinned Ollama digest and the schema digest (OD-475)."""
-    return claude_pins.local_key()
+def current_digest(conn: sqlite3.Connection | None = None) -> str:
+    """Preset A's key: the pinned Ollama digest and the effective schema's digest (OD-475,
+    OD-478); the shipped schema without a connection."""
+    return claude_pins.local_key(config.current_schema(conn) if conn is not None else None)
 
 
 def pair_key(preset: str) -> str:
@@ -173,7 +173,7 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
 
 def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
     """OD-069: Fixes whose corrected labels reach a fraud or regulatory rule the model's didn't."""
-    labels = policy.labels(load_schema(), config.current_rules(conn))
+    labels = policy.labels(config.current_schema(conn), config.current_rules(conn))
     n = 0
     for item in _items(conn, address_id, digest):
         if (

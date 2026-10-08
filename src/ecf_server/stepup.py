@@ -119,7 +119,7 @@ def issue(
                 person(),
                 to_ts(now),
                 to_ts(now + ttl),
-                json.dumps(target, sort_keys=True),
+                json.dumps(target),  # in its order: a schema extension's order is its prompt's
                 code,
             ),
         )

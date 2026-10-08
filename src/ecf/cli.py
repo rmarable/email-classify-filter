@@ -1318,11 +1318,14 @@ def eval_compare(a: Path, b: Path) -> None:
         compare_endpoints,
         compare_fields,
         load_result,
+        schema_warning,
         summary,
     )
 
     ra, rb = load_result(a), load_result(b)
     c = compare(ra, rb)
+    if warning := schema_warning(ra, rb):
+        typer.echo(warning, err=True)
     typer.echo(f"A  {summary(ra)}")
     typer.echo(f"B  {summary(rb)}")
     typer.echo(f"paired cases: {c.n}; B-only right {c.b_only}, A-only right {c.a_only}")

@@ -40,7 +40,7 @@ from typing import Any, Literal
 
 from ecf.schema import CompiledSchema
 from ecf_server import precheck
-from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, RuleInput
+from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, LabelFrom, RuleInput
 
 Mode = Literal["auto", "approve"]
 SAFE = frozenset({"label", "flag", "escalate", "leave"})
@@ -101,12 +101,19 @@ class Context:
 
 
 def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
-    """Every label name ecf may write: built-ins, category values and the rules' own names."""
+    """Every label name ecf may write: built-ins, category values (with any the install's
+    extension adds), the rules' own names, and the values of extension enum fields a rule
+    labels from (`{label: {field: x}}`; OD-478)."""
     names = set(BUILTIN_LABELS) | set(schema.fields["category"].values)
+    ext = set(schema.extension_fields)
     for r in rules.rules:
         for a in r.then:
-            if a.action == "label" and isinstance(a.target, str):
+            if a.action != "label":
+                continue
+            if isinstance(a.target, str):
                 names.add(a.target)
+            elif isinstance(a.target, LabelFrom) and a.target.field in ext:
+                names |= set(schema.fields[a.target.field].values)
     return frozenset(n for n in names if _LABEL.fullmatch(n))
 
 

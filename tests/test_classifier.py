@@ -216,3 +216,31 @@ def test_the_real_model_classifies_the_starter_cards(
     client.close()
     outcomes = {r[0] for r in conn.execute("SELECT outcome FROM model_calls")}
     assert outcomes == {"ok"}
+
+
+def test_a_schema_change_during_the_call_asks_again_instead_of_recording(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """`ecf config apply` changes the schema while the model answers: the answer (to the old
+    schema) isn't recorded under the new key; the item stays new and is asked again (OD-478)."""
+    from ecf_server.clock import to_ts  # noqa: PLC0415
+    from ecf_server.db import write_tx  # noqa: PLC0415
+
+    class Applying(ChatOllama):
+        def handler(self, req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/api/chat":
+                with write_tx(conn):
+                    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                                 " VALUES ('config.schema', ?, ?, 'test')",
+                                 (json.dumps({"category_values": {"legal_notice": "Legal."}}),
+                                  to_ts(clock.now())))  # fmt: skip
+            return super().handler(req)
+
+    add_address(conn, clock, "ap")
+    sid = _item(conn, clock, "i1", "Invoice 4471 for $4,200 is due Friday.")
+    fake = Applying(json.dumps(GOOD))
+    result = classifier.classify_item(conn, clock, fake.client(), _ready(), _row(conn, sid))
+    assert result.outcome == "skipped"
+    row = _row(conn, sid)
+    assert row["status"] == "new" and row["classification"] is None
+    assert classifier.store(conn, clock, sid, GOOD, {}, schema_digest=SCHEMA.digest) is False

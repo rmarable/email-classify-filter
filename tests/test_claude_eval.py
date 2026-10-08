@@ -22,11 +22,13 @@ from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, 
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result
-from ecf_server import claude_eval, claude_pins, db, evalrun, gate
+from ecf.schema import load_schema
+from ecf_server import claude_eval, claude_pins, config, db, evalrun, gate
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import NullNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
+from tests.test_claude_review import EXT, extend
 from tests.test_decide import MARKETING
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
@@ -152,6 +154,7 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     m = json.loads(row["metrics"])
     assert m["confirmed"] == 2 and m["complete"] is True and m["determinism_diffs"] == 0
     assert m["claude"]["pinned"] is True and m["claude"]["sessions"] == 1
+    assert m["schema_digest"] == load_schema().digest  # the schema it was asked with
     assert set(m["claude"]["models"]) == {"classifier", "classifier_high", "actor", "actor_high"}
     text = Path(row["path"]).read_text()
     assert "IBAN" not in text and "SYSTEM NOTE" not in text  # metrics only
@@ -204,7 +207,8 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
     for gold in ("expected", "safety", "injection_target", "must_escalate", "fraud_guard"):
         assert gold not in text
     msg = out[1]
-    assert set(msg) == {"id", "need", "untrusted_email", "notice", "schema"}
+    assert set(msg) == {"id", "need", "untrusted_email", "notice", "schema", "schema_text"}
+    assert msg["schema_text"] == load_schema().prompt_block
     assert set(msg["untrusted_email"]) == {"from", "subject", "date", "text", "attachments_meta"}
 
 
@@ -376,6 +380,49 @@ def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path
                     digest=claude_pins.local_key(), summary=summary)  # fmt: skip
     evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
     return rf.run_id
+
+
+def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    extend(conn, clock)
+    schema = config.current_schema(conn)
+    start(db_path, clock, root)
+    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    msg = claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
+    assert msg["schema_text"] == schema.prompt_block and "contract_stage" in msg["schema_text"]
+    bad = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
+                                            item["agent"])  # fmt: skip
+    assert isinstance(bad, dict) and "contract_stage: missing" in bad["errors"]
+    full = BEC | {"contract_stage": "none", "lawyer_involved": False}
+    assert answer(db_path, clock, item, S1, full)["accepted"]
+    s = claude_eval.stop(connector(db_path), clock)
+    assert s is not None and s["done"] == 1
+    m = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
+    assert m["schema_digest"] == schema.digest != load_schema().digest
+
+
+def test_preset_b_takes_only_a_run_on_the_effective_schema(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    _a_run(conn, clock, db_path, root, REQUEST)  # recorded no digest: the shipped schema
+    extend(conn, clock)
+    with pytest.raises(InvalidInputError, match="ecf eval run"):
+        start(db_path, clock, root, preset="B")
+    cases, version = evalrun.load(root, fraud_only=False)
+    got = REQUEST | {"contract_stage": "none", "lawyer_involved": False}
+    results = [CaseResult(id=c.id, correct=False, got=got | {"rule": None}) for c in cases]
+    summary: dict[str, object] = evalrun.summarize(results, 0)
+    schema = config.current_schema(conn)
+    summary["schema_digest"] = schema.digest
+    rf = ResultFile(run_id="b" * 32, pair="gemma4-12b/local", set_version=version,
+                    created_at=to_ts(clock.now()), cases=results,
+                    digest=claude_pins.local_key(schema), summary=summary)  # fmt: skip
+    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
+    r = start(db_path, clock, root, preset="B")
+    run = claude_eval.current()
+    assert r["state"] == "ready" and run is not None and run.source_run == "b" * 32
+    assert EXT["category_values"].keys() <= run.known
 
 
 def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(

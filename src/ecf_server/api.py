@@ -833,7 +833,8 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`."""
+    """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`; from
+    v2.1.0 `GET /v1/schema` (OD-478)."""
 
     @allow(Caller.CLI)
     def apply_config(request: Request) -> JSONResponse:
@@ -860,9 +861,21 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(ruletest.run(state.clock, current, text, root))
 
+    @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
+    def show_schema(_request: Request) -> JSONResponse:
+        """The effective schema: version, the install's extension, digest (OD-478)."""
+        conn = state.connect()
+        try:
+            schema = config.current_schema(conn)
+        finally:
+            conn.close()
+        return JSONResponse({"version": schema.version, "extension": schema.extension,
+                             "digest": schema.digest})  # fmt: skip
+
     return [
         Route("/v1/config/apply", apply_config, methods=["POST"]),
         Route("/v1/rules/test", test_rules, methods=["POST"]),
+        Route("/v1/schema", show_schema, methods=["GET"]),
     ]
 
 
@@ -945,15 +958,25 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _corpus_run(sid: str | None, *, fraud_only: bool) -> evalrun.CorpusRun | None:
-    """The open corpus session an eval run takes over (R154); None for the synthetic set."""
+def _corpus_run(sid: str | None, *, fraud_only: bool,
+                connect: Callable[[], sqlite3.Connection] | None = None
+                ) -> evalrun.CorpusRun | None:  # fmt: skip
+    """The open corpus session an eval run takes over (R154); None for the synthetic set. Its
+    labels are checked against the effective schema."""
     if not sid:
         return None
     if fraud_only:
         raise InvalidInputError("--fraud-only is for the synthetic set")
+    schema = None
+    if connect is not None:
+        conn = connect()
+        try:
+            schema = config.current_schema(conn)
+        finally:
+            conn.close()
     session = corpus_session.set_busy(sid, True)
     try:
-        return evalrun.corpus_run(session)
+        return evalrun.corpus_run(session, schema)
     except Exception:
         corpus_session.set_busy(sid, False)
         raise
@@ -976,7 +999,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
             raise InvalidInputError("battery_floor: a percent from 0 to 100")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
-        corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True)
+        corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True,
+                                 connect=state.connect)  # fmt: skip
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
                                actor=body.get("actor") is not False,
                                fraud_only=body.get("fraud_only") is True,
@@ -1676,7 +1700,12 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
         path = Path(_str(body, "result")).expanduser()
         if path.suffix != ".json" or not path.is_file():
             raise InvalidInputError(f"no result file at {path}")
-        return JSONResponse(evalrun.rescore(s, path, state.clock))
+        conn = state.connect()
+        try:
+            schema = config.current_schema(conn)
+        finally:
+            conn.close()
+        return JSONResponse(evalrun.rescore(s, path, state.clock, schema))
 
     return [
         Route("/v1/eval/rescore", rescore, methods=["POST"]),

@@ -24,7 +24,6 @@ from typing import Any
 
 from ecf.errors import InvalidInputError
 from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
-from ecf.schema import load_schema
 from ecf_server import db, internal, precheck, rules
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
@@ -159,7 +158,7 @@ def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, A
 def run(
     clock: Clock, current: rules.CompiledRules, proposed_text: str, root: Path
 ) -> dict[str, Any]:
-    proposed = rules.compile_rules(proposed_text, load_schema(), source="proposed rules")
+    proposed = rules.compile_rules(proposed_text, current.schema, source="proposed rules")
     cases, missing = load_cases(root)
     scratch = Scratch(clock)
     rows: list[dict[str, Any]] = []

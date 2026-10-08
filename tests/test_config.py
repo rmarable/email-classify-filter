@@ -11,13 +11,15 @@ import pytest
 from typer.testing import CliRunner
 
 from ecf.cli import app
-from ecf.errors import InvalidInputError, StepupRequiredError
+from ecf.errors import InvalidInputError, SchemaLimitError, StepupRequiredError
 from ecf.paths import Paths
-from ecf_server import addresses, config, rules, ruletest, slack_admin, stepup
+from ecf.schema import load_schema
+from ecf_server import addresses, claude_pins, config, rules, ruletest, slack_admin, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
 from ecf_server.stepper import FakeStepper
+from tests.test_addresses import call, make_state
 
 ME = "U0ME1"
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
@@ -454,3 +456,253 @@ def test_the_summary_puts_the_riskiest_change_first_and_counts_what_it_cuts() ->
     alone = config.summary([{"section": "rules", "change": "+r" * 100}, changes[0]], 50)
     assert alone.startswith("rules: +r") and alone.endswith("…; +1 more section")
     assert len(alone) <= 50
+
+
+# ---- schema extensions (OD-478) -------------------------------------------------------------
+
+SCHEMA_DOC = """version: 1
+schema:
+  fields:
+    contract_stage:
+      type: enum
+      description: Where a contract discussed in the email stands.
+      values: {none: No contract discussed., draft: A draft is being exchanged.}
+  category_values:
+    legal_notice: Letter from a lawyer or court about us.
+"""
+LABEL_STAGE = ("rules: {version: 1, rules: [{id: stage, when: {field: contract_stage,"
+               " eq: draft}, then: [{label: {field: contract_stage}}]},"
+               " {id: rest, then: [leave]}]}\n")  # fmt: skip
+
+
+def test_schema_section_order_and_key() -> None:
+    assert config.SECTIONS.index("schema") < config.SECTIONS.index("rules")
+    assert config.RISK_ORDER.index("schema") == config.RISK_ORDER.index("rules") - 1
+    assert config.KEY["schema"] == "config.schema"
+
+
+def test_a_schema_extension_dry_run_step_up_apply_and_notice(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    n = FakeNotifier()
+    base = config.current_schema(conn)
+    plan = config.apply(conn, clock, n, SCHEMA_DOC, dry_run=True, nonce=None)
+    assert plan.changes == [{"section": "schema", "change": f"{config.SCHEMA_LEAD}:"
+                             " fields +contract_stage; category +legal_notice"}]  # fmt: skip
+    preview = plan.to_json()["schema"]
+    assert preview["budget"].startswith("schema: 1 of 8 fields, 1 of 4 category values, ")
+    assert preview["near"] == []
+    assert (
+        "+ - contract_stage (one of): Where a contract discussed in the email stands."
+        in (preview["prompt_diff"])
+    )
+    assert "+     legal_notice: Letter from a lawyer or court about us." in preview["prompt_diff"]
+    with pytest.raises(StepupRequiredError) as ei:
+        config.apply(conn, clock, n, SCHEMA_DOC, dry_run=False, nonce=None)
+    issued = stepup.issue(conn, clock, FakeStepper(), "config_apply", ei.value.extra["target"])
+    assert "changes the classifier prompt" in issued.prompt
+    stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
+    r = config.apply(conn, clock, n, SCHEMA_DOC, dry_run=False, nonce=issued.nonce_id)
+    assert r.applied
+    s = config.current_schema(conn)
+    assert s.digest != base.digest and s is config.current_schema(conn)  # cached
+    assert "contract_stage" in s.fields and "legal_notice" in s.fields["category"].values
+    assert config.current_rules(conn).schema is s
+    [row] = conn.execute("SELECT data FROM audit WHERE event = 'config.applied'").fetchall()
+    assert json.loads(row[0])["changes"][0]["section"] == "schema"
+    assert "changes the classifier prompt" in n.sent[-1][1]
+    # `schema: default` removes it
+    r = _apply(conn, clock, "version: 1\nschema: default\n")
+    assert r.changes[0]["change"].startswith(f"reset to built-in schema: {config.SCHEMA_LEAD}:"
+                                             " fields -contract_stage")  # fmt: skip
+    assert r.schema is not None and r.schema["prompt_diff"][0].startswith("- ")
+    assert config.current_schema(conn).digest == base.digest
+
+
+def test_a_cap_violation_lists_every_one_before_step_up(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    fields = "".join(f"    f{i}: {{type: boolean, description: Added.}}\n" for i in range(9))
+    cats = "".join(f"    c{i}: Added.\n" for i in range(5))
+    doc = f"version: 1\nschema:\n  fields:\n{fields}  category_values:\n{cats}"
+    with pytest.raises(SchemaLimitError) as ei:
+        config.apply(conn, clock, FakeNotifier(), doc, dry_run=True, nonce=None)
+    assert ei.value.extra["violations"] == ["schema: 9 fields, limit 8",
+                                            "schema: 5 category values, limit 4"]  # fmt: skip
+    assert ei.value.detail.startswith("config: schema: 9 fields, limit 8; ")
+
+
+def test_near_a_cap_the_budget_line_says_so(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    _setup(conn, clock)
+    fields = "".join(f"    f{i}: {{type: boolean, description: Added.}}\n" for i in range(7))
+    plan = config.apply(conn, clock, FakeNotifier(), f"version: 1\nschema:\n  fields:\n{fields}",
+                        dry_run=True, nonce=None)  # fmt: skip
+    assert plan.schema is not None and plan.schema["near"] == ["fields"]
+    assert plan.schema["budget"].endswith(" (near the limit)")
+
+
+def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    with pytest.raises(InvalidInputError, match="unknown field 'contract_stage'"):
+        config.parse(conn, "version: 1\n" + LABEL_STAGE)  # no extension yet
+    _apply(conn, clock, SCHEMA_DOC + LABEL_STAGE)  # schema validated first, then the rules
+    assert [r.id for r in config.current_rules(conn).rules] == ["stage", "rest"]
+    with pytest.raises(InvalidInputError, match="rule stage: unknown field 'contract_stage'"):
+        config.parse(conn, "version: 1\nschema: default")
+    other = SCHEMA_DOC.replace("contract_stage", "deal_stage")
+    with pytest.raises(InvalidInputError, match=r"the rules in force don't compile.*rule stage"):
+        config.parse(conn, other)
+    _apply(conn, clock, "version: 1\nschema: default\nrules: default")  # both at once
+
+
+def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    with pytest.raises(InvalidInputError, match="built-in label or a rule id"):
+        config.parse(conn, "version: 1\nschema: {category_values: {fraud_guard: x}}")  # starter
+    with pytest.raises(InvalidInputError, match="built-in label or a rule id"):
+        config.parse(conn, "version: 1\nschema: {category_values: {alert_echo: x}}")
+    _apply(conn, clock, SCHEMA_DOC)
+    with pytest.raises(InvalidInputError, match="rule id legal_notice is a value"):
+        config.parse(conn, "version: 1\nrules: {version: 1, rules: [{id: legal_notice,"
+                           " then: [leave]}]}")  # fmt: skip
+
+
+def test_the_effective_schema_moves_the_gate_key(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    before = claude_pins.address_key(conn, "ap")
+    _apply(conn, clock, SCHEMA_DOC)
+    assert claude_pins.address_key(conn, "ap") != before
+    assert claude_pins.pins(conn, "A")["digest"].endswith(config.current_schema(conn).digest)
+    assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
+
+
+def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: Path) -> None:
+    _setup(conn, clock)
+    st = make_state(db_path, None)
+    r = call(st, "GET", "/v1/schema")
+    assert r.status_code == 200
+    assert r.json() == {"version": 2, "extension": None, "digest": load_schema().digest}
+    _apply(conn, clock, SCHEMA_DOC)
+    got = call(st, "GET", "/v1/schema").json()
+    assert got["extension"]["category_values"] == {
+        "legal_notice": "Letter from a lawyer or court about us."}  # fmt: skip
+    assert got["digest"] == config.current_schema(conn).digest != load_schema().digest
+
+
+# ---- review fixes (OD-478) ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("empty", ["{}", "[]", "''", "0", "false", "null"])
+def test_an_empty_or_wrong_typed_schema_is_refused(
+    conn: sqlite3.Connection, clock: FakeClock, empty: str
+) -> None:
+    _setup(conn, clock)
+    with pytest.raises(InvalidInputError, match="schema"):
+        config.parse(conn, f"version: 1\nschema: {empty}\n")
+
+
+def test_the_extension_keeps_the_operators_order(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    doc = ("version: 1\nschema:\n  fields:\n    zeta: {type: boolean, description: Zeta.}\n"
+           "    alpha: {type: boolean, description: Alpha.}\n")  # fmt: skip
+    _apply(conn, clock, doc)
+    s = config.current_schema(conn)
+    assert s.extension_fields == ("zeta", "alpha")
+    swapped = doc.replace("zeta", "tmp").replace("alpha", "zeta").replace("tmp", "alpha")
+    swapped = swapped.replace("description: Zeta.", "description: X.").replace(
+        "description: Alpha.", "description: Zeta.").replace("description: X.",
+                                                             "description: Alpha.")  # fmt: skip
+    r = config.apply(conn, clock, FakeNotifier(), swapped, dry_run=True, nonce=None)
+    assert r.changed  # a reorder changes the prompt, so it is a change
+    _apply(conn, clock, swapped)
+    assert config.current_schema(conn).extension_fields == ("alpha", "zeta")
+    assert config.current_schema(conn).digest != s.digest
+
+
+def test_a_schema_change_leads_the_dialog_and_notice_and_demotes_live_at_once(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET stage = 'live'")
+    long_rules = "rules: {version: 1, rules: [" + ", ".join(
+        f"{{id: r{i:02d}, when: {{field: priority, eq: high}}, then: [flag]}}" for i in range(30)
+    ) + ", {id: rest, then: [leave]}]}\n"  # fmt: skip
+    doc = SCHEMA_DOC + long_rules + "forward_allow_list: [{id: bob, address: bob@acme.example}]\n"
+    with pytest.raises(StepupRequiredError) as ei:
+        config.apply(conn, clock, FakeNotifier(), doc, dry_run=False, nonce=None)
+    issued = stepup.issue(conn, clock, FakeStepper(), "config_apply", ei.value.extra["target"])
+    assert issued.prompt.startswith(f"ecf: apply config: {config.SCHEMA_LEAD}; ")
+    stepup.verify(conn, clock, FakeStepper(), issued.nonce_id)
+    n = FakeNotifier()
+    config.apply(conn, clock, n, doc, dry_run=False, nonce=issued.nonce_id)
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
+    [data] = [json.loads(r[0]) for r in conn.execute(
+        "SELECT data FROM audit WHERE event = 'stage.changed'")]  # fmt: skip
+    assert data["to"] == "assist" and "classification schema changed" in data["reason"]
+    assert any(f"Security-relevant config changed: {config.SCHEMA_LEAD}; " in body
+               for _t, body in n.sent)  # fmt: skip
+
+
+def test_rules_default_rechecks_the_starter_ids_against_added_values(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    _apply(conn, clock, "version: 1\nrules: {version: 1, rules: [{id: only, then: [leave]}]}\n")
+    # with custom rules in force, an added value may be a starter rule id ...
+    _apply(conn, clock, "version: 1\nschema: {category_values: {fraud_guard: Added.}}\n")
+    # ... but going back to the starter rules is refused while it is
+    with pytest.raises(InvalidInputError, match="rule id fraud_guard is a value"):
+        config.parse(conn, "version: 1\nrules: default\n")
+
+
+def test_removing_an_added_category_confirmed_senders_use_is_refused(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    _apply(conn, clock, SCHEMA_DOC)
+    with write_tx(conn):
+        conn.execute("INSERT INTO senders (address_id, sender_hash, domain, confirmed_category)"
+                     " VALUES ('ap', 'h1', 'law.example', 'legal_notice')")  # fmt: skip
+    with pytest.raises(InvalidInputError, match=r"legal_notice: a sender at law.example \(ap\)"):
+        config.parse(conn, "version: 1\nschema: default\n")
+    with pytest.raises(InvalidInputError, match="confirmed senders use"):
+        config.parse(conn, "version: 1\nschema: {fields: {f: {type: boolean, description: F.}}}")
+
+
+def test_a_stored_extension_that_no_longer_compiles_fails_closed(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A later release adds a shipped value the extension also adds (simulated by storing one
+    that clashes): the service classifies with the shipped schema under its own key, raises a
+    System Error, and `schema: default` still applies."""
+    _setup(conn, clock)
+    before = claude_pins.address_key(conn, "ap")
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.schema', ?, ?, 'test')",
+                     (json.dumps({"category_values": {"invoice": "Clash."}}),
+                      to_ts(clock.now())))  # fmt: skip
+    s = config.current_schema(conn)
+    assert s.fields == load_schema().fields and s.digest != load_schema().digest
+    assert claude_pins.address_key(conn, "ap") != before  # no old gate carries over
+    assert config.extension_problem(conn) is not None
+    n = FakeNotifier()
+    config.schema_tick(conn, clock, n)
+    assert conn.execute("SELECT kind FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == (
+        "schema_extension")  # fmt: skip
+    r = _apply(conn, clock, "version: 1\nschema: default\n")
+    assert r.applied and r.schema is not None
+    config.schema_tick(conn, clock, n)
+    assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
+    assert config.current_schema(conn).digest == load_schema().digest

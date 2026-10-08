@@ -238,6 +238,10 @@ INVALID: dict[str, tuple[Callable[[bundle_reader.Parsed], object], str]] = {
                 "stale_item_days"),
     "config": (lambda p: p.tables["settings"].append(_setting("org_domains", '["gmail.com"]')),
                "config fails its checks"),
+    # an extension over a cap is a SchemaLimitError, still a bad bundle (OD-478)
+    "schema_cap": (lambda p: p.tables["settings"].append(_setting("config.schema", json.dumps(
+        {"category_values": {f"c{i}": "Added." for i in range(5)}}))),
+                   "config fails its checks.*5 category values"),
 }  # fmt: skip
 
 

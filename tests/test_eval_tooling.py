@@ -16,7 +16,15 @@ from ecf.eval import metrics as m
 from ecf.eval.builder import COMMIT_LIMIT, build_all, build_bytes, message_id
 from ecf.eval.cards import load_cards, parse_card
 from ecf.eval.hygiene import scan_text
-from ecf.eval.results import CaseResult, ResultFile, compare, compare_fields, differences
+from ecf.eval.results import (
+    CaseResult,
+    ResultFile,
+    compare,
+    compare_fields,
+    differences,
+    schema_warning,
+)
+from ecf.schema import load_schema
 
 ROOT = Path(__file__).resolve().parent / "eval" / "synthetic"
 CARD = """---
@@ -284,6 +292,17 @@ def test_compare() -> None:
         compare(a, ResultFile(run_id="x", pair="x", set_version="v2", created_at="t", cases=[]))
 
 
+def test_compare_warns_when_the_schemas_differ() -> None:
+    a, b = _run("A", [True]), _run("B", [True])
+    assert schema_warning(a, b) is None  # neither recorded one: both the shipped schema
+    shipped = b.model_copy(update={"summary": {"schema_digest": load_schema().digest}})
+    assert schema_warning(a, shipped) is None
+    other = b.model_copy(update={"summary": {"schema_digest": "schema-0123456789abcdef"}})
+    warning = schema_warning(shipped, other)
+    assert warning is not None and "schema-0123456789abcdef" in warning
+    assert schema_warning(a, other) is not None
+
+
 def test_differences_name_what_the_model_returned() -> None:
     expected = {"labels": {"category": "other", "fraud_risk": "none"}, "rule": "otherwise"}
     got = {"category": "partnership", "fraud_risk": "none", "rule": "requires_reply",
@@ -344,3 +363,10 @@ def test_cli_new_case_show_compare(tmp_path: Path) -> None:
     out = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
     assert out.exit_code == 0 and "McNemar" in out.output
     assert "per field" not in out.output  # no per-field results in these files
+    assert "different schemas" not in out.output
+    other = _run("B", [True, True, True]).model_copy(
+        update={"summary": {"schema_digest": "schema-0123456789abcdef"}}
+    )
+    fb.write_text(other.model_dump_json())
+    out = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
+    assert out.exit_code == 0 and "warning: the runs used different schemas" in out.output

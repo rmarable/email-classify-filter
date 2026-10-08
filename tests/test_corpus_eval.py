@@ -15,11 +15,13 @@ import pytest
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
 from ecf.eval import results
+from ecf.schema import extend_schema, load_schema
 from ecf_server import corpus_session as cs
 from ecf_server import db, evalrun
 from ecf_server.api import _corpus_run  # pyright: ignore[reportPrivateUsage]
 from ecf_server.clock import FakeClock
 from tests.test_classifier import ChatOllama
+from tests.test_claude_review import EXT, extend
 from tests.test_corpus import SECRET, fetch, req, server_with
 from tests.test_evalrun import AC, BEC, _inline  # pyright: ignore[reportPrivateUsage]
 from tests.test_models import check_kw
@@ -142,6 +144,26 @@ def test_rescore_uses_the_current_labels_and_keeps_the_original(
                      .model_dump_json())  # fmt: skip
     with pytest.raises(InvalidInputError, match="isn't from this corpus"):
         evalrun.rescore(s, wrong, clock)
+
+
+def test_corpus_labels_are_checked_against_the_effective_schema(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, session: cs.Session
+) -> None:
+    labels = cl.load(cl.path_for(session.path))
+    third = session.rows[2]["key"]
+    schema = extend_schema(load_schema(), EXT)
+    cl.put(labels, cl.make((third["content_hash"], third["identity_digest"]),
+                           str(session.corpus.first["corpus_id"]),
+                           BEC | {"contract_stage": "draft"}, None, date(2026, 10, 8),
+                           schema))  # fmt: skip
+    cl.save(cl.path_for(session.path), labels)
+    with pytest.raises(InvalidInputError, match="exactly the schema"):
+        _corpus_run(session.id, fraud_only=False)  # the shipped schema alone refuses it
+    extend(conn, clock)
+    run = _corpus_run(session.id, fraud_only=False, connect=lambda: db.connect(db_path))
+    assert run is not None
+    [case] = [c for c in run.cases if c.id == "00003"]
+    assert case.confirmed and case.expected["labels"]["contract_stage"] == "draft"
 
 
 def test_deterministic_noise_counts_rules_firing_on_harmless_labels() -> None:

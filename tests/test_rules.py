@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import InvalidInputError
-from ecf.schema import load_schema
+from ecf.schema import extend_schema, load_schema
 from ecf_server.rules import Action, Hide, RuleInput, compile_rules, load_starter_rules
 
 SCHEMA = load_schema()
@@ -213,3 +213,80 @@ def test_v1_values_in_a_rules_file_are_read_as_v2_and_named() -> None:
     assert rules.aliased == ("old",)
     assert rules.evaluate(RuleInput({"sender_type": "team"}, FACTS)).rule_id == "old"
     assert compile_rules(text.replace("staff", "team"), SCHEMA).aliased == ()
+
+
+EXTENDED = extend_schema(SCHEMA, {
+    "fields": {
+        "contract_stage": {"type": "enum", "description": "Where a contract stands.",
+                           "values": {"draft": "A draft.", "signature": "Waiting to sign."}},
+        "legal_risk": {"type": "ordinal", "levels": ["none", "low", "high"],
+                       "description": "Legal exposure."},
+    },
+    "category_values": {"legal_notice": "Letter from a lawyer."},
+})  # fmt: skip
+EXT_RULES = """version: 1
+rules:
+  - {id: legal, when: {field: legal_risk, gte: low}, then: [flag]}
+  - {id: stage, when: {field: contract_stage, in: [draft, signature]},
+     then: [{label: {field: contract_stage}}]}
+  - {id: notice, when: {field: category, eq: legal_notice}, then: [escalate]}
+  - {id: rest, then: [leave]}
+"""
+
+
+def test_rules_on_extension_fields() -> None:
+    """Extension fields work in conditions and label-from-field rules; gte/lte use the compiled
+    schema's levels (OD-478)."""
+    rules = compile_rules(EXT_RULES, EXTENDED)
+    full = {**BASE, "contract_stage": "draft", "legal_risk": "none"}
+    d = rules.evaluate(RuleInput(full, FACTS))
+    assert d.rule_id == "stage" and names(d) == [("label", "draft")]
+    assert rules.evaluate(RuleInput({**full, "legal_risk": "high"}, FACTS)).rule_id == "legal"
+    notice = {**full, "contract_stage": "none_of_these", "category": "legal_notice"}
+    assert rules.evaluate(RuleInput(notice, FACTS)).rule_id == "notice"
+    with pytest.raises(InvalidInputError, match="rule legal: unknown field 'legal_risk'"):
+        compile_rules(EXT_RULES, SCHEMA)  # without the extension
+
+
+def test_an_old_row_without_the_extension_fields_evaluates_false() -> None:
+    """An item classified before the extension: comparisons on its fields are false, and a label
+    from one is dropped (C2)."""
+    rules = compile_rules(EXT_RULES, EXTENDED)
+    assert rules.evaluate(RuleInput(BASE, FACTS)).rule_id == "rest"
+    lbl = compile_rules("version: 1\nrules:\n  - {id: a, then: [{label: {field: contract_stage}},"
+                        " flag]}\n", EXTENDED)  # fmt: skip
+    assert [a.name for a in lbl.evaluate(RuleInput(BASE, FACTS)).actions] == ["flag"]
+
+
+def test_not_over_a_missing_extension_field_never_matches_old_mail() -> None:
+    """Unknown, not false: `not` over a field an older item lacks doesn't match, so a rule
+    meant for new mail can't hide old mail; `and`/`or`/continue_if follow Kleene logic."""
+    rules = compile_rules("""version: 1
+rules:
+  - {id: hide, when: {not: {field: contract_stage, eq: draft}}, then: [archive]}
+  - {id: either, when: {or: [{field: priority, eq: high},
+                             {not: {field: contract_stage, eq: draft}}]}, then: [flag]}
+  - {id: both, when: {and: [{field: priority, eq: low},
+                            {not: {field: legal_risk, gte: high}}]}, then: [escalate]}
+  - {id: rest, then: [leave], actor: {continue_if: {not: {field: contract_stage, eq: draft}}}}
+""", EXTENDED)  # fmt: skip
+    old = rules.evaluate(RuleInput(BASE, FACTS))
+    assert old.rule_id == "rest" and old.to_actor is False  # nothing matched on unknowns
+    assert rules.evaluate(RuleInput({**BASE, "priority": "high"}, FACTS)).rule_id == "either"
+    new = {**BASE, "contract_stage": "signature", "legal_risk": "none"}
+    assert rules.evaluate(RuleInput(new, FACTS)).rule_id == "hide"  # new mail: known, matches
+
+
+def test_a_level_the_ordinal_no_longer_has_is_no_match() -> None:
+    """A stored value from an older extension's levels doesn't raise in decide or the gate."""
+    rules = compile_rules(EXT_RULES, EXTENDED)
+    row = {**BASE, "contract_stage": "none_of_these", "legal_risk": "medium"}  # not a level now
+    assert rules.evaluate(RuleInput(row, FACTS)).rule_id == "rest"
+
+
+def test_compile_refuses_a_rule_id_that_is_an_added_value() -> None:
+    with pytest.raises(InvalidInputError, match="rule id legal_notice is a value"):
+        compile_rules("version: 1\nrules:\n  - {id: legal_notice, then: [leave]}\n", EXTENDED)
+    with pytest.raises(InvalidInputError, match="rule id draft is a value"):
+        compile_rules("version: 1\nrules:\n  - {id: draft, then: [leave]}\n", EXTENDED)
+    compile_rules("version: 1\nrules:\n  - {id: legal_notice, then: [leave]}\n", SCHEMA)

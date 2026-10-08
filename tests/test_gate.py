@@ -268,7 +268,7 @@ def test_the_tick_announces_once_and_drops_live_when_the_model_changes(
     monkeypatch.setattr(claude_pins, "address_key", changed)
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
-    assert "a pinned model changed" in _posts(conn)[-1]["card"]["text"]
+    assert "a pinned model or the classification schema changed" in _posts(conn)[-1]["card"]["text"]
 
 
 def test_the_tick_computes_a_gate_only_when_its_inputs_change(

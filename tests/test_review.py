@@ -9,11 +9,13 @@ from typing import Any
 
 import pytest
 
-from ecf.errors import ConflictError
+from ecf.errors import ConflictError, InvalidInputError
+from ecf.schema import extend_schema, load_schema
 from ecf_server import decide, escalations, gate, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.slack_in import Click
+from tests.test_claude_review import extend
 from tests.test_decide import KNOWN_BULK, MARKETING, item_row, make_classified
 from tests.test_digests_daily import ME, MORNING, slack_setup
 
@@ -124,6 +126,55 @@ def test_the_fix_form_offers_the_schema_choices(
     }
     click = slack_in.to_click(payload)
     assert click is not None and click.values == {"category": "invoice"}
+
+
+def test_extension_fields_are_on_the_line_and_in_the_fix_form(
+    conn: sqlite3.Connection, morning: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slack_setup(conn, morning)
+    [old] = _items(conn, morning, MARKETING)  # classified before the extension
+    extend(conn, morning)
+    ext = MARKETING | {"contract_stage": "draft", "lawyer_involved": True}
+    new = _one(conn, morning, ext, "10")
+    review.run(conn, morning)
+    text = _review_post(conn)["card"]["text"]
+    assert "marketing, low, fraud none, ext: contract_stage=draft, lawyer_involved=true;" in text
+    assert text.count("ext:") == 1  # the older item has no extension values
+    form = slack_in.FORMS[review.FIX](conn, Click("button", review.FIX, new, "CAP", ME))
+    fields = {b["block_id"]: b for b in form["blocks"] if b["type"] == "input"}
+    assert list(fields) == [*review.FIXABLE, "contract_stage", "lawyer_involved"]
+    values = [o["value"] for o in fields["category"]["element"]["options"]]
+    assert values[-1] == "legal_notice"
+    yes_no = [o["value"] for o in fields["lawyer_involved"]["element"]["options"]]
+    assert yes_no == ["true", "false"]
+    assert fields["contract_stage"]["element"]["initial_option"]["value"] == "draft"
+    assert fields["lawyer_involved"]["element"]["initial_option"]["value"] == "true"
+    with pytest.raises(InvalidInputError, match="contract_stage"):
+        _click(conn, morning, review.FIX, new, {"contract_stage": "signed"})
+    _click(conn, morning, review.FIX, new, {"contract_stage": "none", "lawyer_involved": "true"})
+    assert json.loads(item_row(conn, new)["human_correction"]) == {"contract_stage": "none"}
+    _click(conn, morning, review.FIX, old, {"lawyer_involved": "false"})  # no value before
+    assert json.loads(item_row(conn, old)["human_correction"]) == {"lawyer_involved": False}
+    monkeypatch.setattr(review, "OPTIONS_MAX", 3)  # Slack's limit is 100 options a select
+    form = slack_in.FORMS[review.FIX](conn, Click("button", review.FIX, new, "CAP", ME))
+    [cat] = [b for b in form["blocks"] if b.get("block_id") == "category"]
+    assert len(cat["element"]["options"]) == 3
+
+
+def _one(conn: sqlite3.Connection, clock: FakeClock, cls: dict[str, Any], sid: str) -> str:
+    out = make_classified(conn, clock, cls, KNOWN_BULK, sid=sid)
+    decide.apply(conn, clock, out)
+    return out
+
+
+def test_the_ext_part_of_a_line_is_kept_short() -> None:
+    long = {f"field_{n}_with_a_long_name": {"type": "boolean", "description": "A yes/no."}
+            for n in range(8)}  # fmt: skip
+    schema = extend_schema(load_schema(), {"fields": long})
+    part = review._ext(dict.fromkeys(long, True), schema)  # pyright: ignore[reportPrivateUsage]
+    assert part.startswith(", ext: field_0_with_a_long_name=true")
+    assert len(part) == len(", ext: ") + review.EXT_CHARS and part.endswith("…")
+    assert review._ext({}, schema) == ""  # pyright: ignore[reportPrivateUsage]
 
 
 def test_after_the_gate_count_only_a_sample_is_asked(

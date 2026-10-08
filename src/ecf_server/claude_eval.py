@@ -50,13 +50,14 @@ from ecf.errors import (
 )
 from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
-from ecf.schema import load_schema
+from ecf.schema import CompiledSchema, load_schema
 from ecf_server import (
     actor,
     alerts,
     claude_pins,
     claude_review,
     claude_usage,
+    config,
     evalrun,
     policy,
     rules,
@@ -128,6 +129,7 @@ class Run:
     rules: rules.CompiledRules
     known: frozenset[str]
     data_dir: Path
+    schema: CompiledSchema  # the effective schema at registration (with any extension)
     source_run: str | None = None  # preset B: the `ecf eval run` whose classifications it uses
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
@@ -204,10 +206,11 @@ def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str],
     if pinned:
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
+    schema = config.current_schema(conn)  # as in `claude_pins.pins` (OD-478)
     if opts.preset in claude_pins.LOCAL_PRESETS:
-        keyed["digest"] = claude_pins.local_key()
+        keyed["digest"] = claude_pins.local_key(schema)
     else:
-        keyed["schema"] = claude_pins.load_schema().digest
+        keyed["schema"] = schema.digest
     return models, False, "eval-" + claude_pins.key(keyed)
 
 
@@ -223,8 +226,10 @@ def agents_for(run: Run) -> dict[str, str]:
 
 def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[str, Any]]]:
     """Preset B (OD-289): the latest complete `ecf eval run` with the classifier, on the pinned
-    digest and this version of the set: its run ID and each case's classification."""
-    digest = claude_pins.local_key()  # Gemma's run with this schema (C5)
+    digest, the effective schema and this version of the set: its run ID and each case's
+    classification."""
+    schema = config.current_schema(conn)
+    digest = claude_pins.local_key(schema)  # Gemma's run with this schema (C5)
     rows = conn.execute("SELECT run_id, metrics, path FROM eval_runs WHERE digest = ? AND"
                         " set_version = ? ORDER BY created_at DESC",
                         (digest, version)).fetchall()  # fmt: skip
@@ -233,6 +238,8 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
         opts: dict[str, Any] = metrics.get("options") or {}
         if not (metrics.get("complete") and opts.get("classifier")):
             continue
+        if not _same_schema(metrics, schema):
+            continue  # asked with another extension (or none): different fields
         if not row["path"] or not Path(row["path"]).is_file():
             continue  # an imported run: its result file stayed on the other computer (V1.5)
         result = load_result(Path(row["path"]))
@@ -243,6 +250,13 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
     raise InvalidInputError("preset B uses Gemma's classifications from a complete `ecf eval run`"
                             " on the pinned model and this version of the set, and there is none:"
                             " run `ecf eval run` first")  # fmt: skip
+
+
+def _same_schema(metrics: dict[str, Any], schema: CompiledSchema) -> bool:
+    """Whether a run was asked with `schema`; a run from before the digest was recorded used
+    the shipped schema."""
+    got = metrics.get("schema_digest")
+    return got == schema.digest if got is not None else schema.digest == load_schema().digest
 
 
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
@@ -263,9 +277,9 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
     try:
         models, pinned, key = models_for(conn, opts)
         source, got = _a_run(conn, version) if opts.preset == "B" else (None, {})
+        schema = config.current_schema(conn)
     finally:
         conn.close()
-    schema = load_schema()
     starter = rules.load_starter_rules(schema)
     works = [Work(c, secrets.token_hex(16)) for c in cases]
     with _SLOT.lock:
@@ -274,7 +288,8 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
             raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
                                 " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
         run = Run(new_random_id(), opts, models, pinned, key, version, clock.now(), works,
-                  starter, policy.labels(schema, starter), data_dir, source)  # fmt: skip
+                  starter, policy.labels(schema, starter), data_dir, schema,
+                  source)  # fmt: skip
         _SLOT.run = run
     evalrun._remember_root(connect, clock, opts.root)  # pyright: ignore[reportPrivateUsage]
     log.info("claude_eval.registered", run_id=run.run_id[:8], cases=len(works),
@@ -399,7 +414,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         w.claim, w.session = "free", None
     if not results:
         return
-    summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete)
+    summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
+                                                schema=run.schema)  # fmt: skip
+    summary["schema_digest"] = run.schema.digest
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)
@@ -598,7 +615,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
                                "untrusted_email": w.email | {"text": text},
                                "notice": claude_review.NOTICE}  # fmt: skip
         if w.need == "classify":
-            out["schema"] = load_schema().json_schema()
+            out |= claude_review.schema_fields(run.schema)
         else:
             out |= {"classification": _cls(w),
                     "actions": list(actor.allowed(_cls(w))),
@@ -610,7 +627,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
 def record_classification(clock: Clock, session_id: str, ref: str, token: str,
                           classification: Any, agent: str) -> dict[str, Any] | Hold:  # fmt: skip
     run, w = _claimed(clock, session_id, ref, token, agent, "classify")
-    result, errors = claude_review.check_classification(classification)
+    result, errors = claude_review.check_classification(classification, run.schema)
     with run.lock:
         if result is None:
             return _invalid(run, w, errors)

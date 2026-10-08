@@ -38,6 +38,7 @@ class ErrorCode(StrEnum):
     SERVICE_UNAVAILABLE = "service_unavailable"
     MAIL_UNAVAILABLE = "mail_unavailable"
     INTERNAL = "internal"
+    SCHEMA_LIMIT = "schema_limit"
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,13 @@ ERROR_TABLE: dict[ErrorCode, ErrorSpec] = {
             ExitCode.UNAVAILABLE,
             "Mail provider unavailable",
             "The mail provider isn't reachable.",
+        ),
+        ErrorSpec(
+            ErrorCode.SCHEMA_LIMIT,
+            400,
+            ExitCode.USER_ERROR,
+            "Schema extension over a limit",
+            "That schema extension is over a limit.",
         ),
         ErrorSpec(
             ErrorCode.INTERNAL,
@@ -236,6 +244,12 @@ class MailUnavailableError(EcfError):
 
 class InternalError(EcfError):
     code = ErrorCode.INTERNAL
+
+
+class SchemaLimitError(EcfError):
+    """A schema extension over a cap (SPEC §7.1, OD-478); `violations` lists every one."""
+
+    code = ErrorCode.SCHEMA_LIMIT
 
 
 _BY_CODE: dict[ErrorCode, type[EcfError]] = {c.code: c for c in EcfError.__subclasses__()}

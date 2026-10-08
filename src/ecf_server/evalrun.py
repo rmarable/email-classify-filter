@@ -56,11 +56,12 @@ from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
 from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
-from ecf.schema import FieldKind, load_schema
+from ecf.schema import V1_VALUE_ALIASES, CompiledSchema, FieldKind, load_schema
 from ecf_server import (
     actor,
     classifier,
     claude_pins,
+    config,
     corpus,
     corpus_session,
     modelq,
@@ -177,16 +178,18 @@ class Case:
 CORPUS_LIMIT = 1500  # messages per corpus run until real-service test 1 measures s/message (R166)
 
 
-def corpus_run(session: corpus_session.Session) -> CorpusRun:
+def corpus_run(session: corpus_session.Session,
+               schema: CompiledSchema | None = None) -> CorpusRun:  # fmt: skip
     """The cases of an open corpus: every message, labelled or not (R114); a confirmed label
     becomes the expected values through the policy over the stored facts (R50); an unlabelled,
-    skipped or unsure message is run but not scored (R157)."""
+    skipped or unsure message is run but not scored (R157). Labels are checked against
+    `schema`, the effective one (default: the shipped one)."""
     rows = session.rows
     if len(rows) > CORPUS_LIMIT:
         raise InvalidInputError(f"a corpus run takes at most {CORPUS_LIMIT} messages")
+    schema = schema or load_schema()
     labels_path = corpus_labels.path_for(session.path)
-    labels = corpus_labels.load(labels_path)
-    schema = load_schema()
+    labels = corpus_labels.load(labels_path, schema)
     rules_now = rules.load_starter_rules(schema)
     known = policy.labels(schema, rules_now)
     default = str(session.corpus.profile.get("sensitivity") or "standard")
@@ -296,8 +299,8 @@ def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float
 
 
 def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool = True,
-              classifier: bool = True, actor: bool = True,
-              production: bool = True) -> dict[str, Any]:  # fmt: skip
+              classifier: bool = True, actor: bool = True, production: bool = True,
+              schema: CompiledSchema | None = None) -> dict[str, Any]:  # fmt: skip
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, the production classifier and redaction on (`production`;
     a decision-model, null or unredacted run never passes, §7.8, R1)."""
@@ -309,7 +312,7 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
     fraud = [c for c in counted if c.fraud]
     fg_n, fg_missed, fg_recall = fraud_guard_recall(counted)
     per_field: dict[str, float] = {}
-    for f in (*load_schema().fields, "rule", "safety"):  # every schema field (R117)
+    for f in (*(schema or load_schema()).fields, "rule", "safety"):  # every field (R117)
         vals = [c.fields[f] for c in counted if f in c.fields]
         if vals:
             per_field[f] = round(100 * sum(vals) / len(vals), 1)
@@ -552,12 +555,13 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             paused.append(True)
         notify(text, desktop)
 
-    schema = load_schema()
     dpin = decision_pin(opts.backend)
     redact = triggers.redact_injection if opts.redact else _unredacted
     on_ac_at_start = power().on_ac
     classifier_s: list[float] = []
     conn = connect()
+    # Gemma is asked with the install's effective schema, as in production (OD-478)
+    schema = config.current_schema(conn) if opts.backend == GEMMA else load_schema()
     client = client_factory()
     scratch = ruletest.Scratch(clock)
     results: list[CaseResult] = []
@@ -614,7 +618,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
                                                     classifier=opts.classifier,
                                                     actor=opts.actor,
-                                                    production=production))  # fmt: skip
+                                                    production=production,
+                                                    schema=schema))  # fmt: skip
+        summary["schema_digest"] = schema.digest
         summary["model"] = stats.summarize(calls, emails=len(results) if opts.classifier else None)
         digest = ready.digest if opts.backend == GEMMA else dpin.digest if dpin else NULL
         summary["backend"] = opts.backend
@@ -635,7 +641,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["set"] = "corpus"
             summary["labels_hash"] = opts.corpus.labels_hash
             summary["deterministic_noise"] = deterministic_noise(cases)
-        key = claude_pins.local_key() if opts.backend == GEMMA else digest  # OD-475
+        key = claude_pins.local_key(schema) if opts.backend == GEMMA else digest  # OD-475
         result = ResultFile(run_id=RUN.run_id, pair=pair_for(opts.backend),
                             set_version=version, created_at=to_ts(clock.now()), cases=results,
                             digest=key, summary=summary)  # fmt: skip
@@ -886,10 +892,10 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-# What a schema v1 answer means in v2 (OD-475): only `staff` was renamed. Rules: every other v1
-# value is a v2 value, and v2's new rules match only v2's new values, so the rule and actions a
-# v1 run recorded are what v2's rules give the mapped answer too.
-V1_TO_V2 = {"sender_type": {"staff": "team"}}
+# What a schema v1 answer means in v2 (OD-475; `ecf.schema.V1_VALUE_ALIASES`). Rules: v2's new
+# rules match only v2's new values, so the rule and actions a v1 run recorded are what v2's rules
+# give the mapped answer too.
+V1_TO_V2 = V1_VALUE_ALIASES
 
 
 def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
@@ -925,7 +931,7 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
         production=False))  # fmt: skip
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
-                "classifier_latency_s", "power"):  # fmt: skip
+                "classifier_latency_s", "power", "schema_digest"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["rescored_from"] = {"run_id": old.run_id, "set_version": old.set_version,
@@ -938,13 +944,14 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
     return {"path": str(path), "summary": summary}
 
 
-def rescore(session: corpus_session.Session, result_path: Path, clock: Clock) -> dict[str, Any]:
+def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
+            schema: CompiledSchema | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore`: a corpus result scored again against the corpus's current labels,
     from what the run recorded (its classification, rule and actions; R53, R113, R120, R178).
     No model runs. The new file sits beside the original, which is kept; its set version and
     labels hash are the current labels', so comparing it with the original is refused."""
     old = load_result(result_path)
-    run = corpus_run(session)
+    run = corpus_run(session, schema)
     if not old.set_version.startswith(f"corpus:{run.corpus_id}:"):
         raise InvalidInputError("this result isn't from this corpus")
     by_id = {c.id: c for c in run.cases}
@@ -965,9 +972,9 @@ def rescore(session: corpus_session.Session, result_path: Path, clock: Clock) ->
     summary: dict[str, object] = dict(summarize(
         cases, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
         classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
-        production=False))  # fmt: skip
+        production=False, schema=schema))  # fmt: skip
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
-                "classifier_latency_s", "power"):  # fmt: skip
+                "classifier_latency_s", "power", "schema_digest"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["set"] = "corpus"

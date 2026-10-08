@@ -5,7 +5,8 @@ and a section set to `default` returns to its shipped value (OD-225; `org_domain
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
 `templates`, from V1.5 `export_schedule` (`daily`, `weekly`, `off`; OD-343), and from V1.6
 `org_addresses` (exact addresses with optional names: the internal set beside `org_domains`,
-OD-431, OD-433; ADR 0021). `org_domains` may be empty only when no watched address is at a
+OD-431, OD-433; ADR 0021), and from v2.1.0 `schema` (the install's schema extension, OD-478;
+ADR 0025). `org_domains` may be empty only when no watched address is at a
 non-public domain (OD-441). A forward target is in `org_domains` or exactly in `org_addresses`
 (OD-437); one at a public provider is named in the step-up dialog. Alert routes
 change with `ecf alerts set` and alert email with `ecf alerts email set`. Unknown keys are
@@ -18,6 +19,11 @@ change made in between voids the nonce. `security_config_delay_minutes` is 0 in 
 (OD-074), so the change applies at once; it is audited (`config.applied`) and announced as a
 Security Notice.
 
+`schema` is validated before `rules`: the rules in force (or the starter rules) must compile
+against the new effective schema, so removing a field or value a rule uses is refused, naming
+the rule (the OD-452 pattern). An extension over a cap is refused with every violation listed
+(`schema_limit`); the dry run carries the budget line and the prompt lines the extension adds.
+
 What reads each section in V1.2: `org_domains` (facts and triggers, §7.2, §8.5). The others are
 validated and stored for their consumers: rules and the action policy (V1.3, with the classifier),
 the move-folder allow-list (V1.3), the forward allow-list and templates (V1.5, with sending).
@@ -25,6 +31,7 @@ the move-folder allow-list (V1.3), the forward allow-list and templates (V1.5, w
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -32,19 +39,36 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, cast
 
-from ecf.errors import InvalidInputError
-from ecf.schema import load_schema
+from ecf.errors import InvalidInputError, SchemaLimitError
+from ecf.schema import (
+    CompiledSchema,
+    extend_schema,
+    extension_budget,
+    extension_text,
+    load_schema,
+    shipped_fallback,
+)
 from ecf.yamlio import load_yaml
-from ecf_server import addresses, internal, rules, slack_admin, stepup, templates
+from ecf_server import (
+    addresses,
+    health,
+    internal,
+    policy,
+    rules,
+    slack_admin,
+    stepup,
+    templates,
+)
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.facts import PUBLIC_DOMAINS
+from ecf_server.log_bridge import log
 from ecf_server.notify import Notifier
 
 MAX_BYTES = 48 * 1024  # inside the API's 64 KB request limit
 MAX_ENTRIES = 50
 SECTIONS = ("org_domains", "org_addresses", "forward_allow_list", "move_folders", "action_policy",
-            "rules", "templates", "export_schedule")  # fmt: skip
+            "schema", "rules", "templates", "export_schedule")  # fmt: skip
 LATER = {
     "alerts": "change alert routes with `ecf alerts set`, alert email with `ecf alerts email set`",
     "export_dir": "change it with `ecf export dir set <path>` (step-up)",
@@ -60,10 +84,19 @@ _POLICY_SHAPE = "{standard: {action: auto|approve}}"
 MAX_ADDRESS = 254
 MAX_NAME = 100
 DEFAULT = "default"  # `<section>: default` returns the section to its shipped value (OD-225)
+SCHEMA_ALERT = "schema_extension"  # System Error: the stored extension no longer compiles
+# leads the step-up dialog and the Security Notice whenever `schema` changes (OD-478)
+SCHEMA_LEAD = "changes the classifier prompt; live addresses go back to assist"
 
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def ordered_json(value: Any) -> str:
+    """JSON in the given key order: the schema extension keeps the operator's order of fields
+    and values (it is the prompt's order), so it is stored, cached and compared this way."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------- current config
@@ -78,10 +111,67 @@ def current(conn: sqlite3.Connection) -> dict[str, Any]:
     return out
 
 
+def _stored(conn: sqlite3.Connection, section: str) -> Any:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (KEY[section],)).fetchone()
+    return json.loads(row["value"]) if row else None
+
+
+def current_schema(conn: sqlite3.Connection) -> CompiledSchema:
+    """The effective schema: the shipped one with the install's extension (OD-478). A stored
+    extension that no longer compiles (a later release added a name it uses) gives the shipped
+    schema keyed apart (`shipped_fallback`, fail closed); `schema_tick` raises a System Error."""
+    return _effective_schema(_stored(conn, "schema"))
+
+
+def _effective_schema(ext: Any) -> CompiledSchema:
+    return load_schema() if ext is None else _tolerant(ordered_json(ext))
+
+
+@functools.lru_cache(maxsize=8)
+def _tolerant(ext_json: str) -> CompiledSchema:
+    try:
+        return _extended(ext_json)
+    except (InvalidInputError, SchemaLimitError) as exc:
+        log.error("schema.extension_broken", violations=len(exc.extra.get("violations") or []))
+        return shipped_fallback(ext_json)
+
+
+@functools.lru_cache(maxsize=8)
+def _extended(ext_json: str) -> CompiledSchema:
+    """Cached on the extension in its stored order (C11); it was checked when applied."""
+    return extend_schema(load_schema(), json.loads(ext_json))
+
+
+def extension_problem(conn: sqlite3.Connection) -> str | None:
+    """Why the stored extension no longer compiles; None when it does (or there is none)."""
+    ext = _stored(conn, "schema")
+    if ext is None:
+        return None
+    try:
+        _extended(ordered_json(ext))
+    except (InvalidInputError, SchemaLimitError) as exc:
+        return exc.detail
+    return None
+
+
+def schema_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
+    """Each tick: a System Error while the stored extension doesn't compile, resolved after."""
+    problem = extension_problem(conn)
+    if problem is None:
+        health.resolve_alert(conn, clock, notifier, SCHEMA_ALERT, None)
+        return
+    health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
+                      "the schema extension no longer compiles with this version"
+                      f" ({problem[:200]}); ecf classifies with the built-in schema and live"
+                      " addresses are back in assist. Fix: change the extension, or `schema:"
+                      " default`, with ecf config apply")  # fmt: skip
+
+
 def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
-    """The applied rules, or the starter rules when none were applied."""
-    schema = load_schema()
-    stored = current(conn)["rules"]
+    """The applied rules, or the starter rules when none were applied, compiled against the
+    effective schema."""
+    schema = current_schema(conn)
+    stored = _stored(conn, "rules")
     if stored is None:
         return rules.load_starter_rules(schema)
     return rules.compile_rules(canonical_json(stored), schema, source="applied rules")
@@ -137,10 +227,7 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
         _forwards(conn, now["forward_allow_list"], org, listed)
     if "action_policy" in doc and "action_policy" not in out:
         out["action_policy"] = _policy(doc["action_policy"])
-    if "rules" in doc and "rules" not in out:
-        out["rules"] = _rules(doc["rules"], folders)
-    elif "move_folders" in doc:  # the rules in force must still move only to allowed folders
-        _rules(_effective(out, now, "rules") or _starter(), folders)
+    _schema_and_rules(conn, doc, out, now, folders)
     if "export_schedule" in doc and "export_schedule" not in out:
         if doc["export_schedule"] not in EXPORT_SCHEDULES:
             raise InvalidInputError("config: export_schedule: daily, weekly or off")
@@ -149,6 +236,32 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
         templates.load_templates(canonical_json(doc["templates"]), source="templates")
         out["templates"] = doc["templates"]
     return out
+
+
+def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[str, Any],
+                      now: dict[str, Any], folders: list[str]) -> None:  # fmt: skip
+    """`schema` first, then `rules` against the effective schema (OD-478)."""
+    rules_doc = doc["rules"] if "rules" in doc and "rules" not in out else None
+    if "schema" in doc and "schema" not in out:
+        out["schema"] = _schema(conn, doc["schema"], now["schema"],
+                                rules_doc or _effective(out, now, "rules"))  # fmt: skip
+    if doc.get("schema") == DEFAULT:
+        _check_sender_categories(conn, now["schema"], None)
+    schema = _effective_schema(_effective(out, now, "schema"))
+    if rules_doc is not None:
+        out["rules"] = _rules(rules_doc, folders, schema)
+    elif "move_folders" in doc or "schema" in doc or doc.get("rules") == DEFAULT:
+        # `rules: default` too: the starter rule ids must not be values the extension adds
+        # the rules in force must still move only to allowed folders, and still compile
+        # against the new schema: a field or value a rule uses can't go (OD-452 pattern)
+        try:
+            _rules(_effective(out, now, "rules") or _starter(), folders, schema)
+        except InvalidInputError as exc:
+            if "schema" not in doc or doc.get("rules") == DEFAULT:
+                raise
+            raise InvalidInputError(f"config: schema: the rules in force don't compile against"
+                                    f" it: {exc.detail}; change the rules in the same"
+                                    " file") from None  # fmt: skip
 
 
 def _effective(out: dict[str, Any], now: dict[str, Any], section: str) -> Any:
@@ -288,14 +401,92 @@ def _policy(v: Any) -> dict[str, dict[str, str]]:
     return {"standard": DEFAULT_POLICY | cast("dict[str, str]", std)}
 
 
-def _rules(v: Any, folders: list[str]) -> Any:
-    compiled = rules.compile_rules(canonical_json(v), load_schema(), source="rules")
+def _rules(v: Any, folders: list[str], schema: CompiledSchema) -> Any:
+    # compile_rules refuses a rule id that is a value the extension adds (S8)
+    compiled = rules.compile_rules(canonical_json(v), schema, source="config: rules")
     for r in compiled.rules:
         for a in r.then:
             if a.action == "move" and (not isinstance(a.target, str) or a.target not in folders):
                 raise InvalidInputError(f"config: rules: rule {r.id} moves to {a.target!r}, which"
                                         " isn't in move_folders")  # fmt: skip
     return v
+
+
+def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
+    """The extension, checked against the caps and content rules; every violation listed. Any
+    value but `default` is checked (an empty mapping, a list or null too). An added category
+    value a confirmed sender uses can't be removed."""
+    if v is None:
+        raise InvalidInputError("config: schema: a mapping with fields and/or category_values,"
+                                " or `default` to remove the extension")  # fmt: skip
+    ids = _rule_ids(rules_doc if rules_doc is not None else _starter())
+    try:
+        extend_schema(load_schema(), v, policy.BUILTIN_LABELS | ids)
+    except (InvalidInputError, SchemaLimitError) as exc:
+        raise type(exc)(f"config: {exc.detail}", **exc.extra) from None
+    _check_sender_categories(conn, old, v)
+    return v
+
+
+def _added_categories(ext: Any) -> set[str]:
+    d = cast("dict[str, Any]", ext) if isinstance(ext, dict) else {}
+    rc: Any = d.get("category_values")
+    return set(cast("dict[str, Any]", rc)) if isinstance(rc, dict) else set()
+
+
+def _check_sender_categories(conn: sqlite3.Connection, old: Any, new: Any) -> None:
+    """Refuse removing an added category value that confirmed senders use, naming them by
+    domain and address (sender records hold no sender address)."""
+    gone = _added_categories(old) - _added_categories(new)
+    if not gone:
+        return
+    rows = conn.execute(
+        "SELECT s.confirmed_category, s.domain, a.address_id FROM senders s JOIN addresses a"
+        " ON a.address_id = s.address_id WHERE s.confirmed_category IN (SELECT value FROM"
+        " json_each(?)) ORDER BY s.confirmed_category, a.address_id, s.domain",
+        (json.dumps(sorted(gone)),)).fetchall()  # fmt: skip
+    if rows:
+        named = ", ".join(f"{r[0]}: a sender at {r[1]} ({r[2]})" for r in rows[:5])
+        more = f" (+{len(rows) - 5} more)" if len(rows) > 5 else ""
+        raise InvalidInputError(f"config: schema: confirmed senders use a category value this"
+                                f" removes: {named}{more}; confirm them as another category"
+                                " first (ecf sender confirm)")  # fmt: skip
+
+
+def _rule_ids(rules_doc: Any) -> frozenset[str]:
+    d = cast("dict[str, Any]", rules_doc) if isinstance(rules_doc, dict) else {}
+    rs: Any = d.get("rules")
+    if not isinstance(rs, list):
+        return frozenset()
+    found = [cast("dict[str, Any]", r).get("id") for r in cast("list[Any]", rs)
+             if isinstance(r, dict)]  # fmt: skip
+    return frozenset(i for i in found if isinstance(i, str))
+
+
+def schema_preview(before: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any] | None:
+    """For a document that sets `schema`: the budget line, whether it is near a cap, and the
+    prompt lines the extension adds or drops (what the dry run prints before step-up). An old
+    extension that no longer compiles is tolerated, so `schema: default` can remove it."""
+    if "schema" not in doc:
+        return None
+    new = None if doc["schema"] == DEFAULT else doc["schema"]
+    base = load_schema()
+    budget = extension_budget(base, new)
+    old_lines = _ext_lines(before["schema"])
+    new_lines = _ext_lines(new)
+    diff_lines = ([f"- {x}" for x in old_lines if x not in new_lines]
+                  + [f"+ {x}" for x in new_lines if x not in old_lines])  # fmt: skip
+    return {"budget": budget["line"], "near": budget["near"], "prompt_diff": diff_lines}
+
+
+def _ext_lines(ext: Any) -> list[str]:
+    if ext is None:
+        return []
+    try:
+        text = extension_text(_extended(ordered_json(ext)))
+    except (InvalidInputError, SchemaLimitError):
+        return ["(the stored extension, which no longer compiles)"]
+    return [x for x in text.splitlines() if x.strip()]
 
 
 # ---------------------------------------------------------------------------- diff
@@ -306,7 +497,8 @@ def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for s in SECTIONS:
         new = None if doc.get(s) == DEFAULT else doc.get(s)
-        if s not in doc or canonical_json(new) == canonical_json(before[s]):
+        same = ordered_json if s == "schema" else canonical_json  # order is the prompt's order
+        if s not in doc or same(new) == same(before[s]):
             continue
         out.append({"section": s, "change": _describe_change(s, before[s], new)})
     return out
@@ -314,7 +506,8 @@ def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
 
 _SHIPPED_NAME = {"forward_allow_list": "none", "move_folders": "none", "org_addresses": "none",
                  "action_policy": "the default policy", "rules": "the starter rules",
-                 "templates": "the shipped templates", "export_schedule": "daily"}  # fmt: skip
+                 "templates": "the shipped templates", "export_schedule": "daily",
+                 "schema": "built-in schema"}  # fmt: skip
 
 
 def _shipped_value(section: str) -> Any:
@@ -326,6 +519,8 @@ def _shipped_value(section: str) -> Any:
         return {"standard": DEFAULT_POLICY}
     if section == "export_schedule":
         return "daily"
+    if section == "schema":
+        return {}
     return []
 
 
@@ -337,6 +532,8 @@ def _describe_change(section: str, old: Any, new: Any) -> str:  # noqa: PLR0911 
         return _set_change(old or [], new)
     if section == "export_schedule":
         return f"{old or 'daily'} to {new}"
+    if section == "schema":
+        return f"{SCHEMA_LEAD}: {_schema_change(old or {}, new)}"
     if section == "org_addresses":
         was_addr: list[dict[str, str]] = old or []
         listed: list[dict[str, str]] = new
@@ -362,6 +559,16 @@ def _describe_change(section: str, old: Any, new: Any) -> str:  # noqa: PLR0911 
     return ("from the shipped templates: " if old is None else "") + _keyed_change(
         was, {t["id"]: t for t in new.get("templates", [])}
     )
+
+
+def _schema_change(old: dict[str, Any], new: dict[str, Any]) -> str:
+    """Field and category-value names added, removed or changed; short for the dialog."""
+    parts: list[str] = []
+    for key, what in (("fields", "fields"), ("category_values", "category")):
+        change = _keyed_change(old.get(key) or {}, new.get(key) or {})
+        if change != "unchanged entries":
+            parts.append(f"{what} {change}")
+    return "; ".join(parts) or "unchanged entries"
 
 
 def _set_change(old: list[str], new: list[str]) -> str:
@@ -396,8 +603,8 @@ def _shipped(name: str) -> dict[str, Any]:
 
 
 # riskiest first, so a cut-off summary still names what matters most (V1.2 review, 2026-09-30)
-RISK_ORDER = ("forward_allow_list", "rules", "action_policy", "org_domains", "org_addresses",
-              "export_schedule", "templates", "move_folders")  # fmt: skip
+RISK_ORDER = ("forward_allow_list", "schema", "rules", "action_policy", "org_domains",
+              "org_addresses", "export_schedule", "templates", "move_folders")  # fmt: skip
 
 
 def summary(changes: list[dict[str, str]], limit: int = 300) -> str:
@@ -433,9 +640,16 @@ def _describe_apply(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
     before = current(conn)
     changes = diff(before, doc)
     return stepup.Bound(
-        stepup.digest("config_apply", canonical_json(doc), canonical_json(before)),
-        f"ecf: apply config: {personal_targets(before, doc)}{summary(changes, 200)}",
-    )
+        stepup.digest("config_apply", canonical_json(doc), canonical_json(before),
+                      ordered_json(doc.get("schema")), ordered_json(before["schema"])),
+        f"ecf: apply config: {_lead(changes)}{personal_targets(before, doc)}"
+        f"{summary(changes, 200)}",
+    )  # fmt: skip
+
+
+def _lead(changes: list[dict[str, str]]) -> str:
+    """A schema change always leads, whatever the summary's length cuts (OD-478)."""
+    return f"{SCHEMA_LEAD}; " if any(c["section"] == "schema" for c in changes) else ""
 
 
 def personal_targets(before: dict[str, Any], doc: dict[str, Any]) -> str:
@@ -460,10 +674,14 @@ class Result:
     applied: bool
     changes: list[dict[str, str]]
     sha256: str
+    schema: dict[str, Any] | None = None  # schema_preview, when the document sets `schema`
 
     def to_json(self) -> dict[str, Any]:
-        return {"changed": self.changed, "applied": self.applied, "changes": self.changes,
-                "sha256": self.sha256}  # fmt: skip
+        out: dict[str, Any] = {"changed": self.changed, "applied": self.applied,
+                               "changes": self.changes, "sha256": self.sha256}  # fmt: skip
+        if self.schema is not None:
+            out["schema"] = self.schema
+        return out
 
 
 def apply(
@@ -477,31 +695,42 @@ def apply(
     actor: str = "os_user",
 ) -> Result:
     doc = parse(conn, text)
-    changes = diff(current(conn), doc)
+    before = current(conn)
+    changes = diff(before, doc)
     sha = hashlib.sha256(canonical_json(doc).encode()).hexdigest()
+    preview = schema_preview(before, doc)
     if not changes or dry_run:
-        return Result(bool(changes), False, changes, sha)
+        return Result(bool(changes), False, changes, sha, preview)
+    from ecf_server import stages  # noqa: PLC0415 - stages imports modules that import this one
+
     stepup.consume(conn, clock, "config_apply", {"document": doc}, nonce)
     now = to_ts(clock.now())
+    schema_changed = any(c["section"] == "schema" for c in changes)
     with write_tx(conn):
         for c in changes:
             s = c["section"]
             if doc[s] == DEFAULT:
                 conn.execute("DELETE FROM settings WHERE key = ?", (KEY[s],))
                 continue
+            stored = ordered_json(doc[s]) if s == "schema" else canonical_json(doc[s])
             conn.execute(
                 "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)"
                 " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
                 " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-                (KEY[s], canonical_json(doc[s]), now, actor),
+                (KEY[s], stored, now, actor),
             )
+        # a new schema is a new gate key: live addresses drop to assist with it, not a tick later
+        demoted = (
+            stages.demote_live(conn, now, actor, stages.SCHEMA_REASON) if schema_changed else []
+        )
         conn.execute(
             "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
             " VALUES (?, NULL, 'config.applied', ?, 'ok', ?)",
             (now, actor, json.dumps({"sha256": sha, "changes": changes})),
         )
     ident = slack_admin.identity(conn)
-    text = f"Security-relevant config changed: {summary(changes)}"
+    text = f"Security-relevant config changed: {_lead(changes)}{summary(changes)}"
     slack_admin.notice(conn, clock, notifier, text,
                        dms=[ident.member] if ident and ident.member else [])  # fmt: skip
-    return Result(True, True, changes, sha)
+    stages.announce_demoted(conn, clock, demoted, stages.SCHEMA_REASON)
+    return Result(True, True, changes, sha, preview)

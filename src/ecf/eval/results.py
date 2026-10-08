@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
 from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, wilson
+from ecf.schema import load_schema
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 NON_INFERIORITY_POINTS = 3.0
@@ -150,6 +151,25 @@ def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     adjusted = holm({k: v[3] for k, v in raw.items()})
     return [FieldComparison(k, n, bo, ao, p, adjusted[k])
             for k, (n, bo, ao, p) in sorted(raw.items())]  # fmt: skip
+
+
+def schema_digest(r: ResultFile) -> str | None:
+    """The digest of the schema the run's models were asked with (its extension included); None
+    in a result from before v2.1.0."""
+    d = (r.summary or {}).get("schema_digest")
+    return d if isinstance(d, str) else None
+
+
+def schema_warning(a: ResultFile, b: ResultFile) -> str | None:
+    """A warning when the two runs were asked with different schemas (an extension added,
+    changed or removed between them): the fields and values they chose from differ. A result
+    that records none is taken as the shipped schema (it predates extensions)."""
+    shipped = load_schema().digest
+    da, db = schema_digest(a) or shipped, schema_digest(b) or shipped
+    if da == db:
+        return None
+    return (f"warning: the runs used different schemas ({da} vs {db}): an extension changed"
+            " between them, so the fields and values they chose from differ")  # fmt: skip
 
 
 def latest(folder: Path) -> ResultFile | None:

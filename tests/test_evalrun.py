@@ -18,6 +18,7 @@ from ecf.errors import ConflictError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, compare, load_result
+from ecf.schema import load_schema
 from ecf_server import evalrun, modelq, policy, schedule
 from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
@@ -118,6 +119,7 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert "bank has changed" not in text and "SYSTEM NOTE" not in text  # no message text (I5)
     summary = json.loads(text)["summary"]
     assert summary["determinism_diffs"] == 0
+    assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None

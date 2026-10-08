@@ -49,11 +49,13 @@ TITLES = {
     "restored_keywords": "Operator Input Needed: ecf's labels on new mail after a restore",
     "export_failed": "System Error",  # scheduled backups keep failing (§11.9; V1.5 step 8b)
     "download_budget": "Operator Input Needed: Gmail download limit reached",  # OD-440 (V1.6)
+    "schema_extension": "System Error",  # the stored schema extension no longer compiles (OD-478)
 }
 # not a mail check's to resolve on success
 NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
                         "send_limit", "alert_email", "export_failed",
-                        "restored_keywords", "download_budget"})  # fmt: skip
+                        "restored_keywords", "download_budget",
+                        "schema_extension"})  # fmt: skip
 Resolver = Callable[[str], bool]
 
 

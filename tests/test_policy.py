@@ -10,7 +10,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ecf.schema import FieldKind, load_schema
+from ecf.schema import FieldKind, extend_schema, load_schema
 from ecf_server import policy, precheck
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
@@ -278,3 +278,22 @@ def test_outbound_off_suppresses_and_flags() -> None:
     assert p.suppressed == "reply_template" and ("flag", None, "auto") in _names(p)
     draft = policy.proposal(ctx, p, "draft_reply", None, LABELS)  # drafts never wait for it
     assert isinstance(draft, Planned) and draft.mode == "approve"
+
+
+def test_labels_include_what_the_extension_adds() -> None:
+    """Added category values, and the values of extension enum fields a rule labels from, are
+    labels ecf may write; a shipped field's values are not (OD-478)."""
+    ext = extend_schema(SCHEMA, {
+        "fields": {"contract_stage": {"type": "enum", "description": "Where a contract stands.",
+                                      "values": {"draft": "A draft.", "signature": "To sign."}},
+                   "region": {"type": "enum", "description": "Region.",
+                              "values": {"emea": "EMEA.", "apac": "APAC."}}},
+        "category_values": {"legal_notice": "Letter from a lawyer."},
+    })  # fmt: skip
+    rules = compile_rules("version: 1\nrules:\n  - {id: a, then: [{label: {field: contract_stage}},"
+                          " {label: {field: sender_type}}]}\n", ext)  # fmt: skip
+    got = policy.labels(ext, rules)
+    assert {"draft", "signature", "legal_notice"} <= got
+    assert not {"emea", "apac"} & got  # no rule labels from region
+    assert "vendor" not in got  # sender_type isn't an extension field
+    assert "legal_notice" not in LABELS and "draft" not in LABELS

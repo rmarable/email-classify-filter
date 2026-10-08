@@ -36,7 +36,6 @@ import sqlite3
 from typing import Any
 
 from ecf.ids import StableId
-from ecf.schema import load_schema
 from ecf_server import answers, decide, items, ollama, outbound_plan, policy
 from ecf_server.classifier import fit
 from ecf_server.clock import Clock
@@ -232,7 +231,7 @@ def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: olla
              item: sqlite3.Row) -> ItemResult:  # fmt: skip
     """The model queue's `Work` for items waiting for the actor."""
     ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(load_schema(), ctx.rules)
+    labels = policy.labels(ctx.rules.schema, ctx.rules)
     folders = ctx.move_folders
     state: dict[str, Any] = json.loads(item["proposal"] or "{}")
     answered: list[dict[str, Any]] = [r for r in state.get("answers", []) if r.get("answer")]

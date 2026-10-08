@@ -43,6 +43,27 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     return {r["name"]: r for r in rows}
 
 
+# ---- schema (OD-478) ---------------------------------------------------------------------------
+
+
+def test_schema_row(conn: sqlite3.Connection) -> None:
+    row = ops_doctor.schema(conn)
+    assert row == {"name": "schema", "level": "ok", "detail": "v2, built in (no extension)",
+                   "fix": ""}  # fmt: skip
+    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
+    row = ops_doctor.schema(conn)
+    assert row["level"] == "ok"
+    assert row["detail"].startswith("v2 with an extension; 1 of 8 fields, 0 of 4 category values")
+    fields = {f"f{i}": {"type": "boolean", "description": "x"} for i in range(7)}
+    _set(conn, "config.schema", {"fields": fields})
+    row = ops_doctor.schema(conn)
+    assert row["level"] == "warn" and row["detail"].endswith("(near the limit)") and row["fix"]
+    _set(conn, "config.schema", {"category_values": {"invoice": "Clashes with a shipped value."}})
+    row = ops_doctor.schema(conn)  # a stored extension a new release clashes with (OD-478)
+    assert row["level"] == "FAIL" and "no longer compiles" in row["detail"]
+    assert "schema: default" in row["fix"]
+
+
 # ---- Gmail --------------------------------------------------------------------------------------
 
 
@@ -228,6 +249,7 @@ def test_the_route_and_doctor_rows(conn: sqlite3.Connection, db_path: Path,
     assert r.status_code == 200
     names = [c["name"] for c in r.json()["checks"]]
     assert names[:2] == ["smtp ap", "alert email"] and "backups" in names
+    assert names[-1] == "schema"
 
     def client(_paths: Paths) -> ApiClient:
         return ApiClient(st)

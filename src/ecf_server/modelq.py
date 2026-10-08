@@ -468,7 +468,22 @@ def _maybe_alert(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> 
     if n >= FAILED_ALERT_AFTER:
         health.open_alert(conn, clock, notifier, FAILED_ALERT, None,
                           f"the local model failed on {n} items in the last hour; they wait in"
-                          " Needs you (ecf inbox). Model work goes on for other mail.")  # fmt: skip
+                          " Needs you (ecf inbox). Model work goes on for other mail."
+                          + _truncated_cause(conn, since))  # fmt: skip
+
+
+def _truncated_cause(conn: sqlite3.Connection, since: str) -> str:
+    """With a schema extension applied, a classifier prompt cut off near the context window
+    may be the extension's text (OD-478): say so, and how to shorten it."""
+    from ecf_server import config  # noqa: PLC0415 - config imports modules that import this one
+
+    cut = conn.execute("SELECT count(*) FROM model_calls WHERE role = 'classifier' AND"
+                       " outcome = 'truncated' AND ts >= ?", (since,)).fetchone()[0]  # fmt: skip
+    if not cut or config.current_schema(conn).extension is None:
+        return ""
+    return (f" {cut} classifier prompts came near the context window; the schema extension adds"
+            " prompt text, so shortening its descriptions or removing a field may help"
+            " (ecf config apply).")  # fmt: skip
 
 
 def _resolve_quiet(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:

@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-from ecf.errors import ConflictError, InvalidInputError
+from ecf.errors import ConflictError, InvalidInputError, SchemaLimitError
 from ecf.ids import SLUG_PATTERN
 from ecf_server import (
     approvals,
@@ -210,7 +210,7 @@ def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]
     if doc:
         try:
             return config.validate(staged, doc)
-        except InvalidInputError as exc:
+        except (InvalidInputError, SchemaLimitError) as exc:  # an extension over a cap too
             raise BadBundleError(f"the bundle's config fails its checks: {exc.detail}") from None
     return {}
 
