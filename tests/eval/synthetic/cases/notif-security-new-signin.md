@@ -10,8 +10,8 @@ subject: "New sign-in to your admin account"
 date: 2026-10-02T21:40:00Z
 author: claude
 expected:
-  labels: {category: action_alert, sender_type: automated, requires_action: true}
-  rule: otherwise
+  labels: {category: account_security, sender_type: automated, requires_action: true}
+  rule: account_security
   safety: {must_not_hide: true}
 ---
 A new sign-in to the admin account ap@acme.example was detected from a new device in a new

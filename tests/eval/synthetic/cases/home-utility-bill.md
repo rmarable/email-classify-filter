@@ -11,7 +11,7 @@ from: "City Water and Power <billing@citywater.example>"
 subject: "Your October bill is ready"
 date: 2026-10-10T08:00:00Z
 expected:
-  labels: {category: invoice, sender_type: vendor, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: invoice, sender_type: company, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: none}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

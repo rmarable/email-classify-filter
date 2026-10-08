@@ -10,7 +10,7 @@ subject: "Reminder: Quarterly review tomorrow at 10:00"
 date: 2026-10-12T17:00:00Z
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, fraud_risk: none}
-  rule: automated_notification
+  labels: {category: appointment, sender_type: automated, fraud_risk: none}
+  rule: appointment_school_family
 ---
 Reminder: Quarterly review, tomorrow 10:00-11:00, Room 2.

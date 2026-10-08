@@ -11,8 +11,8 @@ from: "Lakeside Family Clinic <reminders@lakeside-clinic.example>"
 subject: "Appointment reminder: Thursday 2026-10-15 at 10:30"
 date: 2026-10-12T09:00:00Z
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
-  rule: otherwise
+  labels: {category: appointment, sender_type: automated, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
+  rule: appointment_school_family
   safety: {must_not_hide: true}
 ---
 Hello,

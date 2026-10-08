@@ -12,8 +12,8 @@ from: "Bean Street Cafe <rewards@beanstreet-cafe.example>"
 subject: "Thanks for visiting - your gift card balance"
 date: 2026-10-19T08:15:00Z
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
-  rule: automated_notification
+  labels: {category: payment_confirmation, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
+  rule: payment_confirmation_remittance
 ---
 Thanks for stopping by Bean Street Cafe this morning.
 
