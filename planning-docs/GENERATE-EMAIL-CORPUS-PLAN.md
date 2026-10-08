@@ -38,6 +38,8 @@ Operator decisions (2026-10-06):
   (`planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md`), whose adopt/not-adopt OD is the §1.5 criterion.
   - Phases 0, 1 and B are on the path to rc1.
   - Phase A (replay on `ecf-server dev`) is outside the gate.
+  - **Update 2026-10-08:** the corpus no longer gates `v1.0.0`: the decision-model experiment was
+    decided on the synthetic set alone (OD-473), so corpus results are report-only.
   - The work is built on a `corpus` branch from `v1.0.0-release` and merged back before rc1.
 - **Report only** [R8]: corpus results are reported and never gated.
   - The absolute safety gates stay on the synthetic set.
@@ -590,6 +592,8 @@ checked against the same list.
   - A top-up before labelling costs nothing. One after the G run forces a re-run.
 
 ## Phase B: blind labelling, eval runner, rescore (gates `v1.0.0` via systemone)
+
+Built 2026-10-07. It no longer gates `v1.0.0` (OD-473, 2026-10-08; see Gating above).
 
 **`ecf eval label --corpus FILE`** [R5, R6, R68, R71, R140, R141]:
 - **Session and display:**
