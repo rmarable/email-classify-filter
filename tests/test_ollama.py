@@ -191,7 +191,7 @@ def test_chat_sends_the_fixed_options_and_returns_metrics() -> None:
     reply = _client(_server(chat=chat)).chat(PIN.ecf_tag, "SYSTEM", "USER", role="classifier",
                                              fmt={"type": "object"})  # fmt: skip
     body = seen[0]
-    assert body["options"] == {"num_ctx": 4096, "temperature": 0, "num_predict": 160}
+    assert body["options"] == {"num_ctx": 6144, "temperature": 0, "num_predict": 160}
     assert (body["think"], body["stream"], body["keep_alive"]) == (False, False, "5m")
     assert body["format"] == {"type": "object"}
     assert reply.content == '{"category": "invoice"}'

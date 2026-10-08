@@ -150,7 +150,7 @@ def test_a_prompt_near_the_context_limit_counts_as_truncated(
 ) -> None:
     add_address(conn, clock, "ap")
     sid = _item(conn, clock, "i1", "text")
-    fake = ChatOllama(json.dumps(GOOD), prompt_tokens=4000)
+    fake = ChatOllama(json.dumps(GOOD), prompt_tokens=classifier.NEAR_CTX)
     assert classifier.classify_item(conn, clock, fake.client(), _ready(),
                                     _row(conn, sid)).outcome == "failed"  # fmt: skip
     assert conn.execute("SELECT outcome FROM model_calls").fetchone()[0] == "truncated"

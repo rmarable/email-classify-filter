@@ -50,8 +50,11 @@ def _override(conn: sqlite3.Connection, clock: FakeClock, value: str) -> dict[st
 def test_the_lock_names_every_role_with_a_claude_id() -> None:
     lock = claude_pins.load_lock()
     assert set(lock) == set(claude_pins.ROLES)
-    assert lock["classifier"] == lock["main_session"] == "claude-sonnet-5-5"
-    assert {claude_pins.family(i) for i in lock.values()} == {"sonnet", "opus"}  # no Haiku, OD-461
+    assert lock["classifier"] == "claude-sonnet-5-5"
+    assert lock["main_session"] == "claude-haiku-5-5"  # the session only, OD-474
+    roles = {claude_pins.family(lock[r]) for r in claude_pins.ROLES if r != "main_session"}
+    assert roles == {"sonnet", "opus"}  # Haiku classifies and acts on nothing (OD-461)
+    assert set(claude_pins.lifecycle()) >= set(lock.values())
     assert claude_pins.family("gpt-5") is None
     assert claude_pins.family("claude-sonnet-5-5; rm") is None
 
@@ -101,8 +104,22 @@ def test_none_clears_and_bad_ids_are_refused(conn: sqlite3.Connection, clock: Fa
     for bad in ("gpt-5", "claude-3", ""):
         with pytest.raises(InvalidInputError):
             claude_pins.set_override(conn, clock, FakeNotifier(), bad, nonce=None)
-    with pytest.raises(InvalidInputError, match="ecf pins no haiku model"):  # OD-461
-        claude_pins.set_override(conn, clock, FakeNotifier(), "claude-haiku-4-6", nonce=None)
+
+
+def test_a_haiku_override_replaces_only_the_main_session(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    make_address(conn, clock, "assist")
+    _preset(conn, "C")
+    before = claude_pins.address_key(conn, "ap")
+    out = _override(conn, clock, "claude-haiku-5-6")
+    eff = claude_pins.effective(conn)
+    assert eff["main_session"] == "claude-haiku-5-6"
+    assert eff["classifier"] == "claude-sonnet-5-5"
+    assert out["affected"] == []  # not a gate pin (OD-474): nothing goes back to assist
+    assert claude_pins.address_key(conn, "ap") == before
+    posts = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM jobs")]
+    assert not any("go back to assist" in p["card"]["text"] for p in posts)
 
 
 def test_a_step_up_is_bound_to_the_override_it_was_issued_for(

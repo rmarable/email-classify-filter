@@ -1,7 +1,8 @@
 # ADR 0016: Claude models are pinned by full ID per release, with a weekly watch
 
 - **Status:** accepted (OD-014, OD-053, 2026-09-26; OD-268, OD-272, OD-273, OD-277, OD-278,
-  OD-285, OD-307, 2026-10-02); implemented in V1.4 (steps 2, 6, 10 and 13)
+  OD-285, OD-307, 2026-10-02; amended by OD-461, 2026-10-06, and OD-474, 2026-10-08); implemented in
+  V1.4 (steps 2, 6, 10 and 13)
 - **Context source:** SPEC §7.5, §7.6, §9.3, §21.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) "Runtimes and models"; `ecf_server/claude_pins.py`,
   `data/models.lock`, `telemetry.py`, `claude_review.py`, `model_watch.py`
@@ -19,8 +20,11 @@ model can be overridden per invocation or by an organization's `availableModels`
 - **Full model IDs, one per role, ship in the wheel** in `models.lock` (OD-014): the main session,
   `classifier`, `classifier_high`, `actor` and `actor_high` (§7.5). A release moves a pin; nothing
   else does, except an install-wide override per family (step-up, Security Notice; OD-277).
+  The roles that classify or act are on Sonnet and Opus (OD-461); the main session, which only
+  dispatches, is on Haiku 5.5 once its acceptance runs pass (OD-474).
 - **The gate binds every model the address's preset uses** (OD-278). Any pin change starts the
-  review count again and moves a `live` address back to `assist` (§9.3).
+  review count again and moves a `live` address back to `assist` (§9.3). The main session isn't
+  a gate pin, so changing it (or overriding the Haiku family) moves no address (OD-474).
 - **The service checks the model that actually did the work.** A Claude submission is held until
   Claude Code's telemetry shows every subagent request in its window on the pinned model, and is
   refused otherwise, or when unbound at session end (OD-268, rebuilt as OD-307 after the B shadow
