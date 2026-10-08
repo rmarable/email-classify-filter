@@ -1,10 +1,10 @@
 # Linux-only CI. macOS tests run locally before merging to main (CLAUDE.md, merge gate).
-# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-latest. While the repo is private it
-# names the self-hosted Linux runner in the Colima `ci` VM (operator decision 2026-10-07: no paid
-# minutes); at v1.0.0 the variable is deleted and the runner unregistered (SPEC §17.4).
+# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-latest. CI_RUNNER named a self-hosted
+# runner while the repo was private; it was removed at v1.0.0 (SPEC §17.4).
 name: ci
 
 on:
+  workflow_dispatch:  # `gh workflow run ci.yml --ref <branch>`, when a push didn't start CI
   push:
     paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
   pull_request:
