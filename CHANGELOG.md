@@ -3,7 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.0.0 (not yet tagged)
+## v2.0.0 (2026-10-09)
+
+- v2.0.0 is the release of v2.0.0-rc1 to rc3 below, with no code changes since rc3 (only docs and tests). It passed its release check, an upgrade from v1.0.0 with a rollback and an upgrade again (SPEC §1.5a, §21.2).
+- Schema extensions, listed under v2.0.0-rc1, are not part of v2.0.0: the code ships switched off, and extensions are planned for v2.1.0 (OD-481).
 
 ## v2.0.0-rc3 (2026-10-09)
 
