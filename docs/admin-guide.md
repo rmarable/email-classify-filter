@@ -201,7 +201,9 @@ the addresses using it from `live` to `assist` until their gate passes again (SP
 
 - `ecf models install` pulls the pinned Gemma model, checks its digest and copies it to ecf's own
   name; it starts ecf's Ollama login item when nothing serves Ollama.
-- `ecf models status` shows the pin, Ollama's readiness and any install in progress.
+- `ecf models status` shows the pin, Ollama's readiness, any install in progress and ecf's
+  copies for other releases. Those are kept (another install or `ecf upgrade --to` may run
+  one); `ecf models prune` removes them after asking (SPEC §7.5).
 - `ecf models serve install|uninstall|status` manages ecf's Ollama login item (fixed settings:
   loopback only, one request at a time, cloud off). Don't use `brew services`.
 - macOS: install Ollama with Homebrew and pin it: `brew install ollama && brew pin ollama mlx-c`.

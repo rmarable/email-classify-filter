@@ -390,6 +390,10 @@ UNWANTED_ENV = ("OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG"
 def judge_models(st: dict[str, Any]) -> list[Check]:
     """Turn a /v1/models reply into checks (pure)."""
     pin = st["pin"]
+    stale: list[str] = st.get("stale_tags") or []
+    kept = ([Check("model copies", Level.OK, f"kept for other ecf releases: {', '.join(stale)}"
+                   " (another install or a rollback may use them; ecf models prune removes them)")]
+            if stale else [])  # fmt: skip
     if not st.get("ready"):
         fault = st["fault"]
         never = st.get("installed_at") is None and fault["cause"] in (
@@ -398,7 +402,7 @@ def judge_models(st: dict[str, Any]) -> list[Check]:
         )
         level = Level.WARN if never else Level.FAIL
         return [Check("local model", level, f"{fault['summary']} Model work is stopped.",
-                      fault["fix"])]  # fmt: skip
+                      fault["fix"]), *kept]  # fmt: skip
     out = [Check("local model", Level.OK, f"{pin['ecf_tag']} ({pin['digest'][:12]}), Ollama"
                  f" {st['version']}, listening on {', '.join(st['listener'])} only")]  # fmt: skip
     env: dict[str, str] = st.get("env", {})
@@ -424,7 +428,7 @@ def judge_models(st: dict[str, Any]) -> list[Check]:
         else:
             out.append(Check("decision model", Level.WARN, f"{d['ecf_tag']} isn't the pinned model",
                              f"ecf models install --decision {d['name']}"))  # fmt: skip
-    return out
+    return out + kept
 
 
 DNS_PROBE = "_dmarc.gmail.com"  # a long-standing public DMARC record
