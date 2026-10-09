@@ -21,6 +21,7 @@ rules and policy (V1.3 step 4), never here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -57,6 +58,19 @@ Answer with a JSON object that has every field below and nothing else.
 
 def system_prompt(schema: CompiledSchema) -> str:
     return INSTRUCTIONS + schema.prompt_block
+
+
+def prompt_digest(schema: CompiledSchema) -> str:
+    """SHA-256 over everything the classifier is asked with besides the email (plan 0.3, P6):
+    the rendered system prompt, the user message's template, `MAX_INPUT_BYTES` and the model
+    options. The keyword list isn't in it (Q3): it changes what is redacted, not the prompt."""
+    parts = {
+        "system": system_prompt(schema),
+        "user": user_message("{email}", "{token}"),
+        "max_input_bytes": MAX_INPUT_BYTES,
+        "options": ollama.OPTIONS | {"num_predict": ollama.NUM_PREDICT["classifier"]},
+    }
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 
 
 def fit(text: str, max_bytes: int = MAX_INPUT_BYTES) -> str:

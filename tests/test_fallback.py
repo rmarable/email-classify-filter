@@ -15,8 +15,8 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.ids import StableId
-from ecf.schema import load_schema
 from ecf_server import (
+    claude_pins,
     claude_queue,
     claude_review,
     digests,
@@ -40,7 +40,7 @@ from tests.test_gate import _eval, make_address  # pyright: ignore[reportPrivate
 from tests.test_models import PIN, check_kw
 
 DIGEST = PIN.digest
-KEY = f"{DIGEST}+{load_schema().digest}"  # the fallback's gate key (OD-475)
+KEY = claude_pins.local_key()  # the fallback's gate key (OD-475, plan 0.3)
 REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True,
                                        "requires_action": True}  # fmt: skip
 PAYMENT: dict[str, Any] = REQUEST | {"category": "invoice", "payment_related": True}

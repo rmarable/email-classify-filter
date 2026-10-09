@@ -128,6 +128,8 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     summary = json.loads(text)["summary"]
     assert summary["determinism_diffs"] == 0
     assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
+    assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
+    assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None

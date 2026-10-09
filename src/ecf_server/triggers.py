@@ -33,6 +33,7 @@ for alert mail arrives with email alerts.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -68,6 +69,12 @@ class _Pattern:
     word: str
     regex: re.Pattern[str]
     case_sensitive: bool
+
+
+def keywords_digest() -> str:
+    """SHA-256 of the shipped keywords.yaml, recorded beside a result's prompt digest (Q3)."""
+    raw = resources.files("ecf_server.data").joinpath("keywords.yaml").read_bytes()
+    return hashlib.sha256(raw).hexdigest()
 
 
 @cache

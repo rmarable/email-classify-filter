@@ -632,6 +632,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     production=production,
                                                     schema=schema))  # fmt: skip
         summary["schema_digest"] = schema.digest
+        if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)
+            summary["prompt_digest"] = classifier.prompt_digest(schema)
+        summary["keywords_digest"] = triggers.keywords_digest()
         emails = len(results) if opts.classifier else None
         summary["model"] = stats.summarize([c for cs in calls.values() for c in cs], emails=emails)
         summary["roles"] = {r: stats.summarize(cs, emails=emails if r == "classifier" else None)
