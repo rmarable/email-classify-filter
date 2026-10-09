@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf upgrade` now says when the classifier prompt changes (each release records its prompt's digest) and names every address that drops to `assist` until its gate passes again; an upgrade from v2.0.0 or earlier, which has no prompt digest, counts as a change (plan Q6; SPEC §11.10).
 - The local model's gate key now includes a digest of the classifier's prompt (its instructions, message template, input limit and model options), so new wording starts a new gate; a keyword-list change does not. Upgrading from v2.0.0 starts every preset A and B gate again once. Eval results record the prompt digest and the keyword list's digest.
 - `ecf eval run` results now record the machine and Ollama at the run's start and end: Ollama's version, the context size, power and battery, the CPU limits and warning levels macOS reports (`pmset -g therm`), and the models loaded, so a run on a hot, throttled or battery-powered machine, or beside another model, can be told apart.
 - `ecf eval run` results now hold each case's classifier and actor token counts and times, and the run's figures per role (classifier, actor, determinism repeats), so the classifier's speed and tokens per email are no longer mixed with the actor's; `ecf eval compare` prints them per role.

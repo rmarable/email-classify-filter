@@ -12,6 +12,9 @@ it imports nothing from the service package.
   `min_client`.
 - **Model pins** (OD-381): families whose pin changes, and the addresses that use them, which
   drop to `assist` when the upgrade completes.
+- **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the shipped classifier prompt's
+  digest (shipped schema). It is in the local gate key, so a different one, or one either side
+  lacks (before v2.1.0), counts as "prompt" and every address is affected.
 """
 
 from __future__ import annotations
@@ -148,21 +151,28 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
                           " upgrade to that first")  # fmt: skip
     r.pin_changes, r.affected = changes(
         now["pins"], int(now.get("classifier_schema", 1)), rel.pins,
-        int(new.get("classifier_schema", 1)), now["pin_users"])  # fmt: skip
+        int(new.get("classifier_schema", 1)), now["pin_users"],
+        prompts=(now.get("prompt_digest"), new.get("prompt_digest")))  # fmt: skip
     return r
 
 
 def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str, str],
-            new_schema: int | None,
-            uses: dict[str, list[str]]) -> tuple[list[str], list[str]]:  # fmt: skip
-    """(families whose pin changes, plus "schema"; the addresses that drop to assist). `uses` is
-    family -> addresses. A new classifier schema asks every address differently (OD-475); a
-    schema of None is unknown and counts as unchanged."""
+            new_schema: int | None, uses: dict[str, list[str]], *,
+            prompts: tuple[str | None, str | None] | None = None
+            ) -> tuple[list[str], list[str]]:  # fmt: skip
+    """(families whose pin changes, plus "schema" and "prompt"; the addresses that drop to
+    assist). `uses` is family -> addresses. A new classifier schema asks every address
+    differently (OD-475); a schema of None is unknown and counts as unchanged. `prompts` is the
+    (old, new) prompt digest: different, or missing on either side, is "prompt" (Q6)."""
     fams = sorted(f for f, v in new_pins.items() if old_pins.get(f) != v)
     affected = sorted({a for f in fams for a in uses.get(f, [])})
+    everyone = sorted({a for addrs in uses.values() for a in addrs})
     if old_schema is not None and new_schema is not None and old_schema != new_schema:
         fams.append("schema")
-        affected = sorted({a for addrs in uses.values() for a in addrs})
+        affected = everyone
+    if prompts is not None and (None in prompts or prompts[0] != prompts[1]):
+        fams.append("prompt")
+        affected = everyone
     return fams, affected
 
 
@@ -177,11 +187,14 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
         old = read_wheel(old_wheel)
         old_pins = old.pins
         old_schema: int | None = int(old.info.get("classifier_schema", 1))
+        old_prompt = old.info.get("prompt_digest")
     except InvalidInputError:
         old_pins = dict[str, str](state["pins"])
         old_schema = 1 if version_key(old_version)[0] < 2 else None
+        old_prompt = None  # unknown: counts as a new prompt
     r = Report()
+    prompts = (old_prompt, state.get("prompt_digest"))
     r.pin_changes, r.affected = changes(old_pins, old_schema, state["pins"],
                                         int(state.get("classifier_schema", 1)),
-                                        state["pin_users"])  # fmt: skip
+                                        state["pin_users"], prompts=prompts)  # fmt: skip
     return r

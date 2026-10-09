@@ -7,7 +7,7 @@ from importlib import resources
 
 from ecf import __version__
 from ecf.schema import load_schema
-from ecf_server import api, db, export_bundle
+from ecf_server import api, classifier, db, export_bundle
 
 
 def test_release_json_matches_the_code() -> None:
@@ -18,4 +18,5 @@ def test_release_json_matches_the_code() -> None:
     assert r["data_format"] == export_bundle.DATA_FORMAT
     assert r["api_version"] == api.API_VERSION
     assert r["classifier_schema"] == load_schema().version
+    assert r["prompt_digest"] == classifier.prompt_digest(load_schema())  # new wording: update it
     assert isinstance(r["min_client"], str)
