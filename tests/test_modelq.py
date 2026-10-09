@@ -509,6 +509,10 @@ def test_one_round_at_a_time_and_an_eval_waits_for_a_running_one(
 ) -> None:
     from ecf_server import evalrun  # noqa: PLC0415
 
+    # an earlier test in this process (xdist worker) may have left an eval stopped or the queue
+    # held: `_hold` would then return at once without waiting for the round
+    evalrun.RUN.stop.clear()
+    assert not modelq.EXCLUSIVE.held()
     add_address(conn, clock, "ap")
     _items(conn, clock, "ap", 1)
     modelq.ROUND_LOCK.acquire()  # the worker's round is running
@@ -519,21 +523,26 @@ def test_one_round_at_a_time_and_an_eval_waits_for_a_running_one(
         s.after(report, on_battery=False, offhours=timedelta(minutes=30))
         assert s.next_due == clock.now() + modelq.RETRY
         held = threading.Event()
+        returned: list[bool] = []
 
         def eval_takes_the_queue() -> None:
             opts = evalrun.Options(root=Path("/x"))
-            evalrun._hold(opts, lambda: schedule.Power(laptop=False, on_ac=True),  # pyright: ignore[reportPrivateUsage]
-                          lambda: None, time.monotonic(), clock)  # fmt: skip
+            returned.append(evalrun._hold(opts, lambda: schedule.Power(laptop=False, on_ac=True),  # pyright: ignore[reportPrivateUsage]
+                                          lambda: None, time.monotonic(), clock))  # fmt: skip
             held.set()
 
         t = threading.Thread(target=eval_takes_the_queue)
         t.start()
-        assert not held.wait(0.2)  # it holds EXCLUSIVE, but waits for the round to end
+        deadline = time.monotonic() + 5  # it takes EXCLUSIVE first (however slow the thread)
+        while not modelq.EXCLUSIVE.held() and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert modelq.EXCLUSIVE.held()
+        assert not held.wait(0.2)  # it holds EXCLUSIVE, but waits for the round to end
     finally:
         modelq.ROUND_LOCK.release()
     assert held.wait(5)
     t.join()
+    assert returned == [True]
     modelq.EXCLUSIVE.release()
 
 
