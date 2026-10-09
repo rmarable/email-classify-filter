@@ -15,8 +15,10 @@ re-grant (a refusal doesn't roll back: the service waits with "secret store need
 `START_S`. A failed migration or start restores the whole snapshot (the database file, without
 its `-wal`/`-shm`) and the old wheel, and starts the old service (OD-331, OD-378). On success the
 service records the upgrade (`POST /v1/upgrade/finish`) and marks it settled at its first timer
-pass whose work all succeeds (OD-377). Addresses whose pinned model changed drop to `assist` at
-the service's first tick (stages.tick, §9.3; OD-381).
+pass whose work all succeeds (OD-377). Addresses whose pinned model or classifier schema changed
+drop to `assist` at the service's first tick (stages.tick, §9.3; OD-381, OD-475); phase 2 names
+them by its own rules too, since the old CLI's pre-check can't see a change it doesn't know of
+(`_recount`; operator decision 2026-10-09).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ecf import upgrade_check
 from ecf.client import LocalClient
 from ecf.errors import EcfError
 from ecf.paths import Paths
@@ -132,12 +135,28 @@ def resume(paths: Paths, tools: Tools, *, regrant: bool) -> dict[str, Any]:
     tools.manager.start()
     if not _wait(paths, tools):
         return _roll_back(paths, tools, state, "start")
-    done = state | {"phase": "started", "finished_at": _now()}
+    done = _recount(paths, state | {"phase": "started", "finished_at": _now()})
     write_state(paths, done)
     with LocalClient(paths) as c:
         c.request("POST", "/v1/upgrade/finish", {k: done[k] for k in (
             "from", "to", "label", "started_at", "pin_changes", "affected")})  # fmt: skip
     return done
+
+
+def _recount(paths: Paths, state: dict[str, Any]) -> dict[str, Any]:
+    """Phase 1's pin changes and affected addresses, plus what this version's rules find
+    (upgrade_check.after_upgrade): the old CLI can't see a change it doesn't know of, such as a
+    new classifier schema from v1.0.0 (SPEC §11.10; operator decision 2026-10-09)."""
+    try:
+        with LocalClient(paths) as c:
+            now: dict[str, Any] = c.get("/v1/upgrade/state")
+    except EcfError:
+        return state  # phase 1's lists; the service's first tick still moves the addresses
+    r = upgrade_check.after_upgrade(str(state["from"]), Path(state["old_wheel"]), now)
+    fams = list(state.get("pin_changes") or [])
+    fams += [f for f in r.pin_changes if f not in fams]
+    affected = sorted(set(state.get("affected") or []) | set(r.affected))
+    return state | {"pin_changes": fams, "affected": affected}
 
 
 def find_snapshot(paths: Paths, version: str, current: str) -> tuple[Path, Path] | None:
