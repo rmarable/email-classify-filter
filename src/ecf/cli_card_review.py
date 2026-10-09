@@ -56,12 +56,55 @@ LABEL_TEXTS: dict[str, dict[str, str]] = {
 }
 
 
+LABEL_TEXTS["category"] = {
+    "invoice": "Asks us to pay a bill or invoice, business or personal (utilities, card, rent,"
+    " medical, renewals).",
+    "payment_confirmation": "Confirms a payment we made, or is a receipt or order confirmation.",
+    "remittance": "Tells us a payment to us was sent (remittance advice, payment details from a"
+    " customer).",
+    "vendor_change_request": "Asks to change where or how we pay someone (bank details, payee,"
+    " payment method), genuine or not.",
+    "billing_inquiry": "A question or dispute about a charge, invoice or balance.",
+    "customer_request": "A customer asking for help, service or information that isn't about a"
+    " charge, a defect or buying.",
+    "sales_inquiry": "Someone asking about buying from us or about our prices.",
+    "partnership": "A one-to-one proposal to work together: a pitch, an offer, a collaboration.",
+    "bug_report": "Reports a bug, defect, outage or incident.",
+    "regulatory": "A regulator, government agency, court or tax authority acting toward us"
+    " (notice, audit, inquiry, filing demand), or someone claiming to be one.",
+    "marketing": "Sent to many: newsletters, promotions, advertising.",
+    "notification": "Informs only, and fits no other value.",
+    "action_alert": "A machine or service asking someone to act (expiring certificate or domain,"
+    " quota reached, backup failed).",
+    "account_security": "A sign-in alert, password reset, verification code or security notice"
+    " that asks nothing beyond signing in as usual.",
+    "shipping": "About a delivery: tracking, delivered, missed, returns.",
+    "appointment": "A meeting or service booking, or a reminder for one (dentist, salon,"
+    " restaurant, car service).",
+    "travel": "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes.",
+    "finance": "A bank, brokerage, insurance or tax statement or notice that asks for no payment.",
+    "school_or_family": "School, childcare, activities or family logistics (pickups, schedules,"
+    " who does what).",
+    "spam_or_phishing": "Unsolicited junk or an attempt to deceive, including a fake invoice,"
+    " notice or alert.",
+    "private": "A personal note from a person, not about the business, that fits no other value.",
+    "other": "None of the above.",
+}
+# Shown under the field's own description (SPEC §16.1).
+LABEL_GUIDES = {
+    "category": "Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing,"
+    " account_security; then what the email is about; notification, private and other last.",
+}
+
+
 def labelling_spec(spec: FieldSpec) -> FieldSpec:
-    """The field as the review asks it: SPEC §16.1's value texts where there are any."""
-    texts = LABEL_TEXTS.get(spec.name)
-    if not texts:
-        return spec
-    return dataclasses.replace(spec, value_descriptions=tuple(texts[v] for v in spec.values))
+    """The field as the review asks it: SPEC §16.1's value texts and guide where there are any."""
+    texts, guide = LABEL_TEXTS.get(spec.name), LABEL_GUIDES.get(spec.name)
+    if texts:
+        spec = dataclasses.replace(spec, value_descriptions=tuple(texts[v] for v in spec.values))
+    if guide:
+        spec = dataclasses.replace(spec, description=f"{spec.description}\n  {guide}")
+    return spec
 
 
 class _Quit(Exception):

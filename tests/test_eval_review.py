@@ -171,5 +171,12 @@ def test_the_review_shows_the_labelling_texts_not_the_prompts(root: Path) -> Non
     _, screen = run(root, "sender_type", ["", "q"], add=True, globs=("starter-bec",))
     assert "Firms we don't buy from, including cold pitches" in screen
     assert "A business that is neither a vendor nor a customer" not in screen
-    assert set(ui.LABEL_TEXTS["sender_type"]) == set(schema.fields["sender_type"].values)
+    for name, texts in ui.LABEL_TEXTS.items():
+        assert set(texts) == set(schema.fields[name].values)
     assert classifier.prompt_digest(load_schema()) == digest
+
+
+def test_category_is_asked_with_its_order_guide(root: Path) -> None:
+    _, screen = run(root, "category", ["", "q"], globs=("starter-bec",))
+    assert "Pick the first that fits: vendor_change_request, regulatory" in screen
+    assert "Asks to change where or how we pay someone" in screen
