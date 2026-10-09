@@ -549,7 +549,7 @@ def test_compare_shows_the_experiment_figures(tmp_path: Path) -> None:
     out = CliRunner().invoke(app, ["eval", "compare", str(g), str(d)])
     assert out.exit_code == 0, out.output
     text = out.output
-    assert "score interval (Newcombe form" in text
+    assert "95% Newcombe interval" in text and "score interval" not in text  # one rule (OD-486)
     assert "confirmatory (exact McNemar, Holm over the two): end-to-end p =" in text
     assert "B  classifier systemone:tev1-4b" in text
     assert "B  fraud risk under-rated on 1 of 6" in text

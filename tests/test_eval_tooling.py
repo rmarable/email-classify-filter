@@ -22,6 +22,7 @@ from ecf.eval.results import (
     compare,
     compare_fields,
     differences,
+    input_warnings,
     schema_warning,
 )
 from ecf.schema import load_schema
@@ -287,7 +288,12 @@ def test_compare() -> None:
     b = _run("B", [True] * 95 + [False] * 5)
     c = compare(a, b)
     assert (c.n, c.b_only, c.a_only) == (100, 5, 0)
-    assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior
+    assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior()
+    lo, hi = c.diff_ci  # Newcombe's paired interval (OD-486)
+    assert 0 < lo < 5 < hi
+    worse = compare(b, a)  # 5 points worse: inferior at the -5 margin, whatever the interval
+    assert not worse.b_non_inferior() and not worse.b_non_inferior(margin=3)
+    assert worse.b_non_inferior(margin=12)
     with pytest.raises(InvalidInputError):
         compare(a, ResultFile(run_id="x", pair="x", set_version="v2", created_at="t", cases=[]))
 
@@ -313,6 +319,17 @@ def test_differences_name_what_the_model_returned() -> None:
         "payment_related true (expected false)"
     ]
     assert differences(expected, {}) == []  # an older result without values
+
+
+def test_compare_warns_when_the_runs_were_asked_differently() -> None:
+    a, b = _run("A", [True]), _run("B", [True])
+    assert input_warnings(a, b) == []
+    pa = a.model_copy(update={"summary": {"prompt_digest": "a" * 64, "excerpt_cap": 3000}})
+    pb = b.model_copy(update={"summary": {"prompt_digest": "b" * 64, "excerpt_cap": 1500}})
+    warned = input_warnings(pa, pb)
+    assert [w.split(" (")[0] for w in warned] == ["warning: different prompt",
+                                                  "warning: different inputs"]  # fmt: skip
+    assert input_warnings(pa, b) == []  # a run that recorded none can't be told apart
 
 
 def test_compare_fields_holm() -> None:

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval compare` uses one rule for every comparison: Newcombe's paired interval, always printed, with B non-inferior when its lower bound is above −5 points (`--margin` sets another); the Wald interval and its −3-point margin are gone. It also warns when the two runs were asked with a different prompt or different inputs (OD-486; SPEC §16.5).
 - `ecf upgrade` now says when the classifier prompt changes (each release records its prompt's digest) and names every address that drops to `assist` until its gate passes again; an upgrade from v2.0.0 or earlier, which has no prompt digest, counts as a change (plan Q6; SPEC §11.10).
 - The local model's gate key now includes a digest of the classifier's prompt (its instructions, message template, input limit and model options), so new wording starts a new gate; a keyword-list change does not. Upgrading from v2.0.0 starts every preset A and B gate again once. Eval results record the prompt digest and the keyword list's digest.
 - `ecf eval run` results now record the machine and Ollama at the run's start and end: Ollama's version, the context size, power and battery, the CPU limits and warning levels macOS reports (`pmset -g therm`), and the models loaded, so a run on a hot, throttled or battery-powered machine, or beside another model, can be told apart.

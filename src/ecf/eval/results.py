@@ -15,7 +15,12 @@ from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, wilson
 from ecf.schema import load_schema
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
-NON_INFERIORITY_POINTS = 3.0
+# one comparison rule (SPEC §16.5, OD-486): Newcombe's paired score interval against this margin,
+# the classifier plan's gate margin (Q8); a caller may pass another
+MARGIN_POINTS = 5.0
+# what a run was asked with besides the email: a difference is printed, the comparison still runs
+INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different inputs",
+              "excerpt_cap": "different inputs"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
@@ -84,14 +89,13 @@ class Comparison:
     a_only: int  # A right, B wrong
     p_value: float
     diff_points: float
+    # Newcombe's paired score interval, 95% (§16.5, OD-486); unlike Wald it doesn't collapse to
+    # [0, 0] without discordant pairs
     diff_ci: tuple[float, float]
-    # Newcombe's paired score interval (§16.5, R2): for the decision-model experiment's
-    # non-inferiority; unlike Wald it doesn't collapse to [0, 0] without discordant pairs
-    diff_ci_score: tuple[float, float] = (0.0, 0.0)
 
-    @property
-    def b_non_inferior(self) -> bool:
-        return self.diff_ci[0] > -NON_INFERIORITY_POINTS
+    def b_non_inferior(self, margin: float = MARGIN_POINTS) -> bool:
+        """The interval's lower bound is above -`margin` points."""
+        return self.diff_ci[0] > -margin
 
 
 def compare(a: ResultFile, b: ResultFile) -> Comparison:
@@ -107,9 +111,6 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
     a_only = sum(x and not y for x, y in pairs)
     b_only = sum(y and not x for x, y in pairs)
     diff = (b_only - a_only) / n
-    # 95% CI for a paired difference in proportions (Wald on discordant pairs)
-    se = ((b_only + a_only) / n - diff * diff) ** 0.5 / n**0.5
-    ci = (100 * (diff - 1.96 * se), 100 * (diff + 1.96 * se))
     both = sum(x and y for x, y in pairs)
     lo, hi = newcombe_paired(both, b_only, a_only, n - both - b_only - a_only)
     return Comparison(
@@ -120,8 +121,7 @@ def compare(a: ResultFile, b: ResultFile) -> Comparison:
         a_only=a_only,
         p_value=mcnemar_exact(b_only, a_only),
         diff_points=100 * diff,
-        diff_ci=ci,
-        diff_ci_score=(100 * lo, 100 * hi),
+        diff_ci=(100 * lo, 100 * hi),
     )
 
 
@@ -187,6 +187,19 @@ def schema_warning(a: ResultFile, b: ResultFile) -> str | None:
         return None
     return (f"warning: the runs used different schemas ({da} vs {db}): an extension changed"
             " between them, so the fields and values they chose from differ")  # fmt: skip
+
+
+def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
+    """ "different prompt" or "different inputs" when both runs recorded a value and they differ
+    (OD-486): the runs weren't asked the same way, so the difference isn't only the model's."""
+    out: list[str] = []
+    for key, what in INPUT_KEYS.items():
+        va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
+        if va is not None and vb is not None and va != vb:
+            line = f"warning: {what} ({key} {str(va)[:16]} vs {str(vb)[:16]})"
+            if line not in out:
+                out.append(line)
+    return out
 
 
 def latest(folder: Path) -> ResultFile | None:

@@ -1310,13 +1310,18 @@ def eval_stop() -> None:
 
 
 @eval_app.command("compare")
-def eval_compare(a: Path, b: Path) -> None:
-    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
-    with Holm)."""
+def eval_compare(
+    a: Path,
+    b: Path,
+    margin: Annotated[float, typer.Option(min=0, help="Non-inferiority margin, in points")] = 5.0,
+) -> None:
+    """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
+    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486)."""
     from ecf.eval.results import (  # noqa: PLC0415
         compare,
         compare_endpoints,
         compare_fields,
+        input_warnings,
         load_result,
         schema_warning,
         summary,
@@ -1326,17 +1331,18 @@ def eval_compare(a: Path, b: Path) -> None:
     c = compare(ra, rb)
     if warning := schema_warning(ra, rb):
         typer.echo(warning, err=True)
+    for warning in input_warnings(ra, rb):
+        typer.echo(warning, err=True)
     typer.echo(f"A  {summary(ra)}")
     typer.echo(f"B  {summary(rb)}")
     typer.echo(f"paired cases: {c.n}; B-only right {c.b_only}, A-only right {c.a_only}")
     typer.echo(
-        f"difference B-A: {c.diff_points:+.1f} points "
-        f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
+        f"difference B-A: {c.diff_points:+.1f} points (95% Newcombe interval"
+        f" {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
-    typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    typer.echo(f"B non-inferior (lower bound > -{margin:g} points):"
+               f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
-        lo, hi = c.diff_ci_score
-        typer.echo(f"score interval (Newcombe form, for non-inferiority): {lo:+.1f} to {hi:+.1f}")
         ends = compare_endpoints(ra, rb)
         typer.echo(
             "confirmatory (exact McNemar, Holm over the two): "
