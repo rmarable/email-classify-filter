@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- The classifier's prompt may grow by at most 1,500 tokens in this release (new wording and signals), measured so the longest possible email still fits the model's context (operator decision; SPEC §21.2).
 - Evaluation rules: any model tried as a classifier answers every field, runs through `ecf eval run` on the frozen set, records per-role figures and its prompt digest, is compared with the one rule, and keeps its result until the decision is recorded (OD-486; SPEC §16.5).
 - `ecf eval run --no-new-wording` asks the local model with the v2.0.0 schema text, to measure what new wording changes; such a run never counts for the go-live gate (classifier plan Stage 0.3).
 - `ecf eval run --copy-to <folder>` also writes the run's result file to that folder when the run ends, so it is kept if the install is removed; run from inside an ecf checkout, results go to its gitignored `state-archive/evals/` by default (classifier plan Stage 0.3).
