@@ -11,7 +11,7 @@ from: "Pat Lee <pat-lee-billing@freemail.example>"
 subject: "Invoice 7781 - subscription renewal"
 date: 2026-10-03T11:00:00Z
 expected:
-  labels: {category: invoice, payment_related: true, fraud_risk: high, sender_type: unknown, deadline_mentioned: true}
+  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high, sender_type: vendor, deadline_mentioned: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

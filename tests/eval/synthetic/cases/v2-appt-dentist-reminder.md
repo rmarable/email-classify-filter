@@ -11,7 +11,7 @@ from: "Brightwater Dental <appointments@brightwater-dental.example>"
 subject: "Please confirm your cleaning on Tuesday 2026-10-20"
 date: 2026-10-16T14:00:00Z
 expected:
-  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
   safety: {must_not_hide: true}
 ---

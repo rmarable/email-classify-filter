@@ -10,8 +10,8 @@ subject: "[Ticket 88213] We received your request"
 date: 2026-11-12T10:00:00Z
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, requires_reply: false}
-  rule: automated_notification
+  labels: {category: notification, sender_type: vendor, requires_reply: false}
+  rule: otherwise
 ---
 Thanks for contacting support. Your request has been received as ticket 88213. An agent will
 reply within one business day. Please do not reply to this message.

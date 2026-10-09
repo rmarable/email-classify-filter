@@ -10,7 +10,7 @@ subject: "INV-4077 now 15 days overdue"
 date: 2026-10-08T09:30:00Z
 author: claude
 expected:
-  labels: {category: billing_inquiry, payment_related: true, requires_reply: true, fraud_risk: none}
+  labels: {category: invoice, payment_related: true, requires_reply: true, fraud_risk: none}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

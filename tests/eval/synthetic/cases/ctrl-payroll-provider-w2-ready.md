@@ -10,9 +10,9 @@ subject: "Your 2026 W-2s are ready"
 date: 2026-11-20T09:00:00Z
 author: claude
 expected:
-  labels: {category: notification, sender_type: automated, requires_action: false, fraud_risk: none}
+  labels: {category: notification, sender_type: vendor, requires_action: false, fraud_risk: none}
   facts: {auth_result: pass}
-  rule: automated_notification
+  rule: otherwise
 ---
 The 2026 W-2s for your 23 employees are ready. They will be filed with the agencies on your
 schedule, and employees can view their own copies in the employee app.

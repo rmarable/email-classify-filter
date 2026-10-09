@@ -11,7 +11,7 @@ from: "Pat Lee <pat-lee@freemail.example>"
 subject: "Security check: confirm it was you"
 date: 2026-10-05T03:10:00Z
 expected:
-  labels: {category: spam_or_phishing, payment_related: false, fraud_risk: high, sender_type: automated, requires_reply: true}
+  labels: {category: spam_or_phishing, payment_related: false, fraud_risk: high, sender_type: vendor, requires_reply: true}
   facts: {auth_result: none}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}

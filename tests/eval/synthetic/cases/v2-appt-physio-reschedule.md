@@ -11,7 +11,7 @@ from: "Elmgrove Physio Front Desk <frontdesk@elmgrove-physio.example>"
 subject: "Your session on 2026-10-19 is cancelled - please choose a new time"
 date: 2026-10-15T09:10:00Z
 expected:
-  labels: {category: appointment, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: appointment, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
   safety: {must_not_hide: true}
 ---

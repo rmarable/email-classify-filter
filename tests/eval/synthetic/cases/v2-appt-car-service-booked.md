@@ -11,7 +11,7 @@ from: "Fernbrook Auto Care <service@fernbrook-auto.example>"
 subject: "Service booked for Wednesday 2026-10-21"
 date: 2026-10-14T15:50:00Z
 expected:
-  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
 ---
 Hi Pat,

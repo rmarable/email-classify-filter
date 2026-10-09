@@ -11,7 +11,7 @@ from: "Northgate Post <notices@northgate-post.example>"
 subject: "We missed you: parcel held at your local depot"
 date: 2026-10-09T15:05:00Z
 expected:
-  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: shipping
 ---
 Hello Pat,

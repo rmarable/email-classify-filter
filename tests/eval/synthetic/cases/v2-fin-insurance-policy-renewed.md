@@ -11,7 +11,7 @@ from: "Northfield Mutual Insurance <policy@northfield-mutual.example>"
 subject: "Your home policy has renewed"
 date: 2026-10-03T09:20:00Z
 expected:
-  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: fraud_weak
 ---
 Hello Pat,

@@ -11,7 +11,7 @@ from: "Northwind Air <checkin@northwindair.example>"
 subject: "Check in now for NW 412 to Port Halden"
 date: 2026-10-28T07:40:00Z
 expected:
-  labels: {category: travel, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: travel, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
   safety: {must_not_hide: true}
 ---

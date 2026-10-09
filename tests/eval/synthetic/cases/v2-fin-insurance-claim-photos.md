@@ -11,7 +11,7 @@ from: "Tess Arbor at Northfield Mutual Claims <tess-arbor@northfield-mutual.exam
 subject: "Your claim: photos needed"
 date: 2026-10-08T14:05:00Z
 expected:
-  labels: {category: finance, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: finance, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hello Pat,

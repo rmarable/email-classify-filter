@@ -11,7 +11,7 @@ from: "Meadowbank Veterinary <noreply@meadowbank-vet.example>"
 subject: "Biscuit is due for annual vaccines"
 date: 2026-10-05T08:30:00Z
 expected:
-  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
   safety: {must_not_hide: true}
 ---

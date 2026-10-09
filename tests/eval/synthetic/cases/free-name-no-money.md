@@ -12,7 +12,7 @@ from: "Sam Rivera <sam-rivera-photos@freemail.example>"
 subject: "Photos from Saturday"
 date: 2026-10-03T19:05:00Z
 expected:
-  labels: {category: other, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: low, sender_type: unknown}
+  labels: {category: private, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: low, sender_type: friend}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

@@ -12,7 +12,7 @@ from: "Harbor Savings <alerts@harbor-savings.example>"
 subject: "New sign-in to your Harbor Savings account"
 date: 2026-10-03T19:12:00Z
 expected:
-  labels: {category: account_security, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: account_security, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: account_security
 ---
 Hello Pat,

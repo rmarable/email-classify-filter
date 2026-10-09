@@ -11,7 +11,7 @@ from: "Freemail Accounts <no-reply@freemail.example>"
 subject: "We blocked a sign-in attempt"
 date: 2026-10-12T02:15:00Z
 expected:
-  labels: {category: account_security, priority: high, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: account_security, priority: high, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: account_security
   safety: {must_not_hide: true}
 ---

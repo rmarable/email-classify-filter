@@ -9,7 +9,7 @@ from: "Vendor H Collections <collections@vendor-h.example>"
 subject: "Final notice: settle INV-5150 today"
 date: 2026-10-03T08:30:00Z
 expected:
-  labels: {category: invoice, payment_related: true, fraud_risk: high, priority: urgent}
+  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high, priority: urgent}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

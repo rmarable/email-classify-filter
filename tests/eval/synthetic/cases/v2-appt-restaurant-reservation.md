@@ -11,7 +11,7 @@ from: "Copper Kettle Bistro <reservations@copperkettle.example>"
 subject: "Your table for 4 on Friday 2026-10-16"
 date: 2026-10-11T17:05:00Z
 expected:
-  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: company, fraud_risk: none}
+  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
 ---
 Dear Pat Lee,

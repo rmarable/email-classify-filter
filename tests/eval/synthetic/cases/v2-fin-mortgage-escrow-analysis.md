@@ -12,7 +12,7 @@ from: "Ridgeway Home Loans <escrow@ridgeway-loans.example>"
 subject: "Your annual escrow analysis"
 date: 2026-10-04T10:45:00Z
 expected:
-  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: fraud_weak
 ---
 Hello Pat Lee,

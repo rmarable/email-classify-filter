@@ -11,7 +11,7 @@ from: "Lantern Retirement Plans <plan@lantern-retire.example>"
 subject: "Please review your beneficiaries"
 date: 2026-10-09T08:00:00Z
 expected:
-  labels: {category: finance, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hello,

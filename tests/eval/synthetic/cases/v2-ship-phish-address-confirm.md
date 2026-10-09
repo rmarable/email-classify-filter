@@ -12,7 +12,7 @@ from: "Northgate Post <support@northgate-post-delivery.example>"
 subject: "Delivery failed: incomplete address"
 date: 2026-10-22T08:05:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: medium}
+  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_not_hide: true}
 ---

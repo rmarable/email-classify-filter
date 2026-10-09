@@ -11,7 +11,7 @@ from: "Maple Market Account Team <security@maple-market.example>"
 subject: "Two-step verification is on"
 date: 2026-10-11T15:30:00Z
 expected:
-  labels: {category: account_security, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: account_security, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: account_security
 ---
 Hello Pat,

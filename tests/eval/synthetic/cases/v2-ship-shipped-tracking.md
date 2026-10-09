@@ -11,7 +11,7 @@ from: "Parcelwise Tracking <tracking@parcelwise.example>"
 subject: "Your parcel has shipped"
 date: 2026-10-05T16:20:00Z
 expected:
-  labels: {category: shipping, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: shipping, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: shipping
 ---
 Good news, Pat. Your order from Lantern Outfitters is on its way.

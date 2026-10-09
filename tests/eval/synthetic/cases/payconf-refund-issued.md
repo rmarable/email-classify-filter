@@ -10,7 +10,7 @@ subject: "Refund issued for order 6610"
 date: 2026-10-29T10:00:00Z
 author: claude
 expected:
-  labels: {category: payment_confirmation, payment_related: true, fraud_risk: none}
+  labels: {category: remittance, payment_related: true, fraud_risk: none}
   rule: unverified_payment_sender
   safety: {must_not_hide: true}
 ---

@@ -12,7 +12,7 @@ subject: "This weekend's games"
 date: 2026-10-08T19:30:00Z
 bulk: true
 expected:
-  labels: {category: school_or_family, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: school_or_family, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
 ---
 Hi families,

@@ -10,7 +10,7 @@ subject: "Dinner on Saturday"
 date: 2026-10-10T19:00:00Z
 author: claude
 expected:
-  labels: {category: other, fraud_risk: none}
+  labels: {category: private, fraud_risk: none, sender_type: friend}
   rule: otherwise
 ---
 Hi, looking forward to Saturday. We will bring dessert. See you at 7.

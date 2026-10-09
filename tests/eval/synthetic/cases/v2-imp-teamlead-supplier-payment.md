@@ -11,7 +11,7 @@ from: "Morgan Vale <morgan-vale-work@freemail.example>"
 subject: "Need you to cover a payment today"
 date: 2026-10-02T13:10:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: person, fraud_risk: high}
+  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: team, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

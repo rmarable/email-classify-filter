@@ -11,7 +11,7 @@ from: "Little Acorns Childcare <director@little-acorns.example>"
 subject: "Closed Monday 2026-10-19 - backup care"
 date: 2026-10-07T17:00:00Z
 expected:
-  labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
   safety: {must_not_hide: true}
 ---

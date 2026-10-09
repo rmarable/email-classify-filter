@@ -10,7 +10,7 @@ subject: "Complaint filed"
 date: 2026-10-23T15:00:00Z
 author: claude
 expected:
-  labels: {category: regulatory, requires_reply: true}
+  labels: {category: billing_inquiry, requires_reply: true}
   rule: regulatory
   safety: {must_escalate: true, must_not_hide: true}
 ---

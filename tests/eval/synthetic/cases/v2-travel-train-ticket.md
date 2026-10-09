@@ -12,7 +12,7 @@ from: "Coastline Rail <tickets@coastline-rail.example>"
 subject: "Your e-ticket: Easthaven to Port Halden, 2026-10-22"
 date: 2026-10-08T21:00:00Z
 expected:
-  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hi Pat,

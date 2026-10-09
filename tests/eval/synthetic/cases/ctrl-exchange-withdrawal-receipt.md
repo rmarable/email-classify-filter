@@ -11,7 +11,7 @@ subject: "Withdrawal complete"
 date: 2026-11-20T18:45:00Z
 author: claude
 expected:
-  labels: {category: finance, sender_type: automated, payment_related: true, fraud_risk: none}
+  labels: {category: finance, sender_type: vendor, payment_related: true, fraud_risk: none}
   facts: {auth_result: pass}
   rule: travel_finance
 ---
