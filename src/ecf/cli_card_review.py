@@ -57,11 +57,12 @@ LABEL_TEXTS: dict[str, dict[str, str]] = {
 
 
 LABEL_TEXTS["category"] = {
-    "invoice": "Asks us to pay a bill or invoice, business or personal (utilities, card, rent,"
-    " medical, renewals).",
-    "payment_confirmation": "Confirms a payment we made, or is a receipt or order confirmation.",
-    "remittance": "Tells us a payment to us was sent (remittance advice, payment details from a"
-    " customer).",
+    "invoice": "Asks us to pay: a bill, invoice, overdue reminder or renewal (business or"
+    " personal).",
+    "payment_confirmation": "Confirms money we paid: a receipt, order confirmation or 'payment"
+    " received' from someone we pay.",
+    "remittance": "Tells us money is coming to us: remittance advice, a customer's 'we've"
+    " paid', a refund or payout.",
     "vendor_change_request": "Asks to change where or how we pay someone (bank details, payee,"
     " payment method), genuine or not.",
     "billing_inquiry": "A question or dispute about a charge, invoice or balance.",
@@ -82,7 +83,8 @@ LABEL_TEXTS["category"] = {
     "appointment": "A meeting or service booking, or a reminder for one (dentist, salon,"
     " restaurant, car service).",
     "travel": "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes.",
-    "finance": "A bank, brokerage, insurance or tax statement or notice that asks for no payment.",
+    "finance": "About an account or policy we hold, asking for no payment: statements,"
+    " balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews.",
     "school_or_family": "School, childcare, activities or family logistics (pickups, schedules,"
     " who does what).",
     "spam_or_phishing": "Unsolicited junk or an attempt to deceive, including a fake invoice,"
@@ -101,7 +103,8 @@ LABEL_TEXTS["fraud_risk"] = {
 # Shown under the field's own description (SPEC §16.1).
 LABEL_GUIDES = {
     "category": "Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing,"
-    " account_security; then what the email is about; notification, private and other last.",
+    " account_security; then what the email is about (money: invoice, then payment_confirmation"
+    " or remittance, then finance); notification, private and other last.",
 }
 
 

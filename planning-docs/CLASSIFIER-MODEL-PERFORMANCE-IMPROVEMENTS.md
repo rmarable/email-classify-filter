@@ -57,8 +57,9 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
 - `category` (labelling rule, operator decisions 2026-10-09, SPEC §16.1): the 22 value texts
   of `cli_card_review.LABEL_TEXTS["category"]` and the order guide (vendor_change_request,
   regulatory, spam_or_phishing, account_security first; notification, private, other last);
-  vendor_change_request narrowed to where or how we pay; regulatory to an authority acting toward
-  us.
+  vendor_change_request narrowed to payment details; regulatory to an authority acting toward
+  us; money values by direction and whether money has moved (invoice, payment_confirmation,
+  remittance, then finance for an account or policy we hold).
 - Renderer: `_field_lines` (`schema.py:206`) prints ordinal level text; the schema format gains
   optional per-level descriptions.
 - Length: capped by the context probe (Stage 0), not a fixed 1,200 characters (P11).
