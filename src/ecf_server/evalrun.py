@@ -145,6 +145,7 @@ class Options:
     redact: bool = True  # False: injection text reaches the model (a reported figure, R6)
     corpus: CorpusRun | None = None  # a real-mail corpus instead of the synthetic set (§16.7)
     for_gate: bool = True  # False: an experiment, saved for its figures, never passes (plan 0.3)
+    copy_to: Path | None = None  # also write the result file here (synthetic set only, plan 0.3)
 
 
 @dataclass(frozen=True)
@@ -684,7 +685,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                             set_version=version, created_at=to_ts(clock.now()), cases=results,
                             digest=key, summary=summary)  # fmt: skip
         _save(conn, clock, data_dir, result,
-              corpus_id=opts.corpus.corpus_id if opts.corpus else None)  # fmt: skip
+              corpus_id=opts.corpus.corpus_id if opts.corpus else None,
+              copy_to=opts.copy_to)  # fmt: skip
         if stopped:
             return {"state": "stopped", "detail": stopped, "result": summary}
         return {"state": "done", "result": summary}
@@ -978,8 +980,9 @@ def corpus_folder(data_dir: Path, corpus_id: str) -> Path:
 
 
 def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: ResultFile, *,
-          corpus_id: str | None = None) -> None:  # fmt: skip
-    """The result file; for a synthetic run also the `eval_runs` row the go-live gate reads. A
+          corpus_id: str | None = None, copy_to: Path | None = None) -> None:  # fmt: skip
+    """The result file; for a synthetic run also the `eval_runs` row the go-live gate reads,
+    and a copy in `copy_to` (`ecf eval run --copy-to`, plan 0.3) so it outlives the install. A
     corpus run writes only its file, under `evals/corpus/<id>/`, and the audit row (R2)."""
     summary = result.summary or {}
     if corpus_id is not None:
@@ -1007,6 +1010,12 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
             (to_ts(clock.now()), json.dumps({"run_id": result.run_id,
                                               "gate_passed": summary.get("gate_passed")})),
         )  # fmt: skip
+    if copy_to is not None:
+        try:  # the install's file and row are the record; a failed copy loses nothing
+            write_result(copy_to, result)
+        except OSError as exc:
+            log.warning("eval.copy_failed", run_id=result.run_id[:8],
+                        error_type=type(exc).__name__)  # fmt: skip
 
 
 def latest(conn: sqlite3.Connection, digest: str) -> dict[str, Any] | None:

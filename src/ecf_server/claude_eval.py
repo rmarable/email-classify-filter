@@ -88,6 +88,7 @@ class Options:
     classifier_model: str | None = None
     actor_model: str | None = None
     batch: int = 1  # items per `-high` spawn
+    copy_to: Path | None = None  # also write the result file here (plan 0.3)
 
 
 @dataclass
@@ -423,7 +424,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         result = ResultFile(run_id=run.run_id, pair=claude_pins.PAIR[run.opts.preset],
                             set_version=run.version, created_at=to_ts(clock.now()),
                             cases=results, digest=run.key, summary=summary)  # fmt: skip
-        evalrun._save(conn, clock, run.data_dir, result)  # pyright: ignore[reportPrivateUsage]
+        evalrun._save(conn, clock, run.data_dir, result,  # pyright: ignore[reportPrivateUsage]
+                      copy_to=run.opts.copy_to)  # fmt: skip
     finally:
         conn.close()
     run.summary = summary

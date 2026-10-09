@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ecf.errors import ConflictError, ServiceUnavailableError
+from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, compare, load_result
@@ -430,6 +430,55 @@ def test_a_run_marked_not_for_the_gate_is_saved_but_never_passes(
     assert result["complete"] and result["options"]["for_gate"] is False
     assert result["gate_passed"] is False
     assert conn.execute("SELECT gate_passed FROM eval_runs").fetchone()[0] == 0
+
+
+def test_a_run_copies_its_result_out_of_the_install(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
+) -> None:
+    """`ecf eval run --copy-to` (plan 0.3): the same file, 0600, beside the install's."""
+    from ecf_server import db  # noqa: PLC0415
+
+    copy = tmp_path / "kept" / "evals"
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                  db_path.parent, evalrun.Options(root, copy_to=copy), power=lambda: AC,
+                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    run_id = evalrun.RUN.snapshot()["run_id"]
+    kept = copy / f"{run_id}.json"
+    assert kept.read_bytes() == (db_path.parent / "evals" / f"{run_id}.json").read_bytes()
+    assert kept.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_failed_copy_loses_nothing(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    blocked = tmp_path / "a-file"
+    blocked.write_text("")  # not a folder: the copy fails
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                  db_path.parent, evalrun.Options(root, copy_to=blocked / "evals"),
+                  power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                  check_kw=check_kw())  # fmt: skip
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 1
+
+
+def test_the_copy_goes_to_state_archive_only_from_a_checkout(tmp_path: Path) -> None:
+    from ecf.cli import _copy_folder  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+    from ecf_server.api import _copy_to  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    checkout = tmp_path / "ecf"
+    (checkout / "src" / "ecf_server").mkdir(parents=True)
+    (checkout / ".git").write_text("gitdir: elsewhere\n")  # a worktree's .git is a file
+    (checkout / "tests").mkdir()
+    assert _copy_folder(None, checkout / "tests") == (checkout / "state-archive" / "evals"
+                                                      ).resolve()  # fmt: skip
+    assert _copy_folder(None, tmp_path) is None
+    assert _copy_folder(tmp_path / "x", tmp_path) == (tmp_path / "x").resolve()
+    assert _copy_to({}) is None
+    assert _copy_to({"copy_to": str(tmp_path)}) == tmp_path
+    with pytest.raises(InvalidInputError, match="absolute"):
+        _copy_to({"copy_to": "state-archive/evals"})
 
 
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:

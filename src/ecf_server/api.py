@@ -999,6 +999,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
             raise InvalidInputError("battery_floor: a percent from 0 to 100")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
+        copy_to = _copy_to(body)
+        if sid and copy_to is not None:
+            raise InvalidInputError("copy_to: a corpus run's result stays in the install (R2)")
         corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True,
                                  connect=state.connect)  # fmt: skip
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
@@ -1008,7 +1011,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                backend=_opt_str(body, "backend") or evalrun.GEMMA,
                                redact=body.get("redact") is not False,
                                corpus=corpus_run,
-                               for_gate=body.get("for_gate") is not False)  # fmt: skip
+                               for_gate=body.get("for_gate") is not False,
+                               copy_to=copy_to)  # fmt: skip
         try:
             run = evalrun.start(state.connect, state.clock, state.model_client,
                                 state.db_path.parent, opts, power=state.power,
@@ -1064,7 +1068,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
             root, preset=_str(body, "preset"), sensitivity=_str(body, "sensitivity"),
             fraud_only=body.get("fraud_only") is True,
             classifier_model=_opt_str(body, "classifier_model"),
-            actor_model=_opt_str(body, "actor_model"), batch=batch)  # fmt: skip
+            actor_model=_opt_str(body, "actor_model"), batch=batch,
+            copy_to=_copy_to(body))  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip
 
@@ -2287,6 +2292,16 @@ def _opt_str(body: dict[str, Any], key: str) -> str | None:
     if v is not None and not isinstance(v, str):
         raise InvalidInputError(f"{key} must be text")
     return v
+
+
+def _copy_to(body: dict[str, Any]) -> Path | None:
+    """`ecf eval run --copy-to`: an absolute folder for a copy of the result (plan 0.3)."""
+    v = _opt_str(body, "copy_to")
+    if v is None:
+        return None
+    if not Path(v).is_absolute():
+        raise InvalidInputError("copy_to: a folder for a copy of the result (an absolute path)")
+    return Path(v)
 
 
 def _str_list(v: Any) -> list[str]:

@@ -1104,6 +1104,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             help="An experiment: saved and reported, never counts for the go-live gate.",
         ),
     ] = False,
+    copy_to: Annotated[
+        Path | None,
+        typer.Option(
+            "--copy-to",
+            help="Also write the result file to this folder (default: state-archive/evals/"
+            " when run from a checkout; none otherwise).",
+        ),
+    ] = None,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
@@ -1114,8 +1122,12 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if claude or fraud_only or not redact or classifier_backend == "null":
             raise InvalidInputError("--corpus runs the local model only (no --claude, null"
                                     " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
+        if copy_to is not None:
+            raise InvalidInputError("--copy-to is for the synthetic set: a corpus run's result"
+                                    " stays in the install")  # fmt: skip
         _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
         return
+    copy = _copy_folder(copy_to)
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
@@ -1123,15 +1135,18 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             raise InvalidInputError("--classifier-backend, --no-redact and --not-for-gate are for"
                                     " the local model")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
-                     actor_model, batch)  # fmt: skip
+                     actor_model, batch, copy)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
             "fraud_only": fraud_only, "battery_floor": battery_floor,
             "backend": classifier_backend, "redact": redact,
-            "for_gate": not not_for_gate})  # fmt: skip
+            "for_gate": not not_for_gate,
+            "copy_to": str(copy) if copy else None})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
+    if copy:
+        typer.echo(f"  The result is also written to {copy}/ when the run ends.")
     _follow_hints()
     if r.get("on_battery"):
         typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
@@ -1172,14 +1187,27 @@ def _follow_hints() -> None:
     typer.echo(f"  Stop:      {_ecf('eval stop')}")
 
 
+def _copy_folder(copy_to: Path | None, cwd: Path | None = None) -> Path | None:
+    """Where `ecf eval run` also writes its result (plan 0.3): `--copy-to`, else
+    `state-archive/evals/` (gitignored) when run from inside an ecf checkout, else nowhere."""
+    if copy_to is not None:
+        return copy_to.expanduser().resolve()
+    here = (cwd or Path.cwd()).resolve()
+    for folder in (here, *here.parents):
+        if (folder / ".git").exists() and (folder / "src" / "ecf_server").is_dir():
+            return folder / "state-archive" / "evals"
+    return None
+
+
 def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
                  classifier_model: str | None, actor_model: str | None,
-                 batch: int) -> None:  # fmt: skip
+                 batch: int, copy: Path | None) -> None:  # fmt: skip
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
             "fraud_only": fraud_only, "classifier_model": classifier_model,
-            "actor_model": actor_model, "batch": batch})  # fmt: skip
+            "actor_model": actor_model, "batch": batch,
+            "copy_to": str(copy) if copy else None})  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
            else "other models: for comparison only")  # fmt: skip
@@ -1188,6 +1216,8 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
                " type /ecf-eval; it uses your Claude plan. The run expires in 24 hours;"
                " `ecf eval stop` ends it.")  # fmt: skip
+    if copy:
+        typer.echo(f"The result is also written to {copy}/ when the run ends.")
     if not fraud_only:
         typer.echo("For a first run, `--fraud-only` uses less of the plan.")
 
