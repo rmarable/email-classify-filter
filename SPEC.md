@@ -111,6 +111,15 @@ Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list)
 7. Met: the operator signed off on 2026-10-08 (operator decision), after the public-readiness check (§17.4).
 8. Met: the decision is recorded (OD-473, 2026-10-08): `tev1:4b` is not adopted for now, on the synthetic comparison with Gemma (§7.8). The corpus comparison was not needed for it.
 
+### 1.5a Release criteria for `v2.0.0` (operator decision 2026-10-09)
+
+`v2.0.0` (schema v2, schema extensions, the Haiku 5.5 main session, `num_ctx` 6144; OD-474 to OD-480) is tagged only after a release candidate passes both of these, on the candidate's wheel:
+
+1. **Upgrade.** A `v1.0.0` install upgraded with `ecf upgrade --to v2.0.0-rcN`: the check lists every address as affected (`classifier_schema` 1 to 2, §11.10); migration 0034 runs (`staff` becomes `team`, `items.schema_version` 2); a `live` address drops to `assist` (the schema digest in the gate key, §9.3); the `v1.0.0` model copy is kept (§7.5); the service starts and `ecf doctor` is clean apart from the expected gate rows.
+2. **A schema extension on the synthetic set.** Preset A with a realistic sample extension applied through `ecf config apply` (a `contract_stage` enum, a `needs_signature` boolean, a `vendor_tier` ordinal, and the category values `legal_notice` and `subscription_renewal`): 0 unsafe; fraud-guard recall N/N; no `truncated` or `schema_failure` model call; and on the built-in fields, against `a0462682` (v2, no extension), a Newcombe score lower bound above −5 points, so the extension doesn't dilute the shipped fields. The extension fields' own accuracy is reported only: the synthetic cards don't label them.
+
+Both results go in §21.2 with the run IDs.
+
 ### 1.6 Documents
 
 Order of work and document rules: operator decisions 2026-09-26/27, OD-137 to OD-149 and OD-152 (SPEC plus CLAUDE.md first; other documents with their milestones; roadmap documents at each milestone's start; one owner per topic; the plan committed with its symlink; legacy documents moved to `docs/history/`; README v1-only; about 18 ADRs; the license; the CLAUDE.md rules and 160-line limit; the session-state files). Review passes accepted: OD-150, OD-151.

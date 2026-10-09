@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.0.0 (not yet tagged)
+
+- Before `v2.0.0` is tagged, a release candidate must pass an upgrade from `v1.0.0` and a preset A run with a sample schema extension (operator decision 2026-10-09; SPEC §1.5a).
+
 ## v2.0.0-rc1 (2026-10-09)
 
 ### Added
