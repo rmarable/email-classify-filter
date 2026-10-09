@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval run` reports three fraud figures over cases labelled medium or high fraud risk: those whose plan kept a hide action, those the model answered `none`, and the under-rating on cases only the model's answer routes to `fraud_guard` (36 of the 90 synthetic `fraud_guard` cards); `ecf eval compare` prints them. They don't change `gate_passed` (classifier plan Stage 0.3).
 - `ecf eval run`'s determinism check now repeats 10 cases drawn with a fixed seed from across the whole set, not the first 10 (all fraud and injection cards), and reports which cases it repeated and how many times each field changed; it is a smoke check, not a noise estimate (SPEC §16.5).
 - `ecf eval compare` uses one rule for every comparison: Newcombe's paired interval, always printed, with B non-inferior when its lower bound is above −5 points (`--margin` sets another); the Wald interval and its −3-point margin are gone. It also warns when the two runs were asked with a different prompt or different inputs (OD-486; SPEC §16.5).
 - `ecf upgrade` now says when the classifier prompt changes (each release records its prompt's digest) and names every address that drops to `assist` until its gate passes again; an upgrade from v2.0.0 or earlier, which has no prompt digest, counts as a change (plan Q6; SPEC §11.10).

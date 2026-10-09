@@ -277,6 +277,43 @@ def test_a_cards_expected_facts_reach_the_hide_path(
         "starter-control"]  # fmt: skip
 
 
+def test_the_fraud_figures_catch_a_hidden_fraud_card(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Plan 0.3: a card labelled fraud that only the model can route to fraud_guard, answered
+    as harmless marketing from a known, authenticated sender, is archived: the fraud figures
+    show it hidden, answered `none` and under-rated among the model-only cases."""
+    from ecf_server import db  # noqa: PLC0415
+
+    card = (root / "cases" / "starter-control.md").read_text()
+    lure = card.replace("id: starter-control", "id: seen-lure").replace(
+        "labels: {category: marketing, requires_action: false, fraud_risk: none}\n"
+        "  rule: marketing",
+        "labels: {category: marketing, fraud_risk: high}\n"
+        "  facts: {auth_result: pass, sender_seen_before: true}\n  rule: fraud_guard")  # fmt: skip
+    assert lure != card
+    (root / "cases" / "seen-lure.md").write_text(lure)
+    assert not build_all(root).findings
+    labels.confirm(root, "seen-lure", date(2026, 10, 1))
+    benign = BEC | {"category": "marketing", "priority": "low", "requires_action": False,
+                    "payment_related": False, "fraud_risk": "none"}  # fmt: skip
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(benign)).client,
+                  db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
+                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    result = evalrun.RUN.snapshot()["result"]
+    assert result["fraud_hidden"] == ["seen-lure"]
+    # starter-bec (high) and seen-lure are the confirmed cases labelled medium or high
+    assert result["fraud_answered_none"] == {"none": 2, "of": 2}
+    assert result["model_only_fraud_cases"] == 1  # the starter cards' facts reach fraud_guard
+    assert result["fraud_under_model_only"] == {"under": 1, "of": 1}
+    from ecf.cli import _decision_figures  # noqa: PLC0415  # pyright: ignore[reportPrivateUsage]
+
+    lines = _decision_figures(result)
+    assert "fraud-labelled cases with a hide kept: 1 (seen-lure)" in lines
+    assert "fraud risk answered none on 2 of 2 cases labelled medium or high" in lines
+    assert "under-rated on 1 of 1 cases only the model routes to fraud_guard" in lines
+
+
 def test_a_low_battery_pauses_and_releases_the_queue(
     monkeypatch: pytest.MonkeyPatch, root: Path, clock: FakeClock
 ) -> None:

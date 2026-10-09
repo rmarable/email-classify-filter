@@ -60,6 +60,9 @@ class CaseResult(BaseModel):
     # didn't run, and in older files
     classifier: CallMetrics | None = None
     actor: CallMetrics | None = None
+    # expects fraud_guard, which the rules alone (every field at its least risky value) don't
+    # reach: only the model's answer can route it there (plan 0.3, S5); False in older files
+    model_only_fraud: bool = False
 
 
 class ResultFile(BaseModel):

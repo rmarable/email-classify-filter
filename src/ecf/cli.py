@@ -1389,6 +1389,21 @@ def _decision_figures(summary: dict[str, object] | None) -> list[str]:
     if u.get("of"):
         out.append(f"fraud risk under-rated on {u['under']} of {u['of']} cases labelled medium"
                    " or high")  # fmt: skip
+    hidden = s.get("fraud_hidden")
+    if isinstance(hidden, list):  # the classifier plan's fraud figures (absent before v2.1.0)
+        ids = cast(list[str], hidden)
+        out.append(f"fraud-labelled cases with a hide kept: {len(ids)}"
+                   + (f" ({', '.join(ids)})" if ids else ""))  # fmt: skip
+    none = s.get("fraud_answered_none")
+    if isinstance(none, dict) and cast(dict[str, int], none).get("of"):
+        n = cast(dict[str, int], none)
+        out.append(f"fraud risk answered none on {n['none']} of {n['of']} cases labelled medium"
+                   " or high")  # fmt: skip
+    only = s.get("fraud_under_model_only")
+    if isinstance(only, dict) and cast(dict[str, int], only).get("of"):
+        o = cast(dict[str, int], only)
+        out.append(f"under-rated on {o['under']} of {o['of']} cases only the model routes to"
+                   " fraud_guard")  # fmt: skip
     lat = s.get("classifier_latency_s")
     lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
     if lt.get("p50") is not None:

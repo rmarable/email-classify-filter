@@ -618,7 +618,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 )
             one_result = one_result.model_copy(
                 update={"classifier": _metrics(calls["classifier"], n_cls),
-                        "actor": _metrics(calls["actor"], n_act)})  # fmt: skip
+                        "actor": _metrics(calls["actor"], n_act),
+                        "model_only_fraud": case.expected.get("rule") == "fraud_guard"
+                        and rules_alone(case, facts, rules_now, known, schema)
+                        != "fraud_guard"})  # fmt: skip
             results.append(one_result)
             RUN.set(done=i + 1)
         diffs = 0
@@ -659,6 +662,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             "p95": stats.percentile(classifier_s, 95),
         }
         summary["fraud_under"] = fraud_under(results, cases, schema)
+        summary.update(fraud_metrics(results, cases, schema))
         cal = calibration(results, cases, schema)
         if cal:
             summary["calibration"] = cal
@@ -744,12 +748,44 @@ def _labelled(results: list[CaseResult], cases: list[Case]
             if r.confirmed and r.id in by_id]  # fmt: skip
 
 
-def fraud_under(results: list[CaseResult], cases: list[Case], schema: Any) -> dict[str, int]:
+def rules_alone(case: Case, facts: dict[str, Any], rules_now: Any, known: frozenset[str],
+                schema: Any) -> str:  # fmt: skip
+    """The rule a case's facts reach with no model: every field at its least risky value."""
+    ctx = policy.Context(null_classification(schema), facts,
+                         case.sensitivity or ruletest.ADDRESS.sensitivity, rules_now, {},
+                         frozenset())  # fmt: skip
+    return policy.plan(ctx, known).rule_id
+
+
+FRAUD_LABELS = ("medium", "high")  # "fraud-labelled": the levels fraud_under counts
+
+
+def fraud_metrics(results: list[CaseResult], cases: list[Case], schema: Any) -> dict[str, Any]:
+    """The classifier plan's fraud figures (plan 0.3), over confirmed cases labelled `fraud_risk`
+    medium or high: those whose plan kept a hide action (its gate needs none), those the model
+    answered `none` (its gate: not above run 0), and `fraud_under` on the cases only the model
+    routes to `fraud_guard`. Reported; `gate_passed` doesn't use them."""
+    fraud = [(r, lab) for r, lab in _labelled(results, cases)
+             if r.scored and lab.get("fraud_risk") in FRAUD_LABELS]  # fmt: skip
+    hidden = sorted(r.id for r, _ in fraud if set(r.actions) & HIDE_ACTIONS)
+    answered_none = sum(r.got.get("fraud_risk") == "none" for r, _ in fraud)
+    only = {r.id for r in results if r.confirmed and r.model_only_fraud}
+    return {
+        "fraud_hidden": hidden,
+        "fraud_answered_none": {"none": answered_none, "of": len(fraud)},
+        "model_only_fraud_cases": len(only),
+        "fraud_under_model_only": fraud_under(results, cases, schema, only=only),
+    }
+
+
+def fraud_under(results: list[CaseResult], cases: list[Case], schema: Any, *,
+                only: set[str] | None = None) -> dict[str, int]:  # fmt: skip
     """Confirmed cases labelled `fraud_risk` medium or high, and how many the classification put
-    lower or failed on (§7.8, R5): reported for every backend, so arms compare."""
+    lower or failed on (§7.8, R5): reported for every backend, so arms compare. `only` limits it
+    to those case IDs."""
     levels = schema.fields["fraud_risk"].values
     pairs = [(lab["fraud_risk"], r.got.get("fraud_risk")) for r, lab in _labelled(results, cases)
-             if lab.get("fraud_risk") in levels]  # fmt: skip
+             if lab.get("fraud_risk") in levels and (only is None or r.id in only)]  # fmt: skip
     if not pairs:
         return {"under": 0, "of": 0}
     under, n = metrics.under_rated([g for g, _ in pairs],
