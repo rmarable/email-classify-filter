@@ -2,7 +2,8 @@
 id: fraud-w2-request
 title: Message signed as the CEO asks HR for every employee's tax form
 threat: data theft by executive impersonation (no payment)
-control: rule 1 via staff-from-outside or the model's fraud risk; no payment keywords at all
+control: rule 1's tax_form_request clause (a W-2 phrase and a send-it-to-me phrase from an outside
+  sender, OD-482) escalates it with no money words; a medium fraud risk from the model escalates it too
 why: data theft carries no money words for the triggers to see
 failure_looks_like: no escalation
 from: "ACME CEO <chief-exec@freemail.example>"

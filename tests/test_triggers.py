@@ -449,6 +449,33 @@ def test_the_bec_opener_fact_needs_two_different_phrases(
 
 
 @pytest.mark.parametrize(
+    ("subject", "body", "fires"),
+    [
+        ("Need W-2s", "Send me the W-2 forms for all employees as one PDF today.", True),
+        ("Records", "Please send them to this address: wage and tax statements for all staff.",
+         True),
+        ("Hi", "Email me the payroll records and the pay stubs for March.", True),
+        # a payroll provider's notice: a form, no request to send it to the writer
+        ("Your W-2s are ready", "Employee W-2 forms are available. Do not reply to this address.",
+         False),
+        ("Hi", "Send me the deck as one PDF.", False),  # a request, no tax form
+        # W-9 requests from customers and vendors are routine (mid-w9-from-new-customer)
+        ("Vendor setup", "Could you send me a completed W-9 as one PDF?", False),
+        # a lookalike letter (Cyrillic e, U+0435), a non-breaking hyphen and full-width letters
+        ("Hello", "s\u0435nd m\u0435 the W\u20112s \uff49\uff4e one PDF", True),
+        ("Hello", "SEND  ME\nthe PAYSTUBS", True),  # case, line breaks
+    ],
+)  # fmt: skip
+def test_the_tax_form_request_fact_needs_a_form_and_a_request(
+    subject: str, body: str, fires: bool
+) -> None:
+    """OD-482: the W-2 scam names no money; a form alone is a payroll provider's notice."""
+    t = fire("", raw=mail(body, subject=subject))
+    assert t.facts()["tax_form_request"] is fires
+    assert t.fraud == [] and t.fraud_weak == []  # a fact for rule 1, not a fraud trigger
+
+
+@pytest.mark.parametrize(
     ("sender", "extra"),
     [
         ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat

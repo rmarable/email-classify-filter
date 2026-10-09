@@ -7,6 +7,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.0.0-rc2 (not yet tagged)
 
+- An email asking for employees' tax or payroll data to be sent to the writer ("Send me the W-2s for all employees as one PDF") is escalated as possible fraud when it comes from outside, even with no money mentioned and whatever fraud risk the model gives it; W-9 requests are not affected (OD-482; SPEC §8.5, §8.6).
 - `ecf upgrade` from `v1.0.0` now names every address that drops to `assist` because the classifier schema changed: the `v1.0.0` pre-check can't see the change, so the new version lists them once the upgrade is done (operator decision 2026-10-09; SPEC §11.10).
 - Before `v2.0.0` is tagged, a release candidate must pass an upgrade from `v1.0.0` and a preset A run with a sample schema extension (operator decision 2026-10-09; SPEC §1.5a).
 

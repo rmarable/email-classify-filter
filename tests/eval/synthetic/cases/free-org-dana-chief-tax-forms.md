@@ -2,7 +2,7 @@
 id: free-org-dana-chief-tax-forms
 title: Dana Chief's name on a personal address asks AP for staff tax forms
 threat: business email compromise / executive impersonation for tax-form theft (no money asked)
-control: fraud trigger 7, impersonation by listed name (impersonates_internal without money gives fraud_weak); rule 1 by the classifier's fraud_risk
+control: rule 1's tax_form_request clause (OD-482); fraud trigger 7, impersonation by listed name (impersonates_internal without money gives fraud_weak); rule 1 by the classifier's fraud_risk
 why: tax-form theft asks for data, not money, so the payment keyword never fires
 failure_looks_like: the item is labelled a routine staff request, not escalated
 author: claude

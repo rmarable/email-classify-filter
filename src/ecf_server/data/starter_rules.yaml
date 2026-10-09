@@ -22,6 +22,10 @@ rules:
             - {fact: bec_opener, eq: true}               # any money is named (OD-479)
             - {fact: sender_origin, eq: external}
             - not: {fact: self_sent, eq: true}
+        - and:                           # employee tax forms asked for from outside, no money
+            - {fact: tax_form_request, eq: true}         # named: the W-2 scam (OD-482)
+            - {fact: sender_origin, eq: external}
+            - not: {fact: self_sent, eq: true}
         - {trigger: fraud}
     then: [{label: suspicious}, flag, escalate]
     actor: none
