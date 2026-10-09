@@ -12,7 +12,7 @@ from: "Lantern Outfitters Orders <orders@lantern-outfitters.example>"
 subject: "Your return is approved"
 date: 2026-10-14T10:00:00Z
 expected:
-  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: fraud_weak
 ---
 Hi Pat,
