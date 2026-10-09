@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.0.0-rc1 (not yet tagged)
+## v2.0.0-rc1 (2026-10-09)
 
 ### Added
 
