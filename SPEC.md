@@ -84,6 +84,7 @@ V1.6 Linux verification was moved out of v1 to roadmap milestone M5 on 2026-10-0
 
 - **Milestone tags** (annotated): `ms-v1.0-foundations`, `ms-v1.1-mail-checks`, `ms-v1.2-slack-approvals`, `ms-v1.3-local-models`, `ms-v1.4-claude`, `ms-v1.5-outbound-ops`, `ms-v1.6-gmail` (OD-425); later `ms-m1-aws`, `ms-m2-teams`, …, `ms-m5-linux` (OD-421), `ms-m6-gmail-api` (OD-426). They record internal progress and do **not** mean the software is ready for anyone else. (The plan names only the first, fifth and last; the V1.1-V1.4 names are [proposed].)
 - **Release tags** `vX.Y.Z` (optionally `-rcN`) are the only tags built and published from, and the only ones `ecf upgrade --to` accepts.
+- **Release versions follow semantic versioning** (operator decision 2026-10-08, OD-480): the major version goes up when the classification schema, rules files or the export data format break (`v2.0.0`: schema v2, data format 3), the minor version for added features, the patch version for fixes; release candidates `vX.Y.Z-rcN` come first.
 - Every tag is created and pushed only after the operator confirms and approves the tag and the push (operator decision 2026-09-26, OD-012).
 
 ### 1.5 Release criteria for `v1.0.0`
@@ -2956,6 +2957,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-477 | 2026-10-08 | (operator decision; schema v2 plan step 2) | SPEC §14.3, §21.2 | Gemma's `num_ctx` goes from 4,096 to 6,144: schema v2 and its extensions overflow 4,096 on worst-case input; about 43% slower classifier calls (measured, noisy) and 0.3 GB more accepted |
 | OD-478 | 2026-10-08 | (operator decisions; ADR 0025; schema v2 plan step 4) | SPEC §7.1, §7.4, §9.7, §10.1, §10.3, §12.4, §13.2, §15.1, §15.3, §16.5 | Schema extensions in `v2.1.0`: the `schema` section of `ecf config apply` adds fields and `category` values, never changes the safety core; Gemma and Claude see the descriptions; rules use extension fields with every action, I1 still gates hiding; fixed caps (8 fields, 16 values per field, 4 category values, 180-character descriptions, 4,000 characters of prompt text), a file over a cap refused with every violation listed (`schema_limit`), a warning at 80%; the effective schema's digest is the gate key |
 | OD-479 | 2026-10-08 | (operator decision; num_ctx 6144 eval) | SPEC §7.2, §8.5, §8.6 | Rule 1 escalates an executive-impersonation opener without money: the fact `bec_opener` (two different phrases from the new `keywords.yaml` `bec_opener` list) from an outside sender, not `self_sent`. Escalates, never hides; a fact for rule 1, not a fraud trigger. `mid-exec-quick-favor` no longer depends on the model's `fraud_risk` |
+| OD-480 | 2026-10-08 | (operator decision; schema v2 plan §3.6, E8) | SPEC §1.4 | Release tags follow semantic versioning: major when the classification schema, rules files or the export data format break (`v2.0.0`: schema v2, data format 3), minor for added features (schema extensions were planned as `v2.1.0`), patch for fixes; release candidates `vX.Y.Z-rcN` first |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.1.0 (not yet tagged)
+## v2.0.0-rc1 (not yet tagged)
 
 ### Added
 
@@ -13,6 +13,20 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Changed
 
+- Release versions follow semantic versioning: a new major version when the classification schema, rules files or export data format break (this one: schema v2, data format 3), a minor version for added features, a patch version for fixes; a release candidate comes first (OD-480; SPEC §1.4).
+- Schema v2 passed its evaluation on the synthetic set on every preset (A, B, and C at standard and high): 0 unsafe proposals and every fraud case caught (SPEC §21.2).
+- `school_or_family` stays one category rather than separate school and family categories; a relative's news is sometimes still classed there instead of private (operator decision 2026-10-08; SPEC §7.1).
+- Security and sign-in alerts that ask you to send a code or password, click to verify or call a number are now classed as phishing, and a relative's note that only shares news or thanks is private rather than family logistics (operator decision 2026-10-08, OD-475; SPEC §7.1, §21.2).
+- An email that opens like an executive-impersonation scam ("Are you at your desk? I need a quick favour handled discreetly… email only") is escalated as possible fraud when it comes from outside and uses two or more such phrases, even with no money mentioned yet and whatever fraud risk the model gives it (OD-479; SPEC §8.5, §8.6).
+- The Haiku 5.5 main session passed its acceptance runs (two C, one B; no skill deviations) and is adopted (OD-474; SPEC §7.5, §21.2).
+- The local model's context grows from 4,096 to 6,144 tokens, so schema v2 and your own schema fields fit even long emails in rare scripts; local classification is slower, about 43% in one measurement (OD-477; SPEC §21.2).
+- The `ecf claude` main session (presets B and C) runs on Claude Haiku 5.5 instead of Sonnet 5.5, which costs much less per review; classifying and acting stay on Sonnet and Opus. Adopted only after its acceptance runs (OD-474; SPEC §7.5).
+- An override of the Haiku family (`ecf settings set claude_model_override`) replaces only the main session and no longer says B and C addresses go back to assist, since it changes no gate pin (OD-474).
+- The admin guide explains upgrading to v2.0.0 (schema v2) and that one install can watch both work and personal addresses (OD-475).
+- Classification schema v2: one schema for work and personal mail. New categories `account_security`, `shipping`, `appointment`, `travel`, `finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and `regulatory` also cover personal bills, receipts, account changes and government mail; sender types `company`, `friend`, `family` and `person` are added and `staff` is now `team` (OD-475; SPEC §7.1).
+- New starter rules label the new categories and flag account-security mail and dated appointments or school and family mail; none of them hides mail (OD-475; SPEC §8.6).
+- Rules files written for schema v1 still apply: `staff` is read as `team`, and the rules that did are named (OD-475).
+- Stored classifications are moved to schema v2 on upgrade (`staff` becomes `team`); export bundles are data format 3, which `v1.0.0` can't import (OD-475; SPEC §11.9).
 - With a schema extension applied, the "local model failed" System Error says when classifier prompts came near the context window and that the extension's text may be the cause (OD-478; SPEC §5).
 - On mail classified before an extension, a rule comparing an extension field (or a level the field no longer has) never matches, `not` included, so it can't hide old mail (OD-478; SPEC §7.4).
 - Applying a schema change moves live addresses back to assist at once, and the step-up dialog and Security Notice always lead with "changes the classifier prompt; live addresses go back to assist" (OD-478; SPEC §9.7).
@@ -27,32 +41,11 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Security
 
+- The go-live gate is bound to the classification schema as well as the models: upgrading to v2.0.0 starts every address's gate again and moves live addresses back to assist until the safety gates pass on the new schema; `ecf upgrade` says so (OD-475; SPEC §9.3).
+- Mail from a sender the model reads as an unplaced `person` outside your organization that is about money is labelled `suspicious` and flagged, so a colleague writing from a personal address still gets checked (OD-476; SPEC §8.6, §12.1).
 - An extension change is shown as "changes the classifier prompt" in the dry run, the step-up dialog and the Security Notice, and drops live addresses to assist until their gates pass again: the schema digest with the extension is the gate key (OD-478; SPEC §9.3).
 - Extensions have fixed limits (8 fields, 16 values per field, 4 category values, 180-character descriptions, 4,000 characters of prompt text); a file over a limit is refused before step-up with every problem listed (`schema_limit`), and the dry run warns from 80% (OD-478; SPEC §7.1).
 - Privacy statement: descriptions you write for schema extensions go to Anthropic on presets B and C, and extension field and value names to Slack; neither is email content (OD-478; SPEC §12.4).
-
-## v2.0.0 (not yet tagged)
-
-### Changed
-
-- Schema v2 passed its evaluation on the synthetic set on every preset (A, B, and C at standard and high): 0 unsafe proposals and every fraud case caught (SPEC §21.2).
-- `school_or_family` stays one category rather than separate school and family categories; a relative's news is sometimes still classed there instead of private (operator decision 2026-10-08; SPEC §7.1).
-- Security and sign-in alerts that ask you to send a code or password, click to verify or call a number are now classed as phishing, and a relative's note that only shares news or thanks is private rather than family logistics (operator decision 2026-10-08, OD-475; SPEC §7.1, §21.2).
-- An email that opens like an executive-impersonation scam ("Are you at your desk? I need a quick favour handled discreetly… email only") is escalated as possible fraud when it comes from outside and uses two or more such phrases, even with no money mentioned yet and whatever fraud risk the model gives it (OD-479; SPEC §8.5, §8.6).
-- The Haiku 5.5 main session passed its acceptance runs (two C, one B; no skill deviations) and is adopted (OD-474; SPEC §7.5, §21.2).
-- The local model's context grows from 4,096 to 6,144 tokens, so schema v2 and your own schema fields fit even long emails in rare scripts; local classification is slower, about 43% in one measurement (OD-477; SPEC §21.2).
-- The `ecf claude` main session (presets B and C) runs on Claude Haiku 5.5 instead of Sonnet 5.5, which costs much less per review; classifying and acting stay on Sonnet and Opus. Adopted only after its acceptance runs (OD-474; SPEC §7.5).
-- An override of the Haiku family (`ecf settings set claude_model_override`) replaces only the main session and no longer says B and C addresses go back to assist, since it changes no gate pin (OD-474).
-- The admin guide explains upgrading to v2.0.0 (schema v2) and that one install can watch both work and personal addresses (OD-475).
-- Classification schema v2: one schema for work and personal mail. New categories `account_security`, `shipping`, `appointment`, `travel`, `finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and `regulatory` also cover personal bills, receipts, account changes and government mail; sender types `company`, `friend`, `family` and `person` are added and `staff` is now `team` (OD-475; SPEC §7.1).
-- New starter rules label the new categories and flag account-security mail and dated appointments or school and family mail; none of them hides mail (OD-475; SPEC §8.6).
-- Rules files written for schema v1 still apply: `staff` is read as `team`, and the rules that did are named (OD-475).
-- Stored classifications are moved to schema v2 on upgrade (`staff` becomes `team`); export bundles are data format 3, which `v1.0.0` can't import (OD-475; SPEC §11.9).
-
-### Security
-
-- The go-live gate is bound to the classification schema as well as the models: upgrading to v2.0.0 starts every address's gate again and moves live addresses back to assist until the safety gates pass on the new schema; `ecf upgrade` says so (OD-475; SPEC §9.3).
-- Mail from a sender the model reads as an unplaced `person` outside your organization that is about money is labelled `suspicious` and flagged, so a colleague writing from a personal address still gets checked (OD-476; SPEC §8.6, §12.1).
 
 ## v1.0.0 (2026-10-08)
 
