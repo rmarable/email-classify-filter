@@ -151,6 +151,44 @@ def test_a_cases_metrics_are_its_own_successful_call() -> None:
     assert evalrun._metrics([ok, failed], 1) is None  # pyright: ignore[reportPrivateUsage]
 
 
+class RoleOllama(ChatOllama):
+    """Answers the actor (told apart by its `num_predict`) with its own reply."""
+
+    def __init__(self, classifier: str, actor: str) -> None:
+        super().__init__(classifier)
+        self.classifier_reply, self.actor_reply = classifier, actor
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/chat":
+            body = json.loads(req.content)
+            actor = body["options"]["num_predict"] == evalrun.ollama.NUM_PREDICT["actor"]
+            self.reply = self.actor_reply if actor else self.classifier_reply
+        return super().handler(req)
+
+
+def test_a_successful_actor_call_is_recorded(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    bug = BEC | {"category": "bug_report", "priority": "medium", "requires_reply": True,
+                 "payment_related": False, "fraud_risk": "none"}  # fmt: skip
+    flag = {"action": "flag", "target": "", "reason": "a customer is waiting", "text": ""}
+    fake = RoleOllama(json.dumps(bug), json.dumps(flag))
+    evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
+                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
+                  spawn=_inline, check_kw=check_kw())  # fmt: skip
+    snap = evalrun.RUN.snapshot()
+    assert snap["state"] == "done", snap
+    roles = snap["result"]["roles"]
+    assert roles["actor"]["calls"] > 0 and roles["actor"]["failed"] == 0
+    path = Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
+    acted = [c for c in load_result(path).cases if c.actor is not None]
+    assert len(acted) == roles["actor"]["calls"]  # each case that reached the actor has its call
+    assert all(c.actor is not None and c.actor.output_tokens == 57 for c in acted)
+    assert all("flag" in c.actions for c in acted)
+
+
 def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
