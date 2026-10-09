@@ -13,6 +13,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Changed
 
+- `ecf models install` no longer deletes ecf's copy of the local model for an earlier release, which another install on the same computer or a rollback still needed; `ecf models status` and `ecf doctor` list those copies and the new `ecf models prune` removes them after asking (SPEC §7.5, §11.10, §13.2).
 - Release versions follow semantic versioning: a new major version when the classification schema, rules files or export data format break (this one: schema v2, data format 3), a minor version for added features, a patch version for fixes; a release candidate comes first (OD-480; SPEC §1.4).
 - Schema v2 passed its evaluation on the synthetic set on every preset (A, B, and C at standard and high): 0 unsafe proposals and every fraud case caught (SPEC §21.2).
 - `school_or_family` stays one category rather than separate school and family categories; a relative's news is sometimes still classed there instead of private (operator decision 2026-10-08; SPEC §7.1).

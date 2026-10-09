@@ -297,13 +297,13 @@ def test_decision_install_copies_without_marking_ecfs_model_installed(
 ) -> None:
     fake = FakeOllama()
     fake.models[f"{TEV.ecf_name}:0.0.1"] = TEV.digest  # an earlier release's copy
-    fake.models["ecf/gemma4-12b:0.0.1"] = "a" * 64  # not this model's prefix: left alone
+    fake.models["ecf/gemma4-12b:0.0.1"] = "a" * 64  # the local model's: left alone
     got = models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline,
                                decision="tev1-4b")  # fmt: skip
     assert got["state"] == "done", got
     assert fake.pulled == ["tev1:4b"]
     assert fake.models[TEV.ecf_tag] == TEV.digest
-    assert f"{TEV.ecf_name}:0.0.1" not in fake.models
+    assert f"{TEV.ecf_name}:0.0.1" in fake.models  # kept: another install may use it
     assert "ecf/gemma4-12b:0.0.1" in fake.models
     assert not models.installed(conn)  # no INSTALLED_KEY (R13)
     [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.installed'").fetchall()

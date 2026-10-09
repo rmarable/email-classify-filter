@@ -1255,6 +1255,16 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                                  decision=decision))  # fmt: skip
 
     @allow(Caller.CLI)
+    def prune_models(_request: Request) -> JSONResponse:
+        """`ecf models prune`: remove ecf's model copies for other releases (SPEC §7.5)."""
+        conn, client = state.connect(), state.model_client()
+        try:
+            return JSONResponse({"removed": models.prune(conn, state.clock, client)})
+        finally:
+            client.close()
+            conn.close()
+
+    @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
         """SPEC §13.4 (V1.3 step 9): `ecf stats`; Claude's part (V1.4 step 6) isn't split by
         address, so it comes only without `address` and for presets B and C."""
@@ -1281,6 +1291,7 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/models", show_models, methods=["GET"]),
         Route("/v1/models/install", install_models, methods=["POST"]),
+        Route("/v1/models/prune", prune_models, methods=["POST"]),
         Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
