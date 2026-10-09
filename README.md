@@ -162,6 +162,13 @@ SPEC §12; [`SECURITY.md`](SECURITY.md) summarizes it. We recommend:
   the roadmap (AWS mode, teams, remote access, always-on).
 - [`docs/history/`](docs/history/): earlier design documents, kept for history.
 
+## Disclaimer
+
+ecf reduces risk; it does not remove it. It is provided as is, with no warranty, and the author
+accepts no liability for its use, its failure, or anything anyone does with it. Verify every
+payment and bank-detail change out of band. See [`DISCLAIMER.md`](DISCLAIMER.md) for acceptable
+use and the full terms.
+
 ## License
 
 Apache License 2.0 with the Commons Clause restriction; see [`LICENSE`](LICENSE). This makes ecf
