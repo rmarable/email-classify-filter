@@ -41,15 +41,15 @@ _TAG = re.compile(r"<[^>]+>")
 LABEL_TEXTS: dict[str, dict[str, str]] = {
     "sender_type": {
         "vendor": "Someone we buy from or who serves us (personally or for the organization),"
-        " including their notices about our account, booking or order.",
+        " includes notices about accounts, bookings or orders.",
         "customer": "Someone we sell to or serve.",
         "regulator": "Government agency or regulatory body.",
         "team": "Colleague or co-worker acting on behalf of the organization.",
-        "company": "Firms we don't buy from (a cold pitch, a partner).",
+        "company": "Firms we don't buy from, including cold pitches and (potential) partners.",
         "friend": "Someone we know personally.",
         "family": "Relative.",
         "person": "Someone we do not know very well (if at all).",
-        "automated": "Machine or service reporting information on a monitored system"
+        "automated": "Machine or service reporting monitored systems information"
         " (backups, HPC jobs, etc.).",
         "unknown": "Can't tell the role (an impostor takes the role they claim).",
     },

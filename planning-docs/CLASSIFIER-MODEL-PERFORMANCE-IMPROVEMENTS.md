@@ -48,11 +48,11 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
   credentials, someone posing as a colleague or executive) marked as examples, not a list.
 - `sender_type` (labelling rule, operator decisions 2026-10-09, SPEC §16.1): the value texts
   are SPEC §16.1's: `vendor` someone we buy from or who serves us (personally or for the
-  organization, incl. their system-sent account, booking or order notices); `customer` someone we
+  organization), includes notices about accounts, bookings or orders; `customer` someone we
   sell to or serve; `team` colleague or co-worker acting on behalf of the organization; `company`
-  firms we don't buy from (a cold pitch, a partner); `friend` someone we know personally; `family`
+  firms we don't buy from, including cold pitches and (potential) partners; `friend` someone we know personally; `family`
   relative; `person` someone we do not know very well (if at all); `automated` machine or service
-  reporting information on a monitored system (backups, HPC jobs, etc.); the apparent role (an impostor takes the role claimed); `unknown` only when the
+  reporting monitored systems information (backups, HPC jobs, etc.); the apparent role (an impostor takes the role claimed); `unknown` only when the
   role can't be told.
 - Renderer: `_field_lines` (`schema.py:206`) prints ordinal level text; the schema format gains
   optional per-level descriptions.
