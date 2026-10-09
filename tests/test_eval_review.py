@@ -161,3 +161,15 @@ def test_the_committed_review_log_is_consistent() -> None:
     for x in rv.read_log(SYNTHETIC):
         assert x["kind"] in (rv.REVIEW, rv.RECHECK)
         assert x["kind"] == rv.RECHECK or x["outcome"] in rv.OUTCOMES
+
+
+def test_the_review_shows_the_labelling_texts_not_the_prompts(root: Path) -> None:
+    from ecf_server import classifier  # noqa: PLC0415
+
+    schema = load_schema()
+    digest = classifier.prompt_digest(schema)
+    _, screen = run(root, "sender_type", ["", "q"], add=True, globs=("starter-bec",))
+    assert "Firms we don't buy from (a cold pitch, a partner)." in screen
+    assert "A business that is neither a vendor nor a customer" not in screen
+    assert set(ui.LABEL_TEXTS["sender_type"]) == set(schema.fields["sender_type"].values)
+    assert classifier.prompt_digest(load_schema()) == digest

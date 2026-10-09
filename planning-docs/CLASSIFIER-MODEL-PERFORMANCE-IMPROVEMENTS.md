@@ -51,8 +51,8 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
   organization, incl. their system-sent account, booking or order notices); `customer` someone we
   sell to or serve; `team` colleague or co-worker acting on behalf of the organization; `company`
   firms we don't buy from (a cold pitch, a partner); `friend` someone we know personally; `family`
-  relative; `person` someone we do not know very well (if at all); `automated` a machine reporting
-  on a system; the apparent role (an impostor takes the role claimed); `unknown` only when the
+  relative; `person` someone we do not know very well (if at all); `automated` machine or service
+  reporting information on a monitored system (backups, HPC jobs, etc.); the apparent role (an impostor takes the role claimed); `unknown` only when the
   role can't be told.
 - Renderer: `_field_lines` (`schema.py:206`) prints ordinal level text; the schema format gains
   optional per-level descriptions.

@@ -11,6 +11,7 @@ operator has checked the rest of its expected values, which are shown at that po
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import secrets
@@ -32,6 +33,35 @@ CLEAR = "\x1b[H\x1b[2J"
 SHOWN_CHARS = 4000
 QUIT = "q"
 _TAG = re.compile(r"<[^>]+>")
+
+
+# The labelling texts of SPEC §16.1 (operator decisions 2026-10-09), shown in place of the schema's
+# until classifier plan item 2 puts the same words into the schema; the model's prompt is unchanged
+# until then, so run 0 keeps the v2.0.0 prompt.
+LABEL_TEXTS: dict[str, dict[str, str]] = {
+    "sender_type": {
+        "vendor": "Someone we buy from or who serves us (personally or for the organization),"
+        " including their notices about our account, booking or order.",
+        "customer": "Someone we sell to or serve.",
+        "regulator": "Government agency or regulatory body.",
+        "team": "Colleague or co-worker acting on behalf of the organization.",
+        "company": "Firms we don't buy from (a cold pitch, a partner).",
+        "friend": "Someone we know personally.",
+        "family": "Relative.",
+        "person": "Someone we do not know very well (if at all).",
+        "automated": "Machine or service reporting information on a monitored system"
+        " (backups, HPC jobs, etc.).",
+        "unknown": "Can't tell the role (an impostor takes the role they claim).",
+    },
+}
+
+
+def labelling_spec(spec: FieldSpec) -> FieldSpec:
+    """The field as the review asks it: SPEC §16.1's value texts where there are any."""
+    texts = LABEL_TEXTS.get(spec.name)
+    if not texts:
+        return spec
+    return dataclasses.replace(spec, value_descriptions=tuple(texts[v] for v in spec.values))
 
 
 class _Quit(Exception):
@@ -71,8 +101,8 @@ def _ask(spec: FieldSpec, number: int, of: int, *, unlabelled: bool,
 def _answers(task: rv.Task, schema: CompiledSchema, read: Callable[[str], str],
              write: Callable[[str], None]) -> dict[str, Any]:  # fmt: skip
     labelled = task.card.expected.labels
-    return {f: _ask(schema.fields[f], n, len(task.fields), unlabelled=f not in labelled,
-                    read=read, write=write)
+    return {f: _ask(labelling_spec(schema.fields[f]), n, len(task.fields),
+                    unlabelled=f not in labelled, read=read, write=write)
             for n, f in enumerate(task.fields, 1)}  # fmt: skip
 
 
