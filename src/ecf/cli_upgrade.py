@@ -240,10 +240,20 @@ def _continue(p: Paths) -> None:
     if done["affected"]:
         why = ("the classifier schema changed" if "schema" in done.get("pin_changes", [])
                else "model pins changed")  # fmt: skip
-        typer.echo(f"{why}: {', '.join(done['affected'])} drop to assist until their gate passes"
+        names = done["affected"]
+        typer.echo(f"{why}: {_drop(names)} to assist until {_their(names)} gate passes"
                    " again; re-run ecf eval run")  # fmt: skip
     typer.echo("the database copy is kept in case you go back: ecf upgrade --to"
                f" {done['from']}")  # fmt: skip
+
+
+def _drop(names: list[str]) -> str:
+    """'ap drops' for one address, 'ap, b drop' for more."""
+    return f"{', '.join(names)} {'drops' if len(names) == 1 else 'drop'}"
+
+
+def _their(names: list[str]) -> str:
+    return "its" if len(names) == 1 else "their"
 
 
 def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: list[str]) -> None:
@@ -251,8 +261,11 @@ def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: l
     if report.pin_changes:
         typer.echo(f"model pins that change: {', '.join(report.pin_changes)}")
         if report.affected:
-            typer.echo(f"  these addresses drop to assist until their gate passes again:"
-                       f" {', '.join(report.affected)}; re-run ecf eval run for them")  # fmt: skip
+            one = len(report.affected) == 1
+            these = "this address drops" if one else "these addresses drop"
+            typer.echo(f"  {these} to assist until {_their(report.affected)} gate passes again:"
+                       f" {', '.join(report.affected)}; re-run ecf eval run for"
+                       f" {'it' if one else 'them'}")  # fmt: skip
     for p in problems:
         typer.echo(f"  can't upgrade: {p}", err=True)
     if not problems:
