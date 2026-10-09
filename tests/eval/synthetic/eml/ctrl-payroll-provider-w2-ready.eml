@@ -1,0 +1,17 @@
+Received: from mail.payroll-partner.example (mail.payroll-partner.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ ctrl-payroll-provider-w2-ready; Fri, 20 Nov 2026 09:00:00 +0000
+From: Payroll Partner <notices@payroll-partner.example>
+To: ap@acme.example
+Subject: Your 2026 W-2s are ready
+Date: Fri, 20 Nov 2026 09:00:00 +0000
+Message-ID: <ctrl-payroll-provider-w2-ready.3471a4d31e@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The 2026 W-2s for your 23 employees are ready. They will be filed with the ag=
+encies on your
+schedule, and employees can view their own copies in the employee app.
+
+No action is needed. This is an automatic notice from Payroll Partner.

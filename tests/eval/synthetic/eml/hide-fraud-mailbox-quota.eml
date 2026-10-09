@@ -1,0 +1,20 @@
+Received: from mail.file-drive.example (mail.file-drive.example [192.0.2.10])
+ by mx.example.net with ESMTPS id hide-fraud-mailbox-quota; Tue, 17 Nov 2026
+ 08:10:00 +0000
+From: Drive Storage <no-reply@file-drive.example>
+To: ap@acme.example
+Subject: Mailbox full: messages are being held
+Date: Tue, 17 Nov 2026 08:10:00 +0000
+Message-ID: <hide-fraud-mailbox-quota.f2efd183a3@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your mailbox has reached its storage limit and 12 incoming messages are being=
+ held.
+
+To release them, reply to this message with your username and current passwor=
+d within 24 hours.
+Held messages are deleted after that.
