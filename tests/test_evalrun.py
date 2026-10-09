@@ -113,7 +113,8 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     fake = ChatOllama(json.dumps(BEC))
     evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
                   evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
-                  spawn=_inline, check_kw=check_kw())  # fmt: skip
+                  spawn=_inline, check_kw=check_kw(),
+                  thermal=lambda: {"CPU_Speed_Limit": 100})  # fmt: skip
     snap = evalrun.RUN.snapshot()
     assert snap["state"] == "done", snap
     result = snap["result"]
@@ -130,6 +131,13 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None
+    env = summary["environment"]  # the machine and Ollama at the start and end (plan 0.3)
+    for when in ("start", "end"):
+        assert env[when]["ollama_version"] == "0.35.0" and env[when]["num_ctx"] == 6144
+        assert env[when]["power"] == {"laptop": True, "on_ac": True, "battery": 90}
+        assert env[when]["thermal"] == {"CPU_Speed_Limit": 100}
+        assert env[when]["loaded"][0]["context_length"] == 6144
+        assert "expires_at" not in env[when]["loaded"][0]
     roles = summary["roles"]  # per role, so the classifier's figures aren't mixed (plan 0.3)
     assert roles["classifier"]["emails"] == 3 and roles["classifier"]["calls"] == 3
     assert set(roles) == {"classifier", "determinism"}  # every plan escalates: no actor call
@@ -177,7 +185,7 @@ def test_a_successful_actor_call_is_recorded(
     fake = RoleOllama(json.dumps(bug), json.dumps(flag))
     evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
                   evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
-                  spawn=_inline, check_kw=check_kw())  # fmt: skip
+                  spawn=_inline, check_kw=check_kw(), thermal=dict)  # fmt: skip
     snap = evalrun.RUN.snapshot()
     assert snap["state"] == "done", snap
     roles = snap["result"]["roles"]
@@ -187,6 +195,16 @@ def test_a_successful_actor_call_is_recorded(
     assert len(acted) == roles["actor"]["calls"]  # each case that reached the actor has its call
     assert all(c.actor is not None and c.actor.output_tokens == 57 for c in acted)
     assert all("flag" in c.actions for c in acted)
+
+
+def test_an_unreadable_environment_figure_is_none() -> None:
+    def refuse(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=req)
+
+    gone = evalrun.ollama.Client(transport=httpx.MockTransport(refuse))
+    env = evalrun.environment(gone, lambda: AC, lambda: None, dict)
+    assert env["ollama_version"] is None and env["loaded"] is None and env["thermal"] == {}
+    assert env["power"] == {"laptop": True, "on_ac": True, "battery": None}
 
 
 def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
@@ -324,9 +342,9 @@ def test_a_stopped_run_is_saved_but_never_passes_the_gate(
 
     calls = {"n": 0}
 
-    def battery() -> int:  # `ecf eval stop` arrives during the second case
+    def battery() -> int:  # `ecf eval stop` arrives during the second case (read 1: environment)
         calls["n"] += 1
-        if calls["n"] > 1:
+        if calls["n"] > 2:
             evalrun.stop()
         return 90
 

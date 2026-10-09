@@ -84,6 +84,30 @@ def host_power() -> Power:
         return Power(False, True)
 
 
+_THERM_VALUE = re.compile(r"^\s*(\w+)\s*=\s*(\d+)\s*$", re.MULTILINE)
+_THERM_LEVEL = re.compile(r"(thermal|performance) warning level[^\d\n]*(\d+)", re.IGNORECASE)
+
+
+def thermal() -> dict[str, int]:
+    """macOS `pmset -g therm`: the CPU limits it reports (`CPU_Speed_Limit` and so on) and any
+    recorded thermal or performance warning level; empty elsewhere or when nothing is recorded."""
+    if sys.platform != "darwin":
+        return {}
+    try:
+        out = subprocess.run(["/usr/bin/pmset", "-g", "therm"], capture_output=True, text=True,
+                             timeout=5, check=False).stdout  # fmt: skip
+    except OSError:
+        return {}
+    return parse_therm(out)
+
+
+def parse_therm(out: str) -> dict[str, int]:
+    found = {k: int(v) for k, v in _THERM_VALUE.findall(out)}
+    for kind, level in _THERM_LEVEL.findall(out):
+        found[f"{kind.lower()}_warning_level"] = int(level)
+    return found
+
+
 def battery_percent() -> int | None:
     """The battery's charge in percent, or None (no battery, or unknown)."""
     try:

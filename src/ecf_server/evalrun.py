@@ -343,7 +343,8 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
           battery: Callable[[], int | None] = schedule.battery_percent,
           spawn: Callable[[Callable[[], None]], None] | None = None,
           check_kw: dict[str, Any] | None = None,
-          notifier: Notifier | None = None) -> dict[str, Any]:  # fmt: skip
+          notifier: Notifier | None = None,
+          thermal: Callable[[], dict[str, int]] = schedule.thermal) -> dict[str, Any]:  # fmt: skip
     if opts.corpus is not None:
         if not opts.redact or opts.backend == NULL:
             raise InvalidInputError("a corpus run uses the stored, redacted excerpts")
@@ -379,7 +380,7 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         end: dict[str, Any]
         try:
             end = _run(connect, clock, client_factory, data_dir, opts, cases, version, power,
-                       battery, check_kw or {}, notifier or NullNotifier())  # fmt: skip
+                       battery, check_kw or {}, notifier or NullNotifier(), thermal)  # fmt: skip
         except OllamaError as e:  # a fault no case can run past
             log.error("eval.failed", cause=e.cause)
             end = {"state": "failed", "detail": models.fault_text(e)}
@@ -544,7 +545,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
     connect: Callable[[], sqlite3.Connection], clock: Clock,
          client_factory: Callable[[], Client], data_dir: Path, opts: Options, cases: list[Case],
          version: str, power: Callable[[], schedule.Power], battery: Callable[[], int | None],
-         check_kw: dict[str, Any], notifier: Notifier) -> dict[str, Any]:  # fmt: skip
+         check_kw: dict[str, Any], notifier: Notifier,
+         thermal: Callable[[], dict[str, int]]) -> dict[str, Any]:  # fmt: skip
     """Run the cases; the end state for `RUN` (set by the caller once the queue is released)."""
     started = time.monotonic()
     paused: list[bool] = []
@@ -573,6 +575,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         ready = ollama.readiness(client, **check_kw)
         if dpin is not None:
             check_decision(client, dpin, ready)
+        env_start = environment(client, power, battery, thermal, ready.version)
         rules_now = rules.load_starter_rules(schema)
         known = policy.labels(schema, rules_now)
         for i, case in enumerate(cases):
@@ -621,6 +624,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 again = _classify_with(opts.backend, dpin, client, text, schema,
                                        calls["determinism"])[0]  # fmt: skip
                 diffs += again != firsts.get(case.id)
+        env_end = environment(client, power, battery, thermal)
         production = opts.backend == GEMMA and opts.redact and opts.corpus is None
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
                                                     classifier=opts.classifier,
@@ -647,6 +651,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["calibration"] = cal
         summary["power"] = {"ac_at_start": on_ac_at_start, "ac_at_end": power().on_ac,
                             "paused": bool(paused)}  # fmt: skip
+        summary["environment"] = {"start": env_start, "end": env_end}  # plan 0.3
         if opts.corpus is not None:  # reported, never gated (R8, R54, R168)
             summary["set"] = "corpus"
             summary["labels_hash"] = opts.corpus.labels_hash
@@ -839,6 +844,29 @@ def _act(client: Client, text: str, cls: dict[str, Any], known: frozenset[str],
     out = actor.parse(reply.content, known, frozenset(), actor.allowed(cls))
     calls.append(_call(reply.metrics if out is not None else None))
     return out
+
+
+def environment(client: Client, power: Callable[[], schedule.Power],
+                battery: Callable[[], int | None], thermal: Callable[[], dict[str, int]],
+                version: str | None = None) -> dict[str, Any]:  # fmt: skip
+    """What the machine and Ollama were like at a run's start or end (plan 0.3), so runs on a
+    hot, throttled or battery-powered machine, or with another model loaded, can be told apart.
+    A figure that can't be read is None; this never fails a run."""
+
+    def ask(read: Callable[[], Any]) -> Any:
+        try:
+            return read()
+        except OllamaError:
+            return None
+
+    p = power()
+    return {
+        "ollama_version": version if version is not None else ask(client.version),
+        "num_ctx": ollama.NUM_CTX,
+        "power": {"laptop": p.laptop, "on_ac": p.on_ac, "battery": battery()},
+        "thermal": thermal(),
+        "loaded": ask(client.loaded),
+    }
 
 
 def _metrics(calls: list[stats.Call], before: int) -> CallMetrics | None:
