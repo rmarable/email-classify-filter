@@ -3,6 +3,11 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.1.0 (not yet tagged)
+
+- `ecf eval run` results now hold each case's classifier and actor token counts and times, and the run's figures per role (classifier, actor, determinism repeats), so the classifier's speed and tokens per email are no longer mixed with the actor's; `ecf eval compare` prints them per role.
+- `ecf eval run` now applies a card's expected facts, as `ecf rules test` does, and both recompute whether bulk mail corroborates hiding, so a card for an authenticated notice from a known sender can test the hide path (it never could before).
+
 ## v2.0.0 (2026-10-09)
 
 - v2.0.0 is the release of v2.0.0-rc1 to rc3 below, with no code changes since rc3 (only docs and tests). It passed its release check, an upgrade from v1.0.0 with a rollback and an upgrade again (SPEC §1.5a, §21.2).

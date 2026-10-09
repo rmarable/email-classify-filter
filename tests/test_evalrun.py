@@ -130,6 +130,25 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None
+    roles = summary["roles"]  # per role, so the classifier's figures aren't mixed (plan 0.3)
+    assert roles["classifier"]["emails"] == 3 and roles["classifier"]["calls"] == 3
+    assert set(roles) == {"classifier", "determinism"}  # every plan escalates: no actor call
+    assert roles["determinism"]["calls"] == 3
+    assert model["calls"] == sum(r["calls"] for r in roles.values())
+    cases = load_result(path).cases
+    assert all(c.classifier is not None and c.classifier.output_tokens for c in cases)
+    assert all(c.actor is None for c in cases)
+
+
+def test_a_cases_metrics_are_its_own_successful_call() -> None:
+    from ecf_server import stats  # noqa: PLC0415
+
+    ok = stats.Call(True, 588, 519, 57, 1, 1_900_000_000, 1, 2)
+    failed = stats.Call(False, None, None, None, None, None, None, None)
+    m = evalrun._metrics([ok], 0)  # pyright: ignore[reportPrivateUsage]
+    assert m is not None and (m.prompt_tokens, m.cached_tokens, m.output_tokens) == (588, 519, 57)
+    assert evalrun._metrics([ok], 1) is None  # pyright: ignore[reportPrivateUsage] - no call
+    assert evalrun._metrics([ok, failed], 1) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(

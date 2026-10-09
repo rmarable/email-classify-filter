@@ -54,7 +54,7 @@ from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import corpus_labels, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
-from ecf.eval.results import CaseResult, ResultFile, load_result
+from ecf.eval.results import CallMetrics, CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
 from ecf.schema import V1_VALUE_ALIASES, CompiledSchema, FieldKind, load_schema
 from ecf_server import (
@@ -565,7 +565,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
     client = client_factory()
     scratch = ruletest.Scratch(clock)
     results: list[CaseResult] = []
-    calls: list[stats.Call] = []
+    # by role, so the run's figures don't mix them (plan 0.3); determinism repeats apart
+    calls: dict[str, list[stats.Call]] = {r: [] for r in ROLES}
     firsts: dict[str, dict[str, Any] | None] = {}
     stopped = ""
     try:
@@ -579,7 +580,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 stopped = f"stopped after {i} of {len(cases)}"
                 break
             facts, (text, act_text) = _inputs(case, scratch, redact)
-            cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema, calls)
+            n_cls, n_act = len(calls["classifier"]), len(calls["actor"])
+            cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema,
+                                               calls["classifier"])
                                 if opts.classifier else (None, None, None))  # fmt: skip
             if secs is not None:
                 classifier_s.append(secs)
@@ -592,7 +595,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                      rules_now, {}, frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
                 if opts.actor and plan.to_actor:
-                    proposal = _act(client, act_text, cls, known, calls)
+                    proposal = _act(client, act_text, cls, known, calls["actor"])
                     if proposal is not None and proposal["action"] != "needs_clarification":
                         one = policy.proposal(ctx, plan, proposal["action"],
                                               proposal["target"] or None, known)  # fmt: skip
@@ -606,13 +609,17 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                         "classifier_ms": round(secs * 1000) if secs is not None else None,
                     }
                 )
+            one_result = one_result.model_copy(
+                update={"classifier": _metrics(calls["classifier"], n_cls),
+                        "actor": _metrics(calls["actor"], n_act)})  # fmt: skip
             results.append(one_result)
             RUN.set(done=i + 1)
         diffs = 0
         if opts.classifier and not stopped:
             for case in cases[:DETERMINISM_CASES]:
                 text = _inputs(case, scratch, redact)[1][0]
-                again = _classify_with(opts.backend, dpin, client, text, schema, calls)[0]
+                again = _classify_with(opts.backend, dpin, client, text, schema,
+                                       calls["determinism"])[0]  # fmt: skip
                 diffs += again != firsts.get(case.id)
         production = opts.backend == GEMMA and opts.redact and opts.corpus is None
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
@@ -621,7 +628,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     production=production,
                                                     schema=schema))  # fmt: skip
         summary["schema_digest"] = schema.digest
-        summary["model"] = stats.summarize(calls, emails=len(results) if opts.classifier else None)
+        emails = len(results) if opts.classifier else None
+        summary["model"] = stats.summarize([c for cs in calls.values() for c in cs], emails=emails)
+        summary["roles"] = {r: stats.summarize(cs, emails=emails if r == "classifier" else None)
+                            for r, cs in calls.items() if cs}  # fmt: skip
         digest = ready.digest if opts.backend == GEMMA else dpin.digest if dpin else NULL
         summary["backend"] = opts.backend
         summary["redact"] = opts.redact
@@ -656,6 +666,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         conn.close()
 
 
+ROLES = ("classifier", "actor", "determinism")  # summary["roles"] (plan 0.3)
 FACT_RULES = frozenset({"fraud_guard", "fraud_weak", "unverified_payment_sender"})  # 1, 1b, 1a
 
 
@@ -828,6 +839,15 @@ def _act(client: Client, text: str, cls: dict[str, Any], known: frozenset[str],
     out = actor.parse(reply.content, known, frozenset(), actor.allowed(cls))
     calls.append(_call(reply.metrics if out is not None else None))
     return out
+
+
+def _metrics(calls: list[stats.Call], before: int) -> CallMetrics | None:
+    """The case's call in a role, if it made one after `before` and it succeeded."""
+    if len(calls) <= before or not (c := calls[-1]).ok:
+        return None
+    return CallMetrics(prompt_tokens=c.prompt_tokens, cached_tokens=c.cached_tokens,
+                       output_tokens=c.output_tokens, prompt_ns=c.prompt_ns, eval_ns=c.eval_ns,
+                       load_ns=c.load_ns)  # fmt: skip
 
 
 def _call(m: ollama.Metrics | None) -> stats.Call:

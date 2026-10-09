@@ -1350,6 +1350,8 @@ def eval_compare(a: Path, b: Path) -> None:
         line = _model_figures(run.summary)
         if line:
             typer.echo(f"{name}  model: {line}")
+        for role, line in _role_figures(run.summary):
+            typer.echo(f"{name}    {role}: {line}")
         for line in _claude_figures(run.summary, len(run.cases)):
             typer.echo(f"{name}  {line}")
         for line in _decision_figures(run.summary):
@@ -1414,6 +1416,18 @@ def _model_figures(summary: dict[str, object] | None) -> str | None:
     return (f"{f['calls']} calls, about {per_email} tokens per email; writing"
             f" {w['median']} tokens/s median (slowest 5% {w['slowest_5']}); {t['median']} s per"
             f" call median, {t['p95']} s p95")  # fmt: skip
+
+
+def _role_figures(summary: dict[str, object] | None) -> list[tuple[str, str]]:
+    """The same figures per role (classifier, actor, determinism repeats; absent before v2.1.0)."""
+    roles = (summary or {}).get("roles")
+    if not isinstance(roles, dict):
+        return []
+    out: list[tuple[str, str]] = []
+    for role, figures in cast(dict[str, Any], roles).items():
+        if line := _model_figures({"model": figures}):
+            out.append((role, line))
+    return out
 
 
 def _claude_figures(summary: dict[str, object] | None, cases: int) -> list[str]:

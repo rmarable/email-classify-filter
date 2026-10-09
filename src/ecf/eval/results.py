@@ -19,6 +19,19 @@ NON_INFERIORITY_POINTS = 3.0
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
+class CallMetrics(BaseModel):
+    """One model call's counts from Ollama (or a decision model's input tokens and time): numbers
+    only, never text (I5). None where the backend doesn't report a figure."""
+
+    model_config = _STRICT
+    prompt_tokens: int | None = None  # including cached
+    cached_tokens: int | None = None
+    output_tokens: int | None = None
+    prompt_ns: int | None = None
+    eval_ns: int | None = None
+    load_ns: int | None = None
+
+
 class CaseResult(BaseModel):
     model_config = _STRICT
     id: str
@@ -38,6 +51,10 @@ class CaseResult(BaseModel):
     # result can be re-scored against new labels without running the models again
     actions: list[str] = Field(default_factory=list[str])
     scored: bool = True  # False: no labels to score against (an unlabelled corpus message, R157)
+    # the case's successful classifier and actor calls (plan 0.3); None when the role failed or
+    # didn't run, and in older files
+    classifier: CallMetrics | None = None
+    actor: CallMetrics | None = None
 
 
 class ResultFile(BaseModel):
