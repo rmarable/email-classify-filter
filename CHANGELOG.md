@@ -7,8 +7,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.0.0-rc2 (not yet tagged)
 
+- Schema extensions are held back to v2.1.0: they cost the built-in fields 4.3 points in the release check (run `6b80a149`). The code stays but is off: `ecf config apply` refuses a `schema` section other than `schema: default`, which still removes one applied on an rc; a stored or imported extension is ignored, `ecf doctor` warns about it, and rules that need it give way to the starter rules with a System Error (operator decision 2026-10-09, OD-481; SPEC §7.1, §9.7).
+- Before `v2.0.0` is tagged, a release candidate must pass an upgrade from `v1.0.0`; the preset A run with a sample schema extension now gates the release that turns extensions on (operator decision 2026-10-09, OD-481; SPEC §1.5a).
 - `ecf upgrade` from `v1.0.0` now names every address that drops to `assist` because the classifier schema changed: the `v1.0.0` pre-check can't see the change, so the new version lists them once the upgrade is done (operator decision 2026-10-09; SPEC §11.10).
-- Before `v2.0.0` is tagged, a release candidate must pass an upgrade from `v1.0.0` and a preset A run with a sample schema extension (operator decision 2026-10-09; SPEC §1.5a).
 
 ## v2.0.0-rc1 (2026-10-09)
 

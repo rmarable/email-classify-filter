@@ -382,6 +382,7 @@ def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path
     return rf.run_id
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
@@ -402,6 +403,7 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     assert m["schema_digest"] == schema.digest != load_schema().digest
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_preset_b_takes_only_a_run_on_the_effective_schema(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:

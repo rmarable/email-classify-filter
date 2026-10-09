@@ -10,11 +10,21 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+import ecf.schema
 from ecf.cli import app
 from ecf.errors import InvalidInputError, SchemaLimitError, StepupRequiredError
 from ecf.paths import Paths
 from ecf.schema import load_schema
-from ecf_server import addresses, claude_pins, config, rules, ruletest, slack_admin, stepup
+from ecf_server import (
+    addresses,
+    claude_pins,
+    config,
+    ops_doctor,
+    rules,
+    ruletest,
+    slack_admin,
+    stepup,
+)
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
@@ -497,6 +507,7 @@ def test_schema_section_order_and_key() -> None:
     assert config.KEY["schema"] == "config.schema"
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_schema_extension_dry_run_step_up_apply_and_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -536,6 +547,7 @@ def test_a_schema_extension_dry_run_step_up_apply_and_notice(
     assert config.current_schema(conn).digest == base.digest
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_cap_violation_lists_every_one_before_step_up(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -550,6 +562,7 @@ def test_a_cap_violation_lists_every_one_before_step_up(
     assert ei.value.detail.startswith("config: schema: 9 fields, limit 8; ")
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_near_a_cap_the_budget_line_says_so(conn: sqlite3.Connection, clock: FakeClock) -> None:
     _setup(conn, clock)
     fields = "".join(f"    f{i}: {{type: boolean, description: Added.}}\n" for i in range(7))
@@ -559,6 +572,7 @@ def test_near_a_cap_the_budget_line_says_so(conn: sqlite3.Connection, clock: Fak
     assert plan.schema["budget"].endswith(" (near the limit)")
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -575,6 +589,7 @@ def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
     _apply(conn, clock, "version: 1\nschema: default\nrules: default")  # both at once
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -589,6 +604,7 @@ def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
                            " then: [leave]}]}")  # fmt: skip
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_the_effective_schema_moves_the_gate_key(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -600,6 +616,7 @@ def test_the_effective_schema_moves_the_gate_key(
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: Path) -> None:
     _setup(conn, clock)
     st = make_state(db_path, None)
@@ -616,6 +633,7 @@ def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: P
 # ---- review fixes (OD-478) ---------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("extensions_on")
 @pytest.mark.parametrize("empty", ["{}", "[]", "''", "0", "false", "null"])
 def test_an_empty_or_wrong_typed_schema_is_refused(
     conn: sqlite3.Connection, clock: FakeClock, empty: str
@@ -625,6 +643,7 @@ def test_an_empty_or_wrong_typed_schema_is_refused(
         config.parse(conn, f"version: 1\nschema: {empty}\n")
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_the_extension_keeps_the_operators_order(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -645,6 +664,7 @@ def test_the_extension_keeps_the_operators_order(
     assert config.current_schema(conn).digest != s.digest
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_schema_change_leads_the_dialog_and_notice_and_demotes_live_at_once(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -670,6 +690,7 @@ def test_a_schema_change_leads_the_dialog_and_notice_and_demotes_live_at_once(
                for _t, body in n.sent)  # fmt: skip
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_rules_default_rechecks_the_starter_ids_against_added_values(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -682,6 +703,7 @@ def test_rules_default_rechecks_the_starter_ids_against_added_values(
         config.parse(conn, "version: 1\nrules: default\n")
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_removing_an_added_category_confirmed_senders_use_is_refused(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -696,6 +718,7 @@ def test_removing_an_added_category_confirmed_senders_use_is_refused(
         config.parse(conn, "version: 1\nschema: {fields: {f: {type: boolean, description: F.}}}")
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_stored_extension_that_no_longer_compiles_fails_closed(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -722,3 +745,78 @@ def test_a_stored_extension_that_no_longer_compiles_fails_closed(
     config.schema_tick(conn, clock, n)
     assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
     assert config.current_schema(conn).digest == load_schema().digest
+
+
+# ---- extensions off in v2.0.0 (OD-481) ---------------------------------------------------------
+
+
+def _open_alerts(conn: sqlite3.Connection) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT kind FROM alerts WHERE resolved_at IS NULL")]
+
+
+def test_with_extensions_off_a_schema_section_is_refused(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    with pytest.raises(InvalidInputError, match=r"schema extensions arrive in v2\.1\.0"):
+        config.parse(conn, SCHEMA_DOC)
+    with pytest.raises(InvalidInputError, match="remove the `schema` section"):
+        config.apply(conn, clock, FakeNotifier(), SCHEMA_DOC, dry_run=True, nonce=None)
+    with pytest.raises(InvalidInputError, match=r"arrive in v2\.1\.0"):  # empty is refused too
+        config.parse(conn, "version: 1\nschema: {}\n")
+    assert config.current(conn)["schema"] is None
+    assert config.current_schema(conn).digest == load_schema().digest
+
+
+def test_with_extensions_off_a_stored_extension_is_ignored_and_default_removes_it(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Applied on an rc (switch on), then this version (switch off): the shipped schema and its
+    gate key, no System Error, and `schema: default` removes it without demoting anyone."""
+    _setup(conn, clock)
+    shipped_key = claude_pins.address_key(conn, "ap")
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
+    _apply(conn, clock, SCHEMA_DOC)
+    assert claude_pins.address_key(conn, "ap") != shipped_key
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", False)
+    assert config.current(conn)["schema"] is not None  # kept
+    s = config.current_schema(conn)
+    assert s.extension is None and s.digest == load_schema().digest
+    assert claude_pins.address_key(conn, "ap") == shipped_key
+    assert call(make_state(db_path, None), "GET", "/v1/schema").json()["extension"] is None
+    assert config.extension_problem(conn) is None and config.rules_problem(conn) is None
+    config.schema_tick(conn, clock, FakeNotifier())
+    assert _open_alerts(conn) == []
+    assert ops_doctor.schema(conn)["level"] == "warn"
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET stage = 'live' WHERE address_id = 'ap'")
+    r = _apply(conn, clock, "version: 1\nschema: default\n")
+    assert r.applied
+    assert r.changes == [{"section": "schema", "change": "reset to built-in schema: unused while"
+                          " extensions are off: fields -contract_stage; category"
+                          " -legal_notice"}]  # fmt: skip
+    assert config.current(conn)["schema"] is None
+    stage = conn.execute("SELECT stage FROM addresses WHERE address_id = 'ap'").fetchone()[0]
+    assert stage == "live"  # the effective schema didn't change
+    assert ops_doctor.schema(conn)["level"] == "ok"
+
+
+def test_with_extensions_off_rules_that_use_a_stored_extension_give_way_to_the_starter_rules(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup(conn, clock)
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
+    _apply(conn, clock, SCHEMA_DOC + LABEL_STAGE)
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", False)
+    starter = [r.id for r in rules.load_starter_rules(load_schema()).rules]
+    assert [r.id for r in config.current_rules(conn).rules] == starter  # mail is still decided
+    assert "unknown field 'contract_stage'" in (config.rules_problem(conn) or "")
+    n = FakeNotifier()
+    config.schema_tick(conn, clock, n)
+    assert _open_alerts(conn) == ["schema_extension"]
+    with pytest.raises(InvalidInputError, match="the rules in force don't compile"):
+        config.parse(conn, "version: 1\nschema: default\n")
+    _apply(conn, clock, "version: 1\nschema: default\nrules: default\n")
+    config.schema_tick(conn, clock, n)
+    assert _open_alerts(conn) == []
+    assert config.rules_problem(conn) is None

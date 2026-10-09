@@ -24,6 +24,13 @@ against the new effective schema, so removing a field or value a rule uses is re
 the rule (the OD-452 pattern). An extension over a cap is refused with every violation listed
 (`schema_limit`); the dry run carries the budget line and the prompt lines the extension adds.
 
+Extensions are off in v2.0.0 (OD-481; `ecf.schema.EXTENSIONS_ENABLED`): a `schema` section other
+than `default` is refused, `schema: default` still removes a stored extension, and a stored one
+(applied on an rc, or imported in a bundle) is kept but ignored: the effective schema is the
+shipped one, so the gate key, prompts and rules use it. Applied rules that don't compile
+against the effective schema (they use the ignored extension) give way to the starter rules
+and a System Error until they are changed (`current_rules`, `schema_tick`).
+
 What reads each section in V1.2: `org_domains` (facts and triggers, §7.2, §8.5). The others are
 validated and stored for their consumers: rules and the action policy (V1.3, with the classifier),
 the move-folder allow-list (V1.3), the forward allow-list and templates (V1.5, with sending).
@@ -41,10 +48,12 @@ from typing import Any, cast
 
 from ecf.errors import InvalidInputError, SchemaLimitError
 from ecf.schema import (
+    EXTENSIONS_OFF,
     CompiledSchema,
     extend_schema,
     extension_budget,
     extension_text,
+    extensions_enabled,
     load_schema,
     shipped_fallback,
 )
@@ -119,12 +128,15 @@ def _stored(conn: sqlite3.Connection, section: str) -> Any:
 def current_schema(conn: sqlite3.Connection) -> CompiledSchema:
     """The effective schema: the shipped one with the install's extension (OD-478). A stored
     extension that no longer compiles (a later release added a name it uses) gives the shipped
-    schema keyed apart (`shipped_fallback`, fail closed); `schema_tick` raises a System Error."""
+    schema keyed apart (`shipped_fallback`, fail closed); `schema_tick` raises a System Error.
+    While extensions are off (OD-481) a stored extension is ignored: the shipped schema."""
     return _effective_schema(_stored(conn, "schema"))
 
 
 def _effective_schema(ext: Any) -> CompiledSchema:
-    return load_schema() if ext is None else _tolerant(ordered_json(ext))
+    if ext is None or not extensions_enabled():
+        return load_schema()
+    return _tolerant(ordered_json(ext))
 
 
 @functools.lru_cache(maxsize=8)
@@ -143,9 +155,10 @@ def _extended(ext_json: str) -> CompiledSchema:
 
 
 def extension_problem(conn: sqlite3.Connection) -> str | None:
-    """Why the stored extension no longer compiles; None when it does (or there is none)."""
+    """Why the stored extension no longer compiles; None when it does (or there is none, or
+    extensions are off and it is ignored, OD-481)."""
     ext = _stored(conn, "schema")
-    if ext is None:
+    if ext is None or not extensions_enabled():
         return None
     try:
         _extended(ordered_json(ext))
@@ -155,26 +168,54 @@ def extension_problem(conn: sqlite3.Connection) -> str | None:
 
 
 def schema_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
-    """Each tick: a System Error while the stored extension doesn't compile, resolved after."""
+    """Each tick: a System Error while the stored extension doesn't compile, or the applied
+    rules don't compile against the effective schema; resolved after."""
     problem = extension_problem(conn)
-    if problem is None:
-        health.resolve_alert(conn, clock, notifier, SCHEMA_ALERT, None)
+    if problem is not None:
+        health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
+                          "the schema extension no longer compiles with this version"
+                          f" ({problem[:200]}); ecf classifies with the built-in schema and"
+                          " live addresses are back in assist. Fix: change the extension, or"
+                          " `schema: default`, with ecf config apply")  # fmt: skip
         return
-    health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
-                      "the schema extension no longer compiles with this version"
-                      f" ({problem[:200]}); ecf classifies with the built-in schema and live"
-                      " addresses are back in assist. Fix: change the extension, or `schema:"
-                      " default`, with ecf config apply")  # fmt: skip
+    broken = rules_problem(conn)
+    if broken is not None:
+        health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
+                          f"the applied rules don't compile against the schema in use"
+                          f" ({broken[:200]}); ecf uses the starter rules until they change."
+                          " Fix: apply rules that don't use the schema extension, with ecf"
+                          " config apply")  # fmt: skip
+        return
+    health.resolve_alert(conn, clock, notifier, SCHEMA_ALERT, None)
+
+
+def rules_problem(conn: sqlite3.Connection) -> str | None:
+    """Why the applied rules don't compile against the effective schema (they use a stored
+    extension that is ignored or no longer compiles); None when they do, or none are applied."""
+    stored = _stored(conn, "rules")
+    if stored is None:
+        return None
+    try:
+        rules.compile_rules(canonical_json(stored), current_schema(conn), source="applied rules")
+    except InvalidInputError as exc:
+        return exc.detail
+    return None
 
 
 def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
     """The applied rules, or the starter rules when none were applied, compiled against the
-    effective schema."""
+    effective schema. Applied rules that don't compile against it (they use a stored extension
+    that is ignored, OD-481, or no longer compiles) give way to the starter rules, so mail is
+    still decided; `schema_tick` raises a System Error until they change."""
     schema = current_schema(conn)
     stored = _stored(conn, "rules")
     if stored is None:
         return rules.load_starter_rules(schema)
-    return rules.compile_rules(canonical_json(stored), schema, source="applied rules")
+    try:
+        return rules.compile_rules(canonical_json(stored), schema, source="applied rules")
+    except InvalidInputError:
+        log.error("config.rules_broken")
+        return rules.load_starter_rules(schema)
 
 
 # ---------------------------------------------------------------------------- parse and validate
@@ -206,7 +247,11 @@ def _check_sections(doc: dict[str, Any]) -> None:
         raise InvalidInputError("config: org_domains has no default; list your domains")
 
 
-def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
+def validate(conn: sqlite3.Connection, doc: dict[str, Any], *,
+             imported: bool = False) -> dict[str, Any]:  # fmt: skip
+    """`imported`: a bundle's config (OD-359). While extensions are off (OD-481) a bundle's
+    extension is checked and kept but ignored, like one stored before; `ecf config apply`
+    refuses one."""
     _check_sections(doc)
     now = current(conn)
     out: dict[str, Any] = {k: DEFAULT for k, v in doc.items() if v == DEFAULT}
@@ -227,7 +272,7 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
         _forwards(conn, now["forward_allow_list"], org, listed)
     if "action_policy" in doc and "action_policy" not in out:
         out["action_policy"] = _policy(doc["action_policy"])
-    _schema_and_rules(conn, doc, out, now, folders)
+    _schema_and_rules(conn, doc, out, now, folders, imported=imported)
     if "export_schedule" in doc and "export_schedule" not in out:
         if doc["export_schedule"] not in EXPORT_SCHEDULES:
             raise InvalidInputError("config: export_schedule: daily, weekly or off")
@@ -239,10 +284,14 @@ def validate(conn: sqlite3.Connection, doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[str, Any],
-                      now: dict[str, Any], folders: list[str]) -> None:  # fmt: skip
-    """`schema` first, then `rules` against the effective schema (OD-478)."""
+                      now: dict[str, Any], folders: list[str], *,
+                      imported: bool = False) -> None:  # fmt: skip
+    """`schema` first, then `rules` against the effective schema (OD-478). While extensions
+    are off (OD-481) the effective schema is the shipped one, whatever is stored."""
     rules_doc = doc["rules"] if "rules" in doc and "rules" not in out else None
     if "schema" in doc and "schema" not in out:
+        if not extensions_enabled() and not imported:
+            raise InvalidInputError(f"config: schema: {EXTENSIONS_OFF}")
         out["schema"] = _schema(conn, doc["schema"], now["schema"],
                                 rules_doc or _effective(out, now, "rules"))  # fmt: skip
     if doc.get("schema") == DEFAULT:
@@ -533,6 +582,8 @@ def _describe_change(section: str, old: Any, new: Any) -> str:  # noqa: PLR0911 
     if section == "export_schedule":
         return f"{old or 'daily'} to {new}"
     if section == "schema":
+        if not extensions_enabled():  # only a removal gets here; the prompt doesn't change
+            return f"unused while extensions are off: {_schema_change(old or {}, new)}"
         return f"{SCHEMA_LEAD}: {_schema_change(old or {}, new)}"
     if section == "org_addresses":
         was_addr: list[dict[str, str]] = old or []
@@ -648,8 +699,10 @@ def _describe_apply(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
 
 
 def _lead(changes: list[dict[str, str]]) -> str:
-    """A schema change always leads, whatever the summary's length cuts (OD-478)."""
-    return f"{SCHEMA_LEAD}; " if any(c["section"] == "schema" for c in changes) else ""
+    """A schema change always leads, whatever the summary's length cuts (OD-478); not while
+    extensions are off, when the stored one is unused and removing it changes no prompt."""
+    lead = extensions_enabled() and any(c["section"] == "schema" for c in changes)
+    return f"{SCHEMA_LEAD}; " if lead else ""
 
 
 def personal_targets(before: dict[str, Any], doc: dict[str, Any]) -> str:
@@ -705,7 +758,8 @@ def apply(
 
     stepup.consume(conn, clock, "config_apply", {"document": doc}, nonce)
     now = to_ts(clock.now())
-    schema_changed = any(c["section"] == "schema" for c in changes)
+    # while extensions are off the effective schema stays the shipped one (OD-481)
+    schema_changed = extensions_enabled() and any(c["section"] == "schema" for c in changes)
     with write_tx(conn):
         for c in changes:
             s = c["section"]

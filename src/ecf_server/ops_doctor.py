@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.schema import extension_budget, load_schema
+from ecf.schema import extension_budget, extensions_enabled, load_schema
 from ecf_server import addresses, alert_mail, alerts, config, export_keys, probe, scheduled_export
 from ecf_server.clock import Clock, from_ts
 
@@ -63,13 +63,22 @@ def checks(
 def schema(conn: sqlite3.Connection) -> dict[str, str]:
     ext = config.current(conn)["schema"]
     v = load_schema().version
-    if ext is None:
-        return _c("schema", OK, f"v{v}, built in (no extension)")
     problem = config.extension_problem(conn)  # re-checked: a new release may clash with it
     if problem is not None:
         return _c("schema", FAIL, f"v{v}; the extension no longer compiles ({problem[:200]}),"
                   " so the built-in schema is used", "change the extension, or `schema:"
                   " default`, with ecf config apply")  # fmt: skip
+    broken = config.rules_problem(conn)  # the applied rules use an extension that isn't in use
+    if broken is not None:
+        return _c("schema", FAIL, f"v{v}; the applied rules don't compile against the schema in"
+                  f" use ({broken[:200]}), so the starter rules are used", "apply rules that"
+                  " don't use the schema extension, with ecf config apply")  # fmt: skip
+    if ext is None:
+        return _c("schema", OK, f"v{v}, built in (no extension)")
+    if not extensions_enabled():  # OD-481: kept but ignored
+        return _c("schema", WARN, f"v{v}, built in; an extension is stored but extensions are"
+                  " off in this version", "`ecf config apply` with `schema: default` removes"
+                  " it")  # fmt: skip
     budget = extension_budget(load_schema(), ext)
     detail = f"v{v} with an extension; {budget['line'].removeprefix('schema: ')}"
     if budget["near"]:

@@ -183,6 +183,7 @@ def test_many_failures_in_an_hour_raise_a_system_error_that_resolves(
     assert conn.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_the_failure_alert_names_the_schema_extension_when_prompts_were_cut(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

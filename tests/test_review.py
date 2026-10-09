@@ -128,6 +128,7 @@ def test_the_fix_form_offers_the_schema_choices(
     assert click is not None and click.values == {"category": "invoice"}
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_extension_fields_are_on_the_line_and_in_the_fix_form(
     conn: sqlite3.Connection, morning: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:

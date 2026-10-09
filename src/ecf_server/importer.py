@@ -209,7 +209,7 @@ def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]
     doc = {section_of[k]: json.loads(v) for k, v in kept.items() if k in section_of}
     if doc:
         try:
-            return config.validate(staged, doc)
+            return config.validate(staged, doc, imported=True)  # an extension: kept, ignored
         except (InvalidInputError, SchemaLimitError) as exc:  # an extension over a cap too
             raise BadBundleError(f"the bundle's config fails its checks: {exc.detail}") from None
     return {}
