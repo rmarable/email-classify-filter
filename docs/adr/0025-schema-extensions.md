@@ -1,7 +1,10 @@
 # ADR 0025: schema extensions through `ecf config apply`, with fixed caps
 
-- **Status:** draft (2026-10-08; OD-478); built on branch `ext-core`; ships in
-  `v2.0.0` (planned for `v2.1.0`; moved by operator decision 2026-10-08)
+- **Status:** draft (2026-10-08; OD-478); built on branch `ext-core`; moved into `v2.0.0`
+  (operator decision 2026-10-08), then held back (operator decision 2026-10-09, OD-481): built
+  but off in `v2.0.0` (`ecf.schema.EXTENSIONS_ENABLED`), planned for `v2.1.0` once their
+  dilution of the built-in fields is fixed and SPEC §1.5a item 2 passes (run `6b80a149` failed
+  it: −4.3 points on the built-in fields, fraud-guard recall 89/90; SPEC §21.2)
 - **Context source:** SPEC §7.1, §7.4, §9.3, §9.7, §13.2, §15.1, §15.3;
   `planning-docs/SCHEMA-V2-PLAN.md` step 4 (draft 1, after Phase R)
 
@@ -84,4 +87,8 @@ can't collide with names ecf already writes.
   neither is email content (SPEC §12.4).
 - Whether a full extension fits Gemma's context: by the measured token counts (SPEC §21.2) it
   fits `num_ctx` 6,144 (OD-477), but no run has used a full extension; unverified, confirm in
-  `v2.0.0`.
+  `v2.1.0`.
+- **While extensions are off** (`v2.0.0`, OD-481): `ecf config apply` refuses a `schema` section
+  other than `default`; a stored or imported extension is kept but ignored (the shipped schema
+  and gate key, an `ecf doctor` warning); applied rules that need it give way to the starter
+  rules with a System Error (SPEC §7.4, §9.7).

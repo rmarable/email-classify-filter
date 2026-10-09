@@ -13,6 +13,10 @@ An install may extend the shipped schema through `ecf config apply` (`schema` se
 §7.1, §9.7, OD-478): `extend_schema` appends the extension's fields after the shipped ones and
 its values to `category`; the extension's prompt text follows the shipped text, so the prompt
 prefix doesn't change. `check_extension` lists every violation of the caps and content rules.
+
+Extensions are built but off in v2.0.0 (OD-481; planned for v2.1.0): while `EXTENSIONS_ENABLED`
+is False the service refuses a `schema` section other than `default` and ignores a stored
+extension (the effective schema is the shipped one). The machinery here doesn't read the switch.
 """
 
 from __future__ import annotations
@@ -246,6 +250,17 @@ def load_schema_v1() -> CompiledSchema:
 
 
 # ---------------------------------------------------------------------------- extensions (OD-478)
+
+# The one switch (OD-481): off in v2.0.0, on from v2.1.0 once the extension check passes.
+EXTENSIONS_ENABLED = False
+EXTENSIONS_OFF = "schema extensions arrive in v2.1.0 (SPEC §7.1); remove the `schema` section"
+
+
+def extensions_enabled() -> bool:
+    """Whether an install's extension is applied and used (read at each call, so tests can turn
+    it on)."""
+    return EXTENSIONS_ENABLED
+
 
 # Field names an extension can't take: eval results keep these beside the schema's fields
 RESERVED_FIELDS = frozenset({"rule", "safety"})

@@ -296,6 +296,7 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
 # ---- submitting ------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_the_classifier_gets_the_effective_schema_and_is_checked_against_it(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -343,6 +344,7 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     assert [(i["id"], i["need"]) for i in q["items"]] == [(sid, "act")]
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_schema_change_while_held_releases_the_claim_for_a_new_classification(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
