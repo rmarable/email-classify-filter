@@ -909,6 +909,26 @@ def _out(text: str) -> None:
     sys.stdout.flush()
 
 
+def _review_cards(root: Path, fields: str | None, *, add: bool, cases: str | None, redo: bool,
+                  recheck: int) -> None:  # fmt: skip
+    from datetime import date  # noqa: PLC0415
+
+    from ecf import cli_card_review  # noqa: PLC0415
+    from ecf.prompts import require_terminal  # noqa: PLC0415
+
+    if fields is None:
+        raise InvalidInputError("--add, --cases, --redo and --recheck go with --review")
+    if recheck < 0:
+        raise InvalidInputError("--recheck takes a positive number")
+    globs = tuple(g.strip() for g in (cases or "").split(",") if g.strip())
+    require_terminal()
+    lines = cli_card_review.review(root, fields, read=input, write=_out, today=date.today(),
+                                   add=add, globs=globs, redo=redo, recheck=recheck)  # fmt: skip
+    for line in lines:
+        typer.echo(line)
+    typer.echo("commit reviews.jsonl, labels.jsonl and any changed cards to keep them")
+
+
 def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> None:
     from datetime import date  # noqa: PLC0415
 
@@ -932,7 +952,7 @@ def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> N
 
 
 @eval_app.command("label")
-def eval_label(
+def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; three modes
     case_id: Annotated[
         str | None, typer.Argument(help="One case (default: every pending one).")
     ] = None,
@@ -964,13 +984,51 @@ def eval_label(
         bool,
         typer.Option("--marked", help="With --corpus: go back to skipped or unsure messages."),
     ] = False,
+    review: Annotated[
+        str | None,
+        typer.Option(
+            "--review",
+            help="Blind review: answer these fields (comma-separated, or all) for every card"
+            " from the email alone, then compare with its labels (§16.1).",
+        ),
+    ] = None,
+    add: Annotated[
+        bool,
+        typer.Option("--add", help="With --review: also ask the fields a card leaves unlabelled."),
+    ] = False,
+    cases: Annotated[
+        str | None,
+        typer.Option(
+            "--cases", help="With --review: only cards whose id matches (globs, comma-separated)."
+        ),
+    ] = None,
+    redo: Annotated[
+        bool,
+        typer.Option("--redo", help="With --review: ask fields already reviewed on this file too."),
+    ] = False,
+    recheck: Annotated[
+        int,
+        typer.Option(
+            "--recheck",
+            help="With --review: ask N reviewed cards again (a seeded"
+            " sample) and report how often you answer the same.",
+        ),
+    ] = 0,
 ) -> None:
     """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
     toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
     note are flagged: the note says what to judge. With --corpus: label a real-mail corpus,
-    without seeing any model's answer."""
+    without seeing any model's answer. With --review: re-judge labels blind, from the email
+    alone; answers are logged in reviews.jsonl."""
     if corpus is not None or again or marked:
         _label_corpus(corpus, frozenset(again or ()), marked)
+        return
+    if review is not None or add or cases or redo or recheck:
+        if case_id or show_flags or results or status_only:
+            raise InvalidInputError(
+                "--review takes no case id, --show-flags, --results or --status"
+            )
+        _review_cards(root, review, add=add, cases=cases, redo=redo, recheck=recheck)
         return
     from datetime import UTC, datetime  # noqa: PLC0415
 
