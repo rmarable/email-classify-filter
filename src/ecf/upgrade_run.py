@@ -19,6 +19,16 @@ pass whose work all succeeds (OD-377). Addresses whose pinned model or classifie
 drop to `assist` at the service's first tick (stages.tick, §9.3; OD-381, OD-475); phase 2 names
 them by its own rules too, since the old CLI's pre-check can't see a change it doesn't know of
 (`_recount`; operator decision 2026-10-09).
+
+**Where an older version is reinstalled from** (v2.0.0-rc3, operator-approved fix 2026-10-09):
+`uv tool` records the wheel it installed from in `uv-receipt.toml`, and the next upgrade copies
+that wheel to its snapshot folder. A rollback (`ecf upgrade --to`, or phase 2's) that installed
+straight from `upgrades/<label>/` left the receipt naming a file the next upgrade with the same
+label deletes when it takes its snapshot again, so that upgrade failed with the service stopped.
+Every reinstall of an older version now goes through `keep_wheel`: a copy in
+`<data>/releases/<tag>/` (where `--to` downloads go; no snapshot deletes it), checked by sha256
+against the kept wheel. Phase 1 checks the old wheel is there before it stops anything, keeps a
+copy the snapshot would delete, and starts the service again if anything fails after the stop.
 """
 
 from __future__ import annotations
@@ -35,7 +45,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ecf import upgrade_check
+from ecf import release_source, upgrade_check
 from ecf.client import LocalClient
 from ecf.errors import EcfError
 from ecf.paths import Paths
@@ -88,33 +98,69 @@ def start(paths: Paths, tools: Tools, *, old_version: str, new_version: str, new
     uv = tools.uv()
     if uv is None:
         raise EcfError("uv isn't on PATH; ecf upgrade installs with `uv tool install`")
+    if not old_wheel.is_file():
+        raise EcfError(f"the wheel ecf {old_version} was installed from is gone ({old_wheel}), so"
+                       " a failed upgrade couldn't go back; nothing was stopped; reinstall ecf"
+                       f" {old_version} from its wheel with `uv tool install --force`")  # fmt: skip
     label = f"{old_version}-to-{new_version}"
+    source = old_wheel
+    if _inside(old_wheel, paths.data_dir / "upgrades"):  # a snapshot may delete it (v2.0.0-rc3)
+        source = keep_wheel(paths, old_version, old_wheel)
+        tools.echo(f"keeping {old_wheel.name} in {source.parent}")
     _stopping_on_purpose(paths)
     tools.echo("stopping the service")
     tools.manager.stop()
-    tools.echo("copying the database")
-    if tools.run([str(tools.server()), "snapshot", "--install", paths.install,
-                  "--label", label]) != 0:  # fmt: skip
+    try:
+        tools.echo("copying the database")
+        if tools.run([str(tools.server()), "snapshot", "--install", paths.install,
+                      "--label", label]) != 0:  # fmt: skip
+            raise EcfError("the database copy failed")
+        folder = paths.data_dir / "upgrades" / label
+        kept = folder / old_wheel.name
+        shutil.copy2(source, kept)
+        state = {"from": old_version, "to": new_version, "label": label,
+                 "folder": str(folder), "old_wheel": str(kept), "new_wheel": str(new_wheel),
+                 "phase": "installing", "started_at": _now(), "pin_changes": pin_changes,
+                 "affected": affected}  # fmt: skip
+        write_state(paths, state)
+    except Exception as exc:  # anything after the stop: the old service runs again
         tools.manager.start()
-        raise EcfError("the database copy failed; nothing changed and the service is started"
-                       " again")  # fmt: skip
-    folder = paths.data_dir / "upgrades" / label
-    kept = folder / old_wheel.name
-    shutil.copy2(old_wheel, kept)
-    state = {"from": old_version, "to": new_version, "label": label, "folder": str(folder),
-             "old_wheel": str(kept), "new_wheel": str(new_wheel), "phase": "installing",
-             "started_at": _now(), "pin_changes": pin_changes, "affected": affected}  # fmt: skip
-    write_state(paths, state)
+        why = str(exc) if isinstance(exc, EcfError) else f"{type(exc).__name__}: {exc}"
+        raise EcfError(f"{why}; nothing changed and the service is started again") from exc
     tools.echo(f"installing {new_wheel.name}")
     if tools.run([uv, "tool", "install", "--force", str(new_wheel)]) != 0:
         tools.echo("the install failed; putting the old version back")
-        tools.run([uv, "tool", "install", "--force", str(kept)])
+        tools.run([uv, "tool", "install", "--force", str(source)])
         tools.manager.start()
         write_state(paths, state | {"phase": "failed", "why": "install"})
         raise EcfError("the new version didn't install; the old one is back and running")
     write_state(paths, state | {"phase": "migrating"})
     ecf = Path(sys.prefix) / "bin" / "ecf"
     tools.execv(str(ecf), [str(ecf), "--install", paths.install, "upgrade", "--continue"])
+
+
+def keep_wheel(paths: Paths, version: str, wheel: Path) -> Path:
+    """`wheel` (version `version`) copied to `<data>/releases/<tag>/`, checked against it by
+    sha256; returns the copy, the file to `uv tool install` from. `uv-receipt.toml` then names a
+    file no snapshot deletes (v2.0.0-rc3; SPEC §11.10)."""
+    if not wheel.is_file():
+        raise EcfError(f"the wheel of ecf {version} is missing: {wheel}")
+    want = release_source.sha256(wheel)
+    tag = release_source.version_tag(version) or f"v{version}"
+    dest = paths.data_dir / "releases" / tag / wheel.name
+    if not (dest.is_file() and release_source.sha256(dest) == want):
+        dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = dest.with_name(f".{dest.name}.tmp")
+        shutil.copy2(wheel, tmp)
+        os.replace(tmp, dest)
+    if release_source.sha256(dest) != want:
+        raise EcfError(f"the copy of {wheel.name} in {dest.parent} doesn't match the kept wheel's"
+                       " sha256")  # fmt: skip
+    return dest
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    return path.resolve().is_relative_to(folder.resolve())
 
 
 def resume(paths: Paths, tools: Tools, *, regrant: bool) -> dict[str, Any]:
@@ -178,10 +224,11 @@ def downgrade(paths: Paths, tools: Tools, *, version: str, current: str,
         raise EcfError(f"there's no copy from {version} here; going back needs the snapshot of"
                        f" the upgrade from {version} to {current} (or ecf export, then ecf import"
                        " under the older version)")  # fmt: skip
-    folder, wheel = found
+    folder, kept = found
     uv = tools.uv()
     if uv is None:
         raise EcfError("uv isn't on PATH; ecf upgrade installs with `uv tool install`")
+    wheel = keep_wheel(paths, version, kept)  # never from upgrades/: a snapshot may delete it
     label = folder.name
     _stopping_on_purpose(paths)
     tools.echo("stopping the service")
@@ -233,7 +280,13 @@ def _roll_back(paths: Paths, tools: Tools, state: dict[str, Any], why: str) -> d
     tools.manager.stop()
     _swap_in(paths, Path(state["folder"]) / "ecf.db")
     uv = tools.uv() or "uv"
-    tools.run([uv, "tool", "install", "--force", state["old_wheel"]])
+    old = Path(state["old_wheel"])
+    try:
+        old = keep_wheel(paths, str(state["from"]), old)
+    except (EcfError, OSError) as exc:
+        tools.echo(f"couldn't keep a copy of {old.name} outside the snapshot ({exc}); installing"
+                   " the kept one")  # fmt: skip
+    tools.run([uv, "tool", "install", "--force", str(old)])
     tools.manager.start()
     rolled = state | {"phase": "rolled_back", "why": why, "finished_at": _now()}
     write_state(paths, rolled)

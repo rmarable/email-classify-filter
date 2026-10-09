@@ -6,6 +6,11 @@ backup-API copy of the database to `<data>/upgrades/<label>/ecf.db` (folder 0700
 `ecf upgrade` puts the running version's wheel beside it, so a rollback reinstalls exactly what
 ran. Only the newest `KEEP` upgrade folders are kept (operator decision 2026-10-03, OD-376). The
 copy holds what the live database does (grants, nonces, jobs); it never leaves this computer.
+
+Taking a snapshot again under the same label (an upgrade after a rollback) replaces the folder
+but keeps its wheel files: until v2.0.0-rc3 a rollback installed the older version straight from
+the folder, so `uv-receipt.toml` may still name that wheel (SPEC §11.10; operator-approved fix
+2026-10-09).
 """
 
 from __future__ import annotations
@@ -39,9 +44,11 @@ def take(paths: Paths, label: str) -> Path:
         base.mkdir(mode=0o700, exist_ok=True)
         base.chmod(0o700)
         target = base / label
-        if target.exists():
-            shutil.rmtree(target)
-        target.mkdir(mode=0o700)
+        if target.is_dir() and not target.is_symlink():
+            _empty_but_wheels(target)
+        else:
+            target.mkdir(mode=0o700)
+        target.chmod(0o700)
         src = db.connect(paths.db)
         try:
             dst = sqlite3.connect(target / "ecf.db")
@@ -56,6 +63,16 @@ def take(paths: Paths, label: str) -> Path:
         return target
     finally:
         lock.close()
+
+
+def _empty_but_wheels(target: Path) -> None:
+    for f in target.iterdir():
+        if f.suffix == ".whl" and f.is_file() and not f.is_symlink():
+            continue  # uv's record may name it
+        if f.is_dir() and not f.is_symlink():
+            shutil.rmtree(f)
+        else:
+            f.unlink()
 
 
 def prune(paths: Paths, keep: int = KEEP) -> list[str]:

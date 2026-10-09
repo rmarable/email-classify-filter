@@ -6,6 +6,7 @@ mark."""
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import sys
 import zipfile
@@ -137,6 +138,113 @@ def test_no_uv_stops_nothing(paths: Paths, wheels: tuple[Path, Path]) -> None:
     assert m.calls == []
 
 
+def test_a_missing_old_wheel_stops_nothing(paths: Paths, wheels: tuple[Path, Path]) -> None:
+    wheels[0].unlink()
+    tools, m, ran = _tools(paths)
+    with pytest.raises(EcfError, match="nothing was stopped"):
+        _start(paths, tools, wheels)
+    assert m.calls == [] and ran == []
+
+
+def test_a_failure_after_the_stop_starts_the_old_service_again(
+    paths: Paths, wheels: tuple[Path, Path]
+) -> None:
+    tools, m, ran = _tools(paths)
+    real_run = tools.run
+
+    def run(args: list[str]) -> int:
+        code = real_run(args)
+        if args[1] == "snapshot":
+            wheels[0].unlink()  # the wheel vanishes between the check and the copy
+        return code
+
+    tools.run = run
+    with pytest.raises(EcfError, match=r"FileNotFoundError.*the service is started again"):
+        _start(paths, tools, wheels)
+    assert m.calls == ["stop", "start"] and len(ran) == 1  # no install was tried
+    assert upgrade_run.read_state(paths) is None
+
+
+def _v1_snapshot(paths: Paths, ran: list[list[str]], receipt: list[Path]
+                 ) -> upgrade_run.Run:  # fmt: skip
+    """`ecf-server snapshot` as v1.0.0 has it (the folder deleted and made again) and `uv tool
+    install`, which records the wheel it installed from in `receipt`."""
+
+    def run(args: list[str]) -> int:
+        ran.append(args)
+        if args[1] == "snapshot":
+            folder = paths.data_dir / "upgrades" / args[-1]
+            if folder.exists():
+                shutil.rmtree(folder)
+            folder.mkdir(parents=True)
+            (folder / "ecf.db").write_bytes(paths.db.read_bytes())
+        elif args[1:4] == ["tool", "install", "--force"]:
+            assert Path(args[4]).is_file(), f"uv installs from a missing file: {args[4]}"
+            receipt[0] = Path(args[4])
+        return 0
+
+    return run
+
+
+def test_upgrade_rollback_and_the_same_upgrade_again(
+    paths: Paths, wheels: tuple[Path, Path]
+) -> None:
+    """The v2.0.0-rc2 release gate (2026-10-09): 1.0.0 -> rc2, `--to v1.0.0`, -> rc2 again. The
+    rollback left uv's receipt naming the wheel in `upgrades/1.0.0-to-2.0.0rc2/`; the second
+    upgrade's snapshot deleted that folder and its copy of the receipt's wheel failed with the
+    service stopped. Phase 1 of the second upgrade is v1.0.0's code, so the rollback must leave
+    the receipt pointing outside `upgrades/`."""
+    old, new = wheels
+    receipt = [old]
+    tools, m, ran = _tools(paths)
+    tools.run = _v1_snapshot(paths, ran, receipt)
+    upgrades = paths.data_dir / "upgrades"
+    label = upgrades / "0.1.0-to-0.2.0"
+    for attempt in (1, 2):
+        with pytest.raises(Handover):  # phase 1 hands over; the new version is installed
+            upgrade_run.start(paths, tools, old_version="0.1.0", new_version="0.2.0",
+                              new_wheel=new, old_wheel=receipt[0], pin_changes=[],
+                              affected=[])  # fmt: skip
+        assert receipt[0] == new and (label / old.name).read_bytes() == b"old wheel"
+        if attempt == 1:
+            old.unlink()  # the wheel 0.1.0 was first installed from needn't stay
+            upgrade_run.downgrade(paths, tools, version="0.1.0", current="0.2.0",
+                                  settled=False)  # fmt: skip
+            assert not receipt[0].is_relative_to(upgrades)
+            assert receipt[0] == paths.data_dir / "releases" / "v0.1.0" / old.name
+            assert receipt[0].read_bytes() == b"old wheel"
+    assert m.calls == ["stop", "stop", "start", "stop"]  # never stopped and left down
+
+
+def test_a_receipt_inside_a_snapshot_folder_is_kept_before_the_snapshot(
+    paths: Paths, wheels: tuple[Path, Path]
+) -> None:
+    """An install rolled back by rc2 or earlier: the receipt names the wheel inside the folder the
+    snapshot is about to replace. A v2 phase 1 keeps a copy in `releases/` first."""
+    label = paths.data_dir / "upgrades" / "0.1.0-to-0.2.0"
+    label.mkdir(parents=True)
+    inside = label / wheels[0].name
+    inside.write_bytes(b"old wheel")
+    receipt = [inside]
+    tools, m, ran = _tools(paths, {f"install:{wheels[1].name}": 1})
+    real_run = tools.run
+    v1 = _v1_snapshot(paths, [], receipt)
+
+    def run(args: list[str]) -> int:
+        v1(args)
+        return real_run(args)
+
+    tools.run = run
+    with pytest.raises(EcfError, match="old one is back"):
+        upgrade_run.start(paths, tools, old_version="0.1.0", new_version="0.2.0",
+                          new_wheel=wheels[1], old_wheel=inside, pin_changes=[],
+                          affected=[])  # fmt: skip
+    stable = paths.data_dir / "releases" / "v0.1.0" / wheels[0].name
+    assert inside.read_bytes() == b"old wheel" and stable.read_bytes() == b"old wheel"
+    assert ran[-1] == ["/usr/bin/uv", "tool", "install", "--force", str(stable)]
+    assert receipt[0] == stable and m.calls == ["stop", "start"]
+
+
 def _prepared(paths: Paths, wheels: tuple[Path, Path]) -> None:
     tools, _m, _ran = _tools(paths)
     with pytest.raises(Handover):
@@ -154,7 +262,7 @@ def test_a_failed_migration_restores_everything(paths: Paths, wheels: tuple[Path
     done = upgrade_run.resume(paths, tools, regrant=False)
     assert done["phase"] == "rolled_back" and done["why"] == "migrate"
     assert paths.db.read_bytes() == before and not Path(str(paths.db) + "-wal").exists()
-    assert ran[-1][-1].endswith(wheels[0].name)  # the old wheel again
+    assert ran[-1][-1] == str(paths.data_dir / "releases" / "v0.1.0" / wheels[0].name)
     assert m.calls == ["stop", "start"]
 
 

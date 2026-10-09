@@ -5,6 +5,10 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.0.0 (not yet tagged)
 
+## v2.0.0-rc3 (not yet tagged)
+
+- `ecf upgrade` after going back with `ecf upgrade --to` no longer fails with the service stopped: going back now reinstalls the older version from a copy in the install's `releases` folder, checked by SHA-256, instead of from the upgrade's snapshot folder, which the next upgrade replaces; an upgrade checks the old version's wheel is there before it stops anything and starts the service again if a later step fails (operator-approved fix 2026-10-09; SPEC §11.10).
+
 ## v2.0.0-rc2 (2026-10-09)
 
 - An email asking for employees' tax or payroll data to be sent to the writer ("Send me the W-2s for all employees as one PDF") is escalated as possible fraud when it comes from outside, even with no money mentioned and whatever fraud risk the model gives it; W-9 requests are not affected (OD-482; SPEC §8.5, §8.6).

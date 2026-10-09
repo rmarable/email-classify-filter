@@ -169,6 +169,24 @@ def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> Non
         upgrade_snapshot.take(paths, "../escape")
 
 
+def test_a_snapshot_again_under_the_same_label_keeps_its_wheels(tmp_path: Path) -> None:
+    """A rollback by rc2 or earlier left uv's receipt naming the wheel in the folder (§11.10)."""
+    paths = Paths("t", tmp_path / "home")
+    c = db.connect(paths.db)
+    db.migrate(c)
+    c.close()
+    d = upgrade_snapshot.take(paths, "1.0.0-to-2.0.0rc2")
+    (d / "email_classify_filter-1.0.0-py3-none-any.whl").write_bytes(b"old wheel")
+    (d / "ecf.rollback.db").write_bytes(b"x")
+    (d / "before-downgrade").mkdir()
+    (d / "before-downgrade" / "ecf.db").write_bytes(b"x")
+    again = upgrade_snapshot.take(paths, "1.0.0-to-2.0.0rc2")
+    assert sorted(p.name for p in again.iterdir()) == [
+        "ecf.db", "email_classify_filter-1.0.0-py3-none-any.whl"]  # fmt: skip
+    assert (again / "email_classify_filter-1.0.0-py3-none-any.whl").read_bytes() == b"old wheel"
+    assert oct(again.stat().st_mode & 0o777) == "0o700"
+
+
 def test_cli(conn: sqlite3.Connection, db_path: Path, tmp_path: Path,
              monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
     del conn
