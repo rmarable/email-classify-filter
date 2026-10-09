@@ -296,6 +296,23 @@ def test_the_quick_favour_opener_escalates_without_the_model(
     assert case["current"]["rule"] == "fraud_guard" and "escalate" in case["current"]["actions"]
 
 
+@pytest.mark.parametrize("case_id", ["fraud-w2-request", "free-org-dana-chief-tax-forms"])
+def test_the_w2_request_escalates_without_the_model(
+    tmp_path: Path, clock: FakeClock, case_id: str
+) -> None:
+    """OD-482: the W-2 scam escalates through rule 1's tax_form_request clause even when the model
+    rates its fraud risk low (it did once with a schema extension; the regulatory rule took it)."""
+    (tmp_path / "eml").mkdir()
+    row = next(json.loads(line) for line in (SYNTHETIC / "labels.jsonl").read_text().splitlines()
+               if json.loads(line)["id"] == case_id)  # fmt: skip
+    (tmp_path / row["file"]).write_bytes((SYNTHETIC / row["file"]).read_bytes())
+    row["expected"]["labels"]["fraud_risk"] = "low"
+    (tmp_path / "labels.jsonl").write_text(json.dumps(row) + "\n")
+    starter = rules.load_starter_rules(_schema())
+    [case] = ruletest.run(clock, starter, STARTER.read_text("utf-8"), tmp_path)["cases"]
+    assert case["current"]["rule"] == "fraud_guard" and "escalate" in case["current"]["actions"]
+
+
 def _schema() -> Any:
     from ecf.schema import load_schema  # noqa: PLC0415
 

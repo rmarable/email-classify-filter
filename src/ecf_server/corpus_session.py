@@ -25,7 +25,7 @@ from ecf_server import corpus
 IDLE_S = 15 * 60
 SHOWN_FACTS = ("auth_result", "sender_origin", "from_org_address", "impersonates_internal",
                "reply_to_mismatch", "self_sent", "sender_seen_before", "payment_keyword",
-               "gift_card_keyword", "bec_opener")  # fmt: skip
+               "gift_card_keyword", "bec_opener", "tax_form_request")  # fmt: skip
 
 
 @dataclass
