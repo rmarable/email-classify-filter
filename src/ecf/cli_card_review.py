@@ -77,10 +77,11 @@ LABEL_TEXTS["category"] = {
     " (notice, audit, inquiry, filing demand), or someone claiming to be one.",
     "marketing": "Sent to many: newsletters, promotions, advertising.",
     "notification": "Informs only, and fits no other value.",
-    "action_alert": "Machine or service asking someone to act (expiring certificate or domain,"
-    " quota reached, backup failed).",
-    "account_security": "Sign-in alert, password reset, verification code or security notice"
-    " that asks nothing beyond signing in as usual.",
+    "action_alert": "Machine or service asking someone to act on a system, not on account"
+    " access: expiring certificate or domain, quota reached, backup or job failed.",
+    "account_security": "About access to an account: sign-ins, new devices, password or two-step"
+    " changes, verification codes, security warnings; may ask you to review or change something"
+    " in the account itself.",
     "shipping": "About a delivery: tracking, delivered, missed, returns.",
     "appointment": "Meeting or service booking, or a reminder for one (dentist, salon,"
     " restaurant, car service).",
