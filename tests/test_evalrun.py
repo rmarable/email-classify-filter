@@ -7,6 +7,7 @@ import json
 import shutil
 import sqlite3
 import stat
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -43,12 +44,18 @@ def root(tmp_path: Path) -> Path:
     return r
 
 
-@pytest.fixture(autouse=True)
-def _reset() -> None:
+def _clear() -> None:
     evalrun.RUN.set(state="idle", run_id="", done=0, total=0, result=None, detail="")
     evalrun.RUN.stop.clear()
     if modelq.EXCLUSIVE.held():
         modelq.EXCLUSIVE.release()
+
+
+@pytest.fixture(autouse=True)
+def _reset() -> Iterator[None]:
+    _clear()
+    yield
+    _clear()  # module state is shared with other test files on the same xdist worker
 
 
 def _inline(work: Any) -> None:
