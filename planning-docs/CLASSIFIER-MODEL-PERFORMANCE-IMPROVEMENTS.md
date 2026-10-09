@@ -46,13 +46,14 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
   credentials or access on this email's say-so, whatever the pattern"; `high` a known fraud
   pattern, with examples (changed bank details, gift cards, employee tax or payroll data,
   credentials, someone posing as a colleague or executive) marked as examples, not a list.
-- `sender_type` (labelling rule, operator decision 2026-10-09, SPEC §16.1): `automated` takes
-  precedence over vendor/company; `team` = a colleague at your own organization acting in that
-  role; `vendor` = "Firms our organization buys from or pays" (incl. its bank, insurer, SaaS,
-  payroll provider); `company` = "Firms we do business with personally, or firms we don't buy
-  from (a cold pitch, a partner)"; friend/family only when the content shows the relationship;
-  the apparent role, so an impostor posing as a vendor is `vendor` (fraud_risk carries the doubt);
-  `unknown` only when the role can't be told.
+- `sender_type` (labelling rule, operator decisions 2026-10-09, SPEC §16.1): the value texts
+  are SPEC §16.1's: `vendor` someone we buy from or who serves us (personally or for the
+  organization, incl. their system-sent account, booking or order notices); `customer` someone we
+  sell to or serve; `team` colleague or co-worker acting on behalf of the organization; `company`
+  firms we don't buy from (a cold pitch, a partner); `friend` someone we know personally; `family`
+  relative; `person` someone we do not know very well (if at all); `automated` a machine reporting
+  on a system; the apparent role (an impostor takes the role claimed); `unknown` only when the
+  role can't be told.
 - Renderer: `_field_lines` (`schema.py:206`) prints ordinal level text; the schema format gains
   optional per-level descriptions.
 - Length: capped by the context probe (Stage 0), not a fixed 1,200 characters (P11).
