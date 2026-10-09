@@ -1097,6 +1097,13 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         Path | None,
         typer.Option("--corpus", help="Run a labelled real-mail corpus instead (§16.7)."),
     ] = None,
+    not_for_gate: Annotated[
+        bool,
+        typer.Option(
+            "--not-for-gate",
+            help="An experiment: saved and reported, never counts for the go-live gate.",
+        ),
+    ] = False,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
@@ -1112,8 +1119,9 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
-        if classifier_backend != "gemma" or not redact:
-            raise InvalidInputError("--classifier-backend and --no-redact are for the local model")
+        if classifier_backend != "gemma" or not redact or not_for_gate:
+            raise InvalidInputError("--classifier-backend, --no-redact and --not-for-gate are for"
+                                    " the local model")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch)  # fmt: skip
         return
@@ -1121,7 +1129,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
             "fraud_only": fraud_only, "battery_floor": battery_floor,
-            "backend": classifier_backend, "redact": redact})  # fmt: skip
+            "backend": classifier_backend, "redact": redact,
+            "for_gate": not not_for_gate})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     _follow_hints()
     if r.get("on_battery"):
@@ -1292,6 +1301,8 @@ def _run_caveat(m: dict[str, Any]) -> str:
         return f" (stopped after {m.get('cases')} cases)"
     if opts and not (opts.get("classifier") and opts.get("actor")):
         return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
+    if opts.get("for_gate") is False:
+        return " (not for the gate)"
     return ""
 
 

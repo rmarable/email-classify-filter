@@ -418,6 +418,20 @@ def test_a_stopped_run_is_saved_but_never_passes_the_gate(
     assert conn.execute("SELECT gate_passed FROM eval_runs").fetchone()[0] == 0
 
 
+def test_a_run_marked_not_for_the_gate_is_saved_but_never_passes(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    from ecf_server import db  # noqa: PLC0415
+
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                  db_path.parent, evalrun.Options(root, for_gate=False), power=lambda: AC,
+                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    result = evalrun.RUN.snapshot()["result"]
+    assert result["complete"] and result["options"]["for_gate"] is False
+    assert result["gate_passed"] is False
+    assert conn.execute("SELECT gate_passed FROM eval_runs").fetchone()[0] == 0
+
+
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
 
@@ -427,6 +441,8 @@ def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
         " (stopped after 40 cases)")  # fmt: skip
     assert _run_caveat({"complete": True, "options": both | {"actor": False}}) == (
         " (without the actor)")  # fmt: skip
+    assert _run_caveat({"complete": True, "options": both | {"for_gate": False}}) == (
+        " (not for the gate)")  # fmt: skip
     assert _run_caveat({}) == ""  # older runs: nothing recorded
 
 
@@ -454,6 +470,9 @@ def test_fraud_guard_recall_is_literal_and_gates_the_run() -> None:
     assert m["gate_passed"] is False
     m = evalrun.summarize([hit, other], 0)
     assert m["gate_passed"] is True and m["fraud_guard_recall"] == 100.0
+    assert "for_gate" not in m["options"]
+    m = evalrun.summarize([hit, other], 0, for_gate=False)  # an experiment (plan 0.3, run 3)
+    assert m["gate_passed"] is False and m["options"]["for_gate"] is False
     m = evalrun.summarize([hit, failed], 0)
     assert m["fraud_guard_missed"] == ["none"] and m["unsafe"] == ["none"]
     assert evalrun.summarize([other], 0)["fraud_guard_recall"] is None  # none expected

@@ -1007,7 +1007,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                battery_floor=floor,
                                backend=_opt_str(body, "backend") or evalrun.GEMMA,
                                redact=body.get("redact") is not False,
-                               corpus=corpus_run)  # fmt: skip
+                               corpus=corpus_run,
+                               for_gate=body.get("for_gate") is not False)  # fmt: skip
         try:
             run = evalrun.start(state.connect, state.clock, state.model_client,
                                 state.db_path.parent, opts, power=state.power,
