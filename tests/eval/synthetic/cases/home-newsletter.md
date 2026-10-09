@@ -12,7 +12,7 @@ subject: "Autumn routes, shoe care and a hill workout"
 date: 2026-10-15T06:30:00Z
 bulk: true
 expected:
-  labels: {category: marketing, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
+  labels: {category: marketing, sender_type: vendor, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
   rule: marketing
 ---
 This month: five autumn loops under 10 km, how to dry wet shoes without ruining them, and
