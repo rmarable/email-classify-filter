@@ -120,7 +120,8 @@ lower `MAX_INPUT_BYTES` when an extension is applied, or lower `MAX_EXT_TEXT`.
   then recomputes the derived facts (`bulk_corroborates` is derived in `facts.compute`,
   `facts.py:177`, before any override, and read by `policy.corroborated`, `policy.py:139-146`).
   `sender_origin` stays set from the internal set only (OD-443). An eval test proves a
-  pass+bulk+seen notice with a benign answer yields `mark_read`/`archive` before run 0.- Per-case `classifier` and `actor` metric objects (prompt, cached, output tokens; prompt_ns,
+  pass+bulk+seen notice with a benign answer yields `mark_read`/`archive` before run 0.
+- Per-case `classifier` and `actor` metric objects (prompt, cached, output tokens; prompt_ns,
   eval_ns, load_ns), summarized per role (today `summary.model` mixes roles,
   `evalrun.py:812,826`).
 - Environment at start and end: Ollama version, `num_ctx`, power, `pmset -g therm`, `api/ps`.

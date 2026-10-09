@@ -151,6 +151,33 @@ def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
     assert (result["fraud_guard_cases"], result["fraud_guard_missed"]) == (2, [])  # I1 again
 
 
+def test_a_cards_expected_facts_reach_the_hide_path(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Q1: the eval applies a card's expected facts as `ecf rules test` does and recomputes
+    `bulk_corroborates`, so an authenticated bulk notice from a seen sender, answered benignly,
+    is archived; the same notice without those facts isn't."""
+    from ecf_server import db  # noqa: PLC0415
+
+    card = (root / "cases" / "starter-control.md").read_text()
+    seen = card.replace("id: starter-control", "id: seen-bulk").replace(
+        "  rule: marketing", "  facts: {auth_result: pass, sender_seen_before: true}\n"
+        "  rule: marketing")  # fmt: skip
+    (root / "cases" / "seen-bulk.md").write_text(seen)
+    assert not build_all(root).findings
+    labels.confirm(root, "seen-bulk", date(2026, 10, 1))
+    benign = BEC | {"category": "marketing", "priority": "low", "requires_action": False,
+                    "payment_related": False, "fraud_risk": "none"}  # fmt: skip
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(benign)).client,
+                  db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
+                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
+    actions = {c.id: set(c.actions) for c in load_result(Path(path)).cases}
+    assert {"archive"} <= actions["seen-bulk"] and not {"archive", "mark_read"} & actions[
+        "starter-control"]  # fmt: skip
+
+
 def test_a_low_battery_pauses_and_releases_the_queue(
     monkeypatch: pytest.MonkeyPatch, root: Path, clock: FakeClock
 ) -> None:

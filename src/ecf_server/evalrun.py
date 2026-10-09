@@ -676,11 +676,14 @@ def deterministic_noise(cases: list[Case]) -> dict[str, int]:
 def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
             ) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
     """A case's facts and excerpts: a corpus message's stored ones (never parsed, R97), or a
-    synthetic card's, computed in the eval scratch."""
+    synthetic card's, computed in the eval scratch with its expected facts applied as `ecf rules
+    test` applies them (Q1)."""
     if case.facts is not None and case.excerpts is not None:
         return case.facts, case.excerpts
     raw = case.path.read_bytes()
-    return scratch.facts(raw, case.profile), parse(raw).excerpts(redact)
+    found = ruletest.with_expected(scratch.facts(raw, case.profile),
+                                   case.expected.get("facts") or {})  # fmt: skip
+    return found, parse(raw).excerpts(redact)
 
 
 def _labelled(results: list[CaseResult], cases: list[Case]

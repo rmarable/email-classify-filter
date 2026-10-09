@@ -8,10 +8,11 @@ synthetic set's fictitious org, `org_domains: [acme.example]`, one named staff m
 two named people in `org_addresses`; the scratch alone treats `freemail.example` as a public
 provider, standing in for gmail.com). There is no DNS (so `auth_result` is `none` unless the
 case's expected facts say otherwise). The case's expected facts then override the computed ones,
-except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and its
-expected labels stand in for the classifier's output. Nothing is written to the live database,
-and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones, `ecf eval
-build`) are skipped and listed.
+except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and the
+derived `bulk_corroborates` is recomputed from the result (`with_expected`, shared with `ecf eval
+run`); its expected labels stand in for the classifier's output. Nothing is written to the live
+database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones,
+`ecf eval build`) are skipped and listed.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from ecf_server import db, internal, precheck, rules
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
-from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
+from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo, corroborates
 from ecf_server.message import parse
 
 FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
@@ -146,6 +147,19 @@ class Scratch:
             conn.close()
 
 
+def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    """Computed facts with a case's expected ones over them, the internal set's excepted
+    (OD-443), and `bulk_corroborates` recomputed unless the case sets it: it is derived in
+    `facts.compute` before any override, so a card's `auth_result: pass` or `sender_seen_before`
+    would otherwise never reach the hide path (Q1)."""
+    out = found | {k: v for k, v in expected.items() if k not in INTERNAL_FACTS}
+    if "bulk_corroborates" not in expected:
+        out["bulk_corroborates"] = corroborates(bool(out.get("bulk_signal")),
+                                                out.get("auth_result"),
+                                                bool(out.get("sender_seen_before")))  # fmt: skip
+    return out
+
+
 def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, Any]:
     try:
         d = compiled.evaluate(inp)
@@ -167,7 +181,8 @@ def run(
             if case.path.stat().st_size > MAX_CASE_BYTES:  # skipped, named (V1.2 review)
                 missing.append(case.id)
                 continue
-            found = scratch.facts(case.path.read_bytes(), case.profile) | case.facts
+            found = with_expected(scratch.facts(case.path.read_bytes(), case.profile),
+                                  case.facts)  # fmt: skip
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
             before, after = _outcome(current, inp), _outcome(proposed, inp)

@@ -173,11 +173,15 @@ def compute(
         "reply_to_mismatch": reply_to_mismatch(parsed, from_domain, expected),
         "recipient_mismatch": address.email.lower() not in {*parsed.to, *parsed.cc},
         "bulk_signal": bulk,
-        # bulk mail corroborates hiding only when authenticated and not first-time (OD-045)
-        "bulk_corroborates": bulk and auth_result == "pass" and seen,
+        "bulk_corroborates": corroborates(bulk, auth_result, seen),
         "content_unscanned": bool(unscanned),
         "unscanned_reasons": unscanned,
     }
+
+
+def corroborates(bulk: bool, auth_result: str | None, seen: bool) -> bool:
+    """Bulk mail corroborates hiding only when authenticated and not first-time (OD-045)."""
+    return bulk and auth_result == "pass" and seen
 
 
 def record_sender(
