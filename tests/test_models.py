@@ -186,16 +186,50 @@ def test_install_pulls_checks_and_copies(
     assert json.loads(row[0]) == {"tag": PIN.ecf_tag, "digest": PIN.digest}
 
 
-def test_install_removes_ecfs_copies_for_other_releases(
+def test_install_keeps_ecfs_copies_for_other_releases(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:
+    """Another install, or a rollback (§11.10), may still run an earlier release's copy."""
     from ecf_server import db  # noqa: PLC0415
 
     fake = FakeOllama(installed=False)
-    fake.models[f"{PIN.ecf_name}:0.0.1"] = PIN.digest  # an earlier release's copy
+    old = f"{PIN.ecf_name}:1.0.0"
+    fake.models[old] = PIN.digest  # an earlier release's copy
     fake.models["other/model:1"] = "d" * 64  # not ecf's
     models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline)
-    assert set(fake.models) == {PIN.tag, PIN.ecf_tag, "other/model:1"}
+    assert set(fake.models) == {PIN.tag, PIN.ecf_tag, old, "other/model:1"}
+    assert models.stale_tags(fake.client()) == [old]
+
+
+def test_prune_removes_only_ecfs_copies_for_other_releases(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    from ecf_server import systemone  # noqa: PLC0415
+
+    tev = systemone.pin("tev1-4b")
+    fake = FakeOllama()
+    stale = [f"{PIN.ecf_name}:1.0.0", f"{tev.ecf_name}:0.0.1"]
+    for name in stale:
+        fake.models[name] = PIN.digest
+    fake.models[tev.ecf_tag] = tev.digest  # this release's decision copy
+    fake.models["other/model:1"] = "d" * 64
+    fake.models["ecf/someone-elses:1.0.0"] = "e" * 64  # an ecf/ name no pin owns
+    keep = {PIN.tag, PIN.ecf_tag, tev.ecf_tag, "other/model:1", "ecf/someone-elses:1.0.0"}
+    assert models.prune(conn, clock, fake.client()) == sorted(stale)
+    assert set(fake.models) == keep
+    [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.pruned'").fetchall()
+    assert json.loads(row[0]) == {"tags": sorted(stale)}
+    assert models.prune(conn, clock, fake.client()) == []  # nothing left: no audit row
+    n = conn.execute("SELECT count(*) FROM audit WHERE event = 'models.pruned'").fetchone()[0]
+    assert n == 1
+
+
+def test_status_lists_the_kept_copies(conn: sqlite3.Connection) -> None:
+    fake = FakeOllama()
+    assert models.status(conn, fake.client(), **check_kw())["stale_tags"] == []
+    fake.models[f"{PIN.ecf_name}:1.0.0"] = PIN.digest
+    st = models.status(conn, fake.client(), **check_kw())
+    assert st["ready"] and st["stale_tags"] == [f"{PIN.ecf_name}:1.0.0"]
 
 
 def test_after_an_upgrade_the_check_copies_the_pinned_model_again(
@@ -261,6 +295,10 @@ def test_the_routes(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -
 
     r = anyio.run(call, "GET", "/v1/models")
     assert r.status_code == 200 and r.json()["ready"] is True
+    fake.models[f"{PIN.ecf_name}:1.0.0"] = PIN.digest
+    r = anyio.run(call, "POST", "/v1/models/prune")
+    assert r.status_code == 200 and r.json() == {"removed": [f"{PIN.ecf_name}:1.0.0"]}
+    assert PIN.ecf_tag in fake.models
 
 
 # ---- doctor (pure) ---------------------------------------------------------------------------
@@ -278,6 +316,15 @@ def _st(**kw: Any) -> dict[str, Any]:
 def test_doctor_ok_with_ecfs_settings() -> None:
     [c] = judge_models(_st())
     assert c.level is Level.OK and "listening on 127.0.0.1:11434 only" in c.detail
+
+
+def test_doctor_lists_kept_copies_without_failing() -> None:
+    old = f"{PIN.ecf_name}:1.0.0"
+    [_, c] = judge_models(_st(stale_tags=[old]))
+    assert c.level is Level.OK and old in c.detail and "ecf models prune" in c.detail
+    fault = {"cause": "not_running", "detail": "", "fix": "x", "text": "t", "summary": "s."}
+    rows = judge_models(_st(ready=False, fault=fault, stale_tags=[old]))
+    assert [r.name for r in rows] == ["local model", "model copies"]
 
 
 def test_doctor_reports_settings_that_differ() -> None:

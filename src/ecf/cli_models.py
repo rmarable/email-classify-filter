@@ -1,6 +1,6 @@
-"""`ecf models status|install` and `ecf models serve install|uninstall|status` (SPEC §7.5;
+"""`ecf models status|install|prune` and `ecf models serve install|uninstall|status` (SPEC §7.5;
 V1.3 steps 1b, 1c; OD-246); `ecf models api-key set|clear` and `ecf models watch`, the weekly
-model watch (SPEC §7.6; V1.4 step 10)."""
+model watch (SPEC §7.6; V1.4 step 10). `prune`: 2026-10-08, operator-approved fix (§7.5)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,10 @@ from ecf.prompts import hidden, require_terminal
 
 POLL_S = 2.0
 START_WAIT_S = 30.0
+PRUNE_NOTE = ("Another ecf install on this computer still on one of those releases, or a rollback"
+              " with `ecf upgrade --to`, needs its copy (copied again only while Ollama still"
+              " holds the pinned tag). Copies of the same pinned model share its files, so removing"
+              " them frees no disk.")  # fmt: skip
 
 
 def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
@@ -36,6 +40,7 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
             raise typer.Exit(1)
 
     _watch_commands(models_app, paths)
+    _prune_command(models_app, paths)
 
     serve_app = typer.Typer(no_args_is_help=True, help="ecf's login item that runs Ollama.")
     models_app.add_typer(serve_app, name="serve")
@@ -156,6 +161,9 @@ def _print(st: dict[str, Any]) -> None:
     pin = st["pin"]
     typer.echo(f"pinned: {pin['tag']} ({pin['digest'][:12]}), ecf's copy {pin['ecf_tag']}")
     typer.echo(f"installed: {st['installed_at'] or 'never on this install'}")
+    if st.get("stale_tags"):
+        typer.echo(f"kept for other ecf releases: {', '.join(st['stale_tags'])}"
+                   " (ecf models prune removes them)")  # fmt: skip
     if st["ready"]:
         where = ", ".join(st["listener"])
         typer.echo(f"ready: Ollama {st['version']}, the pinned model, listening on {where} only")
@@ -253,3 +261,28 @@ def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None
         with LocalClient(paths()) as c:
             c.request("POST", "/v1/models/watch", {})
         typer.echo("The model watch runs within a minute; see ecf models status.")
+
+
+def _prune_command(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
+    """`ecf models prune` (SPEC §7.5; 2026-10-08, operator-approved fix)."""
+
+    @models_app.command("prune")
+    def prune(
+        yes: Annotated[bool, typer.Option("--yes", help="Don't ask before removing.")] = False,
+    ) -> None:
+        """Remove ecf's copies of the model for other ecf releases (this release's stays)."""
+        with LocalClient(paths()) as c:
+            stale: list[str] = c.get("/v1/models").get("stale_tags") or []
+            if not stale:
+                typer.echo("no copies for other ecf releases")
+                return
+            typer.echo("ecf's copies for other releases: " + ", ".join(stale))
+            typer.echo(PRUNE_NOTE)
+            if not yes and not typer.confirm("Remove them?", default=False):
+                raise typer.Exit(1)
+            r: dict[str, Any] = c.request("POST", "/v1/models/prune", {})
+        removed: list[str] = r["removed"]
+        typer.echo(f"removed {', '.join(removed)}" if removed else "nothing removed")
+        if len(removed) < len(stale):
+            typer.echo("some couldn't be removed; see ecf models status", err=True)
+            raise typer.Exit(1)

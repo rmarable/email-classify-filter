@@ -14,8 +14,11 @@
   nothing to watch), and before each model round from V1.3 step 2.
 - **After an ecf upgrade** ecf's copy has a new name (`ecf/gemma4-12b:<release>`). When it's
   missing but Ollama still holds the pinned tag with the pinned digest, the check copies it again
-  by itself (audited) instead of stopping model work until `ecf models install`; an install
-  removes ecf's copies for other releases.
+  by itself (audited) instead of stopping model work until `ecf models install`.
+- **ecf's copies for other releases are kept** (2026-10-08, operator-approved fix): another install
+  on this computer, or a rollback (`ecf upgrade --to`, §11.10), may still run one, and installs
+  don't know each other. A copy shares the pinned tag's blobs, so it costs no disk. `ecf models
+  status` and `ecf doctor` list them; `ecf models prune` removes them after asking.
 """
 
 from __future__ import annotations
@@ -111,17 +114,45 @@ def recopy(conn: sqlite3.Connection, clock: Clock, client: Client) -> bool:
     return True
 
 
-def prune(client: Client, pin: ollama.Pin | None = None) -> list[str]:
-    """Remove ecf's copies for other releases (best effort); the names removed."""
-    pin = pin or ollama.load_pin()
+def owned(pin: ollama.Pin) -> list[ollama.Pin]:
+    """The pins whose ecf copies this release owns: the local model's and the eval-only decision
+    models' (SPEC §7.8)."""
+    from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
+
+    return [pin, *systemone.load_pins().values()]
+
+
+def stale_tags(client: Client, pin: ollama.Pin | None = None) -> list[str]:
+    """ecf's copies for other releases (`ecf/<model>:<version>` other than this release's), never
+    any other tag. Empty when Ollama can't list its models."""
+    pins = owned(pin or ollama.load_pin())
+    try:
+        have = client.digests()
+    except OllamaError:
+        return []
+    return sorted(name for name in have for p in pins
+                  if name.startswith(f"{p.ecf_name}:") and name != p.ecf_tag)  # fmt: skip
+
+
+def prune(conn: sqlite3.Connection, clock: Clock, client: Client) -> list[str]:
+    """`ecf models prune`: remove ecf's copies for other releases (best effort; audited
+    `models.pruned`); the names removed. Never removes this release's copy or a tag ecf doesn't
+    own."""
     gone: list[str] = []
-    for name in client.digests():
-        if name.startswith(f"{pin.ecf_name}:") and name != pin.ecf_tag:
-            try:
-                client.delete(name)
-                gone.append(name)
-            except OllamaError:
-                continue
+    for name in stale_tags(client):
+        try:
+            client.delete(name)
+            gone.append(name)
+        except OllamaError:
+            continue
+    if gone:
+        now = to_ts(clock.now())
+        with write_tx(conn):
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, NULL, 'models.pruned', 'os_user', 'ok', json_object('tags', json(?)))",
+                (now, json.dumps(gone)),
+            )
     return gone
 
 
@@ -162,6 +193,7 @@ def status(conn: sqlite3.Connection, client: Client, **kw: Any) -> dict[str, Any
         "installed_at": _setting(conn, INSTALLED_KEY),
         "install": INSTALLS.snapshot(),
         "claude": claude_pins.show(conn),  # V1.4 step 2
+        "stale_tags": stale_tags(client, pin),  # kept for other installs and rollback
     }
     try:
         ready = ollama.readiness(client, pin, **kw)
@@ -287,7 +319,6 @@ def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Pr
     client.copy(pin.tag, pin.ecf_tag)
     if client.digests().get(pin.ecf_tag) != pin.digest:
         raise OllamaError("digest_mismatch", f"{pin.ecf_tag} after the copy")
-    prune(client)
     now = to_ts(clock.now())
     with write_tx(conn):
         slack_admin.put_setting(conn, INSTALLED_KEY, now, now, actor="os_user")
@@ -323,7 +354,6 @@ def install_decision(conn: sqlite3.Connection, clock: Clock, client: Client, pro
     progress.set(state="copying", status=f"copying to {pin.ecf_tag}")
     client.copy(pin.tag, pin.ecf_tag)
     systemone.verify(client, pin)
-    prune(client, pin)
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute(

@@ -39,6 +39,8 @@ Each deliverable, and each real-service test, starts only when the operator name
 
 V1.0 foundations · V1.1 mail and checks · V1.2 Slack and approvals · V1.3 local models (preset A) · V1.4 Claude on demand (B, C) · V1.5 outbound and operations · V1.6 Gmail (personal Google accounts over IMAP, OD-425) (these gate `v1.0.0`). The earlier V1.6, Linux verification, became roadmap milestone M5 (OD-421); its plan is on branch `m5-linux` (`docs/roadmap/m5-linux.md`), not merged.
 
+After `v1.0.0`, work is tracked by release rather than V1.x milestones: `v2.0.0` is schema v2, schema extensions, the Haiku 5.5 main session and `num_ctx` 6144.
+
 ## Commands
 
 Python ≥ 3.12.6, managed with uv (`.python-version`). `docs/` is excluded from pytest, ruff and pyright. Full how-to: `CONTRIBUTING.md`.
@@ -64,7 +66,7 @@ uv build                                  # wheel + sdist
 
 **Shell on macOS:** use `gsed` for GNU sed syntax (the built-in BSD sed rejects `\|` alternation and needs `-i ''`); for multi-line or exact replacements prefer the Edit tool or a short Python script.
 
-**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -n auto -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; the Ollama tests need Ollama installed and the pinned model (`uv run ecf models install`), see CONTRIBUTING; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
+**macOS merge gate:** GitHub CI runs on Linux only (to stay within free minutes). Before any merge to `main`, run the full suite on this Mac (`uv run pytest -n auto -rs`, which includes the `macos` tests) and put the result in the merge commit message, e.g. `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`. **The gate passes only with 0 skipped:** the `imap` tests skip when Docker isn't running, so start Colima first; the Ollama tests need Ollama installed and the pinned model (`uv run ecf models install`), see CONTRIBUTING; if anything is skipped, fix the environment and run again rather than merge. Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create. After a version bump, run `uv run ecf models install` before the gate (the local model's tag carries the package version); with no service running it needs a throwaway `uv run ecf-server dev` and its `ECF_SOCKET`.
 
 ## Hard constraints
 
@@ -78,6 +80,7 @@ uv build                                  # wheel + sdist
 
 - **Milestone tags** (`ms-v1.0-foundations` … `ms-v1.5-outbound-ops`, later `ms-m1-aws`, … `ms-m5-linux`) are annotated tags recording internal progress. They do **not** mean the software is ready for anyone else.
 - **Release tags** `vX.Y.Z` (optionally `-rcN`) are the only tags built and published from, and the only ones `ecf upgrade --to` accepts. `v1.0.0` requires every V1.x milestone plus the release criteria in SPEC.
+- Release versions follow semantic versioning (OD-480; SPEC §1.4): major when the classification schema, rules files or the export data format break, minor for added features, patch for fixes; a release candidate `vX.Y.Z-rcN` comes first.
 - Create or push a tag only after the operator confirms and approves both the tag and the push.
 - When a milestone's work looks complete (its scope built, CI green, its gating real-service test passed), prompt the operator that the `ms-…` tag is due, and say what's done and what isn't. Never apply a tag unprompted.
 
