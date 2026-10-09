@@ -104,7 +104,9 @@ def test_before_settling_the_whole_snapshot_comes_back(paths: Paths) -> None:
                                  settled=False)  # fmt: skip
     assert done["phase"] == "downgraded" and done["settled"] is False
     assert paths.db.read_bytes() == before and not Path(str(paths.db) + "-wal").exists()
-    assert ran == [["/usr/bin/uv", "tool", "install", "--force", str(folder / "old-0.0.9.whl")]]
+    stable = paths.data_dir / "releases" / "v0.0.9" / "old-0.0.9.whl"  # not in upgrades/
+    assert ran == [["/usr/bin/uv", "tool", "install", "--force", str(stable)]]
+    assert stable.read_bytes() == (folder / "old-0.0.9.whl").read_bytes()
     assert m.calls == ["stop", "start"]
     assert (folder / "before-downgrade" / "ecf.db").is_file()  # the newer data, kept
 
@@ -143,6 +145,27 @@ def test_a_failed_install_puts_this_version_back(paths: Paths) -> None:
     assert c.execute("SELECT display_name FROM addresses").fetchone()[0] == "newer"
     c.close()
     assert m.calls == ["stop", "start"] and folder.is_dir()
+
+
+def test_the_older_wheel_is_checked_by_hash_before_anything_stops(
+    paths: Paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = _snapshot(paths)
+    stale = paths.data_dir / "releases" / "v0.0.9" / "old-0.0.9.whl"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"something else")  # replaced by the kept wheel
+    assert upgrade_run.keep_wheel(paths, "0.0.9", folder / "old-0.0.9.whl") == stale
+    assert stale.read_bytes() == b"old wheel"
+    real = upgrade_run.release_source.sha256
+
+    def sha256(p: Path) -> str:
+        return "0" * 64 if "releases" in p.parts else real(p)
+
+    monkeypatch.setattr(upgrade_run.release_source, "sha256", sha256)
+    tools, m, ran = _tools(paths)
+    with pytest.raises(EcfError, match="doesn't match the kept wheel's sha256"):
+        upgrade_run.downgrade(paths, tools, version="0.0.9", current=__version__, settled=False)
+    assert m.calls == [] and ran == []
 
 
 def test_without_a_snapshot_nothing_happens(paths: Paths) -> None:
