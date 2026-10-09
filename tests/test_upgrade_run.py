@@ -8,11 +8,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import ecf.cli_upgrade
 import ecf.upgrade_run
 from ecf import __version__, upgrade_run
 from ecf.errors import EcfError, InvalidInputError
@@ -176,6 +178,8 @@ def test_success_records_the_upgrade_and_a_refused_regrant_does_not_roll_back(
 
     class Client(ApiClient):
         def request(self, method: str, path: str, json: Any = None, **_: Any) -> Any:
+            if method == "GET":
+                return super().request(method, path)
             finished.append(json)
             return super().request(method, path, json | {"to": __version__})
 
@@ -199,6 +203,105 @@ def test_success_records_the_upgrade_and_a_refused_regrant_does_not_roll_back(
     c.close()
     with pytest.raises(EcfError, match="no upgrade is waiting"):
         upgrade_run.resume(paths, tools, regrant=False)
+
+
+LOCK = {"main_session": "claude-haiku-5-5", "classifier": "claude-haiku-4-5-20251001",
+        "classifier_high": "claude-sonnet-5-5", "actor": "claude-sonnet-5-5",
+        "actor_high": "claude-opus-5-5"}  # fmt: skip
+PINS = LOCK | {"local": "d" * 64}
+
+
+def _release_wheel(path: Path, version: str, classifier_schema: int | None) -> Path:
+    """A release wheel's data files; v1.x's release.json has no classifier_schema."""
+    info: dict[str, Any] = {"product": "email-classify-filter", "version": version,
+                            "api_version": 1, "data_format": 2, "schema_version": 33,
+                            "min_client": "0.1.0"}  # fmt: skip
+    if classifier_schema is not None:
+        info["classifier_schema"] = classifier_schema
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ecf_server/data/release.json", json.dumps(info))
+        z.writestr("ecf_server/data/models.lock", json.dumps(LOCK))
+        z.writestr("ecf_server/data/ollama.lock", json.dumps({"digest": "d" * 64}))
+    return path
+
+
+class NewService:
+    """The new service as phase 2 sees it: its upgrade state, and the finish it records."""
+
+    def __init__(self, state: dict[str, Any]) -> None:
+        self.state, self.finished = state, list[dict[str, Any]]()
+
+    def __call__(self, _paths: Paths) -> NewService:
+        return self
+
+    def __enter__(self) -> NewService:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def get(self, path: str, **_: Any) -> Any:
+        assert path == "/v1/upgrade/state"
+        return self.state
+
+    def request(self, method: str, path: str, json: Any = None, **_: Any) -> Any:
+        assert (method, path) == ("POST", "/v1/upgrade/finish")
+        self.finished.append(json)
+        return json
+
+
+@pytest.mark.parametrize(("old_schema", "readable", "affected", "changes"), [
+    (None, True, ["ap", "b"], ["schema"]),  # from v1.0.0: its pre-check saw nothing
+    (2, True, [], []),  # nothing changed: no extra addresses
+    (None, False, ["ap", "b"], ["schema"]),  # old wheel unreadable: a 1.x had schema 1
+])  # fmt: skip
+def test_phase_two_names_addresses_the_old_check_could_not_see(
+    paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], old_schema: int | None, readable: bool,
+    affected: list[str], changes: list[str],
+) -> None:  # fmt: skip
+    """A v1.0.0 CLI doesn't know classifier_schema, so its phase 1 stores affected=[]; the new
+    CLI recomputes after the upgrade (SPEC §11.10; operator decision 2026-10-09)."""
+    old = _release_wheel(tmp_path / "old-1.0.0.whl", "1.0.0", old_schema)
+    if not readable:
+        old.write_bytes(b"not a zip")
+    new = _release_wheel(tmp_path / "new-2.0.0.whl", "2.0.0", 2)
+    tools, _m, _ran = _tools(paths)
+    with pytest.raises(Handover):  # phase 1 as v1.0.0 runs it: nothing affected
+        upgrade_run.start(paths, tools, old_version="1.0.0", new_version="2.0.0", new_wheel=new,
+                          old_wheel=old, pin_changes=[], affected=[])  # fmt: skip
+    service = NewService({"version": "2.0.0", "classifier_schema": 2, "pins": PINS,
+                          "pin_users": {"local": ["ap"], "actor": ["b"]}})  # fmt: skip
+    monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
+    tools, _m, _ran = _tools(paths)
+
+    def same(_p: Paths) -> upgrade_run.Tools:
+        return tools
+
+    monkeypatch.setattr(ecf.cli_upgrade, "_tools", same)
+    ecf.cli_upgrade._continue(paths)  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert service.finished[0]["affected"] == affected
+    assert service.finished[0]["pin_changes"] == changes
+    state = upgrade_run.read_state(paths)
+    assert state is not None and state["affected"] == affected
+    if affected:
+        assert "the classifier schema changed: ap, b drop to assist" in out
+    else:
+        assert "drop to assist" not in out
+    assert "ecf 2.0.0 is running (was 1.0.0)" in out
+
+
+def test_phase_two_keeps_phase_one_lists_without_an_answer(
+    paths: Paths, wheels: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(_paths: Paths) -> Any:
+        raise EcfError("no answer")
+
+    monkeypatch.setattr(ecf.upgrade_run, "LocalClient", refuse)
+    state = {"from": "1.0.0", "old_wheel": str(wheels[0]), "pin_changes": ["local"],
+             "affected": ["ap"]}  # fmt: skip
+    assert upgrade_run._recount(paths, state) == state  # pyright: ignore[reportPrivateUsage]
 
 
 def test_finish_is_for_this_version(conn: sqlite3.Connection, clock: FakeClock) -> None:

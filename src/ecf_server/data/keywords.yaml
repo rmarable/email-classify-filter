@@ -102,6 +102,56 @@ bec_opener:
     - can't talk now
     - reply as soon as you see this
 
+# Employee tax and payroll data (operator decision 2026-10-09, OD-482): the W-2 scam asks HR or
+# finance to send every employee's tax form, with no money named. A form alone is ordinary mail
+# (a payroll provider's "your W-2s are ready"), so the fact `tax_form_request` also needs a phrase
+# from `data_request`, and rule 1 escalates it only from an outside sender. W-9 is not listed:
+# customers and vendors ask for one routinely.
+tax_form:
+  phrases:
+    - W-2
+    - W-2s
+    - W-2's
+    - W2
+    - W2s
+    - employee tax forms
+    - employees' tax forms
+    - staff tax forms
+    - employee tax documents
+    - wage and tax statement
+    - wage and tax statements
+    - payroll records
+    - payroll register
+    - pay stubs
+    - paystubs
+    - payslips
+    - pay slips
+
+# Asking for documents to be sent to the writer (OD-482): with a `tax_form` phrase, the fact
+# `tax_form_request`. Phrases that automated notices use ("reply to this email", "do not reply
+# to this address") are not listed.
+data_request:
+  phrases:
+    - send me
+    - send them to me
+    - send it to me
+    - send them over
+    - send them to this address
+    - send it to this address
+    - send them here
+    - email me the
+    - email them to me
+    - forward them to me
+    - forward me the
+    - as one PDF
+    - as a single PDF
+    - in one PDF
+    - in a single PDF
+    - as one file
+    - in one file
+    - my personal email
+    - my personal address
+
 # Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
 # common terms; add state and non-US agencies as needed.
 regulator:

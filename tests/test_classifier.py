@@ -218,6 +218,7 @@ def test_the_real_model_classifies_the_starter_cards(
     assert outcomes == {"ok"}
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_schema_change_during_the_call_asks_again_instead_of_recording(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

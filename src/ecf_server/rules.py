@@ -47,6 +47,7 @@ FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
     "payment_keyword": None,  # a payment keyword in the text (§8.5; OD-262)
     "gift_card_keyword": None,  # a gift-card term: money for impersonation only (§8.5; OD-457)
     "bec_opener": None,  # two different impersonation-opener phrases (§8.5; OD-479)
+    "tax_form_request": None,  # employee tax data asked to be sent (§8.5; OD-482)
     "from_org_address": None,  # From is in org_addresses (§7.2; V1.6, OD-431)
     "impersonates_internal": None,  # trigger 7's org address or name clause (§8.5; OD-436)
     "self_sent": None,  # Gmail: the account's own mail to itself (§7.2; OD-446)

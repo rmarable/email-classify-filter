@@ -46,6 +46,7 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
 # ---- schema (OD-478) ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_schema_row(conn: sqlite3.Connection) -> None:
     row = ops_doctor.schema(conn)
     assert row == {"name": "schema", "level": "ok", "detail": "v2, built in (no extension)",
@@ -62,6 +63,24 @@ def test_schema_row(conn: sqlite3.Connection) -> None:
     row = ops_doctor.schema(conn)  # a stored extension a new release clashes with (OD-478)
     assert row["level"] == "FAIL" and "no longer compiles" in row["detail"]
     assert "schema: default" in row["fix"]
+
+
+def test_schema_row_with_extensions_off(conn: sqlite3.Connection) -> None:
+    """OD-481: a stored extension is ignored and warned about; rules that use it fail."""
+    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
+    row = ops_doctor.schema(conn)
+    assert row == {"name": "schema", "level": "warn",
+                   "detail": "v2, built in; an extension is stored but extensions are off in"
+                   " this version",
+                   "fix": "`ecf config apply` with `schema: default` removes it"}  # fmt: skip
+    _set(conn, "config.schema", {"category_values": {"invoice": "Clashes with a shipped value."}})
+    assert ops_doctor.schema(conn)["level"] == "warn"  # ignored, so it can't clash
+    _set(conn, "config.rules", {"version": 1, "rules": [
+        {"id": "a", "when": {"field": "a", "eq": True}, "then": ["flag"]},
+        {"id": "rest", "then": ["leave"]}]})  # fmt: skip
+    row = ops_doctor.schema(conn)
+    assert row["level"] == "FAIL" and "starter rules are used" in row["detail"]
+    assert "unknown field 'a'" in row["detail"]
 
 
 # ---- Gmail --------------------------------------------------------------------------------------

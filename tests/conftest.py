@@ -89,6 +89,14 @@ def _fresh_gate_inputs() -> None:
     stages.SEEN.clear()
 
 
+@pytest.fixture
+def extensions_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Schema extensions on (OD-481: built, off in v2.0.0), for tests of the machinery."""
+    import ecf.schema  # noqa: PLC0415
+
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def no_leaked_services() -> Iterator[None]:
     yield

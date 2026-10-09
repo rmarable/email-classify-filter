@@ -146,11 +146,42 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
     if version_key(client_version) < version_key(str(new["min_client"])):
         r.problems.append(f"it needs ecf {new['min_client']} or later to start the upgrade;"
                           " upgrade to that first")  # fmt: skip
-    pins: dict[str, str] = now["pins"]
-    r.pin_changes = sorted(f for f, v in rel.pins.items() if pins.get(f) != v)
-    uses: dict[str, list[str]] = now["pin_users"]  # family -> addresses
-    r.affected = sorted({a for f in r.pin_changes for a in uses.get(f, [])})
-    if int(new.get("classifier_schema", 1)) != int(now.get("classifier_schema", 1)):
-        r.pin_changes.append("schema")  # every address is asked differently (OD-475)
-        r.affected = sorted({a for addrs in uses.values() for a in addrs})
+    r.pin_changes, r.affected = changes(
+        now["pins"], int(now.get("classifier_schema", 1)), rel.pins,
+        int(new.get("classifier_schema", 1)), now["pin_users"])  # fmt: skip
+    return r
+
+
+def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str, str],
+            new_schema: int | None,
+            uses: dict[str, list[str]]) -> tuple[list[str], list[str]]:  # fmt: skip
+    """(families whose pin changes, plus "schema"; the addresses that drop to assist). `uses` is
+    family -> addresses. A new classifier schema asks every address differently (OD-475); a
+    schema of None is unknown and counts as unchanged."""
+    fams = sorted(f for f, v in new_pins.items() if old_pins.get(f) != v)
+    affected = sorted({a for f in fams for a in uses.get(f, [])})
+    if old_schema is not None and new_schema is not None and old_schema != new_schema:
+        fams.append("schema")
+        affected = sorted({a for addrs in uses.values() for a in addrs})
+    return fams, affected
+
+
+def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> Report:
+    """Phase 2 of `ecf upgrade` (the new CLI): the pins and schema that changed, by this
+    version's rules, between the kept old wheel and the new service's `GET /v1/upgrade/state`.
+    The old CLI's pre-check can't see a change it doesn't know of (v1.0.0 doesn't know
+    `classifier_schema`), so the new CLI names the affected addresses after the upgrade (SPEC
+    §11.10; operator decision 2026-10-09). If the old wheel can't be read, only the schema is
+    compared: a 1.x release has no `classifier_schema`, so it was 1."""
+    try:
+        old = read_wheel(old_wheel)
+        old_pins = old.pins
+        old_schema: int | None = int(old.info.get("classifier_schema", 1))
+    except InvalidInputError:
+        old_pins = dict[str, str](state["pins"])
+        old_schema = 1 if version_key(old_version)[0] < 2 else None
+    r = Report()
+    r.pin_changes, r.affected = changes(old_pins, old_schema, state["pins"],
+                                        int(state.get("classifier_schema", 1)),
+                                        state["pin_users"])  # fmt: skip
     return r

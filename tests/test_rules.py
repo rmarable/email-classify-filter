@@ -87,6 +87,16 @@ def test_an_executive_impersonation_opener_from_outside_escalates_without_money(
     assert run(facts={"bec_opener": True, "self_sent": True}).rule_id == "otherwise"
 
 
+def test_an_employee_tax_form_request_from_outside_escalates_without_money() -> None:
+    """OD-482: "send me every employee's W-2 as one PDF" escalates whatever fraud risk and category
+    the model gives it; not from an internal sender or the account's own note to itself."""
+    d = run(facts={"tax_form_request": True}, category="regulatory", fraud_risk="low")
+    assert d.rule_id == "fraud_guard" and ("escalate", None) in names(d)
+    assert d.hide is Hide.NEVER
+    assert run(facts={"tax_form_request": True, "sender_origin": "internal"}).rule_id == "otherwise"
+    assert run(facts={"tax_form_request": True, "self_sent": True}).rule_id == "otherwise"
+
+
 def test_your_own_note_to_yourself_isnt_an_unverified_payment_sender() -> None:
     """OD-446: on Gmail the account's mail to itself is unsigned; Gmail's Sent label says it's
     yours."""

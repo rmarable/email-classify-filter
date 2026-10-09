@@ -13,6 +13,9 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `bec_opener` (a fact, not a trigger; OD-479): two or more different phrases from the
   `bec_opener` list, the opening message of an executive-impersonation scam before any money is
   named; rule 1 escalates it from an outside sender.
+- `tax_form_request` (a fact, not a trigger; OD-482): a `tax_form` phrase (W-2, payroll records)
+  and a `data_request` phrase (send me, as one PDF), the W-2 scam; rule 1 escalates it from an
+  outside sender.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
@@ -43,7 +46,8 @@ from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "regulator", "injection")
+GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "tax_form", "data_request",
+          "regulator", "injection")  # fmt: skip
 BEC_OPENER_MIN = 2  # different `bec_opener` phrases for the fact (OD-479)
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
@@ -100,6 +104,13 @@ def bec_opener(keywords: dict[str, list[str]]) -> bool:
     """At least two different phrases of an executive-impersonation opener ("are you at your
     desk", "quick favour", "email only"; OD-479): one alone is ordinary mail."""
     return len(set(keywords.get("bec_opener", []))) >= BEC_OPENER_MIN
+
+
+def tax_form_request(keywords: dict[str, list[str]]) -> bool:
+    """Employee tax or payroll data ("W-2", "wage and tax statements", "pay stubs") and a request
+    to send it to the writer ("send me", "as one PDF"; OD-482): the W-2 scam. A form alone is a
+    payroll provider's notice."""
+    return bool(keywords.get("tax_form")) and bool(keywords.get("data_request"))
 
 
 INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
@@ -201,6 +212,7 @@ class Triggers:
             "payment_keyword": bool(self.keywords["payment"]),
             "gift_card_keyword": bool(self.keywords["gift_card"]),
             "bec_opener": bec_opener(self.keywords),
+            "tax_form_request": tax_form_request(self.keywords),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,

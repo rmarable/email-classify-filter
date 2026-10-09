@@ -206,3 +206,39 @@ def test_cli(conn: sqlite3.Connection, db_path: Path, tmp_path: Path,
     c.close()
     r = runner.invoke(app, ["--install", "t", "upgrade", "--wheel", str(new), "--check"])
     assert r.exit_code == 1 and "prod install upgrades only from published releases" in r.output
+
+
+def test_check_by_this_client_against_a_v1_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ecf upgrade --check` run by this client against a service that reports no
+    classifier_schema (v1.0.0) lists every address as affected (OD-475)."""
+    v1 = {k: v for k, v in _state(version="1.0.0").items() if k != "classifier_schema"}
+
+    class OldService:
+        def __init__(self, _paths: Paths) -> None: ...
+        def __enter__(self) -> OldService:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def get(self, path: str, **_: Any) -> Any:
+            assert path == "/v1/upgrade/state"
+            return v1
+
+    env = tmp_path / "env"
+    _receipt(env, _wheel(tmp_path, name="installed.whl"))
+    real = upgrade_check.this_install
+
+    def installed(prefix: Path | None = None) -> upgrade_check.Install:
+        del prefix
+        return real(env)
+
+    monkeypatch.setattr(upgrade_check, "this_install", installed)
+    monkeypatch.setattr(ecf.cli_upgrade, "LocalClient", OldService)
+    new = _wheel(tmp_path, version="9.0.0", name="new.whl")
+    r = CliRunner().invoke(app, ["--install", "t", "upgrade", "--wheel", str(new), "--check"])
+    assert r.exit_code == 0, r.output
+    assert "model pins that change: schema" in r.output
+    assert "drop to assist until their gate passes again: ap, b" in r.output

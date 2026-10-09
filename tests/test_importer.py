@@ -263,6 +263,30 @@ def test_validation(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,
     assert _one(target, "SELECT count(*) FROM addresses") == 0
 
 
+def test_a_bundles_extension_is_kept_but_ignored_while_extensions_are_off(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    """OD-481: a backup from an install that applied an extension still restores; the
+    extension is kept, ignored (the shipped schema), and doctor names it."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+    from ecf_server import config, ops_doctor  # noqa: PLC0415
+
+    ext = {"category_values": {"legal_notice": "Letter from a lawyer."}}
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    parsed.tables["settings"].append(_setting("config.schema", json.dumps(ext)))
+
+    def go(nonce: str | None) -> dict[str, Any]:
+        return importer.apply(target, clock, FakeNotifier(), conn_dir(target), "t", parsed,
+                              str(path), replace=False, typed_install=None,
+                              nonce=nonce)  # fmt: skip
+
+    _with_step_up(target, clock, go)
+    assert config.current(target)["schema"] == ext
+    assert config.current_schema(target).digest == load_schema().digest
+    assert ops_doctor.schema(target)["level"] == "warn"
+
+
 # ---- routes and CLI -----------------------------------------------------------------------------
 
 

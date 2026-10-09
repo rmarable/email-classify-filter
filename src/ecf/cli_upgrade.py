@@ -238,8 +238,10 @@ def _continue(p: Paths) -> None:
         raise typer.Exit(1)
     typer.echo(f"ecf {done['to']} is running (was {done['from']})")
     if done["affected"]:
-        typer.echo(f"model pins changed: {', '.join(done['affected'])} drop to assist until"
-                   " their gate passes again; re-run ecf eval run")  # fmt: skip
+        why = ("the classifier schema changed" if "schema" in done.get("pin_changes", [])
+               else "model pins changed")  # fmt: skip
+        typer.echo(f"{why}: {', '.join(done['affected'])} drop to assist until their gate passes"
+                   " again; re-run ecf eval run")  # fmt: skip
     typer.echo("the database copy is kept in case you go back: ecf upgrade --to"
                f" {done['from']}")  # fmt: skip
 

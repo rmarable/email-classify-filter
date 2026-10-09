@@ -210,6 +210,7 @@ def test_the_override_from_the_cli(home: Path) -> None:
         stop(proc)
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_a_schema_extension_changes_every_key_alike(
     conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path
 ) -> None:
