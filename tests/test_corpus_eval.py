@@ -146,6 +146,7 @@ def test_rescore_uses_the_current_labels_and_keeps_the_original(
         evalrun.rescore(s, wrong, clock)
 
 
+@pytest.mark.usefixtures("extensions_on")
 def test_corpus_labels_are_checked_against_the_effective_schema(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, session: cs.Session
 ) -> None:
