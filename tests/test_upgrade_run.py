@@ -400,6 +400,13 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(
     assert "ecf 2.0.0 is running (was 1.0.0)" in out
 
 
+def test_affected_addresses_read_as_one_or_many() -> None:
+    assert ecf.cli_upgrade._drop(["ap"]) == "ap drops"  # pyright: ignore[reportPrivateUsage]
+    assert ecf.cli_upgrade._drop(["ap", "b"]) == "ap, b drop"  # pyright: ignore[reportPrivateUsage]
+    assert ecf.cli_upgrade._their(["ap"]) == "its"  # pyright: ignore[reportPrivateUsage]
+    assert ecf.cli_upgrade._their(["ap", "b"]) == "their"  # pyright: ignore[reportPrivateUsage]
+
+
 def test_phase_two_keeps_phase_one_lists_without_an_answer(
     paths: Paths, wheels: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
