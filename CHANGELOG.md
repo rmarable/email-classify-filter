@@ -5,7 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.0.0 (not yet tagged)
 
-## v2.0.0-rc3 (not yet tagged)
+## v2.0.0-rc3 (2026-10-09)
 
 - `ecf upgrade` after going back with `ecf upgrade --to` no longer fails with the service stopped: going back now reinstalls the older version from a copy in the install's `releases` folder, checked by SHA-256, instead of from the upgrade's snapshot folder, which the next upgrade replaces; an upgrade checks the old version's wheel is there before it stops anything and starts the service again if a later step fails (operator-approved fix 2026-10-09; SPEC §11.10).
 
