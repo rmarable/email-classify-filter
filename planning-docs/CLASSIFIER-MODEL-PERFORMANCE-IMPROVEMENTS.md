@@ -46,9 +46,13 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
   credentials or access on this email's say-so, whatever the pattern"; `high` a known fraud
   pattern, with examples (changed bank details, gift cards, employee tax or payroll data,
   credentials, someone posing as a colleague or executive) marked as examples, not a list.
-- `sender_type`: `automated` takes precedence over vendor/company; `team` = a colleague at your
-  own organization acting in that role; `vendor` = supplies the business; friend/family only when
-  the content shows the relationship; `unknown` includes senders who can't be trusted.
+- `sender_type` (labelling rule, operator decision 2026-10-09, SPEC §16.1): `automated` takes
+  precedence over vendor/company; `team` = a colleague at your own organization acting in that
+  role; `vendor` = a business the mailbox's organization buys from or pays (incl. its bank,
+  insurer, SaaS, payroll provider); `company` = any other business (to a person as a private
+  customer, a cold pitch, a partner); friend/family only when the content shows the relationship;
+  the apparent role, so an impostor posing as a vendor is `vendor` (fraud_risk carries the doubt);
+  `unknown` only when the role can't be told.
 - Renderer: `_field_lines` (`schema.py:206`) prints ordinal level text; the schema format gains
   optional per-level descriptions.
 - Length: capped by the context probe (Stage 0), not a fixed 1,200 characters (P11).
