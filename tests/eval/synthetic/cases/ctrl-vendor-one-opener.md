@@ -10,8 +10,8 @@ subject: "Call about next quarter"
 date: 2026-11-19T11:20:00Z
 author: claude
 expected:
-  labels: {category: other, sender_type: vendor, requires_reply: true, fraud_risk: none}
-  rule: requires_reply
+  labels: {category: appointment, sender_type: vendor, requires_reply: true, fraud_risk: none}
+  rule: appointment_school_family
 ---
 Hi,
 
