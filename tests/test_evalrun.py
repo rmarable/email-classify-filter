@@ -481,6 +481,28 @@ def test_the_copy_goes_to_state_archive_only_from_a_checkout(tmp_path: Path) -> 
         _copy_to({"copy_to": "state-archive/evals"})
 
 
+def test_a_run_with_the_new_wording_off_asks_with_the_v2_0_0_text(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """An eval-only switch (plan 0.3): recorded, and the run never passes the gate."""
+    from ecf.schema import load_schema_v2_0_0  # noqa: PLC0415
+    from ecf_server import db  # noqa: PLC0415
+
+    with pytest.raises(InvalidInputError, match="local model"):
+        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                      db_path.parent, evalrun.Options(root, backend=evalrun.NULL,
+                                                      new_wording=False),
+                      power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                      check_kw=check_kw())  # fmt: skip
+    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                  db_path.parent, evalrun.Options(root, new_wording=False), power=lambda: AC,
+                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    result = evalrun.RUN.snapshot()["result"]
+    assert result["options"]["switches_off"] == ["new_wording"]
+    assert result["options"]["for_gate"] is False and result["gate_passed"] is False
+    assert result["schema_digest"] == load_schema_v2_0_0().digest
+
+
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
 
@@ -492,6 +514,9 @@ def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
         " (without the actor)")  # fmt: skip
     assert _run_caveat({"complete": True, "options": both | {"for_gate": False}}) == (
         " (not for the gate)")  # fmt: skip
+    off = both | {"for_gate": False, "switches_off": ["new_wording"]}
+    assert _run_caveat({"complete": True, "options": off}) == (
+        " (not for the gate: new_wording off)")  # fmt: skip
     assert _run_caveat({}) == ""  # older runs: nothing recorded
 
 

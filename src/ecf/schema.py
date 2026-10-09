@@ -249,6 +249,16 @@ def load_schema_v1() -> CompiledSchema:
     return _load(1)
 
 
+@functools.cache
+def load_schema_v2_0_0() -> CompiledSchema:
+    """The v2.0.0 schema text, frozen byte for byte (its header comment included) for eval runs
+    with the new wording off (`ecf eval run --no-new-wording`, classifier plan 0.3); never used
+    to classify mail."""
+    name = "schema_v2_0_0.yaml"
+    text = resources.files("ecf.data").joinpath(name).read_text(encoding="utf-8")
+    return compile_schema(text, source=name)
+
+
 # ---------------------------------------------------------------------------- extensions (OD-478)
 
 # The one switch (OD-481): off in v2.0.0, on from v2.1.0 once the extension check passes.

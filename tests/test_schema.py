@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -21,6 +22,7 @@ from ecf.schema import (
     extension_text,
     load_schema,
     load_schema_v1,
+    load_schema_v2_0_0,
     shipped_fallback,
     v1_values,
 )
@@ -67,6 +69,22 @@ def test_digest_tracks_what_the_model_is_asked() -> None:
     text = (ROOT / "src/ecf/data/schema_v2.yaml").read_text(encoding="utf-8")
     assert compile_schema(text).digest == a.digest
     assert compile_schema(text.replace("A relative.", "A relative or in-law.")).digest != a.digest
+
+
+# SHA-256 of `git show v2.0.0:src/ecf/data/schema_v2.yaml` (2026-10-09)
+V2_0_0_SHA256 = "e22533e5e2d5bdbf7084f7bdf5712ed494b6335264654bd00abbd347c34e55b1"
+
+
+def test_the_frozen_v2_0_0_text_is_the_released_one() -> None:
+    """`ecf eval run --no-new-wording` asks with it (classifier plan 0.3): byte for byte the
+    v2.0.0 file, with the shipped schema's fields and values (the new wording changes text
+    only)."""
+    raw = (ROOT / "src/ecf/data/schema_v2_0_0.yaml").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == V2_0_0_SHA256
+    frozen, now = load_schema_v2_0_0(), load_schema()
+    assert frozen.version == now.version == 2
+    assert {n: (f.kind, f.values) for n, f in frozen.fields.items()} == {
+        n: (f.kind, f.values) for n, f in now.fields.items()}  # fmt: skip
 
 
 def test_v2_json_schema_snapshot() -> None:

@@ -51,7 +51,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import corpus_labels, metrics
@@ -59,7 +59,13 @@ from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
 from ecf.eval.results import CallMetrics, CaseResult, ResultFile, load_result
 from ecf.ids import new_random_id
-from ecf.schema import V1_VALUE_ALIASES, CompiledSchema, FieldKind, load_schema
+from ecf.schema import (
+    V1_VALUE_ALIASES,
+    CompiledSchema,
+    FieldKind,
+    load_schema,
+    load_schema_v2_0_0,
+)
 from ecf_server import (
     actor,
     classifier,
@@ -146,6 +152,14 @@ class Options:
     corpus: CorpusRun | None = None  # a real-mail corpus instead of the synthetic set (§16.7)
     for_gate: bool = True  # False: an experiment, saved for its figures, never passes (plan 0.3)
     copy_to: Path | None = None  # also write the result file here (synthetic set only, plan 0.3)
+    # Eval-only switches (plan 0.3); production always runs with all on, and a run with any off
+    # never passes the gate. `--no-signals` and `--no-new-signals` come with plan items 3 and 4.
+    new_wording: bool = True  # False: Gemma is asked with the frozen v2.0.0 schema text
+
+    @property
+    def switches_off(self) -> list[str]:
+        """The eval-only switches turned off, by name."""
+        return [] if self.new_wording else ["new_wording"]
 
 
 @dataclass(frozen=True)
@@ -311,7 +325,7 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, the production classifier and redaction on (`production`;
     a decision-model, null or unredacted run never passes, §7.8, R1), not marked not for the
-    gate (`for_gate`, plan 0.3)."""
+    gate (`for_gate`, false too when an eval-only switch is off; plan 0.3)."""
     counted = [c for c in cases if c.confirmed and c.scored]
     n = len(counted)
     correct = sum(c.correct for c in counted)
@@ -345,6 +359,13 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
 # ---------------------------------------------------------------------------- running
 
 
+def _check_options(opts: Options) -> None:
+    if not opts.redact and not opts.fraud_only:
+        raise InvalidInputError("--no-redact runs only with --fraud-only (the injection figure)")
+    if opts.switches_off and opts.backend != GEMMA:
+        raise InvalidInputError("--no-new-wording is for the local model (the gemma backend)")
+
+
 def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     connect: Callable[[], sqlite3.Connection], clock: Clock,
           client_factory: Callable[[], Client], data_dir: Path, opts: Options, *,
@@ -363,8 +384,7 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
     dpin = decision_pin(opts.backend)
-    if not opts.redact and not opts.fraud_only:
-        raise InvalidInputError("--no-redact runs only with --fraud-only (the injection figure)")
+    _check_options(opts)
     if RUN.snapshot()["state"] not in ("running", "paused"):
         client = client_factory()
         try:
@@ -571,8 +591,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
     on_ac_at_start = power().on_ac
     classifier_s: list[float] = []
     conn = connect()
-    # Gemma is asked with the install's effective schema, as in production (OD-478)
-    schema = config.current_schema(conn) if opts.backend == GEMMA else load_schema()
+    # Gemma is asked with the install's effective schema, as in production (OD-478), or with
+    # the frozen v2.0.0 text when the new wording is off (plan 0.3)
+    schema = (load_schema() if opts.backend != GEMMA else config.current_schema(conn)
+              if opts.new_wording else load_schema_v2_0_0())  # fmt: skip
     client = client_factory()
     scratch = ruletest.Scratch(clock)
     results: list[CaseResult] = []
@@ -647,8 +669,11 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     classifier=opts.classifier,
                                                     actor=opts.actor,
                                                     production=production,
-                                                    for_gate=opts.for_gate,
+                                                    for_gate=opts.for_gate
+                                                    and not opts.switches_off,
                                                     schema=schema))  # fmt: skip
+        if opts.switches_off:  # which eval-only switches were off (plan 0.3)
+            cast(dict[str, Any], summary["options"])["switches_off"] = opts.switches_off
         summary["schema_digest"] = schema.digest
         if opts.classifier and not stopped:  # which cases repeated, and the flips per field
             summary["determinism"] = {"cases": sorted(repeat), "field_flips": flipped}

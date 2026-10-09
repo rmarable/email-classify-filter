@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval run --no-new-wording` asks the local model with the v2.0.0 schema text, to measure what new wording changes; such a run never counts for the go-live gate (classifier plan Stage 0.3).
 - `ecf eval run --copy-to <folder>` also writes the run's result file to that folder when the run ends, so it is kept if the install is removed; run from inside an ecf checkout, results go to its gitignored `state-archive/evals/` by default (classifier plan Stage 0.3).
 - `ecf eval run --not-for-gate` runs an experiment: the result is saved and reported, but never counts for the go-live gate, as a run with `--no-actor` doesn't; `ecf eval status` shows "(not for the gate)" (classifier plan Stage 0.3).
 - `ecf eval run` reports three fraud figures over cases labelled medium or high fraud risk: those whose plan kept a hide action, those the model answered `none`, and the under-rating on cases only the model's answer routes to `fraud_guard` (36 of the 90 synthetic `fraud_guard` cards); `ecf eval compare` prints them. They don't change `gate_passed` (classifier plan Stage 0.3).
