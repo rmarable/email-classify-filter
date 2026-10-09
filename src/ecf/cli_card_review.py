@@ -63,24 +63,26 @@ LABEL_TEXTS["category"] = {
     " received' from someone we pay.",
     "remittance": "Tells us money is coming to us: remittance advice, a customer's 'we've"
     " paid', a refund or payout.",
-    "vendor_change_request": "Asks to change where or how we pay someone (bank details, payee,"
-    " payment method), genuine or not.",
-    "billing_inquiry": "A question or dispute about a charge, invoice or balance.",
-    "customer_request": "A customer asking for help, service or information that isn't about a"
+    "vendor_change_request": "Says the bank account, payee or check address that money goes to or"
+    " comes from has changed, or asks us to update it, or to switch from bank transfer or check to"
+    " another method. Takes precedence over every other value, even when the email is also an"
+    " invoice, a lure or a statement.",
+    "billing_inquiry": "Question or dispute about a charge, invoice or balance.",
+    "customer_request": "Customer asking for help, service or information that isn't about a"
     " charge, a defect or buying.",
     "sales_inquiry": "Someone asking about buying from us or about our prices.",
-    "partnership": "A one-to-one proposal to work together: a pitch, an offer, a collaboration.",
+    "partnership": "One-to-one proposal to work together: a pitch, an offer, a collaboration.",
     "bug_report": "Reports a bug, defect, outage or incident.",
-    "regulatory": "A regulator, government agency, court or tax authority acting toward us"
+    "regulatory": "Regulator, government agency, court or tax authority acting toward us"
     " (notice, audit, inquiry, filing demand), or someone claiming to be one.",
     "marketing": "Sent to many: newsletters, promotions, advertising.",
     "notification": "Informs only, and fits no other value.",
-    "action_alert": "A machine or service asking someone to act (expiring certificate or domain,"
+    "action_alert": "Machine or service asking someone to act (expiring certificate or domain,"
     " quota reached, backup failed).",
-    "account_security": "A sign-in alert, password reset, verification code or security notice"
+    "account_security": "Sign-in alert, password reset, verification code or security notice"
     " that asks nothing beyond signing in as usual.",
     "shipping": "About a delivery: tracking, delivered, missed, returns.",
-    "appointment": "A meeting or service booking, or a reminder for one (dentist, salon,"
+    "appointment": "Meeting or service booking, or a reminder for one (dentist, salon,"
     " restaurant, car service).",
     "travel": "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes.",
     "finance": "About an account or policy we hold, asking for no payment: statements,"
@@ -89,7 +91,7 @@ LABEL_TEXTS["category"] = {
     " who does what).",
     "spam_or_phishing": "Unsolicited junk or an attempt to deceive, including a fake invoice,"
     " notice or alert.",
-    "private": "A personal note from a person, not about the business, that fits no other value.",
+    "private": "Personal note from a person, not about the business, that fits no other value.",
     "other": "None of the above.",
 }
 LABEL_TEXTS["fraud_risk"] = {
@@ -97,7 +99,7 @@ LABEL_TEXTS["fraud_risk"] = {
     "low": "Any doubt about the email, short of medium.",
     "medium": "Any request to move money, data, credentials or access on this email's say-so,"
     " whatever the pattern.",
-    "high": "A known fraud pattern, for example changed bank details, gift cards, employee tax or"
+    "high": "Known fraud pattern, for example changed bank details, gift cards, employee tax or"
     " payroll data, credentials, or someone posing as a colleague or executive.",
 }
 # Shown under the field's own description (SPEC §16.1).
