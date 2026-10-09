@@ -5,7 +5,7 @@ and a section set to `default` returns to its shipped value (OD-225; `org_domain
 Sections: `org_domains`, `forward_allow_list`, `move_folders`, `action_policy`, `rules` and
 `templates`, from V1.5 `export_schedule` (`daily`, `weekly`, `off`; OD-343), and from V1.6
 `org_addresses` (exact addresses with optional names: the internal set beside `org_domains`,
-OD-431, OD-433; ADR 0021), and from v2.1.0 `schema` (the install's schema extension, OD-478;
+OD-431, OD-433; ADR 0021), and from v2.0.0 `schema` (the install's schema extension, OD-478;
 ADR 0025). `org_domains` may be empty only when no watched address is at a
 non-public domain (OD-441). A forward target is in `org_domains` or exactly in `org_addresses`
 (OD-437); one at a public provider is named in the step-up dialog. Alert routes

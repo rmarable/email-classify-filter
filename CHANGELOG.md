@@ -7,6 +7,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ### Added
 
+- Schema extensions ship in v2.0.0 rather than a later v2.1.0 (operator decision 2026-10-08, OD-478).
 - `ecf doctor` has a `schema` row: the extension's budget, a warning near a limit (OD-478; SPEC §13.2).
 - `GET /v1/schema` returns the schema version, the install's extension and its digest, for the CLI and MCP (OD-478; SPEC §15.1).
 - Schema extensions: the `schema` section of `ecf config apply` adds classifier fields and `category` values; rules can use them, and the shipped fields can't change (OD-478; ADR 0025; SPEC §7.1, §9.7).

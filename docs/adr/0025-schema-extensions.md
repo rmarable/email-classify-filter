@@ -1,6 +1,7 @@
 # ADR 0025: schema extensions through `ecf config apply`, with fixed caps
 
-- **Status:** draft (2026-10-08; OD-478); built on branch `ext-core`, ships in `v2.1.0`
+- **Status:** draft (2026-10-08; OD-478); built on branch `ext-core`; ships in
+  `v2.0.0` (planned for `v2.1.0`; moved by operator decision 2026-10-08)
 - **Context source:** SPEC §7.1, §7.4, §9.3, §9.7, §13.2, §15.1, §15.3;
   `planning-docs/SCHEMA-V2-PLAN.md` step 4 (draft 1, after Phase R)
 
@@ -81,5 +82,6 @@ can't collide with names ecf already writes.
   corpus is the way to score extension fields).
 - Operator-written descriptions go to Anthropic in presets B and C, and their names to Slack;
   neither is email content (SPEC §12.4).
-- Whether a full extension fits Gemma's context depends on the pending `num_ctx` decision
-  (plan step 2); unverified, confirm in `v2.1.0`.
+- Whether a full extension fits Gemma's context: by the measured token counts (SPEC §21.2) it
+  fits `num_ctx` 6,144 (OD-477), but no run has used a full extension; unverified, confirm in
+  `v2.0.0`.

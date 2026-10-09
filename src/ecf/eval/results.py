@@ -155,7 +155,7 @@ def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
 
 def schema_digest(r: ResultFile) -> str | None:
     """The digest of the schema the run's models were asked with (its extension included); None
-    in a result from before v2.1.0."""
+    in a result from before v2.0.0."""
     d = (r.summary or {}).get("schema_digest")
     return d if isinstance(d, str) else None
 

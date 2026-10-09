@@ -18,7 +18,7 @@ slack_doctor's (`{name, level, detail, fix}`):
 - **Backups**: set up or not, the schedule, `export_dir` writable (a test file) and off the data
   directory's disk, and the last backup's age: fine to one period plus 2 h, a warning to two
   periods, then a failure; a first backup is "due" for one period plus 2 h after setup (OD-398).
-- **Schema** (v2.1.0, OD-478): the install's schema extension against its caps (the budget line
+- **Schema** (v2.0.0, OD-478): the install's schema extension against its caps (the budget line
   `ecf config apply` prints); a warning from 80% of any cap.
 """
 

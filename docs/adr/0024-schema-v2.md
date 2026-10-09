@@ -10,7 +10,8 @@ Schema v1 (§7.1) was written for shared business mailboxes. Since V1.6 ecf also
 Gmail accounts, whose mail (bills, receipts, deliveries, sign-in alerts, appointments, family and
 school) v1 can only call `invoice`, `notification` or `other`. The operator wants one schema for
 both, so an install watching both kinds of address needs nothing special, and wants users to be
-able to extend it later (ADR 0025, `v2.1.0`).
+able to extend it (ADR 0025; planned for `v2.1.0`, ships in `v2.0.0` by operator decision
+2026-10-08).
 
 Two base profiles (work and personal) were considered first and dropped for one combined schema.
 An adversarial review (three reviewers) then showed that two of the first draft's changes would

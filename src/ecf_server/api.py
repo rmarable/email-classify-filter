@@ -834,7 +834,7 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`; from
-    v2.1.0 `GET /v1/schema` (OD-478)."""
+    v2.0.0 `GET /v1/schema` (OD-478)."""
 
     @allow(Caller.CLI)
     def apply_config(request: Request) -> JSONResponse:
