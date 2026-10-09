@@ -32,8 +32,9 @@ no result saved, rather than scoring the remaining cases as model failures.
 **Battery** (OD-237): a run starts on battery without asking; when the battery falls to the floor
 (15% unless `battery_floor` says otherwise) it finishes the current case, releases the queue so mail
 classification resumes, and waits for AC power to go on. **Limits:** a hard runtime cap, and
-`stop()`. **Determinism** (§16.5): the first `DETERMINISM_CASES` cases are classified a second time
-and any difference is counted.
+`stop()`. **Determinism** (§16.5): `DETERMINISM_CASES` cases, a fixed seeded sample spread across
+the set (plan 0.3), are classified a second time; differences are counted per case and per field.
+A smoke check only (Q8): about one flip is expected, so it is no noise estimate.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import sqlite3
 import threading
 import time
@@ -89,6 +91,7 @@ from ecf_server.rules import HIDE_ACTIONS
 DEFAULT_FLOOR = 15  # percent (OD-237)
 RUNTIME_CAP_S = 8 * 3600
 DETERMINISM_CASES = 10
+DETERMINISM_SEED = 20261009  # fixed: the same set always repeats the same cases
 MAX_CASE_BYTES = ruletest.MAX_CASE_BYTES
 HOLDER = "eval"
 EVAL_ROOT = "eval_root"  # setting: the synthetic set the last run used (the go-live gate)
@@ -570,6 +573,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
     # by role, so the run's figures don't mix them (plan 0.3); determinism repeats apart
     calls: dict[str, list[stats.Call]] = {r: [] for r in ROLES}
     firsts: dict[str, dict[str, Any] | None] = {}
+    repeat = set(determinism_sample(cases))
     stopped = ""
     try:
         ready = ollama.readiness(client, **check_kw)
@@ -589,7 +593,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                 if opts.classifier else (None, None, None))  # fmt: skip
             if secs is not None:
                 classifier_s.append(secs)
-            if i < DETERMINISM_CASES:
+            if case.id in repeat:
                 firsts[case.id] = cls
             plan = None
             proposal = None
@@ -618,12 +622,16 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             results.append(one_result)
             RUN.set(done=i + 1)
         diffs = 0
+        flipped: dict[str, int] = {}
         if opts.classifier and not stopped:
-            for case in cases[:DETERMINISM_CASES]:
+            for case in (c for c in cases if c.id in repeat):
                 text = _inputs(case, scratch, redact)[1][0]
                 again = _classify_with(opts.backend, dpin, client, text, schema,
                                        calls["determinism"])[0]  # fmt: skip
-                diffs += again != firsts.get(case.id)
+                first = firsts.get(case.id)
+                diffs += again != first
+                for f in field_flips(first, again):
+                    flipped[f] = flipped.get(f, 0) + 1
         env_end = environment(client, power, battery, thermal)
         production = opts.backend == GEMMA and opts.redact and opts.corpus is None
         summary: dict[str, object] = dict(summarize(results, diffs, complete=not stopped,
@@ -632,6 +640,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     production=production,
                                                     schema=schema))  # fmt: skip
         summary["schema_digest"] = schema.digest
+        if opts.classifier and not stopped:  # which cases repeated, and the flips per field
+            summary["determinism"] = {"cases": sorted(repeat), "field_flips": flipped}
         if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)
             summary["prompt_digest"] = classifier.prompt_digest(schema)
         summary["keywords_digest"] = triggers.keywords_digest()
@@ -675,6 +685,28 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
 
 
 ROLES = ("classifier", "actor", "determinism")  # summary["roles"] (plan 0.3)
+
+
+def determinism_sample(cases: list[Case], n: int = DETERMINISM_CASES) -> list[str]:
+    """`n` case IDs spread across the set: the IDs sorted and cut into `n` equal runs, one drawn
+    from each with a fixed seed, so a set always repeats the same cases (plan 0.3)."""
+    ids = sorted(c.id for c in cases)
+    if len(ids) <= n:
+        return ids
+    rng = random.Random(DETERMINISM_SEED)  # noqa: S311 - a sample, not a secret
+    return [rng.choice(ids[k * len(ids) // n : (k + 1) * len(ids) // n]) for k in range(n)]
+
+
+def field_flips(first: dict[str, Any] | None, again: dict[str, Any] | None) -> list[str]:
+    """The fields two classifications of one case disagree on; `["failed"]` when one of them
+    failed and the other didn't."""
+    if first == again:
+        return []
+    if first is None or again is None:
+        return ["failed"]
+    return sorted(k for k in first.keys() | again.keys() if first.get(k) != again.get(k))
+
+
 FACT_RULES = frozenset({"fraud_guard", "fraud_weak", "unverified_payment_sender"})  # 1, 1b, 1a
 
 

@@ -127,6 +127,8 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert "bank has changed" not in text and "SYSTEM NOTE" not in text  # no message text (I5)
     summary = json.loads(text)["summary"]
     assert summary["determinism_diffs"] == 0
+    every = ["starter-bec", "starter-control", "starter-injection"]  # 3 cases: all repeat
+    assert summary["determinism"] == {"cases": every, "field_flips": {}}
     assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
     assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
     assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
@@ -207,6 +209,26 @@ def test_an_unreadable_environment_figure_is_none() -> None:
     env = evalrun.environment(gone, lambda: AC, lambda: None, dict)
     assert env["ollama_version"] is None and env["loaded"] is None and env["thermal"] == {}
     assert env["power"] == {"laptop": True, "on_ac": True, "battery": None}
+
+
+def test_the_determinism_sample_is_seeded_and_spread_across_the_set() -> None:
+    cases = [evalrun.Case(f"c{i:03d}", Path("x"), {}, True, "claude") for i in range(257)]
+    picked = evalrun.determinism_sample(cases)
+    assert picked == evalrun.determinism_sample(list(reversed(cases)))  # fixed, order-free
+    assert len(set(picked)) == evalrun.DETERMINISM_CASES
+    idx = sorted(int(p[1:]) for p in picked)
+    assert all(k * 257 // 10 <= i < (k + 1) * 257 // 10 for k, i in enumerate(idx))  # one per run
+    assert idx != list(range(10))  # not the first ten (all fraud and injection cards, plan 0.3)
+    small = cases[:3]
+    assert evalrun.determinism_sample(small) == ["c000", "c001", "c002"]
+
+
+def test_field_flips() -> None:
+    a = {"category": "invoice", "priority": "high", "fraud_risk": "none"}
+    assert evalrun.field_flips(a, dict(a)) == []
+    assert evalrun.field_flips(a, a | {"priority": "low", "fraud_risk": "low"}) == [
+        "fraud_risk", "priority"]  # fmt: skip
+    assert evalrun.field_flips(a, None) == ["failed"] and evalrun.field_flips(None, None) == []
 
 
 def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
