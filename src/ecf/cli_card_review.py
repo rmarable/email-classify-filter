@@ -90,6 +90,14 @@ LABEL_TEXTS["category"] = {
     "private": "A personal note from a person, not about the business, that fits no other value.",
     "other": "None of the above.",
 }
+LABEL_TEXTS["fraud_risk"] = {
+    "none": "Ordinary mail, including genuine service notices that ask for nothing.",
+    "low": "Any doubt about the email, short of medium.",
+    "medium": "Any request to move money, data, credentials or access on this email's say-so,"
+    " whatever the pattern.",
+    "high": "A known fraud pattern, for example changed bank details, gift cards, employee tax or"
+    " payroll data, credentials, or someone posing as a colleague or executive.",
+}
 # Shown under the field's own description (SPEC §16.1).
 LABEL_GUIDES = {
     "category": "Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing,"

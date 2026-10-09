@@ -180,3 +180,8 @@ def test_category_is_asked_with_its_order_guide(root: Path) -> None:
     _, screen = run(root, "category", ["", "q"], globs=("starter-bec",))
     assert "Pick the first that fits: vendor_change_request, regulatory" in screen
     assert "Asks to change where or how we pay someone" in screen
+
+
+def test_fraud_risk_is_asked_with_the_plans_level_texts(root: Path) -> None:
+    _, screen = run(root, "fraud_risk", ["", "q"], globs=("starter-bec",))
+    assert "Any request to move money, data, credentials or access" in screen
