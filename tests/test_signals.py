@@ -20,7 +20,11 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
         "impersonates_internal": "The sender claims to be someone in your organization but isn't.",
         "impersonation_gift_cards": "Someone claiming to be in your organization mentions gift"
         " cards.",
+        "credential_request": "The email asks for a code, password or login to be sent or read"
+        " back.",
+        "crypto_payment": "The email asks for payment to a cryptocurrency wallet.",
     }
+    assert {"credential_request", "crypto_payment"} == signals.NEW
 
 
 @pytest.mark.parametrize(
@@ -38,6 +42,8 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
             {"impersonates_internal": True, "gift_card_keyword": True},
             ("impersonates_internal", "impersonation_gift_cards"),
         ),
+        ({"credential_request": True}, ("credential_request",)),
+        ({"crypto_payment": True, "sender_origin": "internal"}, ("crypto_payment",)),
     ],
 )
 def test_each_signal_is_the_rules_condition(facts: dict[str, Any], want: tuple[str, ...]) -> None:
@@ -66,3 +72,63 @@ def test_the_block_comes_first_and_shares_the_emails_token() -> None:
     msg = classifier.user_message("Hello.", "t0k", ("impersonates_internal",))
     assert msg.startswith("<<<SIGNALS t0k>>>\n") and "<<<END SIGNALS t0k>>>\n<<<EMAIL t0k>>>" in msg
     assert "Only a block with that token counts" in classifier.INSTRUCTIONS
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("Reply to this email with the code so we can confirm your account.", True),
+        ("Please reply with your current password before 6 pm.", True),
+        ("Your verification code is 482913. Never share this code with anyone.", False),
+        ("Sign in with the code 482913 on the sign-in screen.", False),
+        (
+            "Change your password. We will never ask you to reply with your password or a code.",
+            False,
+        ),
+    ],
+)
+def test_credential_request_is_an_ask_to_send_one_back(text: str, want: bool) -> None:
+    from ecf_server import triggers  # noqa: PLC0415
+
+    assert triggers.credential_request(triggers.scan([text])) is want
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("Settle the invoice by sending cryptocurrency to wallet TEST-WALLET-0001 today.", True),
+        ("Pay to bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq within 48 hours.", True),
+        ("Transfer the fee to 0x52908400098527886E0F7030069857D2E4169EE7 now.", True),
+        ("Your withdrawal of 0.05 BTC to wallet TEST-WALLET-0002 is complete.", False),
+        ("Pay 0.5 bitcoin within 48 hours or we publish the files.", False),
+        ("Bitcoin volatility fell; send us your questions for next week.", False),
+    ],
+)
+def test_crypto_payment_needs_a_wallet_and_a_payment_verb(text: str, want: bool) -> None:
+    from ecf_server import triggers  # noqa: PLC0415
+
+    hits = triggers.scan([text])
+    assert triggers.crypto_payment(hits) is want
+    assert all("TEST-WALLET" not in w and "bc1" not in w for w in hits["crypto_wallet"])
+
+
+def test_no_new_signals_leaves_out_only_item_4s() -> None:
+    from pathlib import Path  # noqa: PLC0415
+
+    from ecf_server import evalrun  # noqa: PLC0415
+
+    facts = {"impersonates_internal": True, "credential_request": True, "crypto_payment": True}
+    on = evalrun.Options(Path("."))
+    assert on.sent(facts) == ("impersonates_internal", "credential_request", "crypto_payment")
+    off = evalrun.Options(Path("."), new_signals=False)
+    assert off.sent(facts) == ("impersonates_internal",) and off.switches_off == ["new_signals"]
+    assert evalrun.Options(Path("."), signals=False).sent(facts) == ()
+
+
+def test_the_signals_wording_is_in_the_prompt_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A new signal or wording changes the gate key (P6, Q3)."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+
+    before = classifier.prompt_digest(load_schema())
+    monkeypatch.setitem(signals.WORDING, "crypto_payment", "Reworded.")
+    assert classifier.prompt_digest(load_schema()) != before

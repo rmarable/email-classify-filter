@@ -20,7 +20,11 @@ WORDING: dict[str, str] = {
     "tax_form_request_outside": "An outside sender asks for employees' tax or payroll data.",
     "impersonates_internal": "The sender claims to be someone in your organization but isn't.",
     "impersonation_gift_cards": "Someone claiming to be in your organization mentions gift cards.",
+    # OD-485 (plan item 4): signals only, no rule route
+    "credential_request": "The email asks for a code, password or login to be sent or read back.",
+    "crypto_payment": "The email asks for payment to a cryptocurrency wallet.",
 }
+NEW = frozenset({"credential_request", "crypto_payment"})  # `--no-new-signals` leaves them out
 
 
 def sent(facts: dict[str, Any]) -> tuple[str, ...]:
@@ -32,6 +36,8 @@ def sent(facts: dict[str, Any]) -> tuple[str, ...]:
         "tax_form_request_outside": bool(facts.get("tax_form_request")) and outside,
         "impersonates_internal": impersonates,
         "impersonation_gift_cards": impersonates and bool(facts.get("gift_card_keyword")),
+        "credential_request": bool(facts.get("credential_request")),
+        "crypto_payment": bool(facts.get("crypto_payment")),
     }
     return tuple(name for name in WORDING if true[name])
 

@@ -152,6 +152,66 @@ data_request:
     - my personal email
     - my personal address
 
+# A code, password or login (OD-485): with a `credential_ask` phrase, the fact
+# `credential_request`, a signal to the classifier only (no rule route). Alone it is any sign-in
+# notice ("enter the code", "never share this code").
+credential:
+  phrases:
+    - code
+    - verification code
+    - sign-in code
+    - security code
+    - passcode
+    - password
+    - login details
+    - login
+    - username and password
+
+# Asking for a credential to be sent or read back to the writer (OD-485). "Enter it", "sign in
+# with" and "never share" are not listed: genuine notices say them.
+credential_ask:
+  phrases:
+    - reply with
+    - reply to this email with
+    - reply to this message with
+    - reply with your
+    - send us the
+    - send me the
+    - send us your
+    - send me your
+    - read back
+    - read it back
+    - read the code back
+    - tell me the
+    - tell us the
+    - text me the
+
+# What genuine notices say to reassure ("we will never ask you to reply with your password"):
+# when one is present the fact `credential_request` is false (OD-485). A lure that also says it
+# goes unflagged by the signal; its fraud risk still counts.
+credential_never:
+  phrases:
+    - never ask you to reply
+    - never ask you to send
+    - never ask you for
+    - never ask for your
+    - will never ask
+    - never share this code
+    - never share your
+
+# Paying in cryptocurrency (OD-485): a payment verb, which with a wallet address (matched by
+# pattern in triggers.py, never stored) gives the fact `crypto_payment`, a signal only. A receipt
+# for a withdrawal names a wallet but no payment verb.
+crypto_pay:
+  phrases:
+    - pay
+    - send
+    - sending
+    - transfer
+    - settle
+    - deposit
+    - remit
+
 # Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
 # common terms; add state and non-US agencies as needed.
 regulator:

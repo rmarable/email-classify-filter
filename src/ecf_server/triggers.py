@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
@@ -48,7 +49,18 @@ from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold, fold_ci, normalize
 
 GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "tax_form", "data_request",
-          "regulator", "injection")  # fmt: skip
+          "credential", "credential_ask", "credential_never", "crypto_pay", "regulator",
+          "injection")  # fmt: skip
+# Cryptocurrency wallet addresses (OD-485), matched on the NFKC text, not the folded one (the
+# skeleton would change their letters): Bitcoin (bech32, legacy), Ethereum, and the synthetic
+# set's placeholder (`TEST-WALLET-0001`; real shapes fail its hygiene scan). A hit is recorded as
+# "wallet address", never the address.
+WALLETS = (
+    re.compile(r"(?<![\w-])bc1[ac-hj-np-z02-9]{11,71}(?![\w-])"),
+    re.compile(r"(?<![\w-])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w-])"),
+    re.compile(r"(?<![\w-])0x[0-9a-fA-F]{40}(?![\w-])"),
+    re.compile(r"(?<![\w-])TEST-WALLET-\d{4}(?![\w-])"),
+)
 BEC_OPENER_MIN = 2  # different `bec_opener` phrases for the fact (OD-479)
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
@@ -104,6 +116,9 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
         for p in pats:
             if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded):
                 hits[group].append(p.word)
+    nfkc = [unicodedata.normalize("NFKC", t) for t in texts if t]
+    hits["crypto_wallet"] = ["wallet address"] if any(w.search(t) for w in WALLETS
+                                                      for t in nfkc) else []  # fmt: skip
     return hits
 
 
@@ -118,6 +133,19 @@ def tax_form_request(keywords: dict[str, list[str]]) -> bool:
     to send it to the writer ("send me", "as one PDF"; OD-482): the W-2 scam. A form alone is a
     payroll provider's notice."""
     return bool(keywords.get("tax_form")) and bool(keywords.get("data_request"))
+
+
+def credential_request(keywords: dict[str, list[str]]) -> bool:
+    """A code, password or login and an ask to send or read it back ("reply with the code",
+    "reply with your current password"; OD-485), unless the text says such a request is never
+    made ("we will never ask you to reply with your password"). A signal to the classifier only."""
+    return (bool(keywords.get("credential")) and bool(keywords.get("credential_ask"))
+            and not keywords.get("credential_never"))  # fmt: skip
+
+
+def crypto_payment(keywords: dict[str, list[str]]) -> bool:
+    """A cryptocurrency wallet address and a payment verb (OD-485). A signal only."""
+    return bool(keywords.get("crypto_wallet")) and bool(keywords.get("crypto_pay"))
 
 
 INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
@@ -220,6 +248,8 @@ class Triggers:
             "gift_card_keyword": bool(self.keywords["gift_card"]),
             "bec_opener": bec_opener(self.keywords),
             "tax_form_request": tax_form_request(self.keywords),
+            "credential_request": credential_request(self.keywords),
+            "crypto_payment": crypto_payment(self.keywords),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,

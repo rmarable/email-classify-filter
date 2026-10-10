@@ -154,15 +154,23 @@ class Options:
     for_gate: bool = True  # False: an experiment, saved for its figures, never passes (plan 0.3)
     copy_to: Path | None = None  # also write the result file here (synthetic set only, plan 0.3)
     # Eval-only switches (plan 0.3); production always runs with all on, and a run with any off
-    # never passes the gate. `--no-new-signals` comes with plan item 4.
+    # never passes the gate.
     new_wording: bool = True  # False: Gemma is asked with the frozen v2.0.0 schema text
     signals: bool = True  # False: Gemma is asked without the signals block (OD-484)
+    new_signals: bool = True  # False: without plan item 4's two signals (OD-485)
 
     @property
     def switches_off(self) -> list[str]:
         """The eval-only switches turned off, by name."""
         return [name for name, on in (("new_wording", self.new_wording),
-                                      ("signals", self.signals)) if not on]  # fmt: skip
+                                      ("signals", self.signals),
+                                      ("new_signals", self.new_signals)) if not on]  # fmt: skip
+
+    def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
+        """The signals this run asks with for these facts."""
+        if not self.signals:
+            return ()
+        return tuple(s for s in signals.sent(facts) if self.new_signals or s not in signals.NEW)
 
 
 @dataclass(frozen=True)
@@ -619,7 +627,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 break
             facts, (text, act_text) = _inputs(case, scratch, redact)
             n_cls, n_act = len(calls["classifier"]), len(calls["actor"])
-            sent = signals.sent(facts) if opts.signals else ()
+            sent = opts.sent(facts)
             cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema,
                                                calls["classifier"], sent)
                                 if opts.classifier else (None, None, None))  # fmt: skip
@@ -664,7 +672,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 text = texts[0]
                 again = _classify_with(opts.backend, dpin, client, text, schema,
                                        calls["determinism"],
-                                       signals.sent(facts) if opts.signals else ())[0]  # fmt: skip
+                                       opts.sent(facts))[0]  # fmt: skip
                 first = firsts.get(case.id)
                 diffs += again != first
                 for f in field_flips(first, again):

@@ -68,11 +68,13 @@ def system_prompt(schema: CompiledSchema) -> str:
 
 def prompt_digest(schema: CompiledSchema) -> str:
     """SHA-256 over everything the classifier is asked with besides the email (plan 0.3, P6):
-    the rendered system prompt, the user message's template, `MAX_INPUT_BYTES` and the model
-    options. The keyword list isn't in it (Q3): it changes what is redacted, not the prompt."""
+    the rendered system prompt, the user message's template, the signals' wording (OD-484),
+    `MAX_INPUT_BYTES` and the model options. The keyword list isn't in it (Q3): it changes what
+    is redacted, not the prompt."""
     parts = {
         "system": system_prompt(schema),
         "user": user_message("{email}", "{token}"),
+        "signals": user_message("{email}", "{token}", tuple(signals.WORDING)),
         "max_input_bytes": MAX_INPUT_BYTES,
         "options": ollama.OPTIONS | {"num_predict": ollama.NUM_PREDICT["classifier"]},
     }
