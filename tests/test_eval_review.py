@@ -163,17 +163,10 @@ def test_the_committed_review_log_is_consistent() -> None:
         assert x["kind"] == rv.RECHECK or x["outcome"] in rv.OUTCOMES
 
 
-def test_the_review_shows_the_labelling_texts_not_the_prompts(root: Path) -> None:
-    from ecf_server import classifier  # noqa: PLC0415
-
-    schema = load_schema()
-    digest = classifier.prompt_digest(schema)
+def test_the_review_shows_the_schemas_texts(root: Path) -> None:
     _, screen = run(root, "sender_type", ["", "q"], add=True, globs=("starter-bec",))
     assert "Firms we don't buy from, including cold pitches" in screen
     assert "A business that is neither a vendor nor a customer" not in screen
-    for name, texts in ui.LABEL_TEXTS.items():
-        assert set(texts) == set(schema.fields[name].values)
-    assert classifier.prompt_digest(load_schema()) == digest
 
 
 def test_category_is_asked_with_its_order_guide(root: Path) -> None:
@@ -188,7 +181,7 @@ def test_fraud_risk_is_asked_with_the_plans_level_texts(root: Path) -> None:
 
 
 def test_no_labelling_text_starts_with_an_article() -> None:
-    """Operator style (2026-10-09): "Meeting ...", not "A meeting ..."."""
-    for texts in ui.LABEL_TEXTS.values():
-        for text in texts.values():
+    """Operator style (2026-10-09) for the schema's value texts: "Meeting ...", not "A ..."."""
+    for field in load_schema().fields.values():
+        for text in field.value_descriptions:
             assert not text.startswith(("A ", "An ")), text

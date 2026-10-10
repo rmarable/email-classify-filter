@@ -68,7 +68,7 @@ def test_digest_tracks_what_the_model_is_asked() -> None:
     assert a.digest.startswith("schema-") and a.digest != b.digest
     text = (ROOT / "src/ecf/data/schema_v2.yaml").read_text(encoding="utf-8")
     assert compile_schema(text).digest == a.digest
-    assert compile_schema(text.replace("A relative.", "A relative or in-law.")).digest != a.digest
+    assert compile_schema(text.replace("Relative.", "Relative or in-law.")).digest != a.digest
 
 
 # SHA-256 of `git show v2.0.0:src/ecf/data/schema_v2.yaml` (2026-10-09)
@@ -378,3 +378,19 @@ def test_v1_value_aliases_map_each_renamed_v1_value_to_a_v2_value() -> None:
     assert v1_values({"sender_type": "staff", "priority": "high"}, v2) == {
         "sender_type": "team", "priority": "high"}  # fmt: skip
     assert v1_values({"sender_type": "staff"}, v1) == {"sender_type": "staff"}  # still a value
+
+
+def test_ordinal_levels_may_carry_texts() -> None:
+    """Plan item 2: `levels` as a mapping gives each level a text, printed under the field."""
+    s = compile_schema("version: 1\nfields:\n  r:\n    type: ordinal\n    description: x\n"
+                       "    levels:\n      lo: Not much.\n      hi: A lot.\n")  # fmt: skip
+    f = s.fields["r"]
+    assert f.values == ("lo", "hi") and f.value_descriptions == ("Not much.", "A lot.")
+    assert "- r (lo < hi): x\n    lo: Not much.\n    hi: A lot." in s.prompt_block
+    with pytest.raises(InvalidInputError, match="can't be empty"):
+        compile_schema("version: 1\nfields: {r: {type: ordinal, description: x,"
+                       " levels: {lo: '', hi: y}}}\n")  # fmt: skip
+    fr = load_schema().fields["fraud_risk"]
+    assert (
+        len(fr.value_descriptions) == 4 and "    medium: Any request" in load_schema().prompt_block
+    )

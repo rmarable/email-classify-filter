@@ -3,29 +3,29 @@ version: 2
 fields:
   category:
     type: enum
-    description: What this email is primarily about.
+    description: "What this email is primarily about. Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing, account_security; then what the email is about (money: invoice, then payment_confirmation or remittance, then finance); notification, private and other last."
     values:
-      invoice:               Bill or invoice requesting payment, business or personal (utilities, credit card, rent, medical, renewals).
-      payment_confirmation:  Confirmation that a payment was sent or received, or a receipt or order confirmation.
-      remittance:            Remittance advice or payment details from a customer.
-      vendor_change_request: Request to change a vendor's or an account's bank, payment, login, or contact details, or to send money a new way.
-      billing_inquiry:       Question or dispute about a charge, invoice, or account balance.
-      customer_request:      Customer asking for help, service, or information.
-      sales_inquiry:         Prospective customer asking about buying or pricing.
-      partnership:           Partnership proposals, vendor pitches, collaboration.
-      bug_report:            Report of a bug, defect, outage, or incident.
-      regulatory:            Anything involving a regulator, regulation, government agency, court, or tax authority (e.g. FDA, SEC, FTC, IRS, state agencies, compliance notices, audits, filings).
-      marketing:             Newsletters, promotions, cold outreach, advertising.
-      notification:          Automated message that only informs and fits no other value.
-      action_alert:          Automated alert from a service we use that asks someone to act (expiring certificate or domain, quota reached, backup failed).
-      account_security:      Sign-in alert, password reset, verification code, or security warning from a service we use, that asks for nothing beyond signing in as usual. One that asks you to send a code or password, click to verify, or call a number is spam_or_phishing.
-      shipping:              Delivery, tracking, or return update.
-      appointment:           Appointment, booking, reservation, or invitation, or a reminder for one.
-      travel:                Itinerary, ticket, check-in, or travel change.
-      finance:               Bank, brokerage, insurance, or tax statement or notice that is not a bill.
-      school_or_family:      School, childcare, activities, or arranging family logistics (pickups, schedules, who does what). A note from a relative that only shares news or thanks is private.
-      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including fake security or sign-in alerts and fake alerts that push you to a link or a payment.
-      private:               Personal correspondence from a person, not about the business, that fits no other value.
+      invoice:               "Asks us to pay: a bill, invoice, overdue reminder or renewal (business or personal)."
+      payment_confirmation:  "Confirms money we paid: a receipt, order confirmation or 'payment received' from someone we pay."
+      remittance:            "Tells us money is coming to us: remittance advice, a customer's 'we've paid', a refund or payout."
+      vendor_change_request: Says the bank account, payee or check address that money goes to or comes from has changed, or asks us to update it, or to switch from bank transfer or check to another method. Takes precedence over every other value, even when the email is also an invoice, a lure or a statement.
+      billing_inquiry:       Question or dispute about a charge, invoice or balance.
+      customer_request:      Customer asking for help, service or information that isn't about a charge, a defect or buying.
+      sales_inquiry:         Someone asking about buying from us or about our prices.
+      partnership:           "One-to-one proposal to work together: a pitch, an offer, a collaboration."
+      bug_report:            Reports a bug, defect, outage or incident.
+      regulatory:            Regulator, government agency, court or tax authority acting toward us (notice, audit, inquiry, filing demand), or someone claiming to be one.
+      marketing:             "Sent to many: newsletters, promotions, advertising."
+      notification:          Informs only, and fits no other value.
+      action_alert:          "Machine or service asking someone to act on a system, not on account access: expiring certificate or domain, quota reached, backup or job failed."
+      account_security:      "About access to an account: sign-ins, new devices, password or two-step changes, verification codes, security warnings; may ask you to review or change something in the account itself."
+      shipping:              "About a delivery: tracking, delivered, missed, returns."
+      appointment:           Meeting or service booking, or a reminder for one (dentist, salon, restaurant, car service).
+      travel:                "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes."
+      finance:               "About an account or policy we hold, asking for no payment: statements, balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews."
+      school_or_family:      School, childcare, activities or family logistics (pickups, schedules, who does what).
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including a fake invoice, notice or alert.
+      private:               Personal note from a person, not about the business, that fits no other value.
       other:                 None of the above.
   priority:
     type: ordinal
@@ -47,19 +47,21 @@ fields:
     type: enum
     description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
     values:
-      vendor:     Supplier or service provider.
-      customer:   Someone we sell to or serve.
-      regulator:  Government agency or regulatory body.
-      team:       Colleague acting in an internal role.
-      company:    A business that is neither a vendor nor a customer (e.g. a store, bank, or service used personally).
-      friend:     Someone the recipient knows personally.
-      family:     A relative.
-      person:     An individual writing personally whom you can't place.
-      automated:  System or no-reply sender.
-      unknown:    Cannot tell.
+      vendor:    Someone we buy from or who serves us (personally or for the organization), includes notices about accounts, bookings or orders.
+      customer:  Someone we sell to or serve.
+      regulator: Government agency or regulatory body.
+      team:      Colleague or co-worker acting on behalf of the organization.
+      company:   Firms we don't buy from, including cold pitches and (potential) partners.
+      friend:    Someone we know personally.
+      family:    Relative.
+      person:    Someone we do not know very well (if at all).
+      automated: Machine or service reporting monitored systems information (backups, HPC jobs, etc.).
+      unknown:   Can't tell the role (an impostor takes the role they claim).
   fraud_risk:
     type: ordinal
-    levels: [none, low, medium, high]
-    description: >
-      Likelihood of fraud or impersonation (changed bank details, unusual urgency,
-      pressure to bypass process, sender not matching the claimed organization).
+    description: Likelihood that this email is fraud or impersonation.
+    levels:
+      none:   Ordinary mail, including genuine service notices that ask for nothing.
+      low:    Any doubt about the email, short of medium.
+      medium: Any request to move money, data, credentials or access on this email's say-so, whatever the pattern.
+      high:   Known fraud pattern, for example changed bank details, gift cards, employee tax or payroll data, credentials, or someone posing as a colleague or executive.

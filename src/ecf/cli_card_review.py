@@ -11,7 +11,6 @@ operator has checked the rest of its expected values, which are shown at that po
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import re
 import secrets
@@ -33,92 +32,6 @@ CLEAR = "\x1b[H\x1b[2J"
 SHOWN_CHARS = 4000
 QUIT = "q"
 _TAG = re.compile(r"<[^>]+>")
-
-
-# The labelling texts of SPEC §16.1 (operator decisions 2026-10-09), shown in place of the schema's
-# until classifier plan item 2 puts the same words into the schema; the model's prompt is unchanged
-# until then, so run 0 keeps the v2.0.0 prompt.
-LABEL_TEXTS: dict[str, dict[str, str]] = {
-    "sender_type": {
-        "vendor": "Someone we buy from or who serves us (personally or for the organization),"
-        " includes notices about accounts, bookings or orders.",
-        "customer": "Someone we sell to or serve.",
-        "regulator": "Government agency or regulatory body.",
-        "team": "Colleague or co-worker acting on behalf of the organization.",
-        "company": "Firms we don't buy from, including cold pitches and (potential) partners.",
-        "friend": "Someone we know personally.",
-        "family": "Relative.",
-        "person": "Someone we do not know very well (if at all).",
-        "automated": "Machine or service reporting monitored systems information"
-        " (backups, HPC jobs, etc.).",
-        "unknown": "Can't tell the role (an impostor takes the role they claim).",
-    },
-}
-
-
-LABEL_TEXTS["category"] = {
-    "invoice": "Asks us to pay: a bill, invoice, overdue reminder or renewal (business or"
-    " personal).",
-    "payment_confirmation": "Confirms money we paid: a receipt, order confirmation or 'payment"
-    " received' from someone we pay.",
-    "remittance": "Tells us money is coming to us: remittance advice, a customer's 'we've"
-    " paid', a refund or payout.",
-    "vendor_change_request": "Says the bank account, payee or check address that money goes to or"
-    " comes from has changed, or asks us to update it, or to switch from bank transfer or check to"
-    " another method. Takes precedence over every other value, even when the email is also an"
-    " invoice, a lure or a statement.",
-    "billing_inquiry": "Question or dispute about a charge, invoice or balance.",
-    "customer_request": "Customer asking for help, service or information that isn't about a"
-    " charge, a defect or buying.",
-    "sales_inquiry": "Someone asking about buying from us or about our prices.",
-    "partnership": "One-to-one proposal to work together: a pitch, an offer, a collaboration.",
-    "bug_report": "Reports a bug, defect, outage or incident.",
-    "regulatory": "Regulator, government agency, court or tax authority acting toward us"
-    " (notice, audit, inquiry, filing demand), or someone claiming to be one.",
-    "marketing": "Sent to many: newsletters, promotions, advertising.",
-    "notification": "Informs only, and fits no other value.",
-    "action_alert": "Machine or service asking someone to act on a system, not on account"
-    " access: expiring certificate or domain, quota reached, backup or job failed.",
-    "account_security": "About access to an account: sign-ins, new devices, password or two-step"
-    " changes, verification codes, security warnings; may ask you to review or change something"
-    " in the account itself.",
-    "shipping": "About a delivery: tracking, delivered, missed, returns.",
-    "appointment": "Meeting or service booking, or a reminder for one (dentist, salon,"
-    " restaurant, car service).",
-    "travel": "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes.",
-    "finance": "About an account or policy we hold, asking for no payment: statements,"
-    " balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews.",
-    "school_or_family": "School, childcare, activities or family logistics (pickups, schedules,"
-    " who does what).",
-    "spam_or_phishing": "Unsolicited junk or an attempt to deceive, including a fake invoice,"
-    " notice or alert.",
-    "private": "Personal note from a person, not about the business, that fits no other value.",
-    "other": "None of the above.",
-}
-LABEL_TEXTS["fraud_risk"] = {
-    "none": "Ordinary mail, including genuine service notices that ask for nothing.",
-    "low": "Any doubt about the email, short of medium.",
-    "medium": "Any request to move money, data, credentials or access on this email's say-so,"
-    " whatever the pattern.",
-    "high": "Known fraud pattern, for example changed bank details, gift cards, employee tax or"
-    " payroll data, credentials, or someone posing as a colleague or executive.",
-}
-# Shown under the field's own description (SPEC §16.1).
-LABEL_GUIDES = {
-    "category": "Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing,"
-    " account_security; then what the email is about (money: invoice, then payment_confirmation"
-    " or remittance, then finance); notification, private and other last.",
-}
-
-
-def labelling_spec(spec: FieldSpec) -> FieldSpec:
-    """The field as the review asks it: SPEC §16.1's value texts and guide where there are any."""
-    texts, guide = LABEL_TEXTS.get(spec.name), LABEL_GUIDES.get(spec.name)
-    if texts:
-        spec = dataclasses.replace(spec, value_descriptions=tuple(texts[v] for v in spec.values))
-    if guide:
-        spec = dataclasses.replace(spec, description=f"{spec.description}\n  {guide}")
-    return spec
 
 
 class _Quit(Exception):
@@ -158,7 +71,7 @@ def _ask(spec: FieldSpec, number: int, of: int, *, unlabelled: bool,
 def _answers(task: rv.Task, schema: CompiledSchema, read: Callable[[str], str],
              write: Callable[[str], None]) -> dict[str, Any]:  # fmt: skip
     labelled = task.card.expected.labels
-    return {f: _ask(labelling_spec(schema.fields[f]), n, len(task.fields),
+    return {f: _ask(schema.fields[f], n, len(task.fields),
                     unlabelled=f not in labelled, read=read, write=write)
             for n, f in enumerate(task.fields, 1)}  # fmt: skip
 

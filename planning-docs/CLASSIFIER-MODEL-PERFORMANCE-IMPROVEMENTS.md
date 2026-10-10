@@ -55,7 +55,7 @@ docstrings `facts.py:1`, `classifier.py:6`, `claude_review.py:20`; CHANGELOG.
   reporting monitored systems information (backups, HPC jobs, etc.); the apparent role (an impostor takes the role claimed); `unknown` only when the
   role can't be told.
 - `category` (labelling rule, operator decisions 2026-10-09, SPEC §16.1): the 22 value texts
-  of `cli_card_review.LABEL_TEXTS["category"]` and the order guide (vendor_change_request,
+  now in `schema_v2.yaml` (built 2026-10-09) and the order guide (vendor_change_request,
   regulatory, spam_or_phishing, account_security first; notification, private, other last);
   vendor_change_request narrowed to a changed bank account, payee, check address or payment
   method, in either direction, taking precedence over every other value; regulatory to an authority acting toward

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- The classifier is asked with clearer wording for category (22 tightened texts and a first-that-fits order), sender_type (vendor now includes a business's notices about your accounts, bookings or orders; automated is a machine reporting on monitored systems) and fraud_risk (a text for each level). The classifier prompt changes, so every address returns to `assist` until its gate passes again (classifier plan item 2; SPEC §7.1, §16.1).
 - Decision: computed facts may now go to a model as derived signals, by exemption only: true/false conditions the rules already use, in fixed wording, never addresses, keywords or authentication results; nothing a model returns ever becomes a fact. On presets B and C these signals go to Anthropic with the classification request (OD-483, ADR 0026; SPEC §7.2, §12.4).
 - `ecf eval label --review <fields|all>` re-judges the synthetic set's labels blind: each card is shown as an email only (no id, notes, expected values or model answers), your answer is compared with the label afterwards, and every answer is logged in `reviews.jsonl`; `--add` labels empty fields, `--cases` narrows the set, `--recheck N` measures how consistently you answer (SPEC §16.1).
 - The classifier's prompt may grow by at most 1,500 tokens in this release (new wording and signals), measured so the longest possible email still fits the model's context (operator decision; SPEC §21.2).
