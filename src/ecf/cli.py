@@ -1190,7 +1190,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         bool,
         typer.Option(
             "--new-signals/--no-new-signals",
-            help="--no-new-signals leaves out the credential and crypto signals (OD-485; an"
+            help="--no-new-signals leaves out the crypto signal (OD-485; an"
             " experiment, never counts for the go-live gate).",
         ),
     ] = True,

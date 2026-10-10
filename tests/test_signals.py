@@ -20,11 +20,9 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
         "impersonates_internal": "The sender claims to be someone in your organization but isn't.",
         "impersonation_gift_cards": "Someone claiming to be in your organization mentions gift"
         " cards.",
-        "credential_request": "The email asks for a code, password or login to be sent or read"
-        " back.",
         "crypto_payment": "The email asks for payment to a cryptocurrency wallet.",
     }
-    assert {"credential_request", "crypto_payment"} == signals.NEW
+    assert {"crypto_payment"} == signals.NEW
 
 
 @pytest.mark.parametrize(
@@ -42,7 +40,7 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
             {"impersonates_internal": True, "gift_card_keyword": True},
             ("impersonates_internal", "impersonation_gift_cards"),
         ),
-        ({"credential_request": True}, ("credential_request",)),
+        ({"credential_request": True}, ()),  # a fact only (OD-488)
         ({"crypto_payment": True, "sender_origin": "internal"}, ("crypto_payment",)),
     ],
 )
@@ -119,7 +117,7 @@ def test_no_new_signals_leaves_out_only_item_4s() -> None:
 
     facts = {"impersonates_internal": True, "credential_request": True, "crypto_payment": True}
     on = evalrun.Options(Path("."))
-    assert on.sent(facts) == ("impersonates_internal", "credential_request", "crypto_payment")
+    assert on.sent(facts) == ("impersonates_internal", "crypto_payment")
     off = evalrun.Options(Path("."), new_signals=False)
     assert off.sent(facts) == ("impersonates_internal",) and off.switches_off == ["new_signals"]
     assert evalrun.Options(Path("."), signals=False).sent(facts) == ()

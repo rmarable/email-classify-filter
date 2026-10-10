@@ -153,7 +153,7 @@ data_request:
     - my personal address
 
 # A code, password or login (OD-485): with a `credential_ask` phrase, the fact
-# `credential_request`, a signal to the classifier only (no rule route). Alone it is any sign-in
+# `credential_request` (OD-485; a fact, no longer sent to the classifiers, OD-488). Alone it is any sign-in
 # notice ("enter the code", "never share this code").
 credential:
   phrases:
@@ -188,7 +188,7 @@ credential_ask:
 
 # What genuine notices say to reassure ("we will never ask you to reply with your password"):
 # when one is present the fact `credential_request` is false (OD-485). A lure that also says it
-# goes unflagged by the signal; its fraud risk still counts.
+# goes unflagged by the fact; its fraud risk still counts.
 credential_never:
   phrases:
     - never ask you to reply
