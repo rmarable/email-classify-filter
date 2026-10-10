@@ -84,7 +84,7 @@ class MessageAnalyzer:
             watched_providers=self._providers,
             public_domains=self._public,
         )
-        return found | fired.facts()
+        return triggers.with_routes(found | fired.facts(), public_domains=self._public)
 
     def _reused(self, parsed: ParsedMessage) -> bool:
         """The Message-ID already belongs to an item with different content or identity
@@ -100,6 +100,15 @@ class MessageAnalyzer:
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, found: dict[str, Any]
     ) -> None:
+        """Count the message toward its sender's history, unless it had a fraud reason, a
+        lookalike domain or a weak route reason: a scam must not build the history that softens
+        the routes (OD-490). Trigger 2's weak "first-time sender with a payment keyword" still
+        counts, or a new vendor's invoices would never make it known (operator decision
+        2026-10-10)."""
+        t: dict[str, Any] = found.get("triggers") or {}
+        routed: dict[str, Any] = found.get("routes") or {}
+        if t.get("fraud") or t.get("lookalikes") or routed.get("fraud_weak"):
+            return
         facts.record_sender(
             conn,
             self._address.address_id,

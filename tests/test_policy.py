@@ -46,13 +46,38 @@ FACTS = st.fixed_dictionaries({
     "content_unscanned": st.booleans(),
     "quarantined": st.booleans(),
     "payment_keyword": st.booleans(),
+    # every fact rule 1 reads (pre-classifier plan step 4, P17)
+    "impersonates_internal": st.booleans(),
+    "bec_opener": st.booleans(),
+    "tax_form_request": st.booleans(),
+    "self_sent": st.booleans(),
+    "gift_card_keyword": st.booleans(),
 })  # fmt: skip
+# A hand-written custom set that tries to hide mail rule 1 escalates: the invariants hold for any
+# rules, not only the starter ones (v2.1.0's starter rules are v2.0.0's, unchanged).
+CUSTOM = compile_rules(
+    """
+version: 1
+rules:
+  - id: impersonators_to_junk
+    when: {fact: impersonates_internal, eq: true}
+    then: [{label: spam_or_phishing}, junk]
+  - id: hide_the_rest
+    when: {fact: bec_opener, eq: false}
+    then: [{label: marketing}, mark_read, archive]
+  - id: otherwise
+    actor: continue
+""",
+    SCHEMA,
+    source="custom",
+)
+RULE_SETS = (STARTER, CUSTOM)
 CONTEXTS = st.builds(
     Context,
     classification=CLASSIFICATIONS,
     facts=FACTS,
     sensitivity=st.sampled_from(["standard", "high"]),
-    rules=st.just(STARTER),
+    rules=st.sampled_from(RULE_SETS),
     action_policy=st.sampled_from([{}, {"archive": "approve"}, {"junk": "approve"}]),
     move_folders=st.just(FOLDERS),
     confirmed_category=st.one_of(st.none(), st.sampled_from(SCHEMA.fields["category"].values)),
@@ -65,7 +90,7 @@ CONTEXTS = st.builds(
 @settings(max_examples=3000, deadline=None)
 @given(CONTEXTS)
 def test_i1_a_hide_survives_only_when_facts_allow_it(ctx: Context) -> None:
-    p = policy.plan(ctx, LABELS)
+    p = policy.plan(ctx, policy.labels(SCHEMA, ctx.rules))
     if p.hides:
         assert ctx.sensitivity == "standard"
         assert not ctx.facts["content_unscanned"] and not ctx.facts["quarantined"]
@@ -82,13 +107,15 @@ def test_i1_a_hide_survives_only_when_facts_allow_it(ctx: Context) -> None:
 @settings(max_examples=2000, deadline=None)
 @given(CONTEXTS)
 def test_i2_a_pre_check_escalation_always_survives_classification(ctx: Context) -> None:
-    p = policy.plan(ctx, LABELS)
+    p = policy.plan(ctx, policy.labels(SCHEMA, ctx.rules))
     names = {(a.name, a.target) for a in p.actions}
     t = ctx.facts["triggers"]
-    if t["fraud"] or ctx.facts["quarantined"]:
+    # The pre-check's own escalation is queued at fetch and nothing removes it; the plan
+    # escalating again is the starter rules' doing, which a custom set may leave out.
+    if ctx.rules is STARTER and (t["fraud"] or ctx.facts["quarantined"]):
         assert ("escalate", None) in names and ("label", "suspicious") in names
         assert p.rule_id == "fraud_guard" and not p.to_actor
-    elif t["regulator"]:  # rule 2 comes before 1b and 1a (OD-253): it always escalates
+    elif ctx.rules is STARTER and t["regulator"]:  # rule 2 before 1b and 1a (OD-253)
         assert ("escalate", None) in names and p.rule_id in ("fraud_guard", "regulatory")
     if t["fraud_weak"] or t["regulator"] or t["fraud"]:
         assert not p.hides
@@ -97,7 +124,7 @@ def test_i2_a_pre_check_escalation_always_survives_classification(ctx: Context) 
 @settings(max_examples=2000, deadline=None)
 @given(CONTEXTS)
 def test_i3_risk_is_facts_or_classification(ctx: Context) -> None:
-    p = policy.plan(ctx, LABELS)
+    p = policy.plan(ctx, policy.labels(SCHEMA, ctx.rules))
     if precheck.payment_or_fraud(ctx.facts) or ctx.classification["payment_related"]:
         assert p.payment_or_fraud
     if (ctx.sensitivity == "high" or not ctx.facts["sender_seen_before"]
@@ -110,9 +137,10 @@ def test_i3_risk_is_facts_or_classification(ctx: Context) -> None:
 @settings(max_examples=2000, deadline=None)
 @given(CONTEXTS)
 def test_i4_every_target_is_known(ctx: Context) -> None:
-    for a in policy.plan(ctx, LABELS).actions:
+    labels = policy.labels(SCHEMA, ctx.rules)
+    for a in policy.plan(ctx, labels).actions:
         if a.name == "label":
-            assert a.target in LABELS
+            assert a.target in labels
         if a.name == "move":
             assert a.target in FOLDERS
         assert a.name in {"label", "flag", "escalate", "leave", *HIDE_ACTIONS}

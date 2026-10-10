@@ -88,8 +88,9 @@ def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.
     assert post["channel"] == "CAP" and card["title"] == "Digest: ap"
     text = card["text"].splitlines()
     assert text[0] == "3 new message(s) since 13:00 UTC."
-    assert text[2] == "Weak fraud signals (first-time sender asking for payment):"
+    assert text[2] == "Weak fraud signals (flagged, not escalated):"
     assert text[3].startswith("aaaaaaaa billing@vendor-a.example: Invoice aaa")
+    assert text[3].endswith(": first-time sender asking for payment")  # why (OD-490)
     assert text[5] == "Payment email from unverified senders:" and text[6].startswith("bbbbbbbb")
     assert text[-1] == "Not fully scanned: 1"
     assert [(b["action"], b["ref"]) for b in card["buttons"]] == [("undo", "b" * 64),
@@ -115,7 +116,7 @@ def test_impersonation_without_money_has_its_own_digest_section(conn: sqlite3.Co
         "Pretending to be someone you work with (no payment wording found):",
         text[3],
         "",
-        "Weak fraud signals (first-time sender asking for payment):",
+        "Weak fraud signals (flagged, not escalated):",
         text[6],
     ]
     assert text[3].startswith("eeeeeeee") and text[6].startswith("aaaaaaaa")

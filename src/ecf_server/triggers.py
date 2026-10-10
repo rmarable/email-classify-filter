@@ -493,7 +493,7 @@ def _money_triggers(
     fraud: list[str] = []
     weak: list[str] = []
     bank, change, payment = (bool(keywords[g]) for g in ("bank", "change", "payment"))
-    auth, rtm = found["auth_result"], found["reply_to_mismatch"]
+    rtm = found["reply_to_mismatch"]
     # 1. bank details with an unconfirmed sender (OD-044), change wording or a Reply-To mismatch
     held = [
         what
@@ -506,15 +506,7 @@ def _money_triggers(
     ]  # only what held, so the card says why (V1.2 shadow run, 2026-09-30)
     if bank and held:
         fraud.append(f"bank details with {' and '.join(held)}")
-    signals = (
-        ("bank or change wording", bank or change),
-        ("DMARC fail", auth == "fail"),
-        # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
-        ("not addressed to this mailbox", found["recipient_mismatch"] and auth == "pass"),
-        ("lookalike domain", lookalikes),
-        ("Reply-To mismatch", rtm),
-    )
-    second = [name for name, hit in signals if hit]
+    second = second_signals(keywords, found, lookalikes)
     # 2. a first-time sender with a payment keyword needs a second signal; alone it is weak
     if payment and not found["sender_seen_before"]:
         if second:
@@ -529,6 +521,103 @@ def _money_triggers(
         else:
             weak.append("Reply-To mismatch on a payment item")
     return fraud, weak
+
+
+def second_signals(
+    keywords: dict[str, list[str]], found: dict[str, Any], lookalikes: bool
+) -> list[str]:
+    """Trigger 2's second signals (OD-062), shared with the routes (OD-490)."""
+    auth = found["auth_result"]
+    signals = (
+        ("bank or change wording", bool(keywords["bank"] or keywords["change"])),
+        ("DMARC fail", auth == "fail"),
+        # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
+        ("not addressed to this mailbox", bool(found["recipient_mismatch"]) and auth == "pass"),
+        ("lookalike domain", lookalikes),
+        ("Reply-To mismatch", bool(found["reply_to_mismatch"])),
+    )
+    return [name for name, hit in signals if hit]
+
+
+# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+
+NO_HISTORY = "a sender with no established history"
+UNAUTHENTICATED_KNOWN = "a known sender without authentication"
+OTHER_FRAUD = "another fraud signal"
+INTERNAL = "an internal sender"
+IMPERSONATION = "impersonation of someone in your organization"
+CREDENTIAL = "a request for a code or password"
+GIFT_CODES = "a request for gift-card codes"
+CRYPTO = "a wallet address with a payment request"
+AUTH_REGRESSED = "a known sender's mail failed DMARC"
+
+
+def routes(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> tuple[list[str], list[str]]:
+    """Fraud and weak fraud reasons for credential requests, gift-card code requests and crypto
+    payment demands, and for a known sender whose mail fails DMARC (OD-490). Pure, over the
+    facts after they are computed (and, in the eval, after a card's expected facts are laid
+    over), with `found["triggers"]` holding the other triggers' reasons only.
+
+    A route fires as a fraud reason with a second signal: trigger 2's (`second_signals`), any
+    other fraud reason, a sender with no established history, a known sender whose mail isn't
+    authenticated (bulk mail excepted); impersonation for credentials and crypto, an internal
+    sender for gift cards (a compromised colleague's account; impersonation with gift cards
+    already escalates). Without one: weak for credentials (unless the text says such a request
+    is never made) and gift cards, nothing for crypto (genuine deposit notices). A public
+    provider's sender is never "known" here unless confirmed. Never on the account's own mail
+    to itself. Reasons use fixed wording, never a value from the message."""
+    if found.get("self_sent"):
+        return [], []
+    kw: dict[str, list[str]] = found.get("keywords") or {}
+    t: dict[str, Any] = found.get("triggers") or {}
+    auth = found.get("auth_result")
+    known = bool(found.get("sender_confirmed")) or (
+        bool(found.get("sender_seen_before")) and found.get("from_domain") not in public_domains
+    )
+    shared = second_signals(kw, found, bool(t.get("lookalikes"))) if kw else []
+    shared += [name for name, hit in (
+        (OTHER_FRAUD, bool(t.get("fraud"))),
+        (NO_HISTORY, not known),
+        (UNAUTHENTICATED_KNOWN, known and auth == "none" and not found.get("bulk_signal")),
+    ) if hit]  # fmt: skip
+    posing = [IMPERSONATION] if found.get("impersonates_internal") else []
+    inside = [INTERNAL] if found.get("from_org_domain") or found.get("from_org_address") else []
+    fraud: list[str] = []
+    weak: list[str] = []
+
+    def route(what: str, signals: list[str], weak_too: bool) -> None:
+        if signals:
+            fraud.append(f"{what} and {' and '.join(signals)}")
+        elif weak_too:
+            weak.append(f"{what} from a known sender, with no second signal")
+
+    if kw.get("credential") and kw.get("credential_ask"):  # the veto only without a signal
+        route(CREDENTIAL, shared + posing, weak_too=not kw.get("credential_never"))
+    if gift_card_codes_request(kw):
+        route(GIFT_CODES, shared + inside, weak_too=True)
+    if kw.get("crypto_wallet") and kw.get("crypto_pay"):
+        route(CRYPTO, shared + posing, weak_too=False)
+    if found.get("known_sender_auth_regressed") and not any("DMARC fail" in r for r in fraud):
+        fraud.append(AUTH_REGRESSED)  # one reason, not two (R3-P21)
+    return fraud, weak
+
+
+def with_routes(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> dict[str, Any]:
+    """`found` with its route reasons (re)computed: any earlier ones (`found["routes"]`) are
+    taken out of the triggers first, so the eval can route again after laying a card's
+    expected facts over."""
+    prior: dict[str, list[str]] = found.get("routes") or {}
+    t: dict[str, Any] = dict(found.get("triggers") or {})
+    for k in ("fraud", "fraud_weak"):
+        t[k] = [r for r in t.get(k, []) if r not in prior.get(k, [])]
+    fraud, weak = routes(found | {"triggers": t}, public_domains=public_domains)
+    t["fraud"] = t["fraud"] + fraud
+    t["fraud_weak"] = t["fraud_weak"] + weak
+    return found | {"triggers": t, "routes": {"fraud": fraud, "fraud_weak": weak}}
 
 
 def _other_triggers(

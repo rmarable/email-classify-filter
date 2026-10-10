@@ -3,7 +3,8 @@
 **Digests:** one post per address channel, at most hourly and only inside business hours; mail that
 arrived off-hours rolls into the first digest of the workday. It opens with how many messages came
 in ("Caught up: N messages since <time>" after a gap of more than 2 hours), then the sections a
-digest owns: weak fraud signals (a first-time sender asking for payment, OD-171) and unverified
+digest owns: weak fraud signals (a first-time sender asking for payment, OD-171; since v2.1.0 also
+a known sender's credential or gift-card code request, OD-490, each line giving why) and unverified
 payment senders (OD-065), each with what was done, and how many emails weren't fully scanned.
 Escalations are not repeated here: they have their own cards. Buttons: Pause (this address), and
 Undo on items it may undo. No digest when nothing came in (no idle posts). `ecf digest <address>`
@@ -131,7 +132,10 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
         unscanned += bool(facts.get("content_unscanned"))
         t: dict[str, Any] = facts.get("triggers") or {}
         if "fraud_weak" in names and "fraud" not in names:  # impersonation on its own (V1.6)
-            (posing if t.get("impersonation") else weak).append(_line(r, facts))
+            if t.get("impersonation"):
+                posing.append(_line(r, facts))
+            else:
+                weak.append(f"{_line(r, facts)}: {t['fraud_weak'][0]}")
         elif "unverified_payment" in names and "fraud" not in names:
             unverified.append(_line(r, facts))
         if may_undo(facts):
@@ -147,7 +151,7 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     fell = [_line(r, json.loads(r["facts"] or "{}")) for r in handed]
     for title, lines in (("Pretending to be someone you work with (no payment wording found):",
                           posing),
-                         ("Weak fraud signals (first-time sender asking for payment):", weak),
+                         ("Weak fraud signals (flagged, not escalated):", weak),
                          ("Payment email from unverified senders:", unverified),
                          ("Waited too long for /ecf-review; the local model decides them"
                           " (local_high_risk):", fell)):  # fmt: skip

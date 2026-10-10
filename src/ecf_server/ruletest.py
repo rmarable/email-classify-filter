@@ -26,7 +26,7 @@ from typing import Any
 
 from ecf.errors import InvalidInputError
 from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
-from ecf_server import db, fetch, internal, precheck, rules
+from ecf_server import db, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
@@ -184,13 +184,18 @@ def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, 
     """Computed facts with a case's expected ones over them, the internal set's excepted
     (OD-443), and `bulk_corroborates` recomputed unless the case sets it: it is derived in
     `facts.compute` before any override, so a card's `auth_result: pass` or `sender_seen_before`
-    would otherwise never reach the hide path (Q1)."""
+    would otherwise never reach the hide path (Q1). Likewise `known_sender_auth_regressed` (from
+    the expected `sender_seen_before` and `auth_result`), and the routes are computed again over
+    the result (OD-490), so a card's expected facts reach them."""
     out = found | {k: v for k, v in expected.items() if k not in INTERNAL_FACTS}
     if "bulk_corroborates" not in expected:
         out["bulk_corroborates"] = corroborates(bool(out.get("bulk_signal")),
                                                 out.get("auth_result"),
                                                 bool(out.get("sender_seen_before")))  # fmt: skip
-    return out
+    if "known_sender_auth_regressed" not in expected:
+        out["known_sender_auth_regressed"] = (bool(out.get("sender_seen_before"))
+                                              and out.get("auth_result") == "fail")  # fmt: skip
+    return triggers.with_routes(out, public_domains=PUBLIC_DOMAINS | {FREEMAIL})
 
 
 def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, Any]:

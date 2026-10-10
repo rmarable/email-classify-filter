@@ -305,3 +305,11 @@ def test_a_short_sender_never_cuts_the_address() -> None:
     assert cards.short_sender(very) == very  # longer than the limit, still whole
     assert cards.short_sender("someone at gmail.com (sender not recorded before V1.2)") == (
         "someone at gmail.com")  # fmt: skip
+
+
+def test_why_gives_weak_reasons_only_when_no_fraud_reason_says_why() -> None:
+    """OD-490: a known sender's credential request is weak; its card says so."""
+    weak = "a request for a code or password from a known sender, with no second signal"
+    assert cards.why({"triggers": {"fraud_weak": [weak]}}) == weak
+    both = {"triggers": {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [weak]}}
+    assert cards.why(both) == "DMARC fail on a payment item"

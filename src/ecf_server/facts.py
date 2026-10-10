@@ -171,6 +171,9 @@ def compute(  # noqa: PLR0913 - the message, its address and what the scan found
         "self_sent": self_sent(parsed, address, gmail_labels),
         "sender_seen_before": seen,
         "sender_confirmed": confirmed and not shared,
+        # enough DMARC-pass history, and this message fails: a fraud reason (OD-490); `none`
+        # doesn't count (forwarding, lists and late verification give it to known senders)
+        "known_sender_auth_regressed": by_history and auth_result == "fail" and not shared,
         # human-verified for rule 1a (`ecf sender set-verified`, OD-065); fraud triggers ignore it
         "sender_verified": history is not None and bool(history["verified_rule1a"]),
         "shared_platform": shared,

@@ -925,3 +925,192 @@ def test_batched_redaction_matches_paragraph_by_paragraph() -> None:
             paras = ["".join(rng.choices(pieces, k=rng.randint(0, 4))) for _ in range(n)]
             text = rng.choice(["\n\n", "\n \t\n"]).join(paras)
             assert tr.redact_injection(text) == _redact_before_step_3b(text), repr(text[:200])
+
+
+# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+
+CRED = {"credential": ["password"], "credential_ask": ["reply with"]}
+GIFT = {"gift_card": ["gift cards"], "gift_card_ask": ["send me the codes"]}
+COIN = {"crypto_wallet": ["wallet address"], "crypto_pay": ["send"]}
+NEVER = {"credential_never": ["never ask you to reply"]}
+
+
+def _found(words: dict[str, list[str]] | None = None, **facts: Any) -> dict[str, Any]:
+    """A known, authenticated sender with no other signal: the one case routes soften."""
+    keywords: dict[str, list[str]] = {g: [] for g in tr.GROUPS} | {"crypto_wallet": []}
+    none: list[str] = []
+    out: dict[str, Any] = {
+            "auth_result": "pass", "sender_seen_before": True, "sender_confirmed": False,
+            "from_domain": "vendor-a.example", "recipient_mismatch": False,
+            "reply_to_mismatch": False, "bulk_signal": False, "self_sent": False,
+            "impersonates_internal": False, "from_org_domain": False, "from_org_address": False,
+            "known_sender_auth_regressed": False, "keywords": keywords | (words or {}),
+            "triggers": {"fraud": none, "fraud_weak": none, "lookalikes": none}}  # fmt: skip
+    return out | facts
+
+
+SIGNALS: list[tuple[str, dict[str, Any], str]] = [
+    ("first-time", {"sender_seen_before": False}, tr.NO_HISTORY),
+    ("dmarc-fail", {"auth_result": "fail"}, "DMARC fail"),
+    ("unauthenticated-known", {"auth_result": "none"}, tr.UNAUTHENTICATED_KNOWN),
+    ("reply-to", {"reply_to_mismatch": True}, "Reply-To mismatch"),
+    ("not-addressed", {"recipient_mismatch": True}, "not addressed to this mailbox"),
+    ("lookalike", {"triggers": {"fraud": [], "fraud_weak": [], "lookalikes": ["x looks like y"]}},
+     "lookalike domain"),
+    ("other-fraud", {"triggers": {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [],
+                                  "lookalikes": []}}, tr.OTHER_FRAUD),
+    ("public-provider", {"from_domain": "gmail.com"}, tr.NO_HISTORY),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("words", "what"), [
+    (CRED, tr.CREDENTIAL), (GIFT, tr.GIFT_CODES), (COIN, tr.CRYPTO)],
+    ids=["credential", "gift-codes", "crypto"])  # fmt: skip
+@pytest.mark.parametrize(("facts", "signal"), [(f, s) for _, f, s in SIGNALS],
+                         ids=[i for i, _, _ in SIGNALS])  # fmt: skip
+def test_a_route_with_a_second_signal_is_a_fraud_reason(
+    words: dict[str, list[str]], what: str, facts: dict[str, Any], signal: str
+) -> None:
+    fraud, weak = tr.routes(_found(words, **facts))
+    assert len(fraud) == 1 and fraud[0].startswith(what) and signal in fraud[0]
+    assert weak == []
+
+
+@pytest.mark.parametrize(("words", "what", "weak"), [
+    (CRED, tr.CREDENTIAL, True), (GIFT, tr.GIFT_CODES, True), (COIN, tr.CRYPTO, False)],
+    ids=["credential", "gift-codes", "crypto"])  # fmt: skip
+def test_a_known_authenticated_sender_alone_is_weak_or_nothing(
+    words: dict[str, list[str]], what: str, weak: bool
+) -> None:
+    """The only softened case: seen, DMARC pass, nothing else; crypto has no weak leg (genuine
+    deposit and payout notices)."""
+    fraud, weak_reasons = tr.routes(_found(words))
+    assert fraud == []
+    assert weak_reasons == ([f"{what} from a known sender, with no second signal"] if weak else [])
+    confirmed_gmail = _found(words, from_domain="gmail.com", sender_confirmed=True)
+    assert tr.routes(confirmed_gmail) == (fraud, weak_reasons)  # confirmed: known anywhere
+
+
+def test_the_credential_veto_holds_only_without_a_second_signal() -> None:
+    assert tr.routes(_found(CRED | NEVER)) == ([], [])
+    fraud, _ = tr.routes(_found(CRED | NEVER, sender_seen_before=False))
+    assert fraud == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+
+
+def test_origins_count_per_route() -> None:
+    """An internal sender is a signal for gift-card codes only (a compromised colleague);
+    impersonation for credentials and crypto only (with gift cards it already escalates)."""
+    inside = {"from_org_domain": True}
+    assert tr.routes(_found(GIFT, **inside))[0] == [f"{tr.GIFT_CODES} and {tr.INTERNAL}"]
+    assert tr.routes(_found(CRED, **inside))[0] == []
+    posing = {"impersonates_internal": True}
+    assert tr.routes(_found(CRED, **posing))[0] == [f"{tr.CREDENTIAL} and {tr.IMPERSONATION}"]
+    assert tr.routes(_found(COIN, **posing))[0] == [f"{tr.CRYPTO} and {tr.IMPERSONATION}"]
+    assert tr.routes(_found(GIFT, **posing))[0] == []
+
+
+def test_bulk_mail_from_a_known_sender_without_authentication_is_not_a_signal() -> None:
+    assert tr.routes(_found(CRED, auth_result="none", bulk_signal=True))[0] == []
+
+
+def test_no_route_on_the_accounts_own_mail_to_itself() -> None:
+    assert tr.routes(_found(CRED | GIFT | COIN, self_sent=True, sender_seen_before=False)) == (
+        [],
+        [],
+    )
+
+
+def test_a_known_sender_failing_dmarc_is_one_fraud_reason() -> None:
+    """§5 A: enough passing history and a fail; said once when a route already says DMARC fail
+    (R3-P21)."""
+    assert tr.routes(_found(known_sender_auth_regressed=True)) == ([tr.AUTH_REGRESSED], [])
+    both = _found(CRED, known_sender_auth_regressed=True, auth_result="fail")
+    assert tr.routes(both)[0] == [f"{tr.CREDENTIAL} and DMARC fail"]
+
+
+def test_reasons_never_quote_the_message() -> None:
+    """Fixed wording only (R3-P14): no domain, address or value."""
+    found = _found(CRED | GIFT | COIN, sender_seen_before=False, from_domain="evil.example",
+                   reply_to_mismatch=True, known_sender_auth_regressed=True)  # fmt: skip
+    for reason in [*tr.routes(found)[0], *tr.routes(found)[1]]:
+        assert "evil" not in reason and "@" not in reason and "." not in reason
+
+
+def test_with_routes_replaces_earlier_route_reasons() -> None:
+    """The eval routes again after a card's expected facts: the earlier reasons go first."""
+    first = tr.with_routes(_found(CRED, sender_seen_before=False))
+    assert first["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+    assert tr.with_routes(first) == first  # idempotent
+    again = tr.with_routes(first | {"sender_seen_before": True})
+    assert again["triggers"]["fraud"] == [] and again["routes"]["fraud"] == []
+    assert again["triggers"]["fraud_weak"] == [
+        f"{tr.CREDENTIAL} from a known sender, with no second signal"
+    ]
+
+
+def test_the_eval_routes_after_a_cards_expected_facts(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R3-P1: a card's expected `sender_seen_before` and `auth_result` reach the routes and
+    `known_sender_auth_regressed`."""
+    from ecf_server import ruletest  # noqa: PLC0415 - only this test needs it
+
+    scratch = ruletest.Scratch(clock)
+    try:
+        found = scratch.facts(mail("Please reply with your password today."))
+    finally:
+        scratch.close()
+    assert found["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+    known = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "pass"})
+    assert known["triggers"]["fraud"] == []
+    assert known["triggers"]["fraud_weak"] == [
+        f"{tr.CREDENTIAL} from a known sender, with no second signal"
+    ]
+    failed = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "fail"})
+    assert failed["known_sender_auth_regressed"] is True
+    assert failed["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and DMARC fail"]
+    del conn
+
+
+def test_a_routed_item_escalates_at_the_pre_check_and_rule_1(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """The routes are fraud reasons: the pre-check escalates without the model and rule 1
+    matches `{trigger: fraud}` (no new policy code)."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+    from ecf_server import precheck, rules  # noqa: PLC0415
+
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    raw = mail("Buy five gift cards, scratch the backs and send me the codes.")
+    found = analyzer.analyze(parse(raw), raw)
+    assert f"{tr.GIFT_CODES} and {tr.NO_HISTORY}" in found["triggers"]["fraud"]
+    assert precheck.decide(found).escalate
+    schema = load_schema()
+    labels = {n: s.values[0] if s.values else False for n, s in schema.fields.items()}
+    labels["fraud_risk"] = "none"  # the model saw nothing: the reason alone matches rule 1
+    inp = rules.RuleInput(labels, found, frozenset(precheck.fired(found)),
+                          {"sensitivity": "standard"})  # fmt: skip
+    assert rules.load_starter_rules(schema).evaluate(inp).rule_id == "fraud_guard"
+
+
+def test_flagged_items_dont_build_sender_history(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R3-P3 as decided 2026-10-10: a fraud reason, a lookalike or a weak route reason keeps
+    the item out of its sender's history; trigger 2's first-time payment weak doesn't."""
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    parsed = parse(mail("hello"))
+
+    def count() -> int:
+        return int(conn.execute("SELECT coalesce(sum(dmarc_pass_count), 0) FROM senders")
+                   .fetchone()[0])  # fmt: skip
+
+    base: dict[str, Any] = {"auth_result": "pass", "triggers": {}, "routes": {}}
+    for flagged in ({"triggers": {"fraud": ["x"]}}, {"triggers": {"lookalikes": ["x"]}},
+                    {"routes": {"fraud_weak": ["x"]}}):  # fmt: skip
+        analyzer.record(conn, parsed, base | flagged)
+        assert count() == 0
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud_weak": ["first-time sender ..."]}})
+    assert count() == 1
