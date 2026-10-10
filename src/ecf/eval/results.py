@@ -11,7 +11,7 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, wilson
+from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, percentile, wilson
 from ecf.schema import load_schema
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -241,3 +241,92 @@ def summary(r: ResultFile) -> str:
 
 def _counts(c: CaseResult) -> bool:
     return c.confirmed and c.scored
+
+
+# where a local model call's time goes (pre-classifier plan §11, perf-3), from each case's
+# recorded call figures, so it works on any result since plan 0.3 without running a model
+COLD_LOAD_NS = 1_000_000_000  # a load over this is a cold start, left out (ecf_server.stats)
+CACHE_SHORT = 0.9  # a call reused less than this share of the run's longest cached prefix
+
+
+@dataclass(frozen=True)
+class LatencySplit:
+    role: str
+    calls: int  # successful calls with timings, cold starts left out
+    prompt_s: tuple[float, float]  # reading the prompt: median, p95
+    generation_s: tuple[float, float]  # writing the answer: median, p95
+    generation_share: float  # writing's share of reading + writing, summed over the calls
+    uncached_tokens: tuple[int, int, int]  # median, p95, max
+    output_tokens: tuple[int, int]  # median, p95
+
+
+@dataclass(frozen=True)
+class CacheShort:
+    """Classifier calls whose cached prefix fell short, after an actor call or otherwise."""
+
+    after: str  # "an actor call" or "other"
+    calls: int
+    short: int
+    prompt_s: float | None  # the short calls' prompt time, median
+
+
+def latency_split(r: ResultFile) -> list[LatencySplit]:
+    """Prompt and generation time per role (classifier, actor); empty for an older result."""
+    out: list[LatencySplit] = []
+    for role in ("classifier", "actor"):
+        ms = [m for c in r.cases if (m := getattr(c, role)) is not None and _timed(m)]
+        if not ms:
+            continue
+        prompt = [cast(int, m.prompt_ns) / 1e9 for m in ms]
+        gen = [cast(int, m.eval_ns) / 1e9 for m in ms]
+        uncached = [_uncached(m) for m in ms]
+        output = [m.output_tokens or 0 for m in ms]
+        out.append(LatencySplit(
+            role, len(ms), _p(prompt), _p(gen), sum(gen) / (sum(prompt) + sum(gen) or 1),
+            (_pi(uncached, 50), _pi(uncached, 95), max(uncached)),
+            (_pi(output, 50), _pi(output, 95))))  # fmt: skip
+    return out
+
+
+def cache_short(r: ResultFile) -> list[CacheShort]:
+    """Classifier calls that reused less than CACHE_SHORT of the run's longest cached prefix
+    (the shared system prompt), split by whether the case before made an actor call, whose own
+    prompt can push the classifier's out of Ollama's cache (SPEC §1.2 "Grouped model calls")."""
+    timed = [(i, m) for i, c in enumerate(r.cases)
+             if (m := c.classifier) is not None and _timed(m)]  # fmt: skip
+    longest = max((m.cached_tokens or 0 for _, m in timed), default=0)
+    if not longest:
+        return []
+    groups: dict[str, list[CallMetrics]] = {"an actor call": [], "other": []}
+    for i, m in timed:
+        after = i > 0 and r.cases[i - 1].actor is not None
+        groups["an actor call" if after else "other"].append(m)
+    out: list[CacheShort] = []
+    for after, ms in groups.items():
+        short = [m for m in ms if (m.cached_tokens or 0) < CACHE_SHORT * longest]
+        out.append(
+            CacheShort(
+                after,
+                len(ms),
+                len(short),
+                percentile([cast(int, m.prompt_ns) / 1e9 for m in short], 50),
+            )
+        )
+    return out
+
+
+def _timed(m: CallMetrics) -> bool:
+    return (m.prompt_ns is not None and m.eval_ns is not None
+            and (m.load_ns or 0) <= COLD_LOAD_NS)  # fmt: skip
+
+
+def _uncached(m: CallMetrics) -> int:
+    return max(0, (m.prompt_tokens or 0) - (m.cached_tokens or 0))
+
+
+def _p(values: list[float]) -> tuple[float, float]:
+    return cast(float, percentile(values, 50)), cast(float, percentile(values, 95))
+
+
+def _pi(values: list[int], p: float) -> int:
+    return int(cast(float, percentile(values, p)))

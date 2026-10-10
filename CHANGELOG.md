@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval compare` now shows, for each local run, where each model role's time goes (reading the prompt against writing the answer, with uncached input and output tokens) and how many classifier calls lost part of the cached prompt, right after an actor call or otherwise; it works on earlier result files too, from the figures they already recorded (pre-classifier plan §11).
 - ecf's checks now record two more things for the rules to use later: an email asking for gift-card codes, card numbers or a photo of the card, and a checksum-valid IBAN, which counts as bank details; keywords also match when a nearly invisible combining mark sits inside a word, and a wallet address with a zero-width space inside is still found. Plural credential words ("codes", "one-time codes") now count. Nothing is routed on them yet (OD-488; SPEC §8.5).
 - `ecf eval label --review` now shows a card's HTML part as a mail app displays it, with each link followed by where it really goes, and then any plain-text part; before, a card with a plain-text stub hid its HTML and its links.
 - `ecf eval run`, `/ecf-eval` and `ecf rules test` now score a test card over 16 MB as ecf reads such a message (headers, attachment list and the start of each text part; never a DKIM pass) instead of skipping it, so the synthetic set's 17 MB scanned invoice is scored (268 cards, was 267); cards over 64 MB are still skipped (SPEC §8.6, §21.2).

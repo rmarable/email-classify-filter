@@ -1488,6 +1488,8 @@ def eval_compare(
             typer.echo(f"{name}  model: {line}")
         for role, line in _role_figures(run.summary):
             typer.echo(f"{name}    {role}: {line}")
+        for line in _latency_lines(run):
+            typer.echo(f"{name}    {line}")
         for line in _claude_figures(run.summary, len(run.cases)):
             typer.echo(f"{name}  {line}")
         for line in _decision_figures(run.summary):
@@ -1578,6 +1580,27 @@ def _role_figures(summary: dict[str, object] | None) -> list[tuple[str, str]]:
     for role, figures in cast(dict[str, Any], roles).items():
         if line := _model_figures({"model": figures}):
             out.append((role, line))
+    return out
+
+
+def _latency_lines(run: ResultFile) -> list[str]:
+    """Where each role's time goes, and the classifier calls whose prompt cache fell short
+    (pre-classifier plan §11; absent in results before plan 0.3 and in Claude runs)."""
+    from ecf.eval.results import CACHE_SHORT, cache_short, latency_split  # noqa: PLC0415
+
+    out: list[str] = []
+    for s in latency_split(run):
+        out.append(
+            f"{s.role} time: reading the prompt {s.prompt_s[0]:.2f} s median"
+            f" (p95 {s.prompt_s[1]:.2f}), writing {s.generation_s[0]:.2f} s (p95"
+            f" {s.generation_s[1]:.2f}), writing {100 * s.generation_share:.0f}% of the total;"
+            f" uncached input {s.uncached_tokens[0]} tokens median (p95 {s.uncached_tokens[1]},"
+            f" max {s.uncached_tokens[2]}), output {s.output_tokens[0]} (p95 {s.output_tokens[1]})"
+        )
+    for c in cache_short(run):
+        took = "" if c.prompt_s is None else f", prompt {c.prompt_s:.2f} s median"
+        out.append(f"classifier cache after {c.after}: {c.short} of {c.calls} calls reused under"
+                   f" {100 * CACHE_SHORT:.0f}% of the prefix{took}")  # fmt: skip
     return out
 
 

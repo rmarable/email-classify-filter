@@ -186,3 +186,42 @@ def test_eval_compare_prints_a_claude_runs_figures(tmp_path: Path) -> None:
     assert "B  Claude: 4 requests, 3000 tokens in and 200 out, about 1600 per case" in out.output
     assert "B    claude-opus-5-5 (agent): 3 requests, 2950 tokens" in out.output
     assert "B  plan usage: 5-hour 10.0% -> 14.0%, 7-day 40.0% -> 41.0%" in out.output
+
+
+def test_latency_split_from_the_recorded_calls(tmp_path: Path) -> None:
+    """Pre-classifier plan §11 (perf-3): prompt and generation time per role, and the classifier
+    calls whose cached prefix fell short after an actor call, from each case's figures."""
+    from ecf.eval.results import CallMetrics, cache_short, latency_split  # noqa: PLC0415
+
+    def m(cached: int, prompt_s: float, load_s: float = 0.0) -> CallMetrics:
+        return CallMetrics(prompt_tokens=1400, cached_tokens=cached, output_tokens=78,
+                           prompt_ns=int(prompt_s * S), eval_ns=4 * S,
+                           load_ns=int(load_s * S))  # fmt: skip
+
+    cases = [
+        CaseResult(id="a", correct=True, classifier=m(1300, 1.0), actor=m(900, 3.0)),
+        CaseResult(id="b", correct=True, classifier=m(400, 7.0)),  # after an actor call, short
+        CaseResult(id="c", correct=True, classifier=m(1300, 1.0)),
+        CaseResult(id="d", correct=True, classifier=m(1300, 1.0, load_s=2.6)),  # cold: left out
+        CaseResult(id="e", correct=True),  # the classifier failed
+    ]
+    r = ResultFile(run_id="r", pair="p", set_version="v", created_at="t", cases=cases)
+    cls, act = latency_split(r)
+    assert (cls.role, cls.calls, act.role, act.calls) == ("classifier", 3, "actor", 1)
+    assert cls.prompt_s == (1.0, 7.0) and cls.generation_s == (4.0, 4.0)
+    assert round(cls.generation_share, 3) == round(12 / 21, 3)
+    assert cls.uncached_tokens == (100, 1000, 1000) and cls.output_tokens == (78, 78)
+    after, other = cache_short(r)
+    assert (after.after, after.calls, after.short, after.prompt_s) == ("an actor call", 1, 1, 7.0)
+    assert (other.calls, other.short, other.prompt_s) == (2, 0, None)
+    assert latency_split(ResultFile(run_id="o", pair="p", set_version="v", created_at="t",
+                                    cases=[CaseResult(id="x", correct=True)])) == []  # fmt: skip
+
+    path = tmp_path / "r.json"
+    path.write_text(r.model_dump_json())
+    out = CliRunner().invoke(app, ["eval", "compare", str(path), str(path)])
+    assert out.exit_code == 0, out.output
+    assert ("A    classifier time: reading the prompt 1.00 s median (p95 7.00), writing 4.00 s"
+            " (p95 4.00), writing 57% of the total") in out.output  # fmt: skip
+    assert ("B    classifier cache after an actor call: 1 of 1 calls reused under 90% of the"
+            " prefix, prompt 7.00 s median") in out.output  # fmt: skip

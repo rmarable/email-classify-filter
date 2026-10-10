@@ -9,6 +9,14 @@ from collections.abc import Sequence
 Z95 = 1.959963984540054
 
 
+def percentile(values: Sequence[float], p: float) -> float | None:
+    """Nearest-rank percentile (p in 0-100) of a list, else None (as ecf_server.stats)."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[max(1, math.ceil(p / 100 * len(ordered))) - 1]
+
+
 def accuracy(gold: Sequence[object], pred: Sequence[object]) -> float:
     if len(gold) != len(pred) or not gold:
         raise ValueError("gold and pred must be non-empty and the same length")
