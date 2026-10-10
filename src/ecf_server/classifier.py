@@ -3,7 +3,8 @@
 - **Prompt:** a fixed system prompt (instructions and the schema's `prompt_block`), identical for
   every email so Ollama's prompt cache reuses it (measured 2026-09-30: about 1.9 s down to 0.46 s).
   The email goes in the user message between delimiters carrying a random token made for this
-  request, so text in the email can't close them. Computed facts are never sent (§7.2).
+  request, so text in the email can't close them. Computed facts are not sent, except derived
+  signals an OD exempts (§7.2, OD-483).
 - **Input:** the stored classifier excerpt (about 1,500 characters, §5.1 step 4), cut again to
   `MAX_INPUT_BYTES` of UTF-8: Ollama silently drops the start of an input that is too long and
   keeps the end (measured 2026-09-30), which is the part an attacker controls, so ecf never lets it

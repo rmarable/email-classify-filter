@@ -1,4 +1,5 @@
-"""Computed facts (SPEC §7.2): derived by the service, never sent to or taken from a model.
+"""Computed facts (SPEC §7.2): derived by the service, never taken from a model; sent to one only
+as a derived signal an OD exempts (OD-483).
 
 `compute` reads; `record_sender` writes the sender's history and runs inside the item's
 transaction, so a crash can't count a message twice or lose it. A sender is identified by the

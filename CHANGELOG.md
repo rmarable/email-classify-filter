@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- Decision: computed facts may now go to a model as derived signals, by exemption only: true/false conditions the rules already use, in fixed wording, never addresses, keywords or authentication results; nothing a model returns ever becomes a fact. On presets B and C these signals go to Anthropic with the classification request (OD-483, ADR 0026; SPEC §7.2, §12.4).
 - `ecf eval label --review <fields|all>` re-judges the synthetic set's labels blind: each card is shown as an email only (no id, notes, expected values or model answers), your answer is compared with the label afterwards, and every answer is logged in `reviews.jsonl`; `--add` labels empty fields, `--cases` narrows the set, `--recheck N` measures how consistently you answer (SPEC §16.1).
 - The classifier's prompt may grow by at most 1,500 tokens in this release (new wording and signals), measured so the longest possible email still fits the model's context (operator decision; SPEC §21.2).
 - Evaluation rules: any model tried as a classifier answers every field, runs through `ecf eval run` on the frozen set, records per-role figures and its prompt digest, is compared with the one rule, and keeps its result until the decision is recorded (OD-486; SPEC §16.5).
