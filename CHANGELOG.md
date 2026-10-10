@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval routes --corpus <file>` shows how many messages in a corpus of your own mail the new fraud routes would escalate, how many only because of them, and how many because the sender had no history with you, using each message's stored checks and excerpts (pre-classifier plan step 7c; SPEC §16.2).
 - `ecf eval routes <set>...` shows, without running a model, which test cards the fraud routes for code, gift-card and crypto requests catch as built, as first drafted and without them, with the second signals that made each fire and what changes if every sender were already known; with `--result` it says which check changed each recorded card's outcome (pre-classifier plan step 7b; SPEC §16.2).
 - `ecf eval rescore <result> --synthetic <set> --through-policy` plans a recorded run's answers again with today's facts, keywords and rules, without running a model, and lists the cards whose rule or actions changed; runs now record the actor's proposal so it can be replayed, and report genuine cards sent to fraud review or kept from being hidden by a blocker; `ecf eval compare` warns when keywords, rules or scoring differ; a run marked not for the gate no longer re-points the go-live gate at its set (pre-classifier plan step 7; SPEC §16.2).
 - Money amounts in an email (a currency sign or code next to a number, or a number with two decimals) are now recorded for later evaluation; nothing acts on them yet.

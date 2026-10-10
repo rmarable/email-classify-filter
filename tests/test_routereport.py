@@ -3,19 +3,28 @@ second signals, the every-sender-known pass and the attribution of recorded resu
 
 from __future__ import annotations
 
+import json
 import shutil
-from datetime import date
+import sqlite3
+from collections.abc import Iterator
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from ecf.cli import route_lines
+from ecf.errors import InvalidInputError
+from ecf.eval import corpus_labels as cl
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile
+from ecf_server import corpus_session as cs
 from ecf_server import evalrun, routereport, triggers
 from ecf_server.clock import FakeClock
+from tests.corpus_fakes import FakeMessage, FakeServer
+from tests.test_corpus import SECRET, fetch, mail, req
+from tests.test_evalrun import BEC
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 CARDS = ("starter-control", "mid-giftcard-staff-rewards", "v2-acct-unrecognised-device-review",
@@ -124,3 +133,63 @@ def test_a_recorded_change_is_attributed_to_its_mechanism(root: Path, tmp_path: 
     assert res["model_only_fraud_cases"] == [1, 0] and res["unsafe"] == []
     lines = route_lines({"sets": [], "results": [res]})
     assert lines[1] == f"  {gift.id}: fraud_weak -> fraud_guard (routes)"
+
+
+@pytest.fixture
+def corpus(conn: sqlite3.Connection, clock: FakeClock, db_path: Path,
+           tmp_path: Path) -> Iterator[cs.Session]:  # fmt: skip
+    """A fetched corpus of three: a code request, a gift-card code request (both from senders
+    with no history), a newsletter; the code request labelled harmless."""
+    bodies = ["Please reply with the verification codes we sent you.\r\n",
+              "Buy gift cards today and send me the codes.\r\n",
+              "Our October newsletter.\r\n"]  # fmt: skip
+    s = FakeServer()
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    s.folders["INBOX"] = {i: FakeMessage(mail(i, body=b), internaldate=base + timedelta(days=i))
+                          for i, b in enumerate(bodies, 1)}  # fmt: skip
+    out = tmp_path / "out"
+    out.mkdir()
+    path, *_ = fetch(conn, clock, db_path.parent, req(out / "c.ecfcorpus", total=3), s)
+    assert path is not None
+    opened = cs.open_session(str(path), SECRET, lambda: 0.0)
+    session = cs.get(opened["session_id"], lambda: 0.0)
+    code = next(r for r in session.rows if "verification" in r["unredacted"]["classifier"])
+    key = (str(code["key"]["content_hash"]), str(code["key"]["identity_digest"]))
+    labels: dict[cl.Key, cl.Label] = {}
+    harmless = BEC | {"category": "account_security", "payment_related": False,
+                      "fraud_risk": "none"}  # fmt: skip
+    cl.put(labels, cl.make(key, opened["corpus_id"], harmless, None, date(2026, 10, 10)))
+    cl.save(cl.path_for(path), labels)
+    yield session
+    cs.release(session.id)
+
+
+def test_the_corpus_pass_rescans_and_routes_the_stored_messages(corpus: cs.Session) -> None:
+    """§3a Check (b): keywords taken again from the stored excerpts reach the routes; the
+    report holds message indexes and counts, never text."""
+    for row in corpus.rows:  # a corpus fetched before step 3 has no ask phrases on record
+        row["facts"]["keywords"] = {k: v for k, v in row["facts"]["keywords"].items()
+                                    if not k.endswith("_ask")}  # fmt: skip
+    out = routereport.report([], [], FakeClock(), corpus)
+    cp = out["corpus"]
+    assert out["sets"] == [] and out["results"] == []
+    assert (cp["messages"], cp["labelled"]) == (3, 1)
+    by_index = {r["unredacted"]["classifier"].split()[0]: f"{int(r['index']):05d}"
+                for r in corpus.rows}  # fmt: skip
+    code, gift = by_index["Please"], by_index["Buy"]
+    assert cp["routes"][triggers.CREDENTIAL]["fraud"] == sorted({code, gift})
+    assert cp["routes"][triggers.GIFT_CODES]["fraud"] == [gift]
+    assert cp["would_escalate"] == sorted([code, gift]) and cp["would_escalate_pct"] == 66.7
+    assert cp["first_time"] == cp["would_escalate"] and cp["first_time_pct"] == 100.0
+    assert cp["labelled_harmless"] == [code]
+    assert "verification" not in json.dumps(cp) and "gift cards" not in json.dumps(cp)
+    lines = route_lines(out)
+    assert lines[0].startswith(f"corpus {cp['corpus_id'][:8]}: 3 messages, 1 labelled")
+    assert f"  labelled harmless but would escalate: 1 ({code})" in lines
+
+
+def test_a_route_report_needs_a_set_for_its_results(tmp_path: Path) -> None:
+    with pytest.raises(InvalidInputError, match="a synthetic set or a corpus"):
+        routereport.report([], [], FakeClock())
+    with pytest.raises(InvalidInputError, match="needs the synthetic set"):
+        routereport.report([], [tmp_path / "r.json"], FakeClock(), cast(cs.Session, object()))

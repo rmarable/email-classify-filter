@@ -15,6 +15,13 @@ its least risky value) and `model_only_fraud_cases`; for draft 4 also each fraud
 signals, the cards whose only signal is a sender with no history, and a sensitivity pass with
 `sender_seen_before` forced true (a compromised known sender, R3-P10).
 
+On a corpus (§3a Check (b)), each stored message's routes are recomputed from its stored facts
+with its keywords taken again: the fetch-time ones (the whole message, the lists of the day)
+joined with a scan of its stored unredacted excerpts under today's lists (truncated, so a phrase
+past the excerpt is missed). It reports how many messages a route makes fraud (would escalate),
+how many of those nothing else already escalated, the share whose signals include a sender with
+no history, and the labelled-harmless ones among them; message indexes and counts only.
+
 Per recorded result (on the first set): each case is planned again as `ecf eval rescore
 --through-policy` does, and every case whose rule or actions differ from the recorded ones is
 attributed by taking one mechanism out at a time (the routes, the DMARC reason, the risky
@@ -32,7 +39,7 @@ from typing import Any
 from ecf.errors import InvalidInputError
 from ecf.eval.results import CaseResult, load_result
 from ecf.schema import load_schema
-from ecf_server import evalrun, policy, rules, ruletest, triggers
+from ecf_server import corpus_session, evalrun, policy, rules, ruletest, triggers
 from ecf_server.clock import Clock
 from ecf_server.facts import PUBLIC_DOMAINS
 
@@ -216,13 +223,83 @@ def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def report(roots: list[Path], results: list[Path], clock: Clock) -> dict[str, Any]:
-    """`ecf eval routes`: each set's routes, then each result's attribution on the first set."""
-    if not roots:
-        raise InvalidInputError("no set")
+def corpus_facts(row: dict[str, Any]) -> dict[str, Any]:
+    """A stored message's facts with today's routes: its keywords joined with a scan of its
+    stored unredacted excerpts, the routes computed again (`triggers.with_routes`)."""
+    stored: dict[str, Any] = dict(row.get("facts") or {})
+    plain: dict[str, str] = row.get("unredacted") or {}
+    now = triggers.scan([plain.get("classifier") or "", plain.get("actor") or ""])
+    was: dict[str, list[str]] = stored.get("keywords") or {}
+    kw = {g: sorted(set(was.get(g) or []) | set(now.get(g) or [])) for g in was.keys() | now.keys()}
+    base: dict[str, Any] = {"auth_result": "none", "recipient_mismatch": False,
+                            "reply_to_mismatch": False, "triggers": {}}  # fmt: skip
+    found = base | stored | {"keywords": kw}
+    prior: dict[str, Any] = found["triggers"] or {}
+    t: dict[str, Any] = dict(prior)
+    t.setdefault("fraud", [])
+    t.setdefault("fraud_weak", [])
+    return triggers.with_routes(found | {"triggers": t}, public_domains=PUBLIC_DOMAINS)
+
+
+def corpus_report(session: corpus_session.Session) -> dict[str, Any]:
+    """The routes on a corpus's stored messages (module docstring)."""
+    run = evalrun.corpus_run(session)
+    per: dict[str, dict[str, list[str]]] = {w: {"fraud": [], "weak": []} for w in ROUTE_WHATS}
+    escalate: list[str] = []
+    only_route: list[str] = []
+    first_time: list[str] = []
+    first_time_only: list[str] = []
+    harmless: list[str] = []
+    for case, row in zip(run.cases, session.rows, strict=True):
+        found = corpus_facts(row)
+        hits = triggers.route_hits(found, public_domains=PUBLIC_DOMAINS)
+        for h in hits:
+            if h.signals:
+                per[h.what]["fraud"].append(case.id)
+            elif h.weak_too:
+                per[h.what]["weak"].append(case.id)
+        fired = [h for h in hits if h.signals]
+        if not fired:
+            continue
+        escalate.append(case.id)
+        if all(triggers.OTHER_FRAUD not in h.signals for h in fired):
+            only_route.append(case.id)
+        if any(triggers.NO_HISTORY in h.signals for h in fired):
+            first_time.append(case.id)
+        if all(h.signals == (triggers.NO_HISTORY,) for h in fired):
+            first_time_only.append(case.id)
+        lab: dict[str, Any] = case.expected.get("labels") or {}
+        if case.confirmed and lab.get("fraud_risk") == "none" and not lab.get("payment_related"):
+            harmless.append(case.id)
+    n = len(run.cases)
+
+    def share(xs: list[str], of: int) -> float | None:
+        return round(100 * len(xs) / of, 1) if of else None
+
+    return {
+        "corpus_id": run.corpus_id, "messages": n,
+        "labelled": sum(c.confirmed for c in run.cases),
+        "routes": per, "would_escalate": escalate,
+        "would_escalate_pct": share(escalate, n),
+        "escalated_only_by_a_route": only_route,
+        "escalated_only_by_a_route_pct": share(only_route, n),
+        "first_time": first_time, "first_time_pct": share(first_time, len(escalate)),
+        "first_time_only": first_time_only, "labelled_harmless": harmless,
+    }  # fmt: skip
+
+
+def report(roots: list[Path], results: list[Path], clock: Clock,
+           corpus: corpus_session.Session | None = None) -> dict[str, Any]:  # fmt: skip
+    """`ecf eval routes`: each set's routes, then each result's attribution on the first set,
+    then a corpus's routes."""
+    if not roots and corpus is None:
+        raise InvalidInputError("give a synthetic set or a corpus")
+    if results and not roots:
+        raise InvalidInputError("--result needs the synthetic set it ran on")
     env = _Env(clock)
     try:
         return {"sets": [set_report(env, r) for r in roots],
-                "results": [result_report(env, roots[0], p) for p in results]}  # fmt: skip
+                "results": [result_report(env, roots[0], p) for p in results],
+                "corpus": corpus_report(corpus) if corpus is not None else None}  # fmt: skip
     finally:
         env.scratch.close()

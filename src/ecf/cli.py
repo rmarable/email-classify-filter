@@ -1374,23 +1374,47 @@ def eval_rescore(
 @eval_app.command("routes")
 def eval_routes(
     sets: Annotated[
-        list[Path], typer.Argument(help="Synthetic set folders (the frozen set first).")
-    ],
+        list[Path] | None,
+        typer.Argument(help="Synthetic set folders (the frozen set first)."),
+    ] = None,
     result: Annotated[
         list[Path] | None,
         typer.Option("--result", help="A result on the first set to attribute (repeatable)."),
+    ] = None,
+    corpus: Annotated[
+        Path | None, typer.Option("--corpus", help="A corpus file: its stored messages' routes.")
     ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
 ) -> None:
     """What the fraud routes (OD-490) do on synthetic sets: per set, the cards each route makes
     fraud or weak as built, as draft 2 had them and without them, their second signals, and a pass
     with every sender taken as known; per result, which mechanism changed each case's rule or
-    actions. No model runs (pre-classifier plan step 7b, SPEC §16.2)."""
+    actions; on a corpus, how many stored messages a route would escalate. No model runs
+    (pre-classifier plan steps 7b and 7c, SPEC §16.2)."""
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    if not sets and corpus is None:
+        raise typer.BadParameter("give a synthetic set folder or --corpus")
+    body: dict[str, Any] = {
+        "sets": [str(p.expanduser().absolute()) for p in sets or []],
+        "results": [str(p.expanduser().absolute()) for p in result or []],
+    }
     with LocalClient(_paths()) as c:
-        r = c.request("POST", "/v1/eval/routes", {
-            "sets": [str(p.expanduser().absolute()) for p in sets],
-            "results": [str(p.expanduser().absolute()) for p in result or []]},
-            timeout=600)  # fmt: skip
+        if corpus is None:
+            r = c.request("POST", "/v1/eval/routes", body, timeout=600)
+        else:
+            require_terminal()
+            where = corpus.expanduser().absolute()
+            secret = hidden(f"Passphrase for {where.name} (hidden): ")
+            opened = c.request("POST", "/v1/corpus/session",
+                               {"path": str(where), "passphrase": secret}, timeout=600)  # fmt: skip
+            del secret
+            sid = opened["session_id"]
+            try:
+                r = c.request("POST", "/v1/eval/routes", body | {"corpus_session": sid},
+                              timeout=600)  # fmt: skip
+            finally:
+                c.request("DELETE", f"/v1/corpus/session/{sid}")
     if as_json:
         typer.echo(json.dumps(r, indent=1))
         return
@@ -1422,6 +1446,8 @@ def route_lines(r: dict[str, Any]) -> list[str]:
             f"  every sender known: route lost {_ids(seen['lost_route'])}; weak only"
             f" {_ids(seen['weak'])}; model-only fraud {len(seen['model_only_fraud'])}"
         )
+    if (cp := r.get("corpus")) is not None:
+        out += _corpus_route_lines(cp)
     for res in r["results"]:
         mo = res["model_only_fraud_cases"]
         out.append(f"{res['result']}: {len(res['changed'])} cases changed; by mechanism "
@@ -1432,6 +1458,24 @@ def route_lines(r: dict[str, Any]) -> list[str]:
             why = ", ".join(c["mechanisms"]) or "unexplained"
             iban = "; valid IBAN present" if c["iban_bank"] else ""
             out.append(f"  {c['id']}: {c['rule'][0]} -> {c['rule'][1]} ({why}{iban})")
+    return out
+
+
+def _corpus_route_lines(cp: dict[str, Any]) -> list[str]:
+    def pct(v: float | None) -> str:
+        return "-" if v is None else f"{v}%"
+
+    out = [f"corpus {str(cp['corpus_id'])[:8]}: {cp['messages']} messages, {cp['labelled']}"
+           " labelled (keywords: fetch-time plus a rescan of the stored excerpts)"]  # fmt: skip
+    for what, v in cp["routes"].items():
+        out.append(f"  {what}: fraud {_ids(v['fraud'])}; weak {_ids(v['weak'])}")
+    out.append(f"  would escalate: {_ids(cp['would_escalate'])} ({pct(cp['would_escalate_pct'])}"
+               f" of messages); by a route alone: {_ids(cp['escalated_only_by_a_route'])}"
+               f" ({pct(cp['escalated_only_by_a_route_pct'])})")  # fmt: skip
+    out.append(f"  with a sender with no history among the signals: {_ids(cp['first_time'])}"
+               f" ({pct(cp['first_time_pct'])} of those escalated); as the only signal:"
+               f" {_ids(cp['first_time_only'])}")  # fmt: skip
+    out.append(f"  labelled harmless but would escalate: {_ids(cp['labelled_harmless'])}")
     return out
 
 
