@@ -16,6 +16,9 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `tax_form_request` (a fact, not a trigger; OD-482): a `tax_form` phrase (W-2, payroll records)
   and a `data_request` phrase (send me, as one PDF), the W-2 scam; rule 1 escalates it from an
   outside sender.
+- `gift_card_codes_request` (a fact; pre-classifier plan §3): a `gift_card` phrase and a
+  `gift_card_ask` phrase ("send me the codes", "photo of the back"), the gift-card scam.
+- A checksum-valid IBAN counts as a `bank` keyword ("valid IBAN"), so trigger 1 covers it.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
@@ -35,7 +38,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache, lru_cache
@@ -46,21 +48,41 @@ from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
-from ecf_server.skeleton import fold, fold_ci, normalize
+from ecf_server.skeleton import entity_text, fold_ci, keyword_fold, keyword_fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "tax_form", "data_request",
-          "credential", "credential_ask", "credential_never", "crypto_pay", "regulator",
-          "injection")  # fmt: skip
-# Cryptocurrency wallet addresses (OD-485), matched on the NFKC text, not the folded one (the
-# skeleton would change their letters): Bitcoin (bech32, legacy), Ethereum, and the synthetic
-# set's placeholder (`TEST-WALLET-0001`; real shapes fail its hygiene scan). A hit is recorded as
-# "wallet address", never the address.
+GROUPS = ("bank", "change", "payment", "gift_card", "gift_card_ask", "bec_opener", "tax_form",
+          "data_request", "credential", "credential_ask", "credential_never", "crypto_pay",
+          "regulator", "injection")  # fmt: skip
+# Cryptocurrency wallet addresses (OD-485), matched on `entity_text`, not the folded text (the
+# skeleton would change their letters), so a zero-width character or a mark inside one doesn't
+# hide it: Bitcoin (bech32, legacy), Ethereum, and the synthetic set's placeholder
+# (`TEST-WALLET-0001`; real shapes fail its hygiene scan). A hit is recorded as "wallet address",
+# never the address.
 WALLETS = (
     re.compile(r"(?<![\w-])bc1[ac-hj-np-z02-9]{11,71}(?![\w-])"),
     re.compile(r"(?<![\w-])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w-])"),
     re.compile(r"(?<![\w-])0x[0-9a-fA-F]{40}(?![\w-])"),
     re.compile(r"(?<![\w-])TEST-WALLET-\d{4}(?![\w-])"),
 )
+# IBANs (pre-classifier plan §3): country code, check digits, then letters and digits, each
+# optionally after one space or hyphen; bounded, and never starting inside a word. Matched on
+# `entity_text`; a hit is recorded as "valid IBAN", never the number.
+IBAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}")
+IBAN_HIT = "valid IBAN"
+# IBAN length per country, from the SWIFT IBAN registry (unverified against its current release;
+# a country not listed never matches).
+IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22,
+    "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DK": 18, "DO": 28,
+    "EE": 20, "EG": 29, "ES": 24, "FI": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23,
+    "GL": 18, "GR": 27, "GT": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
+    "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+    "LV": 21, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MR": 27, "MT": 31, "MU": 30, "NL": 18,
+    "NO": 15, "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "SA": 24,
+    "SC": 31, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "ST": 25, "SV": 28, "TL": 23, "TN": 24,
+    "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
+}  # fmt: skip
+_IBAN_DIGITS = str.maketrans({chr(c): str(c - 55) for c in range(ord("A"), ord("Z") + 1)})
 BEC_OPENER_MIN = 2  # different `bec_opener` phrases for the fact (OD-479)
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
@@ -106,7 +128,7 @@ def _patterns() -> dict[str, tuple[_Pattern, ...]]:
 
 
 def _compile(word: str, *, case_sensitive: bool) -> _Pattern:
-    folded = fold(word) if case_sensitive else fold_ci(word)
+    folded = keyword_fold(word) if case_sensitive else keyword_fold_ci(word)
     body = r"\s+".join(re.escape(part) for part in folded.split())
     return _Pattern(word, re.compile(rf"{_START}{body}(?!\w)"), case_sensitive)
 
@@ -150,7 +172,7 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
     """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
     part's visible text is its full text)."""
     distinct = list(dict.fromkeys(t for t in texts if t))
-    folded = [(fold(t), fold_ci(t)) for t in distinct]
+    folded = [(keyword_fold(t), keyword_fold_ci(t)) for t in distinct]
     hits: dict[str, list[str]] = {g: [] for g in GROUPS}
     for group, pats in _patterns().items():
         found: set[_Pattern] = set()
@@ -161,10 +183,30 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
                     found |= _found_in(cs if case_sensitive else ci, todo)
                     todo = tuple(p for p in todo if p not in found)
         hits[group] = [p.word for p in pats if p in found]
-    nfkc = [unicodedata.normalize("NFKC", t) for t in distinct]
+    entities = [entity_text(t) for t in distinct]
+    if any(valid_iban(t) for t in entities):
+        hits["bank"].append(IBAN_HIT)
     hits["crypto_wallet"] = ["wallet address"] if any(w.search(t) for w in WALLETS
-                                                      for t in nfkc) else []  # fmt: skip
+                                                      for t in entities) else []  # fmt: skip
     return hits
+
+
+def valid_iban(text: str) -> bool:
+    """A checksum-valid IBAN (ISO 13616 mod-97) in `text`, written whole or in groups split by
+    single spaces or hyphens. It is cut at its country's length, and the cut must not fall inside
+    a word."""
+    for m in IBAN.finditer(text):
+        size = IBAN_LENGTHS.get(m.group()[:2])
+        where = [i for i, c in enumerate(m.group()) if c not in " -"]
+        if size is None or len(where) < size:
+            continue
+        end = m.start() + where[size - 1] + 1
+        if end < len(text) and text[end].isalnum():
+            continue
+        code = "".join(m.group()[i] for i in where[:size])
+        if int((code[4:] + code[:4]).translate(_IBAN_DIGITS)) % 97 == 1:
+            return True
+    return False
 
 
 def bec_opener(keywords: dict[str, list[str]]) -> bool:
@@ -178,6 +220,13 @@ def tax_form_request(keywords: dict[str, list[str]]) -> bool:
     to send it to the writer ("send me", "as one PDF"; OD-482): the W-2 scam. A form alone is a
     payroll provider's notice."""
     return bool(keywords.get("tax_form")) and bool(keywords.get("data_request"))
+
+
+def gift_card_codes_request(keywords: dict[str, list[str]]) -> bool:
+    """Gift cards and an ask for their codes or a photo of them ("send me the codes", "photo of
+    the back"; pre-classifier plan §3): the gift-card scam. Gift cards alone are a receipt or a
+    balance notice."""
+    return bool(keywords.get("gift_card")) and bool(keywords.get("gift_card_ask"))
 
 
 def credential_request(keywords: dict[str, list[str]]) -> bool:
@@ -200,7 +249,7 @@ _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 def _injected(text: str) -> bool:
     pats = _patterns()["injection"]
     return any(
-        _any_of(group).search(fold(text) if case_sensitive else fold_ci(text))
+        _any_of(group).search(keyword_fold(text) if case_sensitive else keyword_fold_ci(text))
         for case_sensitive in (True, False)
         if (group := tuple(p for p in pats if p.case_sensitive is case_sensitive))
     )
@@ -295,6 +344,7 @@ class Triggers:
             "keywords": self.keywords,
             "payment_keyword": bool(self.keywords["payment"]),
             "gift_card_keyword": bool(self.keywords["gift_card"]),
+            "gift_card_codes_request": gift_card_codes_request(self.keywords),
             "bec_opener": bec_opener(self.keywords),
             "tax_form_request": tax_form_request(self.keywords),
             "credential_request": credential_request(self.keywords),

@@ -76,6 +76,20 @@ gift_card:
     - giftcard
     - giftcards
 
+# Asking for gift-card codes to be sent back (pre-classifier plan §3, OD-488): with a `gift_card`
+# phrase, the fact `gift_card_codes_request`, the gift-card scam. Frozen 2026-10-10 before the
+# held-out set was written; on the frozen set (95 scam, 173 genuine cards) "send me the codes" and
+# "reply with the codes" hit 2 scam cards each, "card numbers" and "scratch" 3 each, no genuine
+# card; "photo of the back" and "claim code" hit none (untested).
+gift_card_ask:
+  phrases:
+    - send me the codes
+    - reply with the codes
+    - card numbers
+    - photo of the back
+    - scratch
+    - claim code
+
 # Openers of an executive-impersonation (BEC) scam (operator decision 2026-10-08, OD-479): the
 # first message asks if you're free, for a quick discreet favour, by email only, with no money
 # yet. One phrase alone is ordinary mail; the fact `bec_opener` needs two different phrases, and
@@ -153,15 +167,22 @@ data_request:
     - my personal address
 
 # A code, password or login (OD-485): with a `credential_ask` phrase, the fact
-# `credential_request` (OD-485; a fact, no longer sent to the classifiers, OD-488). Alone it is any sign-in
-# notice ("enter the code", "never share this code").
+# `credential_request` (OD-485; a fact, no longer sent to the classifiers, OD-488). Alone it is any
+# sign-in notice ("enter the code", "never share this code"). Plurals added 2026-10-10 (OD-488):
+# "codes" hits 8 scam cards of the frozen set and no genuine one; the other plurals and
+# "one-time code" hit none (untested).
 credential:
   phrases:
     - code
+    - codes
     - verification code
+    - verification codes
     - sign-in code
     - security code
     - passcode
+    - passcodes
+    - one-time code
+    - one-time codes
     - password
     - login details
     - login

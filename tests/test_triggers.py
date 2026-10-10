@@ -18,7 +18,7 @@ from ecf_server.dnscache import DnsCache
 from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
 from ecf_server.internal import ORG_ADDRESSES_KEY, OrgAddress
 from ecf_server.message import ACTOR_CHARS, CLASSIFIER_CHARS, parse
-from ecf_server.skeleton import fold, fold_ci
+from ecf_server.skeleton import entity_text, keyword_fold, keyword_fold_ci
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
 ORG = ["acme.example"]
@@ -479,6 +479,92 @@ def test_the_tax_form_request_fact_needs_a_form_and_a_request(
 
 
 @pytest.mark.parametrize(
+    ("body", "fires"),
+    [
+        ("Buy five gift cards, scratch the backs and send me the codes.", True),
+        ("Pick up 4 gift cards today and reply with the codes.", True),
+        ("Send a photo of the back of each gift card.", True),
+        ("Get the giftcards and email the card numbers to me.", True),
+        ("Your gift card balance is 12.50. Enjoy your next coffee.", False),  # a balance notice
+        ("Send me the codes for the conference Wi-Fi.", False),  # an ask, no gift card
+    ],
+)
+def test_the_gift_card_codes_request_fact_needs_gift_cards_and_an_ask(
+    body: str, fires: bool
+) -> None:
+    """Pre-classifier plan §3: gift cards alone are a receipt; with an ask for the codes they are
+    the gift-card scam. A fact only until its fraud reason (plan step 4)."""
+    t = fire("", raw=mail(body))
+    assert t.facts()["gift_card_codes_request"] is fires
+    assert t.fraud == [] and t.fraud_weak == []
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [
+        "s\u0435nd me the codes",  # a lookalike letter (Cyrillic e)
+        "send me the co\u200bdes",  # a format character (zero-width space)
+        "\uff53\uff45\uff4e\uff44 me the codes",  # full-width letters
+        "send me the co\u034fdes",  # a nonspacing mark: combining grapheme joiner
+        "send\ufe0f me the codes",  # a nonspacing mark: variation selector
+        "send me the c\u0305odes",  # a nonspacing mark: combining overline
+        "se\u0301nd me the codes",  # a nonspacing mark: combining accent
+    ],
+    ids=["cyrillic", "zero-width", "full-width", "u034f", "ufe0f", "u0305", "accent"],
+)
+def test_a_disguised_ask_still_makes_the_fact(ask: str) -> None:
+    """P15: one evasion per character class on a §3 phrase; marks were not removed before."""
+    assert fire("", raw=mail(f"Buy three gift cards and {ask}.")).facts()["gift_card_codes_request"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Reply with the codes from your phone.", "Send me your one-time codes now.",
+     "Please reply with your verification codes."],
+)  # fmt: skip
+def test_credential_plurals_make_a_credential_request(body: str) -> None:
+    assert fire("", raw=mail(body)).facts()["credential_request"]
+
+
+@pytest.mark.parametrize(
+    ("text", "valid"),
+    [
+        ("IBAN: GB82 WEST 1234 5698 7654 32", True),
+        ("Pay to GB82WEST12345698765432.", True),  # written whole
+        ("DE89-3704-0044-0532-0130-00 is our account", True),  # hyphens
+        ("DE89 3704 0044 0532 0130 00 BIC COBADEFFXXX", True),  # cut at the country's length
+        ("GB82 WEST 1234 5698 7654 3\u200b2", True),  # a zero-width space inside
+        ("GB82 WEST 1234 5698 7654 3\u034f2", True),  # a nonspacing mark inside
+        ("\uff27\uff22\uff18\uff12 WEST 1234 5698 7654 32", True),  # full-width
+        ("GB82 WEST 1234 5698 7654 33", False),  # checksum fails
+        ("GB82WEST12345698765432X", False),  # the cut falls inside a word
+        ("XGB82WEST12345698765432", False),  # starts inside a word
+        ("ZZ82 WEST 1234 5698 7654 32", False),  # no such country
+        ("gb82 west 1234 5698 7654 32", False),  # lower case
+        ("Order 4471 2210 9938 5521 shipped", False),
+    ],
+)
+def test_a_checksum_valid_iban_is_a_bank_keyword(text: str, valid: bool) -> None:
+    """Pre-classifier plan §3 (P12): recorded as "valid IBAN", never the number."""
+    bank = tr.scan([text])["bank"]
+    assert (tr.IBAN_HIT in bank) is valid
+    assert all(not any(ch.isdigit() for ch in word) for word in bank)
+
+
+def test_an_iban_alone_is_trigger_1_from_an_unconfirmed_sender() -> None:
+    body = "Please pay to GB82 WEST 1234 5698 7654 32 from now on."
+    assert fire(body).fraud == []  # a confirmed sender, bank details alone
+    assert fire(body, sender_confirmed=False).fraud == [
+        "bank details with a sender you haven't confirmed"
+    ]
+
+
+def test_a_wallet_with_a_zero_width_space_inside_is_still_found() -> None:
+    text = "Pay to bc1qar0srrr7xfkvy5\u200bl643lydnw9re59gtzzwf5mdq within 48 hours."
+    assert tr.scan([text])["crypto_wallet"] == ["wallet address"]
+
+
+@pytest.mark.parametrize(
     ("sender", "extra"),
     [
         ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat
@@ -654,7 +740,7 @@ EVAL = Path(__file__).parent / "eval"
 
 def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
     """scan() before step 2a: every pattern searched on its own over every text."""
-    folded = [(fold(t), fold_ci(t)) for t in texts if t]
+    folded = [(keyword_fold(t), keyword_fold_ci(t)) for t in texts if t]
     pats = tr._patterns()  # pyright: ignore[reportPrivateUsage]
     return {
         group: [p.word for p in ps
@@ -664,7 +750,9 @@ def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
 
 
 def _keyword_hits(texts: list[str]) -> dict[str, list[str]]:
-    return {g: w for g, w in tr.scan(texts).items() if g != "crypto_wallet"}
+    """scan()'s keyword hits, without the pattern-matched ones (wallets, IBANs)."""
+    return {g: [x for x in w if x != tr.IBAN_HIT] for g, w in tr.scan(texts).items()
+            if g != "crypto_wallet"}  # fmt: skip
 
 
 def test_scan_finds_what_one_search_per_pattern_finds() -> None:
@@ -720,3 +808,17 @@ def test_scan_of_a_10_mib_part_is_bounded(body: str, content_type: str,
     assert time.perf_counter() - began < 15
     if found:
         assert found[1] in hits[found[0]]
+
+
+@pytest.mark.parametrize(
+    "unit",
+    ["DE12 3456 7890 1234 5678 90 ", "DE12 ", "GB82-WEST-1234-5698-7654-33 "],
+    ids=["groups", "heads", "hyphens"],
+)
+def test_the_iban_check_on_a_crafted_10_mib_text_is_bounded(unit: str) -> None:
+    """Plan §4: every candidate fails its checksum. 0.6 s on the Mac that measured it
+    (2026-10-10); the bound leaves room for a slower CI runner."""
+    text = entity_text(unit * (10 * MIB // len(unit)))
+    began = time.perf_counter()
+    assert not tr.valid_iban(text)
+    assert time.perf_counter() - began < 3
