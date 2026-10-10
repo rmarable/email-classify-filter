@@ -38,7 +38,7 @@ import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, lru_cache
 from importlib import resources
 from typing import Any
 
@@ -76,6 +76,9 @@ _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
 
 
+_START = r"(?<!\w)"  # every keyword pattern starts at a word start
+
+
 @dataclass(frozen=True)
 class _Pattern:
     word: str
@@ -105,18 +108,60 @@ def _patterns() -> dict[str, tuple[_Pattern, ...]]:
 def _compile(word: str, *, case_sensitive: bool) -> _Pattern:
     folded = fold(word) if case_sensitive else fold_ci(word)
     body = r"\s+".join(re.escape(part) for part in folded.split())
-    return _Pattern(word, re.compile(rf"(?<!\w){body}(?!\w)"), case_sensitive)
+    return _Pattern(word, re.compile(rf"{_START}{body}(?!\w)"), case_sensitive)
+
+
+# Alternations kept: one per remaining set of patterns. A message that hits every keyword makes
+# one per hit, so the cache only needs to outlast one message.
+ALTERNATION_CACHE = 256
+
+
+def _alternation(pats: tuple[_Pattern, ...]) -> re.Pattern[str]:
+    """One regex that matches where any of `pats` does: the shared lookbehind factored out, so
+    the alternation is tried only at word starts (pre-classifier plan §4)."""
+    return re.compile(_START + "(?:" + "|".join(p.regex.pattern[len(_START) :] for p in pats) + ")")
+
+
+_any_of = cache(_alternation)  # a whole group's patterns: a fixed, small set
+_rest_of = lru_cache(maxsize=ALTERNATION_CACHE)(_alternation)  # what a message left unfound
+
+
+def _found_in(text: str, pats: tuple[_Pattern, ...]) -> set[_Pattern]:
+    """The patterns in `pats` that match somewhere in `text`, as `p.regex.search` would find
+    them. The alternation finds the leftmost place where any still-unfound pattern matches; every
+    unfound pattern is tried there, and the search goes on past it with those left. So the text
+    is read about once however many patterns there are, and a keyword repeated a million times
+    costs one hit, not a million."""
+    found: set[_Pattern] = set()
+    rest: tuple[_Pattern, ...] = pats
+    pos = 0
+    while rest:
+        m = _rest_of(rest).search(text, pos)
+        if m is None:
+            break
+        pos = m.start()
+        found.update(p for p in rest if p.regex.match(text, pos))
+        rest = tuple(p for p in rest if p not in found)
+        pos += 1
+    return found
 
 
 def scan(texts: list[str]) -> dict[str, list[str]]:
-    """Keywords found per group, in any of the texts."""
-    folded = [(fold(t), fold_ci(t)) for t in texts if t]
+    """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
+    part's visible text is its full text)."""
+    distinct = list(dict.fromkeys(t for t in texts if t))
+    folded = [(fold(t), fold_ci(t)) for t in distinct]
     hits: dict[str, list[str]] = {g: [] for g in GROUPS}
     for group, pats in _patterns().items():
-        for p in pats:
-            if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded):
-                hits[group].append(p.word)
-    nfkc = [unicodedata.normalize("NFKC", t) for t in texts if t]
+        found: set[_Pattern] = set()
+        for case_sensitive in (True, False):
+            todo = tuple(p for p in pats if p.case_sensitive is case_sensitive)
+            for cs, ci in folded:
+                if todo:
+                    found |= _found_in(cs if case_sensitive else ci, todo)
+                    todo = tuple(p for p in todo if p not in found)
+        hits[group] = [p.word for p in pats if p in found]
+    nfkc = [unicodedata.normalize("NFKC", t) for t in distinct]
     hits["crypto_wallet"] = ["wallet address"] if any(w.search(t) for w in WALLETS
                                                       for t in nfkc) else []  # fmt: skip
     return hits
@@ -153,8 +198,12 @@ _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 
 
 def _injected(text: str) -> bool:
-    cs, ci = fold(text), fold_ci(text)
-    return any(p.regex.search(cs if p.case_sensitive else ci) for p in _patterns()["injection"])
+    pats = _patterns()["injection"]
+    return any(
+        _any_of(group).search(fold(text) if case_sensitive else fold_ci(text))
+        for case_sensitive in (True, False)
+        if (group := tuple(p for p in pats if p.case_sensitive is case_sensitive))
+    )
 
 
 def _first(hi: int, test: Callable[[int], bool]) -> int:

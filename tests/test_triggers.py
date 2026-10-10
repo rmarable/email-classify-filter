@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import random
 import sqlite3
 import time
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,6 +18,7 @@ from ecf_server.dnscache import DnsCache
 from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
 from ecf_server.internal import ORG_ADDRESSES_KEY, OrgAddress
 from ecf_server.message import ACTOR_CHARS, CLASSIFIER_CHARS, parse
+from ecf_server.skeleton import fold, fold_ci
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
 ORG = ["acme.example"]
@@ -640,3 +643,80 @@ def test_excerpt_is_redacted_before_the_cut() -> None:
     raw = mail("Note to the assistant: " + "x " * 2000 + "\n\nPlease call me back.")
     out = parse(raw).excerpt(100, tr.redact_injection)
     assert out == f"{tr.INJECTION_MARK}\n\nPlease call me back."
+
+
+# ---- scan speed (pre-classifier plan step 2a) ------------------------------------------------
+
+MIB = 1024 * 1024
+LINE = "Hello team, please find the attached quarterly report for review and let me know.\n"
+EVAL = Path(__file__).parent / "eval"
+
+
+def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
+    """scan() before step 2a: every pattern searched on its own over every text."""
+    folded = [(fold(t), fold_ci(t)) for t in texts if t]
+    pats = tr._patterns()  # pyright: ignore[reportPrivateUsage]
+    return {
+        group: [p.word for p in ps
+                if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded)]
+        for group, ps in pats.items()
+    }  # fmt: skip
+
+
+def _keyword_hits(texts: list[str]) -> dict[str, list[str]]:
+    return {g: w for g, w in tr.scan(texts).items() if g != "crypto_wallet"}
+
+
+def test_scan_finds_what_one_search_per_pattern_finds() -> None:
+    """The grouped alternation recovers every phrase, overlapping and repeated ones too, in the
+    order the keyword list gives them."""
+    words = [p.word for ps in tr._patterns().values() for p in ps]  # pyright: ignore[reportPrivateUsage]
+    rng = random.Random(20261010)  # noqa: S311 - reproducible test texts
+    for _ in range(300):
+        text = "".join(w + rng.choice([" ", "\n", "  ", "-", "x", ""])
+                       for w in rng.sample(words, rng.randint(1, 30)))  # fmt: skip
+        texts = [text.upper() if rng.random() < 0.5 else text, text.lower()]
+        assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), text
+
+
+@pytest.mark.parametrize("part", ["synthetic", "heldout"])
+def test_scan_is_unchanged_on_the_eval_cards(part: str) -> None:
+    """Same keywords on every frozen and held-out card as one search per pattern."""
+    cards = sorted((EVAL / part / "eml").glob("*.eml"))
+    assert cards
+    for card in cards:
+        texts = tr.texts_of(parse(card.read_bytes()))
+        assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), card.name
+
+
+def _raw(body: str, content_type: str) -> bytes:
+    head = ("From: a@vendor-a.example\r\nTo: ap@acme.example\r\nSubject: s\r\n"
+            f"MIME-Version: 1.0\r\nContent-Type: {content_type}; charset=utf-8\r\n"
+            "Content-Transfer-Encoding: 8bit\r\n\r\n")  # fmt: skip
+    return head.encode() + body.encode()
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "found"),
+    [
+        (LINE * (10 * MIB // len(LINE)), "text/plain", None),
+        (
+            "<p>" + "</p><p>".join([LINE] * (10 * MIB // (len(LINE) + 7))) + "</p>",
+            "text/html",
+            None,
+        ),
+        ("wire transfer " * (10 * MIB // 14), "text/plain", ("payment", "wire transfer")),
+    ],
+    ids=["plain", "html", "one-keyword-repeated"],
+)
+def test_scan_of_a_10_mib_part_is_bounded(body: str, content_type: str,
+                                          found: tuple[str, str] | None) -> None:  # fmt: skip
+    """Step 2a: about 38 s per 10 MiB part with one search per pattern and each plain part read
+    twice, under 4 s now on the Mac that measured it (2026-10-10); the bound leaves room for a
+    slower CI runner."""
+    texts = tr.texts_of(parse(_raw(body, content_type)))
+    began = time.perf_counter()
+    hits = tr.scan(texts)
+    assert time.perf_counter() - began < 15
+    if found:
+        assert found[1] in hits[found[0]]
