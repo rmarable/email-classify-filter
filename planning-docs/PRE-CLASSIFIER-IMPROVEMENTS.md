@@ -116,6 +116,28 @@ and never quote an IBAN, wallet, URL or domain (P26; the crypto precedent, SPEC 
 signal to the model; on the route it is kept only if the frozen and held-out sets show it saves a
 genuine card (measured in step 3, reported with the commit).
 
+**Frozen lists (step 2, 2026-10-10; P9, M3).** Fixed before any held-out card is written; step 3
+puts them in `keywords.yaml` unchanged unless the held-out run trips (§8, fresh batch). Hit counts on
+the frozen set (268 cards: 95 scam, 173 genuine; the 267 scored in runs plus `scanned-invoice-17mb`),
+matched as `triggers.scan` does (`fold_ci`, whole words; scratchpad script, read-only):
+
+| List | Phrase | Scam | Genuine | Note |
+|---|---|---|---|---|
+| `gift_card_ask` | send me the codes | 2 | 0 | |
+| | reply with the codes | 2 | 0 | |
+| | card numbers | 3 | 0 | |
+| | scratch | 3 | 0 | |
+| | photo of the back | 0 | 0 | **untested** |
+| | claim code | 0 | 0 | **untested** |
+| `credential` (added) | codes | 8 | 0 | |
+| | verification code | 0 | 1 | `v2-acct-verification-code`; no ask phrase, fact false |
+| | verification codes, passcode(s), one-time code(s) | 0 | 0 | **untested** |
+
+Facts with these lists: `gift_card_codes_request` fires on 10 scam cards, 0 genuine (a gift-card phrase
+and an ask phrase); `credential_request` on 13 scam cards, 0 genuine (9 today). The `credential_never`
+veto blocks 0 scam cards and saves 1 genuine (`v2-acct-unrecognised-device-review`), so it stays on the
+route for now; the held-out set decides (P16).
+
 **Unicode (P15):** keywords already fold full-width, Cyrillic and Cf characters (verified). Draft 2
 adds: nonspacing marks (Mn, e.g. U+034F, U+FE0F, U+0305) removed before keyword matching; amounts, IBANs
 and wallets matched on `skeleton.normalize()` text, never on `fold()` text (`fold` maps `1`→`l`,
