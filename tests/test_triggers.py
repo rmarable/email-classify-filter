@@ -770,7 +770,7 @@ def test_scan_finds_what_one_search_per_pattern_finds() -> None:
         assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), text
 
 
-@pytest.mark.parametrize("part", ["synthetic", "heldout"])
+@pytest.mark.parametrize("part", ["synthetic", "heldout", "heldout2"])
 def test_scan_is_unchanged_on_the_eval_cards(part: str) -> None:
     """Same keywords on every frozen and held-out card as one search per pattern."""
     cards = sorted((EVAL / part / "eml").glob("*.eml"))
