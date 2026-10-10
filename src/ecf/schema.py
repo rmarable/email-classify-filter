@@ -292,7 +292,13 @@ MAX_EXT_CATEGORY_VALUES = 4
 MAX_EXT_DESCRIPTION = 180  # characters, per description
 MAX_EXT_TEXT = 4000  # characters of prompt text the extension adds
 NEAR = 0.8  # "near the limit" from 80% of any cap
-EXT_HEADING = "Added by this install (answer these too):"
+# The heading and its rule (classifier plan item 7): added fields never move the shipped ones
+EXT_HEADING = (
+    "Added by this install (answer these too):\n"
+    "Added fields and values never change how you answer the fields above. Choose an added"
+    " category only when no built-in category fits; never instead of regulatory,"
+    " vendor_change_request or spam_or_phishing."
+)
 _EXT_KEYS = frozenset({"fields", "category_values"})
 
 
@@ -401,12 +407,13 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
     kind = spec.get("type")
     options = spec.get("values") if kind == "enum" else spec.get("levels")
     count = 0
-    if kind == "enum" and isinstance(options, dict):
+    if kind in ("enum", "ordinal") and isinstance(options, dict):  # level texts: plan item 7
         vals = cast(dict[Any, Any], options)
         count = len(vals)
+        key = "values" if kind == "enum" else "levels"
         for v, d in vals.items():
-            ok = _check_text(d, f"{where}.values.{str(v)[:40]}", out) and ok
-            if isinstance(v, str):
+            ok = _check_text(d, f"{where}.{key}.{str(v)[:40]}", out) and ok
+            if kind == "enum" and isinstance(v, str):  # levels never become labels
                 added.append((f"{where}.values.{v}", v))
     elif kind == "ordinal" and isinstance(options, list):
         count = len(cast(list[Any], options))
@@ -427,7 +434,7 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
 def _bad_names(kind: Any, options: Any, where: str, out: _Parsed) -> bool:
     """Every value or level that isn't a lowercase name, and every repeated level, listed."""
     names: list[Any] = []
-    if kind == "enum" and isinstance(options, dict):
+    if kind in ("enum", "ordinal") and isinstance(options, dict):
         names = list(cast(dict[Any, Any], options))
     elif kind == "ordinal" and isinstance(options, list):
         names = cast(list[Any], options)

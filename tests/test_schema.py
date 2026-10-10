@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from ecf.errors import InvalidInputError, SchemaLimitError
 from ecf.schema import (
+    EXT_HEADING,
     MAX_EXT_TEXT,
     SAFETY_FIELDS,
     SAFETY_VALUES,
@@ -394,3 +395,34 @@ def test_ordinal_levels_may_carry_texts() -> None:
     assert (
         len(fr.value_descriptions) == 4 and "    medium: Any request" in load_schema().prompt_block
     )
+
+
+def test_an_extension_ordinal_may_carry_level_texts_within_the_caps() -> None:
+    """Plan item 7: an added ordinal's level texts follow the description rules and count in the
+    extension text."""
+    risk = {"type": "ordinal", "description": "Legal exposure.",
+            "levels": {"none": "No legal content.", "high": "A claim or a court."}}  # fmt: skip
+    base = load_schema()
+    s = extend_schema(base, {"fields": {"legal_risk": risk}})
+    assert s.fields["legal_risk"].value_descriptions == ("No legal content.", "A claim or a court.")
+    added = extension_text(s)
+    assert "- legal_risk (none < high): Legal exposure.\n    none: No legal content." in added
+    assert extension_budget(base, {"fields": {"legal_risk": risk}})["text"]["used"] == len(added)
+    for text, why in [("x" * 181, "181 characters, limit 180"), ("two\nlines", "one line"),
+                      ("- a list", "start with"), ("", "description is required")]:  # fmt: skip
+        bad = {"fields": {"r": {**risk, "levels": {"lo": "Fine.", "hi": text}}}}
+        got = check_extension(base, bad)
+        assert any(g.startswith("schema.fields.r.levels.hi") and why in g for g in got), got
+    bad = {"fields": {"r": {**risk, "levels": {"lo": "Fine.", "Hi": "Fine."}}}}
+    assert any("'Hi' isn't a lowercase name" in g for g in check_extension(base, bad))
+
+
+def test_the_extension_heading_keeps_added_fields_from_moving_the_shipped_ones() -> None:
+    """Plan item 7: the heading says added fields never change the fields above and an added
+    category never replaces the three safety categories."""
+    added = extension_text(extend_schema(load_schema(), EXT))
+    assert added.startswith("\nAdded by this install (answer these too):\nAdded fields and"
+                            " values never change how you answer the fields above.")  # fmt: skip
+    for value in ("regulatory", "vendor_change_request", "spam_or_phishing"):
+        assert value in EXT_HEADING
+    assert EXT_HEADING not in load_schema().prompt_block  # inert without an extension
