@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- When applied rules don't work with the running version (for example rules using something a later release added, left after going back a version), the System Error now says the rules don't compile with this version and suggests `rules: default`, instead of blaming a schema extension; mail is still decided by the starter rules meanwhile (classifier plan item 6; SPEC §7.1).
 - `/ecf-eval` now applies a card's expected facts as `ecf eval run` does, so Claude runs reach the hide path on the same cards as local runs; Claude results from before this scored those cards on computed facts only (SPEC §16.2, §21.2).
 - On preset C, Claude's classifier now gets the same signals as the local classifier, as a separate `signals` list beside the email. The C gate key now covers what Claude is asked (the schema and the signals' wording), so every preset C address returns to `assist` once until its gate passes again; a change to the local model's prompt alone no longer restarts C. `/ecf-eval` results on preset C record that prompt digest (OD-484; SPEC §7.2, §9.3).
 - Two more signals for the local classifier: an email asking for a code, password or login to be sent or read back, and an email asking for payment to a cryptocurrency wallet. They only inform the model; no rule acts on them. `ecf eval run --no-new-signals` measures a run without them (OD-485; SPEC §7.2).

@@ -50,6 +50,8 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         # schema extension, apart: an extension carries over an upgrade unchanged
         "prompt_digest": classifier.prompt_digest(load_schema()),
         "effective_prompt_digest": classifier.prompt_digest(config.current_schema(conn)),
+        # a stored extension, in force or not (OD-481): v2.2.0's upgrade check needs it (item 6)
+        "extension_stored": config.current(conn)["schema"] is not None,
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
         "upgrade": current(conn),

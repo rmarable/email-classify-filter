@@ -166,6 +166,7 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert s["busy"] == {"executing": 1, "leases": 1, "claude_sessions": 1}
     shipped = classifier.prompt_digest(load_schema())  # what release.json carries (Q6)
     assert s["prompt_digest"] == shipped and s["effective_prompt_digest"] == shipped
+    assert s["extension_stored"] is False
 
 
 def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> None:
