@@ -23,6 +23,7 @@ from ecf.eval.cards import parse_card
 from ecf.schema import load_schema
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
+HELDOUT = Path(__file__).parent / "eval" / "heldout"
 DAY = date(2026, 10, 9)
 
 
@@ -49,6 +50,26 @@ def run(root: Path, fields: str, answers: list[str], **kw: Any) -> tuple[list[st
 def card_labels(root: Path, case_id: str) -> dict[str, Any]:
     path = root / "cases" / f"{case_id}.md"
     return parse_card(path.read_text(encoding="utf-8")).expected.labels
+
+
+def test_an_html_part_is_shown_with_each_links_real_target() -> None:
+    card = parse_card((HELDOUT / "cases" / "ho-link-text-mismatch.md").read_text(encoding="utf-8"))
+    shown = "\n".join(ui.screen(card))
+    assert (
+        "https://files.vendor-e.example/s/q3-statement"
+        " [link: https://vendor-e-files.test/auth/start?doc=q3stmt&u=ap]"
+    ) in shown
+    assert "sign in with your acme.example work account" in shown
+    assert shown.index("[HTML part") < shown.index("[plain-text part]")
+    assert "HTML-capable mail reader" in shown
+
+
+def test_quoted_html_is_marked_and_an_empty_plain_part_is_not_shown() -> None:
+    path = HELDOUT / "cases" / "ho-thread-html-blockquote-giftcard.md"
+    shown = "\n".join(ui.screen(parse_card(path.read_text(encoding="utf-8"))))
+    assert "> Please pick up eight" in shown and "[plain-text part]" not in shown
+    body = shown[shown.index("[HTML part") :].replace("<dana-chief@acme.example>", "")
+    assert "<" not in body
 
 
 def test_the_card_is_shown_without_its_id_notes_or_labels(root: Path) -> None:

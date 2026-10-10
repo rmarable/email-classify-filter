@@ -2,7 +2,8 @@
 set (SPEC §16.1; `ecf/eval/review.py` holds the rules).
 
 Each card is shown as a mail client shows it (From, To, Cc, Reply-To, Subject, Date, attachment
-names, text) under a counter, never its id, title, notes, expected values or a model's answer.
+names, text: an HTML part as displayed, each link followed by its real target, then any
+plain-text part) under a counter, never its id, title, notes, expected values or a model's answer.
 Every chosen field is answered from the schema's list first; only then are differences from the
 card's labels shown, and the operator keeps either. Cards come in random order. A card whose
 labels change is rewritten and the set rebuilt; a changed or pending card is confirmed once the
@@ -16,6 +17,7 @@ import re
 import secrets
 from collections.abc import Callable
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -31,21 +33,73 @@ from ecf.text import plain
 CLEAR = "\x1b[H\x1b[2J"
 SHOWN_CHARS = 4000
 QUIT = "q"
-_TAG = re.compile(r"<[^>]+>")
+_BLOCK = frozenset(
+    {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "table", "blockquote", "hr"}
+)
 
 
 class _Quit(Exception):
     pass
 
 
+class _Shown(HTMLParser):
+    """An HTML part as text, each link followed by its real target; quoted parts marked `> `."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.href: str | None = None
+        self.quote = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _BLOCK:
+            self.out.append("\n")
+        if tag == "blockquote":
+            self.quote += 1
+        if tag == "a":
+            self.href = dict(attrs).get("href")
+        if tag in ("td", "th"):
+            self.out.append("  ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self.href:
+            self.out.append(f" [link: {self.href}]")
+            self.href = None
+        if tag == "blockquote":
+            self.quote = max(self.quote - 1, 0)
+        if tag in _BLOCK:
+            self.out.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        data = re.sub(r"\s+", " ", data)
+        if self.quote and data.strip() and "".join(self.out[-2:]).endswith("\n"):
+            data = "> " * self.quote + data.lstrip()
+        self.out.append(data)
+
+
+def html_shown(html: str) -> str:
+    """The HTML part as a mail client displays it, with each link's real target after it."""
+    p = _Shown()
+    p.feed(html)
+    p.close()
+    lines = [x.strip() for x in "".join(p.out).splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
 def screen(card: Card) -> list[str]:
-    """The card as a mail client shows it; nothing from its header beyond the message."""
+    """The card as a mail client shows it; nothing from its header beyond the message. An HTML
+    part comes first, as displayed, with each link's real target, then any plain-text part."""
     msg = build_message(card)
     lines = [f"{h + ':':<10}{msg[h]}" for h in ("From", "To", "Cc", "Reply-To", "Subject", "Date")
              if msg[h]]  # fmt: skip
     names = [a.name for a in card.attachments]
     lines.append(f"Attachments: {', '.join(names) or '-'}")
-    text = card.body if card.body.strip() else _TAG.sub(" ", card.html or "")
+    text = card.body
+    if card.html and card.html.strip():
+        text = ("[HTML part, as displayed; [link: ...] is where each link really goes]\n"
+                + html_shown(card.html))  # fmt: skip
+        if card.body.strip():
+            text += "\n\n[plain-text part]\n" + card.body
     if len(text) > SHOWN_CHARS:
         text = text[:SHOWN_CHARS] + "\n[cut at 4,000 characters]"
     return [plain(x) for x in ("", *lines, "", *text.rstrip().splitlines(), "")]
