@@ -1,9 +1,12 @@
 # Pre-classifier improvements: deterministic routes, input preparation (v2.1.0)
 
-- **Status:** draft 2 (2026-10-10). Draft 1 (`31d1a22`) approved by the operator in session; Phase R
-  R1 (§9) run the same day: findings P1-P28, all accepted as recommended (operator 2026-10-10). Draft 2
-  folds them in; `(Pn)` marks text from a finding. Nothing here is built yet.
-- **Base:** branch `v2.1.0-dev` at `1b4b5a4`; extends `CLASSIFIER-MODEL-PERFORMANCE-IMPROVEMENTS.md`
+- **Status:** draft 4 (2026-10-10). Draft 3 amended step 4's route shape after held-out batches 1
+  and 2 (§3a); Phase R R3 on it found R3-P1..P23, all accepted as recommended (operator 2026-10-10);
+  draft 4 folds them in, `(R3-Pn)` marks their text. Draft 2 (2026-10-10): draft 1 (`31d1a22`)
+  approved by the operator; Phase R R1 findings P1-P28 all accepted; `(Pn)` marks their text.
+  **Built:** steps 00, 0, 1, 1a, 2, 2a, 3 and the list change (`ed7dbf9`..`08825d0`), held-out
+  batch 2 (`7d3e382`). Not built: steps 4 onward.
+- **Base:** branch `v2.1.0-dev` (draft 1 at `1b4b5a4`); extends `CLASSIFIER-MODEL-PERFORMANCE-IMPROVEMENTS.md`
   (Stage 1), which stays in force.
 - **Decisions:** SPEC once built; until then this document. ODs (in SPEC, 2026-10-10): OD-488
   deterministic routes as fraud-trigger reasons, the sender-change fact, IBAN as a bank hit, link and
@@ -92,6 +95,9 @@ the false-positive rate.
 
 ## 3. Safety routes (fraud trigger reasons) (P5)
 
+**Superseded in part by §3a (draft 4):** when each route fires (second signal, origins, vetoes) is
+§3a's; this section's facts, lists, IBAN and Unicode rules stand.
+
 The routes are reasons on the existing `fraud` trigger (`triggers.py`, the OD-453 impersonation shape,
 :22-28, :301-304), not new rule clauses. So the pre-check escalates at fetch without the model
 (`precheck.py:94-115`), and `policy.fraud_signal`, `high_risk`, `send_refusal`, `alert_echo` and step-up
@@ -143,6 +149,77 @@ adds: nonspacing marks (Mn, e.g. U+034F, U+FE0F, U+0305) removed before keyword 
 and wallets matched on `skeleton.normalize()` text, never on `fold()` text (`fold` maps `1`→`l`,
 `0`→`O`, verified); `WALLETS` moves to `normalize()` (a zero-width space inside a wallet evades it
 today). One evasion test per character class on a §3 phrase.
+
+## 3a. Route shape after held-out batches 1 and 2 (draft 3; operator 2026-10-10)
+
+**Evidence.** Step 3 (`e2890b2`) built the facts; the held-out set was then run on facts only, no
+model. Batch 1 (32 cards): `gift_card_codes_request` 0 of its 3 gift-card scams; `credential_request`
+and `crypto_payment` each fired on 1 genuine card. Per §8 the lists were changed (`08825d0`: wider
+gift-card lists, `credential_ask` without "send us the", `crypto_payment` vetoed by
+`credential_never`) and checked on a fresh batch 2 (`7d3e382`, 23 cards, 12 scam / 11 genuine):
+
+| Fact | Scams | Genuine it fires on |
+|---|---|---|
+| `gift_card_codes_request` | 0 of 6 gift-card scams (none says "gift card": store, retailer, digital, app-store cards, e-vouchers) | 0 of 11 |
+| `credential_request` | 3 of 3 credential scams, 2 gift-card scams | 3 of 11 (a gate code, a booking code, a payment reference) |
+| `crypto_payment` | 3 of 3 | 2 of 3 genuine crypto (a deposit notice, a stablecoin receipt) |
+
+As fraud reasons from any outside sender (draft 2, §3), 5 of batch 2's 11 genuine cards would escalate.
+Generic words cause it: "code" with "reply with"/"send me the", "deposit"/"pay" with a wallet. More
+gift-card brand words are not pursued: the scams name the card loosely; the model and the
+impersonation checks carry them.
+
+**Decision (operator 2026-10-10, draft 4 after R3; proposed OD-490, amends OD-488).**
+
+- **Where it runs (R3-P1).** One pure function, `triggers.routes(found, keywords, lookalikes,
+  impersonation) -> (fraud_reasons, weak_reasons)`, over post-fact data: called live after
+  `facts.compute`, and in the eval by `ruletest.with_expected` after a card's expected facts are laid
+  over, so a card's `sender_seen_before`, `auth_result` and `reply_to_mismatch` reach the route. The
+  step-4 commit lists by name every frozen and held-out card whose triggers change because the
+  override now reaches them.
+- **One second-signal list (R3-P6),** shared with trigger 2 (`_money_triggers`, factored into a
+  helper) and stated in OD-490: bank or change wording; `auth_result = fail`; `recipient_mismatch` with
+  `pass`; a lookalike domain; a Reply-To mismatch; any other `fraud` reason on the message; for these
+  three facts also a **first-time sender** (R3-P5: chosen explicitly; a fresh install and one-off
+  senders therefore escalate as in draft 2) and a **known sender without a pass** (R3-P2:
+  `sender_seen_before` with `auth_result` none, except `bulk_signal`/`List-Id` mail, measured on the
+  corpus); for `gift_card_codes_request` also an **internal sender** (R3-P4: a compromised colleague
+  account, SPEC §12.1). Impersonation is not a signal on the gift-card leg: impersonation with gift
+  cards already escalates (`triggers.py:402-403`, R3-P6).
+- **So the only softened case** is a known sender (seen) whose message passed DMARC, with none of the
+  above.
+- **Per fact:** `credential_request`: signal → fraud reason; else `fraud_weak`. `gift_card_codes_request`:
+  signal → fraud reason; else `fraud_weak`; any origin, not self-sent. `crypto_payment`: signal → fraud
+  reason; else **recorded only, no weak leg** (R3-P14: genuine deposit and payout notices would be
+  flagged suspicious for good).
+- **Seen history (R3-P3):** an item with any `fraud`, `fraud_weak` or lookalike reason does not count
+  toward its sender's history (`facts.record_sender`); a public-provider sender (`PUBLIC_DOMAINS`) is
+  never "seen" for this downgrade unless `sender_confirmed`.
+- **Veto (R3-P13):** `credential_never` applies only when no second signal holds.
+- **Lists (R3-P7):** the brand words added to `gift_card` in `08825d0` are reverted (they widened
+  OD-457 and the `impersonation_gift_cards` signal unmeasured); the `gift_card_ask` additions stay.
+- **Wording (R3-P14, R3-P21):** fixed reasons naming the signal from a fixed set ("credential request
+  from a sender with no established history"), never a domain or value; one reason when
+  `known_sender_auth_regressed` says the same; the digest's weak heading is generalised and
+  `cards.why()` shows weak reasons when no fraud reason exists (`digests.py`, `cards.py`, SPEC §10.1).
+- **Not in `rules.FACTS` in v2.1.0 (R3-P15):** nothing consumes them; a rollback would fail to compile
+  a custom rule naming one. SPEC §11.10's "no fact rules can use" stays true.
+- **Gmail-only `self_sent` (R3-P22)** and untestable branches (R3-P18: vendor lookalikes and internal
+  senders can't be exercised in the eval; unit tests cover them) are stated limits.
+
+**Known cost (R3-P10).** Two frozen cards are a compromised known sender: `hide-fraud-mailbox-quota`
+and `hide-fraud-subscription-payment` (seen, pass, `credential_request`) go to `fraud_weak` and rely on
+the model to escalate. No held-out scam exercises the softened case (R3-P10, M5). §2's "39 to 24" and
+§11's "one rule change" are draft-2 figures, recomputed in step 7. Batch 2's counts above are facts by
+the cards' labelled facts, not routes (R3-P19).
+
+**Check (R3-P8, replaces a third batch).** (a) The step-7 rescore over the frozen set and both held-out
+batches, reporting routes (baseline, draft 2, draft 4) with each fraud reason's second signal, the
+cards whose only signal is first-time, `model_only_fraud_cases`, and a sensitivity rescore with
+`sender_seen_before` forced true (the compromised-known-sender exposure); (b) a corpus pass with the new
+routes recomputed from stored facts and a rescan of stored excerpts (truncated), reporting first-time
+share and would-escalate share; (c) unit tests per fact x signal. Batches 1 and 2 are in-sample for
+draft 4 (R3-P8) and reported as such.
 
 ## 4. Scan speed and regex bounds (P2, P3) — before any new pattern
 
@@ -271,8 +348,10 @@ no DMARC. Each card's choice is in its notes. An expected `pass` does not recomp
 held-out run is a smoke check. The false-positive measure is a rules-only pass over the corpus's stored
 facts and excerpts (`evalrun.deterministic_noise`, no model; excerpts are truncated).
 
-**Contamination (P10):** if a genuine card trips a rule, stop and report; a narrowed keyword list is
-validated on a fresh batch (held-out 2), never on the batch that tripped. Held-out labels never change.
+**Contamination (P10, widened by R3-P8):** if a genuine card trips a rule, stop and report. Any change
+to lists, facts or route shape after a batch is seen makes that batch in-sample; it is reported as such
+and never validates the change. Held-out labels never change. After batch 2 (draft 4), changes are
+checked on the corpus and the rescore (§3a Check), not on a further batch.
 
 ## 9. Phase R: adversarial review
 
@@ -282,6 +361,13 @@ M1-M14, cost and design C1-C16, performance perf-1..perf-10), merged into P1-P28
 only, trigger 1 bank + change, random token per request, `fold` digit mapping, `payment_history` never
 written, scan time 3.9 s per 1 MB × 2). All accepted as recommended (operator 2026-10-10). Findings in
 `state-archive/pre-classifier/review-findings.md` (gitignored).
+
+**R3, draft 3's route shape (§3a) — done 2026-10-10.** Four read-only Fable agents (safety S1-S13,
+measurement M1-M12, cost and design C1-C14, performance perf-1..10), merged into R3-P1..P23 (2 critical,
+11 high, 6 medium, 4 low); key claims spot-checked (`with_expected` recomputes only
+`bulk_corroborates`; DMARC `fail` needs an enforcing policy; `record_sender` counts every pass; rule 1's
+`team` clause is external-only; IBAN worst case 1.27 s / 10 MiB). All accepted as recommended (operator
+2026-10-10); folded into draft 4. Findings in `state-archive/pre-classifier/review-findings-r3.md`.
 
 **R2, the code**, before each Ollama stage run: two read-only Fable agents in parallel, safety and
 correctness (I1-I4, evasion, wiring, eval scoring), and performance (hot paths, worst-case regex
@@ -316,11 +402,22 @@ commit that changes behaviour (CLAUDE.md), not one for the whole plan (P19).
 - **3. Facts and keywords:** `gift_card_codes_request`, `credential` plurals, Mn removal, entity
   patterns on `normalize()`, IBAN as a `bank` hit, `WALLETS` on `normalize()` (+ keywords digest);
   `credential_never` measured; `tests/test_triggers.py`, `tests/test_facts.py`, evasion tests.
-- **4. Routes:** fraud-trigger reasons (§3), `known_sender_auth_regressed` (§5 A),
-  `ruletest.with_expected`; `tests/test_triggers.py`, `tests/test_rules.py`, `tests/test_precheck.py`;
-  extend the `FACTS` strategy in `tests/test_policy.py` (:40-51) with every fact rule 1 reads
-  (`impersonates_internal`, `bec_opener`, `tax_form_request`, `self_sent`, `gift_card_keyword`, the new
-  ones) and run I1-I4 over several rule sets (starter, v2.0.0 starter, a hand-written custom set) (P17).
+- **3b. Hot-path fixes (R3-P11, P12, P16, P17, P20):** a per-message total scan cap (reason in
+  `content_unscanned`); `valid_iban` caps candidates per text and compacts cheaply; one `normalize` per
+  distinct text shared by the keyword and entity folds, ASCII fast paths; one wallet alternation;
+  Unicode tables not rebuilt per isolate child; `redact_injection` checks the whole text first; timing
+  tests on CPU time against an in-test baseline under a `perf` marker run serially, with crafted-worst
+  inputs (IBAN short-country/newline units, wallets, mark-dense and accented text, a 20-part partial
+  message), texts built inside tests; the `gift_card` brand words reverted (R3-P7).
+- **4. Routes (§3a, draft 4):** `triggers.routes` and the shared second-signal helper; `with_expected`
+  calls it after the override; `record_sender` skips flagged items; public-provider senders never
+  "seen" for the downgrade; the veto change; `known_sender_auth_regressed` (§5 A); digest heading and
+  `cards.why()`; OD-490 and SPEC §5.4, §8.5, §8.6, §10.1, the OD-485 and OD-488 rows (R3-P19);
+  `tests/test_triggers.py` (fact x signal), `tests/test_rules.py`, `tests/test_precheck.py`,
+  `tests/test_digests.py`, `tests/test_cards.py`; extend the `FACTS` strategy in `tests/test_policy.py`
+  (:40-51) with every fact rule 1 reads (`impersonates_internal`, `bec_opener`, `tax_form_request`,
+  `self_sent`, `gift_card_keyword`) and run I1-I4 over several rule sets (starter, v2.0.0 starter, a
+  hand-written custom set) (P17).
 - **5. Link and attachment facts** (§5 C, P22, P24): `htmltext.py`, `message.py`, `policy.py`
   (`risky_attachment` blocker), rule 1b clause; hostile-HTML timing tests.
 - **6. `amount_mentioned`** recorded (§5 A2), bounded patterns.
@@ -328,7 +425,10 @@ commit that changes behaviour (CLAUDE.md), not one for the whole plan (P19).
   (recompute facts as `_inputs` does, re-plan the recorded classification; records `rescored_from`,
   `keywords_digest`, rules digest); `compare` warns on different keywords and different scoring;
   `genuine_hide_dropped` count (confirmed non-fraud cards expecting a hide-capable rule whose plan lost
-  every hide), gated at 0; `model_only_fraud_cases` before/after in the summary; the per-stage
+  every hide), gated at 0; `genuine_flagged` (R3-P9: confirmed cards with `fraud_risk` none/low and no
+  fraud expected rule whose plan is `fraud_guard` or `fraud_weak`, per rule and rules-alone; 0 at
+  `fraud_guard` gates the held-out run); routes reported per mechanism with the §3a Check figures and
+  the corpus pass; `model_only_fraud_cases` before/after in the summary; the per-stage
   measurements of §11; `_remember_root` skipped for not-for-gate runs; tests.
 - — **End of stage 1** (deterministic, plus the one signal removal in step 1a).
 - **10. B** and `--no-excerpt-prep` (`message.py`, `htmltext.py`, `keywords.yaml`, prompt digest
