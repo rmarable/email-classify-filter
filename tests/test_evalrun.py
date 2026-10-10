@@ -503,6 +503,30 @@ def test_a_run_with_the_new_wording_off_asks_with_the_v2_0_0_text(
     assert result["schema_digest"] == load_schema_v2_0_0().digest
 
 
+def test_signals_go_to_the_classifier_unless_switched_off(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """OD-484: a card whose facts make a signal true is asked with the signals block;
+    `--no-signals` (an eval-only switch) leaves it out and the run can't pass the gate."""
+    from ecf_server import db  # noqa: PLC0415
+
+    shutil.copy(SYNTHETIC / "cases" / "mid-exec-quick-favor.md", root / "cases")
+    assert not build_all(root).findings
+    labels.confirm(root, "mid-exec-quick-favor", date(2026, 10, 1))
+    for on in (True, False):
+        fake = ChatOllama(json.dumps(BEC))
+        evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
+                      evalrun.Options(root, actor=False, signals=on), power=lambda: AC,
+                      battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+        users = [b["messages"][-1]["content"] for b in fake.bodies]
+        blocks = [u for u in users if u.startswith("<<<SIGNALS ")]
+        assert bool(blocks) is on  # the case, and its determinism repeat if sampled
+        if on:
+            assert "executive-impersonation" in blocks[0]
+        result = evalrun.RUN.snapshot()["result"]
+        assert (result["options"].get("switches_off") or []) == ([] if on else ["signals"])
+
+
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
 

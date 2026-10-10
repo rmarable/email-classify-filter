@@ -1013,7 +1013,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                corpus=corpus_run,
                                for_gate=body.get("for_gate") is not False,
                                copy_to=copy_to,
-                               new_wording=body.get("new_wording") is not False)  # fmt: skip
+                               new_wording=body.get("new_wording") is not False,
+                               signals=body.get("signals") is not False)  # fmt: skip
         try:
             run = evalrun.start(state.connect, state.clock, state.model_client,
                                 state.db_path.parent, opts, power=state.power,

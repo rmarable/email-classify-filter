@@ -80,6 +80,7 @@ from ecf_server import (
     rules,
     ruletest,
     schedule,
+    signals,
     slack_admin,
     slack_out,
     slack_routes,
@@ -153,13 +154,15 @@ class Options:
     for_gate: bool = True  # False: an experiment, saved for its figures, never passes (plan 0.3)
     copy_to: Path | None = None  # also write the result file here (synthetic set only, plan 0.3)
     # Eval-only switches (plan 0.3); production always runs with all on, and a run with any off
-    # never passes the gate. `--no-signals` and `--no-new-signals` come with plan items 3 and 4.
+    # never passes the gate. `--no-new-signals` comes with plan item 4.
     new_wording: bool = True  # False: Gemma is asked with the frozen v2.0.0 schema text
+    signals: bool = True  # False: Gemma is asked without the signals block (OD-484)
 
     @property
     def switches_off(self) -> list[str]:
         """The eval-only switches turned off, by name."""
-        return [] if self.new_wording else ["new_wording"]
+        return [name for name, on in (("new_wording", self.new_wording),
+                                      ("signals", self.signals)) if not on]  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -616,8 +619,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 break
             facts, (text, act_text) = _inputs(case, scratch, redact)
             n_cls, n_act = len(calls["classifier"]), len(calls["actor"])
+            sent = signals.sent(facts) if opts.signals else ()
             cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema,
-                                               calls["classifier"])
+                                               calls["classifier"], sent)
                                 if opts.classifier else (None, None, None))  # fmt: skip
             if secs is not None:
                 classifier_s.append(secs)
@@ -656,9 +660,11 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         flipped: dict[str, int] = {}
         if opts.classifier and not stopped:
             for case in (c for c in cases if c.id in repeat):
-                text = _inputs(case, scratch, redact)[1][0]
+                facts, texts = _inputs(case, scratch, redact)
+                text = texts[0]
                 again = _classify_with(opts.backend, dpin, client, text, schema,
-                                       calls["determinism"])[0]  # fmt: skip
+                                       calls["determinism"],
+                                       signals.sent(facts) if opts.signals else ())[0]  # fmt: skip
                 first = firsts.get(case.id)
                 diffs += again != first
                 for f in field_flips(first, again):
@@ -892,7 +898,7 @@ def _unredacted(text: str) -> str:
 
 
 def _classify_with(backend: str, dpin: ollama.Pin | None, client: Client, text: str, schema: Any,
-                   calls: list[stats.Call]
+                   calls: list[stats.Call], sent: tuple[str, ...] = ()
                    ) -> tuple[dict[str, Any] | None, dict[str, dict[str, float]] | None,
                               float | None]:  # fmt: skip
     """One classification by the run's backend: the classification (None for a failed attempt),
@@ -901,7 +907,7 @@ def _classify_with(backend: str, dpin: ollama.Pin | None, client: Client, text: 
         return null_classification(schema), None, None
     t0 = time.monotonic()
     if dpin is None:
-        out = _classify(client, text, schema, calls)
+        out = _classify(client, text, schema, calls, sent)
         return out, None, time.monotonic() - t0
     from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
 
@@ -919,10 +925,10 @@ def _classify_with(backend: str, dpin: ollama.Pin | None, client: Client, text: 
     return ans.classification, ans.probabilities or None, secs
 
 
-def _classify(client: Client, text: str, schema: Any,
-              calls: list[stats.Call]) -> dict[str, Any] | None:  # fmt: skip
+def _classify(client: Client, text: str, schema: Any, calls: list[stats.Call],
+              sent: tuple[str, ...] = ()) -> dict[str, Any] | None:  # fmt: skip
     try:
-        reply = classifier.ask(client, text, schema)
+        reply = classifier.ask(client, text, schema, sent)
     except OllamaError as e:
         if e.cause in FATAL:
             raise

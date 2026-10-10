@@ -1,0 +1,44 @@
+"""Derived signals sent to the classifier (OD-484; ADR 0026, SPEC §7.2).
+
+Each signal is the truth of a condition the starter rules already use (rule 1 and `fraud_weak`,
+`starter_rules.yaml`), composed from computed facts, so the model sees what the rules were tuned
+to. A signal is sent only when true, in the fixed wording below, and nothing else from the facts
+goes with it: no trigger reasons, addresses, keywords or sender details (P3, P18). `sent` is the
+one function that builds them, for the local classifier and (plan item 5) Claude alike; the
+allow-list test in `tests/test_signals.py` pins `WORDING`.
+
+They go in a block before the email, between delimiter lines carrying the request's random token
+(P10); with no signal true there is no block, so the request is the same as before.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+WORDING: dict[str, str] = {
+    "bec_opener_outside": "An outside sender opens like an executive-impersonation scam.",
+    "tax_form_request_outside": "An outside sender asks for employees' tax or payroll data.",
+    "impersonates_internal": "The sender claims to be someone in your organization but isn't.",
+    "impersonation_gift_cards": "Someone claiming to be in your organization mentions gift cards.",
+}
+
+
+def sent(facts: dict[str, Any]) -> tuple[str, ...]:
+    """The names of the signals that are true for these facts, in `WORDING`'s order."""
+    outside = facts.get("sender_origin") == "external" and not facts.get("self_sent")
+    impersonates = bool(facts.get("impersonates_internal"))
+    true = {
+        "bec_opener_outside": bool(facts.get("bec_opener")) and outside,
+        "tax_form_request_outside": bool(facts.get("tax_form_request")) and outside,
+        "impersonates_internal": impersonates,
+        "impersonation_gift_cards": impersonates and bool(facts.get("gift_card_keyword")),
+    }
+    return tuple(name for name in WORDING if true[name])
+
+
+def block(names: tuple[str, ...], token: str) -> str:
+    """The signals block for the classifier's user message; empty when no signal is true."""
+    if not names:
+        return ""
+    lines = "".join(f"- {WORDING[n]}\n" for n in names)
+    return f"<<<SIGNALS {token}>>>\n{lines}<<<END SIGNALS {token}>>>\n"
