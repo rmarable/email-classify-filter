@@ -1,14 +1,17 @@
-# Pre-classifier improvements: deterministic routes, computed category, input preparation (v2.1.0)
+# Pre-classifier improvements: deterministic routes, input preparation (v2.1.0)
 
-- **Status:** draft 1 (2026-10-10). Approved by the operator in session; Phase R (§9) not yet run.
-  Nothing here is built yet.
+- **Status:** draft 2 (2026-10-10). Draft 1 (`31d1a22`) approved by the operator in session; Phase R
+  R1 (§9) run the same day: findings P1-P28, all accepted as recommended (operator 2026-10-10). Draft 2
+  folds them in; `(Pn)` marks text from a finding. Nothing here is built yet.
 - **Base:** branch `v2.1.0-dev` at `1b4b5a4`; extends `CLASSIFIER-MODEL-PERFORMANCE-IMPROVEMENTS.md`
   (Stage 1), which stays in force.
 - **Decisions:** SPEC once built; until then this document. Proposed ODs (numbers confirmed when
-  written): OD-488 deterministic routes, computed category, sender-change and entity facts, link and
-  attachment facts, classification reuse; OD-489 excerpt preparation and message signals (new signals
-  need an OD under ADR 0026). Open: whether OD-488 also needs ADR 0027 (SPEC §7.4 l.702 calls the
-  stored classification "the model's"; ADR 0026 covers facts going *to* a model, not this).
+  written): OD-488 deterministic routes as fraud-trigger reasons, the sender-change fact, IBAN as a bank
+  hit, link and attachment facts; OD-489 excerpt preparation and message signals (new signals need an OD
+  under ADR 0026). No ADR 0027: the computed category is cut (P1), so nothing a model returns becomes a
+  fact.
+- **Cut in draft 2:** computed category (P1), classification reuse E (P11), `bank_details_present` and
+  its `senders` column (P12), `confirmed_category_departed` (P28), the amount fact in rule 1 (P9).
 
 ## 1. Context
 
@@ -26,13 +29,21 @@ it:
   codes") answered `payment_related: false` in both runs, so `fraud_weak` instead of `fraud_guard`. No
   signal fires on it; only the model routes it.
 
-A case is correct only on **category + rule + safety** (`evalrun.py:316`). Category is wrong on 87 of
+A case is correct only on **category + rule + safety** (`evalrun.py:317`). Category is wrong on 87 of
 the repeat's 101 wrong cases; 42 of those are scams labelled `spam_or_phishing` that the model files
 under what they pretend to be. 39 fraud cards reach `fraud_guard` only through the model's answer.
 
-**Goal:** route known scam patterns to `fraud_guard` without the model; let ecf's checks set the
-category in those cases; prepare what the model sees. Never lower a route, never change what the
-model returned.
+**Goal:** route known scam patterns to `fraud_guard` without the model, including in the pre-check when
+the model fails or is backed up (P5); prepare what the model sees. Never lower a route, never change
+what the model returned, never set the category from ecf's checks (P1).
+
+**Decided (operator 2026-10-10; P1, M1):** the category regression in §1 comes from the classifier
+plan's `credential_request` signal (OD-485). Draft 1's computed category would have hidden it in the
+score; draft 2 does not, so with the signal on, the stage-1 gate (§11) on model category would be
+expected to fail as the repeat did (−4.9, lower bound −9.9). `credential_request` is **removed from the
+signals sent to Gemma**; it stays a fact and a route (§3), which catch these scams without the model.
+The prompt digest changes (gates restart); OD-485 and SPEC are amended in step 1, the signal change is
+step 1a.
 
 ## 2. Evidence (offline, recorded answers and computed facts; no model calls)
 
@@ -46,17 +57,15 @@ medium/high or rule `fraud_guard`: 95 scam, 172 genuine):
 | `bec_opener` | 5 | 0 | 5/5 `spam_or_phishing` (model 3) |
 | gift card + ask for codes/card numbers | 9 | 0 of 4 genuine gift-card cards | 9 `spam_or_phishing`, 1 `regulatory` |
 | `crypto_payment` | 1 | 0 | 1 `vendor_change_request` |
-| bank + change keywords | 10 | 0 | 10/10 `vendor_change_request` (model 7) |
+| bank + change keywords | 10 | 0 | 10/10 `vendor_change_request`; trigger 1 already routes all 10 (`triggers.py:322-333`) |
 | regulator keywords | – | – | 8/11 `regulatory`: too mixed, not used |
 | `payment_keyword` | 43 | 33 | not a route |
 
-Simulated on recorded answers (safety routes + computed category, §3-§4):
-
-| Run | Now | With §3-§4 | Unsafe | Category right→wrong |
-|---|---|---|---|---|
-| run 0 `883204b3` | 179 | 187 | 0 | 0 |
-| run 1 `66f2190b` | 163 | 182 | 0 | 0 |
-| repeat `852e104b` | 166 | 183 | 0 | 0 |
+**What the routes change** (Phase R M2, reviewer's recomputation on the recorded answers; to be
+reproduced by the committed rescore tool, step 7): on run 1 and the repeat, exactly one case changes its
+rule (`mid-giftcard-staff-rewards`, `fraud_weak` → `fraud_guard`, the unsafe case); on run 0, none.
+Model-only `fraud_guard` cards (null classification + rules, `evalrun.rules_alone`) fall from 39 to 24.
+Draft 1's +8 / +19 / +17 headline gains were ~95% computed-category scoring, not routing (P1).
 
 Entity patterns against labels:
 
@@ -68,119 +77,124 @@ Entity patterns against labels:
 | date pattern | deadline_mentioned | 47 | 18 | 12 |
 | model (repeat) | deadline_mentioned | 59 | 8 | 0 |
 
-Valid IBANs (mod-97): 5 cards, all scam or bank-change. An amount in rule 1's money clauses changes one
-case in three runs: `mid-giftcard-staff-rewards`, to `fraud_guard`.
+Valid IBANs (mod-97): 5 cards, all scam or bank-change. Dates and amounts stay with the model (P9).
 
 Tested and rejected (too noisy for a route): security words in the sender's domain (12 scam, 4
 genuine incl. two real tax notices); an organisation name from free mail (3, 2); "Re:" without thread
 headers (1, 3). 9 of the 15 fact-less model-only scams are content-only (extortion, SEO spam, "aunt with
 a new address", parcel lures): the model's job.
 
-**Caveat:** the cards and keywords were written together, so these figures are optimistic; the held-out
-set (§8) is the check.
+**Caveat (P9, M3):** the cards and keywords were written together. Five of the six `gift_card_ask`
+phrases were taken from frozen positives; "photo of the back" and "claim code" match no frozen card and
+are **untested**. Each list's per-phrase frozen hit count is recorded in the step-3 commit and the lists
+are frozen before any held-out card is written. The held-out set (§8) is a smoke check, not a measure of
+the false-positive rate.
 
-## 3. Safety routes (rule 1 `fraud_guard`)
+## 3. Safety routes (fraud trigger reasons) (P5)
 
-`starter_rules.yaml` rule 1 gains, each from outside and not self-sent (the shape of OD-479, OD-482):
-`credential_request`; `gift_card_codes_request` (new fact: a `gift_card` phrase + a `gift_card_ask`
-phrase, new list in `keywords.yaml` — "send me the codes", "reply with the codes", "card numbers",
-"photo of the back", "scratch", "claim code" — with the `credential_never` exclusions); `crypto_payment`.
+The routes are reasons on the existing `fraud` trigger (`triggers.py`, the OD-453 impersonation shape,
+:22-28, :301-304), not new rule clauses. So the pre-check escalates at fetch without the model
+(`precheck.py:94-115`), and `policy.fraud_signal`, `high_risk`, `send_refusal`, `alert_echo` and step-up
+follow with no new policy code. Rule 1 already matches `{trigger: fraud}` (`starter_rules.yaml:28`).
 
-## 4. Computed category
+Each from outside and not self-sent unless stated:
+- `credential_request` → fraud reason; from inside → `fraud_weak` (rule 1b) (P25).
+- `gift_card_codes_request` (new fact: a `gift_card` phrase + a `gift_card_ask` phrase, new list in
+  `keywords.yaml` — "send me the codes", "reply with the codes", "card numbers", "photo of the back",
+  "scratch", "claim code") → fraud reason **from any origin**, not self-sent (P25: a compromised internal
+  account is SPEC §12.1's case). No `credential_never` exclusion on it (P16).
+- `crypto_payment` → fraud reason.
+- `bank_change` is not added: trigger 1 already fires on bank + change wording.
+- A checksum-valid IBAN (mod-97, on `normalize()` text, spaces and hyphens removed) counts as a `bank`
+  keyword hit, so trigger 1 covers it with no new fact or column (P12).
 
-**Never overwrite the model's answer.** `items.classification` stays as the model returned it. The
-computed category is a fact, `computed_category`, in `items.facts` (no migration; `DATA_FORMAT` 3).
-Policy uses an *effective* classification: the model's, with `category` replaced when set.
+The facts stay rule-readable (`rules.FACTS`) for custom rules and the signals. Reasons use fixed wording
+and never quote an IBAN, wallet, URL or domain (P26; the crypto precedent, SPEC §7.2).
 
-New `ecf_server/computed_category.py`, one pure function over facts and the model's category:
-1. `bank_change` (bank + change keywords, exposed as a fact) → `vendor_change_request` (first in the
-   order, always applies).
-2. From outside, not self-sent, with `credential_request`, `tax_form_request`, `bec_opener`,
-   `crypto_payment` or `gift_card_codes_request` → `spam_or_phishing`, unless the model said
-   `vendor_change_request` or `regulatory` (earlier in the agreed order).
-3. Otherwise none.
+**Keyword lists (P16):** `credential` gains `codes`, `verification code(s)`, `passcode(s)`,
+`one-time code(s)`. The `credential_never` veto ("we will never ask for your password") stays on the
+signal to the model; on the route it is kept only if the frozen and held-out sets show it saves a
+genuine card (measured in step 3, reported with the commit).
 
-Every case step 2 applies to already routes to `fraud_guard` (§3; first match, `hide: never`), and
-step 1's category routes there too, so the computed category can only add a fraud route.
+**Unicode (P15):** keywords already fold full-width, Cyrillic and Cf characters (verified). Draft 2
+adds: nonspacing marks (Mn, e.g. U+034F, U+FE0F, U+0305) removed before keyword matching; amounts, IBANs
+and wallets matched on `skeleton.normalize()` text, never on `fold()` text (`fold` maps `1`→`l`,
+`0`→`O`, verified); `WALLETS` moves to `normalize()` (a zero-width space inside a wallet evades it
+today). One evasion test per character class on a §3 phrase.
 
-**Policy** (`policy.py`, the one call every path shares: production `decide.plan_for`, fallback shadow
-`fallback.py:390-400`, Claude eval `claude_eval.py:358-375`, `ecf eval run` `evalrun.py:641-643`, gate
-replans `gate.py:184`):
-- `rule_input` (:164) passes the effective classification to the rules.
-- I1 kept: `hide_blockers` (:127) and `corroborated` (:139) read the **model's** category; the
-  regulatory blocker ORs in the computed one; `fraud_signal` gains the new facts, so a computed
-  `spam_or_phishing` never enables rule 6 `junk`, even under a person's custom rules.
-- New invariant **I5** (docstring + Hypothesis property in `tests/test_policy.py`): for every
-  classification and facts, the effective plan's escalations and flags ⊇ the model-only plan's, and
-  its hides ⊆ it.
+## 4. Scan speed and regex bounds (P2, P3) — before any new pattern
 
-**Display** (operator decision 2026-10-10: both, labelled): `review.py:218`, `alert_items.py:132/138`
-show `<computed> (ecf's checks; model said <model>)` when they differ. `claude_queue.py:165` batch
-risk reads the effective category. Audit `policy.decided` (`decide.py:170-176`) adds
-`computed_category`.
+Measured on this Mac: `triggers.scan` takes ~3.9 s per 1 MB plain part (~38 s per 10 MB), un-time-limited
+in the check thread (`analysis.py:61`), because `texts_of` passes plain parts twice (`visible` is `full`)
+and 199 patterns each search the whole text. Each new literal pattern adds ~0.17 s per 10 MB.
+- Scan each distinct text once (`dict.fromkeys`).
+- One alternation per keyword group with the matching phrase recovered from the match (reviewer: 1.1 s
+  for all groups over 10 MB, ~17× faster), or move `scan` into the isolate child under its time limit.
+- Every new regex: fixed-width groups with bounded repetition and a lookbehind that forbids a start inside
+  a digit/separator run (never `\d+(?:[.,]\d+)*`, measured > 15 s/MB); quote markers matched per line
+  with `[^\n]{0,N}` bounds, never DOTALL across the text; "to the end" as a line-index cut.
+- Tests: `scan(texts_of(…))` on a 10 MiB plain and a 10 MiB HTML part under a fixed bound; each new regex
+  on its crafted worst input at 10 MiB, ≤ 1 s.
 
-**Eval:** `category` and the headline score the effective category (`score_parts` :288,
-`claude_eval.py`); new per-field `category_model` keeps model comparisons model-only (OD-486); summary
-count `computed_category_applied`; `ecf eval compare` prints both. Old results read `category_model` as
-unknown.
+## 5. Post-model and entity facts (operator 2026-10-10: these augment, none replaces)
 
-**Signals:** unchanged; the `credential_request` signal's harm was on exactly the cards §4 fixes.
-Revisit if run 1 shows spill-over.
+**A. Known sender, failing authentication** (raises risk only; never sent to a model).
+- `known_sender_auth_regressed`: `_enough_history` (`facts.py:284`) of DMARC pass, and this message's
+  `auth_result` is `fail` → fraud reason (rule 1). `none` does not fire: forwarding, lists, late
+  verification and OD-187 all give `none` for exactly these senders (P14, SPEC §7.3).
+- `confirmed_category_departed`: deferred (P28; needs the category, which isn't a fetch-time fact).
+- Eval: `ruletest.with_expected` recomputes it from expected `sender_seen_before` and `auth_result`, as it
+  does `bulk_corroborates` (`ruletest.py:150`). The held-out set tests the fact in isolation, not the
+  end-to-end auth path (M12).
 
-## 5. Post-model additions (operator 2026-10-10: these augment, none replaces)
+**A2. Entity facts** (recorded, never a route, never a signal):
+- `amount_mentioned` (bounded patterns, §4): recorded for measurement only; not in rule 1's money
+  clauses (P9: its one supporting card is the one `gift_card_codes_request` fixes). Reconsider on held-out
+  and corpus evidence.
 
-**A. Escalate when a known sender changes** (raises risk only; never sent to a model). History exists:
-`senders.dmarc_pass_count`, `first_pass_at`, `last_pass_at` (→ `sender_seen_before`),
-`confirmed_category`, `expected_reply_to_domain` (`facts.py:152-160`, `_enough_history` :284).
-- `known_sender_auth_regressed`: DMARC-pass history, but this message's `auth_result` isn't `pass`
-  (a spoof, or a compromised mailbox) → rule 1.
-- `confirmed_category_departed`: a person-confirmed category, and this message's effective category is
-  `vendor_change_request`, `account_security` or `regulatory` while the confirmed one isn't → rule 1b.
-- Eval: `ruletest.with_expected` recomputes them from expected `sender_seen_before`, `auth_result` and a
-  new `sender_confirmed_category`, as it does `bulk_corroborates` (ruletest.py:150).
+**C. Link and attachment facts:**
+- `htmltext._Walker` (:42) records `link_text_mismatch` (an anchor's visible text names a different
+  registrable domain than its href) and `link_count` (HTML and plain text). Bounds (P22): innermost
+  anchor only, href cut to 2 KB before host extraction, anchor text cut to 200 chars, recording stops
+  after N anchors (`link_count` saturates), booleans and counts stored, never URLs. Recorded for
+  measurement only: **not a hide blocker** (P13: tracking redirects make nearly every newsletter
+  mismatch, which would stop rules 7 and 8).
+- `risky_attachment` from `Attachment` (`message.py:71`): HTML/HTM/SHTML/XHT/XHTML/MHT/MHTML,
+  SVG/SVGZ, HTA, JS, VBS, LNK, executable or disk image (ISO/IMG/DMG), or `application/octet-stream`
+  with such an extension (list in `keywords.yaml`). A hide blocker; with a payment, credential or
+  gift-card keyword → `fraud_weak` (rule 1b) (P13).
+- Attachment names (P24): extension and type tested on the uncapped name; the stored name capped as
+  head…tail keeping the last 12 characters (today a 100-char cap can cut `.html` to `.h`).
 
-**A2. Entity facts** (join other conditions; never a route alone, never a signal):
-- `amount_mentioned` (patterns in `keywords.yaml`: symbol or code with a number, `n.nn`, "n dollars",
-  `1.234,56`, `USD 1,200`): joins the money ORs in rule 1's team-from-outside and impersonation
-  clauses and the matching 1b clause, beside `payment_keyword`.
-- `bank_details_present` (a valid IBAN, mod-97, or routing/account-number wording): for A, a sender with
-  history sending bank details when its earlier mail had none → rule 1. Needs a per-sender bit, a new
-  nullable `senders` column set like `payment_history`: a migration (check `DATA_FORMAT`, upgrade notes).
-- Dates stay with the model.
-
-**C. Link and attachment facts** (hide blockers only, no route yet):
-- `htmltext._Walker` (:42) records visible `<a>` anchors: `link_text_mismatch` (the text shows a domain
-  other than the href's), `link_count` (HTML and plain text).
-- `risky_attachment` from `Attachment` (`message.py:71`): HTML, HTM, SVG, script, executable or disk
-  image (list in `keywords.yaml`).
-- A route waits for held-out evidence: tracking redirects in genuine marketing also mismatch.
-
-**E. Reuse a classification for identical content** (performance only). Same excerpt, signals, prompt,
-schema and model digest is the same request; at temperature 0, the same answer. `classify_item`
-(`classifier.py:128`) first looks for an item of this install classified in the last 24 h with the same
-**input digest**; if found, it copies the classification and skips Ollama. The digest and
-`reused_from` go in `pinned_models` JSON (no migration). Facts, rules, policy and actions still run per
-item and address. Never across installs, never from a failed or `truncated` call, local classifier only
-(A, B, C's fallback); `human_correction` isn't copied. Audited; reuse count in `ecf status` and model
-metrics. Unit-tested only (the eval has no duplicates).
-
-## 6. Input changes (each with an off switch, measured separately)
+## 6. Input changes (stage 2; each with an off switch, measured separately)
 
 **B. Excerpt preparation** (classifier and actor excerpts; the trigger scan is untouched):
 `ParsedMessage.excerpts` (`message.py:124-133`) becomes `redact(prepare(body))`.
-- Cleanup: `skeleton.normalize` (NFKC + Cf removal, `skeleton.py:41`), then collapse runs of spaces and
-  blank lines. Normalizing before redaction also stops zero-width characters splitting an injection
-  phrase past `redact_injection`.
-- Strip quoted replies (`>` lines; `On … wrote:`, `-----Original Message-----`, `From: … Sent: …` to
-  the end; HTML `<blockquote>`, Gmail/Outlook quote containers), the `-- ` signature, and footer phrases
-  (new `excerpt_footers` list). Replace with `[earlier messages in this thread: removed]`; keep the
-  original if nothing would remain.
+- Body: all text parts joined (plain first, then visible HTML text where no plain part), not only the
+  first text/plain part (P4, S10).
+- Cleanup: `skeleton.normalize` (NFKC + Cf removal), then collapse runs of spaces and blank lines to one
+  blank line (one is kept: `redact_injection` works per paragraph) (P18). Normalizing before redaction
+  stops zero-width characters splitting an injection phrase past `redact_injection`.
+- Quoted replies (`>` lines; `On … wrote:`, `-----Original Message-----`, `From: … Sent: …`; HTML
+  `<blockquote>`, Gmail/Outlook quote containers), the `-- ` signature and footer phrases (new
+  `excerpt_footers` list) are **moved after the new text, never deleted** (P4): the model sees the new
+  text first and as much of the quote as the cap allows. A forged `From:/Sent:` line or `<blockquote>`
+  can therefore reorder a scam, not hide it. Markers are attacker-writable; the instruction text says so,
+  like `INJECTION_MARK`.
+- Bounds (P22): prep runs on a bounded head of the body (64-256 KB, fixed in step 10); quote containers
+  flagged in the HTML walker (a depth counter like `_hidden`), not by regex over the HTML source; line
+  markers per §4.
+- Gate key (P18): an `excerpt_prep` version joins `prompt_digest`'s inputs (as `MAX_INPUT_BYTES` does)
+  and `INPUT_KEYS` in `ecf eval compare`.
 - `ecf eval run --no-excerpt-prep` (not for the gate).
 
 **D. Message signals** (fixed wording, no domains or names, ADR 0026): "A link's visible text names a
 different site than the link goes to." and "The email has an attachment that can run code or open a web
 page." A new group in `signals.WORDING` (`signals.py:20`) with `--no-message-signals`. The prompt
-digest changes; the token budget is re-measured (at most 1,500 added; run 1 used about +300).
+digest changes, which restarts A, B **and C** gates (the Claude pin digest includes the signals template,
+`claude_pins.py:140`) (P23). Budget as a running total (P23): probe headroom 1,829 tokens; the decided
+budget 1,500; used so far ≈ +300; D adds tens of tokens on the emails where it fires (estimate, measured
+in step 11), reported as uncached tokens per call p50/p95 and the fraction of calls with a signals block.
 
 ## 7. Out of scope
 
@@ -191,59 +205,71 @@ digest changes; the token budget is re-measured (at most 1,500 added; run 1 used
 - Not added: sender history as a hint to the model (it pulls the model toward routine on exactly the
   compromised-vendor case; groomable; a new disclosure to Anthropic on B/C; not measurable in eval), PDF
   parsing, Bayesian or rspamd scores, model summaries, network lookups.
+- **Cut by Phase R:** a computed category (P1: a model-derived fact under ADR 0026, no route gain,
+  scoring only); classification reuse (P11: each request carries a random token, `classifier.py:119`;
+  no evidence of duplicate excerpts; SPEC §1.2 Later, step 0); a per-sender IBAN history (P12: a
+  migration and an export break for no measured gain; a keyed hash of IBANs per sender is a Later item,
+  it is the only way to catch a compromised vendor that always sent an IBAN, S7).
 - Skipping the classifier for bulk senders: SPEC §1.2 Later only (step 0): rules 7 and 8 need the
   model's `category`, `sender_type` and `requires_action`.
 
 ## 8. Held-out set
 
 `tests/eval/heldout/` (same format, `labels.jsonl`), run with `--root tests/eval/heldout
---not-for-gate` (operator decision 2026-10-10: the frozen set, run 0 and the C baseline stand). Written
-by read-only agents and labelled blind by the operator **before any code**, then frozen. About 30 cards:
+--not-for-gate` (operator decision 2026-10-10: the frozen set, run 0 and the C baseline stand). Labelled
+blind by the operator **before any code**, then frozen. About 30 cards.
+
+**Authors (P10, M4):** read-only agents given only SPEC §16.1 (labelling rules),
+`GENERATE-FAKE-TESTING-EMAILS.md` and the card list below with a one-line brief ("business look-alikes
+and new wordings of gift-card, credential, W-2, bank-change and crypto scams"); **not** this document,
+`keywords.yaml` or `signals.py`. Each card's notes say so.
 
 - Genuine look-alikes: a 2FA notice "never share this code"; a helpdesk "reply with your ticket number";
   a staff gift-card order receipt; an HR gift-card thank-you; a real vendor bank-change letter; a payroll
   provider W-2 notice; an exchange withdrawal; "send us the code from your invoice".
 - New scams: one or two per pattern, worded differently from the set.
-- Threads: a scam ask above a quoted genuine thread; a genuine reply quoting an old invoice.
+- Threads: a scam ask above a quoted genuine thread; a genuine reply quoting an old invoice; a scam below
+  one benign line inside a forged `From:/Sent:` block; a scam inside `<blockquote>`/`gmail_quote` in an
+  HTML-only body (P4).
 - Links: a mismatched-link phish; genuine marketing with tracking redirects.
-- Attachments: an HTML-attachment phish; a genuine PDF invoice.
-- History: a seen sender with auth failing; a confirmed-invoice sender asking for a bank change; a
-  confirmed sender's genuine change of topic.
+- Attachments: an HTML-attachment phish; a genuine PDF invoice; a long filename ending `.html` (P24).
+- History: a seen sender with auth failing and `payment_related: false` (so the new fact is the only
+  route, M12); a confirmed-invoice sender asking for a bank change.
 - Entities: a staff-impostor ask with only an amount; genuine receipts in `1.234,56 €`, `USD 1,200`,
-  `£50` from a seen sender; a genuine supplier's first IBAN; a known vendor's new IBAN.
+  `£50` from a seen sender; a known vendor's new IBAN without change wording (documents the known gap,
+  §7).
 
 **Realistic authentication** (operator 2026-10-10): the frozen set has `auth_result: none` everywhere.
 Held-out cards set it as an expected fact: `fail` for spoofs of real or known senders; `pass` for
 lookalike or attacker-owned domains and genuine mail; `none` only where the domain plausibly publishes
-no DMARC. Each card's choice is in its notes.
+no DMARC. Each card's choice is in its notes. An expected `pass` does not recompute the triggers (SPEC
+§16.1).
+
+**Power (P10):** with ~16 genuine cards, 0 false positives still allows a rate up to ~20% (Wilson). The
+held-out run is a smoke check. The false-positive measure is a rules-only pass over the corpus's stored
+facts and excerpts (`evalrun.deterministic_noise`, no model; excerpts are truncated).
+
+**Contamination (P10):** if a genuine card trips a rule, stop and report; a narrowed keyword list is
+validated on a fresh batch (held-out 2), never on the batch that tripped. Held-out labels never change.
 
 ## 9. Phase R: adversarial review
 
-**R1, this document**, before step 0: four read-only Fable agents in parallel, told to attack, not
-summarise:
-- **Safety:** can anything lower a route or enable a hide (I1-I5)? Evasion: zero-width or full-width
-  characters in amounts and IBANs; the ask inside a quoted block that B strips; groomed history; a clean
-  IBAN from a compromised known vendor; a computed category reaching rule 6 under custom rules.
-- **Measurement:** overfitting, held-out leakage, validity of the offline simulation, stage attribution,
-  the comparison with run 0 (no `category_model`), detectability of stage 2 gains.
-- **Cost and design:** migration and `DATA_FORMAT`, upgrade path, prompt budget, ADR 0026 and privacy
-  fit, moving parts against the gain, simpler alternatives.
-- **Performance:** per-email cost on the MacBook Air (prompt and output tokens, prefix-cache reuse with
-  the signals block before the email, latency against run 0's 5.4 s p50 / 7.2 s p95); trigger-scan cost
-  of the new patterns over 10 MB parts and regex worst cases; HTML anchor parsing and quote stripping on
-  hostile HTML; the extra `senders` read and write; the 6-minute model-queue round. It names the
-  measurements each stage reports, including signal-computation time per email.
-
-Findings merged into P1…, by severity, key claims spot-checked; the operator decides each; this document
-is amended before step 0.
+**R1, this document — done 2026-10-10.** Four read-only Fable agents (safety S1-S13, measurement
+M1-M14, cost and design C1-C16, performance perf-1..perf-10), merged into P1-P28 (3 critical, 12 high,
+8 medium, 5 low); key claims spot-checked against the code (ADR 0026 wording, pre-check reads triggers
+only, trigger 1 bank + change, random token per request, `fold` digit mapping, `payment_history` never
+written, scan time 3.9 s per 1 MB × 2). All accepted as recommended (operator 2026-10-10). Findings in
+`state-archive/pre-classifier/review-findings.md` (gitignored).
 
 **R2, the code**, before each Ollama stage run: two read-only Fable agents in parallel, safety and
-correctness (I1-I5, evasion, wiring, eval scoring), and performance (hot paths, worst-case regex,
-`senders` I/O, and in stage 2 the prompt and cache). Findings fixed or decided before the run.
+correctness (I1-I4, evasion, wiring, eval scoring), and performance (hot paths, worst-case regex
+including `.*`, `\s*` and unbounded `*` in keyword-derived and hand-written patterns, and in stage 2 the
+prompt and cache). Findings fixed or decided before the run.
 
 ## 10. Steps
 
-Each committed with the operator's OK; full suite before each commit request.
+Each committed with the operator's OK; full suite before each commit request. One CHANGELOG line per
+commit that changes behaviour (CLAUDE.md), not one for the whole plan (P19).
 
 - **00. CLAUDE.md rule** (operator decision 2026-10-10): an "Adversarial review" bullet: every plan that
   changes the classifier, rules, policy, facts or eval gets Phase R (four Fable agents: safety,
@@ -251,27 +277,41 @@ Each committed with the operator's OK; full suite before each commit request.
   amended); before any gate eval run, two Fable agents (safety and correctness, performance) review the
   diff. Written on `main`, merged into `v2.1.0-dev`.
 - **0. SPEC §1.2 Later** (operator request 2026-10-10): "reuse of classifications for bulk templates"
-  in the Later row and a paragraph after "Grouped model calls": why it isn't a plain skip, what still
-  forces a model call, the corpus measurements first, try shorter keys and grouped calls first.
-- **1. Docs:** OD-488, OD-489 (+ ADR 0027 if chosen); SPEC §7.2 facts, §8.5 triggers, §8.6 rule 1,
-  policy I5, §16.2 eval scoring, §21.2 repeat-run entry; the classifier plan §4; CHANGELOG.
-- **2. Held-out set** (§8), before any code.
-- **3. Facts** `gift_card_codes_request`, `bank_change` (+ `keywords.yaml`, keywords digest);
-  `tests/test_triggers.py`, `tests/test_facts.py` incl. `credential_never`.
-- **4. Rules:** the three rule 1 routes; `tests/test_rules.py`.
-- **5. Computed category, policy wiring, I5;** `tests/test_policy.py`, `tests/test_decide.py`,
-  `tests/test_computed_category.py`.
-- **6. Display and audit;** review and alert tests.
-- **7. Eval scoring** (`category_model`, applied count, compare); `tests/test_evalrun.py`,
-  `tests/test_claude_eval.py`, compare tests.
-- **8. A + A2** (`facts.py`, `triggers.py`, `keywords.yaml`, the `senders` migration,
-  `ruletest.with_expected`, rules); amount formats, IBAN checksum valid and invalid, migration tests.
-- **9. C** (`htmltext.py`, `message.py`, `policy.py`); htmltext, message and policy tests.
-- **9a. E** (`classifier.py`, `fallback.py` local path, status and metrics); reuse on identical input;
-  none when any digest differs, after 24 h, after a failed call, or across installs.
-- — **End of stage 1** (post-model only).
-- **10. B** and `--no-excerpt-prep` (`message.py`, `htmltext.py`, `keywords.yaml`); quoted, Outlook,
-  Gmail, signature, footer, all-quoted, zero-width-split injection now redacted.
+  in the Later row and a paragraph after "Grouped model calls": why it isn't a plain skip (each request
+  carries a random token; the model is not deterministic, replicate 32/257), what still forces a model
+  call, a read-only hit-rate count over stored excerpts first (P11), then an indexed column, not JSON
+  (perf-5); try shorter keys and grouped calls first. Also "keyed hash of IBANs per sender" (§7).
+- **1. Docs (decisions only):** OD-488, OD-489. SPEC "as built" paragraphs are written with each step,
+  not here (P19). Sections touched over the plan: §7.2 facts (which are fetch-time), §8.5 triggers, §8.6
+  rule 1, §11.10 (rewrite "v2.1.0 adds no fact or field rules can use": the new facts are rule-readable;
+  after a rollback a custom rule using one gives way to the starter rules with a System Error), §15.2
+  audit data, §16.2 eval scoring, §21.2 entries; the classifier plan §4.
+- **1a. Signals:** `credential_request` removed from `signals.WORDING` (§1 decision); signals
+  allow-list test, prompt digest in `release.json`.
+- **2. Held-out set** (§8), before any code; keyword lists frozen first (§2).
+- **2a. Scan speed** (§4): dedupe, grouped alternation, 10 MiB timing tests; no behaviour change
+  (same facts on the frozen set, checked).
+- **3. Facts and keywords:** `gift_card_codes_request`, `credential` plurals, Mn removal, entity
+  patterns on `normalize()`, IBAN as a `bank` hit, `WALLETS` on `normalize()` (+ keywords digest);
+  `credential_never` measured; `tests/test_triggers.py`, `tests/test_facts.py`, evasion tests.
+- **4. Routes:** fraud-trigger reasons (§3), `known_sender_auth_regressed` (§5 A),
+  `ruletest.with_expected`; `tests/test_triggers.py`, `tests/test_rules.py`, `tests/test_precheck.py`;
+  extend the `FACTS` strategy in `tests/test_policy.py` (:40-51) with every fact rule 1 reads
+  (`impersonates_internal`, `bec_opener`, `tax_form_request`, `self_sent`, `gift_card_keyword`, the new
+  ones) and run I1-I4 over several rule sets (starter, v2.0.0 starter, a hand-written custom set) (P17).
+- **5. Link and attachment facts** (§5 C, P22, P24): `htmltext.py`, `message.py`, `policy.py`
+  (`risky_attachment` blocker), rule 1b clause; hostile-HTML timing tests.
+- **6. `amount_mentioned`** recorded (§5 A2), bounded patterns.
+- **7. Eval tooling (P20, P21, P27):** a committed `ecf eval rescore --synthetic --through-policy`
+  (recompute facts as `_inputs` does, re-plan the recorded classification; records `rescored_from`,
+  `keywords_digest`, rules digest); `compare` warns on different keywords and different scoring;
+  `genuine_hide_dropped` count (confirmed non-fraud cards expecting a hide-capable rule whose plan lost
+  every hide), gated at 0; `model_only_fraud_cases` before/after in the summary; the per-stage
+  measurements of §11; `_remember_root` skipped for not-for-gate runs; tests.
+- — **End of stage 1** (deterministic, plus the one signal removal in step 1a).
+- **10. B** and `--no-excerpt-prep` (`message.py`, `htmltext.py`, `keywords.yaml`, prompt digest
+  inputs); quoted, forged-marker, Outlook, Gmail, signature, footer, all-quoted, multi-part,
+  zero-width-split injection now redacted; 10 MiB timing tests.
 - **11. D** and `--no-message-signals` (`signals.py`, `evalrun.Options`); signals allow-list; prompt
   digest in `release.json`; budget probe re-run.
 
@@ -279,18 +319,40 @@ Each committed with the operator's OK; full suite before each commit request.
 
 - Targeted tests per step; ruff, pyright strict, lint-imports; full `uv run pytest -n auto -rs` before
   each commit request (0 skipped for the merge gate).
-- **Stage 1 offline:** rescore the recorded answers of run 0, run 1 and the repeat through the new facts,
-  rules and policy; expect 187 / 182 / 183 and 0 unsafe, or explain the difference.
+- **Noise (P7, M6):** with n = 267, the smallest effect this set can show is about 5 points end to end
+  (about 13 net discordant cards); a claim below that reads "not distinguishable from noise". The noise
+  reference is the replicate pair `a0462682`/`112ca628` (32/257 cases differ). Each stage is gated
+  against run 0 as well as the previous stage, so −5 margins don't chain.
+- **Stage 1 offline evidence (P8, M10)**, before any Ollama run, from the step-7 tool: an attribution
+  table per mechanism (fraud reasons, IBAN-as-bank, `known_sender_auth_regressed`, `risky_attachment`,
+  Unicode changes) listing the cases whose rule or actions change on run 0, run 1 and the repeat; three
+  figures per rescore (rule/actions changed, `model_only_fraud_cases` before/after,
+  `genuine_hide_dropped`), 0 unsafe; expected: one rule change (`mid-giftcard-staff-rewards`) on run 1
+  and the repeat, none on run 0 (M2), or the difference explained.
 - **Ollama** (peers asked first, `api/ps` checked, `accept` restarted from `../ecf-v2.1`, on AC):
-  - **Run 1 on stage 1 code** (frozen set, all on): the gate against run 0 (Newcombe lower bound
-    > −5, 0 unsafe, recall 95/95, hide 0, `none` ≤ 2/71, token budgets). Run 0 has no
-    `category_model`: the compare uses `category` for both and says the effective category applies to
-    run 1 only; run 0 rescored offline through the new policy is reported beside it.
-  - **Held-out run:** no genuine look-alike routed to `fraud_guard` or given a computed category; every
-    new scam routed to `fraud_guard`. If a genuine card trips a rule: stop, report, narrow the keyword
-    list; never change held-out labels.
-  - **Stage 2:** one run all on, plus `--no-excerpt-prep` and `--no-message-signals` runs (not for the
-    gate). Lands only if non-inferior to stage 1's run 1 (OD-486), 0 unsafe, recall N/N; otherwise held
-    back.
+  - **Held-out run first** (P8): no genuine look-alike routed to `fraud_guard`; every new scam routed to
+    `fraud_guard`; the forged-quote and blockquote scams keep rule 1. Reported as a smoke check with its
+    Wilson bound.
+  - **Stage-1 live run** (frozen set, all on, `credential_request` signal removed per §1): gate against run
+    0 on model `category` both sides (Newcombe lower bound > −5, 0 unsafe, recall 95/95, hide 0, `none`
+    ≤ 2/71, `genuine_hide_dropped` 0, token budgets). It is also a wiring check: its rules and actions
+    must equal the step-7 rescore of its own recorded classifications; any difference is a bug.
+    Step 1a changes the prompt, so this run is also the measurement of removing the signal.
+  - **Stage 2 (P6, M5):** offline first, count the frozen cards whose classifier excerpt `prepare()`
+    changes and whose request D changes; run those cards live both ways as a paired subset. D's
+    evidence is the held-out cards and the corpus (no frozen card fires it). Stage 2 lands only if
+    non-inferior to stage 1 and to run 0 (OD-486), 0 unsafe, recall N/N, and **no card leaves rule 1**
+    between `--no-excerpt-prep`/`--no-message-signals` and all on (per-card check, P4, S4); otherwise held
+    back. A full all-on run, if made, is recorded as a replicate.
   - **Run 3** (`--no-signals --not-for-gate`) as in the classifier plan; **C final** against `d880a988`
     (paid, operator's go-ahead), noting its expected-facts caveat (SPEC §21.2).
+- **Measurements per stage (P21, perf-10)**, in every result summary:
+  - Offline: trigger scan time per message p50/p95/max and the number of compiled patterns; fact and
+    prep time per email p50/p95 (run 0's recomputed offline as baseline); `senders` and `items` row
+    counts in the environment block.
+  - Ollama, per role, cold starts excluded: prompt, **uncached** and cached tokens p50/p95/max; calls
+    with cached < 0.9 × system-prompt tokens, split "after an actor call / other", with prompt time for
+    each group (the p95 rise 7.2 → 11.3 s in run 1 is cache restores after actor calls, not the prompt,
+    perf-3); output tokens p50/p95 (must be unchanged); latency split into prompt and eval time;
+    fraction of calls with a signals block and its size (D); classifier excerpt length p50/p95 and the
+    count of excerpts prep changed or left by fallback (B).
