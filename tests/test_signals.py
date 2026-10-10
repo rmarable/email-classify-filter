@@ -79,6 +79,7 @@ def test_the_block_comes_first_and_shares_the_emails_token() -> None:
         ("Please reply with your current password before 6 pm.", True),
         ("Your verification code is 482913. Never share this code with anyone.", False),
         ("Sign in with the code 482913 on the sign-in screen.", False),
+        ("Please send us the code from your invoice so we can find your order.", False),
         (
             "Change your password. We will never ask you to reply with your password or a code.",
             False,
@@ -100,6 +101,7 @@ def test_credential_request_is_an_ask_to_send_one_back(text: str, want: bool) ->
         ("Your withdrawal of 0.05 BTC to wallet TEST-WALLET-0002 is complete.", False),
         ("Pay 0.5 bitcoin within 48 hours or we publish the files.", False),
         ("Bitcoin volatility fell; send us your questions for next week.", False),
+        ("Withdrawal to TEST-WALLET-0003 complete. We will never ask you to send funds.", False),
     ],
 )
 def test_crypto_payment_needs_a_wallet_and_a_payment_verb(text: str, want: bool) -> None:

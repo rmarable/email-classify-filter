@@ -69,18 +69,40 @@ payment:
 # Gift cards (V1.6, OD-436, OD-457): money only for the impersonation rules. As payment keywords
 # they marked every ordinary gift-card email suspicious (eval: 4 of 4; closing run: 1 of 1) and
 # changed no fraud decision, so they count only when the mail impersonates someone internal.
+# E-gift, voucher, certificate, prepaid and store-brand cards added 2026-10-10 (OD-488, held-out
+# batch 1 missed 3 of 3 gift-card scams worded without "gift card"); frozen before batch 2.
 gift_card:
   phrases:
     - gift card
     - gift cards
     - giftcard
     - giftcards
+    - e-gift card
+    - e-gift cards
+    - egift card
+    - egift cards
+    - gift voucher
+    - gift vouchers
+    - gift certificate
+    - gift certificates
+    - prepaid card
+    - prepaid cards
+    - iTunes card
+    - iTunes cards
+    - Google Play card
+    - Google Play cards
+    - Steam card
+    - Steam cards
+    - Amazon card
+    - Amazon cards
 
 # Asking for gift-card codes to be sent back (pre-classifier plan §3, OD-488): with a `gift_card`
 # phrase, the fact `gift_card_codes_request`, the gift-card scam. Frozen 2026-10-10 before the
 # held-out set was written; on the frozen set (95 scam, 173 genuine cards) "send me the codes" and
 # "reply with the codes" hit 2 scam cards each, "card numbers" and "scratch" 3 each, no genuine
-# card; "photo of the back" and "claim code" hit none (untested).
+# card; "photo of the back" and "claim code" hit none (untested). The phrases after "claim code"
+# were added 2026-10-10 before held-out batch 2 was written: "email me the codes" hits 1 scam card
+# of the frozen set, the others none (untested).
 gift_card_ask:
   phrases:
     - send me the codes
@@ -89,6 +111,16 @@ gift_card_ask:
     - photo of the back
     - scratch
     - claim code
+    - send the codes
+    - email me the codes
+    - text me the codes
+    - the pins
+    - PIN numbers
+    - photo of the cards
+    - photos of the cards
+    - picture of the back
+    - pictures of the back
+    - pictures of the cards
 
 # Openers of an executive-impersonation (BEC) scam (operator decision 2026-10-08, OD-479): the
 # first message asks if you're free, for a quick discreet favour, by email only, with no money
@@ -189,14 +221,15 @@ credential:
     - username and password
 
 # Asking for a credential to be sent or read back to the writer (OD-485). "Enter it", "sign in
-# with" and "never share" are not listed: genuine notices say them.
+# with" and "never share" are not listed: genuine notices say them. "send us the" was removed
+# 2026-10-10 (OD-488): businesses ask "send us the code from your invoice"; no frozen scam card
+# needed it.
 credential_ask:
   phrases:
     - reply with
     - reply to this email with
     - reply to this message with
     - reply with your
-    - send us the
     - send me the
     - send us your
     - send me your
@@ -208,8 +241,10 @@ credential_ask:
     - text me the
 
 # What genuine notices say to reassure ("we will never ask you to reply with your password"):
-# when one is present the fact `credential_request` is false (OD-485). A lure that also says it
-# goes unflagged by the fact; its fraud risk still counts.
+# when one is present the facts `credential_request` and `crypto_payment` are false (OD-485;
+# `crypto_payment` since 2026-10-10, OD-488: "we will never ask you to send" made an exchange's
+# withdrawal notice a payment demand). A lure that also says it goes unflagged by the facts;
+# its fraud risk still counts.
 credential_never:
   phrases:
     - never ask you to reply

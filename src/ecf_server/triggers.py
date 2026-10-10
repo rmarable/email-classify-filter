@@ -238,8 +238,10 @@ def credential_request(keywords: dict[str, list[str]]) -> bool:
 
 
 def crypto_payment(keywords: dict[str, list[str]]) -> bool:
-    """A cryptocurrency wallet address and a payment verb (OD-485). A signal only."""
-    return bool(keywords.get("crypto_wallet")) and bool(keywords.get("crypto_pay"))
+    """A cryptocurrency wallet address and a payment verb (OD-485), unless the text says such a
+    request is never made ("we will never ask you to send funds"), as `credential_request`."""
+    return (bool(keywords.get("crypto_wallet")) and bool(keywords.get("crypto_pay"))
+            and not keywords.get("credential_never"))  # fmt: skip
 
 
 INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"

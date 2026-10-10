@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- Gift-card checks also recognise e-gift cards, vouchers, certificates, prepaid and store-brand cards (iTunes, Google Play, Steam, Amazon) and more ways of asking for the codes; "send us the code" alone no longer counts as asking for a credential, and a wallet address in an email that says "we will never ask you to send" no longer counts as a crypto payment demand (OD-488; SPEC §8.5).
 - `ecf eval compare` now shows, for each local run, where each model role's time goes (reading the prompt against writing the answer, with uncached input and output tokens) and how many classifier calls lost part of the cached prompt, right after an actor call or otherwise; it works on earlier result files too, from the figures they already recorded (pre-classifier plan §11).
 - ecf's checks now record two more things for the rules to use later: an email asking for gift-card codes, card numbers or a photo of the card, and a checksum-valid IBAN, which counts as bank details; keywords also match when a nearly invisible combining mark sits inside a word, and a wallet address with a zero-width space inside is still found. Plural credential words ("codes", "one-time codes") now count. Nothing is routed on them yet (OD-488; SPEC §8.5).
 - `ecf eval label --review` now shows a card's HTML part as a mail app displays it, with each link followed by where it really goes, and then any plain-text part; before, a card with a plain-text stub hid its HTML and its links.

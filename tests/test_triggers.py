@@ -485,6 +485,9 @@ def test_the_tax_form_request_fact_needs_a_form_and_a_request(
         ("Pick up 4 gift cards today and reply with the codes.", True),
         ("Send a photo of the back of each gift card.", True),
         ("Get the giftcards and email the card numbers to me.", True),
+        ("Buy two Google Play cards and email me the codes.", True),  # batch-2 additions
+        ("Get e-gift cards for the team and send photos of the cards.", True),
+        ("Pick up Steam cards, scratch the PIN numbers and text me the codes.", True),
         ("Your gift card balance is 12.50. Enjoy your next coffee.", False),  # a balance notice
         ("Send me the codes for the conference Wi-Fi.", False),  # an ask, no gift card
     ],
