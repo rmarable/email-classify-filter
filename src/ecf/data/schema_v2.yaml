@@ -18,13 +18,13 @@ fields:
       marketing:             "Sent to many: newsletters, promotions, advertising."
       notification:          Informs only, and fits no other value.
       action_alert:          "Machine or service asking someone to act on a system, not on account access: expiring certificate or domain, quota reached, backup or job failed."
-      account_security:      "About access to an account: sign-ins, new devices, password or two-step changes, verification codes, security warnings; may ask you to review or change something in the account itself."
+      account_security:      "About access to an account: sign-ins, new devices, password or two-step changes, verification codes, security warnings; may ask you to review or change something in the account itself. One that asks you to send a code or password, click to verify, or call a number is spam_or_phishing."
       shipping:              "About a delivery: tracking, delivered, missed, returns."
       appointment:           Meeting or service booking, or a reminder for one (dentist, salon, restaurant, car service).
       travel:                "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes."
       finance:               "About an account or policy we hold, asking for no payment: statements, balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews."
       school_or_family:      School, childcare, activities or family logistics (pickups, schedules, who does what).
-      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including a fake invoice, notice or alert.
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including a fake invoice, notice or alert, and a fake security or sign-in alert.
       private:               Personal note from a person, not about the business, that fits no other value.
       other:                 None of the above.
   priority:

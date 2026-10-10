@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- The category texts again say that a fake security or sign-in alert, or one asking you to send a code or password, click to verify or call a number, is spam_or_phishing, not account_security: the tightened wording had dropped this and the local model filed 15 phishing cards as account_security (SPEC §7.1, §21.2).
 - When applied rules don't work with the running version (for example rules using something a later release added, left after going back a version), the System Error now says the rules don't compile with this version and suggests `rules: default`, instead of blaming a schema extension; mail is still decided by the starter rules meanwhile (classifier plan item 6; SPEC §7.1).
 - `/ecf-eval` now applies a card's expected facts as `ecf eval run` does, so Claude runs reach the hide path on the same cards as local runs; Claude results from before this scored those cards on computed facts only (SPEC §16.2, §21.2).
 - On preset C, Claude's classifier now gets the same signals as the local classifier, as a separate `signals` list beside the email. The C gate key now covers what Claude is asked (the schema and the signals' wording), so every preset C address returns to `assist` once until its gate passes again; a change to the local model's prompt alone no longer restarts C. `/ecf-eval` results on preset C record that prompt digest (OD-484; SPEC §7.2, §9.3).
