@@ -131,6 +131,24 @@ def test_the_wallet_search_on_a_crafted_10_mib_text(unit_text: str) -> None:
     assert found is None
 
 
+@pytest.mark.parametrize(
+    "unit_text",
+    ["1.1.1.1.", "1,111,111,111,111,111,111.1", "USDUSD ", "USD USD ", "$$$$", "1 1 1 ",
+     "1 USDX ", "1 dollarsx "],
+    ids=["dotted-digits", "long-group-run", "codes", "spaced-codes", "signs", "spaced-digits",
+         "code-prefix", "word-suffix"],
+)  # fmt: skip
+def test_the_amount_search_on_a_crafted_10_mib_text(unit_text: str) -> None:
+    """Pre-classifier plan step 6 (§4, perf-2): near misses of every amount form, none found.
+    At most about 6.5 units on this Mac (2026-10-10, spaced digits: 0.53 s); one alternation
+    of all four forms took 10 units there, and 4 on ordinary text against 1 now."""
+    text = unit_text * (10 * MIB // len(unit_text))
+    unit = _unit()
+    took, found = _cpu(lambda: tr.amount(text))
+    assert took < 15 * unit
+    assert not found
+
+
 def test_redact_injection_on_a_crafted_paragraph() -> None:
     """R150: one 4,000-line paragraph with the phrase on its last line took about 90 s with the
     line scan (quadratic); the binary search keeps it to a fraction of a unit."""

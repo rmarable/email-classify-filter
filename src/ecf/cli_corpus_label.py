@@ -212,7 +212,7 @@ def _count(tally: Tally, item: dict[str, Any], values: dict[str, Any] | None,
         tally.unsure += 1
     else:
         tally.labelled += 1
-        if any(item["keywords"].values()):
+        if any(v for k, v in item["keywords"].items() if k != "amount"):  # a pattern, not a word
             tally.keyword_hits += 1
             tally.keyword_hits_payment += bool(values and values["payment_related"])
 

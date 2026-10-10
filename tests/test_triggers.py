@@ -581,6 +581,43 @@ def test_a_wallet_with_a_zero_width_space_inside_is_still_found() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "amount"),
+    [
+        ("Please pay $50 today.", True),
+        ("Total: USD 1,200", True),
+        ("Amount received: 1.234,56 €", True),
+        ("Amount received: 1\u00a0234,56\u00a0€", True),  # no-break spaces
+        ("Send £50 by Friday.", True),
+        ("A refund of 4,800 dollars.", True),
+        ("Pay 7,140 USDT today.", True),
+        ("Price: \uff04\uff15\uff10", True),  # full-width "$50"
+        ("Ten gift cards of 50.00 each.", True),
+        ("It sold for 30.00.", True),
+        ("Invoice INV-4077 (1,180.00, due 2026-10-01)", True),
+        ("Ten gift cards of 50 each.", False),  # a bare whole number
+        ("Tax charged at 9.50% on invoice 7905.", False),
+        ("Rate: 1 USDC = 1.0000", True),  # "1 USDC" is an amount
+        ("Converted at 1.0000 on 10.10.2026, version 2.1.00", False),
+        ("SUSD 5 and USDX 5 are not codes; EURO 5 isn't one either.", False),
+        ("5 USDX, 5USDX and 5 dollarsign", False),
+        ("Pay 1,180.0 or 1,180.00x now", False),
+        ("Fees in €, see the table.", False),
+        ("Order 4471, picked up in store.", False),
+    ],
+)  # fmt: skip
+def test_amount_mentioned(text: str, amount: bool) -> None:
+    """Pre-classifier plan §5 A2: recorded for measurement only."""
+    assert (tr.scan([text])["amount"] == [tr.AMOUNT_HIT]) is amount
+    assert fire(text).facts()["amount_mentioned"] is amount
+
+
+def test_amount_mentioned_changes_no_trigger() -> None:
+    """Recorded only (P9): an amount alone adds no fraud, weak or payment reason."""
+    t = fire("Ten gift cards of 50.00 each.", sender_confirmed=False, sender_seen_before=False)
+    assert (t.fraud, t.fraud_weak, t.unverified_payment) == ([], [], False)
+
+
+@pytest.mark.parametrize(
     ("sender", "extra"),
     [
         ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat
@@ -744,7 +781,7 @@ def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
 def _keyword_hits(texts: list[str]) -> dict[str, list[str]]:
     """scan()'s keyword hits, without the pattern-matched ones (wallets, IBANs)."""
     return {g: [x for x in w if x != tr.IBAN_HIT] for g, w in tr.scan(texts).items()
-            if g not in ("crypto_wallet", "unscanned")}  # fmt: skip
+            if g not in ("crypto_wallet", "amount", "unscanned")}  # fmt: skip
 
 
 def test_scan_finds_what_one_search_per_pattern_finds() -> None:

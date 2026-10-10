@@ -20,6 +20,8 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
   outside sender.
 - `gift_card_codes_request` (a fact; pre-classifier plan §3): a `gift_card` phrase and a
   `gift_card_ask` phrase ("send me the codes", "photo of the back"), the gift-card scam.
+- `amount_mentioned` (a fact, recorded for measurement only; pre-classifier plan §5 A2): a
+  currency sign or code next to a digit.
 - A checksum-valid IBAN counts as a `bank` keyword ("valid IBAN"), so trigger 1 covers it.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
@@ -68,6 +70,23 @@ WALLET = re.compile(
 # IBANs (pre-classifier plan §3): country code, check digits, then letters and digits, each
 # optionally after one space or hyphen; bounded, and never starting inside a word. Matched on
 # `entity_text`; a hit is recorded as "valid IBAN", never the number.
+# A money amount (pre-classifier plan §5 A2, `amount_mentioned`): a currency sign or code next to
+# a digit, either side ("$50", "USD 1,200", "1.234,56 €", "4,800 dollars"), or a bare number with
+# two decimals ("1,180.00", not "9.50%", "1.0000" or "10.10.2026"); a bare whole number doesn't
+# count. Matched on `entity_text`, so a no-break space or a full-width sign counts. Four searches,
+# each starting with a fixed character or word so the regex engine skips ahead to it, each fixed
+# width or bounded, and the bare form never starts inside a number: linear on any input (§4).
+# Recorded for measurement only: not a route, not a signal.
+_CODES = ("USDC", "USDT", "USD", "EUR", "GBP", "CAD", "AUD", "NZD", "CHF", "JPY", "INR")
+_SIGN = "[$€£¥₹]"
+AMOUNTS = (
+    re.compile(rf"{_SIGN} ?[0-9]"),
+    re.compile(rf"[0-9] ?(?:{_SIGN}|(?:{'|'.join(_CODES)}|(?i:dollars?|euros?))(?![A-Za-z]))"),
+    # each code checks the letter before it after matching, so the search starts on its letters
+    re.compile(rf"(?:{'|'.join(f'{c}(?<![A-Za-z]{c})' for c in _CODES)})(?![A-Za-z]) ?[0-9]"),
+    re.compile(r"[0-9](?<![\w.,][0-9])[0-9]{0,2}(?:,[0-9]{3}){0,5}\.[0-9]{2}(?![\w%]|[.,][0-9])"),
+)
+AMOUNT_HIT = "amount"
 IBAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}")
 IBAN_HIT = "valid IBAN"
 # IBAN-shaped candidates checked per text (R3-P12): a crafted text of IBAN heads costs a checksum
@@ -192,8 +211,8 @@ def _within_limit(texts: list[str]) -> tuple[list[str], bool]:
 def scan(texts: list[str]) -> dict[str, list[str]]:
     """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
     part's visible text is its full text), normalized once for its three forms, and the texts
-    are read up to SCAN_CHARS in all. Besides the groups: `crypto_wallet`, and `unscanned`, why
-    the scan stopped short (a reason for `content_unscanned`)."""
+    are read up to SCAN_CHARS in all. Besides the groups: `crypto_wallet`, `amount`, and
+    `unscanned`, why the scan stopped short (a reason for `content_unscanned`)."""
     distinct, cut = _within_limit(texts)
     forms = [folds(t) for t in distinct]
     folded = [(cs, ci) for cs, ci, _ in forms]
@@ -212,9 +231,15 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
     if True in ibans:
         hits["bank"].append(IBAN_HIT)
     hits["crypto_wallet"] = ["wallet address"] if any(WALLET.search(t) for t in entities) else []
+    hits["amount"] = [AMOUNT_HIT] if any(amount(t) for t in entities) else []
     hits["unscanned"] = [r for r, on in ((UNSCANNED_TEXT, cut),
                                          (UNSCANNED_IBANS, None in ibans)) if on]  # fmt: skip
     return hits
+
+
+def amount(text: str) -> bool:
+    """A money amount in `text` (`AMOUNTS`)."""
+    return any(p.search(text) for p in AMOUNTS)
 
 
 def valid_iban(text: str) -> bool:
@@ -425,6 +450,8 @@ class Triggers:
             "tax_form_request": tax_form_request(self.keywords),
             "credential_request": credential_request(self.keywords),
             "crypto_payment": crypto_payment(self.keywords),
+            # recorded for measurement only (pre-classifier plan §5 A2, P9)
+            "amount_mentioned": bool(self.keywords.get("amount")),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,
