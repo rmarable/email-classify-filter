@@ -153,6 +153,11 @@ def _patterns() -> dict[str, tuple[_Pattern, ...]]:
     return out
 
 
+def pattern_count() -> int:
+    """How many keyword patterns the scan compiles, a measured figure (pre-classifier plan §11)."""
+    return sum(len(pats) for pats in _patterns().values())
+
+
 def _compile(word: str, *, case_sensitive: bool) -> _Pattern:
     folded = keyword_fold(word) if case_sensitive else keyword_fold_ci(word)
     body = r"\s+".join(re.escape(part) for part in folded.split())

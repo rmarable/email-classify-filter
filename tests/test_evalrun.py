@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -191,6 +191,16 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     cases = load_result(path).cases
     assert all(c.classifier is not None and c.classifier.output_tokens for c in cases)
     assert all(c.actor is None for c in cases)
+    # per-stage measurements (pre-classifier plan step 7d)
+    m = summary["measurements"]
+    assert m["facts_ms"]["p50"] is not None and m["facts_ms"]["max"] >= m["facts_ms"]["p50"]
+    assert m["scan_ms"]["p95"] is not None and m["excerpt_chars"]["p50"] > 0
+    assert m["keyword_patterns"] == evalrun.triggers.pattern_count() > 0
+    assert m["signals"]["of"] == 3 and m["signals"]["cases"] <= 3
+    cls = m["calls"]["classifier"]
+    assert cls["calls"] == 3 and cls["uncached_tokens"] == {"p50": 69, "p95": 69, "max": 69}
+    assert "actor" not in m["calls"] and m["calls"]["cache_short"][0]["after"] == "an actor call"
+    assert env["start"]["rows"] == {"senders": 0, "items": 0} and "rows" not in env["end"]
 
 
 def test_a_cases_metrics_are_its_own_successful_call() -> None:
@@ -726,6 +736,10 @@ def test_a_run_rescored_through_the_policy_changes_nothing(
     assert s["scoring"] == "policy" and s["rescored_from"]["scoring"] == "live"
     assert s["rescored_from"]["rules_digest"] == s["rules_digest"]
     assert s["correct"] == (live.summary or {})["correct"] and s["gate_passed"] is False
+    # offline figures recomputed today; the call figures are the run's own
+    assert s["measurements"]["facts_ms"]["p50"] is not None
+    ran = cast(dict[str, Any], (live.summary or {})["measurements"])
+    assert s["measurements"]["calls"] == ran["calls"]
     again = load_result(Path(out["path"]))
     assert [c.actions for c in again.cases] == [c.actions for c in live.cases]
     assert path.exists()  # the original is kept
@@ -776,3 +790,21 @@ def test_genuine_figures_name_flagged_and_hide_refused_cards(root: Path) -> None
     plain = blocked.model_copy(update={"hide_blocked": [], "got": {"rule": "marketing"}})
     m = evalrun.genuine_metrics([plain], cases, rules_now)  # refused only for corroboration
     assert m["genuine_hide_dropped"] == [] and m["genuine_flagged"]["run"]["fraud_weak"] == []
+
+
+def test_the_measurements_read_as_lines() -> None:
+    from ecf.cli import _decision_figures  # noqa: PLC0415  # pyright: ignore[reportPrivateUsage]
+
+    three = {"p50": 1.5, "p95": 4.0, "max": 9.0}
+    m = {"facts_ms": three, "scan_ms": three, "keyword_patterns": 412, "excerpt_chars": three,
+         "signals": {"cases": 2, "of": 3, "block_chars": {"p50": None, "p95": None, "max": None}},
+         "calls": {"classifier": {"prompt_tokens": three, "uncached_tokens": three,
+                                  "cached_tokens": three, "output_tokens": three}}}  # fmt: skip
+    env = {"start": {"rows": {"senders": 4, "items": 9}}}
+    lines = _decision_figures({"measurements": m, "environment": env})
+    assert lines == [
+        "facts and excerpts per email 1.5/4/9 ms, trigger scan 1.5/4/9 ms, 412 keyword patterns",
+        "classifier excerpt 1.5/4/9 chars; signals block on 2 of 3 cases, -/-/- chars",
+        "history: 4 senders, 9 items",
+        "classifier tokens: prompt 1.5/4/9, uncached 1.5/4/9, cached 1.5/4/9, output 1.5/4/9",
+    ]

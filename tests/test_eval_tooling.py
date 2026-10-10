@@ -6,6 +6,7 @@ import zlib
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -17,8 +18,10 @@ from ecf.eval.builder import COMMIT_LIMIT, build_all, build_bytes, message_id
 from ecf.eval.cards import load_cards, parse_card
 from ecf.eval.hygiene import scan_text
 from ecf.eval.results import (
+    CallMetrics,
     CaseResult,
     ResultFile,
+    call_figures,
     compare,
     compare_fields,
     differences,
@@ -406,3 +409,28 @@ def test_cli_new_case_show_compare(tmp_path: Path) -> None:
     fb.write_text(other.model_dump_json())
     out = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
     assert out.exit_code == 0 and "warning: the runs used different schemas" in out.output
+
+
+def test_call_figures_leave_out_cold_starts() -> None:
+    """Pre-classifier plan §11 (perf-3): per role, cold starts excluded; the short-cache split."""
+
+    def m(prompt: int, cached: int, load_ns: int = 1) -> CallMetrics:
+        return CallMetrics(prompt_tokens=prompt, cached_tokens=cached, output_tokens=70,
+                           prompt_ns=500_000_000, eval_ns=4_000_000_000,
+                           load_ns=load_ns)  # fmt: skip
+
+    cold = m(9000, 0, load_ns=5_000_000_000)
+    cases = [CaseResult(id="1", correct=True, classifier=m(1300, 1200)),
+             CaseResult(id="2", correct=True, classifier=m(1300, 1200), actor=m(900, 100)),
+             CaseResult(id="3", correct=True, classifier=m(1300, 300)),
+             CaseResult(id="4", correct=True, classifier=cold)]  # fmt: skip
+    f = call_figures(cases)
+    cls = cast(dict[str, Any], f["classifier"])
+    assert cls["calls"] == 3  # the cold start is left out
+    assert cls["uncached_tokens"] == {"p50": 100, "p95": 1000, "max": 1000}  # nearest rank
+    assert cls["generation_s"] == {"p50": 4.0, "p95": 4.0, "max": 4.0}
+    assert f["cache_short"] == [
+        {"after": "an actor call", "calls": 1, "short": 1, "prompt_s": 0.5},
+        {"after": "other", "calls": 2, "short": 0, "prompt_s": None},
+    ]
+    assert call_figures([]) == {"cache_short": []}

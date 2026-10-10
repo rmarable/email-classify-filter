@@ -57,7 +57,14 @@ from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import corpus_labels, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
-from ecf.eval.results import CallMetrics, CaseResult, ResultFile, load_result, scoring
+from ecf.eval.results import (
+    CallMetrics,
+    CaseResult,
+    ResultFile,
+    call_figures,
+    load_result,
+    scoring,
+)
 from ecf.ids import new_random_id
 from ecf.schema import (
     V1_VALUE_ALIASES,
@@ -609,6 +616,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
               if opts.new_wording else load_schema_v2_0_0())  # fmt: skip
     client = client_factory()
     scratch = ruletest.Scratch(clock)
+    measures = Measures()
     results: list[CaseResult] = []
     # by role, so the run's figures don't mix them (plan 0.3); determinism repeats apart
     calls: dict[str, list[stats.Call]] = {r: [] for r in ROLES}
@@ -620,15 +628,18 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         if dpin is not None:
             check_decision(client, dpin, ready)
         env_start = environment(client, power, battery, thermal, ready.version)
+        env_start["rows"] = row_counts(conn)
         rules_now = rules.load_starter_rules(schema)
         known = policy.labels(schema, rules_now)
         for i, case in enumerate(cases):
             if not _hold(opts, power, battery, started, clock, tell):
                 stopped = f"stopped after {i} of {len(cases)}"
                 break
-            facts, (text, act_text) = _inputs(case, scratch, redact)
+            facts, (text, act_text) = measures.inputs(case, scratch, redact)
             n_cls, n_act = len(calls["classifier"]), len(calls["actor"])
             sent = opts.sent(facts)
+            if opts.classifier:
+                measures.sent(sent)
             cls, probs, secs = (_classify_with(opts.backend, dpin, client, text, schema,
                                                calls["classifier"], sent)
                                 if opts.classifier else (None, None, None))  # fmt: skip
@@ -723,6 +734,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         summary["power"] = {"ac_at_start": on_ac_at_start, "ac_at_end": power().on_ac,
                             "paused": bool(paused)}  # fmt: skip
         summary["environment"] = {"start": env_start, "end": env_end}  # plan 0.3
+        summary["measurements"] = measures.summary() | {"calls": call_figures(results)}
         if opts.corpus is not None:  # reported, never gated (R8, R54, R168)
             summary["set"] = "corpus"
             summary["labels_hash"] = opts.corpus.labels_hash
@@ -794,6 +806,69 @@ def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {})  # fmt: skip
     return found, read.parsed.excerpts(redact)
+
+
+@dataclass
+class Measures:
+    """Per-stage figures over a run's cases (pre-classifier plan §11, P21, perf-10): the time to
+    compute a synthetic card's facts and excerpts, the trigger scan's share of it (timed again
+    on its own), the classifier excerpt's length and the signals block's size where one was sent.
+    Wall time on this machine; a corpus case's facts are stored, so it isn't timed."""
+
+    facts_s: list[float] = field(default_factory=list[float])
+    scan_s: list[float] = field(default_factory=list[float])
+    excerpt_chars: list[int] = field(default_factory=list[int])
+    block_chars: list[int] = field(default_factory=list[int])
+    cases: int = 0
+
+    def inputs(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+               ) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
+        """`_inputs`, timed."""
+        self.cases += 1
+        if case.facts is not None and case.excerpts is not None:
+            self.excerpt_chars.append(len(case.excerpts[0]))
+            return case.facts, case.excerpts
+        start = time.perf_counter()
+        read = ruletest.read_case(case.path.read_bytes())
+        found = ruletest.with_expected(scratch.analyze(read, case.profile),
+                                       case.expected.get("facts") or {})  # fmt: skip
+        texts = read.parsed.excerpts(redact)
+        self.facts_s.append(time.perf_counter() - start)
+        start = time.perf_counter()
+        triggers.scan(triggers.texts_of(read.parsed))
+        self.scan_s.append(time.perf_counter() - start)
+        self.excerpt_chars.append(len(texts[0]))
+        return found, texts
+
+    def sent(self, names: tuple[str, ...]) -> None:
+        if names:
+            self.block_chars.append(len(signals.block(names, "0" * 8)))
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "facts_ms": _spread([1000 * x for x in self.facts_s]),
+            "scan_ms": _spread([1000 * x for x in self.scan_s]),
+            "keyword_patterns": triggers.pattern_count(),
+            "excerpt_chars": _spread([float(x) for x in self.excerpt_chars]),
+            "signals": {"cases": len(self.block_chars), "of": self.cases,
+                        "block_chars": _spread([float(x) for x in self.block_chars])},
+        }  # fmt: skip
+
+
+def _spread(xs: list[float]) -> dict[str, float | None]:
+    """p50, p95 and max, rounded; None when there are none."""
+
+    def r(v: float | None) -> float | None:
+        return None if v is None else round(v, 1)
+
+    return {"p50": r(stats.percentile(xs, 50)), "p95": r(stats.percentile(xs, 95)),
+            "max": r(max(xs)) if xs else None}  # fmt: skip
+
+
+def row_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """The install's `senders` and `items` rows: the history the facts are computed against."""
+    return {t: int(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0])  # noqa: S608
+            for t in ("senders", "items")}  # fmt: skip
 
 
 def _labelled(results: list[CaseResult], cases: list[Case]
@@ -1276,6 +1351,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     rules_now = rules.load_starter_rules(schema)
     known = policy.labels(schema, rules_now)
     scratch = ruletest.Scratch(clock)
+    measures = Measures()
     out: list[CaseResult] = []
     mapped = 0
     actor: dict[str, int] = {"recorded": 0, "inferred": 0, "partial": 0, "nothing": 0,
@@ -1284,7 +1360,8 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         for r in old.cases:
             if (case := by_id.get(r.id)) is None:
                 continue  # a card since removed
-            facts, _ = _inputs(case, scratch, triggers.redact_injection)
+            facts, _ = measures.inputs(case, scratch, triggers.redact_injection)
+            measures.sent(signals.sent(facts))
             one, n = replan(case, r, facts, rules_now, known, schema, actor)
             mapped += n
             out.append(one)
@@ -1321,6 +1398,9 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         "values_mapped": mapped,
         "model_only_fraud_cases": before.get("model_only_fraud_cases"),
     }
+    # offline figures recomputed today (a baseline for the run's own); the call figures are the
+    # run's, from what it recorded
+    summary["measurements"] = measures.summary() | {"calls": call_figures(out)}
     summary["replanned"] = {"rule_changed": rule_changed, "actions_changed": actions_changed,
                             "actor": actor}  # fmt: skip
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,

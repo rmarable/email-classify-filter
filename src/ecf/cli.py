@@ -1502,6 +1502,39 @@ def _ids(xs: list[str]) -> str:
     return f"{len(xs)} ({', '.join(xs[:8])}{', ...' if len(xs) > 8 else ''})"
 
 
+def _measurement_figures(s: dict[str, Any]) -> list[str]:
+    """The per-stage measurements (pre-classifier plan §11); absent in older results. Figures
+    are p50/p95/max."""
+    m: dict[str, Any] | None = s.get("measurements")
+    if m is None:
+        return []
+    sig = m["signals"]
+    out = [
+        f"facts and excerpts per email {_three(m['facts_ms'])} ms, trigger scan"
+        f" {_three(m['scan_ms'])} ms, {m['keyword_patterns']} keyword patterns",
+        f"classifier excerpt {_three(m['excerpt_chars'])} chars; signals block on"
+        f" {sig['cases']} of {sig['of']} cases, {_three(sig['block_chars'])} chars",
+    ]
+    env: dict[str, Any] = s.get("environment") or {}
+    start: dict[str, Any] = env.get("start") or {}
+    if rows := start.get("rows"):
+        out.append(f"history: {rows['senders']} senders, {rows['items']} items")
+    calls: dict[str, Any] = m.get("calls") or {}
+    for role in ("classifier", "actor"):
+        if (c := calls.get(role)) is not None:
+            out.append(
+                f"{role} tokens: prompt {_three(c['prompt_tokens'])}, uncached"
+                f" {_three(c['uncached_tokens'])}, cached {_three(c['cached_tokens'])},"
+                f" output {_three(c['output_tokens'])}"
+            )
+    return out
+
+
+def _three(d: dict[str, Any]) -> str:
+    """p50/p95/max."""
+    return "/".join("-" if d.get(k) is None else f"{d[k]:g}" for k in ("p50", "p95", "max"))
+
+
 def _genuine_figures(s: dict[str, Any]) -> list[str]:
     """`genuine_hide_dropped` and `genuine_flagged` (pre-classifier plan step 7); absent in
     older results."""
@@ -1695,6 +1728,7 @@ def _decision_figures(summary: dict[str, object] | None) -> list[str]:
         out.append(f"under-rated on {o['under']} of {o['of']} cases only the model routes to"
                    " fraud_guard")  # fmt: skip
     out += _genuine_figures(s)
+    out += _measurement_figures(s)
     lat = s.get("classifier_latency_s")
     lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
     if lt.get("p50") is not None:

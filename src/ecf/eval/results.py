@@ -318,14 +318,18 @@ def cache_short(r: ResultFile) -> list[CacheShort]:
     """Classifier calls that reused less than CACHE_SHORT of the run's longest cached prefix
     (the shared system prompt), split by whether the case before made an actor call, whose own
     prompt can push the classifier's out of Ollama's cache (SPEC §1.2 "Grouped model calls")."""
-    timed = [(i, m) for i, c in enumerate(r.cases)
+    return _cache_short(r.cases)
+
+
+def _cache_short(cases: list[CaseResult]) -> list[CacheShort]:
+    timed = [(i, m) for i, c in enumerate(cases)
              if (m := c.classifier) is not None and _timed(m)]  # fmt: skip
     longest = max((m.cached_tokens or 0 for _, m in timed), default=0)
     if not longest:
         return []
     groups: dict[str, list[CallMetrics]] = {"an actor call": [], "other": []}
     for i, m in timed:
-        after = i > 0 and r.cases[i - 1].actor is not None
+        after = i > 0 and cases[i - 1].actor is not None
         groups["an actor call" if after else "other"].append(m)
     out: list[CacheShort] = []
     for after, ms in groups.items():
@@ -339,6 +343,41 @@ def cache_short(r: ResultFile) -> list[CacheShort]:
             )
         )
     return out
+
+
+def call_figures(cases: list[CaseResult]) -> dict[str, object]:
+    """Per role, over the successful calls with timings, cold starts left out (pre-classifier
+    plan §11, perf-3): prompt, uncached, cached and output tokens and prompt and generation
+    seconds, each as p50, p95 and max; then the classifier calls whose cached prefix fell short,
+    after an actor call or otherwise (`cache_short`)."""
+    out: dict[str, object] = {}
+    for role in ("classifier", "actor"):
+        ms = [m for c in cases if (m := getattr(c, role)) is not None and _timed(m)]
+        if not ms:
+            continue
+        out[role] = {
+            "calls": len(ms),
+            "prompt_tokens": _spread([m.prompt_tokens or 0 for m in ms]),
+            "uncached_tokens": _spread([_uncached(m) for m in ms]),
+            "cached_tokens": _spread([m.cached_tokens or 0 for m in ms]),
+            "output_tokens": _spread([m.output_tokens or 0 for m in ms]),
+            "prompt_s": _spread([cast(int, m.prompt_ns) / 1e9 for m in ms], 2),
+            "generation_s": _spread([cast(int, m.eval_ns) / 1e9 for m in ms], 2),
+        }
+    out["cache_short"] = [{"after": g.after, "calls": g.calls, "short": g.short,
+                           "prompt_s": None if g.prompt_s is None else round(g.prompt_s, 2)}
+                          for g in _cache_short(cases)]  # fmt: skip
+    return out
+
+
+def _spread(values: list[int] | list[float], digits: int = 0) -> dict[str, float | None]:
+    xs = [float(v) for v in values]
+
+    def r(v: float | None) -> float | None:
+        return None if v is None else round(v, digits)
+
+    return {"p50": r(percentile(xs, 50)), "p95": r(percentile(xs, 95)),
+            "max": r(max(xs)) if xs else None}  # fmt: skip
 
 
 def _timed(m: CallMetrics) -> bool:
