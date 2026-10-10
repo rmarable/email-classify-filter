@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `ecf eval run`, `/ecf-eval` and `ecf rules test` now score a test card over 16 MB as ecf reads such a message (headers, attachment list and the start of each text part; never a DKIM pass) instead of skipping it, so the synthetic set's 17 MB scanned invoice is scored (268 cards, was 267); cards over 64 MB are still skipped (SPEC §8.6, §21.2).
 - Decision: ecf's own checks will send credential requests, gift-card code requests and crypto-wallet payment demands to fraud review without waiting for the model, including when the model is unavailable, and the classifiers no longer get the "asks for a code or password" signal, which led the local model to file phishing as account security (OD-488; SPEC §7.2, §8.5).
 - Decision: what the classifier sees will be prepared (quoted replies and signatures moved after the new text) and two message signals added (a link's text names another site; an attachment can run code), each kept only if measurement shows no loss (OD-489; SPEC §7.2).
 - The category texts again say that a fake security or sign-in alert, or one asking you to send a code or password, click to verify or call a number, is spam_or_phishing, not account_security: the tightened wording had dropped this and the local model filed 15 phishing cards as account_security (SPEC §7.1, §21.2).

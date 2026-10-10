@@ -91,7 +91,6 @@ from ecf_server.cards import Card
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
-from ecf_server.message import parse
 from ecf_server.notify import Notifier, NullNotifier
 from ecf_server.ollama import Client, OllamaError
 from ecf_server.rules import HIDE_ACTIONS
@@ -782,10 +781,10 @@ def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
     test` applies them (Q1)."""
     if case.facts is not None and case.excerpts is not None:
         return case.facts, case.excerpts
-    raw = case.path.read_bytes()
-    found = ruletest.with_expected(scratch.facts(raw, case.profile),
+    read = ruletest.read_case(case.path.read_bytes())
+    found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {})  # fmt: skip
-    return found, parse(raw).excerpts(redact)
+    return found, read.parsed.excerpts(redact)
 
 
 def _labelled(results: list[CaseResult], cases: list[Case]

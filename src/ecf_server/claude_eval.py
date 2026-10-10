@@ -68,7 +68,6 @@ from ecf_server import (
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
-from ecf_server.message import parse
 from ecf_server.notify import Notifier
 from ecf_server.telemetry import Hold, Seen, Telemetry
 
@@ -326,7 +325,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             # as `ecf eval run`: the card's expected facts applied (Q1), so A and C score alike
             facts, (cls_text, act_text) = evalrun._inputs(  # pyright: ignore[reportPrivateUsage]
                 w.case, scratch, triggers.redact_injection)  # fmt: skip
-            msg = parse(raw)
+            msg = ruletest.read_case(raw).parsed
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr
                 else (msg.from_addr or msg.from_name or ""),

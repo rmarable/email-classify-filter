@@ -9,6 +9,7 @@ import sqlite3
 import stat
 from collections.abc import Iterator
 from datetime import date
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, compare, load_result
 from ecf.schema import load_schema
-from ecf_server import evalrun, modelq, policy, schedule
+from ecf_server import evalrun, modelq, policy, ruletest, schedule
 from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
 from tests.test_models import check_kw
@@ -72,6 +73,42 @@ def test_only_confirmed_unchanged_cases_count(root: Path) -> None:
     fraud, _ = evalrun.load(root, fraud_only=True)
     assert {c.id for c in fraud} == {"starter-bec", "starter-injection"}
     assert len(version) == 16
+
+
+def _big(mb: int = 17) -> bytes:
+    """A message over a `standard` address's 16 MB limit: a short body and a large attachment."""
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"] = (
+        "Vendor B <accounts@vendor-b.example>",
+        "ap@acme.example",
+        "Scan",
+    )
+    m.set_content("Scanned copy of invoice INV-1 attached.")
+    m.add_attachment(b"\0" * (mb * 1024 * 1024 * 3 // 4), maintype="application", subtype="pdf",
+                     filename="INV-1-scan.pdf")  # fmt: skip
+    return m.as_bytes()
+
+
+def test_a_card_over_16_mb_is_read_as_the_service_reads_it() -> None:
+    raw = _big()
+    assert len(raw) > 16 * 1024 * 1024
+    read = ruletest.read_case(raw)
+    assert read.extra == {"oversized": True, "content_unscanned": True}
+    assert (
+        read.raw.endswith((b"\n\n", b"\r\n\r\n")) and len(read.raw) < 4096
+    )  # the header block only
+    assert [a.name for a in read.parsed.attachments] == ["INV-1-scan.pdf"]
+    assert read.parsed.excerpts(lambda t: t)[0].startswith("Scanned copy of invoice INV-1")
+    found = ruletest.Scratch(FakeClock()).facts(raw)
+    assert found["oversized"] and found["content_unscanned"] and found["auth_result"] != "pass"
+    small = ruletest.read_case(b"From: a@vendor-b.example\nSubject: s\n\nbody\n")
+    assert small.extra == {} and small.raw.endswith(b"body\n")
+
+
+def test_a_card_over_16_mb_is_loaded_not_skipped(root: Path) -> None:
+    (root / "eml" / "starter-control.eml").write_bytes(_big())
+    cases, _ = evalrun.load(root, fraud_only=False)
+    assert "starter-control" in {c.id for c in cases}
 
 
 def _plan(actions: list[str], rule: str = "fraud_guard") -> policy.Plan:

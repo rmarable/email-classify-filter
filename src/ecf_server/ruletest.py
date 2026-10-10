@@ -12,7 +12,8 @@ except the internal set's (`sender_origin`, `from_org_address`, `impersonates_in
 derived `bulk_corroborates` is recomputed from the result (`with_expected`, shared with `ecf eval
 run`); its expected labels stand in for the classifier's output. Nothing is written to the live
 database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones,
-`ecf eval build`) are skipped and listed.
+`ecf eval build`) are skipped and listed. A card over a `standard` address's limit (16 MB) is read
+as the service reads such a message (`read_case`), not skipped.
 """
 
 from __future__ import annotations
@@ -25,12 +26,13 @@ from typing import Any
 
 from ecf.errors import InvalidInputError
 from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
-from ecf_server import db, internal, precheck, rules
+from ecf_server import db, fetch, internal, precheck, rules
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
 from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo, corroborates
-from ecf_server.message import parse
+from ecf_server.mail.fake import fetch_part_of, structure_of
+from ecf_server.message import ParsedMessage, parse, parse_partial
 
 FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
 
@@ -52,7 +54,34 @@ PROFILES = {
 ADDRESS = PROFILES["org"].address  # both profiles are `standard`
 MAX_CASES = 1000
 MAX_INDEX_BYTES = 4 * 1024 * 1024  # labels.jsonl
-MAX_CASE_BYTES = 16 * 1024 * 1024  # larger ones are parsed in a child in a check (OD-195)
+MAX_CASE_BYTES = 64 * 1024 * 1024  # larger cards are skipped and listed (read whole into memory)
+
+
+@dataclass(frozen=True)
+class Read:
+    """A card as the service reads it: the parsed message, what sender authentication sees
+    (the whole message, or only the header block when partial) and the facts the fetch adds."""
+
+    parsed: ParsedMessage
+    raw: bytes
+    extra: dict[str, Any]
+
+
+def read_case(raw: bytes) -> Read:
+    """A card as a `standard` address reads it: whole, or, over that address's limit (16 MB), as
+    `fetch._process_partial` does: headers, the attachment list and the start of each text part,
+    with `oversized` and `content_unscanned` set and never a DKIM pass (SPEC §5.1). The parts are
+    rebuilt from the file as BODYSTRUCTURE and partial fetches would give them (`mail.fake`); the
+    IMAP fetch itself isn't exercised."""
+    if len(raw) <= fetch.DEFAULT_MAX[ADDRESS.sensitivity]:
+        return Read(parse(raw), raw, {})
+    parts = structure_of(raw)
+    header = fetch_part_of(raw, "HEADER", fetch.HEADER_LIMIT) or b""
+    texts = {p.section: fetch_part_of(raw, p.section, fetch.DEFAULT_SCAN) or b""
+             for p in [p for p in parts if p.content_type.startswith("text/")]
+             [:fetch.MAX_PARTIAL_TEXTS]}  # fmt: skip
+    parsed = parse_partial(header, parts, texts, size=len(raw), max_scan_bytes=fetch.DEFAULT_SCAN)
+    return Read(parsed, header, {"oversized": True, "content_unscanned": True})
 
 
 def _no_dns(name: str, rtype: str) -> Answer:
@@ -136,11 +165,15 @@ class Scratch:
         return conn
 
     def facts(self, raw: bytes, profile: str = "org") -> dict[str, Any]:
+        return self.analyze(read_case(raw), profile)
+
+    def analyze(self, read: Read, profile: str = "org") -> dict[str, Any]:
+        """The facts as `fetch._store` records them: the fetch's own, then the analysis's."""
         conn = self._conn(profile)
         analyzer = MessageAnalyzer(conn, self.clock, PROFILES[profile].address,
                                    DnsCache(conn, self.clock, lookup=_no_dns),
                                    public_domains=PUBLIC_DOMAINS | {FREEMAIL})  # fmt: skip
-        return analyzer.analyze(parse(raw), raw)
+        return read.extra | analyzer.analyze(read.parsed, read.raw)
 
     def close(self) -> None:
         for conn in self._conns.values():
