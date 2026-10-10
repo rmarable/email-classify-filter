@@ -100,6 +100,7 @@ so no null-arm run.
 - `crypto_payment`: a wallet-address pattern and a payment verb, both.
 - Cut: `regulator_claim_unauthenticated` (duplicates rule 2; true on 7 genuine regulator cards).
 - Claimed: firing counts on positive and negative cards; no accuracy claim (1-4 cards, P22).
+- `credential_request` is no longer a signal: OD-488 (pre-classifier plan §1, 2026-10-10).
 
 ## 3. Stage 0: freeze, measure, baseline (before any wording or signal is built)
 

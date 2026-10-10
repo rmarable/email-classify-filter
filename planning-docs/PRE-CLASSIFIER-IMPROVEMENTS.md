@@ -5,10 +5,10 @@
   folds them in; `(Pn)` marks text from a finding. Nothing here is built yet.
 - **Base:** branch `v2.1.0-dev` at `1b4b5a4`; extends `CLASSIFIER-MODEL-PERFORMANCE-IMPROVEMENTS.md`
   (Stage 1), which stays in force.
-- **Decisions:** SPEC once built; until then this document. Proposed ODs (numbers confirmed when
-  written): OD-488 deterministic routes as fraud-trigger reasons, the sender-change fact, IBAN as a bank
-  hit, link and attachment facts; OD-489 excerpt preparation and message signals (new signals need an OD
-  under ADR 0026). No ADR 0027: the computed category is cut (P1), so nothing a model returns becomes a
+- **Decisions:** SPEC once built; until then this document. ODs (in SPEC, 2026-10-10): OD-488
+  deterministic routes as fraud-trigger reasons, the sender-change fact, IBAN as a bank hit, link and
+  attachment facts; OD-489 excerpt preparation and message signals (new signals need an OD under ADR
+  0026). No ADR 0027: the computed category is cut (P1), so nothing a model returns becomes a
   fact.
 - **Cut in draft 2:** computed category (P1), classification reuse E (P11), `bank_details_present` and
   its `senders` column (P12), `confirmed_category_departed` (P28), the amount fact in rule 1 (P9).
