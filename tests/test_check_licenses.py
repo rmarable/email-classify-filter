@@ -138,3 +138,8 @@ def test_committed_notices_list_every_locked_package() -> None:
         if line.startswith("    ")
     }
     assert listed == {(n, v) for n, v, _ in cl.runtime_packages()}
+
+
+def test_runtime_packages_ignore_force_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "3")
+    assert not [p for p in cl.runtime_packages() if "\x1b" in "".join(p)]

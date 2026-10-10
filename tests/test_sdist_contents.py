@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWED = {
     "src", "tests", "scripts", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md", "SECURITY.md",
-    "CONTRIBUTING.md", "GENERATE-FAKE-TESTING-EMAILS.md", "pyproject.toml", "uv.lock",
+    "CONTRIBUTING.md", "DISCLAIMER.md", "GENERATE-FAKE-TESTING-EMAILS.md", "pyproject.toml",
+    "uv.lock",
     "build-constraints.txt",
     ".python-version", "THIRD_PARTY_NOTICES", "PKG-INFO", ".gitignore",  # hatch adds .gitignore
 }  # fmt: skip

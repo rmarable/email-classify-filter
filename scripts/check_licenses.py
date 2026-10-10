@@ -136,6 +136,8 @@ def runtime_packages(*, extras: bool = True) -> list[tuple[str, str, str]]:
     cmd = [
         "uv",
         "export",
+        "--color",
+        "never",  # FORCE_COLOR in the environment would otherwise colour the list
         "--no-dev",
         "--no-hashes",
         "--no-emit-project",
