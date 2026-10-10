@@ -1220,7 +1220,7 @@ def _replayed(r: CaseResult, own: set[str]) -> tuple[list[tuple[str, str | None]
     return kept, "inferred" if len(kept) == len(extra) else "partial"
 
 
-def _replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.CompiledRules,
+def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.CompiledRules,
             known: frozenset[str], schema: CompiledSchema,
             actor: dict[str, int]) -> tuple[CaseResult, int]:  # fmt: skip
     """One recorded case planned again over `facts`, its actor proposal replayed (counted in
@@ -1285,7 +1285,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
             if (case := by_id.get(r.id)) is None:
                 continue  # a card since removed
             facts, _ = _inputs(case, scratch, triggers.redact_injection)
-            one, n = _replan(case, r, facts, rules_now, known, schema, actor)
+            one, n = replan(case, r, facts, rules_now, known, schema, actor)
             mapped += n
             out.append(one)
     finally:

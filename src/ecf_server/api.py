@@ -92,6 +92,7 @@ from ecf_server import (
     pause,
     restore,
     retention,
+    routereport,
     ruletest,
     schedule,
     scheduled_export,
@@ -1730,8 +1731,23 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(evalrun.rescore(s, path, state.clock, schema))
 
+    @allow(Caller.CLI)
+    def routes(request: Request) -> JSONResponse:
+        """`ecf eval routes`: the OD-490 routes on synthetic sets, and attribution of what changed
+        in recorded results on the first set (pre-classifier plan step 7b); no model runs."""
+        body = _body(request)
+        sets: list[Any] = body.get("sets") or []
+        given: list[Any] = body.get("results") or []
+        roots = [Path(str(x)).expanduser() for x in sets]
+        results = [Path(str(x)).expanduser() for x in given]
+        for path in results:
+            if path.suffix != ".json" or not path.is_file():
+                raise InvalidInputError(f"no result file at {path}")
+        return JSONResponse(routereport.report(roots, results, state.clock))
+
     return [
         Route("/v1/eval/rescore", rescore, methods=["POST"]),
+        Route("/v1/eval/routes", routes, methods=["POST"]),
         Route("/v1/corpus/session", open_, methods=["POST"]),
         Route("/v1/corpus/session/{session_id}/keys", keys, methods=["GET"]),
         Route("/v1/corpus/session/{session_id}/items/{index}", item, methods=["GET"]),

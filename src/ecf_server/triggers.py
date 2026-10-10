@@ -586,6 +586,47 @@ AUTH_REGRESSED = "a known sender's mail failed DMARC"
 RISKY_ATTACHMENT = "a web page, script or program attached to a payment, code or gift-card item"
 
 
+@dataclass(frozen=True)
+class RouteHit:
+    """One route that applies to a message (OD-490): what it is, the second signals that hold
+    for it (none: weak, or nothing), and whether it is weak without one."""
+
+    what: str
+    signals: tuple[str, ...]
+    weak_too: bool
+
+
+def route_hits(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> list[RouteHit]:
+    """The routes that apply to a message, each with its second signals (`routes` turns them
+    into reasons; the eval's route report reads them, pre-classifier plan step 7)."""
+    if found.get("self_sent"):
+        return []
+    kw: dict[str, list[str]] = found.get("keywords") or {}
+    t: dict[str, Any] = found.get("triggers") or {}
+    auth = found.get("auth_result")
+    known = bool(found.get("sender_confirmed")) or (
+        bool(found.get("sender_seen_before")) and found.get("from_domain") not in public_domains
+    )
+    shared = second_signals(kw, found, bool(t.get("lookalikes"))) if kw else []
+    shared += [name for name, hit in (
+        (OTHER_FRAUD, bool(t.get("fraud"))),
+        (NO_HISTORY, not known),
+        (UNAUTHENTICATED_KNOWN, known and auth == "none" and not found.get("bulk_signal")),
+    ) if hit]  # fmt: skip
+    posing = [IMPERSONATION] if found.get("impersonates_internal") else []
+    inside = [INTERNAL] if found.get("from_org_domain") or found.get("from_org_address") else []
+    hits: list[RouteHit] = []
+    if kw.get("credential") and kw.get("credential_ask"):  # the veto only without a signal
+        hits.append(RouteHit(CREDENTIAL, (*shared, *posing), not kw.get("credential_never")))
+    if gift_card_codes_request(kw):
+        hits.append(RouteHit(GIFT_CODES, (*shared, *inside), True))
+    if kw.get("crypto_wallet") and kw.get("crypto_pay"):
+        hits.append(RouteHit(CRYPTO, (*shared, *posing), False))
+    return hits
+
+
 def routes(
     found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
 ) -> tuple[list[str], list[str]]:
@@ -604,35 +645,13 @@ def routes(
     to itself. Reasons use fixed wording, never a value from the message."""
     if found.get("self_sent"):
         return [], []
-    kw: dict[str, list[str]] = found.get("keywords") or {}
-    t: dict[str, Any] = found.get("triggers") or {}
-    auth = found.get("auth_result")
-    known = bool(found.get("sender_confirmed")) or (
-        bool(found.get("sender_seen_before")) and found.get("from_domain") not in public_domains
-    )
-    shared = second_signals(kw, found, bool(t.get("lookalikes"))) if kw else []
-    shared += [name for name, hit in (
-        (OTHER_FRAUD, bool(t.get("fraud"))),
-        (NO_HISTORY, not known),
-        (UNAUTHENTICATED_KNOWN, known and auth == "none" and not found.get("bulk_signal")),
-    ) if hit]  # fmt: skip
-    posing = [IMPERSONATION] if found.get("impersonates_internal") else []
-    inside = [INTERNAL] if found.get("from_org_domain") or found.get("from_org_address") else []
     fraud: list[str] = []
     weak: list[str] = []
-
-    def route(what: str, signals: list[str], weak_too: bool) -> None:
-        if signals:
-            fraud.append(f"{what} and {' and '.join(signals)}")
-        elif weak_too:
-            weak.append(f"{what} from a known sender, with no second signal")
-
-    if kw.get("credential") and kw.get("credential_ask"):  # the veto only without a signal
-        route(CREDENTIAL, shared + posing, weak_too=not kw.get("credential_never"))
-    if gift_card_codes_request(kw):
-        route(GIFT_CODES, shared + inside, weak_too=True)
-    if kw.get("crypto_wallet") and kw.get("crypto_pay"):
-        route(CRYPTO, shared + posing, weak_too=False)
+    for h in route_hits(found, public_domains=public_domains):
+        if h.signals:
+            fraud.append(f"{h.what} and {' and '.join(h.signals)}")
+        elif h.weak_too:
+            weak.append(f"{h.what} from a known sender, with no second signal")
     if found.get("known_sender_auth_regressed") and not any("DMARC fail" in r for r in fraud):
         fraud.append(AUTH_REGRESSED)  # one reason, not two (R3-P21)
     return fraud, weak

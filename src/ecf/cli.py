@@ -1371,6 +1371,70 @@ def eval_rescore(
     typer.echo(summary(load(Path(r["path"]))))
 
 
+@eval_app.command("routes")
+def eval_routes(
+    sets: Annotated[
+        list[Path], typer.Argument(help="Synthetic set folders (the frozen set first).")
+    ],
+    result: Annotated[
+        list[Path] | None,
+        typer.Option("--result", help="A result on the first set to attribute (repeatable)."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
+) -> None:
+    """What the fraud routes (OD-490) do on synthetic sets: per set, the cards each route makes
+    fraud or weak as built, as draft 2 had them and without them, their second signals, and a pass
+    with every sender taken as known; per result, which mechanism changed each case's rule or
+    actions. No model runs (pre-classifier plan step 7b, SPEC §16.2)."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/routes", {
+            "sets": [str(p.expanduser().absolute()) for p in sets],
+            "results": [str(p.expanduser().absolute()) for p in result or []]},
+            timeout=600)  # fmt: skip
+    if as_json:
+        typer.echo(json.dumps(r, indent=1))
+        return
+    for line in route_lines(r):
+        typer.echo(line)
+
+
+def route_lines(r: dict[str, Any]) -> list[str]:
+    """`ecf eval routes` as text."""
+    out: list[str] = []
+    for st in r["sets"]:
+        out.append(
+            f"{Path(st['set']).name}: {st['confirmed']} confirmed cards, {st['scam']} scam"
+            + (f" ({st['unconfirmed']} unconfirmed left out)" if st["unconfirmed"] else "")
+        )
+        for name, v in st["variants"].items():
+            out.append(
+                f"  {name}: route fraud {len(v['fraud']['scam'])} scam / "
+                f"{_ids(v['fraud']['genuine'])} genuine; weak {len(v['weak']['scam'])} scam / "
+                f"{_ids(v['weak']['genuine'])} genuine; rules alone fraud_guard "
+                f"{len(v['alone_fraud_guard']['scam'])} scam / "
+                f"{_ids(v['alone_fraud_guard']['genuine'])} genuine; model-only fraud "
+                f"{len(v['model_only_fraud'])}")  # fmt: skip
+        sig = ", ".join(f"{k} {n}" for k, n in st["draft4_signals"].items()) or "none"
+        out.append(f"  draft4 second signals: {sig}")
+        out.append(f"  only signal a sender with no history: {_ids(st['first_time_only'])}")
+        seen = st["seen_forced"]
+        out.append(
+            f"  every sender known: route lost {_ids(seen['lost_route'])}; weak only"
+            f" {_ids(seen['weak'])}; model-only fraud {len(seen['model_only_fraud'])}"
+        )
+    for res in r["results"]:
+        mo = res["model_only_fraud_cases"]
+        out.append(f"{res['result']}: {len(res['changed'])} cases changed; by mechanism "
+                   + ", ".join(f"{k} {n}" for k, n in res["by_mechanism"].items())
+                   + f"; model-only fraud {mo[0]} -> {mo[1]}; unsafe {_ids(res['unsafe'])};"
+                   f" genuine hide refused {_ids(res['genuine_hide_dropped'])}")  # fmt: skip
+        for c in res["changed"]:
+            why = ", ".join(c["mechanisms"]) or "unexplained"
+            iban = "; valid IBAN present" if c["iban_bank"] else ""
+            out.append(f"  {c['id']}: {c['rule'][0]} -> {c['rule'][1]} ({why}{iban})")
+    return out
+
+
 def replanned_lines(s: dict[str, Any]) -> list[str]:
     """What `--through-policy` changed, and the genuine-mail figures (pre-classifier plan step 7);
     nothing for another rescore."""
