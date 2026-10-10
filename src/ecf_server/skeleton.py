@@ -10,12 +10,16 @@ Keywords match the folded text with nonspacing marks removed as well (`keyword_f
 IBANs and wallet addresses match `entity_text` (pre-classifier plan §3, P15): a mark such as U+034F
 or U+0305 on a letter or digit is near-invisible but splits a keyword. Entities never use the
 skeleton, which maps `1` to `l` and `0` to `O`.
+
+Hot path (pre-classifier plan step 3b, R3-P16): `folds` normalizes a text once for all three
+forms; ASCII text skips the Unicode tables (NFKC, NFD and mark removal leave it unchanged, so only
+the confusables of ASCII letters apply), so a message in plain ASCII never builds them; and the
+tables are built in one pass over the planes that hold format characters and marks.
 """
 
 from __future__ import annotations
 
 import re
-import sys
 import unicodedata
 from functools import cache
 from importlib import resources
@@ -34,10 +38,41 @@ def _table() -> dict[int, str]:
     return table
 
 
+# Planes 0-3 and 14: planes 4-13 are unassigned and 15-16 private use, so no format character or
+# mark lies outside them (tests/test_skeleton.py checks it against the whole range).
+PLANES = (range(0x40000), range(0xE0000, 0xF0000))
+
+
+@cache
+def _categories() -> dict[str, list[int]]:
+    """The code points of the categories folding removes (Cf, Mn), in one pass."""
+    out: dict[str, list[int]] = {"Cf": [], "Mn": []}
+    for plane in PLANES:
+        for c in plane:
+            found = out.get(unicodedata.category(chr(c)))
+            if found is not None:
+                found.append(c)
+    return out
+
+
 @cache
 def _chars(category: str) -> dict[int, None]:
     """A `str.translate` table that removes every character of one Unicode category."""
-    return {c: None for c in range(sys.maxunicode + 1) if unicodedata.category(chr(c)) == category}
+    return dict.fromkeys(_categories()[category])
+
+
+@cache
+def _ascii_confusables() -> tuple[tuple[str, str], ...]:
+    """The skeleton's mappings of ASCII characters (`m` to `rn`, `0` to `O`), as replacements.
+    Applied one after another they equal the table on ASCII text: no prototype holds a mapped
+    ASCII character, or a mark (tests/test_triggers.py checks both)."""
+    return tuple((chr(c), v) for c, v in sorted(_table().items()) if c < 0x80)
+
+
+def _ascii_skeleton(text: str) -> str:
+    for k, v in _ascii_confusables():
+        text = text.replace(k, v)
+    return text
 
 
 @cache
@@ -89,15 +124,29 @@ def fold_ci(text: str) -> str:
 
 def keyword_fold(text: str) -> str:
     """What case-sensitive keywords (acronyms) match against: `fold` without nonspacing marks."""
+    if text.isascii():
+        return _ascii_skeleton(text)
     return strip_marks(fold(text))
 
 
 def keyword_fold_ci(text: str) -> str:
     """What case-insensitive keyword phrases match against: `fold_ci` without nonspacing marks."""
+    if text.isascii():
+        return _ascii_skeleton(text.lower())
     return strip_marks(fold_ci(text))
 
 
 def entity_text(text: str) -> str:
     """What amounts, IBANs and wallet addresses match against: `normalize` without nonspacing
     marks, no skeleton."""
+    if text.isascii():
+        return text
     return strip_marks(normalize(text))
+
+
+def folds(text: str) -> tuple[str, str, str]:
+    """`keyword_fold`, `keyword_fold_ci` and `entity_text` of one text, normalized once."""
+    if text.isascii():
+        return _ascii_skeleton(text), _ascii_skeleton(text.lower()), text
+    n = normalize(text)
+    return strip_marks(skeleton(n)), strip_marks(skeleton(n.casefold())), strip_marks(n)

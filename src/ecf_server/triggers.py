@@ -48,7 +48,7 @@ from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.message import ParsedMessage
-from ecf_server.skeleton import entity_text, fold_ci, keyword_fold, keyword_fold_ci, normalize
+from ecf_server.skeleton import fold_ci, folds, keyword_fold, keyword_fold_ci, normalize
 
 GROUPS = ("bank", "change", "payment", "gift_card", "gift_card_ask", "bec_opener", "tax_form",
           "data_request", "credential", "credential_ask", "credential_never", "crypto_pay",
@@ -57,18 +57,19 @@ GROUPS = ("bank", "change", "payment", "gift_card", "gift_card_ask", "bec_opener
 # skeleton would change their letters), so a zero-width character or a mark inside one doesn't
 # hide it: Bitcoin (bech32, legacy), Ethereum, and the synthetic set's placeholder
 # (`TEST-WALLET-0001`; real shapes fail its hygiene scan). A hit is recorded as "wallet address",
-# never the address.
-WALLETS = (
-    re.compile(r"(?<![\w-])bc1[ac-hj-np-z02-9]{11,71}(?![\w-])"),
-    re.compile(r"(?<![\w-])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w-])"),
-    re.compile(r"(?<![\w-])0x[0-9a-fA-F]{40}(?![\w-])"),
-    re.compile(r"(?<![\w-])TEST-WALLET-\d{4}(?![\w-])"),
+# never the address. One alternation, so the text is read once (R3-P16).
+WALLET = re.compile(
+    r"(?<![\w-])(?:bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|0x[0-9a-fA-F]{40}"
+    r"|TEST-WALLET-\d{4})(?![\w-])"
 )
 # IBANs (pre-classifier plan §3): country code, check digits, then letters and digits, each
 # optionally after one space or hyphen; bounded, and never starting inside a word. Matched on
 # `entity_text`; a hit is recorded as "valid IBAN", never the number.
 IBAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}")
 IBAN_HIT = "valid IBAN"
+# IBAN-shaped candidates checked per text (R3-P12): a crafted text of IBAN heads costs a checksum
+# each. Past this many with none valid, the scan says so (`unscanned`), so decoys can't hide one.
+IBAN_CANDIDATES = 256
 # IBAN length per country, from the SWIFT IBAN registry (unverified against its current release;
 # a country not listed never matches).
 IBAN_LENGTHS = {
@@ -96,6 +97,12 @@ DISPLAY_TLDS = frozenset(
 )  # fmt: skip
 _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])")
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
+# Characters of text scanned per message, over all its distinct texts (R3-P11): the scan runs in
+# the check thread with no time limit, and a message may have many parts of up to
+# `max_scan_bytes_per_part` each. The rest is not scanned and the message is `content_unscanned`.
+SCAN_CHARS = 24 * 1024 * 1024  # one maximal part, HTML too (operator decision 2026-10-10)
+UNSCANNED_TEXT = "text over the message's scan limit"
+UNSCANNED_IBANS = "too many IBAN-like numbers to check"
 
 
 _START = r"(?<!\w)"  # every keyword pattern starts at a word start
@@ -168,11 +175,28 @@ def _found_in(text: str, pats: tuple[_Pattern, ...]) -> set[_Pattern]:
     return found
 
 
+def _within_limit(texts: list[str]) -> tuple[list[str], bool]:
+    """The distinct texts, in order, cut to SCAN_CHARS in all; True when something was cut."""
+    out: list[str] = []
+    left = SCAN_CHARS
+    for t in dict.fromkeys(t for t in texts if t):
+        if len(t) > left:
+            if left:
+                out.append(t[:left])
+            return out, True
+        out.append(t)
+        left -= len(t)
+    return out, False
+
+
 def scan(texts: list[str]) -> dict[str, list[str]]:
     """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
-    part's visible text is its full text)."""
-    distinct = list(dict.fromkeys(t for t in texts if t))
-    folded = [(keyword_fold(t), keyword_fold_ci(t)) for t in distinct]
+    part's visible text is its full text), normalized once for its three forms, and the texts
+    are read up to SCAN_CHARS in all. Besides the groups: `crypto_wallet`, and `unscanned`, why
+    the scan stopped short (a reason for `content_unscanned`)."""
+    distinct, cut = _within_limit(texts)
+    forms = [folds(t) for t in distinct]
+    folded = [(cs, ci) for cs, ci, _ in forms]
     hits: dict[str, list[str]] = {g: [] for g in GROUPS}
     for group, pats in _patterns().items():
         found: set[_Pattern] = set()
@@ -183,11 +207,13 @@ def scan(texts: list[str]) -> dict[str, list[str]]:
                     found |= _found_in(cs if case_sensitive else ci, todo)
                     todo = tuple(p for p in todo if p not in found)
         hits[group] = [p.word for p in pats if p in found]
-    entities = [entity_text(t) for t in distinct]
-    if any(valid_iban(t) for t in entities):
+    entities = [e for _, _, e in forms]
+    ibans = [_iban(t) for t in entities]
+    if True in ibans:
         hits["bank"].append(IBAN_HIT)
-    hits["crypto_wallet"] = ["wallet address"] if any(w.search(t) for w in WALLETS
-                                                      for t in entities) else []  # fmt: skip
+    hits["crypto_wallet"] = ["wallet address"] if any(WALLET.search(t) for t in entities) else []
+    hits["unscanned"] = [r for r, on in ((UNSCANNED_TEXT, cut),
+                                         (UNSCANNED_IBANS, None in ibans)) if on]  # fmt: skip
     return hits
 
 
@@ -195,18 +221,42 @@ def valid_iban(text: str) -> bool:
     """A checksum-valid IBAN (ISO 13616 mod-97) in `text`, written whole or in groups split by
     single spaces or hyphens. It is cut at its country's length, and the cut must not fall inside
     a word."""
+    return _iban(text) is True
+
+
+def _iban(text: str) -> bool | None:
+    """`valid_iban`, or None when IBAN_CANDIDATES candidates were checked and none was valid."""
+    checked = 0
     for m in IBAN.finditer(text):
-        size = IBAN_LENGTHS.get(m.group()[:2])
-        where = [i for i, c in enumerate(m.group()) if c not in " -"]
-        if size is None or len(where) < size:
+        g = m.group()
+        size = IBAN_LENGTHS.get(g[:2])
+        if size is None:
             continue
-        end = m.start() + where[size - 1] + 1
+        code = g.replace(" ", "").replace("-", "")
+        if len(code) < size:
+            continue
+        checked += 1
+        if checked > IBAN_CANDIDATES:
+            return None
+        cut = size if len(code) == len(g) else _nth_character(g, size)
+        end = m.start() + cut
         if end < len(text) and text[end].isalnum():
             continue
-        code = "".join(m.group()[i] for i in where[:size])
+        code = code[:size]
         if int((code[4:] + code[:4]).translate(_IBAN_DIGITS)) % 97 == 1:
             return True
     return False
+
+
+def _nth_character(group: str, n: int) -> int:
+    """The index just past the n-th character of `group` that isn't a separator."""
+    seen = 0
+    for i, c in enumerate(group):
+        if c not in " -":
+            seen += 1
+            if seen == n:
+                return i + 1
+    return len(group)
 
 
 def bec_opener(keywords: dict[str, list[str]]) -> bool:
@@ -248,13 +298,35 @@ INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
 _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 
 
-def _injected(text: str) -> bool:
+# Paragraphs tested together before one by one (R3-P20): a text of many tiny paragraphs cost a
+# test each (about 13 s per 10 MiB). Joined by a line holding only a NUL, which no keyword
+# pattern can match across, a batch matches exactly when one of its paragraphs does.
+INJECTION_BATCH = 256
+_BATCH_JOIN = "\n\0\n"
+
+
+@cache
+def _injection() -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
+    """The injection alternations: case-sensitive (acronyms), then case-insensitive."""
     pats = _patterns()["injection"]
-    return any(
-        _any_of(group).search(keyword_fold(text) if case_sensitive else keyword_fold_ci(text))
-        for case_sensitive in (True, False)
-        if (group := tuple(p for p in pats if p.case_sensitive is case_sensitive))
-    )
+    cs = tuple(p for p in pats if p.case_sensitive)
+    ci = tuple(p for p in pats if not p.case_sensitive)
+    return (_any_of(cs) if cs else None), (_any_of(ci) if ci else None)
+
+
+def _injected(text: str) -> bool:
+    cs, ci = _injection()
+    return bool((cs and cs.search(keyword_fold(text))) or (ci and ci.search(keyword_fold_ci(text))))
+
+
+def _injected_paragraphs(paras: list[str]) -> set[int]:
+    """The indexes of the paragraphs `_injected` holds for, testing them in batches first."""
+    out: set[int] = set()
+    for lo in range(0, len(paras), INJECTION_BATCH):
+        batch = paras[lo : lo + INJECTION_BATCH]
+        if len(batch) == 1 or _injected(_BATCH_JOIN.join(batch)):
+            out.update(lo + i for i, para in enumerate(batch) if _injected(para))
+    return out
 
 
 def _first(hi: int, test: Callable[[int], bool]) -> int:
@@ -301,10 +373,14 @@ def redact_injection(text: str) -> str:
     paragraph are replaced by INJECTION_MARK, so the model never reads the instruction and keeps
     the text before it. A phrase split across a blank line still fires the trigger but isn't
     removed."""
+    if not _injected(text):  # the whole text first: most mail has no match (R3-P20)
+        return text
+    paras = _PARAGRAPH_BREAK.split(text)
+    injected = _injected_paragraphs(paras)
     out: list[str] = []
     removed = False
-    for para in _PARAGRAPH_BREAK.split(text):
-        if not _injected(para):
+    for i, para in enumerate(paras):
+        if i not in injected:
             out.append(para)
             continue
         removed = True
@@ -323,12 +399,10 @@ def redact_injection(text: str) -> str:
 
 
 def texts_of(parsed: ParsedMessage) -> list[str]:
-    """Everything triggers look at: both texts of every part, Subject, display name, filenames."""
-    out = [parsed.subject, parsed.from_name]
-    for t in parsed.texts:
-        out += [t.visible, t.full]
-    out += [a.name for a in parsed.attachments]
-    return out
+    """Everything triggers look at: Subject, display name, filenames, then every part's visible
+    text, then every part's full text, the order `scan` reads them in up to its limit."""
+    out = [parsed.subject, parsed.from_name, *(a.name for a in parsed.attachments)]
+    return out + [t.visible for t in parsed.texts] + [t.full for t in parsed.texts]
 
 
 @dataclass

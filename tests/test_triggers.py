@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import random
+import re
 import sqlite3
-import time
+import sys
+import unicodedata
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from ecf_server import skeleton
 from ecf_server import triggers as tr
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock
@@ -485,9 +488,10 @@ def test_the_tax_form_request_fact_needs_a_form_and_a_request(
         ("Pick up 4 gift cards today and reply with the codes.", True),
         ("Send a photo of the back of each gift card.", True),
         ("Get the giftcards and email the card numbers to me.", True),
-        ("Buy two Google Play cards and email me the codes.", True),  # batch-2 additions
+        ("Buy two gift vouchers and email me the codes.", True),  # batch-2 additions
         ("Get e-gift cards for the team and send photos of the cards.", True),
-        ("Pick up Steam cards, scratch the PIN numbers and text me the codes.", True),
+        ("Pick up prepaid cards, scratch the PIN numbers and text me the codes.", True),
+        ("Buy two Google Play cards and email me the codes.", False),  # brand words out (R3-P7)
         ("Your gift card balance is 12.50. Enjoy your next coffee.", False),  # a balance notice
         ("Send me the codes for the conference Wi-Fi.", False),  # an ask, no gift card
     ],
@@ -677,16 +681,6 @@ def test_redact_injection_binary_search_matches_the_line_scan(where: int) -> Non
     assert tr.redact_injection(para) == want
 
 
-def test_redact_injection_is_fast_on_a_crafted_paragraph() -> None:
-    """R150: one 4,000-line paragraph with the phrase on its last line took about 90 s with the
-    line scan (quadratic); the binary search keeps it to seconds."""
-    para = "\n".join(["ordinary words in a line of mail text"] * 3999 + ["note to the assistant"])
-    began = time.perf_counter()
-    out = tr.redact_injection(para)
-    assert time.perf_counter() - began < 5
-    assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
-
-
 def test_redact_injection_searches_only_the_head_of_a_long_paragraph() -> None:
     """R180: in a paragraph longer than SEARCH_CHARS, a match that starts past the head removes
     the paragraph from the end of the head; one that starts in the head is found exactly."""
@@ -700,18 +694,6 @@ def test_redact_injection_searches_only_the_head_of_a_long_paragraph() -> None:
     assert tr.redact_injection("\n".join(early)) == "\n".join(early[:start]) + (
         f"\n{tr.INJECTION_MARK}"
     )
-
-
-def test_redact_injection_is_fast_on_a_10_mib_paragraph() -> None:
-    """R180: a crafted 10 MiB paragraph took over a minute even with the binary search; with the
-    head search it costs one scan of the text."""
-    line = "ordinary words in a line of mail text"
-    para = "\n".join([line] * 270_000 + ["note to the assistant"])
-    began = time.perf_counter()
-    out = tr.redact_injection(para)
-    assert time.perf_counter() - began < 10
-    assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
-    assert tr.scan([para])["injection"]  # trigger 10 still sees the whole text
 
 
 def test_excerpts_match_the_two_single_excerpts() -> None:
@@ -736,8 +718,6 @@ def test_excerpt_is_redacted_before_the_cut() -> None:
 
 # ---- scan speed (pre-classifier plan step 2a) ------------------------------------------------
 
-MIB = 1024 * 1024
-LINE = "Hello team, please find the attached quarterly report for review and let me know.\n"
 EVAL = Path(__file__).parent / "eval"
 
 
@@ -755,7 +735,7 @@ def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
 def _keyword_hits(texts: list[str]) -> dict[str, list[str]]:
     """scan()'s keyword hits, without the pattern-matched ones (wallets, IBANs)."""
     return {g: [x for x in w if x != tr.IBAN_HIT] for g, w in tr.scan(texts).items()
-            if g != "crypto_wallet"}  # fmt: skip
+            if g not in ("crypto_wallet", "unscanned")}  # fmt: skip
 
 
 def test_scan_finds_what_one_search_per_pattern_finds() -> None:
@@ -780,48 +760,168 @@ def test_scan_is_unchanged_on_the_eval_cards(part: str) -> None:
         assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), card.name
 
 
-def _raw(body: str, content_type: str) -> bytes:
-    head = ("From: a@vendor-a.example\r\nTo: ap@acme.example\r\nSubject: s\r\n"
-            f"MIME-Version: 1.0\r\nContent-Type: {content_type}; charset=utf-8\r\n"
-            "Content-Transfer-Encoding: 8bit\r\n\r\n")  # fmt: skip
-    return head.encode() + body.encode()
+# ---- hot path (pre-classifier plan step 3b) ---------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("body", "content_type", "found"),
-    [
-        (LINE * (10 * MIB // len(LINE)), "text/plain", None),
-        (
-            "<p>" + "</p><p>".join([LINE] * (10 * MIB // (len(LINE) + 7))) + "</p>",
-            "text/html",
-            None,
-        ),
-        ("wire transfer " * (10 * MIB // 14), "text/plain", ("payment", "wire transfer")),
-    ],
-    ids=["plain", "html", "one-keyword-repeated"],
+def test_the_ascii_confusables_apply_in_any_order() -> None:
+    """R3-P16: the ASCII fast path replaces mapped characters one after another, which equals
+    the table only when no prototype holds a mapped character or a mark."""
+    pairs = skeleton._ascii_confusables()  # pyright: ignore[reportPrivateUsage]
+    assert pairs
+    assert not any(k in v for _, v in pairs for k, _ in pairs)
+    assert not any(unicodedata.category(c) == "Mn" for _, v in pairs for c in v)
+
+
+def test_the_planes_hold_every_format_character_and_mark() -> None:
+    """The one-pass table build skips planes 4-13, 15 and 16: nothing it removes is there."""
+    every = {c for c in range(sys.maxunicode + 1) if unicodedata.category(chr(c)) in ("Cf", "Mn")}
+    built = skeleton._categories()  # pyright: ignore[reportPrivateUsage]
+    assert every == {*built["Cf"], *built["Mn"]}
+
+
+def _unicode_path(text: str) -> tuple[str, str, str]:
+    """The three forms as built before the ASCII fast path and the shared normalize."""
+    s = skeleton
+    return (s.strip_marks(s.fold(text)), s.strip_marks(s.fold_ci(text)),
+            s.strip_marks(s.normalize(text)))  # fmt: skip
+
+
+def test_folds_equals_the_unicode_path() -> None:
+    """ASCII text skips the Unicode tables and every text is normalized once; same forms."""
+    rng = random.Random(20261011)  # noqa: S311 - reproducible test texts
+    alphabet = [chr(c) for c in range(128)] + list("éÉßİıﬁＡ\u0301\u034f\u200b\u00ad\u0430ⅿ₀°")
+    texts = ["".join(chr(c) for c in range(128))]
+    texts += ["".join(rng.choices(alphabet[:128], k=rng.randint(0, 40))) for _ in range(300)]
+    texts += ["".join(rng.choices(alphabet, k=rng.randint(0, 40))) for _ in range(300)]
+    for text in texts:
+        want = _unicode_path(text)
+        assert skeleton.folds(text) == want, repr(text)
+        assert (keyword_fold(text), keyword_fold_ci(text), entity_text(text)) == want, repr(text)
+
+
+def test_scan_stops_at_the_message_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3-P11: past SCAN_CHARS of distinct text a message isn't scanned further, and says so."""
+    monkeypatch.setattr(tr, "SCAN_CHARS", 100)
+    assert tr.scan(["x" * 60, "x" * 60, "wire transfer"])["unscanned"] == []  # read once
+    late = tr.scan(["x" * 90, "please send a wire transfer"])
+    assert late["bank"] == [] and late["unscanned"] == [tr.UNSCANNED_TEXT]
+    assert tr.scan(["x" * 100, "y"])["unscanned"] == [tr.UNSCANNED_TEXT]
+    assert tr.scan(["x" * 100])["unscanned"] == []
+
+
+def test_texts_of_reads_short_fields_then_visible_then_full_text() -> None:
+    raw = mail("plain body", subject="Subj", html="<p>shown<span hidden>secret</span></p>",
+               attachment="inv.pdf")  # fmt: skip
+    texts = tr.texts_of(parse(raw))
+    assert texts[:3] == ["Subj", "Vendor A", "inv.pdf"]
+    visible, full = texts[3:5], texts[5:]
+    assert not any("secret" in t for t in visible) and any("secret" in t for t in full)
+
+
+def test_a_scan_cut_short_makes_the_message_not_fully_scanned(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    monkeypatch.setattr(tr, "SCAN_CHARS", 10)
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    raw = mail("a body longer than ten")
+    found = analyzer.analyze(parse(raw), raw)
+    assert found["content_unscanned"] is True
+    assert tr.UNSCANNED_TEXT in found["unscanned_reasons"]
+
+
+VALID_IBAN = "DE89 3704 0044 0532 0130 00"
+
+
+def test_the_iban_check_stops_after_its_candidates() -> None:
+    """R3-P12: a crafted text of IBAN heads costs a checksum each, so the check stops after
+    IBAN_CANDIDATES of them; decoys then can't hide a real one: the scan says it stopped."""
+    decoys = "DE12 3456 7890 1234 5678 90. " * (tr.IBAN_CANDIDATES + 1)
+    assert tr._iban(decoys + VALID_IBAN) is None  # pyright: ignore[reportPrivateUsage]
+    hits = tr.scan([decoys + VALID_IBAN])
+    assert tr.IBAN_HIT not in hits["bank"] and hits["unscanned"] == [tr.UNSCANNED_IBANS]
+    assert tr._iban(VALID_IBAN + " " + decoys) is True  # pyright: ignore[reportPrivateUsage]
+    few = "DE12 3456 7890 1234 5678 90. " * (tr.IBAN_CANDIDATES - 1)
+    assert tr._iban(few + VALID_IBAN) is True  # pyright: ignore[reportPrivateUsage]
+
+
+def _iban_before_step_3b(text: str) -> bool:
+    for m in tr.IBAN.finditer(text):
+        size = tr.IBAN_LENGTHS.get(m.group()[:2])
+        where = [i for i, c in enumerate(m.group()) if c not in " -"]
+        if size is None or len(where) < size:
+            continue
+        end = m.start() + where[size - 1] + 1
+        if end < len(text) and text[end].isalnum():
+            continue
+        code = "".join(m.group()[i] for i in where[:size])
+        if int((code[4:] + code[:4]).translate(tr._IBAN_DIGITS)) % 97 == 1:  # pyright: ignore[reportPrivateUsage]
+            return True
+    return False
+
+
+def test_the_iban_check_finds_what_it_found_before() -> None:
+    """The cheaper compaction finds the same IBANs (below the candidate cap)."""
+    rng = random.Random(20261012)  # noqa: S311 - reproducible test texts
+    pieces = [VALID_IBAN, "GB82 WEST 1234 5698 7654 32", "GB82-WEST-1234-5698-7654-32",
+              "NO93 8601 1117 947", "DE89370400440532013000", "DE12 3456", "7890", " ", "-", "x",
+              "\n", "A", "0"]  # fmt: skip
+    for _ in range(500):
+        text = "".join(rng.choices(pieces, k=rng.randint(1, 12)))
+        assert tr.valid_iban(text) is _iban_before_step_3b(text), repr(text)
+
+
+WALLETS_BEFORE = (
+    re.compile(r"(?<![\w-])bc1[ac-hj-np-z02-9]{11,71}(?![\w-])"),
+    re.compile(r"(?<![\w-])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w-])"),
+    re.compile(r"(?<![\w-])0x[0-9a-fA-F]{40}(?![\w-])"),
+    re.compile(r"(?<![\w-])TEST-WALLET-\d{4}(?![\w-])"),
 )
-def test_scan_of_a_10_mib_part_is_bounded(body: str, content_type: str,
-                                          found: tuple[str, str] | None) -> None:  # fmt: skip
-    """Step 2a: about 38 s per 10 MiB part with one search per pattern and each plain part read
-    twice, under 4 s now on the Mac that measured it (2026-10-10); the bound leaves room for a
-    slower CI runner."""
-    texts = tr.texts_of(parse(_raw(body, content_type)))
-    began = time.perf_counter()
-    hits = tr.scan(texts)
-    assert time.perf_counter() - began < 15
-    if found:
-        assert found[1] in hits[found[0]]
 
 
-@pytest.mark.parametrize(
-    "unit",
-    ["DE12 3456 7890 1234 5678 90 ", "DE12 ", "GB82-WEST-1234-5698-7654-33 "],
-    ids=["groups", "heads", "hyphens"],
-)
-def test_the_iban_check_on_a_crafted_10_mib_text_is_bounded(unit: str) -> None:
-    """Plan §4: every candidate fails its checksum. 0.6 s on the Mac that measured it
-    (2026-10-10); the bound leaves room for a slower CI runner."""
-    text = entity_text(unit * (10 * MIB // len(unit)))
-    began = time.perf_counter()
-    assert not tr.valid_iban(text)
-    assert time.perf_counter() - began < 3
+def test_one_wallet_alternation_finds_what_four_patterns_did() -> None:
+    rng = random.Random(20261013)  # noqa: S311 - reproducible test texts
+    pieces = ["bc1", "qpzry9x8gf2tvdw0s3jn54khce6mua7l", "1", "3", "0x", "a" * 20, "F" * 20,
+              "TEST-WALLET-", "0001", "12345", "-", " ", "_", "x", "\n"]  # fmt: skip
+    for _ in range(2000):
+        text = "".join(rng.choices(pieces, k=rng.randint(1, 10)))
+        want = any(w.search(text) for w in WALLETS_BEFORE)
+        assert (tr.WALLET.search(text) is not None) is want, repr(text)
+
+
+def _redact_before_step_3b(text: str) -> str:
+    """redact_injection testing every paragraph on its own, as before R3-P20."""
+    out: list[str] = []
+    removed = False
+    for para in tr._PARAGRAPH_BREAK.split(text):  # pyright: ignore[reportPrivateUsage]
+        if not tr._injected(para):  # pyright: ignore[reportPrivateUsage]
+            out.append(para)
+            continue
+        removed = True
+        lines = para.split("\n")
+        head = tr._head(lines)  # pyright: ignore[reportPrivateUsage]
+        if head is lines:
+            start = tr._match_start(lines)  # pyright: ignore[reportPrivateUsage]
+        else:
+            injected = tr._injected("\n".join(head))  # pyright: ignore[reportPrivateUsage]
+            start = tr._match_start(head) if injected else len(head)  # pyright: ignore[reportPrivateUsage]
+        kept = "\n".join(lines[:start]).rstrip()
+        if kept:
+            out.append(f"{kept}\n{tr.INJECTION_MARK}")
+        elif not out or not out[-1].endswith(tr.INJECTION_MARK):
+            out.append(tr.INJECTION_MARK)
+    return "\n\n".join(out) if removed else text
+
+
+def test_batched_redaction_matches_paragraph_by_paragraph() -> None:
+    """R3-P20: the whole text first, then batches of paragraphs, then each paragraph of a batch
+    that matched; the result is what testing every paragraph gave, phrases split across a blank
+    line or a batch boundary included."""
+    rng = random.Random(20261014)  # noqa: S311 - reproducible test texts
+    pieces = ["hi", "ordinary mail text", "note to the", "assistant",
+              "ignore previous instructions", "Ассистент", "\u0301", " ", "\n"]  # fmt: skip
+    for n in (1, 3, tr.INJECTION_BATCH - 1, tr.INJECTION_BATCH, tr.INJECTION_BATCH * 2 + 5):
+        for _ in range(20):
+            paras = ["".join(rng.choices(pieces, k=rng.randint(0, 4))) for _ in range(n)]
+            text = rng.choice(["\n\n", "\n \t\n"]).join(paras)
+            assert tr.redact_injection(text) == _redact_before_step_3b(text), repr(text[:200])

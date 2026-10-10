@@ -69,8 +69,11 @@ payment:
 # Gift cards (V1.6, OD-436, OD-457): money only for the impersonation rules. As payment keywords
 # they marked every ordinary gift-card email suspicious (eval: 4 of 4; closing run: 1 of 1) and
 # changed no fraud decision, so they count only when the mail impersonates someone internal.
-# E-gift, voucher, certificate, prepaid and store-brand cards added 2026-10-10 (OD-488, held-out
-# batch 1 missed 3 of 3 gift-card scams worded without "gift card"); frozen before batch 2.
+# E-gift, voucher, certificate and prepaid cards added 2026-10-10 (OD-488, held-out batch 1 missed
+# 3 of 3 gift-card scams worded without "gift card"); frozen before batch 2. Store-brand cards
+# (iTunes, Google Play, Steam, Amazon) were added then too and reverted after Phase R R3 (R3-P7):
+# they widened OD-457 and the `impersonation_gift_cards` signal unmeasured; no frozen or held-out
+# card names one.
 gift_card:
   phrases:
     - gift card
@@ -87,14 +90,6 @@ gift_card:
     - gift certificates
     - prepaid card
     - prepaid cards
-    - iTunes card
-    - iTunes cards
-    - Google Play card
-    - Google Play cards
-    - Steam card
-    - Steam cards
-    - Amazon card
-    - Amazon cards
 
 # Asking for gift-card codes to be sent back (pre-classifier plan §3, OD-488): with a `gift_card`
 # phrase, the fact `gift_card_codes_request`, the gift-card scam. Frozen 2026-10-10 before the

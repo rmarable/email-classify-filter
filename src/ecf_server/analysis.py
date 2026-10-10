@@ -68,6 +68,7 @@ class MessageAnalyzer:
             payment_keyword=bool(keywords["payment"]),
             org_addresses=self._org_addresses,
             gmail_labels=gmail_labels,
+            scan_unscanned=tuple(keywords["unscanned"]),
         )
         found = auth.facts() | computed
         found["ecf_mail"] = own_mail.classify(self._conn, parsed, auth.result)

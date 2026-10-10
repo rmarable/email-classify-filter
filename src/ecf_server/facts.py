@@ -133,7 +133,7 @@ def in_domains(domain: str | None, domains: list[str] | tuple[str, ...]) -> bool
     return domain is not None and any(domain == d or domain.endswith("." + d) for d in domains)
 
 
-def compute(
+def compute(  # noqa: PLR0913 - the message, its address and what the scan found
     conn: sqlite3.Connection,
     address: AddressInfo,
     parsed: ParsedMessage,
@@ -143,8 +143,10 @@ def compute(
     payment_keyword: bool = False,
     org_addresses: tuple[internal.OrgAddress, ...] = (),
     gmail_labels: frozenset[str] | None = None,
+    scan_unscanned: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """`gmail_labels` is the message's `X-GM-LABELS` on Gmail, None elsewhere (V1.6)."""
+    """`gmail_labels` is the message's `X-GM-LABELS` on Gmail, None elsewhere (V1.6);
+    `scan_unscanned` is why the trigger scan stopped short (`triggers.scan`'s `unscanned`)."""
     from_domain = domain_of(parsed.from_addr)
     org_domain = in_domains(from_domain, org_domains)
     # the internal set is org_domains plus exact org_addresses; no Gmail folding (OD-431, OD-432)
@@ -158,6 +160,7 @@ def compute(
     bulk = bulk_signal(parsed)
     first_time = not seen
     unscanned = _unscanned_reasons(parsed, address, payment_keyword, first_time)
+    unscanned += scan_unscanned
     return {
         "from_domain": from_domain,
         # the sender record's key, so a later decision can read a confirmed category (V1.3)
