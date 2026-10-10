@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- `/ecf-eval` now applies a card's expected facts as `ecf eval run` does, so Claude runs reach the hide path on the same cards as local runs; Claude results from before this scored those cards on computed facts only (SPEC §16.2, §21.2).
 - On preset C, Claude's classifier now gets the same signals as the local classifier, as a separate `signals` list beside the email. The C gate key now covers what Claude is asked (the schema and the signals' wording), so every preset C address returns to `assist` once until its gate passes again; a change to the local model's prompt alone no longer restarts C. `/ecf-eval` results on preset C record that prompt digest (OD-484; SPEC §7.2, §9.3).
 - Two more signals for the local classifier: an email asking for a code, password or login to be sent or read back, and an email asking for payment to a cryptocurrency wallet. They only inform the model; no rule acts on them. `ecf eval run --no-new-signals` measures a run without them (OD-485; SPEC §7.2).
 - The local classifier now gets a short list of what ecf's own checks found, when any applies: an outside sender opening like an executive-impersonation scam, an outside request for employees' tax data, someone claiming to be in your organization but isn't, or that together with gift cards. It changes the classifier prompt, so every address returns to `assist` until its gate passes again; `ecf eval run --no-signals` measures a run without them (OD-484; SPEC §7.2).

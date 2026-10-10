@@ -323,7 +323,9 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             if run.stop.is_set():
                 return
             raw = w.case.path.read_bytes()
-            facts = scratch.facts(raw, w.case.profile)
+            # as `ecf eval run`: the card's expected facts applied (Q1), so A and C score alike
+            facts, (cls_text, act_text) = evalrun._inputs(  # pyright: ignore[reportPrivateUsage]
+                w.case, scratch, triggers.redact_injection)  # fmt: skip
             msg = parse(raw)
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr
@@ -333,7 +335,6 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 "attachments_meta": [{"name": a.name, "type": a.content_type, "size": a.size}
                                      for a in msg.attachments if not a.inline or a.name],
             }  # fmt: skip
-            cls_text, act_text = msg.excerpts(triggers.redact_injection)
             with run.lock:
                 if not run.open:
                     return

@@ -416,6 +416,28 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     assert m["keywords_digest"] == triggers.keywords_digest()
 
 
+def test_a_cards_expected_facts_reach_the_hide_path_as_in_ecf_eval_run(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Q1 for `/ecf-eval`: a card's expected facts are applied as `ecf eval run` applies them,
+    so an authenticated bulk notice from a seen sender, answered benignly, is archived; the same
+    notice without those facts isn't."""
+    card = (root / "cases" / "starter-control.md").read_text()
+    seen = card.replace("id: starter-control", "id: seen-bulk").replace(
+        "  rule: marketing", "  facts: {auth_result: pass, sender_seen_before: true}\n"
+        "  rule: marketing")  # fmt: skip
+    (root / "cases" / "seen-bulk.md").write_text(seen)
+    assert not build_all(root).findings
+    labels.confirm(root, "seen-bulk", date(2026, 10, 1))
+    labels.confirm(root, "starter-control", date(2026, 10, 1))
+    start(db_path, clock, root)
+    drain(db_path, clock, lambda _c: MARKETING)
+    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
+    actions = {c.id: set(c.actions) for c in load_result(Path(path)).cases}
+    assert {"archive"} <= actions["seen-bulk"] and not {"archive", "mark_read"} & actions[
+        "starter-control"]  # fmt: skip
+
+
 def test_a_case_goes_out_with_the_signals_gemma_gets(
     db_path: Path, clock: FakeClock, tmp_path: Path
 ) -> None:
