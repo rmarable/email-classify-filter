@@ -134,7 +134,10 @@ def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
     if preset in LOCAL_PRESETS:
         out["digest"] = local_key(schema)
     else:
+        from ecf_server import claude_review  # noqa: PLC0415 - claude_review imports this module
+
         out["schema"] = schema.digest  # Claude classifies with it too (OD-475, OD-478)
+        out["prompt"] = claude_review.prompt_digest(schema)[:16]  # and the signals (Q4, OD-484)
     return out
 
 

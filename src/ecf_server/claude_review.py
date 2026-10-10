@@ -73,6 +73,7 @@ from ecf_server import (
     decide,
     health,
     policy,
+    signals,
     telemetry,
 )
 from ecf_server.clock import Clock, from_ts, to_ts
@@ -301,7 +302,7 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
                            "untrusted_email": email, "notice": NOTICE}  # fmt: skip
     schema = config.current_schema(conn)
     if claim["need"] == "classify":
-        out |= schema_fields(schema)
+        out |= schema_fields(schema) | {"signals": signals.as_object(signals.sent(facts))}
     else:
         ctx, p = decide.plan_for(conn, item)
         state: dict[str, Any] = json.loads(item["proposal"] or "{}")
@@ -335,6 +336,14 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
     if result is None:
         return _invalid(conn, clock, claim, errors)
     return _hold(conn, claim, session_id, {"classification": result, "schema": schema.digest})
+
+
+def prompt_digest(schema: CompiledSchema) -> str:
+    """SHA-256 over what ecf gives a Claude classifier besides the email (plan 0.3, Q4): the
+    schema's fields as `schema_fields` sends them and the signals' wording (OD-484). Gemma's
+    prompt isn't in it, so a Gemma-only change keeps the C pin key."""
+    parts = {"fields": schema_fields(schema), "signals": signals.WORDING}
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 
 
 def schema_fields(schema: CompiledSchema) -> dict[str, Any]:

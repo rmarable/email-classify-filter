@@ -4,11 +4,13 @@ Each signal is the truth of a condition the starter rules already use (rule 1 an
 `starter_rules.yaml`), composed from computed facts, so the model sees what the rules were tuned
 to. A signal is sent only when true, in the fixed wording below, and nothing else from the facts
 goes with it: no trigger reasons, addresses, keywords or sender details (P3, P18). `sent` is the
-one function that builds them, for the local classifier and (plan item 5) Claude alike; the
+one function that builds them, for the local classifier and Claude alike (plan item 5); the
 allow-list test in `tests/test_signals.py` pins `WORDING`.
 
-They go in a block before the email, between delimiter lines carrying the request's random token
-(P10); with no signal true there is no block, so the request is the same as before.
+For the local classifier they go in a block before the email, between delimiter lines carrying
+the request's random token (P10); with no signal true there is no block, so the request is the
+same as before. Claude's classifiers get them as `get_message`'s top-level `signals` object
+(`as_object`), empty when none is true.
 """
 
 from __future__ import annotations
@@ -48,3 +50,8 @@ def block(names: tuple[str, ...], token: str) -> str:
         return ""
     lines = "".join(f"- {WORDING[n]}\n" for n in names)
     return f"<<<SIGNALS {token}>>>\n{lines}<<<END SIGNALS {token}>>>\n"
+
+
+def as_object(names: tuple[str, ...]) -> dict[str, str]:
+    """The signals as Claude's `get_message` returns them: name to wording, in `WORDING`'s order."""
+    return {n: WORDING[n] for n in names}

@@ -15,7 +15,18 @@ from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
 from ecf.schema import load_schema
-from ecf_server import classifier, claude_pins, gate, ollama, review, stages, stepup, triggers
+from ecf_server import (
+    classifier,
+    claude_pins,
+    claude_review,
+    gate,
+    ollama,
+    review,
+    signals,
+    stages,
+    stepup,
+    triggers,
+)
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
@@ -66,7 +77,8 @@ def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClo
     prompt = classifier.prompt_digest(load_schema())[:16]  # no keywords hash in it (Q3)
     assert f"{DIGEST}+{load_schema().digest}+{prompt}" == LOCAL
     assert b == {"digest": LOCAL, "actor": lock["actor"], "actor_high": lock["actor_high"]}
-    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema"}
+    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt"}
+    assert c["prompt"] == claude_review.prompt_digest(load_schema())[:16]  # Q4
     assert len({claude_pins.key(p) for p in (a, b, c)}) == 3
     assert claude_pins.key(b).startswith("pins-")
 
@@ -255,3 +267,21 @@ def test_the_prompt_digest_moves_with_the_prompt_not_the_keywords(
         assert classifier.prompt_digest(schema) != before
     monkeypatch.setattr(triggers, "keywords_digest", lambda: "0" * 64)  # a keyword patch
     assert claude_pins.local_key() == key and len(words) == 64  # restarts no gate (Q3)
+
+
+def test_the_c_key_moves_with_what_claude_is_asked_not_with_gemmas_prompt(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q4: the C pin key takes a Claude-side digest (the schema and the signals' wording), so a
+    Gemma-only change doesn't restart C's gate, and a signal reworded does."""
+
+    def c_key() -> str:
+        return claude_pins.key(claude_pins.pins(conn, "C"))
+
+    before, local = c_key(), claude_pins.local_key()
+    with monkeypatch.context() as m:
+        m.setattr(classifier, "INSTRUCTIONS", classifier.INSTRUCTIONS + "Be brief.\n")
+        assert claude_pins.local_key() != local and c_key() == before
+    reworded = signals.WORDING | {"crypto_payment": "Pay this wallet."}
+    monkeypatch.setattr(signals, "WORDING", reworded)
+    assert c_key() != before

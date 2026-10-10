@@ -62,6 +62,7 @@ from ecf_server import (
     policy,
     rules,
     ruletest,
+    signals,
     telemetry,
     triggers,
 )
@@ -418,6 +419,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 schema=run.schema)  # fmt: skip
     summary["schema_digest"] = run.schema.digest
+    if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
+        summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
+    summary["keywords_digest"] = triggers.keywords_digest()
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)
@@ -608,8 +612,8 @@ def _claimed(clock: Clock, session_id: str, ref: str, token: str, agent: str,
 
 def get_message(clock: Clock, session_id: str, ref: str, token: str,
                 agent: str) -> dict[str, Any]:  # fmt: skip
-    """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts, no
-    labels."""
+    """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts but the
+    derived signals (OD-484), no labels."""
     run, w = _claimed(clock, session_id, ref, token, agent)
     with run.lock:
         text = w.cls_text if w.need == "classify" else w.act_text
@@ -617,7 +621,8 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
                                "untrusted_email": w.email | {"text": text},
                                "notice": claude_review.NOTICE}  # fmt: skip
         if w.need == "classify":
-            out |= claude_review.schema_fields(run.schema)
+            sent = signals.as_object(signals.sent(w.facts))
+            out |= claude_review.schema_fields(run.schema) | {"signals": sent}
         else:
             out |= {"classification": _cls(w),
                     "actions": list(actor.allowed(_cls(w))),

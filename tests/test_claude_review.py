@@ -25,6 +25,7 @@ from ecf_server import (
     decide,
     items,
     policy,
+    signals,
 )
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
@@ -264,7 +265,7 @@ def test_claims_end_with_the_session_and_at_start(conn: sqlite3.Connection,
 # ---- reading ---------------------------------------------------------------------------------
 
 
-def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
+def test_the_message_is_wrapped_and_carries_no_facts_but_signals(conn: sqlite3.Connection,
                                                       clock: FakeClock) -> None:  # fmt: skip
     add(conn, clock, "c", "C")
     add(conn, clock, "b", "B")
@@ -283,7 +284,9 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     flat = json.dumps(m)
     for fact in ("sender_seen_before", "auth_result", "bulk_corroborates", "triggers"):
         assert fact not in flat  # §7.2: computed facts never go to a model
+    assert m["signals"] == {}  # derived signals only (OD-484), none true here
     a = read_msg(conn, clock, S2, b1, token_for(q2, b1))
+    assert "signals" not in a  # the classifiers' exemption, not the actor's
     assert a["untrusted_email"]["text"].startswith("Please send the W-9")  # the actor excerpt
     assert a["classification"] == REQUEST
     assert "archive" not in a["actions"] and "needs_clarification" in a["actions"]  # OD-250
@@ -291,6 +294,26 @@ def test_the_message_is_wrapped_and_carries_no_facts(conn: sqlite3.Connection,
     events = [r[0] for r in conn.execute("SELECT actor FROM audit WHERE event ="
                                          " 'claude.message_read'")]  # fmt: skip
     assert events == ["mcp:session-", "mcp:session-"]
+
+
+def test_the_classifier_gets_the_true_signals_under_their_own_key(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """OD-484 (plan item 5): the signals `signals.sent` gives the local classifier, as a
+    top-level `signals` object in fixed wording; nothing else from the facts goes with them."""
+    add(conn, clock, "c", "C")
+    facts = KNOWN_BULK | {"sender_origin": "external", "bec_opener": True,
+                          "impersonates_internal": True, "gift_card_keyword": True,
+                          "sender_hash": "abc123",
+                          "triggers": {"fraud": ["dana-chief"]}}  # fmt: skip
+    c1 = waiting_item(conn, clock, "c", facts=facts)
+    m = read_msg(conn, clock, S1, c1, token_for(queue(conn, clock), c1))
+    names = ("bec_opener_outside", "impersonates_internal", "impersonation_gift_cards")
+    assert signals.sent(facts) == names
+    assert m["signals"] == {n: signals.WORDING[n] for n in names}
+    rest = json.dumps({k: v for k, v in m.items() if k != "signals"})
+    for leaked in ("abc123", "dana-chief", "sender_origin", "bec_opener", "An outside sender"):
+        assert leaked not in rest
 
 
 # ---- submitting ------------------------------------------------------------------------------
