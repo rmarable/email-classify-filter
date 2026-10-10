@@ -20,7 +20,8 @@ _STRICT = ConfigDict(extra="forbid", frozen=True)
 MARGIN_POINTS = 5.0
 # what a run was asked with besides the email: a difference is printed, the comparison still runs
 INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different inputs",
-              "excerpt_cap": "different inputs"}  # fmt: skip
+              "excerpt_cap": "different inputs", "keywords_digest": "different keywords",
+              "rules_digest": "different rules"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
@@ -63,6 +64,17 @@ class CaseResult(BaseModel):
     # expects fraud_guard, which the rules alone (every field at its least risky value) don't
     # reach: only the model's answer can route it there (plan 0.3, S5); False in older files
     model_only_fraud: bool = False
+    # the rule the case's facts reach with no model (every field at its least risky value), so
+    # `genuine_flagged` can tell the rules' share from the model's (pre-classifier plan step 7)
+    rule_alone: str | None = None
+    # the actor's proposal by action name, and its target only when it is one of the schema's
+    # labels or the case's injection target (closed vocabulary, OD-259): so a rescore through the
+    # policy replays it (pre-classifier plan step 7); None when the actor wasn't asked or failed
+    proposal: str | None = None
+    proposal_target: str | None = None
+    # the hide blockers (policy.hide_blockers' fixed names) that refused the plan's hide actions;
+    # empty when nothing was refused for one, and in older files (pre-classifier plan step 7, M7)
+    hide_blocked: list[str] = Field(default_factory=list[str])
 
 
 class ResultFile(BaseModel):
@@ -192,10 +204,24 @@ def schema_warning(a: ResultFile, b: ResultFile) -> str | None:
             " between them, so the fields and values they chose from differ")  # fmt: skip
 
 
+def scoring(r: ResultFile) -> str:
+    """How a result's rules and actions were reached: `live` (the run's own plan), `policy`
+    (`ecf eval rescore --through-policy`: facts recomputed, the recorded answers planned again)
+    or `recorded` (an older rescore that kept the recorded rule and actions)."""
+    s = r.summary or {}
+    if isinstance(v := s.get("scoring"), str):
+        return v
+    return "recorded" if "rescored_from" in s else "live"
+
+
 def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
-    """ "different prompt" or "different inputs" when both runs recorded a value and they differ
-    (OD-486): the runs weren't asked the same way, so the difference isn't only the model's."""
+    """ "different prompt", "different inputs", "different keywords" or "different rules" when
+    both runs recorded a value and they differ (OD-486), and "different scoring" when one result's
+    rules and actions were planned again and the other's weren't (pre-classifier plan step 7):
+    the difference isn't only the model's."""
     out: list[str] = []
+    if (sa := scoring(a)) != (sb := scoring(b)):
+        out.append(f"warning: different scoring ({sa} vs {sb})")
     for key, what in INPUT_KEYS.items():
         va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
         if va is not None and vb is not None and va != vb:

@@ -1321,23 +1321,37 @@ def eval_rescore(
             " against its current labels, answers mapped to v2.",
         ),
     ] = None,
+    through_policy: Annotated[
+        bool,
+        typer.Option(
+            "--through-policy",
+            help="With --synthetic: recompute each card's facts and plan the recorded answers"
+            " again with today's keywords, rules and policy.",
+        ),
+    ] = False,
 ) -> None:
-    """Score a corpus result again against the corpus's current labels, or a pre-v2 synthetic
-    result against the set's current labels, without running the models; the new file sits
-    beside the original (§16.7, §16.5)."""
+    """Score a corpus result again against the corpus's current labels, or a synthetic result
+    against the set's current labels (a pre-v2 one with its answers mapped to v2, or with
+    --through-policy planned again with today's facts and rules), without running the models;
+    the new file sits beside the original (§16.7, §16.5)."""
     from ecf.eval.results import load_result as load  # noqa: PLC0415
     from ecf.eval.results import summary  # noqa: PLC0415
     from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
 
     if (corpus is None) == (synthetic is None):
         raise typer.BadParameter("give --corpus or --synthetic")
+    if through_policy and synthetic is None:
+        raise typer.BadParameter("--through-policy goes with --synthetic")
     if synthetic is not None:
         with LocalClient(_paths()) as c:
             r = c.request("POST", "/v1/eval/rescore", {
                 "result": str(result.expanduser().absolute()),
-                "synthetic_root": str(synthetic.expanduser().absolute())}, timeout=600)  # fmt: skip
+                "synthetic_root": str(synthetic.expanduser().absolute()),
+                "through_policy": through_policy}, timeout=600)  # fmt: skip
         typer.echo(f"written: {r['path']}")
         typer.echo(summary(load(Path(r["path"]))))
+        for line in replanned_lines(r["summary"]):
+            typer.echo(line)
         return
     require_terminal()
     where = cast(Path, corpus).expanduser().absolute()
@@ -1355,6 +1369,42 @@ def eval_rescore(
             c.request("DELETE", f"/v1/corpus/session/{sid}")
     typer.echo(f"written: {r['path']}")
     typer.echo(summary(load(Path(r["path"]))))
+
+
+def replanned_lines(s: dict[str, Any]) -> list[str]:
+    """What `--through-policy` changed, and the genuine-mail figures (pre-classifier plan step 7);
+    nothing for another rescore."""
+    re_: dict[str, Any] | None = s.get("replanned")
+    if re_ is None:
+        return []
+    actor: dict[str, int] = re_["actor"]
+    return [f"rule changed: {_ids(re_['rule_changed'])}",
+            f"actions changed: {_ids(re_['actions_changed'])}",
+            f"actor proposals: {actor['recorded']} recorded, {actor['inferred']} inferred,"
+            f" {actor['partial']} partly inferred, {actor['nothing']} nothing to replay,"
+            f" {actor['not_on_record']} not on record",
+            f"model-only fraud cases: {s.get('rescored_from', {}).get('model_only_fraud_cases')}"
+            f" -> {s.get('model_only_fraud_cases')}",
+            *_genuine_figures(s)]  # fmt: skip
+
+
+def _ids(xs: list[str]) -> str:
+    if not xs:
+        return "0"
+    return f"{len(xs)} ({', '.join(xs[:8])}{', ...' if len(xs) > 8 else ''})"
+
+
+def _genuine_figures(s: dict[str, Any]) -> list[str]:
+    """`genuine_hide_dropped` and `genuine_flagged` (pre-classifier plan step 7); absent in
+    older results."""
+    if "genuine_hide_dropped" not in s:
+        return []
+    out = [f"genuine cases with a hide refused by a blocker: {_ids(s['genuine_hide_dropped'])}"]
+    flagged: dict[str, dict[str, list[str]]] = s.get("genuine_flagged") or {}
+    for who, what in (("run", "the run"), ("rules_alone", "the rules alone")):
+        for rule, xs in (flagged.get(who) or {}).items():
+            out.append(f"genuine cases at {rule} ({what}): {_ids(xs)}")
+    return out
 
 
 @eval_app.command("status")
@@ -1536,6 +1586,7 @@ def _decision_figures(summary: dict[str, object] | None) -> list[str]:
         o = cast(dict[str, int], only)
         out.append(f"under-rated on {o['under']} of {o['of']} cases only the model routes to"
                    " fraud_guard")  # fmt: skip
+    out += _genuine_figures(s)
     lat = s.get("classifier_latency_s")
     lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
     if lt.get("p50") is not None:

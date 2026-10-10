@@ -1705,14 +1705,17 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def rescore(request: Request) -> JSONResponse:
-        """`ecf eval rescore`: a corpus result against the session's current labels (R53), or a
-        pre-v2 synthetic result against the set's current labels (`synthetic_root`, E1)."""
+        """`ecf eval rescore`: a corpus result against the session's current labels (R53), a
+        pre-v2 synthetic result against the set's current labels (`synthetic_root`, E1), or a
+        synthetic result planned again through today's facts and policy (`through_policy`)."""
         body = _body(request)
         if body.get("synthetic_root") is not None:
             path = Path(_str(body, "result")).expanduser()
             if path.suffix != ".json" or not path.is_file():
                 raise InvalidInputError(f"no result file at {path}")
             root = Path(_str(body, "synthetic_root")).expanduser()
+            if body.get("through_policy") is True:  # pre-classifier plan step 7
+                return JSONResponse(evalrun.rescore_through_policy(root, path, state.clock))
             return JSONResponse(evalrun.rescore_synthetic(root, path, state.clock))
         s = corpus_session.get(_str(body, "corpus_session"), state.clock.monotonic)
         if s.busy:

@@ -169,6 +169,10 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
     assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
     assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
+    assert summary["rules_digest"] == evalrun.rules.starter_digest()  # step 7
+    assert summary["scoring"] == "live"
+    assert conn.execute("SELECT value FROM settings WHERE key = ?",
+                        (evalrun.EVAL_ROOT,)).fetchone() is not None  # fmt: skip
     model = summary["model"]  # the run's own token and speed figures (step 9)
     assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
     assert model["generation_tps"]["median"] is not None
@@ -467,6 +471,11 @@ def test_a_run_marked_not_for_the_gate_is_saved_but_never_passes(
     assert result["complete"] and result["options"]["for_gate"] is False
     assert result["gate_passed"] is False
     assert conn.execute("SELECT gate_passed FROM eval_runs").fetchone()[0] == 0
+    # nor does it re-point the go-live gate at its set (a held-out run, M11)
+    assert (
+        conn.execute("SELECT 1 FROM settings WHERE key = ?", (evalrun.EVAL_ROOT,)).fetchone()
+        is None
+    )
 
 
 def test_a_run_copies_its_result_out_of_the_install(
@@ -682,3 +691,88 @@ def test_a_pre_v2_result_is_rescored_with_its_answers_mapped(
     case = next(c for c in new.cases if c.id == "starter-bec")
     assert case.got["sender_type"] == "team"
     assert compare(new, new).n >= 1  # same set version: comparable
+
+
+def _acted_run(conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+               action: str) -> Path:  # fmt: skip
+    """A run whose bug-report answer goes to the actor, which proposes `action`."""
+    from ecf_server import db  # noqa: PLC0415
+
+    bug = BEC | {"category": "bug_report", "priority": "medium", "requires_reply": True,
+                 "payment_related": False, "fraud_risk": "none"}  # fmt: skip
+    proposal = {"action": action, "target": "", "reason": "a customer is waiting", "text": ""}
+    evalrun.start(lambda: db.connect(db_path), clock,
+                  RoleOllama(json.dumps(bug), json.dumps(proposal)).client, db_path.parent,
+                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                  check_kw=check_kw(), thermal=dict)  # fmt: skip
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    return Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
+
+
+def test_a_run_rescored_through_the_policy_changes_nothing(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Pre-classifier plan step 7 (§11 wiring check): a result made with today's code, planned
+    again from its recorded answers and actor proposals, has the same rules and actions."""
+    path = _acted_run(conn, db_path, clock, root, "escalate")
+    live = load_result(path)
+    acted = [c for c in live.cases if c.proposal is not None]
+    assert acted and all(c.proposal == "escalate" and c.proposal_target is None for c in acted)
+    assert all(c.rule_alone is not None for c in live.cases)
+    out = evalrun.rescore_through_policy(root, path, clock)
+    s = out["summary"]
+    assert s["replanned"]["rule_changed"] == [] and s["replanned"]["actions_changed"] == []
+    assert s["replanned"]["actor"]["recorded"] == len(acted)
+    assert s["scoring"] == "policy" and s["rescored_from"]["scoring"] == "live"
+    assert s["rescored_from"]["rules_digest"] == s["rules_digest"]
+    assert s["correct"] == (live.summary or {})["correct"] and s["gate_passed"] is False
+    again = load_result(Path(out["path"]))
+    assert [c.actions for c in again.cases] == [c.actions for c in live.cases]
+    assert path.exists()  # the original is kept
+
+
+def test_an_older_results_actor_action_is_inferred(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
+) -> None:
+    """A result from before step 7 records no proposal: the actions its rule can't plan itself
+    are replayed (here the actor's escalate on a medium-priority bug report, which the rule's own
+    escalate condition doesn't meet); one needing a target the file lacks isn't."""
+    live = load_result(_acted_run(conn, db_path, clock, root, "escalate"))
+    acted = {c.id for c in live.cases if c.proposal is not None}
+    older = [c.model_copy(update={"proposal": None, "rule_alone": None,
+                                  "actions": [*c.actions, "move"] if c.id in acted
+                                  and c.id == min(acted) else c.actions})
+             for c in live.cases]  # fmt: skip
+    old = live.model_copy(update={"cases": older, "summary": {}})
+    out = evalrun.rescore_through_policy(root, evalrun.write_result(tmp_path, old, "old.json"),
+                                         clock)  # fmt: skip
+    s = out["summary"]
+    assert s["replanned"]["actor"]["recorded"] == 0
+    assert s["replanned"]["actor"]["partial"] == 1
+    assert s["replanned"]["actor"]["inferred"] == len(acted) - 1
+    assert s["replanned"]["actions_changed"] == [min(acted)]  # only the unreplayable move
+    assert s["rescored_from"]["scoring"] == "live"
+    new = {c.id: c for c in load_result(Path(out["path"])).cases}
+    assert all("escalate" in new[i].actions for i in acted)
+
+
+def test_genuine_figures_name_flagged_and_hide_refused_cards(root: Path) -> None:
+    """Step 7 (M7, R3-P9): a confirmed genuine card expecting a hiding rule whose hide a blocker
+    refused, and one the plan sent to rule 1b although the rules alone don't."""
+    labels.confirm(root, "starter-control", date(2026, 10, 1))
+    cases, _ = evalrun.load(root, fraud_only=False)
+    rules_now = evalrun.rules.load_starter_rules(load_schema())
+    assert "marketing" in evalrun.hide_rules(rules_now)
+    blocked = CaseResult(id="starter-control", correct=False, got={"rule": "fraud_weak"},
+                         rule_alone="marketing", hide_blocked=["fraud signal"])  # fmt: skip
+    fraud = CaseResult(id="starter-bec", correct=True, got={"rule": "fraud_guard"}, fraud=True,
+                       rule_alone="fraud_guard")  # fmt: skip
+    m = evalrun.genuine_metrics([blocked, fraud], cases, rules_now)
+    assert m["genuine_cases"] == 1  # the BEC expects fraud: never "genuine"
+    assert m["genuine_hide_dropped"] == ["starter-control"]
+    assert m["genuine_flagged"] == {
+        "run": {"fraud_guard": [], "fraud_weak": ["starter-control"]},
+        "rules_alone": {"fraud_guard": [], "fraud_weak": []}}  # fmt: skip
+    plain = blocked.model_copy(update={"hide_blocked": [], "got": {"rule": "marketing"}})
+    m = evalrun.genuine_metrics([plain], cases, rules_now)  # refused only for corroboration
+    assert m["genuine_hide_dropped"] == [] and m["genuine_flagged"]["run"]["fraud_weak"] == []

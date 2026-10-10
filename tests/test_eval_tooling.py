@@ -24,6 +24,7 @@ from ecf.eval.results import (
     differences,
     input_warnings,
     schema_warning,
+    scoring,
 )
 from ecf.schema import load_schema
 
@@ -330,6 +331,24 @@ def test_compare_warns_when_the_runs_were_asked_differently() -> None:
     assert [w.split(" (")[0] for w in warned] == ["warning: different prompt",
                                                   "warning: different inputs"]  # fmt: skip
     assert input_warnings(pa, b) == []  # a run that recorded none can't be told apart
+
+
+def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:
+    """Pre-classifier plan step 7 (M8): a policy rescore beside a live run, or runs whose
+    keywords or starter rules differ, are named before the figures."""
+    a, b = _run("A", [True]), _run("B", [True])
+    ka = a.model_copy(update={"summary": {"keywords_digest": "k1", "rules_digest": "r1",
+                                          "scoring": "live"}})  # fmt: skip
+    kb = b.model_copy(update={"summary": {"keywords_digest": "k2", "rules_digest": "r2",
+                                          "scoring": "policy", "rescored_from": {}}})  # fmt: skip
+    assert input_warnings(ka, kb) == [
+        "warning: different scoring (live vs policy)",
+        "warning: different keywords (keywords_digest k1 vs k2)",
+        "warning: different rules (rules_digest r1 vs r2)",
+    ]
+    old = b.model_copy(update={"summary": {"rescored_from": {}}})  # an older rescore
+    assert scoring(old) == "recorded" and scoring(a) == "live"
+    assert input_warnings(a, old) == ["warning: different scoring (live vs recorded)"]
 
 
 def test_compare_fields_holm() -> None:

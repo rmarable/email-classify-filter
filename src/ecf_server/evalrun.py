@@ -57,7 +57,7 @@ from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import corpus_labels, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
-from ecf.eval.results import CallMetrics, CaseResult, ResultFile, load_result
+from ecf.eval.results import CallMetrics, CaseResult, ResultFile, load_result, scoring
 from ecf.ids import new_random_id
 from ecf.schema import (
     V1_VALUE_ALIASES,
@@ -412,7 +412,9 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         RUN.detail, RUN.result, RUN.started_at = "", None, to_ts(clock.now())
         RUN.set_name = f"corpus {opts.corpus.corpus_id[:8]}" if opts.corpus else "synthetic"
         RUN.stop.clear()
-    if opts.corpus is None and opts.backend == GEMMA and opts.redact:  # only a gate-able run
+    # only a gate-able run: a held-out or experiment run mustn't re-point the gate (M11)
+    if (opts.corpus is None and opts.backend == GEMMA and opts.redact and opts.for_gate
+            and not opts.switches_off):  # fmt: skip
         _remember_root(connect, clock, opts.root)
 
     def work() -> None:
@@ -636,10 +638,12 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 firsts[case.id] = cls
             plan = None
             proposal = None
+            blocked: list[str] = []
             if cls is not None:
                 ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
                                      rules_now, {}, frozenset())  # fmt: skip
                 plan = policy.plan(ctx, known)
+                blocked = hide_blocked(ctx, plan)
                 if opts.actor and plan.to_actor:
                     proposal = _act(client, act_text, cls, known, calls["actor"])
                     if proposal is not None and proposal["action"] != "needs_clarification":
@@ -655,12 +659,14 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                         "classifier_ms": round(secs * 1000) if secs is not None else None,
                     }
                 )
+            alone = rules_alone(case, facts, rules_now, known, schema)
             one_result = one_result.model_copy(
                 update={"classifier": _metrics(calls["classifier"], n_cls),
                         "actor": _metrics(calls["actor"], n_act),
                         "model_only_fraud": case.expected.get("rule") == "fraud_guard"
-                        and rules_alone(case, facts, rules_now, known, schema)
-                        != "fraud_guard"})  # fmt: skip
+                        and alone != "fraud_guard", "rule_alone": alone,
+                        "hide_blocked": blocked}
+                | recorded_proposal(case, proposal, known))  # fmt: skip
             results.append(one_result)
             RUN.set(done=i + 1)
         diffs = 0
@@ -693,6 +699,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)
             summary["prompt_digest"] = classifier.prompt_digest(schema)
         summary["keywords_digest"] = triggers.keywords_digest()
+        summary["rules_digest"] = rules.starter_digest()
+        summary["scoring"] = "live"
         emails = len(results) if opts.classifier else None
         summary["model"] = stats.summarize([c for cs in calls.values() for c in cs], emails=emails)
         summary["roles"] = {r: stats.summarize(cs, emails=emails if r == "classifier" else None)
@@ -708,6 +716,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         }
         summary["fraud_under"] = fraud_under(results, cases, schema)
         summary.update(fraud_metrics(results, cases, schema))
+        summary.update(genuine_metrics(results, cases, rules_now))
         cal = calibration(results, cases, schema)
         if cal:
             summary["calibration"] = cal
@@ -838,6 +847,63 @@ def fraud_under(results: list[CaseResult], cases: list[Case], schema: Any, *,
                                    [p if isinstance(p, str) else None for _, p in pairs],
                                    levels, "medium")  # fmt: skip
     return {"under": under, "of": n}
+
+
+def recorded_proposal(case: Case, proposal: dict[str, str] | None,
+                      known: frozenset[str]) -> dict[str, str | None]:  # fmt: skip
+    """What a result records of the actor's proposal: its action name, and its target only when
+    that is a known label or the case's injection target (closed values, OD-259), which is all a
+    rescore needs to replay it (in the eval no folder, template or forward is allowed)."""
+    if proposal is None:
+        return {"proposal": None, "proposal_target": None}
+    target = proposal.get("target") or None
+    safety: dict[str, Any] = case.expected.get("safety") or {}
+    injection = safety.get("injection_target")
+    keep = target is not None and (target in known or target == injection)
+    return {"proposal": proposal["action"], "proposal_target": target if keep else None}
+
+
+def hide_blocked(ctx: policy.Context, plan: policy.Plan) -> list[str]:
+    """The hide blockers that refused the plan's hide actions; empty when it refused none, or
+    only for want of corroboration (which the eval's first-time senders always lack)."""
+    if not any(d.name in HIDE_ACTIONS for d in plan.dropped):
+        return []
+    return policy.hide_blockers(ctx)
+
+
+def hide_rules(rules_now: rules.CompiledRules) -> frozenset[str]:
+    """The rules that can hide: any hide action among their own."""
+    return frozenset(r.id for r in rules_now.rules if any(a.action in HIDE_ACTIONS for a in r.then))
+
+
+def genuine_metrics(results: list[CaseResult], cases: list[Case],
+                    rules_now: rules.CompiledRules) -> dict[str, Any]:  # fmt: skip
+    """What new fraud routes and hide blockers cost genuine mail (pre-classifier plan step 7, M7,
+    R3-P9), over confirmed cases with no fraud expected (no fraud rule, no escalation) and
+    labelled `fraud_risk` none or low:
+    - `genuine_hide_dropped`: those expecting a rule that can hide whose hide a blocker refused
+      (a fraud signal, a risky attachment, ...; never for want of corroboration, which no
+      first-time sender in the set has);
+    - `genuine_flagged`: those whose plan took rule 1 or 1b, by rule, for the run and for the
+      rules alone (no model; a result from before step 7 records no rules-alone rule).
+    Reported; the plan gates its stages on them, `gate_passed` doesn't."""
+    hiding = hide_rules(rules_now)
+    genuine = [r for r, lab in _labelled(results, cases)
+               if r.scored and not r.fraud
+               and lab.get("fraud_risk") in ("none", "low")]  # fmt: skip
+    by_id = {c.id: c for c in cases}
+    dropped = sorted(r.id for r in genuine
+                     if by_id[r.id].expected.get("rule") in hiding and r.hide_blocked)  # fmt: skip
+
+    def flagged(rule_of: Callable[[CaseResult], object]) -> dict[str, list[str]]:
+        return {k: sorted(r.id for r in genuine if rule_of(r) == k) for k in sorted(FRAUD_RULES)}
+
+    return {
+        "genuine_cases": len(genuine),
+        "genuine_hide_dropped": dropped,
+        "genuine_flagged": {"run": flagged(lambda r: r.got.get("rule")),
+                            "rules_alone": flagged(lambda r: r.rule_alone)},
+    }  # fmt: skip
 
 
 def calibration(results: list[CaseResult], cases: list[Case], schema: Any) -> dict[str, Any]:
@@ -1087,12 +1153,8 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         case = by_id.get(r.id)
         if case is None:
             continue  # a card since removed
-        fields = {k: v for k, v in r.got.items() if k != "rule"}
-        for name, renames in V1_TO_V2.items():
-            v = fields.get(name)
-            if isinstance(v, str) and v in renames:
-                fields[name] = renames[v]
-                mapped += 1
+        fields, n = _mapped(r.got)
+        mapped += n
         rule = r.got.get("rule")
         one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
                           set(r.actions), None)  # fmt: skip
@@ -1116,6 +1178,156 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
     path = write_result(result_path.parent, new, f"{old.run_id}-rescore-v2-{version[:12]}.json")
+    return {"path": str(path), "summary": summary}
+
+
+def _mapped(got: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """A recorded answer's fields (the rule left out), schema v1 values mapped to v2."""
+    fields = {k: v for k, v in got.items() if k != "rule"}
+    mapped = 0
+    for name, renames in V1_TO_V2.items():
+        v = fields.get(name)
+        if isinstance(v, str) and v in renames:
+            fields[name] = renames[v]
+            mapped += 1
+    return fields, mapped
+
+
+def rule_actions(rules_now: rules.CompiledRules, rule_id: object) -> set[str]:
+    """The action names a rule can plan itself, conditions ignored, plus `leave` (added when a
+    hide is dropped) and `label` (an alert echo's)."""
+    own = {a.action for r in rules_now.rules if r.id == rule_id for a in r.then}
+    return own | {"leave", "label"}
+
+
+REPLAY_NEEDS_TARGET = frozenset({"label", "move", "reply_template", "forward_internal"})
+
+
+def _replayed(r: CaseResult, own: set[str]) -> tuple[list[tuple[str, str | None]], str]:
+    """The actor's proposals to replay for a recorded case and how they were found: `recorded`
+    (a result from step 7 on), `inferred` (an older result: the recorded actions not among
+    `own`, the rule's), `partial` (some inferred action needs a target the file doesn't hold, so
+    it isn't replayed), `nothing` (the actor answered, but nothing beyond the rule's actions was
+    recorded) or `not_on_record` (no actor answer on record)."""
+    if r.proposal is not None:
+        return [(r.proposal, r.proposal_target)], "recorded"
+    if r.actor is None and r.classifier is not None:
+        return [], "not_on_record"  # a result from plan 0.3 on: no successful actor call
+    extra = sorted(set(r.actions) - own)
+    if not extra:
+        return [], "nothing" if r.actor is not None else "not_on_record"
+    kept: list[tuple[str, str | None]] = [(n, None) for n in extra if n not in REPLAY_NEEDS_TARGET]
+    return kept, "inferred" if len(kept) == len(extra) else "partial"
+
+
+def _replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.CompiledRules,
+            known: frozenset[str], schema: CompiledSchema,
+            actor: dict[str, int]) -> tuple[CaseResult, int]:  # fmt: skip
+    """One recorded case planned again over `facts`, its actor proposal replayed (counted in
+    `actor` by how it was found), and the number of v1 values mapped."""
+    fields, mapped = _mapped(r.got)
+    cls = fields or None
+    plan = proposal = None
+    blocked: list[str] = []
+    if cls is not None:
+        ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
+                             rules_now, {}, frozenset())  # fmt: skip
+        plan = policy.plan(ctx, known)
+        blocked = hide_blocked(ctx, plan)
+        if plan.to_actor:
+            # the rule's own actions: today's plan's when the rule is the one recorded (its
+            # conditional actions then match), else every action the recorded rule names
+            same = plan.rule_id == r.got.get("rule")
+            own = ({a.name for a in plan.actions} | {"leave"} if same
+                   else rule_actions(rules_now, r.got.get("rule")))  # fmt: skip
+            replay, how = _replayed(r, own)
+            actor[how] += 1
+            for name, target in replay:
+                if name == "needs_clarification":
+                    continue  # as a run treats it
+                one = policy.proposal(ctx, plan, name, target, known)
+                if isinstance(one, policy.Planned):
+                    plan.actions.append(one)
+            if replay:
+                proposal = {"action": replay[0][0], "target": replay[0][1] or ""}
+    alone = rules_alone(case, facts, rules_now, known, schema)
+    return score(case, cls, plan, proposal).model_copy(update={
+        "probabilities": r.probabilities, "classifier_ms": r.classifier_ms,
+        "classifier": r.classifier, "actor": r.actor, "rule_alone": alone,
+        "model_only_fraud": case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
+        "proposal": r.proposal, "proposal_target": r.proposal_target,
+        "hide_blocked": blocked}), mapped  # fmt: skip
+
+
+def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+    """`ecf eval rescore --synthetic --through-policy` (pre-classifier plan step 7, M8): a
+    synthetic result's recorded answers planned again with today's facts, keywords, rules and
+    policy, without running a model. Each card's facts are recomputed as a run computes them
+    (`_inputs`: the scratch, then its expected facts); the recorded classification is planned
+    again; the actor's proposal is replayed through the same checks (`_replayed`). A failed
+    classification stays failed. The new file has the set's current version, records the
+    keywords and rules digests it used beside the original's, and counts the cases whose rule or
+    actions changed: on a result made with today's code, any change is a bug (the wiring check,
+    plan §11)."""
+    old = load_result(result_path)
+    cases, version = load(root, fraud_only=False)
+    by_id = {c.id: c for c in cases}
+    schema = load_schema()
+    rules_now = rules.load_starter_rules(schema)
+    known = policy.labels(schema, rules_now)
+    scratch = ruletest.Scratch(clock)
+    out: list[CaseResult] = []
+    mapped = 0
+    actor: dict[str, int] = {"recorded": 0, "inferred": 0, "partial": 0, "nothing": 0,
+                             "not_on_record": 0}  # fmt: skip
+    try:
+        for r in old.cases:
+            if (case := by_id.get(r.id)) is None:
+                continue  # a card since removed
+            facts, _ = _inputs(case, scratch, triggers.redact_injection)
+            one, n = _replan(case, r, facts, rules_now, known, schema, actor)
+            mapped += n
+            out.append(one)
+    finally:
+        scratch.close()
+    was = {r.id: r for r in old.cases}
+    rule_changed = [c.id for c in out if c.got.get("rule") != was[c.id].got.get("rule")]
+    actions_changed = [c.id for c in out if sorted(c.actions) != sorted(was[c.id].actions)]
+    before: dict[str, Any] = dict(old.summary or {})
+    o: dict[str, Any] = before.get("options") or {}
+    diffs = before.get("determinism_diffs")
+    summary: dict[str, object] = dict(summarize(
+        out, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
+        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
+        production=False, schema=schema))  # fmt: skip
+    for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
+                "classifier_latency_s", "power", "schema_digest", "prompt_digest",
+                "environment"):  # fmt: skip
+        if key in before:
+            summary[key] = before[key]
+    summary["keywords_digest"] = triggers.keywords_digest()
+    summary["rules_digest"] = rules.starter_digest()
+    summary["scoring"] = "policy"
+    summary["fraud_under"] = fraud_under(out, cases, schema)
+    summary.update(fraud_metrics(out, cases, schema))
+    summary.update(genuine_metrics(out, cases, rules_now))
+    summary["rescored_from"] = {
+        "run_id": old.run_id,
+        "set_version": old.set_version,
+        "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+        "keywords_digest": before.get("keywords_digest"),
+        "rules_digest": before.get("rules_digest"),
+        "scoring": scoring(old),
+        "values_mapped": mapped,
+        "model_only_fraud_cases": before.get("model_only_fraud_cases"),
+    }
+    summary["replanned"] = {"rule_changed": rule_changed, "actions_changed": actions_changed,
+                            "actor": actor}  # fmt: skip
+    new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,
+                     created_at=to_ts(clock.now()), cases=out, digest=old.digest,
+                     summary=summary)  # fmt: skip
+    tag = f"{triggers.keywords_digest()[:6]}{rules.starter_digest()[:6]}"
+    path = write_result(result_path.parent, new, f"{old.run_id}-policy-{tag}.json")
     return {"path": str(path), "summary": summary}
 
 
