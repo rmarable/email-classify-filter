@@ -321,3 +321,31 @@ injection:
     - instruction for the email classifier
     - set category to
     - set the category to
+
+# Attachment types that run or render as a page when opened (pre-classifier plan §5 C, P13; not
+# keywords: the fact `risky_attachment`, read by `facts.py`): HTML and web archives (credential
+# phishing pages), SVG (scripts), HTA, scripts, shortcuts, executables and disk images. Tested on
+# the extension of the whole name, before the 100-character cap, and on the content type, so
+# `application/octet-stream` with one of these extensions counts.
+risky_attachment:
+  extensions: [html, htm, shtml, xht, xhtml, mht, mhtml, svg, svgz, hta, js, jse, vbs, vbe, wsf,
+               wsh, ps1, lnk, exe, scr, com, pif, bat, cmd, msi, cpl, jar, iso, img, dmg]
+  content_types:
+    - text/html
+    - application/xhtml+xml
+    - application/x-mimearchive
+    - image/svg+xml
+    - application/hta
+    - application/javascript
+    - application/x-javascript
+    - text/javascript
+    - text/vbscript
+    - application/x-ms-shortcut
+    - application/x-msdownload
+    - application/x-msdos-program
+    - application/x-dosexec
+    - application/vnd.microsoft.portable-executable
+    - application/x-msi
+    - application/java-archive
+    - application/x-iso9660-image
+    - application/x-apple-diskimage

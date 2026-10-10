@@ -168,6 +168,15 @@ def test_bank_details_need_an_unconfirmed_sender_change_wording_or_reply_to() ->
     assert fire("Our bank account is below.", reply_to_mismatch=True).fraud
 
 
+def test_a_risky_attachment_on_a_payment_code_or_gift_card_item_is_weak() -> None:
+    """Pre-classifier plan §5 C (P13): rule 1b, never on the account's own mail to itself."""
+    for body in ("Invoice 42 is attached.", "Your login is attached.", "A gift card for you."):
+        assert fire(body, risky_attachment=True).fraud_weak == [tr.RISKY_ATTACHMENT], body
+    assert fire("Notes from the meeting.", risky_attachment=True).fraud_weak == []
+    assert fire("Invoice 42 is attached.").fraud_weak == []
+    assert fire("Invoice 42 is attached.", risky_attachment=True, self_sent=True).fraud_weak == []
+
+
 def test_first_time_payment_needs_a_second_signal() -> None:
     weak = fire("Invoice 42 is attached.", sender_seen_before=False, sender_confirmed=False)
     assert weak.fraud == [] and weak.fraud_weak == ["first-time sender with a payment keyword"]

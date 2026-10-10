@@ -20,7 +20,7 @@ import json
 import quopri
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from email import message_from_bytes, policy
 from email.errors import HeaderParseError
 from email.header import decode_header, make_header
@@ -29,14 +29,16 @@ from email.parser import BytesHeaderParser
 from email.policy import Policy
 from email.utils import getaddresses
 
-from ecf_server.htmltext import html_to_text, strip_data_uris, tidy
+from ecf_server.htmltext import LINK_CAP, html_text, plain_links, strip_data_uris, tidy
 from ecf_server.mail import PartInfo
 
 HASH_VERSION = 1
 PARTIAL_HASH_VERSION = 0  # oversized messages: headers and part sizes only (see parse_partial)
 CLASSIFIER_CHARS = 1500  # SPEC §5.1 step 4
 ACTOR_CHARS = 4000
-NAME_CHARS = 100  # attachment names are capped (§7.2)
+NAME_CHARS = 100  # attachment names are capped (§7.2) ...
+NAME_TAIL = 12  # ... as head…tail, keeping the end, so the extension stays readable (P24)
+EXTENSION_CHARS = 16
 DEFAULT_SCAN_BYTES = 10 * 1024 * 1024  # max_scan_bytes_per_part default (OD-027)
 KEPT_HEADERS = (
     "from",
@@ -73,6 +75,17 @@ class Attachment:
     content_type: str
     size: int
     inline: bool
+    extension: str = ""  # lowercased, from the whole name before the cap (P24)
+
+
+def attachment(name: str, content_type: str, size: int, inline: bool) -> Attachment:
+    """An attachment record: the name capped as head…tail, the extension taken from the whole
+    name (trailing dots and spaces, which Windows drops, ignored)."""
+    stem = name.strip().rstrip(". ")
+    ext = stem.rsplit(".", 1)[1].lower()[:EXTENSION_CHARS] if "." in stem else ""
+    if len(name) > NAME_CHARS:
+        name = name[: NAME_CHARS - NAME_TAIL - 1] + "…" + name[-NAME_TAIL:]
+    return Attachment(name, content_type, size, inline, ext)
 
 
 @dataclass(frozen=True)
@@ -83,6 +96,8 @@ class TextPart:
     truncated: bool  # longer than the scan limit: only the start was scanned
     attachment: bool = False  # a text/* attachment or a body in another text type: scanned by
     # the triggers (mail clients show them inline) but never used for excerpts (V1.1 review)
+    links: int = 0  # saturates at htmltext.LINK_CAP
+    link_text_mismatch: bool = False  # HTML only (htmltext)
 
 
 @dataclass(frozen=True)
@@ -108,6 +123,14 @@ class ParsedMessage:
     @property
     def any_truncated(self) -> bool:
         return any(t.truncated for t in self.texts)
+
+    @property
+    def link_count(self) -> int:
+        return min(sum(t.links for t in self.texts), LINK_CAP)
+
+    @property
+    def link_text_mismatch(self) -> bool:
+        return any(t.link_text_mismatch for t in self.texts)
 
     def full_text(self) -> str:
         return "\n\n".join(t.full for t in self.texts if t.full)
@@ -208,9 +231,7 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
             data = payload if isinstance(payload, bytes) else b""
             h.update(b"a" + len(data).to_bytes(8, "big") + data)
             name = part.get_filename() or ""
-            attachments.append(
-                Attachment(name[:NAME_CHARS], ctype, len(data), disposition != "attachment")
-            )
+            attachments.append(attachment(name, ctype, len(data), disposition != "attachment"))
             if ctype.startswith("text/"):  # also scanned, as the reader sees it (§8.5)
                 texts.append(_attached_text(ctype, _decode_text(part), max_scan_bytes))
     return _parsed(
@@ -219,8 +240,7 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
 
 
 def _attached_text(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
-    t = _text_part(ctype, normalize_text(decoded), max_scan_bytes)
-    return TextPart(t.content_type, t.full, t.visible, t.truncated, attachment=True)
+    return replace(_text_part(ctype, normalize_text(decoded), max_scan_bytes), attachment=True)
 
 
 _BARE_CR = re.compile(rb"\r(?!\n)")
@@ -315,20 +335,11 @@ def parse_partial(
             decoded = normalize_text(_charset(_transfer_decode(fetched, p.encoding), p.charset))
             text = _text_part(p.content_type, decoded, max_scan_bytes)
             cut = p.size > len(fetched)
-            out_texts.append(
-                TextPart(
-                    text.content_type,
-                    text.full,
-                    text.visible,
-                    text.truncated or cut,
-                    attachment=not body,
-                )
-            )
+            out_texts.append(replace(text, truncated=text.truncated or cut, attachment=not body))
         if not body:
             approx = p.size * 3 // 4 if p.encoding == "base64" else p.size
-            name = (p.filename or "")[:NAME_CHARS]
             attachments.append(
-                Attachment(name, p.content_type, approx, p.disposition != "attachment")
+                attachment(p.filename or "", p.content_type, approx, p.disposition != "attachment")
             )
     return _parsed(
         msg,
@@ -366,11 +377,12 @@ def _text_part(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
     if ctype == "text/html":
         source = strip_data_uris(decoded)
         scanned, truncated = _cap(source, max_scan_bytes)
-        full, visible = html_to_text(scanned)
+        full, visible, links = html_text(scanned)
     else:
         scanned, truncated = _cap(decoded, max_scan_bytes)
         full = visible = tidy(scanned)
-    return TextPart(ctype, full, visible, truncated)
+        links = plain_links(scanned)
+    return TextPart(ctype, full, visible, truncated, False, links.number, links.text_mismatch)
 
 
 def _cap(text: str, max_bytes: int) -> tuple[str, bool]:

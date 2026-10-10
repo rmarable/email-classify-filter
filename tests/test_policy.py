@@ -52,6 +52,7 @@ FACTS = st.fixed_dictionaries({
     "tax_form_request": st.booleans(),
     "self_sent": st.booleans(),
     "gift_card_keyword": st.booleans(),
+    "risky_attachment": st.booleans(),  # a hide blocker (pre-classifier plan step 5)
 })  # fmt: skip
 # A hand-written custom set that tries to hide mail rule 1 escalates: the invariants hold for any
 # rules, not only the starter ones (v2.1.0's starter rules are v2.0.0's, unchanged).
@@ -94,6 +95,7 @@ def test_i1_a_hide_survives_only_when_facts_allow_it(ctx: Context) -> None:
     if p.hides:
         assert ctx.sensitivity == "standard"
         assert not ctx.facts["content_unscanned"] and not ctx.facts["quarantined"]
+        assert not ctx.facts["risky_attachment"]
         t = ctx.facts["triggers"]
         assert not (t["fraud"] or t["fraud_weak"] or t["regulator"] or t["lookalikes"])
         assert ctx.classification["fraud_risk"] == "none"
@@ -175,6 +177,15 @@ def test_labels_are_dropped_where_the_provider_cant_keep_them() -> None:
 def test_corroborated_marketing_is_archived_automatically() -> None:
     p = policy.plan(_ctx(), LABELS)
     assert _names(p) == [("label", "marketing", "auto"), ("archive", None, "auto")]
+
+
+def test_a_risky_attachment_blocks_hiding_and_link_facts_dont() -> None:
+    """Pre-classifier plan §5 C (P13): a risky attachment is a hide blocker; the link facts are
+    recorded only, since tracking redirects would make most newsletters mismatch."""
+    p = policy.plan(_ctx(facts={"risky_attachment": True}), LABELS)
+    assert _names(p) == [("label", "marketing", "auto"), ("leave", None, "auto")]
+    links = policy.plan(_ctx(facts={"link_text_mismatch": True, "link_count": 40}), LABELS)
+    assert ("archive", None, "auto") in _names(links)
 
 
 def test_the_action_policy_can_ask_for_approval() -> None:

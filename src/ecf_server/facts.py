@@ -14,11 +14,14 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cache
+from importlib import resources
 from typing import Any
 
+from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.clock import from_ts
-from ecf_server.message import ParsedMessage
+from ecf_server.message import Attachment, ParsedMessage
 
 # Public mailbox providers can't be org domains (SPEC §7.2): anyone can get an address there.
 # Nor is one a lookalike of another (OD-430): `ymail.com` isn't impersonating `gmail.com`.
@@ -183,6 +186,10 @@ def compute(  # noqa: PLR0913 - the message, its address and what the scan found
         "bulk_corroborates": corroborates(bulk, auth_result, seen),
         "content_unscanned": bool(unscanned),
         "unscanned_reasons": unscanned,
+        # recorded for measurement only, not a hide blocker (pre-classifier plan §5 C, P13)
+        "link_count": parsed.link_count,
+        "link_text_mismatch": parsed.link_text_mismatch,
+        "risky_attachment": any(risky(a) for a in _real(parsed)),  # a hide blocker (policy)
     }
 
 
@@ -259,19 +266,37 @@ def _unscanned_reasons(
         reasons.append("over the size limit")
     if p.any_truncated:
         reasons.append("a text part over the scan limit")
-    # unnamed inline parts (logos and images in signatures) aren't attachments a person sent
-    real = [a for a in p.attachments if not a.inline or a.name]
+    real = _real(p)
     if real and payment_keyword:
         reasons.append("attachments on a payment item")
-    if first_time and any(_is_document(a.content_type, a.name) for a in real):
+    if first_time and any(_is_document(a) for a in real):
         reasons.append("a document from a first-time sender")
     if real and address.sensitivity == "high":
         reasons.append("an attachment on a high address")
     return reasons
 
 
-def _is_document(content_type: str, name: str) -> bool:
-    return content_type.startswith(DOCUMENT_TYPES) or name.lower().endswith(DOCUMENT_EXTENSIONS)
+def _real(p: ParsedMessage) -> list[Attachment]:
+    """Unnamed inline parts (logos and images in signatures) aren't attachments a person sent."""
+    return [a for a in p.attachments if not a.inline or a.name]
+
+
+def _is_document(a: Attachment) -> bool:
+    return a.content_type.startswith(DOCUMENT_TYPES) or f".{a.extension}" in DOCUMENT_EXTENSIONS
+
+
+@cache
+def _risky_lists() -> tuple[frozenset[str], frozenset[str]]:
+    text = resources.files("ecf_server.data").joinpath("keywords.yaml").read_text("utf-8")
+    spec: dict[str, list[str]] = load_yaml(text, source="keywords.yaml")["risky_attachment"]
+    return frozenset(spec["extensions"]), frozenset(spec["content_types"])
+
+
+def risky(a: Attachment) -> bool:
+    """An attachment that runs or renders as a page when opened (`keywords.yaml`
+    `risky_attachment`), by its extension or its content type."""
+    extensions, types = _risky_lists()
+    return a.extension in extensions or a.content_type.lower() in types
 
 
 def _history(

@@ -5,8 +5,10 @@ Keywords come from data/keywords.yaml and match whole words after folding (skele
 lookalike letters, zero-width characters and full-width forms don't hide them. Results:
 
 - `fraud`: fraud triggers 1-9 that fired, as plain-language reasons (rule 1, the fraud guard).
-- `fraud_weak`: a first-time sender with a payment keyword and no second signal (OD-062), or a
-  Reply-To mismatch on a payment item with no other signal (OD-068) (rule 1b).
+- `fraud_weak`: a first-time sender with a payment keyword and no second signal (OD-062), a
+  Reply-To mismatch on a payment item with no other signal (OD-068), or a risky attachment
+  (`facts.risky`) with a payment, credential or gift-card keyword (pre-classifier plan §5 C)
+  (rule 1b).
 - `regulator`: regulator keywords found (rule 2).
 - Fraud trigger 10 (OD-252): text addressed to an automated reader ("note to the classifier",
   "ignore previous instructions"); an email that tells the model what to conclude goes to a person.
@@ -47,6 +49,7 @@ from typing import Any
 from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
+from ecf_server.htmltext import COMMON_TLDS
 from ecf_server.message import ParsedMessage
 from ecf_server.skeleton import fold_ci, folds, keyword_fold, keyword_fold_ci, normalize
 
@@ -91,10 +94,7 @@ TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many lett
 SAAS_TENANT_PARENTS = ("zendesk.com", "freshdesk.com", "atlassian.net", "service-now.com")
 # Top-level domains a bare domain in a display name must end in to count for trigger 7; an
 # address always counts. Common ones only, so "Node.js" or "Vue.js" don't (V1.1 review).
-DISPLAY_TLDS = frozenset(
-    {"com", "net", "org", "co", "io", "us", "uk", "de", "fr", "ca", "au", "nl", "es", "it",
-     "info", "biz", "gov", "edu", "app", "dev", "ai", "me", "online", "site", "xyz"}
-)  # fmt: skip
+DISPLAY_TLDS = COMMON_TLDS
 _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])")
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
 # Characters of text scanned per message, over all its distinct texts (R3-P11): the scan runs in
@@ -475,6 +475,12 @@ def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     t.impersonation = impersonation(parsed, found, org_domains, org_addresses, public_domains)
     money = payment or bool(keywords["gift_card"])  # gift cards: money only here (OD-457)
     (t.fraud if money else t.fraud_weak).extend(t.impersonation)  # module docstring
+    if (
+        found.get("risky_attachment")
+        and not found.get("self_sent")
+        and any(keywords.get(g) for g in ("payment", "credential", "gift_card"))
+    ):
+        t.fraud_weak.append(RISKY_ATTACHMENT)  # rule 1b (pre-classifier plan §5 C, P13)
     if keywords.get("injection"):  # 10 (OD-252)
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 
@@ -550,6 +556,7 @@ CREDENTIAL = "a request for a code or password"
 GIFT_CODES = "a request for gift-card codes"
 CRYPTO = "a wallet address with a payment request"
 AUTH_REGRESSED = "a known sender's mail failed DMARC"
+RISKY_ATTACHMENT = "a web page, script or program attached to a payment, code or gift-card item"
 
 
 def routes(

@@ -18,6 +18,7 @@ from collections.abc import Callable
 import pytest
 
 from ecf_server import triggers as tr
+from ecf_server.htmltext import LINK_CAP, html_text
 from ecf_server.mail import PartInfo
 from ecf_server.message import parse, parse_partial
 from ecf_server.skeleton import entity_text
@@ -164,3 +165,27 @@ def test_redact_injection_on_10_mib_of_tiny_paragraphs(injected: str, units: int
     took, out = _cpu(lambda: tr.redact_injection(text))
     assert took < units * unit
     assert (tr.INJECTION_MARK in out) is (injected != "none")
+
+
+def _repeat(unit_text: str) -> str:
+    return unit_text * (10 * MIB // len(unit_text))
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["anchors", "nested-unclosed-anchors", "one-anchor-of-10-mib", "a-10-mib-href", "paragraphs"],
+)
+def test_link_recording_on_hostile_html(shape: str) -> None:
+    """Pre-classifier plan step 5 (P22): the anchor recorder stays linear. About 8-10 units for
+    each shape on this Mac (2026-10-10), the same as ordinary paragraphs with no anchors."""
+    html = {
+        "anchors": lambda: _repeat('<a href="https://evil.test/x">www.vendor-a.example</a>'),
+        "nested-unclosed-anchors": lambda: _repeat('<a href="https://evil.test/">acme.com '),
+        "one-anchor-of-10-mib": lambda: '<a href="https://x.test/">' + _repeat("acme.com "),
+        "a-10-mib-href": lambda: '<a href="https://' + "a" * (10 * MIB) + '.test/">acme.com</a>',
+        "paragraphs": lambda: _repeat("<p>" + LINE + "</p>"),
+    }[shape]()
+    unit = _unit()
+    took, out = _cpu(lambda: html_text(html))
+    assert took < 30 * unit
+    assert out.links.number <= LINK_CAP
