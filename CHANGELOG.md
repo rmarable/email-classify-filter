@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.1.0-rc1 (not yet tagged)
+## v2.1.0-rc1 (2026-10-11)
 
 - Release builds and CI run on GitHub's Ubuntu 24.04 runner, pinned, instead of whichever Ubuntu GitHub calls latest, which becomes Ubuntu 26 on 2026-10-19 (operator decision 2026-10-11; SPEC §17.4).
 - The rule for what ecf may tell a model now also allows a fact about an email's own links or attachments, never about its sender (ADR 0026 amended, OD-489).
