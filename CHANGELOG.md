@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- The rule for what ecf may tell a model now also allows a fact about an email's own links or attachments, never about its sender (ADR 0026 amended, OD-489).
 - The local and Claude classifiers are now told when a link's visible text names a different site than the link goes to, and when an email has an attachment that can run code or open a web page (two fixed sentences, no addresses or names; OD-489); this is a new gate for every address (local and Claude).
 - `ecf eval run --no-message-signals` asks without those two sentences, for comparison (never counts for the go-live gate).
 - The classifier and actor now read every text part of an email, with quoted replies, signatures and footers moved after the new text behind a line saying ecf moved them (never removed), so a request below a quote or in a second text part is no longer missed; this is a new gate for every address (local and Claude).

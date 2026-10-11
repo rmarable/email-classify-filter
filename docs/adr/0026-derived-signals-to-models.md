@@ -2,7 +2,8 @@
 
 - **Status:** accepted (operator decision 2026-10-09, OD-483); amends ADR 0009 ("facts never go
   to or come from a model"); the first exemption, OD-484, is built in `v2.1.0` (classifier plan
-  items 3-5)
+  items 3-5); amended by OD-489 (operator decision 2026-10-11): a signal may also be a fact about
+  the message's own structure that no rule reads
 - **Context source:** SPEC §3.2, §7.2, §10.4, §12.4; ADR 0009; classifier plan
   (`planning-docs/CLASSIFIER-MODEL-PERFORMANCE-IMPROVEMENTS.md`) §2 and Phase R findings P2, P3,
   P10, P18; runs `a0462682`, `883204b3` and `d880a988` (SPEC §21.2)
@@ -22,9 +23,11 @@ decide anything.
 
 - **Default unchanged:** no computed fact is sent to a model.
 - **Exemptions by OD,** per signal and per role (local classifier, Claude classifier, actor). Each
-  exempted signal is a composed boolean, the truth of a rule-level condition, sent only when true,
-  in fixed service wording, built by one shared function with an allow-list test, so no trigger
-  reason, address, keyword or sender detail can leak (P3, P18).
+  exempted signal is a composed boolean, the truth of a rule-level condition or (OD-489,
+  2026-10-11) a fact about the message's own structure (its links or attachments, as the service
+  parsed them; never about the sender), sent only when true, in fixed service wording, built by
+  one shared function with an allow-list test, so no trigger reason, address, keyword or sender
+  detail can leak (P3, P18).
 - **Never sent:** `auth_result`, `sender_seen_before`, `sender_verified`, `sender_origin`,
   `sender_hash`, `bulk_signal` (attacker-set headers, the only fact pushing toward a hide; P2),
   `reply_to_mismatch` and raw keyword hits.
