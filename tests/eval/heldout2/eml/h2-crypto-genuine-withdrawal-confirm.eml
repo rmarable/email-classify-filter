@@ -1,0 +1,47 @@
+Received: from mail.notify.harbourline.example
+ (mail.notify.harbourline.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id h2-crypto-genuine-withdrawal-confirm; Fri, 09 Oct 2026 21:16:00 +0000
+From: Harbourline Exchange <no-reply@notify.harbourline.example>
+To: pat-lee@freemail.example
+Subject: Withdrawal sent: 0.0425 BTC
+Date: Fri, 09 Oct 2026 21:16:00 +0000
+Message-ID:
+ <h2-crypto-genuine-withdrawal-confirm.3812ac23b6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Your withdrawal has been processed and broadcast to the Bitcoin network.
+
+Asset:          Bitcoin (BTC)
+Amount:         0.0425 BTC
+Network fee:    0.00006 BTC
+Destination:    TEST-WALLET-0412 (saved in your address book as "cold storage=
+")
+Requested:      9 Oct 2026, 21:14 UTC, Firefox on macOS, approx. location Lee=
+ds, UK
+Reference:      WD-20261009-77310
+
+Confirmation usually takes 30 to 60 minutes but can be slower when the networ=
+k is busy. You can follow it under Wallet > History in the app, or at https:/=
+/www.harbourline.example/account/history
+
+Didn't make this withdrawal?
+Lock your account now from the app (Settings > Security > Lock account) or ca=
+ll our 24/7 security line on +1 555-0147. Locking stops any further withdrawa=
+ls until you talk to us.
+
+A reminder about staying safe
+- Harbourline staff will never ask for your password, two-step codes or recov=
+ery phrase, by email, phone, chat or social media.
+- We will never ask you to move your funds to a "safe" or "verification" wall=
+et.
+- Only withdraw to addresses you control or have checked yourself.
+
+Thanks for trading with us,
+Harbourline Exchange
+
+This is a mandatory account notification and can't be turned off. Harbourline=
+ Exchange Ltd, 1 Example Quay, Example City.

@@ -1,0 +1,41 @@
+Received: from mail.paystream.example (mail.paystream.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-payroll-w2-portal; Fri, 23 Jan 2026
+ 15:00:00 +0000
+From: PayStream Payroll <employer-notices@paystream.example>
+To: payroll@acme.example
+Subject: Your 2025 Forms W-2 are ready
+Date: Fri, 23 Jan 2026 15:00:00 +0000
+Message-ID: <ho-genuine-payroll-w2-portal.c1489666fb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Acme,
+
+Your 2025 year-end tax forms are ready.
+
+  Company code: ACM7
+  Forms W-2 published: 214
+  Employee access: from 26 January 2026 in the PayStream employee app
+  Paper copies: mailed to home addresses by 30 January 2026
+
+Admins can view and download the full set, and the W-3 summary, from the empl=
+oyer
+portal under Reports > Year End:
+https://employer.paystream.example/reports/year-end
+
+Before 13 February, please:
+- check the totals against your final 2025 payroll register
+- tell us about any corrections so we can issue a W-2c
+
+We already filed copies with the Social Security Administration for you as pa=
+rt of
+your year-end service, so there's nothing to upload.
+
+Reminder: PayStream will never ask you to email W-2s or employee details to u=
+s or
+anyone else. Everything stays in the portal.
+
+Questions? Your service team is on 555-0127.
+
+PayStream Payroll, Employer Services

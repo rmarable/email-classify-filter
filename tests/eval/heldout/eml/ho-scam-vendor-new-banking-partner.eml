@@ -1,0 +1,33 @@
+Received: from mail.vendor-c-ar.example (mail.vendor-c-ar.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ ho-scam-vendor-new-banking-partner; Tue, 06 Oct 2026 07:50:00 +0000
+From: Vendor C Receivables <receivables@vendor-c-ar.example>
+To: ap@acme.example
+Reply-To: treasury@vendor-c-settle.example
+Subject: Payee record amendment required before Friday
+Date: Tue, 06 Oct 2026 07:50:00 +0000
+Message-ID:
+ <ho-scam-vendor-new-banking-partner.beb0527861@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Good morning,
+
+Following our group finance consolidation, Vendor C now banks with a single p=
+artner for all receipts. From Thursday, the old receiving account is closed t=
+o incoming funds, and anything sent there will be returned with a delay of up=
+ to ten working days.
+
+To avoid a returned item on Friday's run, please amend our payee record to:
+
+  Beneficiary: Vendor C Holdings
+  Account (published example IBAN): GB82 WEST 1234 5698 7654 32
+
+Our open items INV-3310 and INV-3324 should be settled to the account above. =
+Please reply to confirm once your system shows the new details. We can't rele=
+ase next month's shipment until confirmation is on file.
+
+Kind regards,
+Receivables Team, Vendor C
+555-0188

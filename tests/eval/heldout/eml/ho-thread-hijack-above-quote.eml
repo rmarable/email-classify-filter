@@ -1,0 +1,56 @@
+Received: from mail.vendor-c-ar.example (mail.vendor-c-ar.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ho-thread-hijack-above-quote;
+ Tue, 06 Oct 2026 13:12:00 +0000
+From: Vendor C Receivables <receivables@vendor-c-ar.example>
+To: ap@acme.example
+Subject: RE: Q3 statement and open items
+Date: Tue, 06 Oct 2026 13:12:00 +0000
+Message-ID: <ho-thread-hijack-above-quote.1be7f6ec57@synthetic.acme.example>
+MIME-Version: 1.0
+In-Reply-To: <q3-statement-0914@vendor-c.example>
+References:
+ <q3-statement-0911@acme.example> <q3-statement-0914@vendor-c.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Following up on the below. Our finance team has paused incoming wires while w=
+e finish
+a move to a new treasury provider, so for the two open items we're asking cus=
+tomers to
+settle in USDC this week instead. Please send 8,420.00 to our treasury wallet
+TEST-WALLET-0001 (Ethereum network) and reply with the transaction hash so we=
+ can apply
+it before the statement closes on Friday.
+
+Sorry for the extra step, it's only for this cycle.
+
+Leigh Sutter
+Receivables, Vendor C
+555-0118
+
+-----Original Message-----
+From: Leigh Sutter <lsutter@vendor-c.example>
+Sent: Monday, September 14, 2026 10:02 AM
+To: Accounts Payable <ap@acme.example>
+Subject: RE: Q3 statement and open items
+
+Thanks, we've received the credit memo request and will apply it on the Octob=
+er
+statement. Two items remain open after that (INV-C-7710 and INV-C-7731).
+
+Leigh
+
+-----Original Message-----
+From: Accounts Payable <ap@acme.example>
+Sent: Friday, September 11, 2026 3:40 PM
+To: Leigh Sutter <lsutter@vendor-c.example>
+Subject: Q3 statement and open items
+
+Hi Leigh, could you send the Q3 statement? We show a duplicate charge on INV-=
+C-7698
+and would like a credit memo for it.
+
+Thanks,
+ACME Accounts Payable

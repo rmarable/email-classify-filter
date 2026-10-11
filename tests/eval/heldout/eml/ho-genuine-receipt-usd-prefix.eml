@@ -1,0 +1,23 @@
+Received: from mail.vendor-f.example (mail.vendor-f.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-receipt-usd-prefix; Fri, 09 Oct 2026
+ 13:20:00 +0000
+From: Vendor F Billing <billing@vendor-f.example>
+To: ap@acme.example
+Subject: Receipt #R-20417
+Date: Fri, 09 Oct 2026 13:20:00 +0000
+Message-ID: <ho-genuine-receipt-usd-prefix.f8ef8725cf@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Receipt #R-20417
+
+Received from: Acme
+Amount: USD 1,200
+For: October window cleaning, 4 visits (invoice F-3318)
+Method: ACH, received 9 Oct 2026
+
+Balance due: USD 0
+
+Thanks, as always.
+Vendor F Billing

@@ -1,0 +1,33 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id h2-code-supplier-payment-reference; Wed, 07 Oct
+ 2026 10:12:00 +0000
+From: Lena Ortiz <lena-ortiz@vendor-a.example>
+To: ap@acme.example
+Subject: Payment received 6 Oct - which invoice is it for?
+Date: Wed, 07 Oct 2026 10:12:00 +0000
+Message-ID:
+ <h2-code-supplier-payment-reference.d5420de8e3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi there,
+
+We had a transfer from ACME land on Monday 6 October for EUR 3,480.00, but th=
+e reference line on our bank statement came through blank, so our system can'=
+t match it automatically.
+
+We have two invoices open for you at almost the same amount: INV-30417 (3,480=
+.00) and INV-30452 (3,408.00). I'd rather not close the wrong one and then ha=
+ve to chase you for a balance that's actually been paid.
+
+Could you send me the payment reference code you used on the transfer, or jus=
+t tell me which invoice it was meant for? If you have the remittance advice t=
+o hand, a copy of that would be even better.
+
+No rush, end of the week is fine.
+
+Thanks,
+Lena
+Accounts Receivable, Vendor A
+555-0131

@@ -1,0 +1,58 @@
+Received: from mail.news.northwind-supply.example
+ (mail.news.northwind-supply.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id ho-link-tracking-redirects-marketing; Tue, 06 Oct 2026 14:00:00
+ +0000
+From: Northwind Office Supply <deals@news.northwind-supply.example>
+To: ap@acme.example
+Subject: Fall restock: 20% off toner and paper this week
+Date: Tue, 06 Oct 2026 14:00:00 +0000
+Message-ID:
+ <ho-link-tracking-redirects-marketing.5f76cad0fa@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: multipart/alternative;
+ boundary="=_ecf_ho-link-tracking-redirects-marketing_0"
+
+--=_ecf_ho-link-tracking-redirects-marketing_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Fall restock week at Northwind Office Supply
+
+20% off toner, copy paper and labels through Sunday.
+
+Shop toner: https://click.mta-relay.example/ls/click?upn=3Dnw1006-toner&r=3Da=
+7c2
+Shop paper: https://click.mta-relay.example/ls/click?upn=3Dnw1006-paper&r=3Da=
+7c2
+Manage your email preferences: https://click.mta-relay.example/ls/click?upn=
+=3Dnw1006-prefs&r=3Da7c2
+
+Northwind Office Supply, 100 Example Way, Springfield. Call us at 555-0171.
+You're receiving this because you have a business account with us.
+
+--=_ecf_ho-link-tracking-redirects-marketing_0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<div style=3D"font-family:Helvetica,Arial,sans-serif;max-width:600px">
+  <h1 style=3D"color:#234">Fall restock week</h1>
+  <p>20% off toner, copy paper and labels through Sunday.</p>
+  <p><a href=3D"https://click.mta-relay.example/ls/click?upn=3Dnw1006-toner&a=
+mp;r=3Da7c2">Shop toner</a> |
+     <a href=3D"https://click.mta-relay.example/ls/click?upn=3Dnw1006-paper&a=
+mp;r=3Da7c2">Shop paper</a></p>
+  <p>Browse everything at <a href=3D"https://click.mta-relay.example/ls/click=
+?upn=3Dnw1006-home&amp;r=3Da7c2">northwind-supply.example/fall</a></p>
+  <img src=3D"https://click.mta-relay.example/o/nw1006-open.gif" width=3D"1" =
+height=3D"1" alt=3D"">
+  <p style=3D"font-size:11px;color:#888">Northwind Office Supply, 100 Example=
+ Way, Springfield. 555-0171.<br>
+     You're receiving this because you have a business account with us.
+     <a href=3D"https://click.mta-relay.example/ls/click?upn=3Dnw1006-prefs&a=
+mp;r=3Da7c2">Manage preferences</a></p>
+</div>
+
+--=_ecf_ho-link-tracking-redirects-marketing_0--

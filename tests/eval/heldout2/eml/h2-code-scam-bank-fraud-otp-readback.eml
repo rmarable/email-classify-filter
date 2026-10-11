@@ -1,0 +1,33 @@
+Received: from mail.northgate-secure-alerts.example
+ (mail.northgate-secure-alerts.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id h2-code-scam-bank-fraud-otp-readback; Fri, 09 Oct 2026 08:21:00
+ +0000
+From:
+ Northgate Bank Fraud Prevention <fraud-team@northgate-secure-alerts.example>
+To: ap@acme.example
+Subject: Did you make this payment? Reply needed within 30 minutes
+Date: Fri, 09 Oct 2026 08:21:00 +0000
+Message-ID:
+ <h2-code-scam-bank-fraud-otp-readback.6c722e0172@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear Customer,
+
+Our fraud monitoring has stopped a card payment of GBP 642.18 to "ELECTROWAVE=
+ ONLINE", attempted at 08:14 this morning. To protect you, we have placed a t=
+emporary hold on your debit card.
+
+To confirm the payment was not made by you and to cancel it, we have just sen=
+t a one-time passcode to the mobile number we hold for you. Please reply to t=
+his email with that passcode, or read it back to one of our fraud specialists=
+ on 555-0149, within 30 minutes. If we do not hear from you, the payment may =
+be released and your card will stay blocked.
+
+Please note: the text message will tell you not to share the code with anyone=
+. That message is meant for third parties and does not apply to Northgate's o=
+wn fraud team, who need the code to reverse the transaction.
+
+Northgate Bank
+Fraud Prevention Unit

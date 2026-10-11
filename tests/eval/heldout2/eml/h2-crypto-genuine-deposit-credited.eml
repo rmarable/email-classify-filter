@@ -1,0 +1,38 @@
+Received: from mail.copperleaf.example (mail.copperleaf.example [192.0.2.10])
+ by mx.example.net with ESMTPS id h2-crypto-genuine-deposit-credited; Tue, 06
+ Oct 2026 14:02:00 +0000
+From: Copperleaf Markets <alerts@copperleaf.example>
+To: ap@acme.example
+Subject: Deposit credited - 12,500.00 USDC
+Date: Tue, 06 Oct 2026 14:02:00 +0000
+Message-ID:
+ <h2-crypto-genuine-deposit-credited.35c3c790f7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Copperleaf Markets - deposit credited
+
+Account:        ACME Example Inc. (business, ID ending 4410)
+Asset:          USD Coin (USDC), Ethereum network
+Amount:         12,500.00 USDC
+From address:   TEST-WALLET-0261
+Confirmations:  64 of 64
+Credited:       6 Oct 2026, 14:01 UTC
+Reference:      DEP-CL-558102
+
+New USDC balance: 48,730.15 USDC (available)
+
+The funds are available for trading and withdrawal now. As set by your accoun=
+t administrator, withdrawals to addresses not yet on your allowlist are held =
+for 24 hours.
+
+See all activity: https://app.copperleaf.example/activity
+
+If you don't recognise this deposit, let your account administrator know. Dep=
+osits can't be reversed by Copperleaf.
+
+--
+Copperleaf Markets. You get these alerts because deposit notifications are on=
+ for this account. Admins can change alert settings under Team > Notification=
+s.

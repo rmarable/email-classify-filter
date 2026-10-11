@@ -1,0 +1,38 @@
+Received: from mail.vendor-e.example (mail.vendor-e.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-supplier-invoice-code; Tue, 06 Oct
+ 2026 09:12:00 +0000
+From: Vendor E Credit Control <creditcontrol@vendor-e.example>
+To: ap@acme.example
+Subject: RE: Payment received 2 Oct - which invoice?
+Date: Tue, 06 Oct 2026 09:12:00 +0000
+Message-ID:
+ <ho-genuine-supplier-invoice-code.c3b516cb53@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi there,
+
+Thanks for the payment of $3,480.00 that landed on 2 October. Unfortunately i=
+t came
+through with no reference, and you have two open invoices with us for exactly=
+ that
+amount (one for September's consumables, one for the replacement filters), so=
+ I
+can't tell which to clear.
+
+Could you send us the code from your invoice? It's the 8-character payment re=
+ference
+in the box under the total, starting "VE-" (for example VE-7K2Q9M). The PO nu=
+mber
+from your side would also do.
+
+Once I have it I'll allocate the payment and send you an updated statement.
+
+Many thanks,
+Credit Control
+Vendor E
+555-0149
+
+> On 2 Oct 2026, Acme Accounts Payable wrote:
+> Hi, payment sent today by ACH. Regards, AP

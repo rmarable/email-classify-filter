@@ -1,0 +1,33 @@
+Received: from mail.acme-helpdesk.example (mail.acme-helpdesk.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ho-scam-cred-it-pairing-code;
+ Wed, 07 Oct 2026 16:30:00 +0000
+From: Acme IT Service Desk <servicedesk@acme-helpdesk.example>
+To: ap@acme.example
+Subject: Tonight's mailbox move - action needed from you
+Date: Wed, 07 Oct 2026 16:30:00 +0000
+Message-ID: <ho-scam-cred-it-pairing-code.b91bc4261a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We're moving shared mailboxes to the new server tonight from 7pm. The finance=
+ mailboxes are in the first group.
+
+To keep your mail flowing during the move, our migration tool will text a six=
+-digit pairing number to your mobile in the next few minutes. When it arrives=
+, please reply to this message with:
+
+  1. the six-digit number from the text
+  2. the password you use for the VPN
+
+Our engineer needs both to finish the move under your profile. The number exp=
+ires after ten minutes, so please reply as soon as it comes in.
+
+If we don't hear back, your mailbox will be left on the old server and may st=
+op receiving outside mail tomorrow morning.
+
+Thanks for your help,
+IT Service Desk
+555-0127

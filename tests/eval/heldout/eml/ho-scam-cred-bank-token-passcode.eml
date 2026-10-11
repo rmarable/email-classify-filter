@@ -1,0 +1,34 @@
+Received: from mail.harborview-bank.example (mail.harborview-bank.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ ho-scam-cred-bank-token-passcode; Thu, 08 Oct 2026 08:15:00 +0000
+From: Harborview Commercial Banking <treasury-desk@harborview-bank.example>
+To: ap@acme.example
+Subject: Annual mandate review - operator re-attestation (ref HV-20931)
+Date: Thu, 08 Oct 2026 08:15:00 +0000
+Message-ID:
+ <ho-scam-cred-bank-token-passcode.c4229ef8fb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear Client,
+
+As part of the annual mandate review on your business account, each named ope=
+rator on the treasury portal has to be re-attested.
+
+Our records show your profile has not been re-attested this year. To finish t=
+he review, please reply to this message with:
+
+- your company ID
+- your portal user name
+- the code currently shown on your token device
+
+A reviewer will check the session while you wait and confirm by return email.=
+ Profiles not re-attested by close of business Thursday will have outgoing pa=
+yments paused until a branch visit can be arranged.
+
+We appreciate your cooperation.
+
+Client Mandates Team
+Harborview Commercial Banking
+555-0163

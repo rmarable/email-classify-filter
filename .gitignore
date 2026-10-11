@@ -32,9 +32,11 @@ state-archive/
 eval/private/
 tests/eval/synthetic/.build/
 
-# Raw email files anywhere except the synthetic eval set
+# Raw email files anywhere except the synthetic and held-out eval sets
 *.eml
 !tests/eval/synthetic/**/*.eml
+!tests/eval/heldout/**/*.eml
+!tests/eval/heldout2/**/*.eml
 
 # Build and tool caches
 /dist/
