@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +37,32 @@ class CallMetrics(BaseModel):
     prompt_ns: int | None = None
     eval_ns: int | None = None
     load_ns: int | None = None
+
+
+ClaimStage = Literal["classify", "act", "repeat"]
+ClaimOutcome = Literal["recorded", "invalid", "claim_expired", "model_refused", "session_ended",
+                       "run_ended"]  # fmt: skip
+# why an act claim went to the high-risk actor: ecf_server.policy.HighRiskReason's values (§8.2)
+HighRiskReason = Literal["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
+
+
+class ClaimRecord(BaseModel):
+    """One claim of a Claude eval case (v2.2.0 timing plan item 3): closed values, counters and
+    service-side times in seconds from the run's registration (`summary.claude.registered_at`);
+    never content. None where the claim ended before that moment."""
+
+    model_config = _STRICT
+    stage: ClaimStage
+    spawn: str  # the label `eval_next` gave it; unique within its session and round
+    round: int  # the run's rounds that handed out items, from 1, across sessions
+    session: int  # the session's ordinal, from 1
+    preparing: bool  # the run was still preparing cases
+    claimed_s: float
+    read_s: float | None = None  # the first `get_message`
+    answered_s: float | None = None  # the valid submission
+    settled_s: float | None = None  # the held submission applied or refused
+    outcome: ClaimOutcome | None = None
+    high_risk: list[HighRiskReason] = Field(default_factory=list[HighRiskReason])  # act claims
 
 
 class CaseResult(BaseModel):
@@ -76,6 +102,8 @@ class CaseResult(BaseModel):
     # the hide blockers (policy.hide_blockers' fixed names) that refused the plan's hide actions;
     # empty when nothing was refused for one, and in older files (pre-classifier plan step 7, M7)
     hide_blocked: list[str] = Field(default_factory=list[str])
+    # a Claude eval case's claims, in order (v2.2.0); empty for a local run and in older files
+    claims: list[ClaimRecord] = Field(default_factory=list[ClaimRecord])
 
 
 class ResultFile(BaseModel):

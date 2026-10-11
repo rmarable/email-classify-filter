@@ -1246,7 +1246,8 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
                           set(r.actions), None)  # fmt: skip
         out.append(one.model_copy(update={"probabilities": r.probabilities,
-                                          "classifier_ms": r.classifier_ms}))  # fmt: skip
+                                          "classifier_ms": r.classifier_ms,
+                                          "claims": r.claims}))  # fmt: skip
     before: dict[str, Any] = dict(old.summary or {})
     o: dict[str, Any] = before.get("options") or {}
     diffs = before.get("determinism_diffs")
@@ -1255,7 +1256,7 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
         production=False))  # fmt: skip
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
-                "classifier_latency_s", "power", "schema_digest"):  # fmt: skip
+                "classifier_latency_s", "power", "schema_digest", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["rescored_from"] = {"run_id": old.run_id, "set_version": old.set_version,
@@ -1343,7 +1344,7 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
         "classifier": r.classifier, "actor": r.actor, "rule_alone": alone,
         "model_only_fraud": case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
         "proposal": r.proposal, "proposal_target": r.proposal_target,
-        "hide_blocked": blocked}), mapped  # fmt: skip
+        "hide_blocked": blocked, "claims": r.claims}), mapped  # fmt: skip
 
 
 def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
@@ -1395,7 +1396,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         production=False, schema=schema))  # fmt: skip
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
-                "excerpt_prep", "environment"):  # fmt: skip
+                "excerpt_prep", "environment", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["keywords_digest"] = triggers.keywords_digest()

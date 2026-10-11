@@ -40,7 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, cast
 
 from ecf.errors import (
     ConflictError,
@@ -48,7 +48,14 @@ from ecf.errors import (
     InvalidInputError,
     NotFoundError,
 )
-from ecf.eval.results import CaseResult, ResultFile, load_result
+from ecf.eval.results import (
+    CaseResult,
+    ClaimOutcome,
+    ClaimRecord,
+    ClaimStage,
+    ResultFile,
+    load_result,
+)
 from ecf.ids import new_random_id
 from ecf.schema import CompiledSchema, load_schema
 from ecf_server import (
@@ -92,8 +99,7 @@ class Options:
     copy_to: Path | None = None  # also write the result file here (plan 0.3)
 
 
-Outcome = Literal["recorded", "invalid", "claim_expired", "model_refused", "session_ended",
-                  "run_ended"]  # fmt: skip
+Outcome = ClaimOutcome
 
 
 @dataclass
@@ -101,7 +107,7 @@ class Claim:
     """One claim of a case, for the run's timing figures (v2.2.0 plan item 2): closed values,
     counters and service-side times only, all from the injected clock."""
 
-    stage: str  # classify | act | repeat
+    stage: ClaimStage
     spawn: str  # the label `eval_next` gave it; unique within its session and round
     round: int  # the run's rounds that handed out items, from 1, across sessions
     session: int  # the session's ordinal in `Run.sessions`, from 1
@@ -436,13 +442,14 @@ def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
 def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             state: str, detail: str = "") -> None:  # fmt: skip
     """Save what was scored (a stopped or expired run too, marked incomplete) and end the run."""
-    results = [w.result for w in run.works if w.result is not None]
     complete = state == "done"
     run.state, run.detail = state, detail
     for w in run.works:
         if w.claim != "free":
             _ended(w, "run_ended")
         w.claim, w.session = "free", None
+    results = [w.result.model_copy(update={"claims": _claim_records(run, w)})
+               for w in run.works if w.result is not None]  # fmt: skip
     if not results:
         return
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
@@ -466,6 +473,19 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     log.info("claude_eval.saved", run_id=run.run_id[:8], state=state, cases=len(results))
 
 
+def _claim_records(run: Run, w: Work) -> list[ClaimRecord]:
+    """A case's claims for its result: times in seconds from the run's registration (item 3)."""
+
+    def s(t: datetime | None) -> float | None:
+        return None if t is None else round((t - run.created).total_seconds(), 3)
+
+    return [ClaimRecord(stage=c.stage, spawn=c.spawn, round=c.round, session=c.session,
+                        preparing=c.preparing, claimed_s=s(c.claimed) or 0.0, read_s=s(c.read),
+                        answered_s=s(c.answered), settled_s=s(c.settled), outcome=c.outcome,
+                        high_risk=list(c.high_risk))
+            for c in w.claims]  # fmt: skip
+
+
 def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
     """The run's Claude figures (OD-290): its sessions' API requests since it was registered,
     by model and source; plan usage at the first and last reading of those sessions. Approximate
@@ -479,6 +499,7 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
         "batch": run.opts.batch,
         "source_run": run.source_run,
         "sessions": len(run.sessions),
+        "registered_at": to_ts(run.created),  # claims' times count from here (item 3)
     } | claude_usage.run_report(conn, run.sessions, run.created)
 
 
@@ -622,7 +643,8 @@ def _record_claims(run: Run, picked: list[Work], out: list[dict[str, Any]], sess
     preparing = run.state == "preparing"
     for w, it in zip(picked, out, strict=True):
         reasons = policy.high_risk_reasons(_context(run, w)) if w.stage == "act" else ()
-        w.claims.append(Claim(w.stage, str(it["spawn"]), run.rounds, ordinal, limit, len(out),
+        stage = cast(ClaimStage, w.stage)  # a claimable stage
+        w.claims.append(Claim(stage, str(it["spawn"]), run.rounds, ordinal, limit, len(out),
                               preparing, now, high_risk=reasons))  # fmt: skip
 
 

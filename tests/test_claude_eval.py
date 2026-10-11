@@ -446,6 +446,67 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
     assert {_work(i).claims[-1].round for i in later} == {2}
 
 
+def _saved(conn: sqlite3.Connection) -> Path:
+    return Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
+
+
+def test_the_result_carries_each_cases_claims_in_seconds_from_registration(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Plan item 3: every case's claims, merged at the end (a repeat's too), times relative to
+    `summary.claude.registered_at`; `classifier_ms` stays a local model's figure."""
+    start(db_path, clock, root)
+    registered = clock.now()
+    clock.advance(10)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    result = load_result(_saved(conn))
+    claude = cast(dict[str, Any], (result.summary or {})["claude"])
+    assert claude["registered_at"] == to_ts(registered)
+    run = claude_eval.current()
+    assert run is not None
+    for w in run.works:
+        case = next(c for c in result.cases if c.id == w.case.id)
+        assert case.classifier_ms is None
+        assert [(c.stage, c.spawn, c.round, c.session, c.outcome) for c in case.claims] == [
+            (c.stage, c.spawn, c.round, c.session, c.outcome) for c in w.claims]  # fmt: skip
+        assert all(c.claimed_s == 10 and c.read_s == c.answered_s == c.settled_s == 10
+                   for c in case.claims)  # fmt: skip
+    first = next(c for c in result.cases if c.id == run.works[0].case.id)
+    assert [c.stage for c in first.claims] == ["classify", "repeat"]
+    acts = [c for r in result.cases for c in r.claims if c.stage == "act"]
+    assert acts and all("first_time_sender" in c.high_risk for c in acts)
+    text = _saved(conn).read_text()
+    assert run.sessions[0] not in text  # the session's ordinal only, never its ID
+
+
+def test_a_result_from_before_claims_loads_with_none(tmp_path: Path) -> None:
+    old = {"run_id": "r", "pair": "claude/claude", "set_version": "v",
+           "created_at": "2026-10-01T00:00:00Z",
+           "cases": [{"id": "starter-bec", "correct": True}]}  # fmt: skip
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(old))
+    assert load_result(path).cases[0].claims == []
+
+
+def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Plan item 6 (P8): a rescore rebuilds cases and summary from fixed lists; it carries
+    `claims` and `summary.claude`."""
+    start(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    path = _saved(conn)
+    live = load_result(path)
+    claims = {c.id: c.claims for c in live.cases}
+    assert all(claims.values())
+    for rescore in (evalrun.rescore_synthetic, evalrun.rescore_through_policy):
+        new = load_result(Path(rescore(root, path, clock)["path"]))
+        assert {c.id: c.claims for c in new.cases} == claims
+        assert (new.summary or {})["claude"] == (live.summary or {})["claude"]
+
+
 # ---- models, presets and options -------------------------------------------------------------
 
 
