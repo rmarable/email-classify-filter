@@ -1,5 +1,6 @@
 # Linux-only CI. macOS tests run locally before merging to main (CLAUDE.md, merge gate).
-# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-latest. CI_RUNNER named a self-hosted
+# Runner: the repo variable CI_RUNNER (JSON), else ubuntu-24.04 (pinned before ubuntu-latest moves
+# to Ubuntu 26 on 2026-10-19; SPEC §17.4). CI_RUNNER named a self-hosted
 # runner while the repo was private; it was removed at v1.0.0 (SPEC §17.4).
 name: ci
 
@@ -25,7 +26,7 @@ jobs:
   checks:
     # a pull request from a branch of this repo already ran on its push; only a fork's runs here
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -53,7 +54,7 @@ jobs:
 
   licenses-and-build:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
