@@ -1131,7 +1131,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         str | None, typer.Option("--actor-model", help="With --claude: compare this model.")
     ] = None,
     batch: Annotated[
-        int, typer.Option("--batch", help="With --claude: items per -high spawn (1-5).")
+        int, typer.Option("--batch", help="With --claude: items per classifier-high spawn (1-5).")
     ] = 1,
     classifier_backend: Annotated[
         str,
@@ -1720,7 +1720,7 @@ def eval_compare(
             typer.echo(f"{name}    {role}: {line}")
         for line in _latency_lines(run):
             typer.echo(f"{name}    {line}")
-        for line in _claude_figures(run.summary, len(run.cases)):
+        for line in _claude_figures(run, len(run.cases)):
             typer.echo(f"{name}  {line}")
         for line in _decision_figures(run.summary):
             typer.echo(f"{name}  {line}")
@@ -1836,26 +1836,37 @@ def _latency_lines(run: ResultFile) -> list[str]:
     return out
 
 
-def _claude_figures(summary: dict[str, object] | None, cases: int) -> list[str]:
-    """A Claude eval's models, requests and plan usage (V1.4 step 7; absent in other runs)."""
-    m = (summary or {}).get("claude")
-    if not isinstance(m, dict):
-        return []
-    f = cast(dict[str, Any], m)
-    models = ", ".join(f"{k} {v}" for k, v in f["models"].items())
-    kind = "pinned" if f["pinned"] else "comparison"
-    out = [f"Claude: preset {f['preset']}, {f['sensitivity']}, {kind} ({models}),"
-           f" batch {f['batch']}" + (f", classifications from run {str(f['source_run'])[:8]}"
-                                     if f.get("source_run") else "")]  # fmt: skip
-    a = f["all"]
-    tokens = a["input_tokens"] + a["output_tokens"]
-    per = f", about {tokens / cases:.0f} per case" if cases else ""
-    out.append(f"Claude: {a['calls']} requests, {a['input_tokens']} tokens in and"
-               f" {a['output_tokens']} out{per}; {a['seconds']['median']} s per request"
-               " median")  # fmt: skip
-    for g in f["groups"]:
-        out.append(f"  {g['model']} ({g['source']}): {g['calls']} requests,"
-                   f" {g['input_tokens'] + g['output_tokens']} tokens")  # fmt: skip
+def _claude_figures(run: ResultFile, cases: int) -> list[str]:
+    """A Claude eval's models, batch, requests, seconds per request and plan usage (V1.4 step 7)
+    and its spawn figures (v2.2.0); absent in other runs. Read with `.get`: a result may lack any
+    of them."""
+    from ecf.eval.results import claude_block  # noqa: PLC0415
+
+    f = claude_block(run)
+    if f is None:  # a Claude pair without figures (plan item 6): its batch can't be told
+        return ["Claude: batch unknown (no Claude figures)"] if run.pair.endswith("/claude") else []
+    m = f.get("models")
+    models = (", ".join(f"{k} {v}" for k, v in cast(dict[str, Any], m).items())
+              if isinstance(m, dict) else "models unknown")  # fmt: skip
+    kind = "pinned" if f.get("pinned") else "comparison"
+    batch = f.get("batch", "unknown")
+    out = [f"Claude: preset {f.get('preset', '?')}, {f.get('sensitivity', '?')}, {kind}"
+           f" ({models}), batch {batch}" + (f", classifications from run"
+                                            f" {str(f['source_run'])[:8]}"
+                                            if f.get("source_run") else "")]  # fmt: skip
+    a = f.get("all")
+    if isinstance(a, dict):
+        al = cast(dict[str, Any], a)
+        tokens = al["input_tokens"] + al["output_tokens"]
+        per = f", about {tokens / cases:.0f} per case" if cases else ""
+        out.append(f"Claude: {al['calls']} requests, {al['input_tokens']} tokens in and"
+                   f" {al['output_tokens']} out{per}; {al['seconds']['median']} s per request"
+                   " median")  # fmt: skip
+    groups = f.get("groups")
+    for g in cast(list[dict[str, Any]], groups) if isinstance(groups, list) else []:
+        tokens = g["input_tokens"] + g["output_tokens"]
+        out.append(f"  {g['model']} ({g['source']}): {g['calls']} requests, {tokens} tokens"
+                   + _per_request(g))  # fmt: skip
     p = f.get("plan")
     if isinstance(p, dict):
         plan = cast(dict[str, Any], p)
@@ -1863,6 +1874,66 @@ def _claude_figures(summary: dict[str, object] | None, cases: int) -> list[str]:
             f"{label} {plan[f'{k}_start']}% -> {plan[f'{k}_end']}%"
             for k, label in (("five_hour", "5-hour"), ("seven_day", "7-day"))
             if plan.get(f"{k}_end") is not None))  # fmt: skip
+    return out + _spawn_lines(f.get("spawns"))
+
+
+def _per_request(g: dict[str, Any]) -> str:
+    """A request group's seconds per request and cache shares of its input (a load control
+    between two runs, timing plan §5); empty in results that lack them."""
+    out = ""
+    secs = g.get("seconds")
+    if isinstance(secs, dict) and cast(dict[str, Any], secs).get("median") is not None:
+        sd = cast(dict[str, Any], secs)
+        out += f"; {sd['median']} s per request median, {sd.get('p95')} s p95"
+    read, made = g.get("cache_read_tokens"), g.get("cache_creation_tokens")
+    if isinstance(read, int) and isinstance(made, int):
+        total = read + made + int(g.get("input_tokens") or 0)
+        if total:
+            out += f"; cache read {100 * read / total:.0f}%, written {100 * made / total:.0f}%"
+    return out
+
+
+def _spawn_lines(spawns: object) -> list[str]:
+    """`summary.claude.spawns` (v2.2.0 timing plan item 4): service-side seconds per spawn, round
+    and session; read -> answer per item and tokens per case decide, round and run wall time
+    depend on how many spawns Claude Code runs at once (plan 6a)."""
+    if not isinstance(spawns, dict):
+        return ["Claude spawns: no spawn figures"]
+    sp = cast(dict[str, Any], spawns)
+
+    def spread(d: object) -> str:
+        v = cast(dict[str, Any], d) if isinstance(d, dict) else {}
+        return "-" if v.get("p50") is None else f"{v['p50']} s median (p95 {v['p95']})"
+
+    gap = cast(dict[str, Any], sp.get("largest_gap") or {})
+    run_s = sp.get("run_s")
+    out = [f"Claude spawns: run {'-' if run_s is None else f'{run_s} s'} from first claim to last"
+           f" answer; largest gap {gap.get('s', '-')} s at {gap.get('at_s', '-')} s"]  # fmt: skip
+    for agent, a in cast(dict[str, Any], sp.get("agents") or {}).items():
+        f = cast(dict[str, Any], a)
+        items = cast(dict[str, Any], f.get("items_per_spawn") or {})
+        out.append(f"  {agent}: {f.get('spawns')} spawns, {items.get('p50')} items median (max"
+                   f" {items.get('max')}); read -> answer {spread(f.get('read_to_answer_s'))};"
+                   f" claim -> read {spread(f.get('claim_to_read_s'))}; spawn"
+                   f" {spread(f.get('spawn_s'))}; settle lag"
+                   f" {spread(f.get('settle_lag_s'))}")  # fmt: skip
+    for kind, r in cast(dict[str, Any], sp.get("rounds") or {}).items():
+        rd = cast(dict[str, Any], r)
+        if rd.get("rounds"):
+            label = "while preparing" if kind == "preparing" else "ready"
+            out.append(f"  rounds {label}: {rd['rounds']}, {spread(rd.get('duration_s'))}; gap"
+                       f" to the next {spread(rd.get('gap_s'))}")  # fmt: skip
+    for session, t in cast(dict[str, Any], sp.get("sessions") or {}).items():
+        td = cast(dict[str, Any], t)
+        out.append(f"  session {session}: {td.get('rounds')} rounds, {td.get('in_rounds_s')} s"
+                   f" in rounds, {td.get('between_rounds_s')} s between")  # fmt: skip
+    act = cast(dict[str, Any], sp.get("act") or {})
+    if act.get("claims"):
+        n, high = act["claims"], act.get("high_risk_actor", 0)
+        why = cast(dict[str, Any], act.get("reasons") or {})
+        reasons = ", ".join(f"{k} {v}" for k, v in why.items())
+        out.append(f"  act claims: {n}, {high} to the high-risk actor ({100 * high / n:.0f}%)"
+                   + (f"; reasons {reasons}" if reasons else ""))  # fmt: skip
     return out
 
 

@@ -21,7 +21,7 @@ import pytest
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
-from ecf.eval.results import CaseResult, ResultFile, load_result
+from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
 from ecf.schema import load_schema
 from ecf_server import (
     claude_eval,
@@ -342,6 +342,179 @@ def test_a_session_ending_frees_its_claims(db_path: Path, clock: FakeClock, root
     assert len(claude_eval.eval_next(connector(db_path), clock, S2)["items"]) == 3
 
 
+# ---- claim records (v2.2.0 plan item 2) -------------------------------------------------------
+
+
+def _work(item: dict[str, Any]) -> claude_eval.Work:
+    run = claude_eval.current()
+    assert run is not None
+    return run.by_ref[item["id"]]
+
+
+def test_a_claim_records_its_round_spawn_and_times(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    t0 = clock.now()
+    first, second = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)["items"]
+    ref, token, agent = first["id"], first["claim_token"], first["agent"]
+    clock.advance(3)
+    claude_eval.get_message(clock, S1, ref, token, agent)
+    clock.advance(1)
+    claude_eval.get_message(clock, S1, ref, token, agent)  # only the first read counts
+    clock.advance(4)
+    got = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    clock.advance(2)
+    assert settled(db_path, clock, got)["accepted"]
+    (c,) = _work(first).claims
+    assert (c.stage, c.spawn, c.round, c.session, c.limit, c.items, c.preparing) == (
+        "classify", "ecf-classifier", 1, 1, 2, 2, False)  # fmt: skip
+    assert [(t - t0).total_seconds() if t else None
+            for t in (c.claimed, c.read, c.answered, c.settled)] == [0, 3, 8, 10]  # fmt: skip
+    assert c.outcome == "recorded" and c.high_risk == ()
+    # the session ends with the second claim unread; a second session claims it again
+    claude_eval.release_session(S1)
+    (ended,) = _work(second).claims
+    assert ended.outcome == "session_ended" and ended.read is None and ended.answered is None
+    items = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)["items"]
+    assert second["id"] in {i["id"] for i in items}
+    again = _work(second).claims[-1]
+    assert len(_work(second).claims) == 2
+    assert (again.round, again.session, again.items, again.outcome) == (2, 2, len(items), None)
+
+
+def test_every_way_a_claim_ends_is_recorded(db_path: Path, clock: FakeClock, root: Path) -> None:
+    start(db_path, clock, root)
+    expiring = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    clock.advance(16 * 60)
+    invalid, refused, left = claude_eval.eval_next(connector(db_path), clock, S2, limit=3)["items"]
+    assert _work(expiring).claims[0].outcome == "claim_expired"
+    for _ in range(3):
+        claude_eval.record_classification(clock, S2, invalid["id"], invalid["claim_token"],
+                                          {"category": "tax"}, invalid["agent"])  # fmt: skip
+    assert _work(invalid).claims[-1].outcome == "invalid"
+    assert _work(invalid).claims[-1].answered is None
+    got = claude_eval.record_classification(clock, S2, refused["id"], refused["claim_token"], BEC,
+                                            refused["agent"])  # fmt: skip
+    clock.advance(5)
+    assert not settled(db_path, clock, got, Seen("claude-haiku-4-5-20251001"))["accepted"]
+    r = _work(refused).claims[-1]
+    assert r.outcome == "model_refused" and r.settled == clock.now()
+    claude_eval.stop(connector(db_path), clock)
+    assert _work(left).claims[-1].outcome == "run_ended"
+    run = claude_eval.current()
+    assert run is not None and all(c.outcome is not None for w in run.works for c in w.claims)
+
+
+def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    run = claude_eval.current()
+    assert run is not None
+    acts = [c for w in run.works for c in w.claims if c.stage == "act"]
+    assert acts and all(c.high_risk for c in acts)  # every synthetic sender is first-time
+    assert all("first_time_sender" in c.high_risk for c in acts)
+    assert all(c.spawn.startswith("ecf-actor-high") for c in acts)
+    assert all(not c.high_risk for w in run.works for c in w.claims if c.stage != "act")
+    assert [c.stage for c in run.works[0].claims] == ["classify", "repeat"]
+
+
+def test_a_round_while_cases_are_still_being_prepared_says_so(
+    db_path: Path, clock: FakeClock, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = evalrun._inputs  # pyright: ignore[reportPrivateUsage]
+    seen: list[dict[str, Any]] = []
+
+    def inputs(case: Any, *args: Any) -> Any:
+        """Claim a round as soon as the first case is ready, while the rest are prepared."""
+        run = claude_eval.current()
+        if not seen and run is not None and any(w.stage == "classify" for w in run.works):
+            seen.append(claude_eval.eval_next(connector(db_path), clock, S1))
+        return real(case, *args)
+
+    monkeypatch.setattr(evalrun, "_inputs", inputs)
+    start(db_path, clock, root)
+    (q,) = seen
+    assert q["preparing"] is True and len(q["items"]) == 1
+    (c,) = _work(q["items"][0]).claims
+    assert c.preparing is True and c.round == 1 and c.items == 1
+    later = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    assert later and all(not _work(i).claims[-1].preparing for i in later)
+    assert {_work(i).claims[-1].round for i in later} == {2}
+
+
+def _saved(conn: sqlite3.Connection) -> Path:
+    return Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
+
+
+def test_the_result_carries_each_cases_claims_in_seconds_from_registration(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Plan item 3: every case's claims, merged at the end (a repeat's too), times relative to
+    `summary.claude.registered_at`; `classifier_ms` stays a local model's figure."""
+    start(db_path, clock, root)
+    registered = clock.now()
+    clock.advance(10)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    result = load_result(_saved(conn))
+    claude = cast(dict[str, Any], (result.summary or {})["claude"])
+    assert claude["registered_at"] == to_ts(registered)
+    run = claude_eval.current()
+    assert run is not None
+    for w in run.works:
+        case = next(c for c in result.cases if c.id == w.case.id)
+        assert case.classifier_ms is None
+        assert [(c.stage, c.spawn, c.round, c.session, c.outcome) for c in case.claims] == [
+            (c.stage, c.spawn, c.round, c.session, c.outcome) for c in w.claims]  # fmt: skip
+        assert all(c.claimed_s == 10 and c.read_s == c.answered_s == c.settled_s == 10
+                   for c in case.claims)  # fmt: skip
+    first = next(c for c in result.cases if c.id == run.works[0].case.id)
+    assert [c.stage for c in first.claims] == ["classify", "repeat"]
+    acts = [c for r in result.cases for c in r.claims if c.stage == "act"]
+    assert acts and all("first_time_sender" in c.high_risk for c in acts)
+    text = _saved(conn).read_text()
+    assert run.sessions[0] not in text  # the session's ordinal only, never its ID
+
+
+def test_a_result_from_before_claims_loads_with_none(tmp_path: Path) -> None:
+    old = {"run_id": "r", "pair": "claude/claude", "set_version": "v",
+           "created_at": "2026-10-01T00:00:00Z",
+           "cases": [{"id": "starter-bec", "correct": True}]}  # fmt: skip
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(old))
+    assert load_result(path).cases[0].claims == []
+
+
+def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Plan item 6 (P8): a rescore rebuilds cases and summary from fixed lists; it carries
+    `claims` and `summary.claude`."""
+    start(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    path = _saved(conn)
+    live = load_result(path)
+    claims = {c.id: c.claims for c in live.cases}
+    assert all(claims.values())
+    for rescore in (evalrun.rescore_synthetic, evalrun.rescore_through_policy):
+        new = load_result(Path(rescore(root, path, clock)["path"]))
+        assert {c.id: c.claims for c in new.cases} == claims
+        assert (new.summary or {})["claude"] == (live.summary or {})["claude"]
+    spawns = cast(dict[str, Any], (live.summary or {})["claude"])["spawns"]  # plan item 4
+    assert spawns == spawn_figures(live.cases) and spawns["act"]["claims"] >= 1
+    older = live.model_copy(update={"summary": dict(live.summary or {}) | {  # saved before item 4
+        "claude": {k: v for k, v in cast(dict[str, Any], (live.summary or {})["claude"]).items()
+                   if k != "spawns"}}})  # fmt: skip
+    path.write_text(older.model_dump_json())
+    new = load_result(Path(evalrun.rescore_through_policy(root, path, clock)["path"]))
+    assert cast(dict[str, Any], (new.summary or {})["claude"])["spawns"] == spawns
+
+
 # ---- models, presets and options -------------------------------------------------------------
 
 
@@ -378,6 +551,24 @@ def test_high_runs_one_case_per_spawn_unless_batched(
     assert {i["agent"] for i in items} == {"ecf-classifier-high"}
     assert [i["spawn"] for i in items] == ["ecf-classifier-high-1", "ecf-classifier-high-1",
                                            "ecf-classifier-high-2"]  # fmt: skip
+
+
+def test_batch_never_groups_the_high_risk_actor(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """As `/ecf-review` (OD-297): `--batch` sizes only the classifier-high spawns."""
+    start(db_path, clock, root, sensitivity="high", batch=2)
+    run = claude_eval.current()
+    assert run is not None
+    for agent in ("ecf-actor-high", "ecf-eval-actor-high"):
+        items: list[dict[str, Any]] = [{"agent": agent} for _ in range(3)]
+        claude_eval._spawns(run, items)  # pyright: ignore[reportPrivateUsage]
+        assert [i["spawn"] for i in items] == [f"{agent}-{k}" for k in (1, 2, 3)]
+    items = [{"agent": "ecf-eval-classifier-high"} for _ in range(3)]
+    claude_eval._spawns(run, items)  # pyright: ignore[reportPrivateUsage]
+    assert [i["spawn"] for i in items] == ["ecf-eval-classifier-high-1"] * 2 + [
+        "ecf-eval-classifier-high-2"
+    ]
 
 
 def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path,

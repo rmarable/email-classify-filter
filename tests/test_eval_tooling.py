@@ -20,6 +20,7 @@ from ecf.eval.hygiene import scan_text
 from ecf.eval.results import (
     CallMetrics,
     CaseResult,
+    ClaimRecord,
     ResultFile,
     call_figures,
     compare,
@@ -28,6 +29,7 @@ from ecf.eval.results import (
     input_warnings,
     schema_warning,
     scoring,
+    spawn_figures,
 )
 from ecf.schema import load_schema
 
@@ -343,6 +345,88 @@ def test_compare_warns_when_the_runs_were_asked_differently() -> None:
     sa = a.model_copy(update={"summary": {"options": {"switches_off": ["message_signals"]}}})
     assert input_warnings(sa, b) == [  # pre-gate review G3: the prompt digest doesn't show it
         "warning: different switches (message_signals vs all on)"]  # fmt: skip
+
+
+def test_compare_warns_when_two_claude_runs_were_asked_differently() -> None:
+    """Timing plan item 5 (P16): preset, sensitivity and models warn; batch never does."""
+    claude = {
+        "preset": "C",
+        "sensitivity": "high",
+        "batch": 1,
+        "models": {"classifier_high": "claude-sonnet-5-5", "actor_high": "claude-opus-5-5"},
+    }
+    a, b = _run("A", [True]), _run("B", [True])
+    ca = a.model_copy(update={"summary": {"claude": claude}})
+    assert input_warnings(ca, ca.model_copy(update={"summary": {"claude": claude | {"batch": 5}}})
+                          ) == []  # fmt: skip
+    cb = b.model_copy(
+        update={
+            "summary": {
+                "claude": claude
+                | {
+                    "preset": "B",
+                    "sensitivity": "standard",
+                    "models": {
+                        "classifier_high": "claude-sonnet-5-5",
+                        "actor_high": "claude-sonnet-5-5",
+                    },
+                }
+            }
+        }
+    )
+    assert input_warnings(ca, cb) == [
+        "warning: different preset (C vs B)",
+        "warning: different sensitivity (high vs standard)",
+        "warning: different models (actor_high claude-opus-5-5 vs claude-sonnet-5-5)",
+    ]  # fmt: skip
+    assert input_warnings(ca, b) == []  # only one side is a Claude eval with figures
+
+
+def _claim(stage: str, spawn: str, rnd: int, session: int, times: list[float | None],
+           **kw: Any) -> ClaimRecord:  # fmt: skip
+    claimed, read, answered, settled = times
+    return ClaimRecord.model_validate({
+        "stage": stage, "spawn": spawn, "round": rnd, "session": session,
+        "preparing": kw.pop("preparing", False), "claimed_s": claimed, "read_s": read,
+        "answered_s": answered, "settled_s": settled, **kw})  # fmt: skip
+
+
+def test_spawn_figures_from_the_claims() -> None:
+    """Timing plan item 4: per agent, round, session and run, from `cases[].claims` alone."""
+    cases = [
+        CaseResult(id="a", correct=True, claims=[
+            _claim("classify", "ecf-classifier-high-1", 1, 1, [10, 12, 20, 20.5], preparing=True),
+            _claim("act", "ecf-actor-high-1", 2, 1, [40, 41, 50, 50.1],
+                   high_risk=["first_time_sender"])]),
+        CaseResult(id="b", correct=True, claims=[
+            _claim("classify", "ecf-classifier-high-1", 1, 1, [10, 21, 30, 30.2], preparing=True),
+            _claim("act", "ecf-actor", 2, 1, [40, 42, 46, 46.1])]),
+        CaseResult(id="c", correct=False, claims=[  # a second session's claim that expired
+            _claim("classify", "ecf-classifier-high-1", 3, 2, [100, 105, None, None],
+                   outcome="claim_expired")]),
+    ]  # fmt: skip
+    f = cast(dict[str, Any], spawn_figures(cases))
+    high = f["agents"]["ecf-classifier-high"]
+    assert (high["claims"], high["spawns"]) == (3, 2)
+    assert high["items_per_spawn"] == {"p50": 1, "max": 2}
+    assert high["read_to_answer_s"] == {"p50": 8.0, "p95": 9.0, "max": 9.0}
+    assert high["claim_to_read_s"] == {"p50": 5.0, "p95": 11.0, "max": 11.0}
+    assert high["spawn_s"] == {"p50": 18.0, "p95": 18.0, "max": 18.0}  # 12 -> 30; c unanswered
+    assert high["settle_lag_s"]["p95"] == 0.5
+    assert set(f["agents"]) == {"ecf-actor", "ecf-actor-high", "ecf-classifier-high"}
+    assert f["rounds"]["preparing"] == {"rounds": 1, "duration_s": {"p50": 20.0, "p95": 20.0,
+                                        "max": 20.0}, "gap_s": {"p50": 10.0, "p95": 10.0,
+                                        "max": 10.0}}  # fmt: skip
+    assert f["rounds"]["ready"]["rounds"] == 2  # round 3 counts, though nothing was answered
+    assert f["rounds"]["ready"]["gap_s"]["p50"] is None  # no next round in either session
+    assert f["sessions"] == {
+        "1": {"rounds": 2, "in_rounds_s": 30.0, "between_rounds_s": 10.0},
+        "2": {"rounds": 1, "in_rounds_s": 0.0, "between_rounds_s": 0.0},
+    }
+    assert f["run_s"] == 40.0
+    assert f["largest_gap"] == {"s": 49.9, "at_s": 50.1}
+    assert f["act"] == {"claims": 2, "high_risk_actor": 1, "reasons": {"first_time_sender": 1}}
+    assert spawn_figures([CaseResult(id="x", correct=True)]) is None  # a local run
 
 
 def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:

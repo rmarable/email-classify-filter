@@ -64,6 +64,7 @@ from ecf.eval.results import (
     call_figures,
     load_result,
     scoring,
+    spawn_figures,
 )
 from ecf.ids import new_random_id
 from ecf.schema import (
@@ -1226,6 +1227,14 @@ def now_utc() -> datetime:
 V1_TO_V2 = V1_VALUE_ALIASES
 
 
+def _spawns_again(summary: dict[str, object], cases: list[CaseResult]) -> None:
+    """A Claude eval's spawn figures, from the claims the rescore carried (v2.2.0 timing plan
+    item 4): a result saved before them gets them too."""
+    claude = summary.get("claude")
+    if isinstance(claude, dict) and (spawns := spawn_figures(cases)) is not None:
+        summary["claude"] = cast(dict[str, Any], claude) | {"spawns": spawns}
+
+
 def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
     """`ecf eval rescore --synthetic`: a synthetic result made before schema v2 scored against the
     set's current labels, its answers mapped to v2 (V1_TO_V2), without running a model (E1). The
@@ -1246,7 +1255,8 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
                           set(r.actions), None)  # fmt: skip
         out.append(one.model_copy(update={"probabilities": r.probabilities,
-                                          "classifier_ms": r.classifier_ms}))  # fmt: skip
+                                          "classifier_ms": r.classifier_ms,
+                                          "claims": r.claims}))  # fmt: skip
     before: dict[str, Any] = dict(old.summary or {})
     o: dict[str, Any] = before.get("options") or {}
     diffs = before.get("determinism_diffs")
@@ -1255,9 +1265,10 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
         production=False))  # fmt: skip
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
-                "classifier_latency_s", "power", "schema_digest"):  # fmt: skip
+                "classifier_latency_s", "power", "schema_digest", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
+    _spawns_again(summary, out)
     summary["rescored_from"] = {"run_id": old.run_id, "set_version": old.set_version,
                                 "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
                                 "schema": "v1 mapped to v2", "values_mapped": mapped}  # fmt: skip
@@ -1343,7 +1354,7 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
         "classifier": r.classifier, "actor": r.actor, "rule_alone": alone,
         "model_only_fraud": case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
         "proposal": r.proposal, "proposal_target": r.proposal_target,
-        "hide_blocked": blocked}), mapped  # fmt: skip
+        "hide_blocked": blocked, "claims": r.claims}), mapped  # fmt: skip
 
 
 def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
@@ -1395,9 +1406,10 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         production=False, schema=schema))  # fmt: skip
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
-                "excerpt_prep", "environment"):  # fmt: skip
+                "excerpt_prep", "environment", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
+    _spawns_again(summary, out)
     summary["keywords_digest"] = triggers.keywords_digest()
     summary["rules_digest"] = rules.starter_digest()
     summary["scoring"] = "policy"
