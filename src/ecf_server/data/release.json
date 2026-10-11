@@ -6,6 +6,6 @@
   "data_format": 3,
   "schema_version": 35,
   "classifier_schema": 2,
-  "prompt_digest": "66f9f63c2904237060ff78cb246d2bd6788947240886c5adb712c9f88450172b",
+  "prompt_digest": "0b7b8c3f67d211c77f6132b73908b7bebff77ba88916a8ac0fd9063705c99242",
   "min_client": "0.1.0.dev0"
 }

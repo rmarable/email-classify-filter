@@ -18,6 +18,7 @@ from collections.abc import Callable
 
 import pytest
 
+from ecf_server import excerpt
 from ecf_server import triggers as tr
 from ecf_server.htmltext import LINK_CAP, html_text
 from ecf_server.mail import PartInfo
@@ -228,3 +229,39 @@ def test_the_scan_holds_little_more_than_its_limit_in_memory(
         tracemalloc.stop()
     assert hits["unscanned"] == [tr.UNSCANNED_TEXT]
     assert peak < 10 * 4 * MIB
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["on-lines", "from-lines", "quoted-lines", "one-line", "paragraphs", "spaces"],
+)
+def test_excerpt_preparation_on_hostile_text(shape: str) -> None:
+    """Pre-classifier plan step 10 (P22): preparation reads only `HEAD_CHARS`, each marker regex
+    one bounded line. Under 1 unit for every shape on this Mac (2026-10-11), on 10 MiB inputs."""
+    text = {
+        "on-lines": lambda: _repeat("On x\n"),  # each line tried as a wrapped attribution
+        "from-lines": lambda: _repeat("From: a\n"),  # each looks ahead for Sent:
+        "quoted-lines": lambda: _repeat("> q\n"),
+        "one-line": lambda: "x" * (10 * MIB),
+        "paragraphs": lambda: _repeat("unsubscrib\n\n"),  # a near-miss footer per paragraph
+        "spaces": lambda: _repeat(" \t"),
+    }[shape]()
+    unit = _unit()
+    took, out = _cpu(lambda: excerpt.prepare([(text, "")]))
+    assert took < 3 * unit
+    assert len(out) <= excerpt.HEAD_CHARS + len(excerpt.MOVED_MARK) + 4
+
+
+@pytest.mark.parametrize("shape", ["many-quotes", "nested-unclosed-quotes"])
+def test_quote_containers_on_hostile_html(shape: str) -> None:
+    """Pre-classifier plan step 10 (P22): quote containers are a depth counter in the walker and
+    only span positions are kept. About 20 units on this Mac (2026-10-11), against 16-17 before
+    step 10 and 10 for ordinary paragraphs."""
+    html = {
+        "many-quotes": lambda: _repeat("<blockquote>x</blockquote>"),
+        "nested-unclosed-quotes": lambda: _repeat("<blockquote>"),
+    }[shape]()
+    unit = _unit()
+    took, out = _cpu(lambda: html_text(html))
+    assert took < 60 * unit
+    assert out.unquoted is not None

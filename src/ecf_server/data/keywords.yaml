@@ -349,3 +349,15 @@ risky_attachment:
     - application/java-archive
     - application/x-iso9660-image
     - application/x-apple-diskimage
+
+# Footer paragraphs (pre-classifier plan step 10, §6 B; not keywords: read by `excerpt.py`). A body
+# paragraph containing one of these, compared casefolded, goes after the new text in the classifier
+# and actor excerpts, behind ecf's "moved below" line; it is never deleted. Generic phrases only,
+# no sender's own wording (operator decision 2026-10-11).
+excerpt_footers:
+  phrases:
+    - unsubscribe
+    - you are receiving this email because
+    - this email and any attachments are confidential
+    - sent from my iphone
+    - sent from my android

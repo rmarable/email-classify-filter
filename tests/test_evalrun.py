@@ -583,6 +583,23 @@ def test_signals_go_to_the_classifier_unless_switched_off(
         assert (result["options"].get("switches_off") or []) == ([] if on else ["signals"])
 
 
+def test_a_run_records_its_excerpt_preparation(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Pre-classifier plan step 10 (P18): the preparation's version is recorded, and
+    `--no-excerpt-prep` (an eval-only switch) records 0 and can't pass the gate."""
+    from ecf_server import db, excerpt  # noqa: PLC0415
+
+    for on in (True, False):
+        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
+                      db_path.parent, evalrun.Options(root, actor=False, excerpt_prep=on),
+                      power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                      check_kw=check_kw())  # fmt: skip
+        result = evalrun.RUN.snapshot()["result"]
+        assert result["excerpt_prep"] == (excerpt.VERSION if on else 0)
+        assert (result["options"].get("switches_off") or []) == ([] if on else ["excerpt_prep"])
+
+
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
 

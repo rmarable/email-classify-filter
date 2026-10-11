@@ -1194,6 +1194,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " experiment, never counts for the go-live gate).",
         ),
     ] = True,
+    excerpt_prep: Annotated[
+        bool,
+        typer.Option(
+            "--excerpt-prep/--no-excerpt-prep",
+            help="--no-excerpt-prep cuts the excerpts from the first text part, as before"
+            " v2.1.0 (an experiment, never counts for the go-live gate).",
+        ),
+    ] = True,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
@@ -1204,11 +1212,12 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if claude or fraud_only or not redact or classifier_backend == "null":
             raise InvalidInputError("--corpus runs the local model only (no --claude, null"
                                     " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
-        if copy_to is not None or not (new_wording and signals and new_signals) or not_for_gate:
-            raise InvalidInputError("--copy-to, --no-new-wording, --no-signals, --no-new-signals"
-                                    " and --not-for-gate are for the synthetic set (a corpus"
-                                    " run never counts for the gate and its result stays in"
-                                    " the install)")  # fmt: skip
+        if copy_to is not None or not (new_wording and signals and new_signals and excerpt_prep) \
+                or not_for_gate:  # fmt: skip
+            raise InvalidInputError("--copy-to, --no-new-wording, --no-signals, --no-new-signals,"
+                                    " --no-excerpt-prep and --not-for-gate are for the synthetic"
+                                    " set (a corpus run never counts for the gate and its"
+                                    " result stays in the install)")  # fmt: skip
         _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
         return
     copy = _copy_folder(copy_to)
@@ -1216,10 +1225,10 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
         if classifier_backend != "gemma" or not redact or not_for_gate or not new_wording \
-                or not signals or not new_signals:  # fmt: skip
+                or not signals or not new_signals or not excerpt_prep:  # fmt: skip
             raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
-                                    " --no-new-wording, --no-signals and --no-new-signals are"
-                                    " for the local model")  # fmt: skip
+                                    " --no-new-wording, --no-signals, --no-new-signals and"
+                                    " --no-excerpt-prep are for the local model")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy)  # fmt: skip
         return
@@ -1229,7 +1238,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "fraud_only": fraud_only, "battery_floor": battery_floor,
             "backend": classifier_backend, "redact": redact,
             "for_gate": not not_for_gate, "new_wording": new_wording, "signals": signals,
-            "new_signals": new_signals,
+            "new_signals": new_signals, "excerpt_prep": excerpt_prep,
             "copy_to": str(copy) if copy else None})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:

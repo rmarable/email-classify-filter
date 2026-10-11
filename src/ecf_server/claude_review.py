@@ -71,6 +71,7 @@ from ecf_server import (
     claude_queue,
     config,
     decide,
+    excerpt,
     health,
     policy,
     signals,
@@ -340,9 +341,14 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
 
 def prompt_digest(schema: CompiledSchema) -> str:
     """SHA-256 over what ecf gives a Claude classifier besides the email (plan 0.3, Q4): the
-    schema's fields as `schema_fields` sends them and the signals' wording (OD-484). Gemma's
-    prompt isn't in it, so a Gemma-only change keeps the C pin key."""
-    parts = {"fields": schema_fields(schema), "signals": signals.WORDING}
+    schema's fields as `schema_fields` sends them, the signals' wording (OD-484) and the version
+    of the excerpt preparation (pre-classifier plan step 10; Claude reads the same excerpts).
+    Gemma's prompt isn't in it, so a Gemma-only change keeps the C pin key."""
+    parts = {
+        "fields": schema_fields(schema),
+        "signals": signals.WORDING,
+        "excerpt_prep": excerpt.VERSION,
+    }
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 
 

@@ -12,6 +12,11 @@ its href (`link_text_mismatch`; pre-classifier plan §5 C, P22). Recorded for me
 Bounded: the innermost anchor only, the href cut to 2 KB and the anchor text to 200 characters
 before they are read, and nothing recorded after `LINK_CAP` anchors (the count saturates). Only
 a count and a boolean come out, never a URL or domain.
+
+It also notes which visible text lies inside a quote container (`<blockquote>`, Gmail's and
+Yahoo's quote divs, Gmail's signature div), so the excerpt can put it after the new text
+(`excerpt.py`, pre-classifier plan step 10, P22): a depth counter like the hidden one, and only
+the start and end positions are kept until the walk ends.
 """
 
 from __future__ import annotations
@@ -42,6 +47,12 @@ _DATA_URI = re.compile(
     r"(?<=[\"'(])data:[a-z0-9.+/-]*(?:;[a-z0-9=.+-]*)*;base64,[a-z0-9+/=\s]*(?=[\"')])", re.I
 )
 
+
+# Quote containers (pre-classifier plan step 10): their visible text goes after the new text in
+# the excerpt. Outlook's reply header isn't a container (its quoted body follows outside it); the
+# excerpt's line markers find it.
+QUOTE_TAGS = frozenset({"blockquote"})
+QUOTE_CLASSES = frozenset({"gmail_quote", "gmail_signature", "yahoo_quoted"})
 
 LINK_CAP = 500  # links counted per text; anchors after this aren't read (P22)
 HREF_CHARS = 2048
@@ -116,9 +127,11 @@ class _Walker(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.full: list[str] = []
         self.visible: list[str] = []
-        self._stack: list[tuple[str, bool, bool]] = []  # (tag, hidden, no_text)
+        self._stack: list[tuple[str, bool, bool, bool]] = []  # (tag, hidden, no_text, quoted)
         self._hidden = 0
         self._no_text = 0
+        self._quoted = 0
+        self.quoted_spans: list[list[int]] = []  # [start, end) in `visible`, outermost only
         self._open: dict[str, int] = {}  # open elements per tag: end tags matching none are O(1)
         self.links = 0
         self.link_text_mismatch = False
@@ -142,10 +155,16 @@ class _Walker(HTMLParser):
                 self.links += 1
                 self._anchor = "" if self._hidden or hidden else (href_site(a["href"]) or "")
         no_text = tag in NEVER_TEXT
-        self._stack.append((tag, hidden, no_text))
+        classes = a.get("class", "").lower().split()
+        quoted = tag in QUOTE_TAGS or not QUOTE_CLASSES.isdisjoint(classes)
+        self._stack.append((tag, hidden, no_text, quoted))
         self._open[tag] = self._open.get(tag, 0) + 1
         self._hidden += hidden
         self._no_text += no_text
+        if quoted:
+            if not self._quoted:
+                self.quoted_spans.append([len(self.visible), -1])
+            self._quoted += 1
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -161,10 +180,14 @@ class _Walker(HTMLParser):
         # once, so the scans add up to the number of start tags
         for i in range(len(self._stack) - 1, -1, -1):
             if self._stack[i][0] == tag:
-                for t, hidden, no_text in self._stack[i:]:
+                was_quoted = self._quoted > 0
+                for t, hidden, no_text, quoted in self._stack[i:]:
                     self._hidden -= hidden
                     self._no_text -= no_text
+                    self._quoted -= quoted
                     self._open[t] -= 1
+                if was_quoted and not self._quoted:
+                    self.quoted_spans[-1][1] = len(self.visible)
                 del self._stack[i:]
                 return
 
@@ -182,6 +205,24 @@ class _Walker(HTMLParser):
     def close(self) -> None:
         super().close()
         self._end_anchor()
+        if self._quoted:  # an unclosed container runs to the end
+            self.quoted_spans[-1][1] = len(self.visible)
+
+    def split_visible(self) -> tuple[str | None, str]:
+        """(the visible text outside quote containers, the visible text inside them); the first
+        is None when the document has no quote container, as the visible text is then the same."""
+        if not self.quoted_spans:
+            return None, ""
+        main: list[str] = []
+        quoted: list[str] = []
+        at = 0
+        for start, end in self.quoted_spans:
+            main.extend(self.visible[at:start])
+            quoted.extend(self.visible[start:end])
+            quoted.append("\n")
+            at = end
+        main.extend(self.visible[at:])
+        return tidy("".join(main)), tidy("".join(quoted))
 
     def _end_anchor(self) -> None:
         if self._anchor:
@@ -207,15 +248,19 @@ class HtmlText(NamedTuple):
     full: str
     visible: str
     links: Links
+    unquoted: str | None = None  # visible text outside quote containers; None when there are none
+    quoted: str = ""  # visible text inside them
 
 
 def html_text(html: str) -> HtmlText:
-    """The full and visible text of an HTML document, whitespace tidied, and its links."""
+    """The full and visible text of an HTML document, whitespace tidied, its links, and its
+    visible text split around quote containers."""
     w = _Walker()
     w.feed(strip_data_uris(html))
     w.close()
     links = Links(w.links, w.link_text_mismatch)
-    return HtmlText(tidy("".join(w.full)), tidy("".join(w.visible)), links)
+    unquoted, quoted = w.split_visible()
+    return HtmlText(tidy("".join(w.full)), tidy("".join(w.visible)), links, unquoted, quoted)
 
 
 def html_to_text(html: str) -> tuple[str, str]:

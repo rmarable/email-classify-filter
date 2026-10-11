@@ -59,6 +59,7 @@ from ecf_server import (
     claude_usage,
     config,
     evalrun,
+    excerpt,
     policy,
     rules,
     ruletest,
@@ -421,6 +422,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["schema_digest"] = run.schema.digest
     if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
+    summary["excerpt_prep"] = excerpt.VERSION
     summary["keywords_digest"] = triggers.keywords_digest()
     conn = connect()
     try:

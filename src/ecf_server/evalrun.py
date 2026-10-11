@@ -80,6 +80,7 @@ from ecf_server import (
     config,
     corpus,
     corpus_session,
+    excerpt,
     modelq,
     models,
     ollama,
@@ -164,13 +165,15 @@ class Options:
     new_wording: bool = True  # False: Gemma is asked with the frozen v2.0.0 schema text
     signals: bool = True  # False: Gemma is asked without the signals block (OD-484)
     new_signals: bool = True  # False: without plan item 4's two signals (OD-485)
+    excerpt_prep: bool = True  # False: excerpts cut as before step 10 (first text part)
 
     @property
     def switches_off(self) -> list[str]:
         """The eval-only switches turned off, by name."""
         return [name for name, on in (("new_wording", self.new_wording),
                                       ("signals", self.signals),
-                                      ("new_signals", self.new_signals)) if not on]  # fmt: skip
+                                      ("new_signals", self.new_signals),
+                                      ("excerpt_prep", self.excerpt_prep)) if not on]  # fmt: skip
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -635,7 +638,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             if not _hold(opts, power, battery, started, clock, tell):
                 stopped = f"stopped after {i} of {len(cases)}"
                 break
-            facts, (text, act_text) = measures.inputs(case, scratch, redact)
+            facts, (text, act_text) = measures.inputs(case, scratch, redact, opts.excerpt_prep)
             n_cls, n_act = len(calls["classifier"]), len(calls["actor"])
             sent = opts.sent(facts)
             if opts.classifier:
@@ -684,7 +687,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         flipped: dict[str, int] = {}
         if opts.classifier and not stopped:
             for case in (c for c in cases if c.id in repeat):
-                facts, texts = _inputs(case, scratch, redact)
+                facts, texts = _inputs(case, scratch, redact, opts.excerpt_prep)
                 text = texts[0]
                 again = _classify_with(opts.backend, dpin, client, text, schema,
                                        calls["determinism"],
@@ -709,6 +712,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["determinism"] = {"cases": sorted(repeat), "field_flips": flipped}
         if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)
             summary["prompt_digest"] = classifier.prompt_digest(schema)
+        if opts.corpus is None:  # a corpus's excerpts are stored as they were fetched
+            summary["excerpt_prep"] = excerpt.VERSION if opts.excerpt_prep else 0
         summary["keywords_digest"] = triggers.keywords_digest()
         summary["rules_digest"] = rules.starter_digest()
         summary["scoring"] = "live"
@@ -795,8 +800,8 @@ def deterministic_noise(cases: list[Case]) -> dict[str, int]:
     return {"flagged": len(flagged), "of": len(confirmed)}
 
 
-def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
-            ) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
+def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str],
+            prep: bool = True) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
     """A case's facts and excerpts: a corpus message's stored ones (never parsed, R97), or a
     synthetic card's, computed in the eval scratch with its expected facts applied as `ecf rules
     test` applies them (Q1)."""
@@ -805,7 +810,7 @@ def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
     read = ruletest.read_case(case.path.read_bytes())
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {})  # fmt: skip
-    return found, read.parsed.excerpts(redact)
+    return found, read.parsed.excerpts(redact, prep=prep)
 
 
 @dataclass
@@ -824,8 +829,8 @@ class Measures:
     block_chars: list[int] = field(default_factory=list[int])
     cases: int = 0
 
-    def inputs(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
-               ) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
+    def inputs(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str],
+               prep: bool = True) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
         """`_inputs`, timed."""
         self.cases += 1
         if case.facts is not None and case.excerpts is not None:
@@ -835,7 +840,7 @@ class Measures:
         read = ruletest.read_case(case.path.read_bytes())
         found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                        case.expected.get("facts") or {})  # fmt: skip
-        texts = read.parsed.excerpts(redact)
+        texts = read.parsed.excerpts(redact, prep=prep)
         self.facts_s.append(time.perf_counter() - start)
         start = time.perf_counter()
         triggers.scan(triggers.texts_of(read.parsed))
@@ -1387,7 +1392,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         production=False, schema=schema))  # fmt: skip
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
-                "environment"):  # fmt: skip
+                "excerpt_prep", "environment"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["keywords_digest"] = triggers.keywords_digest()

@@ -29,6 +29,7 @@ from email.parser import BytesHeaderParser
 from email.policy import Policy
 from email.utils import getaddresses
 
+from ecf_server import excerpt
 from ecf_server.htmltext import LINK_CAP, html_text, plain_links, strip_data_uris, tidy
 from ecf_server.mail import PartInfo
 
@@ -98,6 +99,10 @@ class TextPart:
     # the triggers (mail clients show them inline) but never used for excerpts (V1.1 review)
     links: int = 0  # saturates at htmltext.LINK_CAP
     link_text_mismatch: bool = False  # HTML only (htmltext)
+    # HTML only, for the excerpt (excerpt.py): the visible text outside quote containers (None when
+    # there are none) and inside them, each cut to excerpt.HEAD_CHARS
+    unquoted: str | None = None
+    quoted: str = ""
 
 
 @dataclass(frozen=True)
@@ -138,18 +143,30 @@ class ParsedMessage:
     def visible_text(self) -> str:
         return "\n\n".join(t.visible for t in self.texts if t.visible)
 
-    def excerpt(self, limit: int, redact: Callable[[str], str] | None = None) -> str:
-        """Plain text preferred, else visible HTML text; `redact` applied before the cut at a
-        word boundary."""
-        text = self._body_text()
+    def excerpt(self, limit: int, redact: Callable[[str], str] | None = None, *,
+                prep: bool = True) -> str:  # fmt: skip
+        """The prepared body (`excerpt.py`), or with `prep` off the first plain part, else the
+        first visible HTML text; `redact` applied before the cut at a word boundary."""
+        text = self.prepared() if prep else self._body_text()
         return _cut(text if redact is None else redact(text), limit)
 
-    def excerpts(self, redact: Callable[[str], str]) -> tuple[str, str]:
-        """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction."""
-        text = redact(self._body_text())
+    def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
+        """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off
+        only in an eval (`--no-excerpt-prep`)."""
+        text = redact(self.prepared() if prep else self._body_text())
         return _cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)
 
+    def prepared(self) -> str:
+        """The body for the excerpts (pre-classifier plan step 10): every plain body part, else
+        every HTML body part's visible text, prepared by `excerpt.prepare`."""
+        body = [t for t in self.texts if not t.attachment and t.visible]
+        plain = [(t.visible, "") for t in body if t.content_type == "text/plain"]
+        html = [(t.visible if t.unquoted is None else t.unquoted, t.quoted)
+                for t in body if t.content_type == "text/html"]  # fmt: skip
+        return excerpt.prepare(plain or html)
+
     def _body_text(self) -> str:
+        """The body before step 10: the first plain part, else the first visible HTML text."""
         body = [t for t in self.texts if not t.attachment and t.visible]
         plain = [t.visible for t in body if t.content_type == "text/plain"]
         html = [t.visible for t in body if t.content_type == "text/html"]
@@ -240,7 +257,12 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
 
 
 def _attached_text(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
-    return replace(_text_part(ctype, normalize_text(decoded), max_scan_bytes), attachment=True)
+    return replace(
+        _text_part(ctype, normalize_text(decoded), max_scan_bytes),
+        attachment=True,
+        unquoted=None,
+        quoted="",
+    )  # never used for excerpts
 
 
 _BARE_CR = re.compile(rb"\r(?!\n)")
@@ -377,11 +399,14 @@ def _text_part(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
     if ctype == "text/html":
         source = strip_data_uris(decoded)
         scanned, truncated = _cap(source, max_scan_bytes)
-        full, visible, links = html_text(scanned)
-    else:
-        scanned, truncated = _cap(decoded, max_scan_bytes)
-        full = visible = tidy(scanned)
-        links = plain_links(scanned)
+        h = html_text(scanned)
+        cap = excerpt.HEAD_CHARS
+        unquoted = None if h.unquoted is None else h.unquoted[:cap]
+        return TextPart(ctype, h.full, h.visible, truncated, False, h.links.number,
+                        h.links.text_mismatch, unquoted, h.quoted[:cap])  # fmt: skip
+    scanned, truncated = _cap(decoded, max_scan_bytes)
+    full = visible = tidy(scanned)
+    links = plain_links(scanned)
     return TextPart(ctype, full, visible, truncated, False, links.number, links.text_mismatch)
 
 

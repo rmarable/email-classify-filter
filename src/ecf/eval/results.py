@@ -20,7 +20,8 @@ _STRICT = ConfigDict(extra="forbid", frozen=True)
 MARGIN_POINTS = 5.0
 # what a run was asked with besides the email: a difference is printed, the comparison still runs
 INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different inputs",
-              "excerpt_cap": "different inputs", "keywords_digest": "different keywords",
+              "excerpt_cap": "different inputs", "excerpt_prep": "different inputs",
+              "keywords_digest": "different keywords",
               "rules_digest": "different rules"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 

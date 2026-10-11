@@ -337,6 +337,9 @@ def test_compare_warns_when_the_runs_were_asked_differently() -> None:
     assert [w.split(" (")[0] for w in warned] == ["warning: different prompt",
                                                   "warning: different inputs"]  # fmt: skip
     assert input_warnings(pa, b) == []  # a run that recorded none can't be told apart
+    ea = a.model_copy(update={"summary": {"excerpt_prep": 1}})
+    eb = b.model_copy(update={"summary": {"excerpt_prep": 0}})  # --no-excerpt-prep (step 10)
+    assert input_warnings(ea, eb) == ["warning: different inputs (excerpt_prep 1 vs 0)"]
 
 
 def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:

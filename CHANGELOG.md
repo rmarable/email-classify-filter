@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- The classifier and actor now read every text part of an email, with quoted replies, signatures and footers moved after the new text behind a line saying ecf moved them (never removed), so a request below a quote or in a second text part is no longer missed; this is a new gate for every address (local and Claude).
+- `ecf eval run --no-excerpt-prep` cuts the excerpts the old way, for comparison (never counts for the go-live gate).
 - The local classifier's description of `account_security` is back to `v2.0.0`'s ("asks for nothing beyond signing in as usual"), so phishing posing as a security alert is filed as `spam_or_phishing` again; the other new category texts stay.
 - A sender that only ever sends requests for codes, gift cards or crypto payments never becomes a known sender, however often its mail is authenticated, so such requests from it stay escalated; a sender becomes known once some of its other mail is authenticated too. `ecf sender show` shows how many of a sender's authenticated messages were such requests. The database gains one column (migration 0035); export bundles keep their format (SPEC §8.5).
 - `ecf eval routes --result` now judges a run against the same answers with the new fraud routes off: it fails if the routes lose a scam that was caught without them, leave a scam uncaught or newly escalate a genuine email, and it also shows what a new mailbox with no sender history would see (SPEC §16.2).
