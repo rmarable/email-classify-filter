@@ -142,6 +142,17 @@ Item 3 is an operator decision (2026-09-27, OD-159). Items 4 (the document list)
 
 Each result goes in §21.2 with its run IDs.
 
+### 1.5b Release criteria for `v2.1.0` (classifier plan §4; written here 2026-10-11, operator decision)
+
+`v2.1.0` (classifier wording and cards, signals to the local and Claude classifiers, pre-classifier plan stages 1-2: deterministic routes, excerpt preparation, message signals, migration 0035) is tagged only after the code it ships passes each item; results in §21.2:
+
+1. **Context probe.** Prompts fit `num_ctx` 6,144 below `NEAR_CTX` 5,920. **Met:** probe 0.1 (2026-10-09) and the step-11 budget probe (2026-10-11, prompt `9c7100e3`): worst input 4,602 tokens with every signal, 1,318 below `NEAR_CTX`; the minimal email with every signal 1,607 tokens, 512 above `v2.0.0`'s 1,095, inside the 1,500 decided.
+2. **All-on run against run 0** (`883204b3`): Newcombe lower bound above −5 points end to end; 0 unsafe; fraud-guard recall N/N; fraud-labelled cases with a hide kept 0; fraud risk answered `none` on fraud-labelled cases not above run 0. **Met by `d80ea43d`** (code `9a7669c`, the code `v2.1.0` ships): +1.1 points (−3.3 to +5.5), 0 unsafe, recall 95/95, hide kept 0, `none` on 0 of 71 (run 0: 2 of 71; computed 2026-10-11 with `ecf eval compare`). The earlier run 1 `66f2190b` (1 unsafe) and its repeat `852e104b` measured superseded code.
+3. **Run 3** (signals not sent, not for the gate) against run 0, reported: `bbcd06e3`, +1.1 points (−3.0 to +5.3); the gain is the wording and cards' (P12).
+4. **C final against the C baseline** (`d880a988`, rescored through today's policy): 0 unsafe, recall N/N, Newcombe lower bound above −5. **Met by `61686db4`:** +2.2 points (−1.6 to +6.2), 0 unsafe, recall 95/95.
+5. **Upgrade.** A `v2.0.0` install upgraded to the candidate: affected addresses named, `live` drops to `assist`, `ecf upgrade --to 2.0.0` and up again, and classification works on the upgraded install. **Met** on install `ecf1009`: a local `2.1.0rc1` wheel (live to assist shown) and the published `v2.1.0-rc1` (download checked against the manifest and `SHA256SUMS`), each with a rollback and a second upgrade. Classification on the upgraded install (2026-10-11 18:57 UTC, `testingecf` resumed at `assist`, `ecf check`): a plain test email from the operator's Gmail address was fetched, classified by the local model (`fraud_risk` none, `sender_type` `team`) and planned; no System Error; database at migration 35. It took `fraud_weak` (labelled `suspicious`, flagged, digest only): no trigger or route fired, but the model placed an outside, first-time sender as `team`, which rule 1b's clause for "`team` from outside" (OD-262, unchanged since `v2.0.0`) flags as a possible impersonation. Expected for a personal address writing like a colleague; whether `v2.0.0` would also have said `team` wasn't tested. `testingecf` paused and the service stopped afterwards.
+6. **macOS merge gate**, 0 skipped, on the release code: 2448 passed (2026-10-11, `v2.1.0-rc1`).
+
 ### 1.6 Documents
 
 Order of work and document rules: operator decisions 2026-09-26/27, OD-137 to OD-149 and OD-152 (SPEC plus CLAUDE.md first; other documents with their milestones; roadmap documents at each milestone's start; one owner per topic; the plan committed with its symlink; legacy documents moved to `docs/history/`; README v1-only; about 18 ADRs; the license; the CLAUDE.md rules and 160-line limit; the session-state files). Review passes accepted: OD-150, OD-151.
