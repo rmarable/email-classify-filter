@@ -14,9 +14,11 @@ before they are read, and nothing recorded after `LINK_CAP` anchors (the count s
 a count and a boolean come out, never a URL or domain.
 
 It also notes which visible text lies inside a quote container (`<blockquote>`, Gmail's and
-Yahoo's quote divs, Gmail's signature div), so the excerpt can put it after the new text
-(`excerpt.py`, pre-classifier plan step 10, P22): a depth counter like the hidden one, and only
-the start and end positions are kept until the walk ends.
+Yahoo's quote divs, Gmail's signature div), so the excerpt can mark it (`excerpt.py`,
+pre-classifier plan step 10, P22): a depth counter like the hidden one, and only the start and end
+positions are kept until the walk ends. Only containers with no visible text after them count
+(pre-gate review G1); one followed by new text stays in place. The split reads at most
+`limit` characters of each side (review G4).
 """
 
 from __future__ import annotations
@@ -208,21 +210,18 @@ class _Walker(HTMLParser):
         if self._quoted:  # an unclosed container runs to the end
             self.quoted_spans[-1][1] = len(self.visible)
 
-    def split_visible(self) -> tuple[str | None, str]:
-        """(the visible text outside quote containers, the visible text inside them); the first
-        is None when the document has no quote container, as the visible text is then the same."""
-        if not self.quoted_spans:
+    def split_visible(self, limit: int) -> tuple[str | None, str]:
+        """(the visible text before the trailing quote containers, the visible text from their
+        start), each read up to `limit` characters; the first is None when no container has only
+        whitespace after it, as the visible text is then the same."""
+        cut, after = None, len(self.visible)
+        for start, end in reversed(self.quoted_spans):
+            if any(p.strip() for p in self.visible[end:after]):
+                break
+            cut, after = start, start
+        if cut is None:
             return None, ""
-        main: list[str] = []
-        quoted: list[str] = []
-        at = 0
-        for start, end in self.quoted_spans:
-            main.extend(self.visible[at:start])
-            quoted.extend(self.visible[start:end])
-            quoted.append("\n")
-            at = end
-        main.extend(self.visible[at:])
-        return tidy("".join(main)), tidy("".join(quoted))
+        return tidy(_head(self.visible[:cut], limit)), tidy(_head(self.visible[cut:], limit))
 
     def _end_anchor(self) -> None:
         if self._anchor:
@@ -248,19 +247,31 @@ class HtmlText(NamedTuple):
     full: str
     visible: str
     links: Links
-    unquoted: str | None = None  # visible text outside quote containers; None when there are none
-    quoted: str = ""  # visible text inside them
+    unquoted: str | None = None  # visible text before the trailing quote containers; None: none
+    quoted: str = ""  # visible text from their start
 
 
-def html_text(html: str) -> HtmlText:
-    """The full and visible text of an HTML document, whitespace tidied, its links, and its
-    visible text split around quote containers."""
+def html_text(html: str, quotes: int = 0) -> HtmlText:
+    """The full and visible text of an HTML document, whitespace tidied, its links, and, when
+    `quotes` is a character limit, its visible text split before trailing quote containers."""
     w = _Walker()
     w.feed(strip_data_uris(html))
     w.close()
     links = Links(w.links, w.link_text_mismatch)
-    unquoted, quoted = w.split_visible()
+    unquoted, quoted = w.split_visible(quotes) if quotes else (None, "")
     return HtmlText(tidy("".join(w.full)), tidy("".join(w.visible)), links, unquoted, quoted)
+
+
+def _head(pieces: list[str], limit: int) -> str:
+    """The first `limit` characters of the pieces joined, without joining the rest."""
+    out: list[str] = []
+    n = 0
+    for p in pieces:
+        if n >= limit:
+            break
+        out.append(p)
+        n += len(p)
+    return "".join(out)[:limit]
 
 
 def html_to_text(html: str) -> tuple[str, str]:

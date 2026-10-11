@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -215,6 +215,14 @@ def scoring(r: ResultFile) -> str:
     return "recorded" if "rescored_from" in s else "live"
 
 
+def switches(r: ResultFile) -> list[str]:
+    """The eval-only switches a run had off (`summary.options.switches_off`), sorted."""
+    opts = (r.summary or {}).get("options")
+    off = cast(dict[str, Any], opts).get("switches_off") if isinstance(opts, dict) else None
+    items: list[Any] = cast(list[Any], off) if isinstance(off, list) else []
+    return sorted(str(x) for x in items)
+
+
 def _set_changed(r: ResultFile) -> bool:
     rescored = cast(dict[str, object], (r.summary or {}).get("rescored_from") or {})
     return rescored.get("set_changed") is True
@@ -231,6 +239,9 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     if _set_changed(a) or _set_changed(b):  # pre-gate review G5
         out.append("warning: a result was planned again on a set whose labels changed since"
                    " its run")  # fmt: skip
+    if (wa := switches(a)) != (wb := switches(b)):  # pre-gate review G3
+        out.append(f"warning: different switches ({', '.join(wa) or 'all on'} vs"
+                   f" {', '.join(wb) or 'all on'})")  # fmt: skip
     for key, what in INPUT_KEYS.items():
         va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
         if va is not None and vb is not None and va != vb:

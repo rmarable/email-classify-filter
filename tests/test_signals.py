@@ -170,3 +170,13 @@ def test_message_signals_come_from_the_message() -> None:
     p = parse(m.as_bytes())
     assert p.link_text_mismatch
     assert any(facts_mod.risky(a) for a in p.attachments)
+
+
+def test_the_actors_instructions_are_in_the_prompt_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-gate review G10: an actor-only change used to keep the gate key."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+    from ecf_server import actor  # noqa: PLC0415
+
+    before = classifier.prompt_digest(load_schema())
+    monkeypatch.setattr(actor, "INSTRUCTIONS", actor.INSTRUCTIONS + " Reworded.")
+    assert classifier.prompt_digest(load_schema()) != before

@@ -99,10 +99,12 @@ class TextPart:
     # the triggers (mail clients show them inline) but never used for excerpts (V1.1 review)
     links: int = 0  # saturates at htmltext.LINK_CAP
     link_text_mismatch: bool = False  # HTML only (htmltext)
-    # HTML only, for the excerpt (excerpt.py): the visible text outside quote containers (None when
-    # there are none) and inside them, each cut to excerpt.HEAD_CHARS
+    # HTML only, for the excerpt (excerpt.py): the visible text before the trailing quote
+    # containers (None when there are none) and from their start, each cut to excerpt.HEAD_CHARS;
+    # left out (None, "") for a part the excerpt can't use (pre-gate review G4)
     unquoted: str | None = None
     quoted: str = ""
+    forwarded: bool = False  # the text of an attached message (message/rfc822): quoted (G6)
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,14 @@ class ParsedMessage:
         text = self.prepared() if prep else self._body_text()
         return _cut(text if redact is None else redact(text), limit)
 
+    def excerpt_sets(self, redact: Callable[[str], str]) -> tuple[tuple[str, str], tuple[str, str]]:
+        """The classifier and actor excerpts redacted and unredacted, from one preparation
+        (pre-gate review G8)."""
+        text = self.prepared()
+        red = redact(text)
+        return ((_cut(red, CLASSIFIER_CHARS), _cut(red, ACTOR_CHARS)),
+                (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)))  # fmt: skip
+
     def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
         """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off
         only in an eval (`--no-excerpt-prep`)."""
@@ -160,8 +170,10 @@ class ParsedMessage:
         """The body for the excerpts (pre-classifier plan step 10): every plain body part, else
         every HTML body part's visible text, prepared by `excerpt.prepare`."""
         body = [t for t in self.texts if not t.attachment and t.visible]
-        plain = [(t.visible, "") for t in body if t.content_type == "text/plain"]
-        html = [(t.visible if t.unquoted is None else t.unquoted, t.quoted)
+        plain = [("", t.visible) if t.forwarded else (t.visible, "")
+                 for t in body if t.content_type == "text/plain"]  # fmt: skip
+        html = [("", t.visible) if t.forwarded
+                else (t.visible if t.unquoted is None else t.unquoted, t.quoted)
                 for t in body if t.content_type == "text/html"]  # fmt: skip
         return excerpt.prepare(plain or html)
 
@@ -232,6 +244,8 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
     texts: list[TextPart] = []
     attachments: list[Attachment] = []
     defects = len(msg.defects) + (pol is policy.compat32)
+    forwarded = _forwarded(msg)
+    quotes = not _has_plain(msg, forwarded)  # the HTML split is used only without a plain part
     for part in msg.walk():
         if part.is_multipart():
             continue
@@ -242,7 +256,8 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
             decoded = normalize_text(_decode_text(part))
             data = decoded.encode("utf-8")
             h.update(b"t" + len(data).to_bytes(8, "big") + data)
-            texts.append(_text_part(ctype, decoded, max_scan_bytes))
+            text = _text_part(ctype, decoded, max_scan_bytes, quotes=quotes)
+            texts.append(replace(text, forwarded=True) if id(part) in forwarded else text)
         else:
             payload = part.get_payload(decode=True)
             data = payload if isinstance(payload, bytes) else b""
@@ -257,12 +272,30 @@ def _parse(raw: bytes, pol: Policy, max_scan_bytes: int) -> ParsedMessage:
 
 
 def _attached_text(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
-    return replace(
-        _text_part(ctype, normalize_text(decoded), max_scan_bytes),
-        attachment=True,
-        unquoted=None,
-        quoted="",
-    )  # never used for excerpts
+    text = _text_part(ctype, normalize_text(decoded), max_scan_bytes, quotes=False)
+    return replace(text, attachment=True)  # never used for excerpts
+
+
+def _forwarded(msg: EmailMessage | Message) -> set[int]:
+    """The ids of the parts inside an attached message (message/rfc822), whose text a mail
+    client shows inline: the excerpt counts it as quoted (pre-gate review G6)."""
+    out: set[int] = set()
+    for part in msg.walk():
+        if part.get_content_type() == "message/rfc822":
+            out.update(id(p) for p in part.walk() if p is not part)
+    return out
+
+
+def _has_plain(msg: EmailMessage | Message, forwarded: set[int]) -> bool:
+    """Whether the message has a plain body part with something in it (before decoding: a part
+    of encoded whitespace counts, and the HTML text is then read in order, unsplit)."""
+    for part in msg.walk():
+        if (part.get_content_type() == "text/plain" and id(part) not in forwarded
+                and part.get_content_disposition() != "attachment"):  # fmt: skip
+            payload = part.get_payload()
+            if isinstance(payload, str) and payload.strip():
+                return True
+    return False
 
 
 _BARE_CR = re.compile(rb"\r(?!\n)")
@@ -349,13 +382,15 @@ def parse_partial(
         h.update(len(value).to_bytes(8, "big") + value)
     out_texts: list[TextPart] = []
     attachments: list[Attachment] = []
+    quotes = not any(p.content_type == "text/plain" and p.disposition != "attachment"
+                     and texts.get(p.section, b"").strip() for p in parts)  # fmt: skip
     for p in parts:
         h.update(f"{p.section}|{p.content_type}|{p.size}\n".encode())
         body = p.content_type in ("text/plain", "text/html") and p.disposition != "attachment"
         if body or p.section in texts:  # other text parts, when fetched, are scanned too
             fetched = texts.get(p.section, b"")
             decoded = normalize_text(_charset(_transfer_decode(fetched, p.encoding), p.charset))
-            text = _text_part(p.content_type, decoded, max_scan_bytes)
+            text = _text_part(p.content_type, decoded, max_scan_bytes, quotes=quotes and body)
             cut = p.size > len(fetched)
             out_texts.append(replace(text, truncated=text.truncated or cut, attachment=not body))
         if not body:
@@ -395,15 +430,14 @@ def _charset(data: bytes, charset: str | None) -> str:
         return data.decode("utf-8", "replace")
 
 
-def _text_part(ctype: str, decoded: str, max_scan_bytes: int) -> TextPart:
+def _text_part(ctype: str, decoded: str, max_scan_bytes: int, *, quotes: bool) -> TextPart:
+    """`quotes`: split the HTML text for the excerpt (only when no plain part will be used)."""
     if ctype == "text/html":
         source = strip_data_uris(decoded)
         scanned, truncated = _cap(source, max_scan_bytes)
-        h = html_text(scanned)
-        cap = excerpt.HEAD_CHARS
-        unquoted = None if h.unquoted is None else h.unquoted[:cap]
+        h = html_text(scanned, excerpt.HEAD_CHARS if quotes else 0)
         return TextPart(ctype, h.full, h.visible, truncated, False, h.links.number,
-                        h.links.text_mismatch, unquoted, h.quoted[:cap])  # fmt: skip
+                        h.links.text_mismatch, h.unquoted, h.quoted)  # fmt: skip
     scanned, truncated = _cap(decoded, max_scan_bytes)
     full = visible = tidy(scanned)
     links = plain_links(scanned)

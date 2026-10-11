@@ -252,16 +252,23 @@ def test_excerpt_preparation_on_hostile_text(shape: str) -> None:
     assert len(out) <= excerpt.HEAD_CHARS + len(excerpt.MOVED_MARK) + 4
 
 
-@pytest.mark.parametrize("shape", ["many-quotes", "nested-unclosed-quotes"])
+@pytest.mark.parametrize("shape", ["many-quotes", "nested-unclosed-quotes", "one-big-quote",
+                                   "half-quoted"])  # fmt: skip
 def test_quote_containers_on_hostile_html(shape: str) -> None:
     """Pre-classifier plan step 10 (P22): quote containers are a depth counter in the walker and
-    only span positions are kept. About 20 units on this Mac (2026-10-11), against 16-17 before
-    step 10 and 10 for ordinary paragraphs."""
+    only span positions are kept; the split reads `HEAD_CHARS` of each side (pre-gate review G4,
+    G11: one 10 MiB container, and one after 5 MiB of text). About 20 units on this Mac for the
+    first two (2026-10-11), against 16-17 before step 10 and 10 for ordinary paragraphs."""
+    para = "<p>" + LINE + "</p>"
     html = {
         "many-quotes": lambda: _repeat("<blockquote>x</blockquote>"),
         "nested-unclosed-quotes": lambda: _repeat("<blockquote>"),
-    }[shape]()
+        "one-big-quote": lambda: "<p>New</p><blockquote>" + _repeat(para) + "</blockquote>",
+        "half-quoted": lambda: (para * (5 * MIB // len(para)) + "<blockquote>"
+                                + para * (5 * MIB // len(para)) + "</blockquote>"),
+    }[shape]()  # fmt: skip
     unit = _unit()
-    took, out = _cpu(lambda: html_text(html))
+    took, out = _cpu(lambda: html_text(html, excerpt.HEAD_CHARS))
     assert took < 60 * unit
     assert out.unquoted is not None
+    assert len(out.unquoted) <= excerpt.HEAD_CHARS and len(out.quoted) <= excerpt.HEAD_CHARS

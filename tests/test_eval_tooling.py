@@ -340,6 +340,9 @@ def test_compare_warns_when_the_runs_were_asked_differently() -> None:
     ea = a.model_copy(update={"summary": {"excerpt_prep": 1}})
     eb = b.model_copy(update={"summary": {"excerpt_prep": 0}})  # --no-excerpt-prep (step 10)
     assert input_warnings(ea, eb) == ["warning: different inputs (excerpt_prep 1 vs 0)"]
+    sa = a.model_copy(update={"summary": {"options": {"switches_off": ["message_signals"]}}})
+    assert input_warnings(sa, b) == [  # pre-gate review G3: the prompt digest doesn't show it
+        "warning: different switches (message_signals vs all on)"]  # fmt: skip
 
 
 def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:
