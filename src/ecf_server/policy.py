@@ -156,12 +156,24 @@ def payment_or_fraud(ctx: Context) -> bool:
             or ctx.classification.get("fraud_risk") in ("medium", "high"))  # fmt: skip
 
 
+HighRiskReason = Literal["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
+
+
+def high_risk_reasons(ctx: Context) -> tuple[HighRiskReason, ...]:
+    """Why an item is high risk (§8.2), in a fixed order; empty when it isn't (v2.2.0: the eval's
+    actor-high routing figures)."""
+    tests: tuple[tuple[HighRiskReason, bool], ...] = (
+        ("high_sensitivity", ctx.sensitivity == "high"),
+        ("first_time_sender", not ctx.facts.get("sender_seen_before")),
+        ("fraud_signal", fraud_signal(ctx)),
+        ("payment", payment_or_fraud(ctx)),
+    )
+    return tuple(name for name, hit in tests if hit)
+
+
 def high_risk(ctx: Context) -> bool:
     """§8.2: a `high` address, a first-time sender, any fraud signal, or payment (I3: OR)."""
-    return (ctx.sensitivity == "high"
-            or not ctx.facts.get("sender_seen_before")
-            or fraud_signal(ctx)
-            or payment_or_fraud(ctx))  # fmt: skip
+    return bool(high_risk_reasons(ctx))
 
 
 def rule_input(ctx: Context) -> RuleInput:

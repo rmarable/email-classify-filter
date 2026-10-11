@@ -15,6 +15,7 @@ from ecf_server import policy, precheck
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
 
+REASONS = ["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
 SCHEMA = load_schema()
 STARTER = load_starter_rules(SCHEMA)
 LABELS = policy.labels(SCHEMA, STARTER)
@@ -121,6 +122,19 @@ def test_i2_a_pre_check_escalation_always_survives_classification(ctx: Context) 
         assert ("escalate", None) in names and p.rule_id in ("fraud_guard", "regulatory")
     if t["fraud_weak"] or t["regulator"] or t["fraud"]:
         assert not p.hides
+
+
+@settings(max_examples=2000, deadline=None)
+@given(CONTEXTS)
+def test_high_risk_is_having_a_reason(ctx: Context) -> None:
+    """v2.2.0: the eval's routing figures read the reasons; routing itself is unchanged."""
+    reasons = policy.high_risk_reasons(ctx)
+    assert policy.high_risk(ctx) is bool(reasons)
+    assert list(reasons) == sorted(set(reasons), key=REASONS.index)
+    assert ("high_sensitivity" in reasons) is (ctx.sensitivity == "high")
+    assert ("first_time_sender" in reasons) is (not ctx.facts.get("sender_seen_before"))
+    assert ("fraud_signal" in reasons) is policy.fraud_signal(ctx)
+    assert ("payment" in reasons) is policy.payment_or_fraud(ctx)
 
 
 @settings(max_examples=2000, deadline=None)

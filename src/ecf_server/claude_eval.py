@@ -40,7 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ecf.errors import (
     ConflictError,
@@ -92,6 +92,30 @@ class Options:
     copy_to: Path | None = None  # also write the result file here (plan 0.3)
 
 
+Outcome = Literal["recorded", "invalid", "claim_expired", "model_refused", "session_ended",
+                  "run_ended"]  # fmt: skip
+
+
+@dataclass
+class Claim:
+    """One claim of a case, for the run's timing figures (v2.2.0 plan item 2): closed values,
+    counters and service-side times only, all from the injected clock."""
+
+    stage: str  # classify | act | repeat
+    spawn: str  # the label `eval_next` gave it; unique within its session and round
+    round: int  # the run's rounds that handed out items, from 1, across sessions
+    session: int  # the session's ordinal in `Run.sessions`, from 1
+    limit: int  # the round's `limit`
+    items: int  # how many items the round handed out
+    preparing: bool  # the run was still preparing cases
+    claimed: datetime
+    read: datetime | None = None  # the first `get_message`
+    answered: datetime | None = None  # the valid submission (`Hold.at`'s moment)
+    settled: datetime | None = None  # the held submission applied or refused
+    outcome: Outcome | None = None
+    high_risk: tuple[policy.HighRiskReason, ...] = ()  # an act claim's reasons (§8.2)
+
+
 @dataclass
 class Work:
     """One case of the run and its claim."""
@@ -116,6 +140,7 @@ class Work:
     need: str = ""
     agent: str = ""
     invalid: int = 0
+    claims: list[Claim] = field(default_factory=list[Claim])  # every claim, the current last
 
 
 @dataclass
@@ -140,6 +165,7 @@ class Run:
     outcomes: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     repeats_started: bool = False
     diffs: int = 0
+    rounds: int = 0  # `eval_next` replies that handed out items
     summary: dict[str, Any] | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -414,6 +440,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     complete = state == "done"
     run.state, run.detail = state, detail
     for w in run.works:
+        if w.claim != "free":
+            _ended(w, "run_ended")
         w.claim, w.session = "free", None
     if not results:
         return
@@ -521,8 +549,11 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
         if agent is not None and out_agents - {agent}:
             free = []
         free = [w for w in free if _agent_of(run, w) == agent]
-        out = [_claim(run, w, session_id, now) for w in free[:limit]]
+        picked = free[:limit]
+        out = [_claim(run, w, session_id, now) for w in picked]
         _spawns(run, out)
+        if out:
+            _record_claims(run, picked, out, session_id, limit, now)
         busy = sum(w.claim != "free" for w in run.works)
         return base | {"items": out, "more": len(free) > limit, "done": False,
                        "preparing": run.state == "preparing", "in_progress": busy}  # fmt: skip
@@ -583,7 +614,26 @@ def _spawns(run: Run, items: list[dict[str, Any]]) -> None:
             it["spawn"] = agent
 
 
-def _outcome(run: Run, w: Work, outcome: str) -> None:
+def _record_claims(run: Run, picked: list[Work], out: list[dict[str, Any]], session_id: str,
+                   limit: int, now: datetime) -> None:  # fmt: skip
+    """One `Claim` per item of a round that handed out items."""
+    run.rounds += 1
+    ordinal = run.sessions.index(session_id) + 1
+    preparing = run.state == "preparing"
+    for w, it in zip(picked, out, strict=True):
+        reasons = policy.high_risk_reasons(_context(run, w)) if w.stage == "act" else ()
+        w.claims.append(Claim(w.stage, str(it["spawn"]), run.rounds, ordinal, limit, len(out),
+                              preparing, now, high_risk=reasons))  # fmt: skip
+
+
+def _ended(w: Work, outcome: Outcome) -> None:
+    """The current claim's outcome, set once."""
+    if w.claims and w.claims[-1].outcome is None:
+        w.claims[-1].outcome = outcome
+
+
+def _outcome(run: Run, w: Work, outcome: Outcome) -> None:
+    _ended(w, outcome)
     if w.session is not None:
         run.outcomes.setdefault(w.session, []).append({"id": w.ref, "outcome": outcome})
 
@@ -619,6 +669,8 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
     derived signals (OD-484), no labels."""
     run, w = _claimed(clock, session_id, ref, token, agent)
     with run.lock:
+        if w.claims and w.claims[-1].read is None:
+            w.claims[-1].read = clock.now()
         text = w.cls_text if w.need == "classify" else w.act_text
         out: dict[str, Any] = {"id": ref, "need": w.need,
                                "untrusted_email": w.email | {"text": text},
@@ -641,7 +693,7 @@ def record_classification(clock: Clock, session_id: str, ref: str, token: str,
     with run.lock:
         if result is None:
             return _invalid(run, w, errors)
-        return _hold(run, w, session_id, {"classification": result})
+        return _hold(clock, w, session_id, {"classification": result})
 
 
 def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: dict[str, Any],
@@ -653,7 +705,7 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
                                            actor.allowed(_cls(w)))  # fmt: skip
         if why is not None:
             return _invalid(run, w, [why])
-        return _hold(run, w, session_id, {"proposal": proposal})
+        return _hold(clock, w, session_id, {"proposal": proposal})
 
 
 def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
@@ -675,8 +727,10 @@ def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
             "tries_left": 0 if ended else claude_review.INVALID_MAX - w.invalid}  # fmt: skip
 
 
-def _hold(run: Run, w: Work, session_id: str, payload: dict[str, Any]) -> Hold:
+def _hold(clock: Clock, w: Work, session_id: str, payload: dict[str, Any]) -> Hold:
     w.claim = "held"
+    if w.claims:
+        w.claims[-1].answered = clock.now()
     return Hold(session_id, w.ref, w.fence, w.need, w.agent, payload, kind="eval")
 
 
@@ -693,6 +747,8 @@ def settle(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: No
         if w is None or w.claim != "held" or w.fence != hold.fence or not run.open:
             return ended
         expected = run.models[role_of(hold.agent)]
+        if w.claims:
+            w.claims[-1].settled = clock.now()
         if seen is None or seen.model != expected:
             return _refuse(connect, clock, notifier, tel, run, w, seen, expected)
         _outcome(run, w, "recorded")
@@ -743,6 +799,7 @@ def release_session(session_id: str) -> None:
     with run.lock:
         for w in run.works:
             if w.session == session_id and w.claim != "free":
+                _ended(w, "session_ended")
                 w.claim, w.session = "free", None
         run.outcomes.pop(session_id, None)
 

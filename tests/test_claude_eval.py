@@ -342,6 +342,110 @@ def test_a_session_ending_frees_its_claims(db_path: Path, clock: FakeClock, root
     assert len(claude_eval.eval_next(connector(db_path), clock, S2)["items"]) == 3
 
 
+# ---- claim records (v2.2.0 plan item 2) -------------------------------------------------------
+
+
+def _work(item: dict[str, Any]) -> claude_eval.Work:
+    run = claude_eval.current()
+    assert run is not None
+    return run.by_ref[item["id"]]
+
+
+def test_a_claim_records_its_round_spawn_and_times(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    t0 = clock.now()
+    first, second = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)["items"]
+    ref, token, agent = first["id"], first["claim_token"], first["agent"]
+    clock.advance(3)
+    claude_eval.get_message(clock, S1, ref, token, agent)
+    clock.advance(1)
+    claude_eval.get_message(clock, S1, ref, token, agent)  # only the first read counts
+    clock.advance(4)
+    got = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    clock.advance(2)
+    assert settled(db_path, clock, got)["accepted"]
+    (c,) = _work(first).claims
+    assert (c.stage, c.spawn, c.round, c.session, c.limit, c.items, c.preparing) == (
+        "classify", "ecf-classifier", 1, 1, 2, 2, False)  # fmt: skip
+    assert [(t - t0).total_seconds() if t else None
+            for t in (c.claimed, c.read, c.answered, c.settled)] == [0, 3, 8, 10]  # fmt: skip
+    assert c.outcome == "recorded" and c.high_risk == ()
+    # the session ends with the second claim unread; a second session claims it again
+    claude_eval.release_session(S1)
+    (ended,) = _work(second).claims
+    assert ended.outcome == "session_ended" and ended.read is None and ended.answered is None
+    items = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)["items"]
+    assert second["id"] in {i["id"] for i in items}
+    again = _work(second).claims[-1]
+    assert len(_work(second).claims) == 2
+    assert (again.round, again.session, again.items, again.outcome) == (2, 2, len(items), None)
+
+
+def test_every_way_a_claim_ends_is_recorded(db_path: Path, clock: FakeClock, root: Path) -> None:
+    start(db_path, clock, root)
+    expiring = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    clock.advance(16 * 60)
+    invalid, refused, left = claude_eval.eval_next(connector(db_path), clock, S2, limit=3)["items"]
+    assert _work(expiring).claims[0].outcome == "claim_expired"
+    for _ in range(3):
+        claude_eval.record_classification(clock, S2, invalid["id"], invalid["claim_token"],
+                                          {"category": "tax"}, invalid["agent"])  # fmt: skip
+    assert _work(invalid).claims[-1].outcome == "invalid"
+    assert _work(invalid).claims[-1].answered is None
+    got = claude_eval.record_classification(clock, S2, refused["id"], refused["claim_token"], BEC,
+                                            refused["agent"])  # fmt: skip
+    clock.advance(5)
+    assert not settled(db_path, clock, got, Seen("claude-haiku-4-5-20251001"))["accepted"]
+    r = _work(refused).claims[-1]
+    assert r.outcome == "model_refused" and r.settled == clock.now()
+    claude_eval.stop(connector(db_path), clock)
+    assert _work(left).claims[-1].outcome == "run_ended"
+    run = claude_eval.current()
+    assert run is not None and all(c.outcome is not None for w in run.works for c in w.claims)
+
+
+def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    run = claude_eval.current()
+    assert run is not None
+    acts = [c for w in run.works for c in w.claims if c.stage == "act"]
+    assert acts and all(c.high_risk for c in acts)  # every synthetic sender is first-time
+    assert all("first_time_sender" in c.high_risk for c in acts)
+    assert all(c.spawn.startswith("ecf-actor-high") for c in acts)
+    assert all(not c.high_risk for w in run.works for c in w.claims if c.stage != "act")
+    assert [c.stage for c in run.works[0].claims] == ["classify", "repeat"]
+
+
+def test_a_round_while_cases_are_still_being_prepared_says_so(
+    db_path: Path, clock: FakeClock, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = evalrun._inputs  # pyright: ignore[reportPrivateUsage]
+    seen: list[dict[str, Any]] = []
+
+    def inputs(case: Any, *args: Any) -> Any:
+        """Claim a round as soon as the first case is ready, while the rest are prepared."""
+        run = claude_eval.current()
+        if not seen and run is not None and any(w.stage == "classify" for w in run.works):
+            seen.append(claude_eval.eval_next(connector(db_path), clock, S1))
+        return real(case, *args)
+
+    monkeypatch.setattr(evalrun, "_inputs", inputs)
+    start(db_path, clock, root)
+    (q,) = seen
+    assert q["preparing"] is True and len(q["items"]) == 1
+    (c,) = _work(q["items"][0]).claims
+    assert c.preparing is True and c.round == 1 and c.items == 1
+    later = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    assert later and all(not _work(i).claims[-1].preparing for i in later)
+    assert {_work(i).claims[-1].round for i in later} == {2}
+
+
 # ---- models, presets and options -------------------------------------------------------------
 
 
