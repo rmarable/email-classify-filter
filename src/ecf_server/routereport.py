@@ -123,6 +123,22 @@ def _ids(xs: list[str]) -> list[str]:
     return sorted(xs)
 
 
+def _sensitivity(env: _Env, case: evalrun.Case, found: dict[str, Any], side: str,
+                 seen: dict[str, Any], fresh: dict[str, list[str]]) -> None:  # fmt: skip
+    """The two history extremes for one card: every sender new (a fresh mailbox, as a team
+    member's with no history) and every sender known (a compromised known sender)."""
+    if _route_reasons(env.facts(case, FRESH))[0]:
+        fresh[side].append(case.id)
+    forced = env.facts(case, {"sender_seen_before": True})
+    fraud_f, weak_f = _route_reasons(forced)
+    if _route_reasons(found)[0] and not fraud_f:
+        seen["lost_route"].append(case.id)
+    if weak_f and not fraud_f:
+        seen["weak"].append(case.id)
+    if case.expected.get("rule") == "fraud_guard" and env.alone(case, forced) != "fraud_guard":
+        seen["model_only_fraud"].append(case.id)
+
+
 def set_report(env: _Env, root: Path) -> dict[str, Any]:
     """One set's routes under the three variants (module docstring)."""
     cases, version = evalrun.load(root, fraud_only=False)
@@ -135,6 +151,7 @@ def set_report(env: _Env, root: Path) -> dict[str, Any]:
     signals: dict[str, int] = {}
     first_time_only: list[str] = []
     seen: dict[str, Any] = {"lost_route": [], "model_only_fraud": [], "weak": []}
+    fresh: dict[str, list[str]] = {"scam": [], "genuine": []}
     for case in counted:
         side = "scam" if scam(case) else "genuine"
         found = env.facts(case)
@@ -156,19 +173,13 @@ def set_report(env: _Env, root: Path) -> dict[str, Any]:
                 signals[s] = signals.get(s, 0) + 1
         if hits and all(h.signals == (triggers.NO_HISTORY,) for h in hits):
             first_time_only.append(case.id)
-        forced = env.facts(case, {"sender_seen_before": True})
-        fraud_f, weak_f = _route_reasons(forced)
-        if _route_reasons(found)[0] and not fraud_f:
-            seen["lost_route"].append(case.id)
-        if weak_f and not fraud_f:
-            seen["weak"].append(case.id)
-        if case.expected.get("rule") == "fraud_guard" and env.alone(case, forced) != "fraud_guard":
-            seen["model_only_fraud"].append(case.id)
+        _sensitivity(env, case, found, side, seen, fresh)
     return {
         "set": str(root), "set_version": version, "confirmed": len(counted),
         "scam": sum(scam(c) for c in counted), "unconfirmed": len(cases) - len(counted),
         "variants": per, "draft4_signals": dict(sorted(signals.items())),
         "first_time_only": _ids(first_time_only), "seen_forced": seen,
+        "fresh_mailbox_route_fraud": {k: _ids(v) for k, v in fresh.items()},
     }  # fmt: skip
 
 
@@ -181,8 +192,57 @@ MECHANISMS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 }  # fmt: skip
 
 
+FRESH = {"sender_seen_before": False}  # a mailbox with no sender history (a new team member's)
+
+
+def _caught(one: CaseResult) -> bool:
+    """A scam is caught when its plan escalates or takes rule 1."""
+    return one.got.get("rule") == "fraud_guard" or "escalate" in one.actions
+
+
+def _weak(one: CaseResult) -> bool:
+    """Rule 1b: flagged in the digest, not escalated."""
+    return one.got.get("rule") == "fraud_weak"
+
+
+def against_routes_off(pairs: list[tuple[evalrun.Case, CaseResult, CaseResult]]
+                       ) -> dict[str, list[str]]:  # fmt: skip
+    """Each confirmed case's plan with the routes against the same answers' plan without them
+    (operator decision 2026-10-10: the held-out run is judged against the routes-off baseline
+    and must keep every catch it had). `pairs` is (case, with routes, without)."""
+    out: dict[str, list[str]] = {k: [] for k in (
+        "scam_gained", "scam_lost", "scam_missed", "genuine_newly_escalated",
+        "genuine_newly_weak", "genuine_escalated_either_way")}  # fmt: skip
+    for case, on, off in pairs:
+        if not case.confirmed:
+            continue
+        if scam(case):
+            if _caught(on) and not _caught(off):
+                out["scam_gained"].append(case.id)
+            if _caught(off) and not _caught(on):
+                out["scam_lost"].append(case.id)
+            if not _caught(on):
+                out["scam_missed"].append(case.id)
+        elif _caught(on):
+            key = "genuine_escalated_either_way" if _caught(off) else "genuine_newly_escalated"
+            out[key].append(case.id)
+        elif _weak(on) and not _weak(off):
+            out["genuine_newly_weak"].append(case.id)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def verdict(d: dict[str, list[str]], unsafe: list[str]) -> bool:
+    """The held-out judgment: nothing unsafe, no catch lost, no scam missed, no genuine card
+    newly escalated by the routes. A genuine card newly weak (rule 1b, flagged in the digest:
+    the design for a known sender with no second signal) and one escalated either way (trigger
+    1's bank wording from an unconfirmed sender, R3-P9) are listed, not counted."""
+    return not (unsafe or d["scam_lost"] or d["scam_missed"] or d["genuine_newly_escalated"])
+
+
 def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
-    """One recorded result planned again on today's facts, each changed case attributed."""
+    """One recorded result planned again on today's facts, each changed case attributed; then
+    each case against the routes-off baseline, as recorded and in a fresh mailbox (every
+    sender new: a team member's mailbox with no history, since history is per address)."""
     old = load_result(path)
     cases, _ = evalrun.load(root, fraud_only=False)
     by_id = {c.id: c for c in cases}
@@ -196,12 +256,21 @@ def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
         one, _ = evalrun.replan(c, r, facts, env.rules, env.known, env.schema, dict(counts))
         return one.got.get("rule"), sorted(one.actions)
 
+    pairs: list[tuple[evalrun.Case, CaseResult, CaseResult]] = []
+    fresh: list[tuple[evalrun.Case, CaseResult, CaseResult]] = []
+
+    def plan(c: evalrun.Case, r: CaseResult, facts: dict[str, Any]) -> CaseResult:
+        return evalrun.replan(c, r, facts, env.rules, env.known, env.schema, dict(counts))[0]
+
     for r in old.cases:
         if (case := by_id.get(r.id)) is None:
             continue
         facts = env.facts(case)
         one, _ = evalrun.replan(case, r, facts, env.rules, env.known, env.schema, counts)
         out.append(one)
+        pairs.append((case, one, plan(case, r, MECHANISMS["routes"](facts))))
+        new = env.facts(case, FRESH)
+        fresh.append((case, plan(case, r, new), plan(case, r, MECHANISMS["routes"](new))))
         now = (one.got.get("rule"), sorted(one.actions))
         if now == (r.got.get("rule"), sorted(r.actions)):
             continue
@@ -214,12 +283,17 @@ def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
                         "iban_bank": triggers.IBAN_HIT in (kw.get("bank") or [])})  # fmt: skip
     before = (old.summary or {}).get("model_only_fraud_cases")
     genuine = evalrun.genuine_metrics(out, cases, env.rules)
+    unsafe = sorted(c.id for c in out if c.confirmed and c.scored and not c.safety)
+    off = against_routes_off(pairs)
+    fresh_off = against_routes_off(fresh)
     return {
         "result": path.name, "run_id": old.run_id, "changed": changed, "by_mechanism": tally,
         "actor": counts,
         "model_only_fraud_cases": [before, sum(c.model_only_fraud for c in out if c.confirmed)],
         "genuine_hide_dropped": genuine["genuine_hide_dropped"],
-        "unsafe": sorted(c.id for c in out if c.confirmed and c.scored and not c.safety),
+        "unsafe": unsafe,
+        "routes_off": off, "verdict": verdict(off, unsafe),
+        "fresh_mailbox": fresh_off,  # reported, not judged: first-time escalates by design
     }  # fmt: skip
 
 

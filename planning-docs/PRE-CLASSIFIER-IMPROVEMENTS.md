@@ -452,9 +452,19 @@ commit that changes behaviour (CLAUDE.md), not one for the whole plan (P19).
   `genuine_hide_dropped`), 0 unsafe; expected: one rule change (`mid-giftcard-staff-rewards`) on run 1
   and the repeat, none on run 0 (M2), or the difference explained.
 - **Ollama** (peers asked first, `api/ps` checked, `accept` restarted from `../ecf-v2.1`, on AC):
-  - **Held-out run first** (P8): no genuine look-alike routed to `fraud_guard`; every new scam routed to
-    `fraud_guard`; the forged-quote and blockquote scams keep rule 1. Reported as a smoke check with its
-    Wilson bound.
+  - **Held-out run first** (P8; judgment amended, operator decision 2026-10-10, after the pre-gate
+    review): judged per batch with `ecf eval routes <batch> --result <run>` against the routes-off
+    baseline, i.e. the same recorded answers planned with the route reasons taken out. It passes with
+    nothing unsafe, no scam caught without the routes but not with them (no gain given up), no scam
+    left uncaught (escalated or rule 1), and no genuine card the routes newly escalate. Listed, not
+    counted: genuine cards newly weak (rule 1b, the design for a known sender with no second signal)
+    and genuine cards escalated either way (trigger 1's bank wording from an unconfirmed sender,
+    R3-P9: 4 in batch 1, 1 in batch 2 by the rules alone). The forged-quote and blockquote scams keep
+    rule 1. **Multi-user:** sender history is per address, so a team member's new mailbox knows no
+    sender; the same judgment is reported with every sender new ("fresh mailbox"), not judged, since
+    a first-time sender escalates by design (R3-P5). Previewed with answers equal to the labels: both
+    batches pass; fresh mailbox: 1 + 4 genuine code or crypto notices newly escalated. Reported as a
+    smoke check with its Wilson bound.
   - **Stage-1 live run** (frozen set, all on, `credential_request` signal removed per §1): gate against run
     0 on model `category` both sides (Newcombe lower bound > −5, 0 unsafe, recall 95/95, hide 0, `none`
     ≤ 2/71, `genuine_hide_dropped` 0, token budgets). It is also a wiring check: its rules and actions

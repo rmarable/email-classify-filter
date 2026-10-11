@@ -1446,6 +1446,9 @@ def route_lines(r: dict[str, Any]) -> list[str]:
             f"  every sender known: route lost {_ids(seen['lost_route'])}; weak only"
             f" {_ids(seen['weak'])}; model-only fraud {len(seen['model_only_fraud'])}"
         )
+        fresh = st["fresh_mailbox_route_fraud"]
+        out.append(f"  every sender new (a fresh mailbox): route fraud {len(fresh['scam'])} scam"
+                   f" / {_ids(fresh['genuine'])} genuine")  # fmt: skip
     if (cp := r.get("corpus")) is not None:
         out += _corpus_route_lines(cp)
     for res in r["results"]:
@@ -1458,7 +1461,21 @@ def route_lines(r: dict[str, Any]) -> list[str]:
             why = ", ".join(c["mechanisms"]) or "unexplained"
             iban = "; valid IBAN present" if c["iban_bank"] else ""
             out.append(f"  {c['id']}: {c['rule'][0]} -> {c['rule'][1]} ({why}{iban})")
+        out.append(f"  against the routes off: {'PASS' if res['verdict'] else 'FAIL'}")
+        out += _against_lines(res["routes_off"], "    ")
+        out.append("  in a fresh mailbox (every sender new; reported, not judged):")
+        out += _against_lines(res["fresh_mailbox"], "    ")
     return out
+
+
+def _against_lines(d: dict[str, list[str]], pad: str) -> list[str]:
+    names = (("scam_gained", "scams caught only with the routes"),
+             ("scam_lost", "scams caught only without them"),
+             ("scam_missed", "scams not caught"),
+             ("genuine_newly_escalated", "genuine newly escalated"),
+             ("genuine_newly_weak", "genuine newly weak (rule 1b)"),
+             ("genuine_escalated_either_way", "genuine escalated either way"))  # fmt: skip
+    return [f"{pad}{what}: {_ids(d[key])}" for key, what in names]
 
 
 def _corpus_route_lines(cp: dict[str, Any]) -> list[str]:

@@ -133,6 +133,46 @@ def test_a_recorded_change_is_attributed_to_its_mechanism(root: Path, tmp_path: 
     assert res["model_only_fraud_cases"] == [1, 0] and res["unsafe"] == []
     lines = route_lines({"sets": [], "results": [res]})
     assert lines[1] == f"  {gift.id}: fraud_weak -> fraud_guard (routes)"
+    # judged against the routes off (operator decision 2026-10-10): the catch is the routes'
+    assert res["routes_off"]["scam_gained"] == [gift.id] and res["routes_off"]["scam_lost"] == []
+    assert res["verdict"] is True and "  against the routes off: PASS" in lines
+    assert res["fresh_mailbox"]["scam_gained"] == [gift.id]
+
+
+def _case(cid: str, rule: str | None) -> evalrun.Case:
+    return evalrun.Case(cid, Path(), {"rule": rule}, True, "test")
+
+
+def _plan(cid: str, rule: str, *actions: str) -> CaseResult:
+    return CaseResult(id=cid, correct=False, got={"rule": rule}, actions=list(actions))
+
+
+def test_the_judgment_keeps_every_catch_and_names_new_escalations() -> None:
+    """A scam caught without the routes but not with them fails the run, as does a genuine
+    card the routes newly escalate; one newly weak, or escalated either way, is only listed."""
+    pairs = [
+        (_case("s-gained", "fraud_guard"), _plan("s-gained", "fraud_guard", "escalate"),
+         _plan("s-gained", "otherwise")),
+        (_case("s-kept", "fraud_guard"), _plan("s-kept", "fraud_guard"),
+         _plan("s-kept", "fraud_guard")),
+        (_case("g-weak", "otherwise"), _plan("g-weak", "fraud_weak", "flag"),
+         _plan("g-weak", "otherwise")),
+        (_case("g-trigger1", "invoice"), _plan("g-trigger1", "fraud_guard"),
+         _plan("g-trigger1", "fraud_guard")),
+    ]  # fmt: skip
+    d = routereport.against_routes_off(pairs)
+    assert d == {"scam_gained": ["s-gained"], "scam_lost": [], "scam_missed": [],
+                 "genuine_newly_escalated": [], "genuine_newly_weak": ["g-weak"],
+                 "genuine_escalated_either_way": ["g-trigger1"]}  # fmt: skip
+    assert routereport.verdict(d, []) is True
+    assert routereport.verdict(d, ["s-kept"]) is False  # unsafe
+    lost = routereport.against_routes_off([(_case("s", "fraud_guard"), _plan("s", "otherwise"),
+                                            _plan("s", "fraud_guard"))])  # fmt: skip
+    assert lost["scam_lost"] == ["s"] and lost["scam_missed"] == ["s"]
+    assert routereport.verdict(lost, []) is False
+    new = routereport.against_routes_off([(_case("g", "otherwise"), _plan("g", "fraud_guard"),
+                                           _plan("g", "otherwise"))])  # fmt: skip
+    assert new["genuine_newly_escalated"] == ["g"] and routereport.verdict(new, []) is False
 
 
 @pytest.fixture
