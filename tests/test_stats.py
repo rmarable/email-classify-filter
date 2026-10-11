@@ -180,12 +180,59 @@ def test_eval_compare_prints_a_claude_runs_figures(tmp_path: Path) -> None:
         paths[-1].write_text(r.model_dump_json())
     out = CliRunner().invoke(app, ["eval", "compare", *map(str, paths)])
     assert out.exit_code == 0, out.output
-    assert "A  Claude" not in out.output
+    assert "A  Claude: batch unknown (no Claude figures)" in out.output  # plan item 6
     assert ("B  Claude: preset C, high, comparison (classifier_high claude-opus-5-5), batch 5"
             in out.output)  # fmt: skip
     assert "B  Claude: 4 requests, 3000 tokens in and 200 out, about 1600 per case" in out.output
     assert "B    claude-opus-5-5 (agent): 3 requests, 2950 tokens" in out.output
     assert "B  plan usage: 5-hour 10.0% -> 14.0%, 7-day 40.0% -> 41.0%" in out.output
+    assert "B  Claude spawns: no spawn figures" in out.output  # a result from before v2.2.0
+
+
+def test_eval_compare_prints_the_spawn_figures(tmp_path: Path) -> None:
+    """Timing plan item 5: spawn figures, seconds per request and cache shares per side; a
+    trimmed `claude` block prints what it has (P17)."""
+    from ecf.eval.results import ClaimRecord, spawn_figures  # noqa: PLC0415
+
+    def claim(spawn: str, stage: str, t: float, **kw: Any) -> ClaimRecord:
+        return ClaimRecord.model_validate({"stage": stage, "spawn": spawn, "round": 1,
+                                           "session": 1, "preparing": False, "claimed_s": t,
+                                           "read_s": t + 1, "answered_s": t + 5,
+                                           "settled_s": t + 5.5, **kw})  # fmt: skip
+
+    why = ["first_time_sender", "payment"]
+    cases = [CaseResult(id="c", correct=True,
+                        claims=[claim("ecf-classifier-high-1", "classify", 0)]),
+             CaseResult(id="d", correct=True,
+                        claims=[claim("ecf-actor-high-1", "act", 0, high_risk=why)])]  # fmt: skip
+    claude = {"preset": "C", "sensitivity": "high", "pinned": True, "batch": 1,
+              "models": {"classifier_high": "claude-sonnet-5-5"},
+              "groups": [{"model": "claude-sonnet-5-5", "source": "agent", "calls": 2,
+                          "input_tokens": 100, "output_tokens": 50, "cache_read_tokens": 800,
+                          "cache_creation_tokens": 100, "seconds": {"median": 8.3, "p95": 18.6}}],
+              "spawns": spawn_figures(cases)}  # fmt: skip
+    paths: list[Path] = []
+    for name, block in (("a", {"batch": 5}), ("b", claude)):
+        r = ResultFile(run_id=name, pair="claude/claude", set_version="v", created_at="t",
+                       cases=cases, summary={"claude": block})  # fmt: skip
+        paths.append(tmp_path / f"{name}.json")
+        paths[-1].write_text(r.model_dump_json())
+    out = CliRunner().invoke(app, ["eval", "compare", *map(str, paths)])
+    assert out.exit_code == 0, out.output
+    assert "A  Claude: preset ?, ?, comparison (models unknown), batch 5" in out.output
+    assert "A  Claude spawns: no spawn figures" in out.output
+    assert "warning:" not in out.output  # A's block records no preset, sensitivity or models
+    assert ("B    claude-sonnet-5-5 (agent): 2 requests, 150 tokens; 8.3 s per request median,"
+            " 18.6 s p95; cache read 80%, written 10%") in out.output  # fmt: skip
+    assert ("B  Claude spawns: run 5.0 s from first claim to last answer; largest gap 4.0 s at"
+            " 1.0 s") in out.output  # fmt: skip
+    assert ("B    ecf-classifier-high: 1 spawns, 1 items median (max 1); read -> answer 4.0 s"
+            " median (p95 4.0); claim -> read 1.0 s median (p95 1.0); spawn 4.0 s median"
+            " (p95 4.0); settle lag 0.5 s median (p95 0.5)") in out.output  # fmt: skip
+    assert "B    rounds ready: 1, 5.0 s median (p95 5.0); gap to the next -" in out.output
+    assert "B    session 1: 1 rounds, 5.0 s in rounds, 0.0 s between" in out.output
+    assert ("B    act claims: 1, 1 to the high-risk actor (100%); reasons first_time_sender 1,"
+            " payment 1") in out.output  # fmt: skip
 
 
 def test_latency_split_from_the_recorded_calls(tmp_path: Path) -> None:

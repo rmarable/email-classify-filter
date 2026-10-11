@@ -3,8 +3,11 @@ text) and the paired comparison `ecf eval compare` prints (SPEC §16.2, §16.5).
 
 from __future__ import annotations
 
+import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -276,7 +279,32 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
             line = f"warning: {what} ({key} {str(va)[:16]} vs {str(vb)[:16]})"
             if line not in out:
                 out.append(line)
+    if (ca := claude_block(a)) is not None and (cb := claude_block(b)) is not None:
+        # how two Claude evals were asked (v2.2.0 timing plan item 5, P16); `batch` is the
+        # comparison's subject, printed per side, never warned on
+        for key in ("preset", "sensitivity"):
+            va, vb = ca.get(key), cb.get(key)
+            if va is not None and vb is not None and va != vb:
+                out.append(f"warning: different {key} ({va} vs {vb})")
+        ma, mb = _models(ca), _models(cb)
+        if ma and mb and ma != mb:
+            differ = [r for r in sorted(ma.keys() | mb.keys()) if ma.get(r) != mb.get(r)]
+            roles = ", ".join(f"{r} {ma.get(r, '-')} vs {mb.get(r, '-')}" for r in differ)
+            out.append(f"warning: different models ({roles})")
     return out
+
+
+def claude_block(r: ResultFile) -> dict[str, Any] | None:
+    """A Claude eval's `summary.claude` (its models, batch, requests, spawn figures), or None."""
+    c = (r.summary or {}).get("claude")
+    return cast(dict[str, Any], c) if isinstance(c, dict) else None
+
+
+def _models(claude: dict[str, Any]) -> dict[str, str]:
+    m = claude.get("models")
+    return (
+        {str(k): str(v) for k, v in cast(dict[str, Any], m).items()} if isinstance(m, dict) else {}
+    )
 
 
 def latest(folder: Path) -> ResultFile | None:
@@ -415,6 +443,111 @@ def call_figures(cases: list[CaseResult]) -> dict[str, object]:
     out["cache_short"] = [{"after": g.after, "calls": g.calls, "short": g.short,
                            "prompt_s": None if g.prompt_s is None else round(g.prompt_s, 2)}
                           for g in _cache_short(cases)]  # fmt: skip
+    return out
+
+
+# a `-high` agent's spawn label: the agent and the spawn's number in its round (`_spawns`)
+_SPAWN = re.compile(r"(.+-high)-[0-9]+")
+
+
+def spawn_figures(cases: list[CaseResult]) -> dict[str, object] | None:
+    """A Claude eval's timing per spawn (v2.2.0 timing plan item 4), from each case's claims, so
+    a rescored copy gets them too; None without claims (a local run, an older result). Seconds,
+    service-side: per agent, spawns, items per spawn, read -> answer per item, claim -> first
+    read, spawn duration (first read to last answer) and settle lag (settle - answer); per round,
+    claim to last answer and the gap to the session's next round (0 when they overlap), with
+    rounds handed out while cases were still preparing apart; per session, both summed; the run
+    (first claim to last answer) and its largest gap between consecutive events; for act claims,
+    how many went to the high-risk actor and why."""
+    claims = [c for case in cases for c in case.claims]
+    if not claims:
+        return None
+    by_agent: dict[str, list[ClaimRecord]] = {}
+    for c in claims:
+        by_agent.setdefault(_agent(c.spawn), []).append(c)
+    agents: dict[str, object] = {}
+    for agent, cs in sorted(by_agent.items()):
+        spawns: dict[tuple[int, int, str], list[ClaimRecord]] = {}
+        for c in cs:
+            spawns.setdefault((c.session, c.round, c.spawn), []).append(c)
+        took = [max(ans) - min(reads) for sc in spawns.values()
+                if (reads := [c.read_s for c in sc if c.read_s is not None])
+                and (ans := [c.answered_s for c in sc if c.answered_s is not None])]  # fmt: skip
+        agents[agent] = {
+            "claims": len(cs),
+            "spawns": len(spawns),
+            "items_per_spawn": {
+                "p50": _pi(sizes := [len(sc) for sc in spawns.values()], 50),
+                "max": max(sizes),
+            },
+            "read_to_answer_s": _spread(_between(cs, "read_s", "answered_s"), 2),
+            "claim_to_read_s": _spread(_between(cs, "claimed_s", "read_s"), 2),
+            "spawn_s": _spread(took, 2),
+            "settle_lag_s": _spread(_between(cs, "answered_s", "settled_s"), 2),
+        }
+    rounds: dict[int, list[ClaimRecord]] = {}
+    for c in claims:
+        rounds.setdefault(c.round, []).append(c)
+    kinds: dict[str, tuple[list[int], list[float], list[float]]] = {
+        "ready": ([], [], []),
+        "preparing": ([], [], []),
+    }  # round numbers, durations, gaps
+    sessions: dict[str, dict[str, float]] = {}
+    ordered = sorted(rounds.items())
+    for i, (_, cs) in enumerate(ordered):
+        start = min(c.claimed_s for c in cs)
+        answers = [c.answered_s for c in cs if c.answered_s is not None]
+        end = max(answers, default=start)
+        session = cs[0].session
+        numbers, durations, gaps = kinds["preparing" if cs[0].preparing else "ready"]
+        numbers.append(cs[0].round)
+        totals = sessions.setdefault(str(session), {"rounds": 0, "in_rounds_s": 0.0,
+                                                     "between_rounds_s": 0.0})  # fmt: skip
+        totals["rounds"] += 1
+        if answers:
+            durations.append(end - start)
+            totals["in_rounds_s"] += end - start
+        later = [r for _, r in ordered[i + 1 :] if r[0].session == session]
+        if later:
+            gap = max(0.0, min(c.claimed_s for c in later[0]) - end)
+            gaps.append(gap)
+            totals["between_rounds_s"] += gap
+    events = sorted(t for c in claims
+                    for t in (c.claimed_s, c.read_s, c.answered_s, c.settled_s)
+                    if t is not None)  # fmt: skip
+    gap, at = max(((b - a, a) for a, b in pairwise(events)),
+                  default=(0.0, events[0]))  # fmt: skip
+    answered = [c.answered_s for c in claims if c.answered_s is not None]
+    first = min(c.claimed_s for c in claims)
+    acts = [c for c in claims if c.stage == "act"]
+    reasons = Counter(r for c in acts for r in c.high_risk)
+    return {
+        "run_s": round(max(answered) - first, 2) if answered else None,
+        "largest_gap": {"s": round(gap, 2), "at_s": round(at, 2)},
+        "agents": agents,
+        "rounds": {k: {"rounds": len(n), "duration_s": _spread(d, 2), "gap_s": _spread(g, 2)}
+                   for k, (n, d, g) in kinds.items()},
+        "sessions": {k: {"rounds": int(v["rounds"]), "in_rounds_s": round(v["in_rounds_s"], 2),
+                         "between_rounds_s": round(v["between_rounds_s"], 2)}
+                     for k, v in sorted(sessions.items(), key=lambda kv: int(kv[0]))},
+        "act": {"claims": len(acts),
+                "high_risk_actor": sum(_agent(c.spawn).endswith("-high") for c in acts),
+                "reasons": dict(sorted(reasons.items()))},
+    }  # fmt: skip
+
+
+def _agent(spawn: str) -> str:
+    """The agent a spawn label names: `ecf-classifier-high-2` -> `ecf-classifier-high`."""
+    m = _SPAWN.fullmatch(spawn)
+    return m.group(1) if m else spawn
+
+
+def _between(claims: list[ClaimRecord], start: str, end: str) -> list[float]:
+    out: list[float] = []
+    for c in claims:
+        a, b = getattr(c, start), getattr(c, end)
+        if a is not None and b is not None:
+            out.append(b - a)
     return out
 
 

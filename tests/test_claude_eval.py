@@ -21,7 +21,7 @@ import pytest
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
-from ecf.eval.results import CaseResult, ResultFile, load_result
+from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
 from ecf.schema import load_schema
 from ecf_server import (
     claude_eval,
@@ -505,6 +505,14 @@ def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
         new = load_result(Path(rescore(root, path, clock)["path"]))
         assert {c.id: c.claims for c in new.cases} == claims
         assert (new.summary or {})["claude"] == (live.summary or {})["claude"]
+    spawns = cast(dict[str, Any], (live.summary or {})["claude"])["spawns"]  # plan item 4
+    assert spawns == spawn_figures(live.cases) and spawns["act"]["claims"] >= 1
+    older = live.model_copy(update={"summary": dict(live.summary or {}) | {  # saved before item 4
+        "claude": {k: v for k, v in cast(dict[str, Any], (live.summary or {})["claude"]).items()
+                   if k != "spawns"}}})  # fmt: skip
+    path.write_text(older.model_dump_json())
+    new = load_result(Path(evalrun.rescore_through_policy(root, path, clock)["path"]))
+    assert cast(dict[str, Any], (new.summary or {})["claude"])["spawns"] == spawns
 
 
 # ---- models, presets and options -------------------------------------------------------------

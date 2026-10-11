@@ -55,6 +55,7 @@ from ecf.eval.results import (
     ClaimStage,
     ResultFile,
     load_result,
+    spawn_figures,
 )
 from ecf.ids import new_random_id
 from ecf.schema import CompiledSchema, load_schema
@@ -462,6 +463,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)
+        if (spawns := spawn_figures(results)) is not None:
+            summary["claude"]["spawns"] = spawns
         result = ResultFile(run_id=run.run_id, pair=claude_pins.PAIR[run.opts.preset],
                             set_version=run.version, created_at=to_ts(clock.now()),
                             cases=results, digest=run.key, summary=summary)  # fmt: skip
