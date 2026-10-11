@@ -2,10 +2,12 @@
 
 Each signal is the truth of a condition the starter rules already use (rule 1 and `fraud_weak`,
 `starter_rules.yaml`), composed from computed facts, so the model sees what the rules were tuned
-to. A signal is sent only when true, in the fixed wording below, and nothing else from the facts
-goes with it: no trigger reasons, addresses, keywords or sender details (P3, P18). `sent` is the
-one function that builds them, for the local classifier and Claude alike (plan item 5); the
-allow-list test in `tests/test_signals.py` pins `WORDING`.
+to; the two message signals (OD-489) are facts about the message's structure instead, and
+`link_text_mismatch` is read by no rule (OD-488: recorded only). A signal is sent only when true,
+in the fixed wording below, and nothing else from the facts goes with it: no trigger reasons,
+addresses, keywords or sender details (P3, P18). `sent` is the one function that builds them, for
+the local classifier and Claude alike (plan item 5); the allow-list test in `tests/test_signals.py`
+pins `WORDING`.
 
 For the local classifier they go in a block before the email, between delimiter lines carrying
 the request's random token (P10); with no signal true there is no block, so the request is the
@@ -25,8 +27,12 @@ WORDING: dict[str, str] = {
     # OD-485 (plan item 4): signal only, no rule route. `credential_request` is a fact only (OD-488:
     # as a signal it pulled phishing toward account_security).
     "crypto_payment": "The email asks for payment to a cryptocurrency wallet.",
+    # OD-489 (pre-classifier plan step 11, §6 D): message signals, from the message's own structure
+    "link_text_mismatch": "A link's visible text names a different site than the link goes to.",
+    "risky_attachment": "The email has an attachment that can run code or open a web page.",
 }
 NEW = frozenset({"crypto_payment"})  # `--no-new-signals` leaves them out
+MESSAGE = frozenset({"link_text_mismatch", "risky_attachment"})  # `--no-message-signals`
 
 
 def sent(facts: dict[str, Any]) -> tuple[str, ...]:
@@ -39,6 +45,8 @@ def sent(facts: dict[str, Any]) -> tuple[str, ...]:
         "impersonates_internal": impersonates,
         "impersonation_gift_cards": impersonates and bool(facts.get("gift_card_keyword")),
         "crypto_payment": bool(facts.get("crypto_payment")),
+        "link_text_mismatch": bool(facts.get("link_text_mismatch")),
+        "risky_attachment": bool(facts.get("risky_attachment")),
     }
     return tuple(name for name in WORDING if true[name])
 

@@ -1017,7 +1017,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                new_wording=body.get("new_wording") is not False,
                                signals=body.get("signals") is not False,
                                new_signals=body.get("new_signals") is not False,
-                               excerpt_prep=body.get("excerpt_prep") is not False)  # fmt: skip
+                               excerpt_prep=body.get("excerpt_prep") is not False,
+                               message_signals=(body.get("message_signals")
+                                                is not False))  # fmt: skip
         try:
             run = evalrun.start(state.connect, state.clock, state.model_client,
                                 state.db_path.parent, opts, power=state.power,

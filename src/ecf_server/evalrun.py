@@ -166,20 +166,23 @@ class Options:
     signals: bool = True  # False: Gemma is asked without the signals block (OD-484)
     new_signals: bool = True  # False: without plan item 4's two signals (OD-485)
     excerpt_prep: bool = True  # False: excerpts cut as before step 10 (first text part)
+    message_signals: bool = True  # False: without step 11's link and attachment signals (OD-489)
 
     @property
     def switches_off(self) -> list[str]:
         """The eval-only switches turned off, by name."""
-        return [name for name, on in (("new_wording", self.new_wording),
-                                      ("signals", self.signals),
-                                      ("new_signals", self.new_signals),
-                                      ("excerpt_prep", self.excerpt_prep)) if not on]  # fmt: skip
+        switches = (("new_wording", self.new_wording), ("signals", self.signals),
+                    ("new_signals", self.new_signals), ("excerpt_prep", self.excerpt_prep),
+                    ("message_signals", self.message_signals))  # fmt: skip
+        return [name for name, on in switches if not on]
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
         if not self.signals:
             return ()
-        return tuple(s for s in signals.sent(facts) if self.new_signals or s not in signals.NEW)
+        return tuple(s for s in signals.sent(facts)
+                     if (self.new_signals or s not in signals.NEW)
+                     and (self.message_signals or s not in signals.MESSAGE))  # fmt: skip
 
 
 @dataclass(frozen=True)

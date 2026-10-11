@@ -21,8 +21,11 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
         "impersonation_gift_cards": "Someone claiming to be in your organization mentions gift"
         " cards.",
         "crypto_payment": "The email asks for payment to a cryptocurrency wallet.",
+        "link_text_mismatch": "A link's visible text names a different site than the link goes to.",
+        "risky_attachment": "The email has an attachment that can run code or open a web page.",
     }
     assert {"crypto_payment"} == signals.NEW
+    assert {"link_text_mismatch", "risky_attachment"} == signals.MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -42,6 +45,9 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
         ),
         ({"credential_request": True}, ()),  # a fact only (OD-488)
         ({"crypto_payment": True, "sender_origin": "internal"}, ("crypto_payment",)),
+        ({"link_text_mismatch": True, "sender_origin": "internal"}, ("link_text_mismatch",)),
+        ({"risky_attachment": True}, ("risky_attachment",)),
+        ({"link_count": 3, "amount_mentioned": True}, ()),  # recorded only (OD-488)
     ],
 )
 def test_each_signal_is_the_rules_condition(facts: dict[str, Any], want: tuple[str, ...]) -> None:
@@ -132,3 +138,35 @@ def test_the_signals_wording_is_in_the_prompt_digest(monkeypatch: pytest.MonkeyP
     before = classifier.prompt_digest(load_schema())
     monkeypatch.setitem(signals.WORDING, "crypto_payment", "Reworded.")
     assert classifier.prompt_digest(load_schema()) != before
+
+
+def test_no_message_signals_leaves_out_only_step_11s() -> None:
+    from pathlib import Path  # noqa: PLC0415
+
+    from ecf_server import evalrun  # noqa: PLC0415
+
+    facts = {"crypto_payment": True, "link_text_mismatch": True, "risky_attachment": True}
+    assert evalrun.Options(Path(".")).sent(facts) == (
+        "crypto_payment", "link_text_mismatch", "risky_attachment")  # fmt: skip
+    off = evalrun.Options(Path("."), message_signals=False)
+    assert off.sent(facts) == ("crypto_payment",) and off.switches_off == ["message_signals"]
+
+
+def test_message_signals_come_from_the_message() -> None:
+    """The facts behind them, end to end from a parsed message: an HTML link whose text names
+    another site, an HTML attachment."""
+    from email.message import EmailMessage  # noqa: PLC0415
+
+    from ecf_server import facts as facts_mod  # noqa: PLC0415
+    from ecf_server.message import parse  # noqa: PLC0415
+
+    m = EmailMessage()
+    m["From"] = "Billing <billing@vendor-a.example>"
+    m["To"] = "ap@acme.example"
+    m["Subject"] = "Invoice"
+    m.set_content('<p>Pay at <a href="https://pay.attacker.example/x">www.vendor-a.example</a></p>',
+                  subtype="html")  # fmt: skip
+    m.add_attachment(b"<html></html>", maintype="text", subtype="html", filename="invoice.html")
+    p = parse(m.as_bytes())
+    assert p.link_text_mismatch
+    assert any(facts_mod.risky(a) for a in p.attachments)
