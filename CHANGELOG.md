@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.2.0 (not yet tagged)
+
+- In a Claude eval, `--batch` now groups only the high-sensitivity classifier's messages; the high-risk actor takes one message per spawn, as `/ecf-review` does, so `--batch 1` against `--batch 5` measures the `classifier_high_batch` choice (SPEC §7.5, §16.3).
+
 ## v2.1.0 (2026-10-11)
 
 - v2.1.0 is the release of v2.1.0-rc1 below, with no code changes since rc1 (only docs). It passed its release check: an upgrade from v2.0.0 with a rollback and an upgrade again, and an email classified on the upgraded install (SPEC §1.5b, §21.2).

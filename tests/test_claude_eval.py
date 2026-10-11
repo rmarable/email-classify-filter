@@ -380,6 +380,24 @@ def test_high_runs_one_case_per_spawn_unless_batched(
                                            "ecf-classifier-high-2"]  # fmt: skip
 
 
+def test_batch_never_groups_the_high_risk_actor(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """As `/ecf-review` (OD-297): `--batch` sizes only the classifier-high spawns."""
+    start(db_path, clock, root, sensitivity="high", batch=2)
+    run = claude_eval.current()
+    assert run is not None
+    for agent in ("ecf-actor-high", "ecf-eval-actor-high"):
+        items: list[dict[str, Any]] = [{"agent": agent} for _ in range(3)]
+        claude_eval._spawns(run, items)  # pyright: ignore[reportPrivateUsage]
+        assert [i["spawn"] for i in items] == [f"{agent}-{k}" for k in (1, 2, 3)]
+    items = [{"agent": "ecf-eval-classifier-high"} for _ in range(3)]
+    claude_eval._spawns(run, items)  # pyright: ignore[reportPrivateUsage]
+    assert [i["spawn"] for i in items] == ["ecf-eval-classifier-high-1"] * 2 + [
+        "ecf-eval-classifier-high-2"
+    ]
+
+
 def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path,
            got: dict[str, Any]) -> str:  # fmt: skip
     """A saved `ecf eval run` result on the pinned digest, with Gemma's classifications."""

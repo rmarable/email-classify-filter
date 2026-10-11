@@ -1131,7 +1131,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         str | None, typer.Option("--actor-model", help="With --claude: compare this model.")
     ] = None,
     batch: Annotated[
-        int, typer.Option("--batch", help="With --claude: items per -high spawn (1-5).")
+        int, typer.Option("--batch", help="With --claude: items per classifier-high spawn (1-5).")
     ] = 1,
     classifier_backend: Annotated[
         str,

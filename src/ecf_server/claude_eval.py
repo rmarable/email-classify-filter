@@ -569,15 +569,16 @@ def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
 
 
 def _spawns(run: Run, items: list[dict[str, Any]]) -> None:
-    """Group the round's items into spawns: one per batched agent; `-high` agents `batch` each
-    (one by default, as `/ecf-review` hands them out)."""
+    """Group the round's items into spawns as `/ecf-review` hands them out: one per batched agent;
+    the classifier-high agent `batch` each (one by default), the actor-high agent one each."""
     n: dict[str, int] = {}
     for it in items:
         agent = str(it["agent"])
         if agent.endswith("-high"):
             k = n.get(agent, 0)
             n[agent] = k + 1
-            it["spawn"] = f"{agent}-{k // run.opts.batch + 1}"
+            size = run.opts.batch if role_of(agent) == "classifier_high" else 1
+            it["spawn"] = f"{agent}-{k // size + 1}"
         else:
             it["spawn"] = agent
 
