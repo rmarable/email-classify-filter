@@ -12,7 +12,7 @@ from: "Riverbend Stream <account-notice@riverbend-streaming-help.example>"
 subject: "Action needed to keep your account"
 date: 2026-10-20T14:00:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: medium}
+  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_not_hide: true}
 ---

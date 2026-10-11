@@ -11,7 +11,7 @@ from: "Parcelwise Tracking <tracking@parcelwise.example>"
 subject: "Out for delivery today"
 date: 2026-10-08T07:30:00Z
 expected:
-  labels: {category: shipping, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: shipping, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: shipping
 ---
 Your parcel PW 4408 1173 26 is out for delivery.

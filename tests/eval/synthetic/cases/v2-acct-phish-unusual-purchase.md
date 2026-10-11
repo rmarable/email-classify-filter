@@ -11,7 +11,7 @@ from: "Lantern Outfitters Security <security-check@lantern-orders.example>"
 subject: "Unusual purchase on your account"
 date: 2026-10-17T10:10:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: true, payment_related: true, deadline_mentioned: true, sender_type: company, fraud_risk: high}
+  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: true, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

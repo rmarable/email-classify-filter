@@ -11,11 +11,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ecf_server.htmltext import html_to_text
+from ecf_server.htmltext import LINK_CAP, html_text, html_to_text, plain_links
 from ecf_server.mail import PartInfo
 from ecf_server.message import (
     ACTOR_CHARS,
     CLASSIFIER_CHARS,
+    attachment,
     normalize_message_id,
     parse,
     parse_partial,
@@ -146,8 +147,57 @@ def test_attachments_are_metadata_only() -> None:
     m.set_content("see attached")
     m.add_attachment(b"12345", maintype="application", subtype="pdf", filename=long_name)
     (att,) = parse(m.as_bytes()).attachments
-    assert att.name == long_name[:100] and att.size == 5 and att.content_type == "application/pdf"
+    assert att.name == "a" * 87 + "…" + "a" * 8 + ".pdf" and len(att.name) == 100  # head…tail
+    assert att.size == 5 and att.content_type == "application/pdf" and att.extension == "pdf"
     assert not att.inline
+
+
+@pytest.mark.parametrize(
+    ("name", "ext"),
+    [("invoice.HTML", "html"), ("a" * 98 + ".html", "html"), ("pay.htm. . ", "htm"),
+     ("no extension", ""), ("", ""), ("report.pdf.exe", "exe")],
+)  # fmt: skip
+def test_the_extension_comes_from_the_whole_name(name: str, ext: str) -> None:
+    """P24: a 100-character cap used to cut `.html` to `.h`; trailing dots and spaces (which
+    Windows drops) don't hide the extension."""
+    assert attachment(name, "application/octet-stream", 1, False).extension == ext
+
+
+def test_links_are_counted_and_a_mismatched_anchor_noted() -> None:
+    plain = parse(build("See https://vendor-a.example/a and http://b.example.\n", attachment=None))
+    assert (plain.link_count, plain.link_text_mismatch) == (2, False)
+    html = (
+        '<p><a href="https://evil.test/login">www.vendor-a.example</a>'
+        '<a href="https://track.mailer.example/r?u=1">Read more</a>'
+        '<a href="https://mail.vendor-a.example/x">vendor-a.example</a>'
+        '<a href="mailto:ap@vendor-a.example">bank.example.com</a></p>'
+    )
+    p = parse(build(html=html, attachment=None))
+    assert (p.link_count, p.link_text_mismatch) == (4, True)
+    same = parse(build(html="<p>" + html.split("</a>", 1)[1], attachment=None))
+    assert same.link_text_mismatch is False  # same site, no site named, or not a web link
+
+
+@pytest.mark.parametrize(
+    ("html", "mismatch"),
+    [
+        ('<a href="https://shop.acme.co.uk/">acme.co.uk</a>', False),  # registry label
+        ('<a href="https://acme.example.com/">Node.js</a>', False),  # not a common TLD
+        ('<a href="https://x.test/">https://acme.io/pay</a>', True),
+        ('<a href="https://x.test/"><a href="https://acme.com/">acme.com</a></a>', False),
+        ('<div hidden><a href="https://x.test/">acme.com</a></div>', False),  # not visible
+        ('<a href="https://[::1/">acme.com</a>', False),  # a malformed href is skipped
+        ('<a href="https://x.test/">' + "acme " * 50 + "acme.com</a>", False),  # past 200
+    ],
+)  # fmt: skip
+def test_link_text_mismatch_cases(html: str, mismatch: bool) -> None:
+    assert html_text(html).links.text_mismatch is mismatch
+
+
+def test_link_count_saturates() -> None:
+    many = '<a href="https://a.example/">x</a>' * (LINK_CAP + 50)
+    assert html_text(many).links.number == LINK_CAP
+    assert plain_links("https://a.example/ " * (LINK_CAP + 1)).number == LINK_CAP
 
 
 def test_text_attachments_are_scanned_but_not_excerpted() -> None:

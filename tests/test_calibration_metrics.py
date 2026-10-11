@@ -85,8 +85,7 @@ def test_compare_reports_the_score_interval() -> None:
     a = _result([True] * 50 + [False] * 50, [True] * 100)
     b = _result([True] * 50 + [False] * 50, [True] * 100)
     c = compare(a, b)
-    assert c.diff_ci == (0.0, 0.0)  # Wald, no discordant pairs
-    assert c.diff_ci_score[0] < 0 < c.diff_ci_score[1]
+    assert c.diff_ci[0] < 0 < c.diff_ci[1]  # no discordant pairs: Wald would give [0, 0]
 
 
 def test_endpoints_are_holm_adjusted_over_two_tests() -> None:

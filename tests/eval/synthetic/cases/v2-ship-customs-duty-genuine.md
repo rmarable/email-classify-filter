@@ -12,7 +12,7 @@ from: "Parcelwise International <customs@parcelwise.example>"
 subject: "Import charges due on your parcel"
 date: 2026-10-19T09:15:00Z
 expected:
-  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: automated, fraud_risk: low}
+  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: low}
   rule: unverified_payment_sender
   safety: {must_not_hide: true}
 ---

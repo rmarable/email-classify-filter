@@ -12,7 +12,7 @@ from: "Sаm Rivera <sam-r-new@freemail.example>"
 subject: "Running late"
 date: 2026-10-04T12:05:00Z
 expected:
-  labels: {category: other, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: low, sender_type: unknown}
+  labels: {category: private, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: low, sender_type: friend}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

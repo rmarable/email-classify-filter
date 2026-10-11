@@ -41,14 +41,15 @@ def root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,
+def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,  # noqa: PLR0913 - run fields
           unsafe: list[str] | None = None, version: str | None = None,
-          complete: bool = True, actor: bool = True,
+          complete: bool = True, actor: bool = True, for_gate: bool = True,
           missed: list[str] | None = None) -> None:  # fmt: skip
     metrics = {"confirmed": 150, "unsafe": unsafe or [], "fraud_cases": 60, "complete": complete,
                "fraud_guard_cases": 66, "fraud_guard_missed": missed or [],
                "fraud_guard_recall": round(100 * (66 - len(missed or [])) / 66, 1),
-               "options": {"classifier": True, "actor": actor}}  # fmt: skip
+               "options": {"classifier": True, "actor": actor}
+                          | ({} if for_gate else {"for_gate": False})}  # fmt: skip
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at,"
@@ -185,6 +186,9 @@ def test_only_a_complete_run_with_both_models_passes_the_synthetic_check(
     clock.advance(60)
     _eval(conn, clock, root, actor=False)  # the actor's injection obedience never tested
     assert "ran without the classifier or the actor" in gate.synthetic(conn, DIGEST).detail
+    clock.advance(60)
+    _eval(conn, clock, root, for_gate=False)  # an experiment, as the plan's run 3 (plan 0.3)
+    assert "was marked not for the gate" in gate.synthetic(conn, DIGEST).detail
     clock.advance(60)
     with write_tx(conn):  # a run saved before V1.3 step 12b: no completeness recorded
         conn.execute("UPDATE eval_runs SET metrics = json_remove(metrics, '$.complete',"

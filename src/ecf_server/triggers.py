@@ -5,8 +5,10 @@ Keywords come from data/keywords.yaml and match whole words after folding (skele
 lookalike letters, zero-width characters and full-width forms don't hide them. Results:
 
 - `fraud`: fraud triggers 1-9 that fired, as plain-language reasons (rule 1, the fraud guard).
-- `fraud_weak`: a first-time sender with a payment keyword and no second signal (OD-062), or a
-  Reply-To mismatch on a payment item with no other signal (OD-068) (rule 1b).
+- `fraud_weak`: a first-time sender with a payment keyword and no second signal (OD-062), a
+  Reply-To mismatch on a payment item with no other signal (OD-068), or a risky attachment
+  (`facts.risky`) with a payment, credential or gift-card keyword (pre-classifier plan §5 C)
+  (rule 1b).
 - `regulator`: regulator keywords found (rule 2).
 - Fraud trigger 10 (OD-252): text addressed to an automated reader ("note to the classifier",
   "ignore previous instructions"); an email that tells the model what to conclude goes to a person.
@@ -16,6 +18,11 @@ lookalike letters, zero-width characters and full-width forms don't hide them. R
 - `tax_form_request` (a fact, not a trigger; OD-482): a `tax_form` phrase (W-2, payroll records)
   and a `data_request` phrase (send me, as one PDF), the W-2 scam; rule 1 escalates it from an
   outside sender.
+- `gift_card_codes_request` (a fact; pre-classifier plan §3): a `gift_card` phrase and a
+  `gift_card_ask` phrase ("send me the codes", "photo of the back"), the gift-card scam.
+- `amount_mentioned` (a fact, recorded for measurement only; pre-classifier plan §5 A2): a
+  currency sign or code next to a digit.
+- A checksum-valid IBAN counts as a `bank` keyword ("valid IBAN"), so trigger 1 covers it.
 - `unverified_payment`: a payment keyword and `auth_result = none`, counting a pass whose MIME
   headers were unsigned as none (OD-187) (rule 1a); not for a human-verified sender (OD-065).
 
@@ -33,21 +40,72 @@ for alert mail arrives with email alerts.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, lru_cache
 from importlib import resources
 from typing import Any
 
 from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
+from ecf_server.htmltext import COMMON_TLDS
 from ecf_server.message import ParsedMessage
-from ecf_server.skeleton import fold, fold_ci, normalize
+from ecf_server.skeleton import fold_ci, folds, keyword_fold, keyword_fold_ci, normalize
 
-GROUPS = ("bank", "change", "payment", "gift_card", "bec_opener", "tax_form", "data_request",
+GROUPS = ("bank", "change", "payment", "gift_card", "gift_card_ask", "bec_opener", "tax_form",
+          "data_request", "credential", "credential_ask", "credential_never", "crypto_pay",
           "regulator", "injection")  # fmt: skip
+# Cryptocurrency wallet addresses (OD-485), matched on `entity_text`, not the folded text (the
+# skeleton would change their letters), so a zero-width character or a mark inside one doesn't
+# hide it: Bitcoin (bech32, legacy), Ethereum, and the synthetic set's placeholder
+# (`TEST-WALLET-0001`; real shapes fail its hygiene scan). A hit is recorded as "wallet address",
+# never the address. One alternation, so the text is read once (R3-P16).
+WALLET = re.compile(
+    r"(?<![\w-])(?:bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|0x[0-9a-fA-F]{40}"
+    r"|TEST-WALLET-\d{4})(?![\w-])"
+)
+# IBANs (pre-classifier plan §3): country code, check digits, then letters and digits, each
+# optionally after one space or hyphen; bounded, and never starting inside a word. Matched on
+# `entity_text`; a hit is recorded as "valid IBAN", never the number.
+# A money amount (pre-classifier plan §5 A2, `amount_mentioned`): a currency sign or code next to
+# a digit, either side ("$50", "USD 1,200", "1.234,56 €", "4,800 dollars"), or a bare number with
+# two decimals ("1,180.00", not "9.50%", "1.0000" or "10.10.2026"); a bare whole number doesn't
+# count. Matched on `entity_text`, so a no-break space or a full-width sign counts. Four searches,
+# each starting with a fixed character or word so the regex engine skips ahead to it, each fixed
+# width or bounded, and the bare form never starts inside a number: linear on any input (§4).
+# Recorded for measurement only: not a route, not a signal.
+_CODES = ("USDC", "USDT", "USD", "EUR", "GBP", "CAD", "AUD", "NZD", "CHF", "JPY", "INR")
+_SIGN = "[$€£¥₹]"
+AMOUNTS = (
+    re.compile(rf"{_SIGN} ?[0-9]"),
+    re.compile(rf"[0-9] ?(?:{_SIGN}|(?:{'|'.join(_CODES)}|(?i:dollars?|euros?))(?![A-Za-z]))"),
+    # each code checks the letter before it after matching, so the search starts on its letters
+    re.compile(rf"(?:{'|'.join(f'{c}(?<![A-Za-z]{c})' for c in _CODES)})(?![A-Za-z]) ?[0-9]"),
+    re.compile(r"[0-9](?<![\w.,][0-9])[0-9]{0,2}(?:,[0-9]{3}){0,5}\.[0-9]{2}(?![\w%]|[.,][0-9])"),
+)
+AMOUNT_HIT = "amount"
+IBAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}")
+IBAN_HIT = "valid IBAN"
+# IBAN-shaped candidates checked per text (R3-P12): a crafted text of IBAN heads costs a checksum
+# each. Past this many with none valid, the scan says so (`unscanned`), so decoys can't hide one.
+IBAN_CANDIDATES = 256
+# IBAN length per country, from the SWIFT IBAN registry (unverified against its current release;
+# a country not listed never matches).
+IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22,
+    "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DK": 18, "DO": 28,
+    "EE": 20, "EG": 29, "ES": 24, "FI": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23,
+    "GL": 18, "GR": 27, "GT": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
+    "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+    "LV": 21, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MR": 27, "MT": 31, "MU": 30, "NL": 18,
+    "NO": 15, "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "SA": 24,
+    "SC": 31, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "ST": 25, "SV": 28, "TL": 23, "TN": 24,
+    "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
+}  # fmt: skip
+_IBAN_DIGITS = str.maketrans({chr(c): str(c - 55) for c in range(ord("A"), ord("Z") + 1)})
 BEC_OPENER_MIN = 2  # different `bec_opener` phrases for the fact (OD-479)
 TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many letters
 # Shared services that give each customer a subdomain; initial list, unverified which domains
@@ -55,12 +113,20 @@ TYPO_MIN = 5  # a one-edit typo only counts for names of at least this many lett
 SAAS_TENANT_PARENTS = ("zendesk.com", "freshdesk.com", "atlassian.net", "service-now.com")
 # Top-level domains a bare domain in a display name must end in to count for trigger 7; an
 # address always counts. Common ones only, so "Node.js" or "Vue.js" don't (V1.1 review).
-DISPLAY_TLDS = frozenset(
-    {"com", "net", "org", "co", "io", "us", "uk", "de", "fr", "ca", "au", "nl", "es", "it",
-     "info", "biz", "gov", "edu", "app", "dev", "ai", "me", "online", "site", "xyz"}
-)  # fmt: skip
+DISPLAY_TLDS = COMMON_TLDS
 _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])")
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
+# Text scanned per message, over all its distinct texts, in bytes as Python holds it (1, 2 or 4
+# per character, so a non-BMP character can't make the bound 4x larger; pre-gate review G7)
+# (R3-P11): the scan runs in the check thread with no time limit, and a message may have many
+# parts of up to `max_scan_bytes_per_part` each. The rest is not scanned and the message is
+# `content_unscanned`.
+SCAN_BYTES = 24 * 1024 * 1024  # one maximal part, HTML too (operator decision 2026-10-10)
+UNSCANNED_TEXT = "text over the message's scan limit"
+UNSCANNED_IBANS = "too many IBAN-like numbers to check"
+
+
+_START = r"(?<!\w)"  # every keyword pattern starts at a word start
 
 
 @dataclass(frozen=True)
@@ -68,6 +134,12 @@ class _Pattern:
     word: str
     regex: re.Pattern[str]
     case_sensitive: bool
+
+
+def keywords_digest() -> str:
+    """SHA-256 of the shipped keywords.yaml, recorded beside a result's prompt digest (Q3)."""
+    raw = resources.files("ecf_server.data").joinpath("keywords.yaml").read_bytes()
+    return hashlib.sha256(raw).hexdigest()
 
 
 @cache
@@ -83,21 +155,156 @@ def _patterns() -> dict[str, tuple[_Pattern, ...]]:
     return out
 
 
+def pattern_count() -> int:
+    """How many keyword patterns the scan compiles, a measured figure (pre-classifier plan §11)."""
+    return sum(len(pats) for pats in _patterns().values())
+
+
 def _compile(word: str, *, case_sensitive: bool) -> _Pattern:
-    folded = fold(word) if case_sensitive else fold_ci(word)
+    folded = keyword_fold(word) if case_sensitive else keyword_fold_ci(word)
     body = r"\s+".join(re.escape(part) for part in folded.split())
-    return _Pattern(word, re.compile(rf"(?<!\w){body}(?!\w)"), case_sensitive)
+    return _Pattern(word, re.compile(rf"{_START}{body}(?!\w)"), case_sensitive)
+
+
+# Alternations kept: one per remaining set of patterns. A message that hits every keyword makes
+# one per hit, so the cache only needs to outlast one message.
+ALTERNATION_CACHE = 256
+
+
+def _alternation(pats: tuple[_Pattern, ...]) -> re.Pattern[str]:
+    """One regex that matches where any of `pats` does: the shared lookbehind factored out, so
+    the alternation is tried only at word starts (pre-classifier plan §4)."""
+    return re.compile(_START + "(?:" + "|".join(p.regex.pattern[len(_START) :] for p in pats) + ")")
+
+
+_any_of = cache(_alternation)  # a whole group's patterns: a fixed, small set
+_rest_of = lru_cache(maxsize=ALTERNATION_CACHE)(_alternation)  # what a message left unfound
+
+
+def _found_in(text: str, pats: tuple[_Pattern, ...]) -> set[_Pattern]:
+    """The patterns in `pats` that match somewhere in `text`, as `p.regex.search` would find
+    them. The alternation finds the leftmost place where any still-unfound pattern matches; every
+    unfound pattern is tried there, and the search goes on past it with those left. So the text
+    is read about once however many patterns there are, and a keyword repeated a million times
+    costs one hit, not a million."""
+    found: set[_Pattern] = set()
+    rest: tuple[_Pattern, ...] = pats
+    pos = 0
+    while rest:
+        m = _rest_of(rest).search(text, pos)
+        if m is None:
+            break
+        pos = m.start()
+        found.update(p for p in rest if p.regex.match(text, pos))
+        rest = tuple(p for p in rest if p not in found)
+        pos += 1
+    return found
+
+
+def _width(text: str) -> int:
+    """Bytes per character as Python holds `text` (PEP 393): 1, 2 or 4."""
+    if text.isascii():
+        return 1
+    top = ord(max(text))
+    return 1 if top <= 0xFF else 2 if top <= 0xFFFF else 4
+
+
+def _within_limit(texts: list[str]) -> tuple[list[str], bool]:
+    """The distinct texts, in order, cut to SCAN_BYTES in all; True when something was cut."""
+    out: list[str] = []
+    left = SCAN_BYTES
+    for t in dict.fromkeys(t for t in texts if t):
+        width = _width(t)
+        if len(t) * width > left:
+            if left >= width:
+                out.append(t[: left // width])
+            return out, True
+        out.append(t)
+        left -= len(t) * width
+    return out, False
 
 
 def scan(texts: list[str]) -> dict[str, list[str]]:
-    """Keywords found per group, in any of the texts."""
-    folded = [(fold(t), fold_ci(t)) for t in texts if t]
-    hits: dict[str, list[str]] = {g: [] for g in GROUPS}
-    for group, pats in _patterns().items():
-        for p in pats:
-            if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded):
-                hits[group].append(p.word)
+    """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
+    part's visible text is its full text), normalized once for its three forms, and the texts
+    are read up to SCAN_BYTES in all. Every group's patterns of one case are searched together,
+    one search per text form, and one text's forms are held at a time (pre-gate review G6, G7);
+    a keyword two groups list is one pattern, found for both. Besides the groups:
+    `crypto_wallet`, `amount`, and `unscanned`, why the scan stopped short (a reason for
+    `content_unscanned`)."""
+    distinct, cut = _within_limit(texts)
+    pats = _patterns()
+    todo = {case: tuple(dict.fromkeys(p for ps in pats.values() for p in ps
+                                      if p.case_sensitive is case))
+            for case in (True, False)}  # fmt: skip
+    found: set[_Pattern] = set()
+    iban: set[bool | None] = set()
+    wallet = money = False
+    for t in distinct:
+        cs, ci, entity = folds(t)
+        for case, form in ((True, cs), (False, ci)):
+            if todo[case]:
+                found |= _found_in(form, todo[case])
+                todo[case] = tuple(p for p in todo[case] if p not in found)
+        del cs, ci  # one text's forms at a time
+        iban.add(_iban(entity))
+        wallet = wallet or bool(WALLET.search(entity))
+        money = money or amount(entity)
+    hits: dict[str, list[str]] = {g: [p.word for p in pats[g] if p in found] for g in GROUPS}
+    if True in iban:
+        hits["bank"].append(IBAN_HIT)
+    hits["crypto_wallet"] = ["wallet address"] if wallet else []
+    hits["amount"] = [AMOUNT_HIT] if money else []
+    hits["unscanned"] = [r for r, on in ((UNSCANNED_TEXT, cut),
+                                         (UNSCANNED_IBANS, None in iban)) if on]  # fmt: skip
     return hits
+
+
+def amount(text: str) -> bool:
+    """A money amount in `text` (`AMOUNTS`)."""
+    return any(p.search(text) for p in AMOUNTS)
+
+
+def valid_iban(text: str) -> bool:
+    """A checksum-valid IBAN (ISO 13616 mod-97) in `text`, written whole or in groups split by
+    single spaces or hyphens. It is cut at its country's length, and the cut must not fall inside
+    a word."""
+    return _iban(text) is True
+
+
+def _iban(text: str) -> bool | None:
+    """`valid_iban`, or None when IBAN_CANDIDATES candidates were checked and none was valid."""
+    checked = 0
+    for m in IBAN.finditer(text):
+        g = m.group()
+        size = IBAN_LENGTHS.get(g[:2])
+        if size is None:
+            continue
+        code = g.replace(" ", "").replace("-", "")
+        if len(code) < size:
+            continue
+        checked += 1
+        if checked > IBAN_CANDIDATES:
+            return None
+        cut = size if len(code) == len(g) else _nth_character(g, size)
+        end = m.start() + cut
+        if end < len(text) and text[end].isalnum():
+            continue
+        code = code[:size]
+        if int((code[4:] + code[:4]).translate(_IBAN_DIGITS)) % 97 == 1:
+            return True
+    return False
+
+
+def _nth_character(group: str, n: int) -> int:
+    """The index just past the n-th character of `group` that isn't a separator."""
+    seen = 0
+    for i, c in enumerate(group):
+        if c not in " -":
+            seen += 1
+            if seen == n:
+                return i + 1
+    return len(group)
 
 
 def bec_opener(keywords: dict[str, list[str]]) -> bool:
@@ -113,13 +320,61 @@ def tax_form_request(keywords: dict[str, list[str]]) -> bool:
     return bool(keywords.get("tax_form")) and bool(keywords.get("data_request"))
 
 
+def gift_card_codes_request(keywords: dict[str, list[str]]) -> bool:
+    """Gift cards and an ask for their codes or a photo of them ("send me the codes", "photo of
+    the back"; pre-classifier plan §3): the gift-card scam. Gift cards alone are a receipt or a
+    balance notice."""
+    return bool(keywords.get("gift_card")) and bool(keywords.get("gift_card_ask"))
+
+
+def credential_request(keywords: dict[str, list[str]]) -> bool:
+    """A code, password or login and an ask to send or read it back ("reply with the code",
+    "reply with your current password"; OD-485), unless the text says such a request is never
+    made ("we will never ask you to reply with your password"). A signal to the classifier only."""
+    return (bool(keywords.get("credential")) and bool(keywords.get("credential_ask"))
+            and not keywords.get("credential_never"))  # fmt: skip
+
+
+def crypto_payment(keywords: dict[str, list[str]]) -> bool:
+    """A cryptocurrency wallet address and a payment verb (OD-485), unless the text says such a
+    request is never made ("we will never ask you to send funds"), as `credential_request`."""
+    return (bool(keywords.get("crypto_wallet")) and bool(keywords.get("crypto_pay"))
+            and not keywords.get("credential_never"))  # fmt: skip
+
+
 INJECTION_MARK = "[text removed by ecf: text addressed to an automated reader]"
 _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 
 
+# Paragraphs tested together before one by one (R3-P20): a text of many tiny paragraphs cost a
+# test each (about 13 s per 10 MiB). Joined by a line holding only a NUL, which no keyword
+# pattern can match across, a batch matches exactly when one of its paragraphs does.
+INJECTION_BATCH = 256
+_BATCH_JOIN = "\n\0\n"
+
+
+@cache
+def _injection() -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
+    """The injection alternations: case-sensitive (acronyms), then case-insensitive."""
+    pats = _patterns()["injection"]
+    cs = tuple(p for p in pats if p.case_sensitive)
+    ci = tuple(p for p in pats if not p.case_sensitive)
+    return (_any_of(cs) if cs else None), (_any_of(ci) if ci else None)
+
+
 def _injected(text: str) -> bool:
-    cs, ci = fold(text), fold_ci(text)
-    return any(p.regex.search(cs if p.case_sensitive else ci) for p in _patterns()["injection"])
+    cs, ci = _injection()
+    return bool((cs and cs.search(keyword_fold(text))) or (ci and ci.search(keyword_fold_ci(text))))
+
+
+def _injected_paragraphs(paras: list[str]) -> set[int]:
+    """The indexes of the paragraphs `_injected` holds for, testing them in batches first."""
+    out: set[int] = set()
+    for lo in range(0, len(paras), INJECTION_BATCH):
+        batch = paras[lo : lo + INJECTION_BATCH]
+        if len(batch) == 1 or _injected(_BATCH_JOIN.join(batch)):
+            out.update(lo + i for i, para in enumerate(batch) if _injected(para))
+    return out
 
 
 def _first(hi: int, test: Callable[[int], bool]) -> int:
@@ -166,10 +421,14 @@ def redact_injection(text: str) -> str:
     paragraph are replaced by INJECTION_MARK, so the model never reads the instruction and keeps
     the text before it. A phrase split across a blank line still fires the trigger but isn't
     removed."""
+    if not _injected(text):  # the whole text first: most mail has no match (R3-P20)
+        return text
+    paras = _PARAGRAPH_BREAK.split(text)
+    injected = _injected_paragraphs(paras)
     out: list[str] = []
     removed = False
-    for para in _PARAGRAPH_BREAK.split(text):
-        if not _injected(para):
+    for i, para in enumerate(paras):
+        if i not in injected:
             out.append(para)
             continue
         removed = True
@@ -188,12 +447,10 @@ def redact_injection(text: str) -> str:
 
 
 def texts_of(parsed: ParsedMessage) -> list[str]:
-    """Everything triggers look at: both texts of every part, Subject, display name, filenames."""
-    out = [parsed.subject, parsed.from_name]
-    for t in parsed.texts:
-        out += [t.visible, t.full]
-    out += [a.name for a in parsed.attachments]
-    return out
+    """Everything triggers look at: Subject, display name, filenames, then every part's visible
+    text, then every part's full text, the order `scan` reads them in up to its limit."""
+    out = [parsed.subject, parsed.from_name, *(a.name for a in parsed.attachments)]
+    return out + [t.visible for t in parsed.texts] + [t.full for t in parsed.texts]
 
 
 @dataclass
@@ -211,8 +468,13 @@ class Triggers:
             "keywords": self.keywords,
             "payment_keyword": bool(self.keywords["payment"]),
             "gift_card_keyword": bool(self.keywords["gift_card"]),
+            "gift_card_codes_request": gift_card_codes_request(self.keywords),
             "bec_opener": bec_opener(self.keywords),
             "tax_form_request": tax_form_request(self.keywords),
+            "credential_request": credential_request(self.keywords),
+            "crypto_payment": crypto_payment(self.keywords),
+            # recorded for measurement only (pre-classifier plan §5 A2, P9)
+            "amount_mentioned": bool(self.keywords.get("amount")),
             "impersonates_internal": bool(self.impersonation),
             "triggers": {
                 "fraud": self.fraud,
@@ -263,6 +525,12 @@ def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     t.impersonation = impersonation(parsed, found, org_domains, org_addresses, public_domains)
     money = payment or bool(keywords["gift_card"])  # gift cards: money only here (OD-457)
     (t.fraud if money else t.fraud_weak).extend(t.impersonation)  # module docstring
+    if (
+        found.get("risky_attachment")
+        and not found.get("self_sent")
+        and any(keywords.get(g) for g in ("payment", "credential", "gift_card"))
+    ):
+        t.fraud_weak.append(RISKY_ATTACHMENT)  # rule 1b (pre-classifier plan §5 C, P13)
     if keywords.get("injection"):  # 10 (OD-252)
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 
@@ -281,7 +549,7 @@ def _money_triggers(
     fraud: list[str] = []
     weak: list[str] = []
     bank, change, payment = (bool(keywords[g]) for g in ("bank", "change", "payment"))
-    auth, rtm = found["auth_result"], found["reply_to_mismatch"]
+    rtm = found["reply_to_mismatch"]
     # 1. bank details with an unconfirmed sender (OD-044), change wording or a Reply-To mismatch
     held = [
         what
@@ -294,15 +562,7 @@ def _money_triggers(
     ]  # only what held, so the card says why (V1.2 shadow run, 2026-09-30)
     if bank and held:
         fraud.append(f"bank details with {' and '.join(held)}")
-    signals = (
-        ("bank or change wording", bank or change),
-        ("DMARC fail", auth == "fail"),
-        # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
-        ("not addressed to this mailbox", found["recipient_mismatch"] and auth == "pass"),
-        ("lookalike domain", lookalikes),
-        ("Reply-To mismatch", rtm),
-    )
-    second = [name for name, hit in signals if hit]
+    second = second_signals(keywords, found, lookalikes)
     # 2. a first-time sender with a payment keyword needs a second signal; alone it is weak
     if payment and not found["sender_seen_before"]:
         if second:
@@ -317,6 +577,140 @@ def _money_triggers(
         else:
             weak.append("Reply-To mismatch on a payment item")
     return fraud, weak
+
+
+def second_signals(
+    keywords: dict[str, list[str]], found: dict[str, Any], lookalikes: bool
+) -> list[str]:
+    """Trigger 2's second signals (OD-062), shared with the routes (OD-490)."""
+    auth = found["auth_result"]
+    signals = (
+        ("bank or change wording", bool(keywords.get("bank") or keywords.get("change"))),
+        ("DMARC fail", auth == "fail"),
+        # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
+        (NOT_ADDRESSED, bool(found["recipient_mismatch"]) and auth == "pass"),
+        ("lookalike domain", lookalikes),
+        ("Reply-To mismatch", bool(found["reply_to_mismatch"])),
+    )
+    return [name for name, hit in signals if hit]
+
+
+# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+
+NO_HISTORY = "a sender with no established history"
+UNAUTHENTICATED_KNOWN = "a known sender without authentication"
+OTHER_FRAUD = "another fraud signal"
+INTERNAL = "an internal sender"
+IMPERSONATION = "impersonation of someone in your organization"
+CREDENTIAL = "a request for a code or password"
+GIFT_CODES = "a request for gift-card codes"
+CRYPTO = "a wallet address with a payment request"
+AUTH_REGRESSED = "a known sender's mail failed DMARC"
+RISKY_ATTACHMENT = "a web page, script or program attached to a payment, code or gift-card item"
+NOT_ADDRESSED = "not addressed to this mailbox"  # trigger 2's signal; not the routes' (G2)
+ROUTE_WHATS = (CREDENTIAL, GIFT_CODES, CRYPTO)
+# a route reason whose only second signal is a sender with no history: it doesn't stop the
+# sender's history from forming, or a genuine sender would stay unknown (pre-gate review G1)
+HISTORY_ONLY = frozenset(f"{what} and {NO_HISTORY}" for what in ROUTE_WHATS)
+
+
+@dataclass(frozen=True)
+class RouteHit:
+    """One route that applies to a message (OD-490): what it is, the second signals that hold
+    for it (none: weak, or nothing), and whether it is weak without one."""
+
+    what: str
+    signals: tuple[str, ...]
+    weak_too: bool
+
+
+def route_hits(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> list[RouteHit]:
+    """The routes that apply to a message, each with its second signals (`routes` turns them
+    into reasons; the eval's route report reads them, pre-classifier plan step 7)."""
+    if found.get("self_sent"):
+        return []
+    kw: dict[str, list[str]] = found.get("keywords") or {}
+    t: dict[str, Any] = found.get("triggers") or {}
+    auth = found.get("auth_result")
+    known = bool(found.get("sender_confirmed")) or (
+        bool(found.get("sender_seen_before")) and found.get("from_domain") not in public_domains
+    )
+    # alias and list mail is ordinary for these requests: not their signal (pre-gate review G2)
+    shared = [s for s in (second_signals(kw, found, bool(t.get("lookalikes"))) if kw else [])
+              if s != NOT_ADDRESSED]  # fmt: skip
+    shared += [name for name, hit in (
+        (OTHER_FRAUD, bool(t.get("fraud"))),
+        (NO_HISTORY, not known),
+        (UNAUTHENTICATED_KNOWN, known and auth == "none" and not found.get("bulk_signal")),
+    ) if hit]  # fmt: skip
+    posing = [IMPERSONATION] if found.get("impersonates_internal") else []
+    inside = [INTERNAL] if found.get("from_org_domain") or found.get("from_org_address") else []
+    hits: list[RouteHit] = []
+    if kw.get("credential") and kw.get("credential_ask"):  # the veto only without a signal
+        hits.append(RouteHit(CREDENTIAL, (*shared, *posing), not kw.get("credential_never")))
+    if gift_card_codes_request(kw):
+        hits.append(RouteHit(GIFT_CODES, (*shared, *inside), True))
+    if kw.get("crypto_wallet") and kw.get("crypto_pay"):
+        hits.append(RouteHit(CRYPTO, (*shared, *posing), False))
+    return hits
+
+
+def routes(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> tuple[list[str], list[str]]:
+    """Fraud and weak fraud reasons for credential requests, gift-card code requests and crypto
+    payment demands, and for a known sender whose mail fails DMARC (OD-490). Pure, over the
+    facts after they are computed (and, in the eval, after a card's expected facts are laid
+    over), with `found["triggers"]` holding the other triggers' reasons only.
+
+    A route fires as a fraud reason with a second signal: trigger 2's (`second_signals`), any
+    other fraud reason, a sender with no established history, a known sender whose mail isn't
+    authenticated (bulk mail excepted); impersonation for credentials and crypto, an internal
+    sender for gift cards (a compromised colleague's account; impersonation with gift cards
+    already escalates). Without one: weak for credentials (unless the text says such a request
+    is never made) and gift cards, nothing for crypto (genuine deposit notices). A public
+    provider's sender is never "known" here unless confirmed. Never on the account's own mail
+    to itself. Reasons use fixed wording, never a value from the message."""
+    if found.get("self_sent"):
+        return [], []
+    fraud: list[str] = []
+    weak: list[str] = []
+    for h in route_hits(found, public_domains=public_domains):
+        if h.signals:
+            fraud.append(f"{h.what} and {' and '.join(h.signals)}")
+        elif h.weak_too:
+            weak.append(f"{h.what} from a known sender, with no second signal")
+    t: dict[str, Any] = found.get("triggers") or {}
+    other: list[str] = t.get("fraud") or []
+    if found.get("known_sender_auth_regressed") and not any(
+        "DMARC fail" in r for r in (*fraud, *other)
+    ):
+        fraud.append(AUTH_REGRESSED)  # one reason, not two (R3-P21, pre-gate review G11)
+    return fraud, weak
+
+
+def with_routes(
+    found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
+) -> dict[str, Any]:
+    """`found` with its route reasons (re)computed: any earlier ones (`found["routes"]`, and any
+    reason worded as a route's, so stored facts from an earlier wording don't count as another
+    fraud signal; pre-gate review G10) are taken out of the triggers first, so the eval can
+    route again after laying a card's expected facts over."""
+    prior: dict[str, list[str]] = found.get("routes") or {}
+    t: dict[str, Any] = dict(found.get("triggers") or {})
+    for k in ("fraud", "fraud_weak"):
+        t[k] = [r for r in t.get(k, []) if r not in prior.get(k, []) and not is_route_reason(r)]
+    fraud, weak = routes(found | {"triggers": t}, public_domains=public_domains)
+    t["fraud"] = t["fraud"] + fraud
+    t["fraud_weak"] = t["fraud_weak"] + weak
+    return found | {"triggers": t, "routes": {"fraud": fraud, "fraud_weak": weak}}
+
+
+def is_route_reason(reason: str) -> bool:
+    """A reason `routes` words: a route's, or the known-sender DMARC one."""
+    return reason.startswith(ROUTE_WHATS) or reason == AUTH_REGRESSED
 
 
 def _other_triggers(

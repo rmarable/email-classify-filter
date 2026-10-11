@@ -6,12 +6,27 @@ from the reader still counts (§8.5). Hidden means: `display:none`, `visibility:
 font size or opacity, the `hidden` attribute, and `<script>`, `<style>`, `<head>`, `<template>`
 and comments. Colour tricks (white on white) are not detected; the full text still carries them.
 Embedded `data:` URIs are removed before the size is measured (they carry no readable text).
+
+The same pass counts links and notes whether a visible anchor's text names a different site than
+its href (`link_text_mismatch`; pre-classifier plan §5 C, P22). Recorded for measurement only.
+Bounded: the innermost anchor only, the href cut to 2 KB and the anchor text to 200 characters
+before they are read, and nothing recorded after `LINK_CAP` anchors (the count saturates). Only
+a count and a boolean come out, never a URL or domain.
+
+It also notes which visible text lies inside a quote container (`<blockquote>`, Gmail's and
+Yahoo's quote divs, Gmail's signature div), so the excerpt can mark it (`excerpt.py`,
+pre-classifier plan step 10, P22): a depth counter like the hidden one, and only the start and end
+positions are kept until the walk ends. Only containers with no visible text after them count
+(pre-gate review G1); one followed by new text stays in place. The split reads at most
+`limit` characters of each side (review G4).
 """
 
 from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
+from typing import NamedTuple
+from urllib.parse import urlsplit
 
 VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                   "param", "source", "track", "wbr"})  # fmt: skip
@@ -35,6 +50,76 @@ _DATA_URI = re.compile(
 )
 
 
+# Quote containers (pre-classifier plan step 10): their visible text goes after the new text in
+# the excerpt. Outlook's reply header isn't a container (its quoted body follows outside it); the
+# excerpt's line markers find it.
+QUOTE_TAGS = frozenset({"blockquote"})
+QUOTE_CLASSES = frozenset({"gmail_quote", "gmail_signature", "yahoo_quoted"})
+
+LINK_CAP = 500  # links counted per text; anchors after this aren't read (P22)
+HREF_CHARS = 2048
+ANCHOR_TEXT_CHARS = 200
+# Common top-level domains: a bare name in anchor text counts as a site only with one of these
+# (so "Node.js" isn't one); a scheme or `www.` always counts. Shared with trigger 7's display
+# names.
+COMMON_TLDS = frozenset(
+    {"com", "net", "org", "co", "io", "us", "uk", "de", "fr", "ca", "au", "nl", "es", "it",
+     "info", "biz", "gov", "edu", "app", "dev", "ai", "me", "online", "site", "xyz"}
+)  # fmt: skip
+# Second-level labels under a country code that are registries, not sites (`acme.co.uk`): no
+# public-suffix list is shipped, so the site is approximate.
+_SECOND_LEVEL = frozenset({"co", "com", "org", "net", "ac", "gov", "edu", "ne", "or"})
+_TEXT_SITE = re.compile(
+    r"(?<![\w@.-])(https?://|www\.)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})"
+    r"(?![\w-])"
+)
+_URL = re.compile(r"(?<![\w-])https?://", re.I)
+
+
+class Links(NamedTuple):
+    number: int = 0  # saturates at LINK_CAP
+    text_mismatch: bool = False
+
+
+def site(host: str) -> str:
+    """The registrable part of a host name, approximately: the last two labels, or three under
+    a country code's registry label (`co.uk`)."""
+    labels = host.lower().rstrip(".").split(".")
+    n = 3 if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL else 2
+    return ".".join(labels[-n:])
+
+
+def text_site(text: str) -> str | None:
+    """The first site named in anchor text: a URL, a `www.` name, or a bare domain with a
+    common top-level domain."""
+    for m in _TEXT_SITE.finditer(text.casefold()):
+        if m.group(1) or m.group(2).rsplit(".", 1)[-1] in COMMON_TLDS:
+            return site(m.group(2))
+    return None
+
+
+def href_site(href: str) -> str | None:
+    """The site of an http(s) or scheme-relative href, None for anything else."""
+    try:
+        parts = urlsplit(href[:HREF_CHARS].strip())
+        host = parts.hostname
+    except ValueError:  # a malformed IPv6 literal
+        return None
+    if parts.scheme.lower() not in ("http", "https", "") or not host:
+        return None
+    return site(host)
+
+
+def plain_links(text: str) -> Links:
+    """Links in plain text: http(s) URLs, counted up to LINK_CAP."""
+    n = 0
+    for _ in _URL.finditer(text):
+        n += 1
+        if n >= LINK_CAP:
+            break
+    return Links(n)
+
+
 def strip_data_uris(html: str) -> str:
     return _DATA_URI.sub("data:", html)
 
@@ -44,10 +129,17 @@ class _Walker(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.full: list[str] = []
         self.visible: list[str] = []
-        self._stack: list[tuple[str, bool, bool]] = []  # (tag, hidden, no_text)
+        self._stack: list[tuple[str, bool, bool, bool]] = []  # (tag, hidden, no_text, quoted)
         self._hidden = 0
         self._no_text = 0
+        self._quoted = 0
+        self.quoted_spans: list[list[int]] = []  # [start, end) in `visible`, outermost only
         self._open: dict[str, int] = {}  # open elements per tag: end tags matching none are O(1)
+        self.links = 0
+        self.link_text_mismatch = False
+        self._anchor: str | None = None  # the open anchor's href site ("" when it has none)
+        self._anchor_text: list[str] = []
+        self._anchor_chars = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -59,14 +151,27 @@ class _Walker(HTMLParser):
             return
         a = {k.lower(): (v or "") for k, v in attrs}
         hidden = "hidden" in a or bool(_HIDDEN_STYLE.search(a.get("style", "")))
+        if tag == "a":
+            self._end_anchor()  # an anchor inside another: only the innermost is read
+            if "href" in a and self.links < LINK_CAP:
+                self.links += 1
+                self._anchor = "" if self._hidden or hidden else (href_site(a["href"]) or "")
         no_text = tag in NEVER_TEXT
-        self._stack.append((tag, hidden, no_text))
+        classes = a.get("class", "").lower().split()
+        quoted = tag in QUOTE_TAGS or not QUOTE_CLASSES.isdisjoint(classes)
+        self._stack.append((tag, hidden, no_text, quoted))
         self._open[tag] = self._open.get(tag, 0) + 1
         self._hidden += hidden
         self._no_text += no_text
+        if quoted:
+            if not self._quoted:
+                self.quoted_spans.append([len(self.visible), -1])
+            self._quoted += 1
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
+        if tag == "a":
+            self._end_anchor()
         if tag in BLOCK:
             self._newline()
         elif tag in CELL:
@@ -77,10 +182,14 @@ class _Walker(HTMLParser):
         # once, so the scans add up to the number of start tags
         for i in range(len(self._stack) - 1, -1, -1):
             if self._stack[i][0] == tag:
-                for t, hidden, no_text in self._stack[i:]:
+                was_quoted = self._quoted > 0
+                for t, hidden, no_text, quoted in self._stack[i:]:
                     self._hidden -= hidden
                     self._no_text -= no_text
+                    self._quoted -= quoted
                     self._open[t] -= 1
+                if was_quoted and not self._quoted:
+                    self.quoted_spans[-1][1] = len(self.visible)
                 del self._stack[i:]
                 return
 
@@ -90,6 +199,38 @@ class _Walker(HTMLParser):
         self.full.append(data)
         if not self._hidden:
             self.visible.append(data)
+            if self._anchor and self._anchor_chars < ANCHOR_TEXT_CHARS:
+                piece = data[: ANCHOR_TEXT_CHARS - self._anchor_chars]
+                self._anchor_text.append(piece)
+                self._anchor_chars += len(piece)
+
+    def close(self) -> None:
+        super().close()
+        self._end_anchor()
+        if self._quoted:  # an unclosed container runs to the end
+            self.quoted_spans[-1][1] = len(self.visible)
+
+    def split_visible(self, limit: int) -> tuple[str | None, str]:
+        """(the visible text before the trailing quote containers, the visible text from their
+        start), each read up to `limit` characters; the first is None when no container has only
+        whitespace after it, as the visible text is then the same."""
+        cut, after = None, len(self.visible)
+        for start, end in reversed(self.quoted_spans):
+            if any(p.strip() for p in self.visible[end:after]):
+                break
+            cut, after = start, start
+        if cut is None:
+            return None, ""
+        return tidy(_head(self.visible[:cut], limit)), tidy(_head(self.visible[cut:], limit))
+
+    def _end_anchor(self) -> None:
+        if self._anchor:
+            named = text_site("".join(self._anchor_text))
+            if named is not None and named != self._anchor:
+                self.link_text_mismatch = True
+        self._anchor = None
+        self._anchor_text = []
+        self._anchor_chars = 0
 
     def _space(self) -> None:
         self.full.append(" ")
@@ -102,12 +243,41 @@ class _Walker(HTMLParser):
             self.visible.append("\n")
 
 
-def html_to_text(html: str) -> tuple[str, str]:
-    """(full, visible) text of an HTML document, whitespace tidied."""
+class HtmlText(NamedTuple):
+    full: str
+    visible: str
+    links: Links
+    unquoted: str | None = None  # visible text before the trailing quote containers; None: none
+    quoted: str = ""  # visible text from their start
+
+
+def html_text(html: str, quotes: int = 0) -> HtmlText:
+    """The full and visible text of an HTML document, whitespace tidied, its links, and, when
+    `quotes` is a character limit, its visible text split before trailing quote containers."""
     w = _Walker()
     w.feed(strip_data_uris(html))
     w.close()
-    return tidy("".join(w.full)), tidy("".join(w.visible))
+    links = Links(w.links, w.link_text_mismatch)
+    unquoted, quoted = w.split_visible(quotes) if quotes else (None, "")
+    return HtmlText(tidy("".join(w.full)), tidy("".join(w.visible)), links, unquoted, quoted)
+
+
+def _head(pieces: list[str], limit: int) -> str:
+    """The first `limit` characters of the pieces joined, without joining the rest."""
+    out: list[str] = []
+    n = 0
+    for p in pieces:
+        if n >= limit:
+            break
+        out.append(p)
+        n += len(p)
+    return "".join(out)[:limit]
+
+
+def html_to_text(html: str) -> tuple[str, str]:
+    """(full, visible) text of an HTML document, whitespace tidied."""
+    t = html_text(html)
+    return t.full, t.visible
 
 
 def tidy(text: str) -> str:

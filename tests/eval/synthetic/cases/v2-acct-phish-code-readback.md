@@ -11,7 +11,7 @@ from: "Harbor Savings Fraud Team <fraud-desk@harbor-help.example>"
 subject: "Confirm it's you"
 date: 2026-10-07T12:25:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: company, fraud_risk: high}
+  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

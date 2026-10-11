@@ -97,6 +97,23 @@ def test_seen_needs_three_passes_over_fourteen_days(
     assert f["sender_seen_before"] and not f["sender_confirmed"]
 
 
+def test_requests_alone_never_make_a_sender_known(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Pre-gate review G1 refinement (operator decision 2026-10-10): passes that were code,
+    gift-card or crypto requests count, but a sender is known only once other mail passed too."""
+    start = clock.now()
+    for d in (0, 7, 20):
+        with write_tx(conn):
+            facts.record_sender(conn, "ap", "billing@vendor-a.example", "pass",
+                                to_ts(start + _days(d)), request=True)  # fmt: skip
+    assert not compute(conn, mail())["sender_seen_before"]
+    history(conn, "billing@vendor-a.example", [21], clock)  # one ordinary message
+    assert compute(conn, mail())["sender_seen_before"]
+    row = conn.execute("SELECT dmarc_pass_count, request_pass_count FROM senders").fetchone()
+    assert tuple(row) == (4, 3)
+
+
 def test_only_passing_mail_builds_history(conn: sqlite3.Connection, clock: FakeClock) -> None:
     for d in (0, 7, 20):
         with write_tx(conn):
@@ -222,6 +239,37 @@ def test_gmails_sent_label_marks_the_accounts_own_note_to_itself(conn: sqlite3.C
     assert facts.compute(conn, me, note, "none", [])["self_sent"] is False  # not Gmail
     other = parse(mail("someone@gmail.com", to="pat.lee@gmail.com"))
     assert facts.compute(conn, me, other, "none", [], gmail_labels=sent)["self_sent"] is False
+
+
+@pytest.mark.parametrize(
+    ("name", "ctype", "risky"),
+    [
+        ("statement.html", "text/html", True),
+        ("statement.HTM", "application/octet-stream", True),  # by extension
+        ("a" * 120 + ".shtml", "application/octet-stream", True),  # past the name cap (P24)
+        ("logo", "image/svg+xml", True),  # by type
+        ("setup.exe", "application/x-msdownload", True),
+        ("invoice.pdf.lnk", "application/octet-stream", True),
+        ("disk.iso", "application/octet-stream", True),
+        ("invoice.pdf", "application/pdf", False),
+        ("photo.jpg", "image/jpeg", False),
+        ("archive.zip", "application/zip", False),
+    ],
+)  # fmt: skip
+def test_risky_attachment(conn: sqlite3.Connection, name: str, ctype: str, risky: bool) -> None:
+    """Pre-classifier plan §5 C: pages, scripts, programs and disk images."""
+    assert compute(conn, mail(attachment=(name, ctype)))["risky_attachment"] is risky
+
+
+def test_a_long_html_name_is_still_a_document(conn: sqlite3.Connection) -> None:
+    """P24: the 100-character cap cut `.html` to `.h`, so this wasn't a document before."""
+    raw = mail(attachment=("a" * 98 + ".html", "application/octet-stream"))
+    assert compute(conn, raw)["unscanned_reasons"] == ["a document from a first-time sender"]
+
+
+def test_link_facts_are_recorded(conn: sqlite3.Connection) -> None:
+    f = compute(conn, mail())
+    assert (f["link_count"], f["link_text_mismatch"]) == (0, False)
 
 
 def test_unnamed_inline_images_are_not_attachments(conn: sqlite3.Connection) -> None:

@@ -12,7 +12,7 @@ from: "Stillwater Spa <bookings@stillwater-spa.example>"
 subject: "Your massage booking is held - deposit due 2026-10-20"
 date: 2026-10-13T13:25:00Z
 expected:
-  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: appointment, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

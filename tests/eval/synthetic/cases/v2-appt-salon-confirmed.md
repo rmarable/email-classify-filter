@@ -12,7 +12,7 @@ from: "Willow and Thread Salon <bookings@willowthread-salon.example>"
 subject: "Booking confirmed: Saturday 2026-10-24, 11:00"
 date: 2026-10-09T10:20:00Z
 expected:
-  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: appointment, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
 ---
 Hi Pat,

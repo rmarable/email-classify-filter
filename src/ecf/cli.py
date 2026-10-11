@@ -909,6 +909,26 @@ def _out(text: str) -> None:
     sys.stdout.flush()
 
 
+def _review_cards(root: Path, fields: str | None, *, add: bool, cases: str | None, redo: bool,
+                  recheck: int) -> None:  # fmt: skip
+    from datetime import date  # noqa: PLC0415
+
+    from ecf import cli_card_review  # noqa: PLC0415
+    from ecf.prompts import require_terminal  # noqa: PLC0415
+
+    if fields is None:
+        raise InvalidInputError("--add, --cases, --redo and --recheck go with --review")
+    if recheck < 0:
+        raise InvalidInputError("--recheck takes a positive number")
+    globs = tuple(g.strip() for g in (cases or "").split(",") if g.strip())
+    require_terminal()
+    lines = cli_card_review.review(root, fields, read=input, write=_out, today=date.today(),
+                                   add=add, globs=globs, redo=redo, recheck=recheck)  # fmt: skip
+    for line in lines:
+        typer.echo(line)
+    typer.echo("commit reviews.jsonl, labels.jsonl and any changed cards to keep them")
+
+
 def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> None:
     from datetime import date  # noqa: PLC0415
 
@@ -932,7 +952,7 @@ def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> N
 
 
 @eval_app.command("label")
-def eval_label(
+def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; three modes
     case_id: Annotated[
         str | None, typer.Argument(help="One case (default: every pending one).")
     ] = None,
@@ -964,13 +984,51 @@ def eval_label(
         bool,
         typer.Option("--marked", help="With --corpus: go back to skipped or unsure messages."),
     ] = False,
+    review: Annotated[
+        str | None,
+        typer.Option(
+            "--review",
+            help="Blind review: answer these fields (comma-separated, or all) for every card"
+            " from the email alone, then compare with its labels (§16.1).",
+        ),
+    ] = None,
+    add: Annotated[
+        bool,
+        typer.Option("--add", help="With --review: also ask the fields a card leaves unlabelled."),
+    ] = False,
+    cases: Annotated[
+        str | None,
+        typer.Option(
+            "--cases", help="With --review: only cards whose id matches (globs, comma-separated)."
+        ),
+    ] = None,
+    redo: Annotated[
+        bool,
+        typer.Option("--redo", help="With --review: ask fields already reviewed on this file too."),
+    ] = False,
+    recheck: Annotated[
+        int,
+        typer.Option(
+            "--recheck",
+            help="With --review: ask N reviewed cards again (a seeded"
+            " sample) and report how often you answer the same.",
+        ),
+    ] = 0,
 ) -> None:
     """Confirm each case's expected labels (only you; OD-229, OD-241). A confirmed case counts
     toward the gates; editing its card undoes the confirmation. Cases whose card has a `review`
     note are flagged: the note says what to judge. With --corpus: label a real-mail corpus,
-    without seeing any model's answer."""
+    without seeing any model's answer. With --review: re-judge labels blind, from the email
+    alone; answers are logged in reviews.jsonl."""
     if corpus is not None or again or marked:
         _label_corpus(corpus, frozenset(again or ()), marked)
+        return
+    if review is not None or add or cases or redo or recheck:
+        if case_id or show_flags or results or status_only:
+            raise InvalidInputError(
+                "--review takes no case id, --show-flags, --results or --status"
+            )
+        _review_cards(root, review, add=add, cases=cases, redo=redo, recheck=recheck)
         return
     from datetime import UTC, datetime  # noqa: PLC0415
 
@@ -1097,6 +1155,61 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         Path | None,
         typer.Option("--corpus", help="Run a labelled real-mail corpus instead (§16.7)."),
     ] = None,
+    not_for_gate: Annotated[
+        bool,
+        typer.Option(
+            "--not-for-gate",
+            help="An experiment: saved and reported, never counts for the go-live gate.",
+        ),
+    ] = False,
+    copy_to: Annotated[
+        Path | None,
+        typer.Option(
+            "--copy-to",
+            help="Also write the result file to this folder (default: state-archive/evals/"
+            " when run from a checkout; none otherwise).",
+        ),
+    ] = None,
+    new_wording: Annotated[
+        bool,
+        typer.Option(
+            "--new-wording/--no-new-wording",
+            help="--no-new-wording asks the model with the v2.0.0 schema text (an experiment;"
+            " never counts for the go-live gate).",
+        ),
+    ] = True,
+    signals: Annotated[
+        bool,
+        typer.Option(
+            "--signals/--no-signals",
+            help="--no-signals asks the model without the derived signals (OD-484; an"
+            " experiment, never counts for the go-live gate).",
+        ),
+    ] = True,
+    new_signals: Annotated[
+        bool,
+        typer.Option(
+            "--new-signals/--no-new-signals",
+            help="--no-new-signals leaves out the crypto signal (OD-485; an"
+            " experiment, never counts for the go-live gate).",
+        ),
+    ] = True,
+    excerpt_prep: Annotated[
+        bool,
+        typer.Option(
+            "--excerpt-prep/--no-excerpt-prep",
+            help="--no-excerpt-prep cuts the excerpts from the first text part, as before"
+            " v2.1.0 (an experiment, never counts for the go-live gate).",
+        ),
+    ] = True,
+    message_signals: Annotated[
+        bool,
+        typer.Option(
+            "--message-signals/--no-message-signals",
+            help="--no-message-signals leaves out the link and attachment signals (OD-489; an"
+            " experiment, never counts for the go-live gate).",
+        ),
+    ] = True,
 ) -> None:
     """Run the synthetic set through the local model (holds the model; fraud checks go on). A
     full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
@@ -1107,22 +1220,42 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if claude or fraud_only or not redact or classifier_backend == "null":
             raise InvalidInputError("--corpus runs the local model only (no --claude, null"
                                     " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
+        if copy_to is not None or not (new_wording and signals and new_signals and excerpt_prep
+                                         and message_signals) \
+                or not_for_gate:  # fmt: skip
+            raise InvalidInputError("--copy-to, --no-new-wording, --no-signals, --no-new-signals,"
+                                    " --no-excerpt-prep, --no-message-signals and --not-for-gate"
+                                    " are for the synthetic"
+                                    " set (a corpus run never counts for the gate and its"
+                                    " result stays in the install)")  # fmt: skip
         _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
         return
+    copy = _copy_folder(copy_to)
     if claude:
         if not (classifier and actor):
             raise InvalidInputError("--no-classifier and --no-actor are for the local model")
-        if classifier_backend != "gemma" or not redact:
-            raise InvalidInputError("--classifier-backend and --no-redact are for the local model")
+        if classifier_backend != "gemma" or not redact or not_for_gate or not new_wording \
+                or not signals or not new_signals or not excerpt_prep \
+                or not message_signals:  # fmt: skip
+            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
+                                    " --no-new-wording, --no-signals, --no-new-signals,"
+                                    " --no-excerpt-prep and --no-message-signals are for the"
+                                    " local model")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
-                     actor_model, batch)  # fmt: skip
+                     actor_model, batch, copy)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "actor": actor,
             "fraud_only": fraud_only, "battery_floor": battery_floor,
-            "backend": classifier_backend, "redact": redact})  # fmt: skip
+            "backend": classifier_backend, "redact": redact,
+            "for_gate": not not_for_gate, "new_wording": new_wording, "signals": signals,
+            "new_signals": new_signals, "excerpt_prep": excerpt_prep,
+            "message_signals": message_signals,
+            "copy_to": str(copy) if copy else None})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
+    if copy:
+        typer.echo(f"  The result is also written to {copy}/ when the run ends.")
     _follow_hints()
     if r.get("on_battery"):
         typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
@@ -1163,14 +1296,27 @@ def _follow_hints() -> None:
     typer.echo(f"  Stop:      {_ecf('eval stop')}")
 
 
+def _copy_folder(copy_to: Path | None, cwd: Path | None = None) -> Path | None:
+    """Where `ecf eval run` also writes its result (plan 0.3): `--copy-to`, else
+    `state-archive/evals/` (gitignored) when run from inside an ecf checkout, else nowhere."""
+    if copy_to is not None:
+        return copy_to.expanduser().resolve()
+    here = (cwd or Path.cwd()).resolve()
+    for folder in (here, *here.parents):
+        if (folder / ".git").exists() and (folder / "src" / "ecf_server").is_dir():
+            return folder / "state-archive" / "evals"
+    return None
+
+
 def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
                  classifier_model: str | None, actor_model: str | None,
-                 batch: int) -> None:  # fmt: skip
+                 batch: int, copy: Path | None) -> None:  # fmt: skip
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
             "fraud_only": fraud_only, "classifier_model": classifier_model,
-            "actor_model": actor_model, "batch": batch})  # fmt: skip
+            "actor_model": actor_model, "batch": batch,
+            "copy_to": str(copy) if copy else None})  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
            else "other models: for comparison only")  # fmt: skip
@@ -1179,6 +1325,8 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
                " type /ecf-eval; it uses your Claude plan. The run expires in 24 hours;"
                " `ecf eval stop` ends it.")  # fmt: skip
+    if copy:
+        typer.echo(f"The result is also written to {copy}/ when the run ends.")
     if not fraud_only:
         typer.echo("For a first run, `--fraud-only` uses less of the plan.")
 
@@ -1195,23 +1343,37 @@ def eval_rescore(
             " against its current labels, answers mapped to v2.",
         ),
     ] = None,
+    through_policy: Annotated[
+        bool,
+        typer.Option(
+            "--through-policy",
+            help="With --synthetic: recompute each card's facts and plan the recorded answers"
+            " again with today's keywords, rules and policy.",
+        ),
+    ] = False,
 ) -> None:
-    """Score a corpus result again against the corpus's current labels, or a pre-v2 synthetic
-    result against the set's current labels, without running the models; the new file sits
-    beside the original (§16.7, §16.5)."""
+    """Score a corpus result again against the corpus's current labels, or a synthetic result
+    against the set's current labels (a pre-v2 one with its answers mapped to v2, or with
+    --through-policy planned again with today's facts and rules), without running the models;
+    the new file sits beside the original (§16.7, §16.5)."""
     from ecf.eval.results import load_result as load  # noqa: PLC0415
     from ecf.eval.results import summary  # noqa: PLC0415
     from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
 
     if (corpus is None) == (synthetic is None):
         raise typer.BadParameter("give --corpus or --synthetic")
+    if through_policy and synthetic is None:
+        raise typer.BadParameter("--through-policy goes with --synthetic")
     if synthetic is not None:
         with LocalClient(_paths()) as c:
             r = c.request("POST", "/v1/eval/rescore", {
                 "result": str(result.expanduser().absolute()),
-                "synthetic_root": str(synthetic.expanduser().absolute())}, timeout=600)  # fmt: skip
+                "synthetic_root": str(synthetic.expanduser().absolute()),
+                "through_policy": through_policy}, timeout=600)  # fmt: skip
         typer.echo(f"written: {r['path']}")
         typer.echo(summary(load(Path(r["path"]))))
+        for line in replanned_lines(r["summary"]):
+            typer.echo(line)
         return
     require_terminal()
     where = cast(Path, corpus).expanduser().absolute()
@@ -1229,6 +1391,200 @@ def eval_rescore(
             c.request("DELETE", f"/v1/corpus/session/{sid}")
     typer.echo(f"written: {r['path']}")
     typer.echo(summary(load(Path(r["path"]))))
+
+
+@eval_app.command("routes")
+def eval_routes(
+    sets: Annotated[
+        list[Path] | None,
+        typer.Argument(help="Synthetic set folders (the frozen set first)."),
+    ] = None,
+    result: Annotated[
+        list[Path] | None,
+        typer.Option("--result", help="A result on the first set to attribute (repeatable)."),
+    ] = None,
+    corpus: Annotated[
+        Path | None, typer.Option("--corpus", help="A corpus file: its stored messages' routes.")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
+) -> None:
+    """What the fraud routes (OD-490) do on synthetic sets: per set, the cards each route makes
+    fraud or weak as built, as draft 2 had them and without them, their second signals, and a pass
+    with every sender taken as known; per result, which mechanism changed each case's rule or
+    actions; on a corpus, how many stored messages a route would escalate. No model runs
+    (pre-classifier plan steps 7b and 7c, SPEC §16.2)."""
+    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
+
+    if not sets and corpus is None:
+        raise typer.BadParameter("give a synthetic set folder or --corpus")
+    body: dict[str, Any] = {
+        "sets": [str(p.expanduser().absolute()) for p in sets or []],
+        "results": [str(p.expanduser().absolute()) for p in result or []],
+    }
+    with LocalClient(_paths()) as c:
+        if corpus is None:
+            r = c.request("POST", "/v1/eval/routes", body, timeout=600)
+        else:
+            require_terminal()
+            where = corpus.expanduser().absolute()
+            secret = hidden(f"Passphrase for {where.name} (hidden): ")
+            opened = c.request("POST", "/v1/corpus/session",
+                               {"path": str(where), "passphrase": secret}, timeout=600)  # fmt: skip
+            del secret
+            sid = opened["session_id"]
+            try:
+                r = c.request("POST", "/v1/eval/routes", body | {"corpus_session": sid},
+                              timeout=600)  # fmt: skip
+            finally:
+                c.request("DELETE", f"/v1/corpus/session/{sid}")
+    if as_json:
+        typer.echo(json.dumps(r, indent=1))
+        return
+    for line in route_lines(r):
+        typer.echo(line)
+
+
+def route_lines(r: dict[str, Any]) -> list[str]:
+    """`ecf eval routes` as text."""
+    out: list[str] = []
+    for st in r["sets"]:
+        out.append(
+            f"{Path(st['set']).name}: {st['confirmed']} confirmed cards, {st['scam']} scam"
+            + (f" ({st['unconfirmed']} unconfirmed left out)" if st["unconfirmed"] else "")
+        )
+        for name, v in st["variants"].items():
+            out.append(
+                f"  {name}: route fraud {len(v['fraud']['scam'])} scam / "
+                f"{_ids(v['fraud']['genuine'])} genuine; weak {len(v['weak']['scam'])} scam / "
+                f"{_ids(v['weak']['genuine'])} genuine; rules alone fraud_guard "
+                f"{len(v['alone_fraud_guard']['scam'])} scam / "
+                f"{_ids(v['alone_fraud_guard']['genuine'])} genuine; model-only fraud "
+                f"{len(v['model_only_fraud'])}")  # fmt: skip
+        sig = ", ".join(f"{k} {n}" for k, n in st["draft4_signals"].items()) or "none"
+        out.append(f"  draft4 second signals: {sig}")
+        out.append(f"  only signal a sender with no history: {_ids(st['first_time_only'])}")
+        seen = st["seen_forced"]
+        out.append(
+            f"  every sender known: route lost {_ids(seen['lost_route'])}; weak only"
+            f" {_ids(seen['weak'])}; model-only fraud {len(seen['model_only_fraud'])}"
+        )
+        fresh = st["fresh_mailbox_route_fraud"]
+        out.append(f"  every sender new (a fresh mailbox): route fraud {len(fresh['scam'])} scam"
+                   f" / {_ids(fresh['genuine'])} genuine")  # fmt: skip
+    if (cp := r.get("corpus")) is not None:
+        out += _corpus_route_lines(cp)
+    for res in r["results"]:
+        mo = res["model_only_fraud_cases"]
+        out.append(f"{res['result']}: {len(res['changed'])} cases changed; by mechanism "
+                   + ", ".join(f"{k} {n}" for k, n in res["by_mechanism"].items())
+                   + f"; model-only fraud {mo[0]} -> {mo[1]}; unsafe {_ids(res['unsafe'])};"
+                   f" genuine hide refused {_ids(res['genuine_hide_dropped'])}")  # fmt: skip
+        for c in res["changed"]:
+            why = ", ".join(c["mechanisms"]) or "unexplained"
+            iban = "; valid IBAN present" if c["iban_bank"] else ""
+            out.append(f"  {c['id']}: {c['rule'][0]} -> {c['rule'][1]} ({why}{iban})")
+        out.append(f"  against the routes off: {'PASS' if res['verdict'] else 'FAIL'}")
+        out += _against_lines(res["routes_off"], "    ")
+        out.append("  in a fresh mailbox (every sender new; reported, not judged):")
+        out += _against_lines(res["fresh_mailbox"], "    ")
+    return out
+
+
+def _against_lines(d: dict[str, list[str]], pad: str) -> list[str]:
+    names = (("scam_gained", "scams caught only with the routes"),
+             ("scam_lost", "scams caught only without them"),
+             ("scam_missed", "scams not caught"),
+             ("genuine_newly_escalated", "genuine newly escalated"),
+             ("genuine_newly_weak", "genuine newly weak (rule 1b)"),
+             ("genuine_escalated_either_way", "genuine escalated either way"))  # fmt: skip
+    return [f"{pad}{what}: {_ids(d[key])}" for key, what in names]
+
+
+def _corpus_route_lines(cp: dict[str, Any]) -> list[str]:
+    def pct(v: float | None) -> str:
+        return "-" if v is None else f"{v}%"
+
+    out = [f"corpus {str(cp['corpus_id'])[:8]}: {cp['messages']} messages, {cp['labelled']}"
+           " labelled (keywords: fetch-time plus a rescan of the stored excerpts)"]  # fmt: skip
+    for what, v in cp["routes"].items():
+        out.append(f"  {what}: fraud {_ids(v['fraud'])}; weak {_ids(v['weak'])}")
+    out.append(f"  would escalate: {_ids(cp['would_escalate'])} ({pct(cp['would_escalate_pct'])}"
+               f" of messages); by a route alone: {_ids(cp['escalated_only_by_a_route'])}"
+               f" ({pct(cp['escalated_only_by_a_route_pct'])})")  # fmt: skip
+    out.append(f"  with a sender with no history among the signals: {_ids(cp['first_time'])}"
+               f" ({pct(cp['first_time_pct'])} of those escalated); as the only signal:"
+               f" {_ids(cp['first_time_only'])}")  # fmt: skip
+    out.append(f"  labelled harmless but would escalate: {_ids(cp['labelled_harmless'])}")
+    return out
+
+
+def replanned_lines(s: dict[str, Any]) -> list[str]:
+    """What `--through-policy` changed, and the genuine-mail figures (pre-classifier plan step 7);
+    nothing for another rescore."""
+    re_: dict[str, Any] | None = s.get("replanned")
+    if re_ is None:
+        return []
+    actor: dict[str, int] = re_["actor"]
+    return [f"rule changed: {_ids(re_['rule_changed'])}",
+            f"actions changed: {_ids(re_['actions_changed'])}",
+            f"actor proposals: {actor['recorded']} recorded, {actor['inferred']} inferred,"
+            f" {actor['partial']} partly inferred, {actor['nothing']} nothing to replay,"
+            f" {actor['not_on_record']} not on record",
+            f"model-only fraud cases: {s.get('rescored_from', {}).get('model_only_fraud_cases')}"
+            f" -> {s.get('model_only_fraud_cases')}",
+            *_genuine_figures(s)]  # fmt: skip
+
+
+def _ids(xs: list[str]) -> str:
+    if not xs:
+        return "0"
+    return f"{len(xs)} ({', '.join(xs[:8])}{', ...' if len(xs) > 8 else ''})"
+
+
+def _measurement_figures(s: dict[str, Any]) -> list[str]:
+    """The per-stage measurements (pre-classifier plan §11); absent in older results. Figures
+    are p50/p95/max."""
+    m: dict[str, Any] | None = s.get("measurements")
+    if m is None:
+        return []
+    sig = m["signals"]
+    out = [
+        f"facts and excerpts per email {_three(m['facts_ms'])} ms, trigger scan"
+        f" {_three(m['scan_ms'])} ms, {m['keyword_patterns']} keyword patterns",
+        f"classifier excerpt {_three(m['excerpt_chars'])} chars; signals block on"
+        f" {sig['cases']} of {sig['of']} cases, {_three(sig['block_chars'])} chars",
+    ]
+    env: dict[str, Any] = s.get("environment") or {}
+    start: dict[str, Any] = env.get("start") or {}
+    if rows := start.get("rows"):
+        out.append(f"history: {rows['senders']} senders, {rows['items']} items")
+    calls: dict[str, Any] = m.get("calls") or {}
+    for role in ("classifier", "actor"):
+        if (c := calls.get(role)) is not None:
+            out.append(
+                f"{role} tokens: prompt {_three(c['prompt_tokens'])}, uncached"
+                f" {_three(c['uncached_tokens'])}, cached {_three(c['cached_tokens'])},"
+                f" output {_three(c['output_tokens'])}"
+            )
+    return out
+
+
+def _three(d: dict[str, Any]) -> str:
+    """p50/p95/max."""
+    return "/".join("-" if d.get(k) is None else f"{d[k]:g}" for k in ("p50", "p95", "max"))
+
+
+def _genuine_figures(s: dict[str, Any]) -> list[str]:
+    """`genuine_hide_dropped` and `genuine_flagged` (pre-classifier plan step 7); absent in
+    older results."""
+    if "genuine_hide_dropped" not in s:
+        return []
+    out = [f"genuine cases with a hide refused by a blocker: {_ids(s['genuine_hide_dropped'])}"]
+    flagged: dict[str, dict[str, list[str]]] = s.get("genuine_flagged") or {}
+    for who, what in (("run", "the run"), ("rules_alone", "the rules alone")):
+        for rule, xs in (flagged.get(who) or {}).items():
+            out.append(f"genuine cases at {rule} ({what}): {_ids(xs)}")
+    return out
 
 
 @eval_app.command("status")
@@ -1292,6 +1648,10 @@ def _run_caveat(m: dict[str, Any]) -> str:
         return f" (stopped after {m.get('cases')} cases)"
     if opts and not (opts.get("classifier") and opts.get("actor")):
         return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
+    if opts.get("switches_off"):
+        return " (not for the gate: " + ", ".join(opts["switches_off"]) + " off)"
+    if opts.get("for_gate") is False:
+        return " (not for the gate)"
     return ""
 
 
@@ -1310,13 +1670,18 @@ def eval_stop() -> None:
 
 
 @eval_app.command("compare")
-def eval_compare(a: Path, b: Path) -> None:
-    """Compare two result files (paired, exact McNemar; non-inferiority at -3 points; per field
-    with Holm)."""
+def eval_compare(
+    a: Path,
+    b: Path,
+    margin: Annotated[float, typer.Option(min=0, help="Non-inferiority margin, in points")] = 5.0,
+) -> None:
+    """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
+    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486)."""
     from ecf.eval.results import (  # noqa: PLC0415
         compare,
         compare_endpoints,
         compare_fields,
+        input_warnings,
         load_result,
         schema_warning,
         summary,
@@ -1326,17 +1691,18 @@ def eval_compare(a: Path, b: Path) -> None:
     c = compare(ra, rb)
     if warning := schema_warning(ra, rb):
         typer.echo(warning, err=True)
+    for warning in input_warnings(ra, rb):
+        typer.echo(warning, err=True)
     typer.echo(f"A  {summary(ra)}")
     typer.echo(f"B  {summary(rb)}")
     typer.echo(f"paired cases: {c.n}; B-only right {c.b_only}, A-only right {c.a_only}")
     typer.echo(
-        f"difference B-A: {c.diff_points:+.1f} points "
-        f"(95% CI {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
+        f"difference B-A: {c.diff_points:+.1f} points (95% Newcombe interval"
+        f" {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p = {c.p_value:.3g}"
     )
-    typer.echo(f"B non-inferior (lower bound > -3 points): {'yes' if c.b_non_inferior else 'no'}")
+    typer.echo(f"B non-inferior (lower bound > -{margin:g} points):"
+               f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
-        lo, hi = c.diff_ci_score
-        typer.echo(f"score interval (Newcombe form, for non-inferiority): {lo:+.1f} to {hi:+.1f}")
         ends = compare_endpoints(ra, rb)
         typer.echo(
             "confirmatory (exact McNemar, Holm over the two): "
@@ -1350,6 +1716,10 @@ def eval_compare(a: Path, b: Path) -> None:
         line = _model_figures(run.summary)
         if line:
             typer.echo(f"{name}  model: {line}")
+        for role, line in _role_figures(run.summary):
+            typer.echo(f"{name}    {role}: {line}")
+        for line in _latency_lines(run):
+            typer.echo(f"{name}    {line}")
         for line in _claude_figures(run.summary, len(run.cases)):
             typer.echo(f"{name}  {line}")
         for line in _decision_figures(run.summary):
@@ -1381,6 +1751,23 @@ def _decision_figures(summary: dict[str, object] | None) -> list[str]:
     if u.get("of"):
         out.append(f"fraud risk under-rated on {u['under']} of {u['of']} cases labelled medium"
                    " or high")  # fmt: skip
+    hidden = s.get("fraud_hidden")
+    if isinstance(hidden, list):  # the classifier plan's fraud figures (absent before v2.1.0)
+        ids = cast(list[str], hidden)
+        out.append(f"fraud-labelled cases with a hide kept: {len(ids)}"
+                   + (f" ({', '.join(ids)})" if ids else ""))  # fmt: skip
+    none = s.get("fraud_answered_none")
+    if isinstance(none, dict) and cast(dict[str, int], none).get("of"):
+        n = cast(dict[str, int], none)
+        out.append(f"fraud risk answered none on {n['none']} of {n['of']} cases labelled medium"
+                   " or high")  # fmt: skip
+    only = s.get("fraud_under_model_only")
+    if isinstance(only, dict) and cast(dict[str, int], only).get("of"):
+        o = cast(dict[str, int], only)
+        out.append(f"under-rated on {o['under']} of {o['of']} cases only the model routes to"
+                   " fraud_guard")  # fmt: skip
+    out += _genuine_figures(s)
+    out += _measurement_figures(s)
     lat = s.get("classifier_latency_s")
     lt = cast(dict[str, float], lat) if isinstance(lat, dict) else {}
     if lt.get("p50") is not None:
@@ -1414,6 +1801,39 @@ def _model_figures(summary: dict[str, object] | None) -> str | None:
     return (f"{f['calls']} calls, about {per_email} tokens per email; writing"
             f" {w['median']} tokens/s median (slowest 5% {w['slowest_5']}); {t['median']} s per"
             f" call median, {t['p95']} s p95")  # fmt: skip
+
+
+def _role_figures(summary: dict[str, object] | None) -> list[tuple[str, str]]:
+    """The same figures per role (classifier, actor, determinism repeats; absent before v2.1.0)."""
+    roles = (summary or {}).get("roles")
+    if not isinstance(roles, dict):
+        return []
+    out: list[tuple[str, str]] = []
+    for role, figures in cast(dict[str, Any], roles).items():
+        if line := _model_figures({"model": figures}):
+            out.append((role, line))
+    return out
+
+
+def _latency_lines(run: ResultFile) -> list[str]:
+    """Where each role's time goes, and the classifier calls whose prompt cache fell short
+    (pre-classifier plan §11; absent in results before plan 0.3 and in Claude runs)."""
+    from ecf.eval.results import CACHE_SHORT, cache_short, latency_split  # noqa: PLC0415
+
+    out: list[str] = []
+    for s in latency_split(run):
+        out.append(
+            f"{s.role} time: reading the prompt {s.prompt_s[0]:.2f} s median"
+            f" (p95 {s.prompt_s[1]:.2f}), writing {s.generation_s[0]:.2f} s (p95"
+            f" {s.generation_s[1]:.2f}), writing {100 * s.generation_share:.0f}% of the total;"
+            f" uncached input {s.uncached_tokens[0]} tokens median (p95 {s.uncached_tokens[1]},"
+            f" max {s.uncached_tokens[2]}), output {s.output_tokens[0]} (p95 {s.output_tokens[1]})"
+        )
+    for c in cache_short(run):
+        took = "" if c.prompt_s is None else f", prompt {c.prompt_s:.2f} s median"
+        out.append(f"classifier cache after {c.after}: {c.short} of {c.calls} calls reused under"
+                   f" {100 * CACHE_SHORT:.0f}% of the prefix{took}")  # fmt: skip
+    return out
 
 
 def _claude_figures(summary: dict[str, object] | None, cases: int) -> list[str]:

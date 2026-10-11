@@ -11,7 +11,7 @@ from: "Bayline Brokerage Support <support@bayline-invest-help.example>"
 subject: "Update your linked bank account before Friday"
 date: 2026-10-08T05:40:00Z
 expected:
-  labels: {category: vendor_change_request, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: company, fraud_risk: high}
+  labels: {category: vendor_change_request, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

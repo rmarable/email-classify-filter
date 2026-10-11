@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 
 from ecf.errors import InvalidInputError, SchemaLimitError
 from ecf.schema import (
+    EXT_HEADING,
     MAX_EXT_TEXT,
     SAFETY_FIELDS,
     SAFETY_VALUES,
@@ -21,6 +23,7 @@ from ecf.schema import (
     extension_text,
     load_schema,
     load_schema_v1,
+    load_schema_v2_0_0,
     shipped_fallback,
     v1_values,
 )
@@ -66,7 +69,23 @@ def test_digest_tracks_what_the_model_is_asked() -> None:
     assert a.digest.startswith("schema-") and a.digest != b.digest
     text = (ROOT / "src/ecf/data/schema_v2.yaml").read_text(encoding="utf-8")
     assert compile_schema(text).digest == a.digest
-    assert compile_schema(text.replace("A relative.", "A relative or in-law.")).digest != a.digest
+    assert compile_schema(text.replace("Relative.", "Relative or in-law.")).digest != a.digest
+
+
+# SHA-256 of `git show v2.0.0:src/ecf/data/schema_v2.yaml` (2026-10-09)
+V2_0_0_SHA256 = "e22533e5e2d5bdbf7084f7bdf5712ed494b6335264654bd00abbd347c34e55b1"
+
+
+def test_the_frozen_v2_0_0_text_is_the_released_one() -> None:
+    """`ecf eval run --no-new-wording` asks with it (classifier plan 0.3): byte for byte the
+    v2.0.0 file, with the shipped schema's fields and values (the new wording changes text
+    only)."""
+    raw = (ROOT / "src/ecf/data/schema_v2_0_0.yaml").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == V2_0_0_SHA256
+    frozen, now = load_schema_v2_0_0(), load_schema()
+    assert frozen.version == now.version == 2
+    assert {n: (f.kind, f.values) for n, f in frozen.fields.items()} == {
+        n: (f.kind, f.values) for n, f in now.fields.items()}  # fmt: skip
 
 
 def test_v2_json_schema_snapshot() -> None:
@@ -360,3 +379,50 @@ def test_v1_value_aliases_map_each_renamed_v1_value_to_a_v2_value() -> None:
     assert v1_values({"sender_type": "staff", "priority": "high"}, v2) == {
         "sender_type": "team", "priority": "high"}  # fmt: skip
     assert v1_values({"sender_type": "staff"}, v1) == {"sender_type": "staff"}  # still a value
+
+
+def test_ordinal_levels_may_carry_texts() -> None:
+    """Plan item 2: `levels` as a mapping gives each level a text, printed under the field."""
+    s = compile_schema("version: 1\nfields:\n  r:\n    type: ordinal\n    description: x\n"
+                       "    levels:\n      lo: Not much.\n      hi: A lot.\n")  # fmt: skip
+    f = s.fields["r"]
+    assert f.values == ("lo", "hi") and f.value_descriptions == ("Not much.", "A lot.")
+    assert "- r (lo < hi): x\n    lo: Not much.\n    hi: A lot." in s.prompt_block
+    with pytest.raises(InvalidInputError, match="can't be empty"):
+        compile_schema("version: 1\nfields: {r: {type: ordinal, description: x,"
+                       " levels: {lo: '', hi: y}}}\n")  # fmt: skip
+    fr = load_schema().fields["fraud_risk"]
+    assert (
+        len(fr.value_descriptions) == 4 and "    medium: Any request" in load_schema().prompt_block
+    )
+
+
+def test_an_extension_ordinal_may_carry_level_texts_within_the_caps() -> None:
+    """Plan item 7: an added ordinal's level texts follow the description rules and count in the
+    extension text."""
+    risk = {"type": "ordinal", "description": "Legal exposure.",
+            "levels": {"none": "No legal content.", "high": "A claim or a court."}}  # fmt: skip
+    base = load_schema()
+    s = extend_schema(base, {"fields": {"legal_risk": risk}})
+    assert s.fields["legal_risk"].value_descriptions == ("No legal content.", "A claim or a court.")
+    added = extension_text(s)
+    assert "- legal_risk (none < high): Legal exposure.\n    none: No legal content." in added
+    assert extension_budget(base, {"fields": {"legal_risk": risk}})["text"]["used"] == len(added)
+    for text, why in [("x" * 181, "181 characters, limit 180"), ("two\nlines", "one line"),
+                      ("- a list", "start with"), ("", "description is required")]:  # fmt: skip
+        bad = {"fields": {"r": {**risk, "levels": {"lo": "Fine.", "hi": text}}}}
+        got = check_extension(base, bad)
+        assert any(g.startswith("schema.fields.r.levels.hi") and why in g for g in got), got
+    bad = {"fields": {"r": {**risk, "levels": {"lo": "Fine.", "Hi": "Fine."}}}}
+    assert any("'Hi' isn't a lowercase name" in g for g in check_extension(base, bad))
+
+
+def test_the_extension_heading_keeps_added_fields_from_moving_the_shipped_ones() -> None:
+    """Plan item 7: the heading says added fields never change the fields above and an added
+    category never replaces the three safety categories."""
+    added = extension_text(extend_schema(load_schema(), EXT))
+    assert added.startswith("\nAdded by this install (answer these too):\nAdded fields and"
+                            " values never change how you answer the fields above.")  # fmt: skip
+    for value in ("regulatory", "vendor_change_request", "spam_or_phishing"):
+        assert value in EXT_HEADING
+    assert EXT_HEADING not in load_schema().prompt_block  # inert without an extension

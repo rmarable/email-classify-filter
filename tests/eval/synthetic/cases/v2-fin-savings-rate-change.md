@@ -11,7 +11,7 @@ from: "Cedar Credit Union <notices@cedar-cu.example>"
 subject: "Change to your savings rate"
 date: 2026-10-05T12:00:00Z
 expected:
-  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Dear member,

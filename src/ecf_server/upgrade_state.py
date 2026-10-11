@@ -17,7 +17,7 @@ from typing import Any
 from ecf import __version__
 from ecf.errors import InvalidInputError
 from ecf.schema import load_schema
-from ecf_server import claude_pins, export_bundle, initsetup, ollama
+from ecf_server import classifier, claude_pins, config, export_bundle, initsetup, ollama
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 
@@ -46,6 +46,12 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "version": __version__, "schema_version": schema,
         "data_format": export_bundle.DATA_FORMAT, "api_version": api_version,
         "classifier_schema": load_schema().version,
+        # the shipped prompt's digest, as release.json has it (Q6); the install's, with its
+        # schema extension, apart: an extension carries over an upgrade unchanged
+        "prompt_digest": classifier.prompt_digest(load_schema()),
+        "effective_prompt_digest": classifier.prompt_digest(config.current_schema(conn)),
+        # a stored extension, in force or not (OD-481): v2.2.0's upgrade check needs it (item 6)
+        "extension_stored": config.current(conn)["schema"] is not None,
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
         "upgrade": current(conn),

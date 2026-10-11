@@ -1,0 +1,18 @@
+Received: from mail.coin-exchange.example (mail.coin-exchange.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ ctrl-exchange-withdrawal-receipt; Fri, 20 Nov 2026 18:45:00 +0000
+From: Coin Exchange <receipts@coin-exchange.example>
+To: pat-lee@freemail.example
+Subject: Withdrawal complete
+Date: Fri, 20 Nov 2026 18:45:00 +0000
+Message-ID:
+ <ctrl-exchange-withdrawal-receipt.8ae8421259@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your withdrawal of 0.0500 BTC to wallet TEST-WALLET-0002 is complete. Network=
+ fee: 0.0001 BTC.
+
+If you didn't make this withdrawal, contact support from the app. This receip=
+t needs no reply.

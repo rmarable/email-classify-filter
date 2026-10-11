@@ -88,7 +88,13 @@ def parse_answer(spec: FieldSpec, answer: str) -> str | bool | None:
     return a if a in spec.values else None
 
 
-def field_block(spec: FieldSpec, number: int, of: int) -> list[str]:
+MARKS_HELP = (
+    "(or: s skip this message, u unsure; both are saved and left unscored."
+    " q quits; nothing is saved for this message)"
+)
+
+
+def field_block(spec: FieldSpec, number: int, of: int, footer: str = MARKS_HELP) -> list[str]:
     """How a field is asked: its name and meaning, then each choice on its own line with its
     number and what it means (from the schema), then what to type."""
     lines = ["", f"Field {number} of {of}: {spec.name}", f"  {spec.description}"]
@@ -100,10 +106,7 @@ def field_block(spec: FieldSpec, number: int, of: int) -> list[str]:
         lines += [f"  {i:>2}  {v:<{width}}  {d}".rstrip()
                   for i, (v, d) in enumerate(zip(spec.values, descs, strict=False), 1)]  # fmt: skip
         lines.append("Type the number or the name.")
-    lines.append(
-        "(or: s skip this message, u unsure; both are saved and left unscored."
-        " q quits; nothing is saved for this message)"
-    )
+    lines.append(footer)
     return lines
 
 
@@ -209,7 +212,7 @@ def _count(tally: Tally, item: dict[str, Any], values: dict[str, Any] | None,
         tally.unsure += 1
     else:
         tally.labelled += 1
-        if any(item["keywords"].values()):
+        if any(v for k, v in item["keywords"].items() if k != "amount"):  # a pattern, not a word
             tally.keyword_hits += 1
             tally.keyword_hits_payment += bool(values and values["payment_related"])
 

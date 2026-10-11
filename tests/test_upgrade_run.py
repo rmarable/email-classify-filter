@@ -319,13 +319,20 @@ LOCK = {"main_session": "claude-haiku-5-5", "classifier": "claude-haiku-4-5-2025
 PINS = LOCK | {"local": "d" * 64}
 
 
-def _release_wheel(path: Path, version: str, classifier_schema: int | None) -> Path:
-    """A release wheel's data files; v1.x's release.json has no classifier_schema."""
+PROMPT = "p" * 64  # a release.json prompt_digest (Q6)
+
+
+def _release_wheel(path: Path, version: str, classifier_schema: int | None,
+                   prompt: str | None = None) -> Path:  # fmt: skip
+    """A release wheel's data files; v1.x's release.json has no classifier_schema, and none
+    before v2.1.0 has a prompt_digest."""
     info: dict[str, Any] = {"product": "email-classify-filter", "version": version,
                             "api_version": 1, "data_format": 2, "schema_version": 33,
                             "min_client": "0.1.0"}  # fmt: skip
     if classifier_schema is not None:
         info["classifier_schema"] = classifier_schema
+    if prompt is not None:
+        info["prompt_digest"] = prompt
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))
         z.writestr("ecf_server/data/models.lock", json.dumps(LOCK))
@@ -358,19 +365,20 @@ class NewService:
         return json
 
 
-@pytest.mark.parametrize(("old_schema", "readable", "affected", "changes"), [
-    (None, True, ["ap", "b"], ["schema"]),  # from v1.0.0: its pre-check saw nothing
-    (2, True, [], []),  # nothing changed: no extra addresses
-    (None, False, ["ap", "b"], ["schema"]),  # old wheel unreadable: a 1.x had schema 1
+@pytest.mark.parametrize(("old_schema", "old_prompt", "readable", "affected", "changes"), [
+    (None, None, True, ["ap", "b"], ["schema", "prompt"]),  # from v1.0.0: its check saw nothing
+    (2, PROMPT, True, [], []),  # nothing changed: no extra addresses
+    (2, None, True, ["ap", "b"], ["prompt"]),  # from v2.0.0: no prompt digest yet (Q6)
+    (None, None, False, ["ap", "b"], ["schema", "prompt"]),  # unreadable: a 1.x had schema 1
 ])  # fmt: skip
-def test_phase_two_names_addresses_the_old_check_could_not_see(
+def test_phase_two_names_addresses_the_old_check_could_not_see(  # noqa: PLR0913, PLR0917 - parameters
     paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], old_schema: int | None, readable: bool,
-    affected: list[str], changes: list[str],
+    capsys: pytest.CaptureFixture[str], old_schema: int | None, old_prompt: str | None,
+    readable: bool, affected: list[str], changes: list[str],
 ) -> None:  # fmt: skip
     """A v1.0.0 CLI doesn't know classifier_schema, so its phase 1 stores affected=[]; the new
     CLI recomputes after the upgrade (SPEC §11.10; operator decision 2026-10-09)."""
-    old = _release_wheel(tmp_path / "old-1.0.0.whl", "1.0.0", old_schema)
+    old = _release_wheel(tmp_path / "old-1.0.0.whl", "1.0.0", old_schema, old_prompt)
     if not readable:
         old.write_bytes(b"not a zip")
     new = _release_wheel(tmp_path / "new-2.0.0.whl", "2.0.0", 2)
@@ -378,7 +386,8 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(
     with pytest.raises(Handover):  # phase 1 as v1.0.0 runs it: nothing affected
         upgrade_run.start(paths, tools, old_version="1.0.0", new_version="2.0.0", new_wheel=new,
                           old_wheel=old, pin_changes=[], affected=[])  # fmt: skip
-    service = NewService({"version": "2.0.0", "classifier_schema": 2, "pins": PINS,
+    service = NewService({"version": "2.0.0", "classifier_schema": 2, "prompt_digest": PROMPT,
+                          "pins": PINS,
                           "pin_users": {"local": ["ap"], "actor": ["b"]}})  # fmt: skip
     monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
     tools, _m, _ran = _tools(paths)
@@ -394,7 +403,8 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(
     state = upgrade_run.read_state(paths)
     assert state is not None and state["affected"] == affected
     if affected:
-        assert "the classifier schema changed: ap, b drop to assist" in out
+        why = "schema" if "schema" in changes else "prompt"
+        assert f"the classifier {why} changed: ap, b drop to assist" in out
     else:
         assert "drop to assist" not in out
     assert "ecf 2.0.0 is running (was 1.0.0)" in out

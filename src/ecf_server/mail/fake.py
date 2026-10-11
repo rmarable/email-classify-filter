@@ -123,11 +123,11 @@ class FakeMailSource:
 
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         s = self._msgs.get(uid)
-        return None if s is None else _fetch_part(s.raw, section, limit)
+        return None if s is None else fetch_part_of(s.raw, section, limit)
 
     def structure(self, uid: int) -> list[PartInfo] | None:
         s = self._msgs.get(uid)
-        return None if s is None else _structure(s.raw)
+        return None if s is None else structure_of(s.raw)
 
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(self._msgs[u].flags) for u in uids if u in self._msgs}
@@ -338,11 +338,11 @@ class GmailFakeSource:
 
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         m = self._get("INBOX", uid)
-        return None if m is None else _fetch_part(m.raw, section, limit)
+        return None if m is None else fetch_part_of(m.raw, section, limit)
 
     def structure(self, uid: int) -> list[PartInfo] | None:
         m = self._get("INBOX", uid)
-        return None if m is None else _structure(m.raw)
+        return None if m is None else structure_of(m.raw)
 
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(m.flags) for u in uids if (m := self._get("INBOX", u)) is not None}
@@ -533,8 +533,8 @@ class GmailFakeSource:
             self._views[f.name] = view
 
 
-def _fetch_part(raw: bytes, section: str, limit: int) -> bytes | None:
-    """`BODY.PEEK[section]<0.limit>` of a raw message."""
+def fetch_part_of(raw: bytes, section: str, limit: int) -> bytes | None:
+    """`BODY.PEEK[section]<0.limit>` of a raw message (also `ruletest.read_case`)."""
     if section == "HEADER":
         return _split(raw)[0][:limit]
     part: Message = _parse(raw)
@@ -554,7 +554,8 @@ def _fetch_part(raw: bytes, section: str, limit: int) -> bytes | None:
     return _split(part.as_bytes(policy=policy.compat32.clone(linesep=linesep)))[1][:limit]
 
 
-def _structure(raw: bytes) -> list[PartInfo]:
+def structure_of(raw: bytes) -> list[PartInfo]:
+    """The leaf parts as BODYSTRUCTURE gives them (also `ruletest.read_case`)."""
     out: list[PartInfo] = []
     linesep = "\r\n" if b"\r\n" in raw else "\n"
 

@@ -10,7 +10,7 @@ subject: "Re: INV-2210 - payment received, thank you"
 date: 2026-10-05T14:20:00Z
 author: claude
 expected:
-  labels: {category: payment_confirmation, payment_related: true, fraud_risk: none}
+  labels: {category: payment_confirmation, payment_related: true, fraud_risk: none, sender_type: vendor}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

@@ -92,6 +92,7 @@ from ecf_server import (
     pause,
     restore,
     retention,
+    routereport,
     ruletest,
     schedule,
     scheduled_export,
@@ -999,6 +1000,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
             raise InvalidInputError("battery_floor: a percent from 0 to 100")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
+        copy_to = _copy_to(body)
+        if sid and copy_to is not None:
+            raise InvalidInputError("copy_to: a corpus run's result stays in the install (R2)")
         corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True,
                                  connect=state.connect)  # fmt: skip
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
@@ -1007,7 +1011,15 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                battery_floor=floor,
                                backend=_opt_str(body, "backend") or evalrun.GEMMA,
                                redact=body.get("redact") is not False,
-                               corpus=corpus_run)  # fmt: skip
+                               corpus=corpus_run,
+                               for_gate=body.get("for_gate") is not False,
+                               copy_to=copy_to,
+                               new_wording=body.get("new_wording") is not False,
+                               signals=body.get("signals") is not False,
+                               new_signals=body.get("new_signals") is not False,
+                               excerpt_prep=body.get("excerpt_prep") is not False,
+                               message_signals=(body.get("message_signals")
+                                                is not False))  # fmt: skip
         try:
             run = evalrun.start(state.connect, state.clock, state.model_client,
                                 state.db_path.parent, opts, power=state.power,
@@ -1063,7 +1075,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
             root, preset=_str(body, "preset"), sensitivity=_str(body, "sensitivity"),
             fraud_only=body.get("fraud_only") is True,
             classifier_model=_opt_str(body, "classifier_model"),
-            actor_model=_opt_str(body, "actor_model"), batch=batch)  # fmt: skip
+            actor_model=_opt_str(body, "actor_model"), batch=batch,
+            copy_to=_copy_to(body))  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip
 
@@ -1696,14 +1709,17 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def rescore(request: Request) -> JSONResponse:
-        """`ecf eval rescore`: a corpus result against the session's current labels (R53), or a
-        pre-v2 synthetic result against the set's current labels (`synthetic_root`, E1)."""
+        """`ecf eval rescore`: a corpus result against the session's current labels (R53), a
+        pre-v2 synthetic result against the set's current labels (`synthetic_root`, E1), or a
+        synthetic result planned again through today's facts and policy (`through_policy`)."""
         body = _body(request)
         if body.get("synthetic_root") is not None:
             path = Path(_str(body, "result")).expanduser()
             if path.suffix != ".json" or not path.is_file():
                 raise InvalidInputError(f"no result file at {path}")
             root = Path(_str(body, "synthetic_root")).expanduser()
+            if body.get("through_policy") is True:  # pre-classifier plan step 7
+                return JSONResponse(evalrun.rescore_through_policy(root, path, state.clock))
             return JSONResponse(evalrun.rescore_synthetic(root, path, state.clock))
         s = corpus_session.get(_str(body, "corpus_session"), state.clock.monotonic)
         if s.busy:
@@ -1718,8 +1734,29 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(evalrun.rescore(s, path, state.clock, schema))
 
+    @allow(Caller.CLI)
+    def routes(request: Request) -> JSONResponse:
+        """`ecf eval routes`: the OD-490 routes on synthetic sets, attribution of what changed in
+        recorded results on the first set, and the routes on an open corpus (pre-classifier plan
+        steps 7b, 7c); no model runs."""
+        body = _body(request)
+        sets: list[Any] = body.get("sets") or []
+        given: list[Any] = body.get("results") or []
+        roots = [Path(str(x)).expanduser() for x in sets]
+        results = [Path(str(x)).expanduser() for x in given]
+        for path in results:
+            if path.suffix != ".json" or not path.is_file():
+                raise InvalidInputError(f"no result file at {path}")
+        corpus = None
+        if body.get("corpus_session") is not None:
+            corpus = corpus_session.get(_str(body, "corpus_session"), state.clock.monotonic)
+            if corpus.busy:
+                raise InvalidInputError("an eval run is using this corpus; wait for it to end")
+        return JSONResponse(routereport.report(roots, results, state.clock, corpus))
+
     return [
         Route("/v1/eval/rescore", rescore, methods=["POST"]),
+        Route("/v1/eval/routes", routes, methods=["POST"]),
         Route("/v1/corpus/session", open_, methods=["POST"]),
         Route("/v1/corpus/session/{session_id}/keys", keys, methods=["GET"]),
         Route("/v1/corpus/session/{session_id}/items/{index}", item, methods=["GET"]),
@@ -2286,6 +2323,16 @@ def _opt_str(body: dict[str, Any], key: str) -> str | None:
     if v is not None and not isinstance(v, str):
         raise InvalidInputError(f"{key} must be text")
     return v
+
+
+def _copy_to(body: dict[str, Any]) -> Path | None:
+    """`ecf eval run --copy-to`: an absolute folder for a copy of the result (plan 0.3)."""
+    v = _opt_str(body, "copy_to")
+    if v is None:
+        return None
+    if not Path(v).is_absolute():
+        raise InvalidInputError("copy_to: a folder for a copy of the result (an absolute path)")
+    return Path(v)
 
 
 def _str_list(v: Any) -> list[str]:

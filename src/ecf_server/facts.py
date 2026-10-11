@@ -1,4 +1,5 @@
-"""Computed facts (SPEC §7.2): derived by the service, never sent to or taken from a model.
+"""Computed facts (SPEC §7.2): derived by the service, never taken from a model; sent to one only
+as a derived signal an OD exempts (OD-483).
 
 `compute` reads; `record_sender` writes the sender's history and runs inside the item's
 transaction, so a crash can't count a message twice or lose it. A sender is identified by the
@@ -13,11 +14,14 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cache
+from importlib import resources
 from typing import Any
 
+from ecf.yamlio import load_yaml
 from ecf_server import internal
 from ecf_server.clock import from_ts
-from ecf_server.message import ParsedMessage
+from ecf_server.message import Attachment, ParsedMessage
 
 # Public mailbox providers can't be org domains (SPEC §7.2): anyone can get an address there.
 # Nor is one a lookalike of another (OD-430): `ymail.com` isn't impersonating `gmail.com`.
@@ -132,7 +136,7 @@ def in_domains(domain: str | None, domains: list[str] | tuple[str, ...]) -> bool
     return domain is not None and any(domain == d or domain.endswith("." + d) for d in domains)
 
 
-def compute(
+def compute(  # noqa: PLR0913 - the message, its address and what the scan found
     conn: sqlite3.Connection,
     address: AddressInfo,
     parsed: ParsedMessage,
@@ -142,8 +146,10 @@ def compute(
     payment_keyword: bool = False,
     org_addresses: tuple[internal.OrgAddress, ...] = (),
     gmail_labels: frozenset[str] | None = None,
+    scan_unscanned: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """`gmail_labels` is the message's `X-GM-LABELS` on Gmail, None elsewhere (V1.6)."""
+    """`gmail_labels` is the message's `X-GM-LABELS` on Gmail, None elsewhere (V1.6);
+    `scan_unscanned` is why the trigger scan stopped short (`triggers.scan`'s `unscanned`)."""
     from_domain = domain_of(parsed.from_addr)
     org_domain = in_domains(from_domain, org_domains)
     # the internal set is org_domains plus exact org_addresses; no Gmail folding (OD-431, OD-432)
@@ -157,6 +163,7 @@ def compute(
     bulk = bulk_signal(parsed)
     first_time = not seen
     unscanned = _unscanned_reasons(parsed, address, payment_keyword, first_time)
+    unscanned += scan_unscanned
     return {
         "from_domain": from_domain,
         # the sender record's key, so a later decision can read a confirmed category (V1.3)
@@ -167,32 +174,53 @@ def compute(
         "self_sent": self_sent(parsed, address, gmail_labels),
         "sender_seen_before": seen,
         "sender_confirmed": confirmed and not shared,
+        # enough DMARC-pass history, and this message fails: a fraud reason (OD-490); `none`
+        # doesn't count (forwarding, lists and late verification give it to known senders)
+        "known_sender_auth_regressed": by_history and auth_result == "fail" and not shared,
         # human-verified for rule 1a (`ecf sender set-verified`, OD-065); fraud triggers ignore it
         "sender_verified": history is not None and bool(history["verified_rule1a"]),
         "shared_platform": shared,
         "reply_to_mismatch": reply_to_mismatch(parsed, from_domain, expected),
         "recipient_mismatch": address.email.lower() not in {*parsed.to, *parsed.cc},
         "bulk_signal": bulk,
-        # bulk mail corroborates hiding only when authenticated and not first-time (OD-045)
-        "bulk_corroborates": bulk and auth_result == "pass" and seen,
+        "bulk_corroborates": corroborates(bulk, auth_result, seen),
         "content_unscanned": bool(unscanned),
         "unscanned_reasons": unscanned,
+        # recorded for measurement only, not a hide blocker (pre-classifier plan §5 C, P13)
+        "link_count": parsed.link_count,
+        "link_text_mismatch": parsed.link_text_mismatch,
+        "risky_attachment": any(risky(a) for a in _real(parsed)),  # a hide blocker (policy)
     }
 
 
+def corroborates(bulk: bool, auth_result: str | None, seen: bool) -> bool:
+    """Bulk mail corroborates hiding only when authenticated and not first-time (OD-045)."""
+    return bulk and auth_result == "pass" and seen
+
+
 def record_sender(
-    conn: sqlite3.Connection, address_id: str, from_addr: str | None, auth_result: str, now: str
+    conn: sqlite3.Connection,
+    address_id: str,
+    from_addr: str | None,
+    auth_result: str,
+    now: str,
+    *,
+    request: bool = False,
 ) -> None:
-    """Count a DMARC-pass message toward the sender's history (inside the item's transaction)."""
+    """Count a DMARC-pass message toward the sender's history (inside the item's transaction);
+    `request`: it was a code, gift-card or crypto request whose only fraud reason was the
+    missing history, also counted apart (migration 0035)."""
     if auth_result != "pass" or not from_addr:
         return
     conn.execute(
         "INSERT INTO senders (address_id, sender_hash, domain, dmarc_pass_count, first_pass_at,"
-        " last_pass_at) VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT (address_id, sender_hash) DO UPDATE"
+        " last_pass_at, request_pass_count) VALUES (?, ?, ?, 1, ?, ?, ?)"
+        " ON CONFLICT (address_id, sender_hash) DO UPDATE"
         " SET dmarc_pass_count = dmarc_pass_count + 1, domain = excluded.domain,"
         " first_pass_at = coalesce(first_pass_at, excluded.first_pass_at),"
-        " last_pass_at = excluded.last_pass_at",
-        (address_id, sender_hash(from_addr), domain_of(from_addr), now, now),
+        " last_pass_at = excluded.last_pass_at,"
+        " request_pass_count = request_pass_count + excluded.request_pass_count",
+        (address_id, sender_hash(from_addr), domain_of(from_addr), now, now, int(request)),
     )
 
 
@@ -248,19 +276,37 @@ def _unscanned_reasons(
         reasons.append("over the size limit")
     if p.any_truncated:
         reasons.append("a text part over the scan limit")
-    # unnamed inline parts (logos and images in signatures) aren't attachments a person sent
-    real = [a for a in p.attachments if not a.inline or a.name]
+    real = _real(p)
     if real and payment_keyword:
         reasons.append("attachments on a payment item")
-    if first_time and any(_is_document(a.content_type, a.name) for a in real):
+    if first_time and any(_is_document(a) for a in real):
         reasons.append("a document from a first-time sender")
     if real and address.sensitivity == "high":
         reasons.append("an attachment on a high address")
     return reasons
 
 
-def _is_document(content_type: str, name: str) -> bool:
-    return content_type.startswith(DOCUMENT_TYPES) or name.lower().endswith(DOCUMENT_EXTENSIONS)
+def _real(p: ParsedMessage) -> list[Attachment]:
+    """Unnamed inline parts (logos and images in signatures) aren't attachments a person sent."""
+    return [a for a in p.attachments if not a.inline or a.name]
+
+
+def _is_document(a: Attachment) -> bool:
+    return a.content_type.startswith(DOCUMENT_TYPES) or f".{a.extension}" in DOCUMENT_EXTENSIONS
+
+
+@cache
+def _risky_lists() -> tuple[frozenset[str], frozenset[str]]:
+    text = resources.files("ecf_server.data").joinpath("keywords.yaml").read_text("utf-8")
+    spec: dict[str, list[str]] = load_yaml(text, source="keywords.yaml")["risky_attachment"]
+    return frozenset(spec["extensions"]), frozenset(spec["content_types"])
+
+
+def risky(a: Attachment) -> bool:
+    """An attachment that runs or renders as a page when opened (`keywords.yaml`
+    `risky_attachment`), by its extension or its content type."""
+    extensions, types = _risky_lists()
+    return a.extension in extensions or a.content_type.lower() in types
 
 
 def _history(
@@ -277,6 +323,10 @@ def _history(
 
 def _enough_history(row: sqlite3.Row) -> bool:
     if row["dmarc_pass_count"] < SEEN_COUNT or not row["first_pass_at"] or not row["last_pass_at"]:
+        return False
+    # at least one pass was other mail than a code, gift-card or crypto request: a domain that
+    # only ever sends such requests never becomes known (pre-gate review G1 refinement)
+    if row["request_pass_count"] >= row["dmarc_pass_count"]:
         return False
     first: datetime = from_ts(row["first_pass_at"])
     last: datetime = from_ts(row["last_pass_at"])

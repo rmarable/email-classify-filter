@@ -34,8 +34,6 @@ from typing import Any, NamedTuple
 
 from ecf_server import triggers
 from ecf_server.message import (
-    ACTOR_CHARS,
-    CLASSIFIER_CHARS,
     Attachment,
     ParsedMessage,
     TextPart,
@@ -95,8 +93,8 @@ def subprocess_isolator(
 
 def isolated(parsed: ParsedMessage, auth: AuthOutcome) -> Isolated:
     """The result for a parsed and verified message: its excerpts are cut here."""
-    plain = (parsed.excerpt(CLASSIFIER_CHARS), parsed.excerpt(ACTOR_CHARS))
-    return Isolated(parsed, auth, parsed.excerpts(triggers.redact_injection), plain)
+    redacted, plain = parsed.excerpt_sets(triggers.redact_injection)
+    return Isolated(parsed, auth, redacted, plain)
 
 
 def encode(result: Isolated) -> dict[str, Any]:

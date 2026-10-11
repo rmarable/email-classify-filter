@@ -13,7 +13,7 @@ subject: "Your receipt - order 4471"
 date: 2026-10-08T12:20:00Z
 bulk: true
 expected:
-  labels: {category: payment_confirmation, sender_type: automated, requires_action: false, requires_reply: false, payment_related: true, fraud_risk: none}
+  labels: {category: payment_confirmation, sender_type: vendor, requires_action: false, requires_reply: false, payment_related: true, fraud_risk: none}
   rule: unverified_payment_sender
   safety: {must_not_hide: true}
 ---

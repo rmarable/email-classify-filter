@@ -69,12 +69,53 @@ payment:
 # Gift cards (V1.6, OD-436, OD-457): money only for the impersonation rules. As payment keywords
 # they marked every ordinary gift-card email suspicious (eval: 4 of 4; closing run: 1 of 1) and
 # changed no fraud decision, so they count only when the mail impersonates someone internal.
+# E-gift, voucher, certificate and prepaid cards added 2026-10-10 (OD-488, held-out batch 1 missed
+# 3 of 3 gift-card scams worded without "gift card"); frozen before batch 2. Store-brand cards
+# (iTunes, Google Play, Steam, Amazon) were added then too and reverted after Phase R R3 (R3-P7):
+# they widened OD-457 and the `impersonation_gift_cards` signal unmeasured; no frozen or held-out
+# card names one.
 gift_card:
   phrases:
     - gift card
     - gift cards
     - giftcard
     - giftcards
+    - e-gift card
+    - e-gift cards
+    - egift card
+    - egift cards
+    - gift voucher
+    - gift vouchers
+    - gift certificate
+    - gift certificates
+    - prepaid card
+    - prepaid cards
+
+# Asking for gift-card codes to be sent back (pre-classifier plan §3, OD-488): with a `gift_card`
+# phrase, the fact `gift_card_codes_request`, the gift-card scam. Frozen 2026-10-10 before the
+# held-out set was written; on the frozen set (95 scam, 173 genuine cards) "send me the codes" and
+# "reply with the codes" hit 2 scam cards each, "card numbers" and "scratch" 3 each, no genuine
+# card; "photo of the back" and "claim code" hit none (untested). The phrases after "claim code"
+# were added 2026-10-10 before held-out batch 2 was written: "email me the codes" hits 1 scam card
+# of the frozen set, the others none (untested).
+gift_card_ask:
+  phrases:
+    - send me the codes
+    - reply with the codes
+    - card numbers
+    - photo of the back
+    - scratch
+    - claim code
+    - send the codes
+    - email me the codes
+    - text me the codes
+    - the pins
+    - PIN numbers
+    - photo of the cards
+    - photos of the cards
+    - picture of the back
+    - pictures of the back
+    - pictures of the cards
 
 # Openers of an executive-impersonation (BEC) scam (operator decision 2026-10-08, OD-479): the
 # first message asks if you're free, for a quick discreet favour, by email only, with no money
@@ -152,6 +193,76 @@ data_request:
     - my personal email
     - my personal address
 
+# A code, password or login (OD-485): with a `credential_ask` phrase, the fact
+# `credential_request` (OD-485; a fact, no longer sent to the classifiers, OD-488). Alone it is any
+# sign-in notice ("enter the code", "never share this code"). Plurals added 2026-10-10 (OD-488):
+# "codes" hits 8 scam cards of the frozen set and no genuine one; the other plurals and
+# "one-time code" hit none (untested).
+credential:
+  phrases:
+    - code
+    - codes
+    - verification code
+    - verification codes
+    - sign-in code
+    - security code
+    - passcode
+    - passcodes
+    - one-time code
+    - one-time codes
+    - password
+    - login details
+    - login
+    - username and password
+
+# Asking for a credential to be sent or read back to the writer (OD-485). "Enter it", "sign in
+# with" and "never share" are not listed: genuine notices say them. "send us the" was removed
+# 2026-10-10 (OD-488): businesses ask "send us the code from your invoice"; no frozen scam card
+# needed it.
+credential_ask:
+  phrases:
+    - reply with
+    - reply to this email with
+    - reply to this message with
+    - reply with your
+    - send me the
+    - send us your
+    - send me your
+    - read back
+    - read it back
+    - read the code back
+    - tell me the
+    - tell us the
+    - text me the
+
+# What genuine notices say to reassure ("we will never ask you to reply with your password"):
+# when one is present the facts `credential_request` and `crypto_payment` are false (OD-485;
+# `crypto_payment` since 2026-10-10, OD-488: "we will never ask you to send" made an exchange's
+# withdrawal notice a payment demand). A lure that also says it goes unflagged by the facts;
+# its fraud risk still counts.
+credential_never:
+  phrases:
+    - never ask you to reply
+    - never ask you to send
+    - never ask you for
+    - never ask for your
+    - will never ask
+    - never share this code
+    - never share your
+
+# Paying in cryptocurrency (OD-485): a payment verb, which with a wallet address (matched by
+# pattern in triggers.py, never stored) gives the fact `crypto_payment`, a signal only. A receipt
+# for a withdrawal names a wallet but no payment verb.
+crypto_pay:
+  phrases:
+    - pay
+    - send
+    - sending
+    - transfer
+    - settle
+    - deposit
+    - remit
+
 # Regulators and regulatory terms (SPEC §8.5: the regulator trigger). US federal agencies plus
 # common terms; add state and non-US agencies as needed.
 regulator:
@@ -210,3 +321,43 @@ injection:
     - instruction for the email classifier
     - set category to
     - set the category to
+
+# Attachment types that run or render as a page when opened (pre-classifier plan §5 C, P13; not
+# keywords: the fact `risky_attachment`, read by `facts.py`): HTML and web archives (credential
+# phishing pages), SVG (scripts), HTA, scripts, shortcuts, executables and disk images. Tested on
+# the extension of the whole name, before the 100-character cap, and on the content type, so
+# `application/octet-stream` with one of these extensions counts.
+risky_attachment:
+  extensions: [html, htm, shtml, xht, xhtml, mht, mhtml, svg, svgz, hta, js, jse, vbs, vbe, wsf,
+               wsh, ps1, lnk, exe, scr, com, pif, bat, cmd, msi, cpl, jar, iso, img, dmg]
+  content_types:
+    - text/html
+    - application/xhtml+xml
+    - application/x-mimearchive
+    - image/svg+xml
+    - application/hta
+    - application/javascript
+    - application/x-javascript
+    - text/javascript
+    - text/vbscript
+    - application/x-ms-shortcut
+    - application/x-msdownload
+    - application/x-msdos-program
+    - application/x-dosexec
+    - application/vnd.microsoft.portable-executable
+    - application/x-msi
+    - application/java-archive
+    - application/x-iso9660-image
+    - application/x-apple-diskimage
+
+# Footer paragraphs (pre-classifier plan step 10, §6 B; not keywords: read by `excerpt.py`). A body
+# paragraph containing one of these, compared casefolded, goes after the new text in the classifier
+# and actor excerpts, behind ecf's "moved below" line; it is never deleted. Generic phrases only,
+# no sender's own wording (operator decision 2026-10-11).
+excerpt_footers:
+  phrases:
+    - unsubscribe
+    - you are receiving this email because
+    - this email and any attachments are confidential
+    - sent from my iphone
+    - sent from my android

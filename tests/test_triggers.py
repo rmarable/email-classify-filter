@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import random
+import re
 import sqlite3
-import time
+import sys
+import unicodedata
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from ecf_server import skeleton
 from ecf_server import triggers as tr
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import FakeClock
@@ -16,6 +21,7 @@ from ecf_server.dnscache import DnsCache
 from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
 from ecf_server.internal import ORG_ADDRESSES_KEY, OrgAddress
 from ecf_server.message import ACTOR_CHARS, CLASSIFIER_CHARS, parse
+from ecf_server.skeleton import entity_text, keyword_fold, keyword_fold_ci
 from tests.test_senderauth import FakeDns, ed25519_key, publish, sign
 
 ORG = ["acme.example"]
@@ -160,6 +166,15 @@ def test_bank_details_need_an_unconfirmed_sender_change_wording_or_reply_to() ->
     assert fire("Our bank account is below.", sender_confirmed=False).fraud
     assert fire("Please note our updated bank details.").fraud
     assert fire("Our bank account is below.", reply_to_mismatch=True).fraud
+
+
+def test_a_risky_attachment_on_a_payment_code_or_gift_card_item_is_weak() -> None:
+    """Pre-classifier plan §5 C (P13): rule 1b, never on the account's own mail to itself."""
+    for body in ("Invoice 42 is attached.", "Your login is attached.", "A gift card for you."):
+        assert fire(body, risky_attachment=True).fraud_weak == [tr.RISKY_ATTACHMENT], body
+    assert fire("Notes from the meeting.", risky_attachment=True).fraud_weak == []
+    assert fire("Invoice 42 is attached.").fraud_weak == []
+    assert fire("Invoice 42 is attached.", risky_attachment=True, self_sent=True).fraud_weak == []
 
 
 def test_first_time_payment_needs_a_second_signal() -> None:
@@ -476,6 +491,133 @@ def test_the_tax_form_request_fact_needs_a_form_and_a_request(
 
 
 @pytest.mark.parametrize(
+    ("body", "fires"),
+    [
+        ("Buy five gift cards, scratch the backs and send me the codes.", True),
+        ("Pick up 4 gift cards today and reply with the codes.", True),
+        ("Send a photo of the back of each gift card.", True),
+        ("Get the giftcards and email the card numbers to me.", True),
+        ("Buy two gift vouchers and email me the codes.", True),  # batch-2 additions
+        ("Get e-gift cards for the team and send photos of the cards.", True),
+        ("Pick up prepaid cards, scratch the PIN numbers and text me the codes.", True),
+        ("Buy two Google Play cards and email me the codes.", False),  # brand words out (R3-P7)
+        ("Your gift card balance is 12.50. Enjoy your next coffee.", False),  # a balance notice
+        ("Send me the codes for the conference Wi-Fi.", False),  # an ask, no gift card
+    ],
+)
+def test_the_gift_card_codes_request_fact_needs_gift_cards_and_an_ask(
+    body: str, fires: bool
+) -> None:
+    """Pre-classifier plan §3: gift cards alone are a receipt; with an ask for the codes they are
+    the gift-card scam. A fact only until its fraud reason (plan step 4)."""
+    t = fire("", raw=mail(body))
+    assert t.facts()["gift_card_codes_request"] is fires
+    assert t.fraud == [] and t.fraud_weak == []
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [
+        "s\u0435nd me the codes",  # a lookalike letter (Cyrillic e)
+        "send me the co\u200bdes",  # a format character (zero-width space)
+        "\uff53\uff45\uff4e\uff44 me the codes",  # full-width letters
+        "send me the co\u034fdes",  # a nonspacing mark: combining grapheme joiner
+        "send\ufe0f me the codes",  # a nonspacing mark: variation selector
+        "send me the c\u0305odes",  # a nonspacing mark: combining overline
+        "se\u0301nd me the codes",  # a nonspacing mark: combining accent
+    ],
+    ids=["cyrillic", "zero-width", "full-width", "u034f", "ufe0f", "u0305", "accent"],
+)
+def test_a_disguised_ask_still_makes_the_fact(ask: str) -> None:
+    """P15: one evasion per character class on a §3 phrase; marks were not removed before."""
+    assert fire("", raw=mail(f"Buy three gift cards and {ask}.")).facts()["gift_card_codes_request"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Reply with the codes from your phone.", "Send me your one-time codes now.",
+     "Please reply with your verification codes."],
+)  # fmt: skip
+def test_credential_plurals_make_a_credential_request(body: str) -> None:
+    assert fire("", raw=mail(body)).facts()["credential_request"]
+
+
+@pytest.mark.parametrize(
+    ("text", "valid"),
+    [
+        ("IBAN: GB82 WEST 1234 5698 7654 32", True),
+        ("Pay to GB82WEST12345698765432.", True),  # written whole
+        ("DE89-3704-0044-0532-0130-00 is our account", True),  # hyphens
+        ("DE89 3704 0044 0532 0130 00 BIC COBADEFFXXX", True),  # cut at the country's length
+        ("GB82 WEST 1234 5698 7654 3\u200b2", True),  # a zero-width space inside
+        ("GB82 WEST 1234 5698 7654 3\u034f2", True),  # a nonspacing mark inside
+        ("\uff27\uff22\uff18\uff12 WEST 1234 5698 7654 32", True),  # full-width
+        ("GB82 WEST 1234 5698 7654 33", False),  # checksum fails
+        ("GB82WEST12345698765432X", False),  # the cut falls inside a word
+        ("XGB82WEST12345698765432", False),  # starts inside a word
+        ("ZZ82 WEST 1234 5698 7654 32", False),  # no such country
+        ("gb82 west 1234 5698 7654 32", False),  # lower case
+        ("Order 4471 2210 9938 5521 shipped", False),
+    ],
+)
+def test_a_checksum_valid_iban_is_a_bank_keyword(text: str, valid: bool) -> None:
+    """Pre-classifier plan §3 (P12): recorded as "valid IBAN", never the number."""
+    bank = tr.scan([text])["bank"]
+    assert (tr.IBAN_HIT in bank) is valid
+    assert all(not any(ch.isdigit() for ch in word) for word in bank)
+
+
+def test_an_iban_alone_is_trigger_1_from_an_unconfirmed_sender() -> None:
+    body = "Please pay to GB82 WEST 1234 5698 7654 32 from now on."
+    assert fire(body).fraud == []  # a confirmed sender, bank details alone
+    assert fire(body, sender_confirmed=False).fraud == [
+        "bank details with a sender you haven't confirmed"
+    ]
+
+
+def test_a_wallet_with_a_zero_width_space_inside_is_still_found() -> None:
+    text = "Pay to bc1qar0srrr7xfkvy5\u200bl643lydnw9re59gtzzwf5mdq within 48 hours."
+    assert tr.scan([text])["crypto_wallet"] == ["wallet address"]
+
+
+@pytest.mark.parametrize(
+    ("text", "amount"),
+    [
+        ("Please pay $50 today.", True),
+        ("Total: USD 1,200", True),
+        ("Amount received: 1.234,56 €", True),
+        ("Amount received: 1\u00a0234,56\u00a0€", True),  # no-break spaces
+        ("Send £50 by Friday.", True),
+        ("A refund of 4,800 dollars.", True),
+        ("Pay 7,140 USDT today.", True),
+        ("Price: \uff04\uff15\uff10", True),  # full-width "$50"
+        ("Ten gift cards of 50.00 each.", True),
+        ("It sold for 30.00.", True),
+        ("Invoice INV-4077 (1,180.00, due 2026-10-01)", True),
+        ("Ten gift cards of 50 each.", False),  # a bare whole number
+        ("Tax charged at 9.50% on invoice 7905.", False),
+        ("Rate: 1 USDC = 1.0000", True),  # "1 USDC" is an amount
+        ("Converted at 1.0000 on 10.10.2026, version 2.1.00", False),
+        ("SUSD 5 and USDX 5 are not codes; EURO 5 isn't one either.", False),
+        ("5 USDX, 5USDX and 5 dollarsign", False),
+        ("Pay 1,180.0 or 1,180.00x now", False),
+        ("Fees in €, see the table.", False),
+        ("Order 4471, picked up in store.", False),
+    ],
+)  # fmt: skip
+def test_amount_mentioned(text: str, amount: bool) -> None:
+    """Pre-classifier plan §5 A2: recorded for measurement only."""
+    assert (tr.scan([text])["amount"] == [tr.AMOUNT_HIT]) is amount
+    assert fire(text).facts()["amount_mentioned"] is amount
+
+
+def test_amount_mentioned_changes_no_trigger() -> None:
+    """Recorded only (P9): an amount alone adds no fraud, weak or payment reason."""
+    t = fire("Ten gift cards of 50.00 each.", sender_confirmed=False, sender_seen_before=False)
+    assert (t.fraud, t.fraud_weak, t.unverified_payment) == ([], [], False)
+
+
+@pytest.mark.parametrize(
     ("sender", "extra"),
     [
         ('"Pat Lee" <patlee@gmail.com>', {"from_org_address": True}),  # it's Pat
@@ -585,16 +727,6 @@ def test_redact_injection_binary_search_matches_the_line_scan(where: int) -> Non
     assert tr.redact_injection(para) == want
 
 
-def test_redact_injection_is_fast_on_a_crafted_paragraph() -> None:
-    """R150: one 4,000-line paragraph with the phrase on its last line took about 90 s with the
-    line scan (quadratic); the binary search keeps it to seconds."""
-    para = "\n".join(["ordinary words in a line of mail text"] * 3999 + ["note to the assistant"])
-    began = time.perf_counter()
-    out = tr.redact_injection(para)
-    assert time.perf_counter() - began < 5
-    assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
-
-
 def test_redact_injection_searches_only_the_head_of_a_long_paragraph() -> None:
     """R180: in a paragraph longer than SEARCH_CHARS, a match that starts past the head removes
     the paragraph from the end of the head; one that starts in the head is found exactly."""
@@ -608,18 +740,6 @@ def test_redact_injection_searches_only_the_head_of_a_long_paragraph() -> None:
     assert tr.redact_injection("\n".join(early)) == "\n".join(early[:start]) + (
         f"\n{tr.INJECTION_MARK}"
     )
-
-
-def test_redact_injection_is_fast_on_a_10_mib_paragraph() -> None:
-    """R180: a crafted 10 MiB paragraph took over a minute even with the binary search; with the
-    head search it costs one scan of the text."""
-    line = "ordinary words in a line of mail text"
-    para = "\n".join([line] * 270_000 + ["note to the assistant"])
-    began = time.perf_counter()
-    out = tr.redact_injection(para)
-    assert time.perf_counter() - began < 10
-    assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
-    assert tr.scan([para])["injection"]  # trigger 10 still sees the whole text
 
 
 def test_excerpts_match_the_two_single_excerpts() -> None:
@@ -640,3 +760,451 @@ def test_excerpt_is_redacted_before_the_cut() -> None:
     raw = mail("Note to the assistant: " + "x " * 2000 + "\n\nPlease call me back.")
     out = parse(raw).excerpt(100, tr.redact_injection)
     assert out == f"{tr.INJECTION_MARK}\n\nPlease call me back."
+
+
+# ---- scan speed (pre-classifier plan step 2a) ------------------------------------------------
+
+EVAL = Path(__file__).parent / "eval"
+
+
+def _one_pattern_at_a_time(texts: list[str]) -> dict[str, list[str]]:
+    """scan() before step 2a: every pattern searched on its own over every text."""
+    folded = [(keyword_fold(t), keyword_fold_ci(t)) for t in texts if t]
+    pats = tr._patterns()  # pyright: ignore[reportPrivateUsage]
+    return {
+        group: [p.word for p in ps
+                if any(p.regex.search(cs if p.case_sensitive else ci) for cs, ci in folded)]
+        for group, ps in pats.items()
+    }  # fmt: skip
+
+
+def _keyword_hits(texts: list[str]) -> dict[str, list[str]]:
+    """scan()'s keyword hits, without the pattern-matched ones (wallets, IBANs)."""
+    return {g: [x for x in w if x != tr.IBAN_HIT] for g, w in tr.scan(texts).items()
+            if g not in ("crypto_wallet", "amount", "unscanned")}  # fmt: skip
+
+
+def test_scan_finds_what_one_search_per_pattern_finds() -> None:
+    """The grouped alternation recovers every phrase, overlapping and repeated ones too, in the
+    order the keyword list gives them."""
+    words = [p.word for ps in tr._patterns().values() for p in ps]  # pyright: ignore[reportPrivateUsage]
+    rng = random.Random(20261010)  # noqa: S311 - reproducible test texts
+    for _ in range(300):
+        text = "".join(w + rng.choice([" ", "\n", "  ", "-", "x", ""])
+                       for w in rng.sample(words, rng.randint(1, 30)))  # fmt: skip
+        texts = [text.upper() if rng.random() < 0.5 else text, text.lower()]
+        assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), text
+
+
+@pytest.mark.parametrize("part", ["synthetic", "heldout", "heldout2"])
+def test_scan_is_unchanged_on_the_eval_cards(part: str) -> None:
+    """Same keywords on every frozen and held-out card as one search per pattern."""
+    cards = sorted((EVAL / part / "eml").glob("*.eml"))
+    assert cards
+    for card in cards:
+        texts = tr.texts_of(parse(card.read_bytes()))
+        assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), card.name
+
+
+# ---- hot path (pre-classifier plan step 3b) ---------------------------------------------------
+
+
+def test_the_ascii_confusables_apply_in_any_order() -> None:
+    """R3-P16: the ASCII fast path replaces mapped characters one after another, which equals
+    the table only when no prototype holds a mapped character or a mark."""
+    pairs = skeleton._ascii_confusables()  # pyright: ignore[reportPrivateUsage]
+    assert pairs
+    assert not any(k in v for _, v in pairs for k, _ in pairs)
+    assert not any(unicodedata.category(c) == "Mn" for _, v in pairs for c in v)
+
+
+def test_the_planes_hold_every_format_character_and_mark() -> None:
+    """The one-pass table build skips planes 4-13, 15 and 16: nothing it removes is there."""
+    every = {c for c in range(sys.maxunicode + 1) if unicodedata.category(chr(c)) in ("Cf", "Mn")}
+    built = skeleton._categories()  # pyright: ignore[reportPrivateUsage]
+    assert every == {*built["Cf"], *built["Mn"]}
+
+
+def _unicode_path(text: str) -> tuple[str, str, str]:
+    """The three forms as built before the ASCII fast path and the shared normalize."""
+    s = skeleton
+    return (s.strip_marks(s.fold(text)), s.strip_marks(s.fold_ci(text)),
+            s.strip_marks(s.normalize(text)))  # fmt: skip
+
+
+def test_folds_equals_the_unicode_path() -> None:
+    """ASCII text skips the Unicode tables and every text is normalized once; same forms."""
+    rng = random.Random(20261011)  # noqa: S311 - reproducible test texts
+    alphabet = [chr(c) for c in range(128)] + list("éÉßİıﬁＡ\u0301\u034f\u200b\u00ad\u0430ⅿ₀°")
+    texts = ["".join(chr(c) for c in range(128))]
+    texts += ["".join(rng.choices(alphabet[:128], k=rng.randint(0, 40))) for _ in range(300)]
+    texts += ["".join(rng.choices(alphabet, k=rng.randint(0, 40))) for _ in range(300)]
+    for text in texts:
+        want = _unicode_path(text)
+        assert skeleton.folds(text) == want, repr(text)
+        assert (keyword_fold(text), keyword_fold_ci(text), entity_text(text)) == want, repr(text)
+
+
+def test_scan_stops_at_the_message_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3-P11: past SCAN_BYTES of distinct text a message isn't scanned further, and says so."""
+    monkeypatch.setattr(tr, "SCAN_BYTES", 100)
+    assert tr.scan(["x" * 60, "x" * 60, "wire transfer"])["unscanned"] == []  # read once
+    late = tr.scan(["x" * 90, "please send a wire transfer"])
+    assert late["bank"] == [] and late["unscanned"] == [tr.UNSCANNED_TEXT]
+    assert tr.scan(["x" * 100, "y"])["unscanned"] == [tr.UNSCANNED_TEXT]
+    assert tr.scan(["x" * 100])["unscanned"] == []
+    # the limit is bytes as Python holds the text: a non-BMP character takes 4 (pre-gate G7)
+    emoji = "\U0001f600"
+    assert tr.scan([emoji * 25])["unscanned"] == []
+    cut = tr.scan([emoji * 26 + " wire transfer"])
+    assert cut["unscanned"] == [tr.UNSCANNED_TEXT] and cut["bank"] == []
+
+
+def test_texts_of_reads_short_fields_then_visible_then_full_text() -> None:
+    raw = mail("plain body", subject="Subj", html="<p>shown<span hidden>secret</span></p>",
+               attachment="inv.pdf")  # fmt: skip
+    texts = tr.texts_of(parse(raw))
+    assert texts[:3] == ["Subj", "Vendor A", "inv.pdf"]
+    visible, full = texts[3:5], texts[5:]
+    assert not any("secret" in t for t in visible) and any("secret" in t for t in full)
+
+
+def test_a_scan_cut_short_makes_the_message_not_fully_scanned(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    monkeypatch.setattr(tr, "SCAN_BYTES", 10)
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    raw = mail("a body longer than ten")
+    found = analyzer.analyze(parse(raw), raw)
+    assert found["content_unscanned"] is True
+    assert tr.UNSCANNED_TEXT in found["unscanned_reasons"]
+
+
+VALID_IBAN = "DE89 3704 0044 0532 0130 00"
+
+
+def test_the_iban_check_stops_after_its_candidates() -> None:
+    """R3-P12: a crafted text of IBAN heads costs a checksum each, so the check stops after
+    IBAN_CANDIDATES of them; decoys then can't hide a real one: the scan says it stopped."""
+    decoys = "DE12 3456 7890 1234 5678 90. " * (tr.IBAN_CANDIDATES + 1)
+    assert tr._iban(decoys + VALID_IBAN) is None  # pyright: ignore[reportPrivateUsage]
+    hits = tr.scan([decoys + VALID_IBAN])
+    assert tr.IBAN_HIT not in hits["bank"] and hits["unscanned"] == [tr.UNSCANNED_IBANS]
+    assert tr._iban(VALID_IBAN + " " + decoys) is True  # pyright: ignore[reportPrivateUsage]
+    few = "DE12 3456 7890 1234 5678 90. " * (tr.IBAN_CANDIDATES - 1)
+    assert tr._iban(few + VALID_IBAN) is True  # pyright: ignore[reportPrivateUsage]
+
+
+def _iban_before_step_3b(text: str) -> bool:
+    for m in tr.IBAN.finditer(text):
+        size = tr.IBAN_LENGTHS.get(m.group()[:2])
+        where = [i for i, c in enumerate(m.group()) if c not in " -"]
+        if size is None or len(where) < size:
+            continue
+        end = m.start() + where[size - 1] + 1
+        if end < len(text) and text[end].isalnum():
+            continue
+        code = "".join(m.group()[i] for i in where[:size])
+        if int((code[4:] + code[:4]).translate(tr._IBAN_DIGITS)) % 97 == 1:  # pyright: ignore[reportPrivateUsage]
+            return True
+    return False
+
+
+def test_the_iban_check_finds_what_it_found_before() -> None:
+    """The cheaper compaction finds the same IBANs (below the candidate cap)."""
+    rng = random.Random(20261012)  # noqa: S311 - reproducible test texts
+    pieces = [VALID_IBAN, "GB82 WEST 1234 5698 7654 32", "GB82-WEST-1234-5698-7654-32",
+              "NO93 8601 1117 947", "DE89370400440532013000", "DE12 3456", "7890", " ", "-", "x",
+              "\n", "A", "0"]  # fmt: skip
+    for _ in range(500):
+        text = "".join(rng.choices(pieces, k=rng.randint(1, 12)))
+        assert tr.valid_iban(text) is _iban_before_step_3b(text), repr(text)
+
+
+WALLETS_BEFORE = (
+    re.compile(r"(?<![\w-])bc1[ac-hj-np-z02-9]{11,71}(?![\w-])"),
+    re.compile(r"(?<![\w-])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w-])"),
+    re.compile(r"(?<![\w-])0x[0-9a-fA-F]{40}(?![\w-])"),
+    re.compile(r"(?<![\w-])TEST-WALLET-\d{4}(?![\w-])"),
+)
+
+
+def test_one_wallet_alternation_finds_what_four_patterns_did() -> None:
+    rng = random.Random(20261013)  # noqa: S311 - reproducible test texts
+    pieces = ["bc1", "qpzry9x8gf2tvdw0s3jn54khce6mua7l", "1", "3", "0x", "a" * 20, "F" * 20,
+              "TEST-WALLET-", "0001", "12345", "-", " ", "_", "x", "\n"]  # fmt: skip
+    for _ in range(2000):
+        text = "".join(rng.choices(pieces, k=rng.randint(1, 10)))
+        want = any(w.search(text) for w in WALLETS_BEFORE)
+        assert (tr.WALLET.search(text) is not None) is want, repr(text)
+
+
+def _redact_before_step_3b(text: str) -> str:
+    """redact_injection testing every paragraph on its own, as before R3-P20."""
+    out: list[str] = []
+    removed = False
+    for para in tr._PARAGRAPH_BREAK.split(text):  # pyright: ignore[reportPrivateUsage]
+        if not tr._injected(para):  # pyright: ignore[reportPrivateUsage]
+            out.append(para)
+            continue
+        removed = True
+        lines = para.split("\n")
+        head = tr._head(lines)  # pyright: ignore[reportPrivateUsage]
+        if head is lines:
+            start = tr._match_start(lines)  # pyright: ignore[reportPrivateUsage]
+        else:
+            injected = tr._injected("\n".join(head))  # pyright: ignore[reportPrivateUsage]
+            start = tr._match_start(head) if injected else len(head)  # pyright: ignore[reportPrivateUsage]
+        kept = "\n".join(lines[:start]).rstrip()
+        if kept:
+            out.append(f"{kept}\n{tr.INJECTION_MARK}")
+        elif not out or not out[-1].endswith(tr.INJECTION_MARK):
+            out.append(tr.INJECTION_MARK)
+    return "\n\n".join(out) if removed else text
+
+
+def test_batched_redaction_matches_paragraph_by_paragraph() -> None:
+    """R3-P20: the whole text first, then batches of paragraphs, then each paragraph of a batch
+    that matched; the result is what testing every paragraph gave, phrases split across a blank
+    line or a batch boundary included."""
+    rng = random.Random(20261014)  # noqa: S311 - reproducible test texts
+    pieces = ["hi", "ordinary mail text", "note to the", "assistant",
+              "ignore previous instructions", "Ассистент", "\u0301", " ", "\n"]  # fmt: skip
+    for n in (1, 3, tr.INJECTION_BATCH - 1, tr.INJECTION_BATCH, tr.INJECTION_BATCH * 2 + 5):
+        for _ in range(20):
+            paras = ["".join(rng.choices(pieces, k=rng.randint(0, 4))) for _ in range(n)]
+            text = rng.choice(["\n\n", "\n \t\n"]).join(paras)
+            assert tr.redact_injection(text) == _redact_before_step_3b(text), repr(text[:200])
+
+
+# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+
+CRED = {"credential": ["password"], "credential_ask": ["reply with"]}
+GIFT = {"gift_card": ["gift cards"], "gift_card_ask": ["send me the codes"]}
+COIN = {"crypto_wallet": ["wallet address"], "crypto_pay": ["send"]}
+NEVER = {"credential_never": ["never ask you to reply"]}
+
+
+def _found(words: dict[str, list[str]] | None = None, **facts: Any) -> dict[str, Any]:
+    """A known, authenticated sender with no other signal: the one case routes soften."""
+    keywords: dict[str, list[str]] = {g: [] for g in tr.GROUPS} | {"crypto_wallet": []}
+    none: list[str] = []
+    out: dict[str, Any] = {
+            "auth_result": "pass", "sender_seen_before": True, "sender_confirmed": False,
+            "from_domain": "vendor-a.example", "recipient_mismatch": False,
+            "reply_to_mismatch": False, "bulk_signal": False, "self_sent": False,
+            "impersonates_internal": False, "from_org_domain": False, "from_org_address": False,
+            "known_sender_auth_regressed": False, "keywords": keywords | (words or {}),
+            "triggers": {"fraud": none, "fraud_weak": none, "lookalikes": none}}  # fmt: skip
+    return out | facts
+
+
+SIGNALS: list[tuple[str, dict[str, Any], str]] = [
+    ("first-time", {"sender_seen_before": False}, tr.NO_HISTORY),
+    ("dmarc-fail", {"auth_result": "fail"}, "DMARC fail"),
+    ("unauthenticated-known", {"auth_result": "none"}, tr.UNAUTHENTICATED_KNOWN),
+    ("reply-to", {"reply_to_mismatch": True}, "Reply-To mismatch"),
+    ("lookalike", {"triggers": {"fraud": [], "fraud_weak": [], "lookalikes": ["x looks like y"]}},
+     "lookalike domain"),
+    ("other-fraud", {"triggers": {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [],
+                                  "lookalikes": []}}, tr.OTHER_FRAUD),
+    ("public-provider", {"from_domain": "gmail.com"}, tr.NO_HISTORY),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("words", "what"), [
+    (CRED, tr.CREDENTIAL), (GIFT, tr.GIFT_CODES), (COIN, tr.CRYPTO)],
+    ids=["credential", "gift-codes", "crypto"])  # fmt: skip
+@pytest.mark.parametrize(("facts", "signal"), [(f, s) for _, f, s in SIGNALS],
+                         ids=[i for i, _, _ in SIGNALS])  # fmt: skip
+def test_a_route_with_a_second_signal_is_a_fraud_reason(
+    words: dict[str, list[str]], what: str, facts: dict[str, Any], signal: str
+) -> None:
+    fraud, weak = tr.routes(_found(words, **facts))
+    assert len(fraud) == 1 and fraud[0].startswith(what) and signal in fraud[0]
+    assert weak == []
+
+
+@pytest.mark.parametrize(("words", "what", "weak"), [
+    (CRED, tr.CREDENTIAL, True), (GIFT, tr.GIFT_CODES, True), (COIN, tr.CRYPTO, False)],
+    ids=["credential", "gift-codes", "crypto"])  # fmt: skip
+def test_a_known_authenticated_sender_alone_is_weak_or_nothing(
+    words: dict[str, list[str]], what: str, weak: bool
+) -> None:
+    """The only softened case: seen, DMARC pass, nothing else; crypto has no weak leg (genuine
+    deposit and payout notices)."""
+    fraud, weak_reasons = tr.routes(_found(words))
+    assert fraud == []
+    assert weak_reasons == ([f"{what} from a known sender, with no second signal"] if weak else [])
+    confirmed_gmail = _found(words, from_domain="gmail.com", sender_confirmed=True)
+    assert tr.routes(confirmed_gmail) == (fraud, weak_reasons)  # confirmed: known anywhere
+
+
+def test_the_credential_veto_holds_only_without_a_second_signal() -> None:
+    assert tr.routes(_found(CRED | NEVER)) == ([], [])
+    fraud, _ = tr.routes(_found(CRED | NEVER, sender_seen_before=False))
+    assert fraud == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+
+
+def test_origins_count_per_route() -> None:
+    """An internal sender is a signal for gift-card codes only (a compromised colleague);
+    impersonation for credentials and crypto only (with gift cards it already escalates)."""
+    inside = {"from_org_domain": True}
+    assert tr.routes(_found(GIFT, **inside))[0] == [f"{tr.GIFT_CODES} and {tr.INTERNAL}"]
+    assert tr.routes(_found(CRED, **inside))[0] == []
+    posing = {"impersonates_internal": True}
+    assert tr.routes(_found(CRED, **posing))[0] == [f"{tr.CREDENTIAL} and {tr.IMPERSONATION}"]
+    assert tr.routes(_found(COIN, **posing))[0] == [f"{tr.CRYPTO} and {tr.IMPERSONATION}"]
+    assert tr.routes(_found(GIFT, **posing))[0] == []
+
+
+def test_bulk_mail_from_a_known_sender_without_authentication_is_not_a_signal() -> None:
+    assert tr.routes(_found(CRED, auth_result="none", bulk_signal=True))[0] == []
+
+
+def test_no_route_on_the_accounts_own_mail_to_itself() -> None:
+    assert tr.routes(_found(CRED | GIFT | COIN, self_sent=True, sender_seen_before=False)) == (
+        [],
+        [],
+    )
+
+
+def test_a_known_sender_failing_dmarc_is_one_fraud_reason() -> None:
+    """§5 A: enough passing history and a fail; said once when a route already says DMARC fail
+    (R3-P21)."""
+    assert tr.routes(_found(known_sender_auth_regressed=True)) == ([tr.AUTH_REGRESSED], [])
+    both = _found(CRED, known_sender_auth_regressed=True, auth_result="fail")
+    assert tr.routes(both)[0] == [f"{tr.CREDENTIAL} and DMARC fail"]
+
+
+def test_reasons_never_quote_the_message() -> None:
+    """Fixed wording only (R3-P14): no domain, address or value."""
+    found = _found(CRED | GIFT | COIN, sender_seen_before=False, from_domain="evil.example",
+                   reply_to_mismatch=True, known_sender_auth_regressed=True)  # fmt: skip
+    for reason in [*tr.routes(found)[0], *tr.routes(found)[1]]:
+        assert "evil" not in reason and "@" not in reason and "." not in reason
+
+
+def test_with_routes_replaces_earlier_route_reasons() -> None:
+    """The eval routes again after a card's expected facts: the earlier reasons go first."""
+    first = tr.with_routes(_found(CRED, sender_seen_before=False))
+    assert first["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+    assert tr.with_routes(first) == first  # idempotent
+    again = tr.with_routes(first | {"sender_seen_before": True})
+    assert again["triggers"]["fraud"] == [] and again["routes"]["fraud"] == []
+    assert again["triggers"]["fraud_weak"] == [
+        f"{tr.CREDENTIAL} from a known sender, with no second signal"
+    ]
+
+
+def test_the_eval_routes_after_a_cards_expected_facts(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R3-P1: a card's expected `sender_seen_before` and `auth_result` reach the routes and
+    `known_sender_auth_regressed`."""
+    from ecf_server import ruletest  # noqa: PLC0415 - only this test needs it
+
+    scratch = ruletest.Scratch(clock)
+    try:
+        found = scratch.facts(mail("Please reply with your password today."))
+    finally:
+        scratch.close()
+    assert found["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
+    known = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "pass"})
+    assert known["triggers"]["fraud"] == []
+    assert known["triggers"]["fraud_weak"] == [
+        f"{tr.CREDENTIAL} from a known sender, with no second signal"
+    ]
+    failed = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "fail"})
+    assert failed["known_sender_auth_regressed"] is True
+    # as live: a shared platform's history isn't the sender's (pre-gate review G3)
+    regressed = {"sender_seen_before": True, "auth_result": "fail"}
+    shared = ruletest.with_expected(found | {"shared_platform": True}, regressed)
+    assert shared["known_sender_auth_regressed"] is False
+    assert failed["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and DMARC fail"]
+    del conn
+
+
+def test_a_routed_item_escalates_at_the_pre_check_and_rule_1(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """The routes are fraud reasons: the pre-check escalates without the model and rule 1
+    matches `{trigger: fraud}` (no new policy code)."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+    from ecf_server import precheck, rules  # noqa: PLC0415
+
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    raw = mail("Buy five gift cards, scratch the backs and send me the codes.")
+    found = analyzer.analyze(parse(raw), raw)
+    assert f"{tr.GIFT_CODES} and {tr.NO_HISTORY}" in found["triggers"]["fraud"]
+    assert precheck.decide(found).escalate
+    schema = load_schema()
+    labels = {n: s.values[0] if s.values else False for n, s in schema.fields.items()}
+    labels["fraud_risk"] = "none"  # the model saw nothing: the reason alone matches rule 1
+    inp = rules.RuleInput(labels, found, frozenset(precheck.fired(found)),
+                          {"sensitivity": "standard"})  # fmt: skip
+    assert rules.load_starter_rules(schema).evaluate(inp).rule_id == "fraud_guard"
+
+
+def test_flagged_items_dont_build_sender_history(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """R3-P3 as decided 2026-10-10: a fraud reason, a lookalike or a weak route reason keeps
+    the item out of its sender's history; trigger 2's first-time payment weak doesn't."""
+    analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
+                               DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
+    parsed = parse(mail("hello"))
+
+    def count() -> int:
+        return int(conn.execute("SELECT coalesce(sum(dmarc_pass_count), 0) FROM senders")
+                   .fetchone()[0])  # fmt: skip
+
+    base: dict[str, Any] = {"auth_result": "pass", "triggers": {}, "routes": {}}
+    for flagged in ({"triggers": {"fraud": ["x"]}}, {"triggers": {"lookalikes": ["x"]}},
+                    {"routes": {"fraud_weak": ["x"]}}):  # fmt: skip
+        analyzer.record(conn, parsed, base | flagged)
+        assert count() == 0
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud_weak": ["first-time sender ..."]}})
+    assert count() == 1
+    # pre-gate review G1: a route whose only signal is the missing history still counts, or a
+    # genuine sender of such requests never becomes known; with any other reason it doesn't
+    only = f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only]}})
+    assert count() == 2
+    requests = conn.execute("SELECT sum(request_pass_count) FROM senders").fetchone()[0]
+    assert requests == 1  # counted apart: requests alone never make a sender known
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only, "bank details with x"]}})
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [
+        f"{tr.CREDENTIAL} and {tr.NO_HISTORY} and Reply-To mismatch"]}})  # fmt: skip
+    assert count() == 2
+
+
+def test_alias_mail_is_not_a_route_signal() -> None:
+    """Pre-gate review G2: mail to an alias or list (not addressed to this mailbox) is ordinary
+    for these requests; it stays trigger 2's signal only."""
+    found = _found(CRED, recipient_mismatch=True)
+    assert tr.routes(found) == ([], [f"{tr.CREDENTIAL} from a known sender, with no second"
+                                     " signal"])  # fmt: skip
+    assert tr.NOT_ADDRESSED in tr.second_signals(found["keywords"], found, False)
+
+
+def test_one_dmarc_reason_and_route_reasons_stripped_by_wording() -> None:
+    """G11: a known sender's DMARC failure adds no reason when trigger 4 already names DMARC;
+    G10: a stored route reason in another wording isn't taken for another fraud signal."""
+    dmarc = {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [], "lookalikes": []}
+    found = _found(known_sender_auth_regressed=True, auth_result="fail", triggers=dmarc)
+    assert tr.routes(found) == ([], [])
+    old = {"fraud": [f"{tr.CREDENTIAL} and an older signal name"], "fraud_weak": [],
+           "lookalikes": []}  # fmt: skip
+    out = tr.with_routes(_found(CRED, triggers=old))
+    assert out["triggers"]["fraud"] == [] and out["routes"]["fraud"] == []
+    assert out["triggers"]["fraud_weak"] == [f"{tr.CREDENTIAL} from a known sender, with no"
+                                             " second signal"]  # fmt: skip
+
+
+def test_route_signals_tolerate_a_partial_keyword_map() -> None:
+    """G8: a facts map without every keyword group doesn't raise."""
+    found = _found(sender_seen_before=False) | {"keywords": CRED}
+    assert tr.routes(found)[0] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]

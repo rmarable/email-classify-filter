@@ -12,7 +12,7 @@ from: "Riverbend Stream <account@riverbend-stream.example>"
 subject: "Your password was changed"
 date: 2026-10-06T09:02:00Z
 expected:
-  labels: {category: account_security, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: account_security, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: account_security
 ---
 Hi Pat,

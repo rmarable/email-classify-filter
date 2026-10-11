@@ -17,11 +17,12 @@
   held a risky or still unclassified item needs approval (claude_queue.batch_risky; unknown
   counts as risky, operator decision 2026-10-02).
 - **`get_message`** returns the stored excerpt (about 1,500 characters to classify, 4,000 to act,
-  both with OD-254's redaction) inside the untrusted-data wrapper. No computed facts (§7.2;
-  operator decision 2026-10-02): Claude gets what the local model gets. To classify it also gets
-  the effective schema (with any extension) as a JSON schema and as `schema_text`, the meaning of
-  each field and value, a separate trusted field (SCHEMA-V2-PLAN 4.3). To act it also gets the
-  classification, the actions and targets it may choose, and your earlier answers.
+  both with OD-254's redaction) inside the untrusted-data wrapper. No computed facts except the
+  derived signals an OD exempts (§7.2, OD-483): Claude gets what the local model gets. To
+  classify it also gets the effective schema (with any extension) as a JSON schema and as
+  `schema_text`, the meaning of each field and value, a separate trusted field (SCHEMA-V2-PLAN
+  4.3). To act it also gets the classification, the actions and targets it may choose, and your
+  earlier answers.
 - **Submissions** are checked like the local model's output: a classification against the schema
   (§7.4); a proposal by `actor.problem` with OD-250's no-hiding rule, its reason cleaned and capped
   at 300 characters (OD-270); then the same rules and policy (`policy.proposal`, `decide.apply`).
@@ -70,8 +71,10 @@ from ecf_server import (
     claude_queue,
     config,
     decide,
+    excerpt,
     health,
     policy,
+    signals,
     telemetry,
 )
 from ecf_server.clock import Clock, from_ts, to_ts
@@ -300,7 +303,7 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
                            "untrusted_email": email, "notice": NOTICE}  # fmt: skip
     schema = config.current_schema(conn)
     if claim["need"] == "classify":
-        out |= schema_fields(schema)
+        out |= schema_fields(schema) | {"signals": signals.as_object(signals.sent(facts))}
     else:
         ctx, p = decide.plan_for(conn, item)
         state: dict[str, Any] = json.loads(item["proposal"] or "{}")
@@ -334,6 +337,19 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
     if result is None:
         return _invalid(conn, clock, claim, errors)
     return _hold(conn, claim, session_id, {"classification": result, "schema": schema.digest})
+
+
+def prompt_digest(schema: CompiledSchema) -> str:
+    """SHA-256 over what ecf gives a Claude classifier besides the email (plan 0.3, Q4): the
+    schema's fields as `schema_fields` sends them, the signals' wording (OD-484) and the version
+    of the excerpt preparation (pre-classifier plan step 10; Claude reads the same excerpts).
+    Gemma's prompt isn't in it, so a Gemma-only change keeps the C pin key."""
+    parts = {
+        "fields": schema_fields(schema),
+        "signals": signals.WORDING,
+        "excerpt_prep": excerpt.VERSION,
+    }
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 
 
 def schema_fields(schema: CompiledSchema) -> dict[str, Any]:

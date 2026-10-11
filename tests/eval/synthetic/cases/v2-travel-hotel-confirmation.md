@@ -11,7 +11,7 @@ from: "Harborline Stays <stays@harborline.example>"
 subject: "Stay confirmed: Harborline Port Halden, 2026-10-29 to 2026-11-02"
 date: 2026-10-03T10:15:00Z
 expected:
-  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Dear Pat Lee,

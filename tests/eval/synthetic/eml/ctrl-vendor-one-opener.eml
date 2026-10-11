@@ -1,0 +1,21 @@
+Received: from mail.vendor-b.example (mail.vendor-b.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ctrl-vendor-one-opener; Thu, 19 Nov 2026
+ 11:20:00 +0000
+From: Jordan Lake <jordan-lake@vendor-b.example>
+To: ap@acme.example
+Subject: Call about next quarter
+Date: Thu, 19 Nov 2026 11:20:00 +0000
+Message-ID: <ctrl-vendor-one-opener.ab74064090@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Are you available Thursday afternoon for a 20-minute call about next quarter'=
+s delivery
+schedule? Any time after 2 pm works for me.
+
+Thanks,
+Jordan Lake
+Account Manager, Vendor B

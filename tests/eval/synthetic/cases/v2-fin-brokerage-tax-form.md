@@ -11,7 +11,7 @@ from: "Bayline Brokerage <statements@bayline-invest.example>"
 subject: "Your consolidated tax form is available"
 date: 2026-10-02T06:15:00Z
 expected:
-  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hello Pat Lee,

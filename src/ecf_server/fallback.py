@@ -48,6 +48,7 @@ from ecf_server import (
     ollama,
     policy,
     review,
+    signals,
     slack_admin,
     stages,
     stepup,
@@ -382,7 +383,12 @@ def shadow_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: o
     metrics = None
     try:
         if a["preset"] == "C":
-            reply = classifier.ask(client, classifier.fit(str(ex["classifier_text"] or "")), schema)
+            reply = classifier.ask(
+                client,
+                classifier.fit(str(ex["classifier_text"] or "")),
+                schema,
+                signals.sent(json.loads(item["facts"] or "{}")),
+            )
             metrics = reply.metrics
             cls = None if classifier.truncated(reply) else classifier.parse(reply.content, schema)
             if cls is None:

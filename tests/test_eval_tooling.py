@@ -6,6 +6,7 @@ import zlib
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -17,12 +18,16 @@ from ecf.eval.builder import COMMIT_LIMIT, build_all, build_bytes, message_id
 from ecf.eval.cards import load_cards, parse_card
 from ecf.eval.hygiene import scan_text
 from ecf.eval.results import (
+    CallMetrics,
     CaseResult,
     ResultFile,
+    call_figures,
     compare,
     compare_fields,
     differences,
+    input_warnings,
     schema_warning,
+    scoring,
 )
 from ecf.schema import load_schema
 
@@ -85,6 +90,9 @@ def test_profile_sets_the_default_recipient_and_internal_facts_are_refused() -> 
     for fact in ("sender_origin", "from_org_address", "impersonates_internal"):
         with pytest.raises(InvalidInputError, match="come from the profile"):
             parse_card(card(f"expected:\n  facts: {{{fact}: true}}\n"))
+    for fact in ("keywords", "triggers", "routes"):  # computed (pre-gate review G8)
+        with pytest.raises(InvalidInputError, match="computed from the message"):
+            parse_card(card(f"expected:\n  facts: {{{fact}: {{}}}}\n"))
     with pytest.raises(InvalidInputError, match="profile"):
         parse_card(card("profile: corporate\n"))
 
@@ -287,7 +295,12 @@ def test_compare() -> None:
     b = _run("B", [True] * 95 + [False] * 5)
     c = compare(a, b)
     assert (c.n, c.b_only, c.a_only) == (100, 5, 0)
-    assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior
+    assert c.diff_points == pytest.approx(5.0) and c.b_non_inferior()
+    lo, hi = c.diff_ci  # Newcombe's paired interval (OD-486)
+    assert 0 < lo < 5 < hi
+    worse = compare(b, a)  # 5 points worse: inferior at the -5 margin, whatever the interval
+    assert not worse.b_non_inferior() and not worse.b_non_inferior(margin=3)
+    assert worse.b_non_inferior(margin=12)
     with pytest.raises(InvalidInputError):
         compare(a, ResultFile(run_id="x", pair="x", set_version="v2", created_at="t", cases=[]))
 
@@ -313,6 +326,44 @@ def test_differences_name_what_the_model_returned() -> None:
         "payment_related true (expected false)"
     ]
     assert differences(expected, {}) == []  # an older result without values
+
+
+def test_compare_warns_when_the_runs_were_asked_differently() -> None:
+    a, b = _run("A", [True]), _run("B", [True])
+    assert input_warnings(a, b) == []
+    pa = a.model_copy(update={"summary": {"prompt_digest": "a" * 64, "excerpt_cap": 3000}})
+    pb = b.model_copy(update={"summary": {"prompt_digest": "b" * 64, "excerpt_cap": 1500}})
+    warned = input_warnings(pa, pb)
+    assert [w.split(" (")[0] for w in warned] == ["warning: different prompt",
+                                                  "warning: different inputs"]  # fmt: skip
+    assert input_warnings(pa, b) == []  # a run that recorded none can't be told apart
+    ea = a.model_copy(update={"summary": {"excerpt_prep": 1}})
+    eb = b.model_copy(update={"summary": {"excerpt_prep": 0}})  # --no-excerpt-prep (step 10)
+    assert input_warnings(ea, eb) == ["warning: different inputs (excerpt_prep 1 vs 0)"]
+    sa = a.model_copy(update={"summary": {"options": {"switches_off": ["message_signals"]}}})
+    assert input_warnings(sa, b) == [  # pre-gate review G3: the prompt digest doesn't show it
+        "warning: different switches (message_signals vs all on)"]  # fmt: skip
+
+
+def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:
+    """Pre-classifier plan step 7 (M8): a policy rescore beside a live run, or runs whose
+    keywords or starter rules differ, are named before the figures."""
+    a, b = _run("A", [True]), _run("B", [True])
+    ka = a.model_copy(update={"summary": {"keywords_digest": "k1", "rules_digest": "r1",
+                                          "scoring": "live"}})  # fmt: skip
+    kb = b.model_copy(update={"summary": {"keywords_digest": "k2", "rules_digest": "r2",
+                                          "scoring": "policy", "rescored_from": {}}})  # fmt: skip
+    assert input_warnings(ka, kb) == [
+        "warning: different scoring (live vs policy)",
+        "warning: different keywords (keywords_digest k1 vs k2)",
+        "warning: different rules (rules_digest r1 vs r2)",
+    ]
+    old = b.model_copy(update={"summary": {"rescored_from": {}}})  # an older rescore
+    assert scoring(old) == "recorded" and scoring(a) == "live"
+    assert input_warnings(a, old) == ["warning: different scoring (live vs recorded)"]
+    moved = kb.model_copy(update={"summary": {"scoring": "policy",
+                                              "rescored_from": {"set_changed": True}}})  # fmt: skip
+    assert input_warnings(kb, moved)[-1].startswith("warning: a result was planned again on a set")
 
 
 def test_compare_fields_holm() -> None:
@@ -370,3 +421,28 @@ def test_cli_new_case_show_compare(tmp_path: Path) -> None:
     fb.write_text(other.model_dump_json())
     out = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
     assert out.exit_code == 0 and "warning: the runs used different schemas" in out.output
+
+
+def test_call_figures_leave_out_cold_starts() -> None:
+    """Pre-classifier plan §11 (perf-3): per role, cold starts excluded; the short-cache split."""
+
+    def m(prompt: int, cached: int, load_ns: int = 1) -> CallMetrics:
+        return CallMetrics(prompt_tokens=prompt, cached_tokens=cached, output_tokens=70,
+                           prompt_ns=500_000_000, eval_ns=4_000_000_000,
+                           load_ns=load_ns)  # fmt: skip
+
+    cold = m(9000, 0, load_ns=5_000_000_000)
+    cases = [CaseResult(id="1", correct=True, classifier=m(1300, 1200)),
+             CaseResult(id="2", correct=True, classifier=m(1300, 1200), actor=m(900, 100)),
+             CaseResult(id="3", correct=True, classifier=m(1300, 300)),
+             CaseResult(id="4", correct=True, classifier=cold)]  # fmt: skip
+    f = call_figures(cases)
+    cls = cast(dict[str, Any], f["classifier"])
+    assert cls["calls"] == 3  # the cold start is left out
+    assert cls["uncached_tokens"] == {"p50": 100, "p95": 1000, "max": 1000}  # nearest rank
+    assert cls["generation_s"] == {"p50": 4.0, "p95": 4.0, "max": 4.0}
+    assert f["cache_short"] == [
+        {"after": "an actor call", "calls": 1, "short": 1, "prompt_s": 0.5},
+        {"after": "other", "calls": 2, "short": 0, "prompt_s": None},
+    ]
+    assert call_figures([]) == {"cache_short": []}

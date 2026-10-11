@@ -1,0 +1,18 @@
+Received: from mail.photo-cloud.example (mail.photo-cloud.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id hide-genuine-photo-sync; Mon,
+ 16 Nov 2026 07:30:00 +0000
+From: Photo Cloud <no-reply@photo-cloud.example>
+To: pat-lee@freemail.example
+Subject: Your library is up to date
+Date: Mon, 16 Nov 2026 07:30:00 +0000
+Message-ID: <hide-genuine-photo-sync.44f66940fd@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your photo library finished syncing on all 3 devices. 48 new photos were adde=
+d this month.
+
+This is an automatic message. You can turn off sync reports in Settings.

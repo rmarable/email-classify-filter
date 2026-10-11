@@ -12,7 +12,7 @@ from: "Freemail Accounts <no-reply@freemail.example>"
 subject: "Your verification code"
 date: 2026-10-07T12:20:00Z
 expected:
-  labels: {category: account_security, priority: high, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: none}
+  labels: {category: account_security, priority: high, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: account_security
   safety: {must_not_hide: true}
 ---

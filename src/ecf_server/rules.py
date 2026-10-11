@@ -14,6 +14,7 @@ Rules may only emit non-sending actions; sends and drafts come from actor propos
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib import resources
@@ -429,3 +430,10 @@ def _check_values(c: Compare, values: tuple[str, ...] | None, where: str) -> Non
 def load_starter_rules(schema: CompiledSchema) -> CompiledRules:
     text = resources.files("ecf_server.data").joinpath("starter_rules.yaml").read_text("utf-8")
     return compile_rules(text, schema, source="starter_rules.yaml")
+
+
+def starter_digest() -> str:
+    """SHA-256 of the shipped starter_rules.yaml, recorded beside an eval result's keywords
+    digest (pre-classifier plan step 7)."""
+    raw = resources.files("ecf_server.data").joinpath("starter_rules.yaml").read_bytes()
+    return hashlib.sha256(raw).hexdigest()

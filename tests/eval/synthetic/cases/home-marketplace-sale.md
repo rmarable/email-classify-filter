@@ -11,7 +11,7 @@ from: "SwapMarket <messages@swapmarket.example>"
 subject: "Your item sold: bike helmet"
 date: 2026-10-18T14:40:00Z
 expected:
-  labels: {category: payment_confirmation, sender_type: automated, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: remittance, sender_type: vendor, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: none}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

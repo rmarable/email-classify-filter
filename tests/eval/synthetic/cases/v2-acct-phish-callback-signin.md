@@ -12,7 +12,7 @@ from: "Maple Market Security <alerts@maple-market-security.example>"
 subject: "Sign-in from a new location"
 date: 2026-10-15T22:40:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: medium}
+  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_not_hide: true}
 ---

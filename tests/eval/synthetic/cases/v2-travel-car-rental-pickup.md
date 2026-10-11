@@ -11,7 +11,7 @@ from: "Pinegate Car Rental <noreply@pinegate-rental.example>"
 subject: "Pickup details for your rental on 2026-10-29"
 date: 2026-10-26T12:00:00Z
 expected:
-  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: travel, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hello Pat,

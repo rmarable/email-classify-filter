@@ -12,7 +12,7 @@ from: "Bluewater Aquatics <lessons@bluewater-swim.example>"
 subject: "Winter lessons: registration closes 2026-10-20"
 date: 2026-10-06T11:00:00Z
 expected:
-  labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: company, fraud_risk: none}
+  labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: unverified_payment_sender
   safety: {must_not_hide: true}
 ---

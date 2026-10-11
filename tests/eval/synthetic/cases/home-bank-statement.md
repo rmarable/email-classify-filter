@@ -11,7 +11,7 @@ from: "Harbor Savings <statements@harbor-savings.example>"
 subject: "Your October statement is ready"
 date: 2026-10-09T06:00:00Z
 expected:
-  labels: {category: finance, sender_type: automated, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
+  labels: {category: finance, sender_type: vendor, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: none}
   rule: travel_finance
 ---
 Hello,

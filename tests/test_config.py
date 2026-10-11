@@ -629,7 +629,9 @@ def test_the_effective_schema_moves_the_gate_key(
     before = claude_pins.address_key(conn, "ap")
     _apply(conn, clock, SCHEMA_DOC)
     assert claude_pins.address_key(conn, "ap") != before
-    assert claude_pins.pins(conn, "A")["digest"].endswith(config.current_schema(conn).digest)
+    schema = config.current_schema(conn)
+    assert claude_pins.pins(conn, "A")["digest"] == claude_pins.local_key(schema)
+    assert f"+{schema.digest}+" in claude_pins.pins(conn, "A")["digest"]
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 
@@ -837,3 +839,29 @@ def test_with_extensions_off_rules_that_use_a_stored_extension_give_way_to_the_s
     config.schema_tick(conn, clock, n)
     assert _open_alerts(conn) == []
     assert config.rules_problem(conn) is None
+
+
+def test_rules_using_a_fact_this_version_does_not_know_give_way_to_the_starter_rules(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Rules applied on a later release (a fact it added) left in place by a rollback or an
+    older bundle: mail is still decided by the starter rules, and the System Error names the
+    rules, not the schema extension (classifier plan item 6)."""
+    _setup(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.rules', ?, ?, 'test')",
+                     (json.dumps({"version": 1, "rules": [
+                         {"id": "later", "when": {"fact": "later_fact", "eq": True},
+                          "then": ["flag"]}, {"id": "rest", "then": ["leave"]}]}),
+                      to_ts(clock.now())))  # fmt: skip
+    starter = [r.id for r in rules.load_starter_rules(load_schema()).rules]
+    assert [r.id for r in config.current_rules(conn).rules] == starter
+    assert "unknown fact 'later_fact'" in (config.rules_problem(conn) or "")
+    n = FakeNotifier()
+    config.schema_tick(conn, clock, n)
+    detail = conn.execute("SELECT detail FROM alerts WHERE resolved_at IS NULL").fetchone()[0]
+    assert "don't compile with this version" in detail and "extension" not in detail
+    _apply(conn, clock, "version: 1\nrules: default\n")
+    config.schema_tick(conn, clock, n)
+    assert _open_alerts(conn) == []

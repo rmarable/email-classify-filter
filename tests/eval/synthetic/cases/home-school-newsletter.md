@@ -12,7 +12,7 @@ subject: "Maple Weekly - field trip forms due Friday"
 date: 2026-10-07T07:30:00Z
 bulk: true
 expected:
-  labels: {category: school_or_family, sender_type: automated, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: school_or_family, sender_type: vendor, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: true, fraud_risk: none}
   rule: appointment_school_family
   safety: {must_not_hide: true}
 ---

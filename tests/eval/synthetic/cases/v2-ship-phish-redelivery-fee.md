@@ -11,7 +11,7 @@ from: "Parcelwise Delivery <redelivery@parcelwise-redeliver.example>"
 subject: "Parcel on hold: unpaid redelivery fee"
 date: 2026-10-10T06:35:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: automated, fraud_risk: high}
+  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -59,15 +59,16 @@ from ecf_server import (
     claude_usage,
     config,
     evalrun,
+    excerpt,
     policy,
     rules,
     ruletest,
+    signals,
     telemetry,
     triggers,
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
-from ecf_server.message import parse
 from ecf_server.notify import Notifier
 from ecf_server.telemetry import Hold, Seen, Telemetry
 
@@ -88,6 +89,7 @@ class Options:
     classifier_model: str | None = None
     actor_model: str | None = None
     batch: int = 1  # items per `-high` spawn
+    copy_to: Path | None = None  # also write the result file here (plan 0.3)
 
 
 @dataclass
@@ -321,8 +323,10 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             if run.stop.is_set():
                 return
             raw = w.case.path.read_bytes()
-            facts = scratch.facts(raw, w.case.profile)
-            msg = parse(raw)
+            # as `ecf eval run`: the card's expected facts applied (Q1), so A and C score alike
+            facts, (cls_text, act_text) = evalrun._inputs(  # pyright: ignore[reportPrivateUsage]
+                w.case, scratch, triggers.redact_injection)  # fmt: skip
+            msg = ruletest.read_case(raw).parsed
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr
                 else (msg.from_addr or msg.from_name or ""),
@@ -331,7 +335,6 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 "attachments_meta": [{"name": a.name, "type": a.content_type, "size": a.size}
                                      for a in msg.attachments if not a.inline or a.name],
             }  # fmt: skip
-            cls_text, act_text = msg.excerpts(triggers.redact_injection)
             with run.lock:
                 if not run.open:
                     return
@@ -417,13 +420,18 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 schema=run.schema)  # fmt: skip
     summary["schema_digest"] = run.schema.digest
+    if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
+        summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
+    summary["excerpt_prep"] = excerpt.VERSION
+    summary["keywords_digest"] = triggers.keywords_digest()
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)
         result = ResultFile(run_id=run.run_id, pair=claude_pins.PAIR[run.opts.preset],
                             set_version=run.version, created_at=to_ts(clock.now()),
                             cases=results, digest=run.key, summary=summary)  # fmt: skip
-        evalrun._save(conn, clock, run.data_dir, result)  # pyright: ignore[reportPrivateUsage]
+        evalrun._save(conn, clock, run.data_dir, result,  # pyright: ignore[reportPrivateUsage]
+                      copy_to=run.opts.copy_to)  # fmt: skip
     finally:
         conn.close()
     run.summary = summary
@@ -606,8 +614,8 @@ def _claimed(clock: Clock, session_id: str, ref: str, token: str, agent: str,
 
 def get_message(clock: Clock, session_id: str, ref: str, token: str,
                 agent: str) -> dict[str, Any]:  # fmt: skip
-    """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts, no
-    labels."""
+    """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts but the
+    derived signals (OD-484), no labels."""
     run, w = _claimed(clock, session_id, ref, token, agent)
     with run.lock:
         text = w.cls_text if w.need == "classify" else w.act_text
@@ -615,7 +623,8 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
                                "untrusted_email": w.email | {"text": text},
                                "notice": claude_review.NOTICE}  # fmt: skip
         if w.need == "classify":
-            out |= claude_review.schema_fields(run.schema)
+            sent = signals.as_object(signals.sent(w.facts))
+            out |= claude_review.schema_fields(run.schema) | {"signals": sent}
         else:
             out |= {"classification": _cls(w),
                     "actions": list(actor.allowed(_cls(w))),

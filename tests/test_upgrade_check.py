@@ -20,7 +20,8 @@ from ecf import __version__, upgrade_check
 from ecf.cli import app
 from ecf.errors import InvalidInputError
 from ecf.paths import Paths
-from ecf_server import db, export_bundle, upgrade_snapshot, upgrade_state
+from ecf.schema import load_schema
+from ecf_server import classifier, db, export_bundle, upgrade_snapshot, upgrade_state
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from tests.test_addresses import make_state
@@ -33,6 +34,7 @@ SCHEMA = max(v for v, _n, _s in db._migration_files())  # pyright: ignore[report
 LOCK = {"main_session": "claude-haiku-4-5-20251001", "classifier": "claude-haiku-4-5-20251001",
         "classifier_high": "claude-sonnet-5-5", "actor": "claude-sonnet-5-5",
         "actor_high": "claude-opus-5-5"}  # fmt: skip
+PROMPT = "p" * 64
 
 
 def test_version_order() -> None:
@@ -45,10 +47,12 @@ def test_version_order() -> None:
 def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int | None = None,  # noqa: PLR0913
            data_format: int = FORMAT, min_client: str = "0.1.0.dev0",
            lock: dict[str, str] | None = None, digest: str = "d" * 64, name: str = "w.whl",
-           classifier_schema: int = 2) -> Path:  # fmt: skip
+           classifier_schema: int = 2, prompt: str | None = PROMPT) -> Path:  # fmt: skip
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
             "data_format": data_format, "schema_version": SCHEMA if schema is None else schema,
             "min_client": min_client, "classifier_schema": classifier_schema}  # fmt: skip
+    if prompt is not None:
+        info["prompt_digest"] = prompt
     path = tmp / name
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))
@@ -95,7 +99,7 @@ def test_install_detection(tmp_path: Path) -> None:
 
 def _state(**over: Any) -> dict[str, Any]:
     return {"version": "0.1.0", "schema_version": SCHEMA, "data_format": FORMAT - 1,
-            "api_version": 1, "classifier_schema": 2,
+            "api_version": 1, "classifier_schema": 2, "prompt_digest": PROMPT,
             "pins": LOCK | {"local": "d" * 64}, "pin_users": {"local": ["ap"], "actor": ["b"]},
             "install_role": "test",
             "busy": {"executing": 0, "leases": 0, "claude_sessions": 0}} | over  # fmt: skip
@@ -122,11 +126,26 @@ def test_compare(tmp_path: Path) -> None:
 
 def test_a_new_classifier_schema_affects_every_address(tmp_path: Path) -> None:
     """OD-475: the schema digest is part of every gate key; a v1.0.0 service reports none (1)."""
-    v1 = {k: v for k, v in _state().items() if k != "classifier_schema"}
+    v1 = {k: v for k, v in _state().items() if k not in ("classifier_schema", "prompt_digest")}
     r = upgrade_check.compare(v1, upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
-    assert r.pin_changes == ["schema"] and r.affected == ["ap", "b"]
+    assert r.pin_changes == ["schema", "prompt"] and r.affected == ["ap", "b"]
     same = upgrade_check.compare(_state(), upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
     assert same.pin_changes == []
+
+
+def test_a_new_prompt_affects_every_address(tmp_path: Path) -> None:
+    """Q6: the prompt digest is in the local gate key; a release without one (v2.0.0 and
+    earlier) counts as a new prompt."""
+    new = upgrade_check.compare(_state(), upgrade_check.read_wheel(
+        _wheel(tmp_path, prompt="q" * 64)), "0.1.0")  # fmt: skip
+    assert new.pin_changes == ["prompt"] and new.affected == ["ap", "b"]
+    v2 = {k: v for k, v in _state().items() if k != "prompt_digest"}
+    old = upgrade_check.compare(v2, upgrade_check.read_wheel(_wheel(tmp_path, name="v.whl")),
+                                "0.1.0")  # fmt: skip
+    assert old.pin_changes == ["prompt"] and old.affected == ["ap", "b"]
+    none = upgrade_check.compare(_state(), upgrade_check.read_wheel(
+        _wheel(tmp_path, prompt=None, name="n.whl")), "0.1.0")  # fmt: skip
+    assert none.pin_changes == ["prompt"]
 
 
 def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -145,6 +164,9 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert s["pin_users"]["local"] == ["a", "b"]
     assert s["pin_users"]["actor"] == ["b", "c"] and s["pin_users"]["classifier"] == ["c"]
     assert s["busy"] == {"executing": 1, "leases": 1, "claude_sessions": 1}
+    shipped = classifier.prompt_digest(load_schema())  # what release.json carries (Q6)
+    assert s["prompt_digest"] == shipped and s["effective_prompt_digest"] == shipped
+    assert s["extension_stored"] is False
 
 
 def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> None:

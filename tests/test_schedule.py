@@ -251,3 +251,18 @@ def test_timer_work_that_keeps_failing_is_counted_shown_and_told_once(
     clock.advance(60)
     svc.tick()
     assert svc.state.tick_failures == 0 and svc.state.tick_error is None
+
+
+def test_pmset_therm_is_read_for_limits_and_warning_levels() -> None:
+    quiet = ("Note: No thermal warning level has been recorded\n"
+             "Note: No performance warning level has been recorded\n"
+             "Note: No CPU power status has been recorded\n")  # fmt: skip
+    assert schedule.parse_therm(quiet) == {}
+    hot = ("2026-10-09 10:00:00 -0700 Thermal Warning Level set to 2.\n"
+           "2026-10-09 10:00:00 -0700 Performance Warning Level set to 1.\n"
+           "2026-10-09 10:00:00 -0700 CPU Power notify\n"
+           "\tCPU_Scheduler_Limit \t= 100\n\tCPU_Available_CPUs \t= 12\n"
+           "\tCPU_Speed_Limit \t= 72\n")  # fmt: skip
+    assert schedule.parse_therm(hot) == {
+        "CPU_Scheduler_Limit": 100, "CPU_Available_CPUs": 12, "CPU_Speed_Limit": 72,
+        "thermal_warning_level": 2, "performance_warning_level": 1}  # fmt: skip

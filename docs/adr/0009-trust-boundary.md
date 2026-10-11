@@ -2,7 +2,8 @@
 
 - **Status:** accepted (design plan "Decision summary", Trust boundary, reviewed by the operator
   2026-09-26/27; OD-013, OD-087, 2026-09-26; OD-073, OD-123, 2026-09-27); implemented from V1.0
-  (socket, import rules), V1.1 (facts, triggers) and V1.3 (rules, policy)
+  (socket, import rules), V1.1 (facts, triggers) and V1.3 (rules, policy); amended by ADR 0026
+  (operator decision 2026-10-09, OD-483): derived signals may go to a model by exemption
 - **Context source:** SPEC §3.2, §7.2, §7.4b, §10.4, §12.1, §12.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) "Decision summary"; `pyproject.toml` import-linter
   contracts; `ecf_server/policy.py`

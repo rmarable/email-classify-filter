@@ -60,13 +60,14 @@ def _row(conn: sqlite3.Connection, aid: str, email: str) -> sqlite3.Row | None:
 def _state(row: sqlite3.Row | None) -> dict[str, Any]:
     if row is None:
         return {"known": False, "confirmed_category": None, "expected_reply_to_domain": None,
-                "verified": False, "dmarc_pass_count": 0}  # fmt: skip
+                "verified": False, "dmarc_pass_count": 0, "request_pass_count": 0}  # fmt: skip
     return {
         "known": True,
         "confirmed_category": row["confirmed_category"],
         "expected_reply_to_domain": row["expected_reply_to_domain"],
         "verified": bool(row["verified_rule1a"]),
         "dmarc_pass_count": row["dmarc_pass_count"],
+        "request_pass_count": row["request_pass_count"],
     }
 
 

@@ -9,7 +9,7 @@ from: "SEC Enforcement Division <enforcement-office@freemail.example>"
 subject: "Subpoena - immediate response and filing fee required"
 date: 2026-10-03T14:00:00Z
 expected:
-  labels: {category: regulatory, fraud_risk: high, payment_related: true}
+  labels: {category: regulatory, fraud_risk: high, payment_related: true, sender_type: regulator}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

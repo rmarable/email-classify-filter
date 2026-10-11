@@ -28,8 +28,9 @@ Extensions are off in v2.0.0 (OD-481; `ecf.schema.EXTENSIONS_ENABLED`): a `schem
 than `default` is refused, `schema: default` still removes a stored extension, and a stored one
 (applied on an rc, or imported in a bundle) is kept but ignored: the effective schema is the
 shipped one, so the gate key, prompts and rules use it. Applied rules that don't compile
-against the effective schema (they use the ignored extension) give way to the starter rules
-and a System Error until they are changed (`current_rules`, `schema_tick`).
+against this version (they use the ignored extension, or a field or fact a later release added
+and a rollback or older bundle left in place) give way to the starter rules and a System Error
+until they are changed (`current_rules`, `schema_tick`; classifier plan item 6).
 
 What reads each section in V1.2: `org_domains` (facts and triggers, §7.2, §8.5). The others are
 validated and stored for their consumers: rules and the action policy (V1.3, with the classifier),
@@ -181,17 +182,18 @@ def schema_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> N
     broken = rules_problem(conn)
     if broken is not None:
         health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
-                          f"the applied rules don't compile against the schema in use"
+                          f"the applied rules don't compile with this version"
                           f" ({broken[:200]}); ecf uses the starter rules until they change."
-                          " Fix: apply rules that don't use the schema extension, with ecf"
-                          " config apply")  # fmt: skip
+                          " Fix: apply rules this version accepts (no field or fact it doesn't"
+                          " know), or `rules: default`, with ecf config apply")  # fmt: skip
         return
     health.resolve_alert(conn, clock, notifier, SCHEMA_ALERT, None)
 
 
 def rules_problem(conn: sqlite3.Connection) -> str | None:
     """Why the applied rules don't compile against the effective schema (they use a stored
-    extension that is ignored or no longer compiles); None when they do, or none are applied."""
+    extension that is ignored or no longer compiles, or a field or fact this version doesn't
+    know); None when they do, or none are applied."""
     stored = _stored(conn, "rules")
     if stored is None:
         return None
@@ -205,8 +207,9 @@ def rules_problem(conn: sqlite3.Connection) -> str | None:
 def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
     """The applied rules, or the starter rules when none were applied, compiled against the
     effective schema. Applied rules that don't compile against it (they use a stored extension
-    that is ignored, OD-481, or no longer compiles) give way to the starter rules, so mail is
-    still decided; `schema_tick` raises a System Error until they change."""
+    that is ignored, OD-481, or no longer compiles, or a field or fact this version doesn't know)
+    give way to the starter rules, so mail is still decided; `schema_tick` raises a System Error
+    until they change."""
     schema = current_schema(conn)
     stored = _stored(conn, "rules")
     if stored is None:

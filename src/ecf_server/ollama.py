@@ -293,6 +293,12 @@ class Client:
         models = cast("list[dict[str, Any]]", self._call("GET", "/api/tags").get("models") or [])
         return {str(m["name"]): str(m["digest"]) for m in models if "name" in m and "digest" in m}
 
+    def loaded(self) -> list[dict[str, Any]]:
+        """The models in memory (`/api/ps`): name, digest, bytes in VRAM and context length."""
+        models = cast("list[dict[str, Any]]", self._call("GET", "/api/ps").get("models") or [])
+        keys = ("name", "digest", "size_vram", "context_length")
+        return [{k: m.get(k) for k in keys} for m in models]
+
     def copy(self, source: str, destination: str) -> None:
         self._call("POST", "/api/copy", {"source": source, "destination": destination})
 

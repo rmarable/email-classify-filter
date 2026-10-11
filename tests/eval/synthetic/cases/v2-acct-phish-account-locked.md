@@ -12,7 +12,7 @@ from: "Harbor Savings Security <secure-team@harbor-savings-verify.example>"
 subject: "Account locked: verify within 24 hours"
 date: 2026-10-04T05:50:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: automated, fraud_risk: high}
+  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

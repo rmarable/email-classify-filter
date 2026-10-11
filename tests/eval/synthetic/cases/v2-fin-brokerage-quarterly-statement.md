@@ -11,7 +11,7 @@ from: "Bayline Brokerage <statements@bayline-invest.example>"
 subject: "Your third-quarter statement"
 date: 2026-10-06T05:30:00Z
 expected:
-  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: automated, fraud_risk: none}
+  labels: {category: finance, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none}
   rule: travel_finance
 ---
 Hello,

@@ -68,6 +68,7 @@ class MessageAnalyzer:
             payment_keyword=bool(keywords["payment"]),
             org_addresses=self._org_addresses,
             gmail_labels=gmail_labels,
+            scan_unscanned=tuple(keywords["unscanned"]),
         )
         found = auth.facts() | computed
         found["ecf_mail"] = own_mail.classify(self._conn, parsed, auth.result)
@@ -83,7 +84,7 @@ class MessageAnalyzer:
             watched_providers=self._providers,
             public_domains=self._public,
         )
-        return found | fired.facts()
+        return triggers.with_routes(found | fired.facts(), public_domains=self._public)
 
     def _reused(self, parsed: ParsedMessage) -> bool:
         """The Message-ID already belongs to an item with different content or identity
@@ -99,12 +100,26 @@ class MessageAnalyzer:
     def record(
         self, conn: sqlite3.Connection, parsed: ParsedMessage, found: dict[str, Any]
     ) -> None:
+        """Count the message toward its sender's history, unless it had a fraud reason, a
+        lookalike domain or a weak route reason: a scam must not build the history that softens
+        the routes (OD-490). Trigger 2's weak "first-time sender with a payment keyword" still
+        counts, or a new vendor's invoices would never make it known (operator decision
+        2026-10-10); so does a route whose only signal is that the sender has no history, or a
+        genuine sender sending such requests would never become known (operator decision
+        2026-10-10, pre-gate review G1). `record_sender` counts only DMARC-pass mail."""
+        t: dict[str, Any] = found.get("triggers") or {}
+        routed: dict[str, Any] = found.get("routes") or {}
+        reasons: list[str] = t.get("fraud") or []
+        fraud = [r for r in reasons if r not in triggers.HISTORY_ONLY]
+        if fraud or t.get("lookalikes") or routed.get("fraud_weak"):
+            return
         facts.record_sender(
             conn,
             self._address.address_id,
             parsed.from_addr,
             found["auth_result"],
             to_ts(self._clock.now()),
+            request=bool(reasons),  # all of them requests from a sender with no history
         )
 
 

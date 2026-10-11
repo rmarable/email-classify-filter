@@ -245,6 +245,9 @@ def _print_sender(r: dict[str, Any]) -> None:
     typer.echo(f"  Reply-To domain: {r['expected_reply_to_domain'] or 'none expected'}")
     typer.echo(f"  human-verified:  {'yes' if r['verified'] else 'no'} (rule 1a)")
     typer.echo(f"  DMARC passes:    {r['dmarc_pass_count']}")
+    if requests := r.get("request_pass_count"):  # migration 0035; absent from an older service
+        typer.echo(f"    of them code, gift-card or crypto requests: {requests}"
+                   " (known only once other mail passes too)")  # fmt: skip
     if r["shared_platform"]:
         typer.echo("  a shared platform: never counts as a known sender")
 

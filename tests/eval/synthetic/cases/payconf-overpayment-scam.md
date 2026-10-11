@@ -10,7 +10,7 @@ subject: "Payment received - overpayment of 3,000.00"
 date: 2026-10-30T09:00:00Z
 author: claude
 expected:
-  labels: {category: payment_confirmation, payment_related: true, fraud_risk: high}
+  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

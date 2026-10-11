@@ -84,7 +84,7 @@ class FieldSpec:
     kind: FieldKind
     description: str
     values: tuple[str, ...] = ()  # enum values, or ordinal levels low -> high
-    value_descriptions: tuple[str, ...] = ()
+    value_descriptions: tuple[str, ...] = ()  # each value's text; an ordinal's may be empty
 
     def rank(self, value: str) -> int:
         if self.kind is not FieldKind.ORDINAL:
@@ -154,16 +154,27 @@ def _field(name: str, raw: Any) -> FieldSpec:
             name, kind, desc, tuple(vals), tuple(str(v).strip() for v in vals.values())
         )
     if kind is FieldKind.ORDINAL:
-        levels = spec.get("levels")
-        if not isinstance(levels, list) or len(cast(list[Any], levels)) < 2:
-            raise InvalidInputError(f"field {name}: ordinal needs at least two levels")
-        lv = cast(list[Any], levels)
-        if any(not isinstance(v, str) or not re.fullmatch(VALUE_NAME, v) for v in lv):
-            raise InvalidInputError(f"field {name}: each level must be a lowercase name")
-        if len(set(lv)) != len(lv):
-            raise InvalidInputError(f"field {name}: levels must be unique")
-        return FieldSpec(name, kind, desc, tuple(cast(list[str], lv)))
+        return FieldSpec(name, kind, desc, *_levels(name, spec.get("levels")))
     return FieldSpec(name, kind, desc)
+
+
+def _levels(name: str, levels: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """An ordinal's levels, low to high, and their texts: `levels` is a list, or a mapping of each
+    level to its text (classifier plan item 2)."""
+    texts: tuple[str, ...] = ()
+    if isinstance(levels, dict):
+        texts = tuple(str(v).strip() for v in cast(dict[Any, Any], levels).values())
+        levels = list(cast(dict[Any, Any], levels))
+    if not isinstance(levels, list) or len(cast(list[Any], levels)) < 2:
+        raise InvalidInputError(f"field {name}: ordinal needs at least two levels")
+    lv = cast(list[Any], levels)
+    if any(not isinstance(v, str) or not re.fullmatch(VALUE_NAME, v) for v in lv):
+        raise InvalidInputError(f"field {name}: each level must be a lowercase name")
+    if len(set(lv)) != len(lv):
+        raise InvalidInputError(f"field {name}: levels must be unique")
+    if any(not t for t in texts):
+        raise InvalidInputError(f"field {name}: a level's text can't be empty")
+    return tuple(cast(list[str], lv)), texts
 
 
 def compile_schema(text: str, *, source: str = "schema") -> CompiledSchema:
@@ -211,6 +222,7 @@ def _field_lines(fields: Any) -> list[str]:
             lines += [f"    {v}: {d}" for v, d in zip(f.values, f.value_descriptions, strict=True)]
         elif f.kind is FieldKind.ORDINAL:
             lines.append(f"- {f.name} ({' < '.join(f.values)}): {f.description}")
+            lines += [f"    {v}: {d}" for v, d in zip(f.values, f.value_descriptions, strict=False)]
         else:
             lines.append(f"- {f.name} (true/false): {f.description}")
     return lines
@@ -249,6 +261,16 @@ def load_schema_v1() -> CompiledSchema:
     return _load(1)
 
 
+@functools.cache
+def load_schema_v2_0_0() -> CompiledSchema:
+    """The v2.0.0 schema text, frozen byte for byte (its header comment included) for eval runs
+    with the new wording off (`ecf eval run --no-new-wording`, classifier plan 0.3); never used
+    to classify mail."""
+    name = "schema_v2_0_0.yaml"
+    text = resources.files("ecf.data").joinpath(name).read_text(encoding="utf-8")
+    return compile_schema(text, source=name)
+
+
 # ---------------------------------------------------------------------------- extensions (OD-478)
 
 # The one switch (OD-481): off in v2.0.0, on from v2.1.0 once the extension check passes.
@@ -270,7 +292,13 @@ MAX_EXT_CATEGORY_VALUES = 4
 MAX_EXT_DESCRIPTION = 180  # characters, per description
 MAX_EXT_TEXT = 4000  # characters of prompt text the extension adds
 NEAR = 0.8  # "near the limit" from 80% of any cap
-EXT_HEADING = "Added by this install (answer these too):"
+# The heading and its rule (classifier plan item 7): added fields never move the shipped ones
+EXT_HEADING = (
+    "Added by this install (answer these too):\n"
+    "Added fields and values never change how you answer the fields above. Choose an added"
+    " category only when no built-in category fits; never instead of regulatory,"
+    " vendor_change_request or spam_or_phishing."
+)
 _EXT_KEYS = frozenset({"fields", "category_values"})
 
 
@@ -379,12 +407,13 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
     kind = spec.get("type")
     options = spec.get("values") if kind == "enum" else spec.get("levels")
     count = 0
-    if kind == "enum" and isinstance(options, dict):
+    if kind in ("enum", "ordinal") and isinstance(options, dict):  # level texts: plan item 7
         vals = cast(dict[Any, Any], options)
         count = len(vals)
+        key = "values" if kind == "enum" else "levels"
         for v, d in vals.items():
-            ok = _check_text(d, f"{where}.values.{str(v)[:40]}", out) and ok
-            if isinstance(v, str):
+            ok = _check_text(d, f"{where}.{key}.{str(v)[:40]}", out) and ok
+            if kind == "enum" and isinstance(v, str):  # levels never become labels
                 added.append((f"{where}.values.{v}", v))
     elif kind == "ordinal" and isinstance(options, list):
         count = len(cast(list[Any], options))
@@ -405,7 +434,7 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
 def _bad_names(kind: Any, options: Any, where: str, out: _Parsed) -> bool:
     """Every value or level that isn't a lowercase name, and every repeated level, listed."""
     names: list[Any] = []
-    if kind == "enum" and isinstance(options, dict):
+    if kind in ("enum", "ordinal") and isinstance(options, dict):
         names = list(cast(dict[Any, Any], options))
     elif kind == "ordinal" and isinstance(options, list):
         names = cast(list[Any], options)

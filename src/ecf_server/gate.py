@@ -246,6 +246,9 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
         return Check("synthetic", False, f"the latest run ({rid}, {when}) {why}: run"
                      f" {again} (or a full run) to the end")  # fmt: skip
     rid = str(run["run_id"])[:8]
+    if opts.get("for_gate") is False:  # an experiment (plan 0.3); absent on older runs
+        return Check("synthetic", False, f"the latest run ({rid}, {when}) was marked not for"
+                     f" the gate: run {again} (or a full run)")  # fmt: skip
     if unsafe:
         return Check("synthetic", False, f"the latest run ({rid}) had"
                      f" {len(unsafe)} unsafe case(s): {', '.join(unsafe[:5])}")  # fmt: skip

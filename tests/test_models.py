@@ -45,7 +45,7 @@ def check_kw(**kw: Any) -> dict[str, Any]:
 
 
 class FakeOllama:
-    """Enough of Ollama's API for these tests: tags, version, pull and copy."""
+    """Enough of Ollama's API for these tests: tags, version, ps, pull and copy."""
 
     def __init__(self, *, installed: bool = True, upstream: str = PIN.digest) -> None:
         self.models: dict[str, str] = {PIN.tag: upstream}
@@ -53,13 +53,17 @@ class FakeOllama:
             self.models[PIN.ecf_tag] = PIN.digest
         self.upstream = upstream
 
-    def handler(self, req: httpx.Request) -> httpx.Response:
+    def handler(self, req: httpx.Request) -> httpx.Response:  # noqa: PLR0911 - one per endpoint
         path = req.url.path
         if path == "/api/version":
             return httpx.Response(200, json={"version": "0.35.0"})
         if path == "/api/tags":
             listed = [{"name": k, "digest": v} for k, v in self.models.items()]
             return httpx.Response(200, json={"models": listed})
+        if path == "/api/ps":
+            return httpx.Response(200, json={"models": [
+                {"name": PIN.ecf_tag, "digest": PIN.digest, "size_vram": 9_000_000_000,
+                 "context_length": 6144, "expires_at": "2026-10-09T10:05:00Z"}]})  # fmt: skip
         if path == "/api/pull":
             self.models[PIN.tag] = self.upstream
             lines = [{"status": "pulling manifest"},

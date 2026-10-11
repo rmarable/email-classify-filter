@@ -162,7 +162,7 @@ def test_0034_moves_stored_classifications_to_schema_v2(
               " classification, created_at) VALUES ('s1', 'ap', 'd', 'ok', ?, 't')",
               (staff,))  # fmt: skip
     monkeypatch.setattr(db, "_migration_files", lambda: every)
-    assert db.migrate(c) == ["0034_schema_v2.sql"]
+    assert db.migrate(c, up_to=34) == ["0034_schema_v2.sql"]
     rows = {r[0]: r for r in c.execute("SELECT stable_id, classification, human_correction,"
                                        " schema_version FROM items")}  # fmt: skip
     assert json.loads(rows["s1"][1])["sender_type"] == "team"
@@ -172,5 +172,20 @@ def test_0034_moves_stored_classifications_to_schema_v2(
     assert {r[3] for r in rows.values()} == {2}
     shadow = c.execute("SELECT classification FROM fallback_shadow").fetchone()[0]
     assert json.loads(shadow)["sender_type"] == "team"
-    assert db.migrate(c) == []
+    assert db.migrate(c, up_to=34) == []
     c.close()
+
+
+def test_0035_counts_request_passes_apart(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-gate review G1 refinement: existing history keeps its count, with no requests."""
+    every = db._migration_files()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < 35])
+    c = db.connect(db_path)
+    db.migrate(c)
+    c.execute(
+        "INSERT INTO senders (address_id, sender_hash, dmarc_pass_count) VALUES ('ap', 'h', 4)"
+    )
+    monkeypatch.setattr(db, "_migration_files", lambda: every)
+    assert db.migrate(c) == ["0035_sender_request_passes.sql"]
+    row = c.execute("SELECT dmarc_pass_count, request_pass_count FROM senders").fetchone()
+    assert tuple(row) == (4, 0)

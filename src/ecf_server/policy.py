@@ -8,11 +8,12 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   junk) survives only when the rule allows hiding, the stage allows it (`live`; step 4b), the
   address isn't `high` (rules 6-8 become label + leave there, §8.3), none of the blockers is set
   (`content_unscanned`, quarantine, the regulator trigger, any fraud signal: a fraud or weak fraud
-  trigger, a lookalike domain, or `fraud_risk` of low or more), and it is corroborated from facts
-  alone: authenticated bulk mail from a sender seen before (`bulk_corroborates`), or a category a
-  person confirmed for this sender that matches this classification, on a message whose
-  `auth_result` is pass (OD-057). A hide that doesn't survive leaves the label and adds `leave`;
-  the digest may offer "confirm this sender's category".
+  trigger, a lookalike domain, or `fraud_risk` of low or more; a risky attachment, v2.1.0), and
+  it is corroborated from facts alone: authenticated bulk mail from a sender seen before
+  (`bulk_corroborates`), or a category a person confirmed for this sender that matches this
+  classification, on a message whose `auth_result` is pass (OD-057). A hide that doesn't
+  survive leaves the label and adds `leave`; the digest may offer "confirm this sender's
+  category".
 - **I2:** nothing here removes a label or flag; the pre-check's actions are never undone by a
   classification.
 - **I3:** `high_risk` (§8.2) and `payment_or_fraud` (step-up, Approve-all exclusions) are the facts
@@ -133,6 +134,8 @@ def hide_blockers(ctx: Context) -> list[str]:
         out.append("regulatory")
     if fraud_signal(ctx):
         out.append("fraud signal")
+    if ctx.facts.get("risky_attachment"):
+        out.append("risky attachment")
     return out
 
 

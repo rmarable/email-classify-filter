@@ -23,7 +23,17 @@ from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result
 from ecf.schema import load_schema
-from ecf_server import claude_eval, claude_pins, config, db, evalrun, gate
+from ecf_server import (
+    claude_eval,
+    claude_pins,
+    claude_review,
+    config,
+    db,
+    evalrun,
+    gate,
+    signals,
+    triggers,
+)
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import NullNotifier
@@ -207,7 +217,8 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
     for gold in ("expected", "safety", "injection_target", "must_escalate", "fraud_guard"):
         assert gold not in text
     msg = out[1]
-    assert set(msg) == {"id", "need", "untrusted_email", "notice", "schema", "schema_text"}
+    assert set(msg) == {"id", "need", "untrusted_email", "notice", "schema", "schema_text",
+                        "signals"}  # fmt: skip
     assert msg["schema_text"] == load_schema().prompt_block
     assert set(msg["untrusted_email"]) == {"from", "subject", "date", "text", "attachments_meta"}
 
@@ -401,6 +412,44 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     assert s is not None and s["done"] == 1
     m = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
     assert m["schema_digest"] == schema.digest != load_schema().digest
+    assert m["prompt_digest"] == claude_review.prompt_digest(schema)  # Claude's side (Q4)
+    assert m["keywords_digest"] == triggers.keywords_digest()
+
+
+def test_a_cards_expected_facts_reach_the_hide_path_as_in_ecf_eval_run(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Q1 for `/ecf-eval`: a card's expected facts are applied as `ecf eval run` applies them,
+    so an authenticated bulk notice from a seen sender, answered benignly, is archived; the same
+    notice without those facts isn't."""
+    card = (root / "cases" / "starter-control.md").read_text()
+    seen = card.replace("id: starter-control", "id: seen-bulk").replace(
+        "  rule: marketing", "  facts: {auth_result: pass, sender_seen_before: true}\n"
+        "  rule: marketing")  # fmt: skip
+    (root / "cases" / "seen-bulk.md").write_text(seen)
+    assert not build_all(root).findings
+    labels.confirm(root, "seen-bulk", date(2026, 10, 1))
+    labels.confirm(root, "starter-control", date(2026, 10, 1))
+    start(db_path, clock, root)
+    drain(db_path, clock, lambda _c: MARKETING)
+    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
+    actions = {c.id: set(c.actions) for c in load_result(Path(path)).cases}
+    assert {"archive"} <= actions["seen-bulk"] and not {"archive", "mark_read"} & actions[
+        "starter-control"]  # fmt: skip
+
+
+def test_a_case_goes_out_with_the_signals_gemma_gets(
+    db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """OD-484 (plan item 5): the same `signals.sent` on the case's facts, as `signals`."""
+    r = tmp_path / "synthetic"
+    (r / "cases").mkdir(parents=True)
+    shutil.copy(SYNTHETIC / "cases" / "crypto-payment-demand.md", r / "cases")
+    assert not build_all(r).findings
+    start(db_path, clock, r)
+    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    msg = claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
+    assert msg["signals"] == {"crypto_payment": signals.WORDING["crypto_payment"]}
 
 
 @pytest.mark.usefixtures("extensions_on")

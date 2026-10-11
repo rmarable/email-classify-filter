@@ -8,10 +8,12 @@ synthetic set's fictitious org, `org_domains: [acme.example]`, one named staff m
 two named people in `org_addresses`; the scratch alone treats `freemail.example` as a public
 provider, standing in for gmail.com). There is no DNS (so `auth_result` is `none` unless the
 case's expected facts say otherwise). The case's expected facts then override the computed ones,
-except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and its
-expected labels stand in for the classifier's output. Nothing is written to the live database,
-and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones, `ecf eval
-build`) are skipped and listed.
+except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and the
+derived `bulk_corroborates` is recomputed from the result (`with_expected`, shared with `ecf eval
+run`); its expected labels stand in for the classifier's output. Nothing is written to the live
+database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones,
+`ecf eval build`) are skipped and listed. A card over a `standard` address's limit (16 MB) is read
+as the service reads such a message (`read_case`), not skipped.
 """
 
 from __future__ import annotations
@@ -23,13 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
-from ecf_server import db, internal, precheck, rules
+from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
+from ecf_server import db, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
-from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo
-from ecf_server.message import parse
+from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo, corroborates
+from ecf_server.mail.fake import fetch_part_of, structure_of
+from ecf_server.message import ParsedMessage, parse, parse_partial
 
 FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
 
@@ -51,7 +54,34 @@ PROFILES = {
 ADDRESS = PROFILES["org"].address  # both profiles are `standard`
 MAX_CASES = 1000
 MAX_INDEX_BYTES = 4 * 1024 * 1024  # labels.jsonl
-MAX_CASE_BYTES = 16 * 1024 * 1024  # larger ones are parsed in a child in a check (OD-195)
+MAX_CASE_BYTES = 64 * 1024 * 1024  # larger cards are skipped and listed (read whole into memory)
+
+
+@dataclass(frozen=True)
+class Read:
+    """A card as the service reads it: the parsed message, what sender authentication sees
+    (the whole message, or only the header block when partial) and the facts the fetch adds."""
+
+    parsed: ParsedMessage
+    raw: bytes
+    extra: dict[str, Any]
+
+
+def read_case(raw: bytes) -> Read:
+    """A card as a `standard` address reads it: whole, or, over that address's limit (16 MB), as
+    `fetch._process_partial` does: headers, the attachment list and the start of each text part,
+    with `oversized` and `content_unscanned` set and never a DKIM pass (SPEC §5.1). The parts are
+    rebuilt from the file as BODYSTRUCTURE and partial fetches would give them (`mail.fake`); the
+    IMAP fetch itself isn't exercised."""
+    if len(raw) <= fetch.DEFAULT_MAX[ADDRESS.sensitivity]:
+        return Read(parse(raw), raw, {})
+    parts = structure_of(raw)
+    header = fetch_part_of(raw, "HEADER", fetch.HEADER_LIMIT) or b""
+    texts = {p.section: fetch_part_of(raw, p.section, fetch.DEFAULT_SCAN) or b""
+             for p in [p for p in parts if p.content_type.startswith("text/")]
+             [:fetch.MAX_PARTIAL_TEXTS]}  # fmt: skip
+    parsed = parse_partial(header, parts, texts, size=len(raw), max_scan_bytes=fetch.DEFAULT_SCAN)
+    return Read(parsed, header, {"oversized": True, "content_unscanned": True})
 
 
 def _no_dns(name: str, rtype: str) -> Answer:
@@ -93,6 +123,9 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             raise InvalidInputError(f"labels.jsonl line {n}: {exc}") from None
         if case.profile not in PROFILES:
             raise InvalidInputError(f"labels.jsonl line {n}: no profile {case.profile!r}")
+        if bad := sorted(DERIVED_FACTS & case.facts.keys()):
+            raise InvalidInputError(f"labels.jsonl line {n}: {', '.join(bad)} can't be set by"
+                                    " a case (computed from the message)")  # fmt: skip
         if bad := sorted(INTERNAL_FACTS & case.facts.keys()):
             raise InvalidInputError(f"labels.jsonl line {n}: {', '.join(bad)} can't be set by"
                                     " a case (OD-443)")  # fmt: skip
@@ -135,15 +168,39 @@ class Scratch:
         return conn
 
     def facts(self, raw: bytes, profile: str = "org") -> dict[str, Any]:
+        return self.analyze(read_case(raw), profile)
+
+    def analyze(self, read: Read, profile: str = "org") -> dict[str, Any]:
+        """The facts as `fetch._store` records them: the fetch's own, then the analysis's."""
         conn = self._conn(profile)
         analyzer = MessageAnalyzer(conn, self.clock, PROFILES[profile].address,
                                    DnsCache(conn, self.clock, lookup=_no_dns),
                                    public_domains=PUBLIC_DOMAINS | {FREEMAIL})  # fmt: skip
-        return analyzer.analyze(parse(raw), raw)
+        return read.extra | analyzer.analyze(read.parsed, read.raw)
 
     def close(self) -> None:
         for conn in self._conns.values():
             conn.close()
+
+
+def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    """Computed facts with a case's expected ones over them, the internal set's excepted
+    (OD-443), and `bulk_corroborates` recomputed unless the case sets it: it is derived in
+    `facts.compute` before any override, so a card's `auth_result: pass` or `sender_seen_before`
+    would otherwise never reach the hide path (Q1). Likewise `known_sender_auth_regressed` (from
+    the expected `sender_seen_before` and `auth_result`), and the routes are computed again over
+    the result (OD-490), so a card's expected facts reach them."""
+    out = found | {k: v for k, v in expected.items() if k not in INTERNAL_FACTS}
+    if "bulk_corroborates" not in expected:
+        out["bulk_corroborates"] = corroborates(bool(out.get("bulk_signal")),
+                                                out.get("auth_result"),
+                                                bool(out.get("sender_seen_before")))  # fmt: skip
+    if "known_sender_auth_regressed" not in expected:
+        # live also needs DMARC-pass history; a card's `sender_seen_before` stands in for it
+        out["known_sender_auth_regressed"] = (bool(out.get("sender_seen_before"))
+                                              and out.get("auth_result") == "fail"
+                                              and not out.get("shared_platform"))  # fmt: skip
+    return triggers.with_routes(out, public_domains=PUBLIC_DOMAINS | {FREEMAIL})
 
 
 def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, Any]:
@@ -167,7 +224,8 @@ def run(
             if case.path.stat().st_size > MAX_CASE_BYTES:  # skipped, named (V1.2 review)
                 missing.append(case.id)
                 continue
-            found = scratch.facts(case.path.read_bytes(), case.profile) | case.facts
+            found = with_expected(scratch.facts(case.path.read_bytes(), case.profile),
+                                  case.facts)  # fmt: skip
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
             before, after = _outcome(current, inp), _outcome(proposed, inp)

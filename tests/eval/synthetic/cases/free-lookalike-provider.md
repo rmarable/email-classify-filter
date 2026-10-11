@@ -11,7 +11,7 @@ from: "Sam Rivera <sam-rivera@freemai1.example>"
 subject: "Dinner moved to 7"
 date: 2026-10-04T15:30:00Z
 expected:
-  labels: {category: other, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: medium, sender_type: unknown}
+  labels: {category: private, priority: low, requires_action: false, requires_reply: false, payment_related: false, fraud_risk: medium, sender_type: friend}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---
