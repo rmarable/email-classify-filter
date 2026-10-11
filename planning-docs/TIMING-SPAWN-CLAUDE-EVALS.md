@@ -1,7 +1,7 @@
-# Timing per spawn in Claude evals (v2.1.1)
+# Timing per spawn in Claude evals (v2.2.0)
 
-- **Status:** draft 1 (2026-10-11). Release `v2.1.1`, worked on after `v2.1.0` ships (operator
-  decision 2026-10-11). Not built.
+- **Status:** draft 1 (2026-10-11). Release `v2.2.0`, worked on after `v2.1.0` ships (operator
+  decision 2026-10-11; was `v2.1.1`). Not built.
 - **Base:** `main` after the `v2.1.0` merge.
 - **Decisions:** SPEC once built; until then this document. SPEC §1.2 holds the one-paragraph
   summary.
@@ -82,6 +82,6 @@ Not changed: `claude_calls` (no case IDs on telemetry rows; the claim times are 
   earlier ones' time; spawn duration is the fairer figure.
 - One session per run is assumed for spawn figures; a run continued in a second session (typing
   `/ecf-eval` again) restarts the round counter per run, not per session (to confirm in step 1).
-- Version: an added eval feature; under OD-480 that could be a minor release. The operator chose
-  `v2.1.1` (2026-10-11).
+- Version: an added eval feature, so a minor release under OD-480: `v2.2.0` (operator decision
+  2026-10-11; first chosen as `v2.1.1`). The IBAN resume fix follows as `v2.3.0`.
 - Whether `standard` runs need a `--batch`-like split for `ecf-classifier` is out of scope.
