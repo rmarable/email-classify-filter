@@ -846,13 +846,18 @@ def test_folds_equals_the_unicode_path() -> None:
 
 
 def test_scan_stops_at_the_message_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """R3-P11: past SCAN_CHARS of distinct text a message isn't scanned further, and says so."""
-    monkeypatch.setattr(tr, "SCAN_CHARS", 100)
+    """R3-P11: past SCAN_BYTES of distinct text a message isn't scanned further, and says so."""
+    monkeypatch.setattr(tr, "SCAN_BYTES", 100)
     assert tr.scan(["x" * 60, "x" * 60, "wire transfer"])["unscanned"] == []  # read once
     late = tr.scan(["x" * 90, "please send a wire transfer"])
     assert late["bank"] == [] and late["unscanned"] == [tr.UNSCANNED_TEXT]
     assert tr.scan(["x" * 100, "y"])["unscanned"] == [tr.UNSCANNED_TEXT]
     assert tr.scan(["x" * 100])["unscanned"] == []
+    # the limit is bytes as Python holds the text: a non-BMP character takes 4 (pre-gate G7)
+    emoji = "\U0001f600"
+    assert tr.scan([emoji * 25])["unscanned"] == []
+    cut = tr.scan([emoji * 26 + " wire transfer"])
+    assert cut["unscanned"] == [tr.UNSCANNED_TEXT] and cut["bank"] == []
 
 
 def test_texts_of_reads_short_fields_then_visible_then_full_text() -> None:
@@ -867,7 +872,7 @@ def test_texts_of_reads_short_fields_then_visible_then_full_text() -> None:
 def test_a_scan_cut_short_makes_the_message_not_fully_scanned(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    monkeypatch.setattr(tr, "SCAN_CHARS", 10)
+    monkeypatch.setattr(tr, "SCAN_BYTES", 10)
     analyzer = MessageAnalyzer(conn, clock, AddressInfo("ap", "ap@acme.example", "standard"),
                                DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
     raw = mail("a body longer than ten")

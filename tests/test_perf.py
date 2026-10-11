@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+import tracemalloc
 from collections.abc import Callable
 
 import pytest
@@ -82,7 +83,7 @@ def test_scan_of_a_10_mib_part(kind: str, units: int) -> None:
 
 def test_scan_of_a_20_part_partial_message_stops_at_its_limit() -> None:
     """R3-P11: a message over the size limit is read as 20 parts of 5 MiB here (100 MiB, about
-    220 units to scan whole); the scan stops at SCAN_CHARS (about 70 units) and says so."""
+    220 units to scan whole); the scan stops at SCAN_BYTES (about 70 units) and says so."""
     parts = [PartInfo(str(i + 1), "text/plain", None, None, "8bit", "utf-8", 5 * MIB)
              for i in range(20)]  # fmt: skip
     texts = {p.section: (f"part {p.section}\n" + LINE * (5 * MIB // len(LINE))).encode()
@@ -208,3 +209,22 @@ def test_link_recording_on_hostile_html(shape: str) -> None:
     took, out = _cpu(lambda: html_text(html))
     assert took < 30 * unit
     assert out.links.number <= LINK_CAP
+
+
+def test_the_scan_holds_little_more_than_its_limit_in_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-gate review G7: the limit counts bytes, so non-BMP text can't make it 4x larger, and
+    one text's folds are held at a time. 6x the limit measured on this Mac (2026-10-10; 24x
+    when the limit counted characters)."""
+    monkeypatch.setattr(tr, "SCAN_BYTES", 4 * MIB)
+    text = "words \U0001f600 " * (8 * MIB // 9)
+    tr.scan(["warm"])
+    tracemalloc.start()
+    try:
+        hits = tr.scan([text])
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert hits["unscanned"] == [tr.UNSCANNED_TEXT]
+    assert peak < 10 * 4 * MIB

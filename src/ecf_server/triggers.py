@@ -116,10 +116,12 @@ SAAS_TENANT_PARENTS = ("zendesk.com", "freshdesk.com", "atlassian.net", "service
 DISPLAY_TLDS = COMMON_TLDS
 _DOMAIN = re.compile(r"(?<![\w@.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])")
 _ADDRESS = re.compile(r"[\w.+-]+@((?:[a-z0-9-]+\.)+[a-z]{2,})")
-# Characters of text scanned per message, over all its distinct texts (R3-P11): the scan runs in
-# the check thread with no time limit, and a message may have many parts of up to
-# `max_scan_bytes_per_part` each. The rest is not scanned and the message is `content_unscanned`.
-SCAN_CHARS = 24 * 1024 * 1024  # one maximal part, HTML too (operator decision 2026-10-10)
+# Text scanned per message, over all its distinct texts, in bytes as Python holds it (1, 2 or 4
+# per character, so a non-BMP character can't make the bound 4x larger; pre-gate review G7)
+# (R3-P11): the scan runs in the check thread with no time limit, and a message may have many
+# parts of up to `max_scan_bytes_per_part` each. The rest is not scanned and the message is
+# `content_unscanned`.
+SCAN_BYTES = 24 * 1024 * 1024  # one maximal part, HTML too (operator decision 2026-10-10)
 UNSCANNED_TEXT = "text over the message's scan limit"
 UNSCANNED_IBANS = "too many IBAN-like numbers to check"
 
@@ -199,46 +201,62 @@ def _found_in(text: str, pats: tuple[_Pattern, ...]) -> set[_Pattern]:
     return found
 
 
+def _width(text: str) -> int:
+    """Bytes per character as Python holds `text` (PEP 393): 1, 2 or 4."""
+    if text.isascii():
+        return 1
+    top = ord(max(text))
+    return 1 if top <= 0xFF else 2 if top <= 0xFFFF else 4
+
+
 def _within_limit(texts: list[str]) -> tuple[list[str], bool]:
-    """The distinct texts, in order, cut to SCAN_CHARS in all; True when something was cut."""
+    """The distinct texts, in order, cut to SCAN_BYTES in all; True when something was cut."""
     out: list[str] = []
-    left = SCAN_CHARS
+    left = SCAN_BYTES
     for t in dict.fromkeys(t for t in texts if t):
-        if len(t) > left:
-            if left:
-                out.append(t[:left])
+        width = _width(t)
+        if len(t) * width > left:
+            if left >= width:
+                out.append(t[: left // width])
             return out, True
         out.append(t)
-        left -= len(t)
+        left -= len(t) * width
     return out, False
 
 
 def scan(texts: list[str]) -> dict[str, list[str]]:
     """Keywords found per group, in any of the texts. Each distinct text is read once (a plain
     part's visible text is its full text), normalized once for its three forms, and the texts
-    are read up to SCAN_CHARS in all. Besides the groups: `crypto_wallet`, `amount`, and
-    `unscanned`, why the scan stopped short (a reason for `content_unscanned`)."""
+    are read up to SCAN_BYTES in all. Every group's patterns of one case are searched together,
+    one search per text form, and one text's forms are held at a time (pre-gate review G6, G7);
+    a keyword two groups list is one pattern, found for both. Besides the groups:
+    `crypto_wallet`, `amount`, and `unscanned`, why the scan stopped short (a reason for
+    `content_unscanned`)."""
     distinct, cut = _within_limit(texts)
-    forms = [folds(t) for t in distinct]
-    folded = [(cs, ci) for cs, ci, _ in forms]
-    hits: dict[str, list[str]] = {g: [] for g in GROUPS}
-    for group, pats in _patterns().items():
-        found: set[_Pattern] = set()
-        for case_sensitive in (True, False):
-            todo = tuple(p for p in pats if p.case_sensitive is case_sensitive)
-            for cs, ci in folded:
-                if todo:
-                    found |= _found_in(cs if case_sensitive else ci, todo)
-                    todo = tuple(p for p in todo if p not in found)
-        hits[group] = [p.word for p in pats if p in found]
-    entities = [e for _, _, e in forms]
-    ibans = [_iban(t) for t in entities]
-    if True in ibans:
+    pats = _patterns()
+    todo = {case: tuple(dict.fromkeys(p for ps in pats.values() for p in ps
+                                      if p.case_sensitive is case))
+            for case in (True, False)}  # fmt: skip
+    found: set[_Pattern] = set()
+    iban: set[bool | None] = set()
+    wallet = money = False
+    for t in distinct:
+        cs, ci, entity = folds(t)
+        for case, form in ((True, cs), (False, ci)):
+            if todo[case]:
+                found |= _found_in(form, todo[case])
+                todo[case] = tuple(p for p in todo[case] if p not in found)
+        del cs, ci  # one text's forms at a time
+        iban.add(_iban(entity))
+        wallet = wallet or bool(WALLET.search(entity))
+        money = money or amount(entity)
+    hits: dict[str, list[str]] = {g: [p.word for p in pats[g] if p in found] for g in GROUPS}
+    if True in iban:
         hits["bank"].append(IBAN_HIT)
-    hits["crypto_wallet"] = ["wallet address"] if any(WALLET.search(t) for t in entities) else []
-    hits["amount"] = [AMOUNT_HIT] if any(amount(t) for t in entities) else []
+    hits["crypto_wallet"] = ["wallet address"] if wallet else []
+    hits["amount"] = [AMOUNT_HIT] if money else []
     hits["unscanned"] = [r for r, on in ((UNSCANNED_TEXT, cut),
-                                         (UNSCANNED_IBANS, None in ibans)) if on]  # fmt: skip
+                                         (UNSCANNED_IBANS, None in iban)) if on]  # fmt: skip
     return hits
 
 
