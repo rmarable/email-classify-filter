@@ -38,9 +38,10 @@ def _cpu[T](f: Callable[[], T]) -> tuple[float, T]:
 
 
 def _unit() -> float:
-    """The baseline: the fastest of three searches for a missing word over 10 MiB."""
+    """The baseline: the fastest of five searches for a missing word over 10 MiB (five: under
+    `-n auto` the baseline and the workload can land on different core types; pre-gate G15)."""
     text = LINE * (10 * MIB // len(LINE))
-    return min(_cpu(lambda: _PROBE.search(text))[0] for _ in range(3))
+    return min(_cpu(lambda: _PROBE.search(text))[0] for _ in range(5))
 
 
 def _raw(body: str, content_type: str) -> bytes:
@@ -145,7 +146,7 @@ def test_the_amount_search_on_a_crafted_10_mib_text(unit_text: str) -> None:
     text = unit_text * (10 * MIB // len(unit_text))
     unit = _unit()
     took, found = _cpu(lambda: tr.amount(text))
-    assert took < 15 * unit
+    assert took < 20 * unit  # at least 3x the worst measured (pre-gate review G15)
     assert not found
 
 

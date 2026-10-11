@@ -734,6 +734,7 @@ def test_a_run_rescored_through_the_policy_changes_nothing(
     assert s["replanned"]["rule_changed"] == [] and s["replanned"]["actions_changed"] == []
     assert s["replanned"]["actor"]["recorded"] == len(acted)
     assert s["scoring"] == "policy" and s["rescored_from"]["scoring"] == "live"
+    assert s["rescored_from"]["set_changed"] is False
     assert s["rescored_from"]["rules_digest"] == s["rules_digest"]
     assert s["correct"] == (live.summary or {})["correct"] and s["gate_passed"] is False
     # offline figures recomputed today; the call figures are the run's own
@@ -757,7 +758,7 @@ def test_an_older_results_actor_action_is_inferred(
                                   "actions": [*c.actions, "move"] if c.id in acted
                                   and c.id == min(acted) else c.actions})
              for c in live.cases]  # fmt: skip
-    old = live.model_copy(update={"cases": older, "summary": {}})
+    old = live.model_copy(update={"cases": older, "summary": {}, "set_version": "an-older-set"})
     out = evalrun.rescore_through_policy(root, evalrun.write_result(tmp_path, old, "old.json"),
                                          clock)  # fmt: skip
     s = out["summary"]
@@ -766,6 +767,7 @@ def test_an_older_results_actor_action_is_inferred(
     assert s["replanned"]["actor"]["inferred"] == len(acted) - 1
     assert s["replanned"]["actions_changed"] == [min(acted)]  # only the unreplayable move
     assert s["rescored_from"]["scoring"] == "live"
+    assert s["rescored_from"]["set_changed"] is True  # the copy says another set (G5)
     new = {c.id: c for c in load_result(Path(out["path"])).cases}
     assert all("escalate" in new[i].actions for i in acted)
 

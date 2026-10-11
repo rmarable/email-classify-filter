@@ -214,6 +214,11 @@ def scoring(r: ResultFile) -> str:
     return "recorded" if "rescored_from" in s else "live"
 
 
+def _set_changed(r: ResultFile) -> bool:
+    rescored = cast(dict[str, object], (r.summary or {}).get("rescored_from") or {})
+    return rescored.get("set_changed") is True
+
+
 def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     """ "different prompt", "different inputs", "different keywords" or "different rules" when
     both runs recorded a value and they differ (OD-486), and "different scoring" when one result's
@@ -222,6 +227,9 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     out: list[str] = []
     if (sa := scoring(a)) != (sb := scoring(b)):
         out.append(f"warning: different scoring ({sa} vs {sb})")
+    if _set_changed(a) or _set_changed(b):  # pre-gate review G5
+        out.append("warning: a result was planned again on a set whose labels changed since"
+                   " its run")  # fmt: skip
     for key, what in INPUT_KEYS.items():
         va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
         if va is not None and vb is not None and va != vb:

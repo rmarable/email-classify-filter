@@ -811,9 +811,12 @@ def _inputs(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
 @dataclass
 class Measures:
     """Per-stage figures over a run's cases (pre-classifier plan §11, P21, perf-10): the time to
-    compute a synthetic card's facts and excerpts, the trigger scan's share of it (timed again
-    on its own), the classifier excerpt's length and the signals block's size where one was sent.
-    Wall time on this machine; a corpus case's facts are stored, so it isn't timed."""
+    compute a synthetic card's facts and excerpts (reading the file and the scan included), the
+    trigger scan timed again on its own (a second, warm pass: its compiled patterns are cached
+    by then), the classifier excerpt's length and the signals block's size where one was sent.
+    Wall time on this machine; a corpus case's facts are stored, so it isn't timed. A synthetic
+    card's facts come from the eval's empty scratch, not the install's history (pre-gate review
+    G12)."""
 
     facts_s: list[float] = field(default_factory=list[float])
     scan_s: list[float] = field(default_factory=list[float])
@@ -866,7 +869,8 @@ def _spread(xs: list[float]) -> dict[str, float | None]:
 
 
 def row_counts(conn: sqlite3.Connection) -> dict[str, int]:
-    """The install's `senders` and `items` rows: the history the facts are computed against."""
+    """The install's `senders` and `items` rows: the live history's size. A synthetic card's facts
+    are computed in the eval's scratch, not against it (pre-gate review G12)."""
     return {t: int(conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0])  # noqa: S608
             for t in ("senders", "items")}  # fmt: skip
 
@@ -1347,7 +1351,11 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     old = load_result(result_path)
     cases, version = load(root, fraud_only=False)
     by_id = {c.id: c for c in cases}
-    schema = load_schema()
+    # the schema the run asked with: its labels are what a replayed label proposal is checked
+    # against (pre-gate review G5)
+    before_opts = cast(dict[str, Any], (old.summary or {}).get("options") or {})
+    wording_off = "new_wording" in (before_opts.get("switches_off") or [])
+    schema = load_schema_v2_0_0() if wording_off else load_schema()
     rules_now = rules.load_starter_rules(schema)
     known = policy.labels(schema, rules_now)
     scratch = ruletest.Scratch(clock)
@@ -1396,6 +1404,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         "rules_digest": before.get("rules_digest"),
         "scoring": scoring(old),
         "values_mapped": mapped,
+        "set_changed": old.set_version != version,  # labels changed since the run (G5)
         "model_only_fraud_cases": before.get("model_only_fraud_cases"),
     }
     # offline figures recomputed today (a baseline for the run's own); the call figures are the

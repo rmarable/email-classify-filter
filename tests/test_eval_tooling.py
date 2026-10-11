@@ -355,6 +355,9 @@ def test_compare_warns_on_different_keywords_rules_or_scoring() -> None:
     old = b.model_copy(update={"summary": {"rescored_from": {}}})  # an older rescore
     assert scoring(old) == "recorded" and scoring(a) == "live"
     assert input_warnings(a, old) == ["warning: different scoring (live vs recorded)"]
+    moved = kb.model_copy(update={"summary": {"scoring": "policy",
+                                              "rescored_from": {"set_changed": True}}})  # fmt: skip
+    assert input_warnings(kb, moved)[-1].startswith("warning: a result was planned again on a set")
 
 
 def test_compare_fields_holm() -> None:
