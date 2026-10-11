@@ -1173,6 +1173,8 @@ def test_flagged_items_dont_build_sender_history(
     only = f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"
     analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only]}})
     assert count() == 2
+    requests = conn.execute("SELECT sum(request_pass_count) FROM senders").fetchone()[0]
+    assert requests == 1  # counted apart: requests alone never make a sender known
     analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only, "bank details with x"]}})
     analyzer.record(conn, parsed, base | {"triggers": {"fraud": [
         f"{tr.CREDENTIAL} and {tr.NO_HISTORY} and Reply-To mismatch"]}})  # fmt: skip

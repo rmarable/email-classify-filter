@@ -97,6 +97,23 @@ def test_seen_needs_three_passes_over_fourteen_days(
     assert f["sender_seen_before"] and not f["sender_confirmed"]
 
 
+def test_requests_alone_never_make_a_sender_known(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Pre-gate review G1 refinement (operator decision 2026-10-10): passes that were code,
+    gift-card or crypto requests count, but a sender is known only once other mail passed too."""
+    start = clock.now()
+    for d in (0, 7, 20):
+        with write_tx(conn):
+            facts.record_sender(conn, "ap", "billing@vendor-a.example", "pass",
+                                to_ts(start + _days(d)), request=True)  # fmt: skip
+    assert not compute(conn, mail())["sender_seen_before"]
+    history(conn, "billing@vendor-a.example", [21], clock)  # one ordinary message
+    assert compute(conn, mail())["sender_seen_before"]
+    row = conn.execute("SELECT dmarc_pass_count, request_pass_count FROM senders").fetchone()
+    assert tuple(row) == (4, 3)
+
+
 def test_only_passing_mail_builds_history(conn: sqlite3.Connection, clock: FakeClock) -> None:
     for d in (0, 7, 20):
         with write_tx(conn):

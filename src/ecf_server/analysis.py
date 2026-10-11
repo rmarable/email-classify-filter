@@ -119,6 +119,7 @@ class MessageAnalyzer:
             parsed.from_addr,
             found["auth_result"],
             to_ts(self._clock.now()),
+            request=bool(reasons),  # all of them requests from a sender with no history
         )
 
 

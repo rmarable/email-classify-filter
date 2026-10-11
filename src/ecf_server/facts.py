@@ -199,18 +199,28 @@ def corroborates(bulk: bool, auth_result: str | None, seen: bool) -> bool:
 
 
 def record_sender(
-    conn: sqlite3.Connection, address_id: str, from_addr: str | None, auth_result: str, now: str
+    conn: sqlite3.Connection,
+    address_id: str,
+    from_addr: str | None,
+    auth_result: str,
+    now: str,
+    *,
+    request: bool = False,
 ) -> None:
-    """Count a DMARC-pass message toward the sender's history (inside the item's transaction)."""
+    """Count a DMARC-pass message toward the sender's history (inside the item's transaction);
+    `request`: it was a code, gift-card or crypto request whose only fraud reason was the
+    missing history, also counted apart (migration 0035)."""
     if auth_result != "pass" or not from_addr:
         return
     conn.execute(
         "INSERT INTO senders (address_id, sender_hash, domain, dmarc_pass_count, first_pass_at,"
-        " last_pass_at) VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT (address_id, sender_hash) DO UPDATE"
+        " last_pass_at, request_pass_count) VALUES (?, ?, ?, 1, ?, ?, ?)"
+        " ON CONFLICT (address_id, sender_hash) DO UPDATE"
         " SET dmarc_pass_count = dmarc_pass_count + 1, domain = excluded.domain,"
         " first_pass_at = coalesce(first_pass_at, excluded.first_pass_at),"
-        " last_pass_at = excluded.last_pass_at",
-        (address_id, sender_hash(from_addr), domain_of(from_addr), now, now),
+        " last_pass_at = excluded.last_pass_at,"
+        " request_pass_count = request_pass_count + excluded.request_pass_count",
+        (address_id, sender_hash(from_addr), domain_of(from_addr), now, now, int(request)),
     )
 
 
@@ -313,6 +323,10 @@ def _history(
 
 def _enough_history(row: sqlite3.Row) -> bool:
     if row["dmarc_pass_count"] < SEEN_COUNT or not row["first_pass_at"] or not row["last_pass_at"]:
+        return False
+    # at least one pass was other mail than a code, gift-card or crypto request: a domain that
+    # only ever sends such requests never becomes known (pre-gate review G1 refinement)
+    if row["request_pass_count"] >= row["dmarc_pass_count"]:
         return False
     first: datetime = from_ts(row["first_pass_at"])
     last: datetime = from_ts(row["last_pass_at"])

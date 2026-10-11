@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.1.0 (not yet tagged)
 
+- A sender that only ever sends requests for codes, gift cards or crypto payments never becomes a known sender, however often its mail is authenticated, so such requests from it stay escalated; a sender becomes known once some of its other mail is authenticated too. `ecf sender show` shows how many of a sender's authenticated messages were such requests. The database gains one column (migration 0035); export bundles keep their format (SPEC §8.5).
 - `ecf eval routes --result` now judges a run against the same answers with the new fraud routes off: it fails if the routes lose a scam that was caught without them, leave a scam uncaught or newly escalate a genuine email, and it also shows what a new mailbox with no sender history would see (SPEC §16.2).
 - ecf's own checks scan a huge email faster and with less memory; the 24 MiB scan limit now counts the text's size in memory, so very large text in a non-Latin script or with emoji is marked not fully scanned sooner (never hidden or answered automatically) (SPEC §8.5).
 - The new fraud routes no longer count mail sent to an alias or list address as a warning sign, and a sender whose requests for a code or gift cards are flagged only because it's new still builds history from its authenticated mail, so a genuine sender stops being escalated once it's known; a known sender failing DMARC gets one reason, not two (OD-490; SPEC §8.5).
