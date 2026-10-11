@@ -1,0 +1,51 @@
+Received: from mail.vendor-d.example (mail.vendor-d.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-thread-genuine-reply-old-invoice; Mon, 05
+ Oct 2026 15:47:00 +0000
+From: Vendor D Billing <billing@vendor-d.example>
+To: ap@acme.example
+Subject: RE: Invoice INV-D-3302 (August services)
+Date: Mon, 05 Oct 2026 15:47:00 +0000
+Message-ID:
+ <ho-thread-genuine-reply-old-invoice.96cf95c38c@synthetic.acme.example>
+MIME-Version: 1.0
+In-Reply-To: <inv-d-3302-q@acme.example>
+References: <inv-d-3302@vendor-d.example> <inv-d-3302-q@acme.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Thanks for checking. The transfer you sent on 28 September matches INV-D-3302=
+ in full,
+so nothing is outstanding on this one and I've marked it closed on our side. =
+Your
+September invoice will go out next week as usual.
+
+Best,
+Avery Lund
+Billing, Vendor D
+555-0126
+
+On Fri, Oct 2, 2026 at 11:05 AM Accounts Payable <ap@acme.example> wrote:
+> Hi Avery, can you confirm INV-D-3302 shows as paid? Our transfer went out on
+> 28 September.
+>
+> Thanks, ACME AP
+>
+> On Tue, Sep 1, 2026 at 9:15 AM Vendor D Billing <billing@vendor-d.example> =
+wrote:
+>> Hello,
+>>
+>> Please find invoice INV-D-3302 for August services.
+>>
+>> Amount due: 3,150.00 USD
+>> Due date: 30 September 2026
+>>
+>> Remit by bank transfer to:
+>> Account name: Vendor D LLC
+>> IBAN: GB82 WEST 1234 5698 7654 32
+>> Reference: INV-D-3302
+>>
+>> Questions about this invoice? Reply to this email or call 555-0126.
+>>
+>> Vendor D Billing

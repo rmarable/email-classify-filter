@@ -1,0 +1,47 @@
+Received: from mail.vendor-b-billing.example (mail.vendor-b-billing.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ h2-crypto-scam-vendor-lookalike-crypto-only; Mon, 05 Oct 2026 10:12:00 +0000
+From: Vendor B Accounts <accounts@vendor-b-billing.example>
+To: ap@acme.example
+Subject:
+ Change to how we accept payment - open invoices INV-B-2207 and INV-B-2231
+Date: Mon, 05 Oct 2026 10:12:00 +0000
+Message-ID: <h2-crypto-scam-vendor-lookalike-crypto-only.16d3f4331f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi ACME accounts team,
+
+Hope you're well. A quick but important update from us.
+
+Our bank has told us it is closing a number of business accounts as part of a=
+ "risk review", ours included. We are moving banks, but in the meantime, and =
+for the foreseeable future, we have decided to accept payment in USDT (Tether=
+) only. Honestly it has been quicker and cheaper for us with overseas supplie=
+rs anyway.
+
+That means the bank details you have on file for us will no longer be monitor=
+ed, and any transfer sent there may bounce or be delayed by weeks.
+
+You currently have two invoices open with us:
+
+  INV-B-2207   due 10 Oct   USD 4,180.00
+  INV-B-2231   due 17 Oct   USD 2,960.00
+  Total                     USD 7,140.00
+
+Please send the total as 7,140 USDT (TRC-20 network) to our company wallet:
+
+  TEST-WALLET-0587
+
+If your finance system can't handle crypto, let me know and I can point you t=
+o a broker we've used who makes it quite painless. Once sent, just reply with=
+ the transaction reference and I'll mark both invoices paid on our side the s=
+ame day.
+
+Sorry for the hassle, and thanks for being flexible. Not our choice!
+
+Kind regards,
+Accounts Receivable
+Vendor B
++1 555-0129

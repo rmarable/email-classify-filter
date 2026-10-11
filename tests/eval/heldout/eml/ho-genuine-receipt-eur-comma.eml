@@ -1,0 +1,51 @@
+Received: from mail.vendor-d.example (mail.vendor-d.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-receipt-eur-comma; Sat, 03 Oct 2026
+ 07:55:00 +0000
+From: Vendor D Buchhaltung <buchhaltung@vendor-d.example>
+To: billing@acme.example
+Subject: Zahlungseingang / Payment received - RE-2026-0931
+Date: Sat, 03 Oct 2026 07:55:00 +0000
+Message-ID: <ho-genuine-receipt-eur-comma.3ba0e5a17f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="=_ecf_ho-genuine-receipt-eur-comma_0"
+
+--=_ecf_ho-genuine-receipt-eur-comma_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Sehr geehrte Damen und Herren, dear Acme team,
+
+we confirm receipt of your payment. Thank you.
+
+Invoice: RE-2026-0931 (3 Sep 2026)
+Amount received: 1.234,56 =E2=82=AC
+Value date: 1 Oct 2026
+Open balance on this invoice: 0,00 =E2=82=AC
+
+Your account with us is fully paid. You don't need to do anything.
+
+Mit freundlichen Gr=C3=BC=C3=9Fen / Kind regards
+Accounting, Vendor D
+Tel. 555-0171
+
+--=_ecf_ho-genuine-receipt-eur-comma_0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body style=3D"font-family:Verdana,sans-serif;font-size:13px">
+<p>Sehr geehrte Damen und Herren, dear Acme team,</p>
+<p>we confirm receipt of your payment. Thank you.</p>
+<table cellpadding=3D"3">
+<tr><td>Invoice</td><td>RE-2026-0931 (3 Sep 2026)</td></tr>
+<tr><td>Amount received</td><td><b>1.234,56 =E2=82=AC</b></td></tr>
+<tr><td>Value date</td><td>1 Oct 2026</td></tr>
+<tr><td>Open balance on this invoice</td><td>0,00 =E2=82=AC</td></tr>
+</table>
+<p>Your account with us is fully paid. You don't need to do anything.</p>
+<p>Mit freundlichen Gr=C3=BC=C3=9Fen / Kind regards<br>Accounting, Vendor D<b=
+r>Tel. 555-0171</p>
+</body></html>
+
+--=_ecf_ho-genuine-receipt-eur-comma_0--

@@ -1,0 +1,48 @@
+Received: from mail.vendor-c.example (mail.vendor-c.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-vendor-bank-change-proper; Mon, 05
+ Oct 2026 11:15:00 +0000
+From: Vendor C Accounts Receivable <ar@vendor-c.example>
+To: ap@acme.example
+Subject: Advance notice: Vendor C is changing banks on 16 November 2026
+Date: Mon, 05 Oct 2026 11:15:00 +0000
+Message-ID:
+ <ho-genuine-vendor-bank-change-proper.c90713dfb8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear Acme Accounts Payable,
+
+We're writing to all customers with advance notice that Vendor C is moving its
+business banking to a new provider. The change takes effect on Monday 16 Nove=
+mber
+2026.
+
+What this means for you:
+
+1. Keep paying our current account for everything due before 16 November. It =
+will
+   stay open until the end of January, so any late payments will still reach =
+us.
+2. On purpose, we are not putting the new account details in this email. Our
+   finance team will send you a signed letter by post on company letterhead d=
+uring
+   the week of 26 October.
+3. Before you change anything in your system, please call us to confirm the
+   details. Use the phone number you already have on file for Vendor C, not o=
+ne
+   from any email or letter, including this one. If you don't have it, it's t=
+he
+   number printed on every invoice we've sent you.
+
+If you get an email that says our bank details have changed and it doesn't ma=
+tch
+this notice (a different date, details in the email body, pressure to pay
+urgently), please don't act on it. Forward it to us and give us a call.
+
+We're sorry for the admin. Thanks for being a customer for so many years.
+
+Kind regards,
+
+Accounts Receivable
+Vendor C

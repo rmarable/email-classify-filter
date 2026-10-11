@@ -1,0 +1,48 @@
+Received: from mail.hostdesk-renewals.example (mail.hostdesk-renewals.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ h2-crypto-scam-btc-invoice-suspension; Fri, 02 Oct 2026 07:48:00 +0000
+From: HostDesk Billing <billing@hostdesk-renewals.example>
+To: ap@acme.example
+Subject:
+ FINAL NOTICE - invoice HD-88213 unpaid, acme.example suspension scheduled
+Date: Fri, 02 Oct 2026 07:48:00 +0000
+Message-ID:
+ <h2-crypto-scam-btc-invoice-suspension.3fedb4e051@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear Customer,
+
+Our records show invoice HD-88213 for the annual renewal of your services is =
+still unpaid. Two attempts to charge the card on file were declined.
+
+Services affected:
+  - Domain registration: acme.example
+  - Business hosting plan (3 sites)
+  - Mailboxes (12)
+
+Amount due: USD 389.00
+
+Your services are scheduled for suspension within 24 hours of this notice. On=
+ce suspended, your website and email will stop working and the domain may be =
+released after the grace period. Reactivation carries a USD 150 fee.
+
+Because card payment has failed twice, our billing system has switched this i=
+nvoice to cryptocurrency settlement. To avoid suspension, please settle in BT=
+C:
+
+  Amount:   0.0061 BTC
+  Wallet:   TEST-WALLET-0958
+  Memo:     HD-88213
+
+After sending, reply to this email with the transaction ID so our team can ca=
+ncel the suspension manually. Payments without a transaction ID can take up t=
+o 72 hours to match, which is after the suspension date.
+
+If you have already paid, please ignore this notice.
+
+Regards,
+Billing Department
+HostDesk Domain & Hosting Services
++1 555-0118

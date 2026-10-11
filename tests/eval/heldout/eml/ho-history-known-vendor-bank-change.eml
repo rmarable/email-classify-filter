@@ -1,0 +1,37 @@
+Received: from mail.vendor-k.example (mail.vendor-k.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-history-known-vendor-bank-change; Wed, 07
+ Oct 2026 09:18:00 +0000
+From: Vendor K Receivables <ar@vendor-k.example>
+To: ap@acme.example
+Subject: Re: INV-K-4410 and receivables transition
+Date: Wed, 07 Oct 2026 09:18:00 +0000
+Message-ID:
+ <ho-history-known-vendor-bank-change.965a4d6784@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi team,
+
+Thanks again for confirming INV-K-4410 last month.
+
+As part of our merger with our parent group, our receivables are moving to th=
+e group's
+banking partner. The account you have on file for us will be closed on 20 Oct=
+ober, and
+transfers sent to it after that date will be returned. Please update your rec=
+ords so
+that INV-K-4471 and later invoices go to:
+
+Account name: Vendor K Holdings
+IBAN: DE00 1234 5678 9012 3456 78
+SWIFT: EXAMDEFFXXX
+
+Could you reply to confirm once your system is updated? A signed letter from =
+our
+controller can follow if your process needs one.
+
+Kind regards,
+Morgan Tellis
+Receivables, Vendor K
+555-0162

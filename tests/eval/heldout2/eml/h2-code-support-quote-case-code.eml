@@ -1,0 +1,37 @@
+Received: from mail.vendor-c.example (mail.vendor-c.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id h2-code-support-quote-case-code; Wed, 07 Oct
+ 2026 08:55:00 +0000
+From: Vendor C Support <support@vendor-c.example>
+To: it-admin@acme.example
+Subject: [Case 00482913] Export to CSV stops at 10,000 rows
+Date: Wed, 07 Oct 2026 08:55:00 +0000
+Message-ID:
+ <h2-code-support-quote-case-code.8d5cf6e729@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Thanks for getting in touch. I'm Rowan from the Vendor C support team and I'v=
+e picked up your request.
+
+Your case code is 00482913. When you reply, please keep it in the subject lin=
+e or quote it at the top of your message, so your reply comes straight back t=
+o this case instead of opening a new one. If you'd rather call us on 555-0172=
+, the agent will ask you for it as well.
+
+On the issue itself: the 10,000-row cut-off is a limit of the quick export bu=
+tton, not a problem with your data. For larger reports, use Reports > Schedul=
+ed exports, which has no row limit and emails you a download link when the fi=
+le is ready.
+
+If that doesn't cover what you need, could you tell me roughly how many rows =
+the report has and which plan your workspace is on? A screenshot of the expor=
+t settings would also help.
+
+We'll keep the case open for 7 days while we wait for your reply.
+
+Best regards,
+Rowan
+Vendor C Support

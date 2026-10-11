@@ -1,0 +1,45 @@
+Received: from mail.vendor-c-invoicing.example
+ (mail.vendor-c-invoicing.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id h2-gc-vendor-thread-hijack-cards; Thu, 08 Oct 2026 16:47:00 +0000
+From: Alex Brandt <alex-brandt@vendor-c-invoicing.example>
+To: ap@acme.example
+Subject: RE: INV-30418 - October service invoice
+Date: Thu, 08 Oct 2026 16:47:00 +0000
+Message-ID:
+ <h2-gc-vendor-thread-hijack-cards.de924d75b8@synthetic.acme.example>
+MIME-Version: 1.0
+In-Reply-To: <inv30418-thread-02@vendor-c.example>
+References:
+ <inv30418-thread-01@vendor-c.example> <inv30418-thread-02@vendor-c.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi there,
+
+Thanks for confirming. Small wrinkle on our side - our bank has put a tempora=
+ry hold on incoming international and domestic wires while they finish an aud=
+it of our accounts, so anything sent this week will bounce back and sit for 1=
+0-15 business days.
+
+To keep things moving, our controller has okayed us taking part of this invoi=
+ce in retailer cards, which we use for our field crew's expenses anyway. Coul=
+d you cover $2,400 of INV-30418 that way (12 x $200, any of the large home im=
+provement or electronics stores) and send the codes over to me in a reply? Th=
+e remaining $1,450 can go by wire once the hold lifts and I'll send you an ad=
+justed statement.
+
+Sorry for the hassle, I know it's unusual. If you can get it to me before end=
+ of day tomorrow we avoid the late fee on our side.
+
+Best,
+Alex Brandt
+Accounts Receivable | Vendor C Facility Services
+555-0118
+
+> On Tue, Oct 6, 2026, AP Team <ap@acme.example> wrote:
+> Hi Alex, we've received INV-30418 and it's approved for payment.
+> It's scheduled for our Thursday run. Let us know if anything changes.
+>
+> > On Mon, Oct 5, 2026, Alex Brandt <alex-brandt@vendor-c.example> wrote:
+> > Good morning, attached is our October invoice for the quarterly HVAC
+> > maintenance visit. Payment terms net 30 as usual. Thanks!

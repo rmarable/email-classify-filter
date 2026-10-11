@@ -1,0 +1,37 @@
+Received: from mail.acme.example (mail.acme.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id h2-code-scam-helpdesk-mfa-migration; Thu, 08
+ Oct 2026 07:42:00 +0000
+From: ACME IT Service Desk <servicedesk@acme.example>
+To: ap@acme.example
+Reply-To: servicedesk@acme-mailmigration.example
+Subject: Action needed today: mailbox move - final verification step
+Date: Thu, 08 Oct 2026 07:42:00 +0000
+Message-ID:
+ <h2-code-scam-helpdesk-mfa-migration.d84028c51a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+Your mailbox is in tonight's batch for the move to the new mail platform. Mos=
+t of the move has already run in the background, but the final step needs us =
+to confirm it's really you on the account. If we can't, the mailbox is locked=
+ at switch-over and you'll be without email until we rebuild it (normally 2 t=
+o 3 working days).
+
+What we need from you:
+
+1. In the next few minutes you'll get a sign-in prompt, or a 6-digit code in =
+your authenticator app or by text.
+2. Approve the prompt, and reply to this email with the 6-digit code so the m=
+igration tool can finish the hand-over.
+
+Please do this before 12:00 today. You don't need to change your password. Th=
+ere's also no need to call the desk: we're very busy with the cut-over, and r=
+eplying here is quicker.
+
+Thanks for your help,
+
+IT Service Desk
+ACME

@@ -1,0 +1,32 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id h2-code-scam-account-recovery-keep-account;
+ Sat, 10 Oct 2026 05:58:00 +0000
+From: Freemail Account Recovery <account-recovery@freemail.example>
+To: pat-lee@freemail.example
+Reply-To: recovery-desk@mailkeep-review.example
+Subject: Someone asked to recover your account - respond to keep it
+Date: Sat, 10 Oct 2026 05:58:00 +0000
+Message-ID: <h2-code-scam-account-recovery-keep-account.b66aa5800a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello pat-lee,
+
+We received a request to recover the account pat-lee@freemail.example from a =
+new device (Android, location approximate). If this was not you, you must ver=
+ify ownership within 24 hours. Otherwise the recovery will complete and acces=
+s will pass to the person who requested it.
+
+To keep your account, reply to this message with:
+
+ - your current password
+ - the 2 most recent verification codes we sent to your phone
+ - your recovery email address
+
+Our team will check these against our records and cancel the other request. A=
+ccounts that are not verified in time are transferred automatically and canno=
+t be restored.
+
+Freemail Accounts Team
+This is a security notice. Do not ignore it.

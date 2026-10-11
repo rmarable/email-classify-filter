@@ -1,0 +1,35 @@
+Received: from mail.ledgerline.example (mail.ledgerline.example [192.0.2.10])
+ by mx.example.net with ESMTPS id ho-genuine-exchange-withdrawal-confirm; Thu,
+ 08 Oct 2026 19:47:00 +0000
+From: LedgerLine Exchange <no-reply@ledgerline.example>
+To: treasury@acme.example
+Subject: Withdrawal completed: 0.2500 BTC
+Date: Thu, 08 Oct 2026 19:47:00 +0000
+Message-ID:
+ <ho-genuine-exchange-withdrawal-confirm.4d66d410c7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Withdrawal completed
+
+Your withdrawal from LedgerLine has been sent and has 3 network confirmations.
+
+  Asset:           Bitcoin (BTC)
+  Amount:          0.2500 BTC
+  Network fee:     0.00004 BTC
+  To address:      TEST-WALLET-0003 (saved as "Acme cold storage")
+  Requested:       8 Oct 2026, 19:31 UTC, from a recognised device
+  Approved by:     second admin on the account
+  Reference:       WD-20261008-7714
+
+Nothing else for you to do.
+
+Not you? Lock your account straight away from the app, or at
+https://www.ledgerline.example/lock, then contact support. We'll never ask fo=
+r your
+password, your 2FA code or your recovery phrase, and we'll never ask you to s=
+end
+crypto to us.
+
+LedgerLine Exchange

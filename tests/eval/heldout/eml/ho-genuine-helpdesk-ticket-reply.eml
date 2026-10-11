@@ -1,0 +1,39 @@
+Received: from mail.msp-a.example (mail.msp-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-genuine-helpdesk-ticket-reply; Wed, 07 Oct
+ 2026 10:41:00 +0000
+From: MSP-A Service Desk <servicedesk@msp-a.example>
+To: ap@acme.example
+Subject: [Ticket #48213] Scanner on 2nd floor won't send to email - update
+Date: Wed, 07 Oct 2026 10:41:00 +0000
+Message-ID:
+ <ho-genuine-helpdesk-ticket-reply.2ecc058cca@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi AP team,
+
+Quick update on your ticket.
+
+We've pushed a new scan-to-email profile to the 2nd floor scanner (the one by=
+ the
+kitchen). Test scans to ap@acme.example arrived on our side, but we'd like yo=
+u to
+confirm from your end before we close this.
+
+Could you send one test scan and then reply to this email with your ticket nu=
+mber
+(#48213) in the subject line? Our system files replies by that number, so a n=
+ew
+email without it opens a fresh ticket and we lose the history.
+
+If it still fails, tell us what the scanner's screen says. No need to send any
+passwords; we already have admin access to the device.
+
+Status: Waiting on customer
+Priority: Normal
+Engineer: Level 1 desk
+
+Thanks,
+MSP-A Service Desk
+555-0118 (8am-6pm, Mon-Fri)

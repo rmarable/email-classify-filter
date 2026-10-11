@@ -1,0 +1,33 @@
+Received: from mail.licence-audit.test (mail.licence-audit.test [192.0.2.10])
+ by mx.example.net with ESMTPS id ho-scam-crypto-licence-settlement; Sat, 03
+ Oct 2026 13:10:00 +0000
+From: Licence Compliance Office <case-officer@licence-audit.test>
+To: ap@acme.example
+Subject: Case LC-77812: unlicensed seats detected - settlement offer
+Date: Sat, 03 Oct 2026 13:10:00 +0000
+Message-ID:
+ <ho-scam-crypto-licence-settlement.627db24d6c@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+To the accounts department,
+
+Our network review found 14 unlicensed seats of commercial design software ru=
+nning on devices registered to your organisation. Under the publisher's enfor=
+cement programme, the full penalty for this is considerably higher than the s=
+ettlement offered below.
+
+To close case LC-77812 without referral to litigation, settle 18,500 USDT wit=
+hin 72 hours to the case wallet:
+
+  TEST-WALLET-0007
+
+Use the case number as the memo. Once the transfer has three confirmations, a=
+ closure letter will be issued and no further action will be taken.
+
+If we receive no settlement in this window, the file passes to external couns=
+el and the offer is withdrawn.
+
+Case Officer
+Licence Compliance Office

@@ -1,0 +1,74 @@
+Received: from mail.vendor-a.example (mail.vendor-a.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id ho-scam-known-vendor-iban-no-change-words; Wed,
+ 07 Oct 2026 09:12:00 +0000
+From: Vendor A Billing <billing@vendor-a.example>
+To: ap@acme.example
+Subject: Invoice INV-7716 - Q4 maintenance
+Date: Wed, 07 Oct 2026 09:12:00 +0000
+Message-ID:
+ <ho-scam-known-vendor-iban-no-change-words.949be0efe7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed;
+ boundary="=_ecf_ho-scam-known-vendor-iban-no-change-words_0"
+
+--=_ecf_ho-scam-known-vendor-iban-no-change-words_0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Acme team,
+
+Please find attached invoice INV-7716 for the fourth-quarter maintenance visi=
+t, $6,840.00, due 23 October.
+
+For this invoice, please remit to:
+
+  Vendor A Europe
+  IBAN DE89 3704 0044 0532 0130 00
+  Reference: INV-7716
+
+Please send the remittance advice to this address once it has been processed =
+so we can match it on our side.
+
+Many thanks, and speak soon,
+Billing, Vendor A
+555-0142
+
+--=_ecf_ho-scam-known-vendor-iban-no-change-words_0
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="INV-7716.pdf"
+MIME-Version: 1.0
+
+JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3Vy
+Y2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUgo+PgplbmRvYmoKMiAwIG9iago8PAov
+QmFzZUZvbnQgL0hlbHZldGljYSAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjEg
+L1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iagozIDAgb2JqCjw8Ci9CYXNlRm9u
+dCAvQ291cmllciAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjIgL1N1YnR5cGUg
+L1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago0IDAgb2JqCjw8Ci9Db250ZW50cyA4IDAgUiAv
+TWVkaWFCb3ggWyAwIDAgNjEyIDc5MiBdIC9QYXJlbnQgNyAwIFIgL1Jlc291cmNlcyA8PAovRm9u
+dCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+
+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNSAwIG9i
+ago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDcgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVu
+ZG9iago2IDAgb2JqCjw8Ci9BdXRob3IgKGVjZiBzeW50aGV0aWMgdGVzdCBzZXQpIC9DcmVhdGlv
+bkRhdGUgKEQ6MjAwMDAxMDEwMDAwMDArMDAnMDAnKSAvQ3JlYXRvciAoYW5vbnltb3VzKSAvS2V5
+d29yZHMgKCkgL01vZERhdGUgKEQ6MjAwMDAxMDEwMDAwMDArMDAnMDAnKSAvUHJvZHVjZXIgKFJl
+cG9ydExhYiBQREYgTGlicmFyeSAtIFwob3BlbnNvdXJjZVwpKSAKICAvU3ViamVjdCAodW5zcGVj
+aWZpZWQpIC9UaXRsZSAoSW52b2ljZSBJTlYtNzcxNikgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9i
+ago3IDAgb2JqCjw8Ci9Db3VudCAxIC9LaWRzIFsgNCAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5k
+b2JqCjggMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9M
+ZW5ndGggMzU1Cj4+CnN0cmVhbQpHYXQ9ZTlpSFp1JjtLWlAoJTUiakprOEs4SDM5Jkk5Vm8xJ2xa
+YmY5J28uaFtKdHJBJlBXR1FFXEBEPm9dXC5eVnAnaDZfTXRfRXIhV2g5WE1MdTtgMVVzZTxCUnRz
+ZF1lNypHWTwwMmZlYktgbSdrVDZ1TTNIMW82OG9McStYbCVVazAqOG4yRys1ak9zUnJiM3E9KUNQ
+TzErOFVKb01Za1xMNz1BLlJHW0MwKkBgN2hfME5vbmRcXTs8Tz8ySjFdQzckNz1vK0wxIT5OUzY8
+XWguIU9wNjJLY0RGQSI3NG0rVik5Mzw4VlFDVituIltpWDk9ZD0wOFhSLmFxPXQsUi1TMDRpcU5b
+YF1NPjxGJl1WXzBndGRZPFFPXGpmWzcrNzAoVGlxST5OQ0g8OTNNT0gzYUQ6UU1cTlkpPkZOQCIm
+SWs2bjtnZzYmaTRbaF8sVzh0OCxSKFthWiQ7NkpqZn4+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAg
+OQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwNjEgMDAwMDAgbiAKMDAwMDAwMDEwMiAwMDAw
+MCBuIAowMDAwMDAwMjA5IDAwMDAwIG4gCjAwMDAwMDAzMTQgMDAwMDAgbiAKMDAwMDAwMDUwNyAw
+MDAwMCBuIAowMDAwMDAwNTc1IDAwMDAwIG4gCjAwMDAwMDA4NTcgMDAwMDAgbiAKMDAwMDAwMDkx
+NiAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9JRCAKWzxiODMxOWE3Y2YzOWZmZTMyMjQ1OTQ1YzkzMDE0
+MjJjMD48YjgzMTlhN2NmMzlmZmUzMjI0NTk0NWM5MzAxNDIyYzA+XQolIFJlcG9ydExhYiBnZW5l
+cmF0ZWQgUERGIGRvY3VtZW50IC0tIGRpZ2VzdCAob3BlbnNvdXJjZSkKCi9JbmZvIDYgMCBSCi9S
+b290IDUgMCBSCi9TaXplIDkKPj4Kc3RhcnR4cmVmCjEzNjEKJSVFT0YK
+
+--=_ecf_ho-scam-known-vendor-iban-no-change-words_0--
