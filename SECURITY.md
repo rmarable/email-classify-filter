@@ -20,9 +20,9 @@ vulnerabilities.
 
 ## Supported versions
 
-The latest release only; fixes ship as a new release. `v1.0.0` is supported until `v2.0.0` ships,
-and stops being supported then. Milestone tags (`ms-…`) and release candidates (`vX.Y.Z-rcN`, such as
-`v2.0.0-rc1`) record progress and are not supported. Versioning: SPEC §1.4 (OD-480).
+The latest release only; fixes ship as a new release, and an older release stops being supported
+when the next one ships. Milestone tags (`ms-…`) and release candidates (`vX.Y.Z-rcN`, such as
+`v2.1.0-rc1`) record progress and are not supported. Versioning: SPEC §1.4 (OD-480).
 
 ## The security model in brief
 
