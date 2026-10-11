@@ -1,10 +1,10 @@
 # Timing per spawn in Claude evals (v2.2.0)
 
 - **Status:** draft 2 (2026-10-11). Release `v2.2.0`, worked on after `v2.1.0` ships (operator
-  decision 2026-10-11; was `v2.1.1`). Not built.
+  decision 2026-10-11; was `v2.1.1`). Steps 1-5 built (2026-10-11); step 6 (measurements) not run.
 - **Base:** `main` after the `v2.1.0` merge.
-- **Decisions:** SPEC once built; until then this document. SPEC §1.2 holds the one-paragraph
-  summary.
+- **Decisions:** SPEC once built: §16.2 (what is recorded and printed), §16.3 (the comparisons),
+  §7.5 (eval batching); the §1.2 roadmap item was removed when it was built.
 - **Review:** Phase R done on draft 1 (2026-10-11; four read-only Fable agents; findings P1-P20 in
   `state-archive/timing-spawn/review-findings.md`). The operator accepted every recommendation and
   added the Opus-value test (step 6b). Draft 2 applies both; the P numbers below point to the
