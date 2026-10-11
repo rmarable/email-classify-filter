@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.eval.cards import INTERNAL_FACTS, PROFILE_TO
+from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
 from ecf_server import db, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
@@ -123,6 +123,9 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             raise InvalidInputError(f"labels.jsonl line {n}: {exc}") from None
         if case.profile not in PROFILES:
             raise InvalidInputError(f"labels.jsonl line {n}: no profile {case.profile!r}")
+        if bad := sorted(DERIVED_FACTS & case.facts.keys()):
+            raise InvalidInputError(f"labels.jsonl line {n}: {', '.join(bad)} can't be set by"
+                                    " a case (computed from the message)")  # fmt: skip
         if bad := sorted(INTERNAL_FACTS & case.facts.keys()):
             raise InvalidInputError(f"labels.jsonl line {n}: {', '.join(bad)} can't be set by"
                                     " a case (OD-443)")  # fmt: skip
@@ -193,8 +196,10 @@ def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, 
                                                 out.get("auth_result"),
                                                 bool(out.get("sender_seen_before")))  # fmt: skip
     if "known_sender_auth_regressed" not in expected:
+        # live also needs DMARC-pass history; a card's `sender_seen_before` stands in for it
         out["known_sender_auth_regressed"] = (bool(out.get("sender_seen_before"))
-                                              and out.get("auth_result") == "fail")  # fmt: skip
+                                              and out.get("auth_result") == "fail"
+                                              and not out.get("shared_platform"))  # fmt: skip
     return triggers.with_routes(out, public_domains=PUBLIC_DOMAINS | {FREEMAIL})
 
 

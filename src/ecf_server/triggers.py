@@ -567,10 +567,10 @@ def second_signals(
     """Trigger 2's second signals (OD-062), shared with the routes (OD-490)."""
     auth = found["auth_result"]
     signals = (
-        ("bank or change wording", bool(keywords["bank"] or keywords["change"])),
+        ("bank or change wording", bool(keywords.get("bank") or keywords.get("change"))),
         ("DMARC fail", auth == "fail"),
         # a replayed signed message: only then (OD-201); mail to an alias or list is ordinary
-        ("not addressed to this mailbox", bool(found["recipient_mismatch"]) and auth == "pass"),
+        (NOT_ADDRESSED, bool(found["recipient_mismatch"]) and auth == "pass"),
         ("lookalike domain", lookalikes),
         ("Reply-To mismatch", bool(found["reply_to_mismatch"])),
     )
@@ -589,6 +589,11 @@ GIFT_CODES = "a request for gift-card codes"
 CRYPTO = "a wallet address with a payment request"
 AUTH_REGRESSED = "a known sender's mail failed DMARC"
 RISKY_ATTACHMENT = "a web page, script or program attached to a payment, code or gift-card item"
+NOT_ADDRESSED = "not addressed to this mailbox"  # trigger 2's signal; not the routes' (G2)
+ROUTE_WHATS = (CREDENTIAL, GIFT_CODES, CRYPTO)
+# a route reason whose only second signal is a sender with no history: it doesn't stop the
+# sender's history from forming, or a genuine sender would stay unknown (pre-gate review G1)
+HISTORY_ONLY = frozenset(f"{what} and {NO_HISTORY}" for what in ROUTE_WHATS)
 
 
 @dataclass(frozen=True)
@@ -614,7 +619,9 @@ def route_hits(
     known = bool(found.get("sender_confirmed")) or (
         bool(found.get("sender_seen_before")) and found.get("from_domain") not in public_domains
     )
-    shared = second_signals(kw, found, bool(t.get("lookalikes"))) if kw else []
+    # alias and list mail is ordinary for these requests: not their signal (pre-gate review G2)
+    shared = [s for s in (second_signals(kw, found, bool(t.get("lookalikes"))) if kw else [])
+              if s != NOT_ADDRESSED]  # fmt: skip
     shared += [name for name, hit in (
         (OTHER_FRAUD, bool(t.get("fraud"))),
         (NO_HISTORY, not known),
@@ -657,25 +664,35 @@ def routes(
             fraud.append(f"{h.what} and {' and '.join(h.signals)}")
         elif h.weak_too:
             weak.append(f"{h.what} from a known sender, with no second signal")
-    if found.get("known_sender_auth_regressed") and not any("DMARC fail" in r for r in fraud):
-        fraud.append(AUTH_REGRESSED)  # one reason, not two (R3-P21)
+    t: dict[str, Any] = found.get("triggers") or {}
+    other: list[str] = t.get("fraud") or []
+    if found.get("known_sender_auth_regressed") and not any(
+        "DMARC fail" in r for r in (*fraud, *other)
+    ):
+        fraud.append(AUTH_REGRESSED)  # one reason, not two (R3-P21, pre-gate review G11)
     return fraud, weak
 
 
 def with_routes(
     found: dict[str, Any], *, public_domains: frozenset[str] = PUBLIC_DOMAINS
 ) -> dict[str, Any]:
-    """`found` with its route reasons (re)computed: any earlier ones (`found["routes"]`) are
-    taken out of the triggers first, so the eval can route again after laying a card's
-    expected facts over."""
+    """`found` with its route reasons (re)computed: any earlier ones (`found["routes"]`, and any
+    reason worded as a route's, so stored facts from an earlier wording don't count as another
+    fraud signal; pre-gate review G10) are taken out of the triggers first, so the eval can
+    route again after laying a card's expected facts over."""
     prior: dict[str, list[str]] = found.get("routes") or {}
     t: dict[str, Any] = dict(found.get("triggers") or {})
     for k in ("fraud", "fraud_weak"):
-        t[k] = [r for r in t.get(k, []) if r not in prior.get(k, [])]
+        t[k] = [r for r in t.get(k, []) if r not in prior.get(k, []) and not is_route_reason(r)]
     fraud, weak = routes(found | {"triggers": t}, public_domains=public_domains)
     t["fraud"] = t["fraud"] + fraud
     t["fraud_weak"] = t["fraud_weak"] + weak
     return found | {"triggers": t, "routes": {"fraud": fraud, "fraud_weak": weak}}
+
+
+def is_route_reason(reason: str) -> bool:
+    """A reason `routes` words: a route's, or the known-sender DMARC one."""
+    return reason.startswith(ROUTE_WHATS) or reason == AUTH_REGRESSED
 
 
 def _other_triggers(

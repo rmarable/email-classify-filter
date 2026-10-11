@@ -28,6 +28,8 @@ DEFAULT_DATE = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 PROFILE_TO = {"org": "ap@acme.example", "freemail": "pat-lee@freemail.example"}
 # Facts of the internal set: always computed from the profile, never set by a card (OD-443).
 INTERNAL_FACTS = frozenset({"sender_origin", "from_org_address", "impersonates_internal"})
+# computed from the message and the other facts; a card sets facts, never these (pre-gate G8)
+DERIVED_FACTS = frozenset({"keywords", "triggers", "routes"})
 
 
 class InvoiceSpec(BaseModel):
@@ -70,6 +72,8 @@ class Expected(BaseModel):
     def _not_internal(cls, facts: dict[str, Any]) -> dict[str, Any]:
         if bad := sorted(INTERNAL_FACTS & facts.keys()):
             raise ValueError(f"{', '.join(bad)} come from the profile, not the card")
+        if bad := sorted(DERIVED_FACTS & facts.keys()):
+            raise ValueError(f"{', '.join(bad)} are computed from the message, not set by a card")
         return facts
 
 

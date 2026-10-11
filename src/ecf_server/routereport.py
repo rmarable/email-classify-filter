@@ -45,7 +45,7 @@ from ecf_server.facts import PUBLIC_DOMAINS
 
 PUBLIC = PUBLIC_DOMAINS | {ruletest.FREEMAIL}
 VARIANTS = ("baseline", "draft2", "draft4")
-ROUTE_WHATS = (triggers.CREDENTIAL, triggers.GIFT_CODES, triggers.CRYPTO)
+ROUTE_WHATS = triggers.ROUTE_WHATS
 
 
 def _is_route(reason: str) -> bool:

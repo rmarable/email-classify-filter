@@ -104,10 +104,14 @@ class MessageAnalyzer:
         lookalike domain or a weak route reason: a scam must not build the history that softens
         the routes (OD-490). Trigger 2's weak "first-time sender with a payment keyword" still
         counts, or a new vendor's invoices would never make it known (operator decision
-        2026-10-10)."""
+        2026-10-10); so does a route whose only signal is that the sender has no history, or a
+        genuine sender sending such requests would never become known (operator decision
+        2026-10-10, pre-gate review G1). `record_sender` counts only DMARC-pass mail."""
         t: dict[str, Any] = found.get("triggers") or {}
         routed: dict[str, Any] = found.get("routes") or {}
-        if t.get("fraud") or t.get("lookalikes") or routed.get("fraud_weak"):
+        reasons: list[str] = t.get("fraud") or []
+        fraud = [r for r in reasons if r not in triggers.HISTORY_ONLY]
+        if fraud or t.get("lookalikes") or routed.get("fraud_weak"):
             return
         facts.record_sender(
             conn,

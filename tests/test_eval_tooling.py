@@ -90,6 +90,9 @@ def test_profile_sets_the_default_recipient_and_internal_facts_are_refused() -> 
     for fact in ("sender_origin", "from_org_address", "impersonates_internal"):
         with pytest.raises(InvalidInputError, match="come from the profile"):
             parse_card(card(f"expected:\n  facts: {{{fact}: true}}\n"))
+    for fact in ("keywords", "triggers", "routes"):  # computed (pre-gate review G8)
+        with pytest.raises(InvalidInputError, match="computed from the message"):
+            parse_card(card(f"expected:\n  facts: {{{fact}: {{}}}}\n"))
     with pytest.raises(InvalidInputError, match="profile"):
         parse_card(card("profile: corporate\n"))
 

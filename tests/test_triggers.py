@@ -1000,7 +1000,6 @@ SIGNALS: list[tuple[str, dict[str, Any], str]] = [
     ("dmarc-fail", {"auth_result": "fail"}, "DMARC fail"),
     ("unauthenticated-known", {"auth_result": "none"}, tr.UNAUTHENTICATED_KNOWN),
     ("reply-to", {"reply_to_mismatch": True}, "Reply-To mismatch"),
-    ("not-addressed", {"recipient_mismatch": True}, "not addressed to this mailbox"),
     ("lookalike", {"triggers": {"fraud": [], "fraud_weak": [], "lookalikes": ["x looks like y"]}},
      "lookalike domain"),
     ("other-fraud", {"triggers": {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [],
@@ -1114,6 +1113,10 @@ def test_the_eval_routes_after_a_cards_expected_facts(
     ]
     failed = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "fail"})
     assert failed["known_sender_auth_regressed"] is True
+    # as live: a shared platform's history isn't the sender's (pre-gate review G3)
+    regressed = {"sender_seen_before": True, "auth_result": "fail"}
+    shared = ruletest.with_expected(found | {"shared_platform": True}, regressed)
+    assert shared["known_sender_auth_regressed"] is False
     assert failed["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and DMARC fail"]
     del conn
 
@@ -1160,3 +1163,41 @@ def test_flagged_items_dont_build_sender_history(
         assert count() == 0
     analyzer.record(conn, parsed, base | {"triggers": {"fraud_weak": ["first-time sender ..."]}})
     assert count() == 1
+    # pre-gate review G1: a route whose only signal is the missing history still counts, or a
+    # genuine sender of such requests never becomes known; with any other reason it doesn't
+    only = f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only]}})
+    assert count() == 2
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [only, "bank details with x"]}})
+    analyzer.record(conn, parsed, base | {"triggers": {"fraud": [
+        f"{tr.CREDENTIAL} and {tr.NO_HISTORY} and Reply-To mismatch"]}})  # fmt: skip
+    assert count() == 2
+
+
+def test_alias_mail_is_not_a_route_signal() -> None:
+    """Pre-gate review G2: mail to an alias or list (not addressed to this mailbox) is ordinary
+    for these requests; it stays trigger 2's signal only."""
+    found = _found(CRED, recipient_mismatch=True)
+    assert tr.routes(found) == ([], [f"{tr.CREDENTIAL} from a known sender, with no second"
+                                     " signal"])  # fmt: skip
+    assert tr.NOT_ADDRESSED in tr.second_signals(found["keywords"], found, False)
+
+
+def test_one_dmarc_reason_and_route_reasons_stripped_by_wording() -> None:
+    """G11: a known sender's DMARC failure adds no reason when trigger 4 already names DMARC;
+    G10: a stored route reason in another wording isn't taken for another fraud signal."""
+    dmarc = {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [], "lookalikes": []}
+    found = _found(known_sender_auth_regressed=True, auth_result="fail", triggers=dmarc)
+    assert tr.routes(found) == ([], [])
+    old = {"fraud": [f"{tr.CREDENTIAL} and an older signal name"], "fraud_weak": [],
+           "lookalikes": []}  # fmt: skip
+    out = tr.with_routes(_found(CRED, triggers=old))
+    assert out["triggers"]["fraud"] == [] and out["routes"]["fraud"] == []
+    assert out["triggers"]["fraud_weak"] == [f"{tr.CREDENTIAL} from a known sender, with no"
+                                             " second signal"]  # fmt: skip
+
+
+def test_route_signals_tolerate_a_partial_keyword_map() -> None:
+    """G8: a facts map without every keyword group doesn't raise."""
+    found = _found(sender_seen_before=False) | {"keywords": CRED}
+    assert tr.routes(found)[0] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
