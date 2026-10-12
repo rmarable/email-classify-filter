@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Decided, not built: TypeSafe Jev may become a destination for email content, as a classifier (OD-493, ADR 0028); nothing goes to it yet, and the privacy statement will say exactly what it receives before it ships.
+- Qwen and Qwen-based models are banned in every role, including evaluation; the two earlier exceptions are revoked (OD-494, ADR 0029).
+- The all-local preset A is no longer prioritized: local-model speed work waits until the design is proven on frontier models; A stays supported (OD-495).
 - Releases no longer go through a release candidate and repeated checks by default: one dated bump, the release run as the check, one test upgrade; a release that changes migrations, the gate, upgrade or Keychain code, or the data format also tests the upgrade and a rollback on a local build before it is tagged (OD-492).
 
 ## v2.2.1 (2026-10-12)
@@ -196,7 +199,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 - Security: in a very long paragraph, removing text addressed to an automated reader now searches only its first 64 K characters for where that text starts, and removes the rest of the paragraph when it starts later; a crafted 10 MiB paragraph took over a minute per excerpt and now takes under 2 s. Both excerpts come from one redaction (R180, corpus plan review).
 - Security: removing text addressed to an automated reader from model input no longer slows down sharply on long paragraphs; one crafted 2,000-line paragraph took about 40 s of the check thread, now under 1 s (R150, corpus plan review).
-- Changed: the Claude session and the `standard` classifier use Sonnet instead of Haiku (Haiku didn't reliably follow ecf's instructions, and Sonnet classified significantly better); `ecf claude` lets the session start only ecf's own agents (OD-461).
+- Changed: the Claude session and the `standard` classifier use Sonnet instead of Haiku 4.5 (Haiku 4.5 didn't reliably follow ecf's instructions, and Sonnet classified significantly better; Haiku 5.5 not measured as a classifier); `ecf claude` lets the session start only ecf's own agents (OD-461).
 - Fixed: `/ecf-eval` no longer stops every few rounds: submissions waiting for their model check don't hold back other work, and an empty reply waits a few seconds while work is still out. `ecf claude` turns off Claude Code's prompt suggestions and away summaries, which spent plan usage on nothing.
 - Fixed: `ecf claude` also denies Claude Code's built-in `claude` agent, and `/ecf-eval` and `/ecf-review` stop if any built-in agent runs in the session, naming it; a Claude eval had spent about half its plan usage on one doing no eval work.
 - Fixed: `/ecf-eval` and `/ecf-review` hand out one kind of agent work at a time, so classifier and actor subagents on different models no longer overlap and get refused by the model check; the first Claude eval stopped this way after 23 of 184 cases.

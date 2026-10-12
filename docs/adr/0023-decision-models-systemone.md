@@ -1,7 +1,7 @@
 # ADR 0023: decision models via Ollama `/v1/systemone` (Qwen exception)
 
 - **Status:** accepted (2026-10-07; OD-470, OD-471); experiment built and run; decided 2026-10-08:
-  `tev1:4b` not adopted for now (OD-473)
+  `tev1:4b` not adopted for now (OD-473); Qwen exception revoked 2026-10-12 (OD-494, ADR 0029)
 - **Context source:** SPEC §7.8, §16.3-16.5, §21.1, §21.2, §1.5 item 8;
   `planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md` (draft 3, after review round R, findings R1-R30)
 

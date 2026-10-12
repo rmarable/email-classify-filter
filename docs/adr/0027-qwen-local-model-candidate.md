@@ -2,7 +2,7 @@
 
 - **Status:** accepted (operator decision 2026-10-12, OD-491); widens the Qwen exception of ADR
   0023 (OD-470) for one candidate; evaluated 2026-10-12: fails the safety gate and
-  non-inferiority, Gemma stays
+  non-inferiority, Gemma stays; exception revoked 2026-10-12 (OD-494, ADR 0029)
 - **Context source:** SPEC §7.5, §7.8, §16.5; ADR 0005, ADR 0023; the grouped-model-calls
   measurements of 2026-10-11 (branch `grouped-model-calls`, not merged)
 
