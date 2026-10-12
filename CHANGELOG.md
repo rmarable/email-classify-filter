@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.2.0 (not yet tagged)
 
+- Qwen3.5 9B may now be evaluated as the local model in place of Gemma 4 12B (classifier and actor, local only, evaluation only until a decision); nothing changes for users until it is adopted (OD-491, ADR 0027).
 - A Claude eval's result now records each case's claims (which spawn and round took it, when it was claimed, read, answered and settled, and why an action went to the high-risk actor; no message content), with figures per spawn, round and session; `ecf eval compare` prints them, each model's seconds per request and cache shares, and warns when two Claude runs used a different preset, sensitivity or models. A `v2.1.0` client can't read a result written by `v2.2.0` (SPEC §16.2).
 - In a Claude eval, `--batch` now groups only the high-sensitivity classifier's messages; the high-risk actor takes one message per spawn, as `/ecf-review` does, so `--batch 1` against `--batch 5` measures the `classifier_high_batch` choice (SPEC §7.5, §16.3).
 
