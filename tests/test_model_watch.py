@@ -277,7 +277,7 @@ def test_new_ollama_tags_after_the_first_read_go_on_the_daily_summary(
     model_watch.run(conn, clock, FakeNotifier(), _store(None), _http(handle))
     assert model_watch.daily_lines(conn) == [
         "New gemma4 tags in the Ollama library: 12b-it-qat2."
-        " ecf keeps gemma4:12b until a release moves it."
+        " ecf keeps gemma4:12b-it-q4_K_M until a release moves it."
     ]
 
 

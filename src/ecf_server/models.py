@@ -91,14 +91,26 @@ def check(
     return ready
 
 
+def local_source(digests: dict[str, str], pin: ollama.Pin) -> str | None:
+    """A tag Ollama already holds with the pinned digest: the pinned tag, else an ecf copy (any
+    release), else any other. Ollama 0.40 on Apple silicon pulls an MLX build for `gemma4:12b`,
+    replacing that tag, so the pinned model may survive only under ecf's copies (v2.2.3)."""
+    held = sorted(t for t, d in digests.items() if d == pin.digest)
+    for t in (pin.tag, *(t for t in held if t.startswith(f"{pin.ecf_name}:")), *held):
+        if digests.get(t) == pin.digest:
+            return t
+    return None
+
+
 def recopy(conn: sqlite3.Connection, clock: Clock, client: Client) -> bool:
-    """Copy the pinned tag to this release's ecf name when Ollama still holds it unchanged (after
-    an ecf upgrade); True if it did. Never pulls."""
+    """Copy the pinned model to this release's ecf name from a tag Ollama already holds with the
+    pinned digest (after an ecf upgrade); True if it did. Never pulls."""
     pin = ollama.load_pin()
     try:
-        if client.digests().get(pin.tag) != pin.digest:
+        source = local_source(client.digests(), pin)
+        if source is None:
             return False
-        client.copy(pin.tag, pin.ecf_tag)
+        client.copy(source, pin.ecf_tag)
         if client.digests().get(pin.ecf_tag) != pin.digest:
             return False
     except OllamaError:
@@ -305,18 +317,23 @@ def start_install(
 
 
 def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Progress) -> None:
+    """Copy the pinned model to this release's ecf name, pulling only when Ollama doesn't already
+    hold it under some tag (a pull can replace a tag with a different build, v2.2.3)."""
     pin = ollama.load_pin()
-    for event in client.pull(pin.tag):
-        progress.set(status=str(event.get("status", ""))[:60],
-                     completed=int(event.get("completed") or 0),
-                     total=int(event.get("total") or 0))  # fmt: skip
-    got = client.digests().get(pin.tag)
-    if got != pin.digest:
-        was = (got or "missing")[:12]
-        raise OllamaError("digest_mismatch", f"{pin.tag} upstream is {was}, pinned"
-                          f" {pin.digest[:12]}; no ecf release moves the pin yet")  # fmt: skip
+    source = local_source(client.digests(), pin)
+    if source is None:
+        for event in client.pull(pin.tag):
+            progress.set(status=str(event.get("status", ""))[:60],
+                         completed=int(event.get("completed") or 0),
+                         total=int(event.get("total") or 0))  # fmt: skip
+        got = client.digests().get(pin.tag)
+        if got != pin.digest:
+            was = (got or "missing")[:12]
+            raise OllamaError("digest_mismatch", f"{pin.tag} upstream is {was}, pinned"
+                              f" {pin.digest[:12]}; no ecf release moves the pin yet")  # fmt: skip
+        source = pin.tag
     progress.set(state="copying", status=f"copying to {pin.ecf_tag}")
-    client.copy(pin.tag, pin.ecf_tag)
+    client.copy(source, pin.ecf_tag)
     if client.digests().get(pin.ecf_tag) != pin.digest:
         raise OllamaError("digest_mismatch", f"{pin.ecf_tag} after the copy")
     now = to_ts(clock.now())

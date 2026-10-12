@@ -35,7 +35,7 @@ def canary() -> ModuleType:
 def test_models_lock_matches_the_pages_as_verified(canary: ModuleType) -> None:
     rep = canary.check(DEPRECATIONS, OVERVIEW, TAGS)
     assert rep.failures == []
-    assert rep.notes == ["Ollama library: 51 gemma4 tags; gemma4:12b listed"]
+    assert rep.notes == ["Ollama library: 51 gemma4 tags; gemma4:12b-it-q4_K_M listed"]
 
 
 def test_the_status_table_parses_every_kind_of_date(canary: ModuleType) -> None:
@@ -119,10 +119,10 @@ def test_a_page_that_changed_format_fails(canary: ModuleType, which: str) -> Non
 
 def test_a_missing_pin_or_ollama_tag_fails(canary: ModuleType) -> None:
     dep = "\n".join(line for line in DEPRECATIONS.splitlines() if "claude-opus-5-5" not in line)
-    rep = canary.check(dep, OVERVIEW, TAGS.replace('gemma4:12b"', 'gemma4:12x"'))
+    rep = canary.check(dep, OVERVIEW, TAGS.replace('gemma4:12b-it-q4_K_M"', 'gemma4:12x"'))
     assert rep.failures == [
         "claude-opus-5-5: not on the deprecations page's status table",
-        "Ollama library: gemma4:12b isn't on its tags page (51 tags read)",
+        "Ollama library: gemma4:12b-it-q4_K_M isn't on its tags page (51 tags read)",
     ]
 
 

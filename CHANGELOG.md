@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- `ecf models install` and the model copy after an upgrade work again with Ollama 0.40 on Apple silicon, which pulls a different (MLX) build for `gemma4:12b`: ecf now pulls the same pinned model as `gemma4:12b-it-q4_K_M`, and uses a copy Ollama already holds before pulling (SPEC §7.5, §21.2).
+
 ## v2.2.2 (2026-10-12)
 
 - A fake IBAN placed just before a real one, or an invisible character just after it, no longer hides the real IBAN from the bank-details check (fraud trigger 1) (SPEC §8.5).
