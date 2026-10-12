@@ -58,6 +58,7 @@ from ecf.eval.results import (
     spawn_figures,
 )
 from ecf.ids import new_random_id
+from ecf.plugin_digest import plugin_digest
 from ecf.schema import CompiledSchema, load_schema
 from ecf_server import (
     actor,
@@ -462,6 +463,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
     summary["excerpt_prep"] = excerpt.VERSION
+    summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()
     conn = connect()
     try:

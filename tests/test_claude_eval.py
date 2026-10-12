@@ -18,10 +18,12 @@ import anyio
 import httpx
 import pytest
 
+from ecf.claude_wrapper import client_doc
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
+from ecf.plugin_digest import plugin_digest
 from ecf.schema import load_schema
 from ecf_server import (
     claude_eval,
@@ -623,6 +625,7 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     assert m["schema_digest"] == schema.digest != load_schema().digest
     assert m["prompt_digest"] == claude_review.prompt_digest(schema)  # Claude's side (Q4)
     assert m["keywords_digest"] == triggers.keywords_digest()
+    assert m["plugin_digest"] == plugin_digest()  # the skills and agent prompts
 
 
 def test_a_cards_expected_facts_reach_the_hide_path_as_in_ecf_eval_run(
@@ -784,7 +787,7 @@ def test_the_routes_and_their_profiles(
                 if st["state"] != "preparing":
                     break
                 await anyio.sleep(0.05)
-            sess = (await h.post("/v1/sessions", headers=cli)).json()
+            sess = (await h.post("/v1/sessions", json=client_doc(), headers=cli)).json()
             out["session"] = sess
             work = {"Authorization": f"Bearer {sess['profile_token']}"}
             agent = {"Authorization": f"Bearer {sess['agent_token']}"}

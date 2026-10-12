@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sqlite3
 import threading
 import time
 from datetime import timedelta
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,10 @@ import pytest
 
 from ecf import doctor
 from ecf import statusline as sl
+from ecf.claude_wrapper import client_doc
 from ecf.doctor import Level
-from ecf_server import claude_pins, claude_usage, retention, telemetry, telemetry_app
+from ecf.plugin_digest import digest_of, plugin_digest
+from ecf_server import claude_eval, claude_pins, claude_usage, retention, telemetry, telemetry_app
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
@@ -196,9 +200,46 @@ def export(state: ServiceState, bearer: str, body: Any, path: str = "/v1/logs",
     return anyio.run(go)
 
 
+def test_a_session_from_another_install_is_refused(
+    state: ServiceState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v2.2.0 (SPEC §10.3): 6b's first run ran an old worktree's client against the service."""
+    good = client_doc()
+    assert api(state, "POST", "/v1/sessions", good).status_code == 201
+    old = {"client": good["client"] | {"version": "1.0.0"}}
+    refused = api(state, "POST", "/v1/sessions", old)
+    assert refused.status_code == 409 and "version 1.0.0" in refused.json()["detail"]
+    other = {"client": good["client"] | {"plugin_digest": "0" * 64}}
+    refused = api(state, "POST", "/v1/sessions", other)
+    assert refused.status_code == 409 and "different plugin" in refused.json()["detail"]
+    assert api(state, "POST", "/v1/sessions", {"client": "2.2.0"}).status_code == 400
+    assert api(state, "POST", "/v1/sessions", {"client": {"version": 2}}).status_code == 400
+    unchecked = api(state, "POST", "/v1/sessions").json()  # a client from before v2.2.0
+    work = unchecked["profile_token"]
+    refused = api(state, "POST", "/v1/eval/next", {}, token=work)
+    assert refused.status_code == 409 and "older than the service" in refused.json()["detail"]
+    monkeypatch.setattr(claude_eval, "progress", lambda: {"run_id": "abcd1234"})  # an eval open
+    assert api(state, "POST", "/v1/sessions").status_code == 409
+    assert api(state, "POST", "/v1/sessions", good).status_code == 201
+
+
+def test_the_plugin_digest_changes_with_any_template(tmp_path: Path) -> None:
+    src = resources.files("ecf.data").joinpath("plugin")
+    with resources.as_file(src) as path:
+        shutil.copytree(path, tmp_path / "plugin")
+    copy = tmp_path / "plugin"
+    assert digest_of(copy) == plugin_digest()
+    actor = copy / "agents" / "actor.md"
+    actor.write_text(actor.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    edited = digest_of(copy)
+    assert edited != plugin_digest()
+    (copy / "agents" / "actor.md").rename(copy / "agents" / "actor2.md")
+    assert digest_of(copy) not in (edited, plugin_digest())  # a name is covered too
+
+
 def test_the_receiver_takes_only_a_sessions_json(conn: sqlite3.Connection,
                                                  state: ServiceState) -> None:  # fmt: skip
-    made = api(state, "POST", "/v1/sessions").json()
+    made = api(state, "POST", "/v1/sessions", client_doc()).json()
     bearer = made["telemetry_bearer"]
     assert bearer != made["profile_token"]
     body = logs(api_request(source="main", input_tokens=10, output_tokens=2))
@@ -237,7 +278,7 @@ def review(conn: sqlite3.Connection, state: ServiceState) -> tuple[str, str, str
     assert isinstance(clock, FakeClock)
     add(conn, clock, "c", "C")
     sid = waiting_item(conn, clock, "c")
-    made = api(state, "POST", "/v1/sessions").json()
+    made = api(state, "POST", "/v1/sessions", client_doc()).json()
     return (sid, made["session_id"], made["profile_token"], made["telemetry_bearer"],
             made["agent_token"])  # fmt: skip
 
@@ -325,7 +366,7 @@ def test_work_with_nothing_in_its_window_is_refused_when_the_session_ends(
         "model_refused",
     )
     assert conn.execute("SELECT classification FROM items").fetchone()[0] is None
-    made = api(state, "POST", "/v1/sessions").json()  # a later session can claim it again
+    made = api(state, "POST", "/v1/sessions", client_doc()).json()  # a later session claims it
     assert claim(state, made["profile_token"])["id"] == sid
     last = conn.execute("SELECT refused, refused_model FROM claude_sessions WHERE session_id = ?",
                         (session,)).fetchone()  # fmt: skip
@@ -354,7 +395,7 @@ def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
     row = conn.execute("SELECT five_hour_start, five_hour_end, seven_day_start, seven_day_end,"
                        " seven_day_resets FROM claude_sessions").fetchone()  # fmt: skip
     assert tuple(row) == (10.0, 14.5, 90.0, 95.0, "1790500000")
-    made = api(state, "POST", "/v1/sessions").json()
+    made = api(state, "POST", "/v1/sessions", client_doc()).json()
     assert made["last_plan"]["seven_day"] == 95.0
     stats = api(state, "GET", "/v1/stats?hours=24").json()["claude"]
     assert stats["sessions"] == 2 and stats["items"] == 1 and stats["refused"] == 0

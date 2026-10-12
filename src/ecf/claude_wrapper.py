@@ -40,6 +40,7 @@ from ecf import __version__
 from ecf.client import LocalClient
 from ecf.errors import EcfError, InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
+from ecf.plugin_digest import plugin_digest
 
 MIN_CLAUDE = (2, 1, 242)
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
@@ -172,6 +173,12 @@ def layout(paths: Paths) -> Layout:
     cfg = paths.data_dir / "claude-config"
     return Layout(cfg, paths.data_dir / "claude-work", cfg / "settings.json",
                   cfg / "ecf-mcp.json", cfg / "ecf-plugin", cfg / ".claude.json")  # fmt: skip
+
+
+def client_doc() -> dict[str, Any]:
+    """What `POST /v1/sessions` checks against the service's own install (v2.2.0): this
+    client's version and the digest of the plugin it renders."""
+    return {"client": {"version": __version__, "plugin_digest": plugin_digest()}}
 
 
 def settings_doc(main_model: str, statusline: str) -> dict[str, Any]:
@@ -381,7 +388,7 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
     lay = layout(paths)
     purge_transcripts(lay)  # a crashed earlier session may have left some behind
     with LocalClient(paths) as c:
-        session: dict[str, Any] = c.request("POST", "/v1/sessions")
+        session: dict[str, Any] = c.request("POST", "/v1/sessions", client_doc())
     socket = paths.socket.absolute()
     try:
         ev: dict[str, Any] | None = session.get("eval")
