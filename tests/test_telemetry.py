@@ -344,6 +344,7 @@ def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
         reading = {"five_hour": five, "seven_day": seven, "seven_day_resets_at": 1790500000}
         r = api(state, "POST", "/v1/statusline", reading, work)
         assert r.json() == {"recorded": True}
+    assert api(state, "POST", "/v1/statusline", {}, work).json() == {"recorded": False}  # no plan
     export(state, bearer, logs(api_request(-1, source="main", input_tokens=100, output_tokens=10,
                                            duration_ms=1000),
                                api_request(1, input_tokens=2000, output_tokens=50,
@@ -410,6 +411,29 @@ def test_the_status_line_sends_only_plan_numbers(monkeypatch: pytest.MonkeyPatch
     assert sent == [("/run/ecf.sock", "tok", sl.usage(session))]
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert sl.main(["/nowhere/ecf.sock"]) == 0  # never fails the status line
+
+
+def test_the_status_line_shows_an_eval_runs_progress_from_the_service() -> None:
+    """The counts are the service's, never the session's; anything out of shape is dropped."""
+    ev = {"run_id": "5f5772a7", "scored": 159, "total": 268, "in_progress": 10,
+          "repeats_left": 0, "round": 30}  # fmt: skip
+    u = {"five_hour": 4, "seven_day": 29}
+    assert sl.line(u, {"recorded": True, "eval": ev}) == (
+        "ecf eval 5f5772a7 · 159/268 scored · 10 out · 5h 4% · 7d 29%"
+    )
+    assert sl.line({}, {"eval": ev | {"repeats_left": 10}}) == (
+        "ecf eval 5f5772a7 · 159/268 scored · 10 out · 10 repeats left"
+    )
+    bads: list[Any] = [
+        None,
+        [],
+        {"recorded": True},
+        {"eval": ev | {"scored": "159"}},
+        {"eval": ev | {"run_id": "\x1b[2J"}},
+        {"eval": ev | {"total": True}},
+    ]
+    for bad in bads:
+        assert sl.line(u, bad) == "ecf review · 5h 4% · 7d 29%"
 
 
 def test_the_status_line_survives_a_dead_service(monkeypatch: pytest.MonkeyPatch,

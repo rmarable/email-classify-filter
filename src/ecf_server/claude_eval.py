@@ -580,7 +580,8 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
             _record_claims(run, picked, out, session_id, limit, now)
         busy = sum(w.claim != "free" for w in run.works)
         return base | {"items": out, "more": len(free) > limit, "done": False,
-                       "preparing": run.state == "preparing", "in_progress": busy}  # fmt: skip
+                       "preparing": run.state == "preparing", "in_progress": busy,
+                       "progress": progress_line(_progress(run))}  # fmt: skip
 
 
 def _agent_of(run: Run, w: Work) -> str:
@@ -866,6 +867,28 @@ def status(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dict[str,
     with run.lock:
         _check_expiry(connect, clock, run)
     return snapshot(run)
+
+
+def progress() -> dict[str, Any] | None:
+    """The open run's progress, for the status line (SPEC §13.4): counts only, no case IDs."""
+    run = current()
+    if run is None or not run.open:
+        return None
+    with run.lock:
+        return _progress(run)
+
+
+def _progress(run: Run) -> dict[str, Any]:
+    return {"run_id": run.run_id[:8], "scored": sum(w.result is not None for w in run.works),
+            "total": len(run.works), "in_progress": sum(w.claim != "free" for w in run.works),
+            "repeats_left": sum(w.stage == "repeat" for w in run.works),
+            "round": run.rounds}  # fmt: skip
+
+
+def progress_line(p: dict[str, Any]) -> str:
+    """The line `/ecf-eval` quotes after each round, so the session never counts for itself."""
+    line = f"{p['scored']}/{p['total']} scored, {p['in_progress']} in progress, round {p['round']}"
+    return line + (f", {p['repeats_left']} repeats left" if p["repeats_left"] else "")
 
 
 def results() -> dict[str, Any]:

@@ -1088,6 +1088,17 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
     ]
 
 
+def _statusline(state: ServiceState, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Records plan numbers when there are any; the reply carries an open eval run's progress,
+    which the script prints (v2.2.0)."""
+    p = telemetry.parse_plan(body)
+    recorded = p != telemetry.Plan(None, None, None, None) and state.telemetry.plan(session_id, p)
+    out: dict[str, Any] = {"recorded": recorded}
+    if (ev := claude_eval.progress()) is not None:
+        out["eval"] = ev
+    return out
+
+
 def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims. The main session (WORK) claims;
     only its agent servers (AGENT, naming their agent) read and submit (OD-307). POST throughout:
@@ -1186,9 +1197,7 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.WORK)
     def statusline(request: Request) -> JSONResponse:
         """The status-line script's plan usage (SPEC §13.4): numbers only."""
-        recorded = state.telemetry.plan(_session(request),
-                                        telemetry.parse_plan(_body(request)))  # fmt: skip
-        return JSONResponse({"recorded": recorded})
+        return JSONResponse(_statusline(state, _session(request), _body(request)))
 
     return [
         Route("/v1/review-queue", review_queue, methods=["POST"]),
