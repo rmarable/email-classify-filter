@@ -24,7 +24,9 @@ Repeat until done:
    spawns of the same `agent` may run in parallel, but wait for them all to finish before
    starting another agent's spawns.
 5. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
-   says: outcomes come only from `results` in the next `eval_next` call.
+   says: outcomes come only from `results` in the next `eval_next` call. Never end your turn to
+   wait for a spawn: if you aren't sure every spawn has finished, go back to step 1 anyway;
+   `in_progress` says how many claims are still out.
 
 At the end, call `mcp__ecf__eval_results` and tell the person, in three or four lines: the
 state, how many cases are done of the total, and, when there are metrics, the correct count of
