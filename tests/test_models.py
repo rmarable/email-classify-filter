@@ -52,6 +52,7 @@ class FakeOllama:
         if installed:
             self.models[PIN.ecf_tag] = PIN.digest
         self.upstream = upstream
+        self.pulls = 0
 
     def handler(self, req: httpx.Request) -> httpx.Response:  # noqa: PLR0911 - one per endpoint
         path = req.url.path
@@ -65,6 +66,7 @@ class FakeOllama:
                 {"name": PIN.ecf_tag, "digest": PIN.digest, "size_vram": 9_000_000_000,
                  "context_length": 6144, "expires_at": "2026-10-09T10:05:00Z"}]})  # fmt: skip
         if path == "/api/pull":
+            self.pulls += 1
             self.models[PIN.tag] = self.upstream
             lines = [{"status": "pulling manifest"},
                      {"status": "pulling bb72", "total": 100, "completed": 50},
@@ -251,6 +253,43 @@ def test_after_an_upgrade_the_check_copies_the_pinned_model_again(
     moved = FakeOllama(installed=False, upstream="c" * 64)  # the upstream tag moved: no copy
     assert models.check(conn, clock, n, moved.client(), **check_kw()) is None
     assert PIN.ecf_tag not in moved.models
+
+
+def test_install_copies_a_local_copy_of_the_pinned_model_without_pulling(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """v2.2.3: Ollama 0.40 on Apple silicon pulled an MLX build over the bare `gemma4:12b`, so the
+    pinned model may survive only under an earlier release's ecf copy; a pull could replace it."""
+    from ecf_server import db  # noqa: PLC0415
+
+    fake = FakeOllama(installed=False, upstream="c" * 64)
+    fake.models[PIN.tag] = "c" * 64  # the pinned tag now names another build
+    fake.models[f"{PIN.ecf_name}:2.2.1"] = PIN.digest
+    got = models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline)
+    assert got["state"] == "done", got
+    assert fake.models[PIN.ecf_tag] == PIN.digest and fake.pulls == 0
+    assert fake.models[PIN.tag] == "c" * 64  # the user's tag is left alone
+
+
+def test_after_an_upgrade_the_check_copies_from_an_earlier_ecf_copy(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    fake = FakeOllama(installed=False, upstream="c" * 64)
+    fake.models[PIN.tag] = "c" * 64
+    fake.models[f"{PIN.ecf_name}:2.2.1"] = PIN.digest
+    with write_tx(conn):
+        slack_admin.put_setting(conn, models.INSTALLED_KEY, "t", "t", actor="test")
+    assert models.check(conn, clock, FakeNotifier(), fake.client(), **check_kw()) is not None
+    assert fake.models[PIN.ecf_tag] == PIN.digest and fake.pulls == 0
+
+
+def test_local_source_prefers_the_pinned_tag_then_ecf_copies() -> None:
+    d = PIN.digest
+    assert models.local_source({PIN.tag: d, f"{PIN.ecf_name}:1": d}, PIN) == PIN.tag
+    assert models.local_source({PIN.tag: "c" * 64, "x/y:1": d, f"{PIN.ecf_name}:1": d},
+                               PIN) == f"{PIN.ecf_name}:1"  # fmt: skip
+    assert models.local_source({"x/y:1": d}, PIN) == "x/y:1"
+    assert models.local_source({PIN.tag: "c" * 64}, PIN) is None
 
 
 def test_install_refuses_a_moved_upstream_tag(

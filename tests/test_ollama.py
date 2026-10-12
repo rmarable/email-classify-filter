@@ -57,7 +57,7 @@ def _server(
 
 def test_the_shipped_pin_is_the_measured_model() -> None:
     pin = ollama.load_pin()
-    assert pin.tag == "gemma4:12b"
+    assert pin.tag == "gemma4:12b-it-q4_K_M"  # the explicit quantization since v2.2.3
     assert pin.digest == "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b"
     assert pin.ecf_tag.startswith("ecf/gemma4-12b:")
 

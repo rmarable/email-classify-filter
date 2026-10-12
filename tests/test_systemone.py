@@ -270,7 +270,7 @@ def test_the_lock_holds_only_eval_only_classifiers() -> None:
 
 
 def test_the_production_pin_stays_gemma() -> None:
-    assert ollama.load_pin().tag == "gemma4:12b"
+    assert ollama.load_pin().tag == "gemma4:12b-it-q4_K_M"
     assert all(p.ecf_name != ollama.load_pin().ecf_name for p in systemone.load_pins().values())
 
 
