@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v2.2.2 (2026-10-12)
 
 - A fake IBAN placed just before a real one, or an invisible character just after it, no longer hides the real IBAN from the bank-details check (fraud trigger 1) (SPEC §8.5).
 - Recorded a comparison of Gemma's MLX flavor with the pinned GGUF model on Ollama 0.40.3: MLX was about 28% faster but has no structured output in Ollama yet, so it is not adopted (SPEC §1.2, §21.2).
