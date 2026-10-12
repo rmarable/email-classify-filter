@@ -62,7 +62,7 @@ uv build                                        # wheel + sdist
 | `src/ecf_server/` | the local service (`ecf-server`): state, job queue, rules, secret stores, API, service process |
 | `src/ecf_server/migrations/` | SQLite migrations, applied in order |
 | `tests/` | pytest; `conftest.py` has the shared fixtures, including real service processes |
-| `tests/eval/synthetic/` | the synthetic eval set (see `GENERATE-FAKE-TESTING-EMAILS.md`) |
+| `tests/eval/synthetic/` | the synthetic eval set (see `planning-docs/GENERATE-FAKE-TESTING-EMAILS.md`) |
 | `scripts/` | maintenance scripts |
 | `docs/adr/` | decision records; `docs/history/` holds dated design plans |
 
@@ -124,7 +124,7 @@ uv run ecf eval show bec-002                      # headers, text, attachments
 uv run ecf eval compare a.json b.json             # paired comparison of two result files
 ```
 
-Details, rules and the card format: `GENERATE-FAKE-TESTING-EMAILS.md`.
+Details, rules and the card format: `planning-docs/GENERATE-FAKE-TESTING-EMAILS.md`.
 
 ## Releases and tags
 
