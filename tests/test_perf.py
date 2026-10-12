@@ -107,8 +107,24 @@ def test_scan_of_a_20_part_partial_message_stops_at_its_limit() -> None:
         "DE12\n3456\n7890\n1234\n5678\n90\n",  # newlines: no candidate spans them
         "LC12 3456 7890 1234 . ",  # too short for its country
         "ZZ12 3456 7890 1234 5678 ",  # no such country
+        "ZZ12 AB12 CD12 EF12 ",  # dense heads naming no country (every start is tried)
+        "DE12 3456. ",  # dense heads of a real country, each too short
+        "LC12 LC12 LC12 LC12 LC12 LC12 LC12 AAA.",  # just short of LC's 32: uncounted matches
+        "DE12.",  # a real country's head every 5 bytes, no full match
     ],
-    ids=["groups", "heads", "hyphens", "short-country", "newlines", "short", "no-country"],
+    ids=[
+        "groups",
+        "heads",
+        "hyphens",
+        "short-country",
+        "newlines",
+        "short",
+        "no-country",
+        "no-country-dense",
+        "short-dense",
+        "uncounted-matches",
+        "head-only",
+    ],
 )
 def test_the_iban_check_on_a_crafted_10_mib_text(unit_text: str) -> None:
     """R3-P12: every candidate fails its checksum; 1.26 s per 10 MiB before the candidate cap
