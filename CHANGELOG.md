@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.2.0 (not yet tagged)
 
+- Recorded the first test of whether Opus as the high-risk actor brings value (preset B): Sonnet in its place was as safe on the synthetic set and cost about half, and the operator judged its actions no worse (three cards differed); the `actor_high` pin is unchanged until a separate decision (SPEC §21.2).
 - Qwen3.5 9B may now be evaluated as the local model in place of Gemma 4 12B (classifier and actor, local only, evaluation only until a decision); evaluated 2026-10-12, it had one unsafe case and was less accurate and slower than Gemma, so Gemma stays and nothing changes for users (OD-491, ADR 0027).
 - A preset B Claude eval no longer takes its Gemma classifications from an experiment run (`--not-for-gate` or a switch off); it uses the latest normal run (SPEC §16.2).
 - Recorded the first batch 1 against batch 5 comparison on `high` (Claude classifier): batch 5 was as accurate and cost about a third less, but the `classifier_high_batch` default stays 1 until cross-item injection can be measured (SPEC §21.2).
