@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## v2.2.1 (not yet tagged)
+
+- v2.2.1 is the release of v2.2.1-rc1 below, with no code changes since rc1 (only docs). It passed its release check: an upgrade from v2.2.0 with a rollback and an upgrade again (SPEC §21.2).
+
 ## v2.2.1-rc1 (2026-10-12)
 
 - When `ecf upgrade --to` says a version is already installed, it now names the `ecf` that answered and, if the install's service runs a different version, says so: an `ecf` earlier on your PATH (such as a development copy) may not be the install's own (SPEC §21.2).
