@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.2.0 (not yet tagged)
+## v2.2.0 (2026-10-12)
 
 - v2.2.0 is the release of v2.2.0-rc1 below, with no code changes since rc1 (only docs). It passed its release check: an upgrade from v2.1.0 with a rollback and an upgrade again (SPEC §21.2).
 - The high-risk actor's model and routing are unchanged; whether Sonnet could take Opus's place is revisited after v3.0.0 (SPEC §21.2).
