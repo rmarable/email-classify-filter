@@ -1,7 +1,7 @@
 # Timing per spawn in Claude evals (v2.2.0)
 
 - **Status:** draft 2 (2026-10-11). Release `v2.2.0`, worked on after `v2.1.0` ships (operator
-  decision 2026-10-11; was `v2.1.1`). Steps 1-5 built (2026-10-11); step 6 (measurements) not run.
+  decision 2026-10-11; was `v2.1.1`). Steps 1-5 built (2026-10-11); step 6 run 2026-10-11/12 (SPEC §21.2: batch default stays 1; `actor_high` unchanged, revisit after `v3.0.0`).
 - **Base:** `main` after the `v2.1.0` merge.
 - **Decisions:** SPEC once built: §16.2 (what is recorded and printed), §16.3 (the comparisons),
   §7.5 (eval batching); the §1.2 roadmap item was removed when it was built.
