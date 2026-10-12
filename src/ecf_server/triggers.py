@@ -88,10 +88,15 @@ AMOUNTS = (
 )
 AMOUNT_HIT = "amount"
 IBAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[ -]?[A-Z0-9]){11,30}")
+# Where an IBAN can start: tried first, so a head naming no country costs no full match.
+IBAN_HEAD = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}")
 IBAN_HIT = "valid IBAN"
 # IBAN-shaped candidates checked per text (R3-P12): a crafted text of IBAN heads costs a checksum
 # each. Past this many with none valid, the scan says so (`unscanned`), so decoys can't hide one.
 IBAN_CANDIDATES = 256
+# Full matches tried per text, counted or not (v2.2.2): every head of a listed country is tried, so
+# heads too few to reach their country's length would cost a match each without this cap.
+IBAN_ATTEMPTS = 16 * IBAN_CANDIDATES
 # IBAN length per country, from the SWIFT IBAN registry (unverified against its current release;
 # a country not listed never matches).
 IBAN_LENGTHS = {
@@ -273,23 +278,34 @@ def valid_iban(text: str) -> bool:
 
 
 def _iban(text: str) -> bool | None:
-    """`valid_iban`, or None when IBAN_CANDIDATES candidates were checked and none was valid."""
-    checked = 0
-    for m in IBAN.finditer(text):
-        g = m.group()
-        size = IBAN_LENGTHS.get(g[:2])
+    """`valid_iban`, or None when IBAN_CANDIDATES candidates (or IBAN_ATTEMPTS full matches) were
+    checked and none was valid."""
+    checked = attempts = pos = 0
+    # Every start is tried, not just those after the last candidate: a failed candidate can run
+    # into a real IBAN ("GB00 WEST ... 32 DE89 ..."), which `finditer` would skip.
+    while h := IBAN_HEAD.search(text, pos):
+        pos = h.end()
+        size = IBAN_LENGTHS.get(h.group()[:2])
         if size is None:
             continue
+        attempts += 1
+        if attempts > IBAN_ATTEMPTS:
+            return None
+        if (m := IBAN.match(text, h.start())) is None:
+            continue
+        g = m.group()
         code = g.replace(" ", "").replace("-", "")
         if len(code) < size:
             continue
-        checked += 1
-        if checked > IBAN_CANDIDATES:
-            return None
         cut = size if len(code) == len(g) else _nth_character(g, size)
         end = m.start() + cut
-        if end < len(text) and text[end].isalnum():
+        # ASCII, as the start's lookbehind is: an invisible Hangul filler (category Lo) after an
+        # IBAN would otherwise hide it
+        if end < len(text) and text[end].isascii() and text[end].isalnum():
             continue
+        checked += 1  # only candidates that reach the checksum (a head inside a run isn't one)
+        if checked > IBAN_CANDIDATES:
+            return None
         code = code[:size]
         if int((code[4:] + code[:4]).translate(_IBAN_DIGITS)) % 97 == 1:
             return True

@@ -558,6 +558,11 @@ def test_credential_plurals_make_a_credential_request(body: str) -> None:
         ("ZZ82 WEST 1234 5698 7654 32", False),  # no such country
         ("gb82 west 1234 5698 7654 32", False),  # lower case
         ("Order 4471 2210 9938 5521 shipped", False),
+        # a failed candidate that runs into a real IBAN doesn't hide it (2026-10-11 repro)
+        ("GB00 WEST 1234 5698 7654 32 DE89 3704 0044 0532 0130 00", True),
+        ("ZZ12 DE89 3704 0044 0532 0130 00", True),  # a decoy with no such country
+        ("GB00 WEST 1234 5698 7654 32 DE89 3704 0044 0532 0130 01", False),  # both fail
+        ("DE89 3704 0044 0532 0130 00\u3164", True),  # an invisible Hangul filler after it
     ],
 )
 def test_a_checksum_valid_iban_is_a_bank_keyword(text: str, valid: bool) -> None:
@@ -894,32 +899,43 @@ def test_the_iban_check_stops_after_its_candidates() -> None:
     assert tr._iban(VALID_IBAN + " " + decoys) is True  # pyright: ignore[reportPrivateUsage]
     few = "DE12 3456 7890 1234 5678 90. " * (tr.IBAN_CANDIDATES - 1)
     assert tr._iban(few + VALID_IBAN) is True  # pyright: ignore[reportPrivateUsage]
+    run = "DE12 DE12 DE12 DE12 DE12 DE12 DE12 DE12 DE1. " * 70  # heads in a run: uncounted
+    assert tr._iban(run + VALID_IBAN) is True  # pyright: ignore[reportPrivateUsage]
+    heads = "DE12. " * (tr.IBAN_ATTEMPTS + 1)  # uncounted candidates have their own cap
+    assert tr._iban(heads + VALID_IBAN) is None  # pyright: ignore[reportPrivateUsage]
+    assert tr._iban("DE12. " * (tr.IBAN_ATTEMPTS - 1) + VALID_IBAN) is True  # pyright: ignore[reportPrivateUsage]
 
 
-def _iban_before_step_3b(text: str) -> bool:
-    for m in tr.IBAN.finditer(text):
+def _iban_every_start(text: str) -> bool:
+    """The IBAN check tried at every position the pattern can start (no candidate cap): an
+    oracle for the search that resumes past each candidate's start (a decoy can't hide one)."""
+    for i in range(len(text)):
+        m = tr.IBAN.match(text, i)
+        if m is None:
+            continue
         size = tr.IBAN_LENGTHS.get(m.group()[:2])
-        where = [i for i, c in enumerate(m.group()) if c not in " -"]
+        where = [k for k, c in enumerate(m.group()) if c not in " -"]
         if size is None or len(where) < size:
             continue
         end = m.start() + where[size - 1] + 1
         if end < len(text) and text[end].isalnum():
             continue
-        code = "".join(m.group()[i] for i in where[:size])
+        code = "".join(m.group()[k] for k in where[:size])
         if int((code[4:] + code[:4]).translate(tr._IBAN_DIGITS)) % 97 == 1:  # pyright: ignore[reportPrivateUsage]
             return True
     return False
 
 
-def test_the_iban_check_finds_what_it_found_before() -> None:
-    """The cheaper compaction finds the same IBANs (below the candidate cap)."""
+def test_the_iban_check_finds_every_iban_an_every_start_check_finds() -> None:
+    """Below the candidate cap the check finds an IBAN wherever one starts, including after a
+    failed candidate that ran into it (2026-10-11: `finditer` resumed past such a decoy)."""
     rng = random.Random(20261012)  # noqa: S311 - reproducible test texts
     pieces = [VALID_IBAN, "GB82 WEST 1234 5698 7654 32", "GB82-WEST-1234-5698-7654-32",
               "NO93 8601 1117 947", "DE89370400440532013000", "DE12 3456", "7890", " ", "-", "x",
               "\n", "A", "0"]  # fmt: skip
     for _ in range(500):
         text = "".join(rng.choices(pieces, k=rng.randint(1, 12)))
-        assert tr.valid_iban(text) is _iban_before_step_3b(text), repr(text)
+        assert tr.valid_iban(text) is _iban_every_start(text), repr(text)
 
 
 WALLETS_BEFORE = (

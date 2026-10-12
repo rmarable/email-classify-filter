@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- A fake IBAN placed just before a real one, or an invisible character just after it, no longer hides the real IBAN from the bank-details check (fraud trigger 1) (SPEC §8.5).
 - Recorded a comparison of Gemma's MLX flavor with the pinned GGUF model on Ollama 0.40.3: MLX was about 28% faster but has no structured output in Ollama yet, so it is not adopted (SPEC §1.2, §21.2).
 - Decided, not built: TypeSafe Jev may become a destination for email content, as a classifier (OD-493, ADR 0028); nothing goes to it yet, and the privacy statement will say exactly what it receives before it ships.
 - Qwen and Qwen-based models are banned in every role, including evaluation; the two earlier exceptions are revoked (OD-494, ADR 0029).
