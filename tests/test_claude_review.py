@@ -199,6 +199,35 @@ def test_a_session_gets_one_agent_type_at_a_time(
     assert [i["id"] for i in queue(conn, clock)["items"]] == [c1]  # S1 may take any type now
 
 
+def test_in_progress_counts_the_sessions_claims_and_an_empty_reply_waits_for_them(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A session that lost count of its spawns asks again (run 5f5772a7): the reply says how
+    many of its claims are out (held ones too) and, when empty only because of them, waits up to
+    WAIT_S; with nothing out it returns at once."""
+    add(conn, clock, "c", "C")
+    a, b = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    slept: list[float] = []
+    q = claude_review.review_queue_waiting(conn, clock, S1, sleep=slept.append)
+    assert len(q["items"]) == 2 and q["in_progress"] == 2 and slept == []
+    assert queue(conn, clock, S2)["in_progress"] == 0  # another session's claims aren't counted
+    got = claude_review.record_classification(conn, clock, S1, a, token_for(q, a), REQUEST,
+                                              agent_of(conn, a))  # fmt: skip
+    assert isinstance(got, Hold)  # held, waiting for its model check: still in progress
+    q2 = claude_review.review_queue_waiting(conn, clock, S1, sleep=slept.append)
+    assert q2["items"] == [] and q2["in_progress"] == 2
+    assert sum(slept) == claude_review.WAIT_S and claude_review.WAIT_S < 10  # ecf-mcp's limit
+    settled(conn, clock, got)
+    assert claude_review.release_session(conn, S1) == 1  # b's claim
+    slept.clear()
+    q3 = claude_review.review_queue_waiting(conn, clock, S1, sleep=slept.append)
+    assert [i["id"] for i in q3["items"]] == [b] and q3["in_progress"] == 1
+    q4 = claude_review.review_queue_waiting(conn, clock, S2, sleep=slept.append)
+    assert [(i["id"], i["need"]) for i in q4["items"]] == [(a, "act")]  # classified: to the actor
+    q5 = claude_review.review_queue_waiting(conn, clock, "session-3", sleep=slept.append)
+    assert q5["items"] == [] and q5["in_progress"] == 0 and slept == []  # nothing to wait for
+
+
 def test_limit_more_address_and_paused(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add(conn, clock, "c", "C")
     add(conn, clock, "d", "C")

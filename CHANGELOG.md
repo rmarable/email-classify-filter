@@ -6,6 +6,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 ## v2.2.0 (not yet tagged)
 
 - `/ecf-eval` no longer stops when it loses count of its subagents: if it isn't sure every spawn has finished, it asks the service again instead of waiting (a C eval stalled when two spawns finished at once).
+- `/ecf-review` now carries on while its own claims are still out: `review_queue` says how many are in progress and waits a few seconds for them, and the skill ends only when nothing is waiting and nothing is in progress (SPEC §10.4).
 - A Claude eval's result now records each case's claims (which spawn and round took it, when it was claimed, read, answered and settled, and why an action went to the high-risk actor; no message content), with figures per spawn, round and session; `ecf eval compare` prints them, each model's seconds per request and cache shares, and warns when two Claude runs used a different preset, sensitivity or models. A `v2.1.0` client can't read a result written by `v2.2.0` (SPEC §16.2).
 - In a Claude eval, `--batch` now groups only the high-sensitivity classifier's messages; the high-risk actor takes one message per spawn, as `/ecf-review` does, so `--batch 1` against `--batch 5` measures the `classifier_high_batch` choice (SPEC §7.5, §16.3).
 

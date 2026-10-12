@@ -52,6 +52,8 @@ import hmac
 import json
 import secrets
 import sqlite3
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -179,9 +181,40 @@ def review_queue(
             [(f"claude:{round_id}:{b}", s) for b, sids in batches.items() if len(sids) > 1
              for s in sids],
         )  # fmt: skip
+        busy = int(conn.execute(
+            "SELECT COUNT(*) FROM claims WHERE session_id = ?"
+            " AND (state = 'held' OR (state = 'claimed' AND expires_at > ?))",
+            (session_id, to_ts(now))).fetchone()[0])  # fmt: skip
     if out:
         log.info("claude.claimed", session_id=session_id[:8], items=len(out))
-    return {"items": out, "more": len(rows) > limit, "results": results}
+    return {"items": out, "more": len(rows) > limit, "results": results, "in_progress": busy}
+
+
+WAIT_S = 6.0  # as claude_eval: under ecf-mcp's 10 s request limit (§15.4)
+POLL_S = 2.0
+
+
+def review_queue_waiting(
+    conn: sqlite3.Connection,
+    clock: Clock,
+    session_id: str,
+    *,
+    address: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+    stopped: str | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """`review_queue`, but a reply that would be empty only because this session's claims are
+    still out waits up to `WAIT_S` for them: the session can't pause itself, and a session that
+    lost count of its spawns asks again rather than wait for one (C eval run 5f5772a7)."""
+    waited = 0.0
+    while True:
+        got = review_queue(conn, clock, session_id, address=address, limit=limit,
+                           stopped=stopped)  # fmt: skip
+        if got["items"] or got.get("stopped") or not got["in_progress"] or waited >= WAIT_S:
+            return got
+        sleep(POLL_S)
+        waited += POLL_S
 
 
 def _spawn(conn: sqlite3.Connection, agent: str, address_id: str, sid: str,

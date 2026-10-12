@@ -1133,7 +1133,7 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
             raise InvalidInputError("limit must be a whole number")
         address = _opt_str(body, "address_id")
         stopped = state.telemetry.stopped(sid)
-        return _with_conn(lambda c: claude_review.review_queue(
+        return _with_conn(lambda c: claude_review.review_queue_waiting(
             c, state.clock, sid, address=address, limit=limit, stopped=stopped))  # fmt: skip
 
     @allow(Caller.AGENT)
