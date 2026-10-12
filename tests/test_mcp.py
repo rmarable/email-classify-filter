@@ -20,6 +20,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 
 from ecf import mcp_server
+from ecf.claude_wrapper import client_doc
 from ecf.paths import Paths
 from ecf_server import claude_pins
 from ecf_server.api import ServiceState, create_app
@@ -43,7 +44,8 @@ def session_tokens(state: ServiceState) -> tuple[str, str]:
     async def go() -> tuple[str, str]:
         transport = httpx.ASGITransport(app=create_app(state))
         async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
-            r = (await c.post("/v1/sessions", headers={"Authorization": "Bearer cli-token"})).json()
+            r = (await c.post("/v1/sessions", json=client_doc(),
+                              headers={"Authorization": "Bearer cli-token"})).json()  # fmt: skip
             return str(r["profile_token"]), str(r["agent_token"])
 
     return anyio.run(go)

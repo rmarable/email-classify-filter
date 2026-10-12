@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.2.0 (not yet tagged)
 
+- `ecf claude` now refuses to start when it comes from a different install than the service (another version, or different skills or agent prompts), and says where to run it from; a Claude eval's result records which skills and agent prompts it ran with (SPEC §10.3).
 - Recorded the first test of whether Opus as the high-risk actor brings value (preset B): Sonnet in its place was as safe on the synthetic set and cost about half, and the operator judged its actions no worse (three cards differed); the `actor_high` pin and routing stay as they are, to be revisited after v3.0.0 (operator decision) (SPEC §21.2).
 - Qwen3.5 9B may now be evaluated as the local model in place of Gemma 4 12B (classifier and actor, local only, evaluation only until a decision); evaluated 2026-10-12, it had one unsafe case and was less accurate and slower than Gemma, so Gemma stays and nothing changes for users (OD-491, ADR 0027).
 - A preset B Claude eval no longer takes its Gemma classifications from an experiment run (`--not-for-gate` or a switch off); it uses the latest normal run (SPEC §16.2).

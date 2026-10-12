@@ -18,6 +18,7 @@ import json
 import os
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -37,6 +38,7 @@ from starlette.routing import Route
 from ecf import __version__
 from ecf.errors import (
     PROBLEM_CONTENT_TYPE,
+    ConflictError,
     EcfError,
     ForbiddenProfileError,
     InternalError,
@@ -47,6 +49,7 @@ from ecf.errors import (
     UnauthorizedError,
 )
 from ecf.ids import new_random_id
+from ecf.plugin_digest import plugin_digest
 from ecf_server import (
     _slack,
     addresses,
@@ -138,6 +141,7 @@ class Session:
     profile: Caller
     created_at: str
     agent_token: str = field(default="", repr=False)
+    client_checked: bool = False  # `ecf claude` matched this install (v2.2.0)
 
 
 @dataclass
@@ -281,8 +285,9 @@ def create_app(state: ServiceState) -> Starlette:
         )
 
     @allow(Caller.CLI)
-    def create_session(_request: Request) -> JSONResponse:
-        s = _new_session(state)
+    def create_session(request: Request) -> JSONResponse:
+        checked = _client_checked(_body(request).get("client"))
+        s = replace(_new_session(state), client_checked=checked)
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
@@ -420,6 +425,40 @@ def _new_session(state: ServiceState) -> Session:
     return Session(
         new_random_id(), secrets.token_urlsafe(32), Caller.WORK, now, secrets.token_urlsafe(32)
     )
+
+
+def _client_mismatch(what: str) -> ConflictError:
+    return ConflictError(f"this `ecf claude` {what}; run `ecf claude` from the install the"
+                         f" service runs ({Path(sys.executable).parent})")  # fmt: skip
+
+
+def _client_checked(client: Any) -> bool:
+    """`ecf claude`'s client against this install (v2.2.0; SPEC §10.3): a different version or
+    plugin is refused. A client too old to say (before v2.2.0) is refused while a Claude eval
+    is open, since the run's result would name prompts it didn't use; otherwise allowed and
+    logged, and its session can't run `/ecf-eval`."""
+    if client is None:
+        if claude_eval.progress() is not None:
+            raise _client_mismatch("is older than the service and an eval is open")
+        log.warning("session.client_unchecked")
+        return False
+    if not isinstance(client, dict):
+        raise InvalidInputError("client must be an object")
+    c = cast(dict[str, Any], client)
+    version, digest = c.get("version"), c.get("plugin_digest")
+    if not isinstance(version, str) or not isinstance(digest, str):
+        raise InvalidInputError("client needs version and plugin_digest strings")
+    if version != __version__:
+        raise _client_mismatch(f"is version {version[:32]}, the service {__version__}")
+    if digest != plugin_digest():
+        raise _client_mismatch("renders a different plugin from the service's")
+    return True
+
+
+def _require_checked(request: Request) -> None:
+    """`/ecf-eval` only from a session whose client was checked (`_client_checked`)."""
+    if not cast(Session, request.state.session).client_checked:
+        raise _client_mismatch("is older than the service")
 
 
 def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
@@ -1183,6 +1222,7 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def eval_next(request: Request) -> JSONResponse:
         """`/ecf-eval` (V1.4 step 7, OD-287): claims the next cases, as `review_queue` does."""
         body, sid = _body(request), _session(request)
+        _require_checked(request)
         limit = body.get("limit", claude_review.LIMIT_DEFAULT)
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise InvalidInputError("limit must be a whole number")
