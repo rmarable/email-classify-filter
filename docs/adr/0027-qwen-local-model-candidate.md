@@ -1,7 +1,8 @@
 # ADR 0027: Qwen3.5 9B may be evaluated as the local model
 
 - **Status:** accepted (operator decision 2026-10-12, OD-491); widens the Qwen exception of ADR
-  0023 (OD-470) for one candidate; nothing built or run yet
+  0023 (OD-470) for one candidate; evaluated 2026-10-12: fails the safety gate and
+  non-inferiority, Gemma stays
 - **Context source:** SPEC §7.5, §7.8, §16.5; ADR 0005, ADR 0023; the grouped-model-calls
   measurements of 2026-10-11 (branch `grouped-model-calls`, not merged)
 
@@ -45,6 +46,17 @@ disagree by a week); Gemma 4 12B on 2026-06-03 (Google's release log).
 ## Consequences
 
 - An adoption would change the pinned local model: `ollama.lock`, `ecf models install`, the
-  shipped tag and probably every address's review counts, as with any pin change (SPEC §7.5), and the
-  prompts, which were tuned on Gemma.
+  shipped tag and probably every address's review counts, as with any pin change (SPEC §7.5),
+  and the prompts, which were tuned on Gemma.
 - The model filter now has two exceptions; CLAUDE.md states both.
+
+## Outcome (2026-10-12)
+
+Qwen3.5 9B can't be adopted: on the frozen set it had 1 unsafe case (`bug-outage-urgent`, an
+urgent outage rated high, so not escalated) and was 1.9 points behind Gemma (176/268 against
+181/268; Newcombe −7.7 to +4.0, not non-inferior), with more genuine mail on fraud routes (15
+against 6). It wasn't faster either: classifier median 7.8 s against 5.7 s, because llama-server
+resumes its cached prompt only about halfway (770 tokens re-read against Gemma's 109) and it
+writes fewer tokens per second; its actor calls were quicker (6.9 s against 9.9 s). Both runs on
+the same code, service setup and power, back to back (runs `41c2a2be`, `445c9075`; SPEC §7.5).
+Gemma stays the local model.
