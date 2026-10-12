@@ -19,8 +19,8 @@ from typer.testing import CliRunner
 import ecf.cli_upgrade
 from ecf import __version__, release_source, upgrade_check
 from ecf.cli import app
-from ecf.errors import InvalidInputError
-from ecf.paths import Paths
+from ecf.errors import InvalidInputError, ServiceUnavailableError
+from ecf.paths import Paths, paths_for
 from ecf.release_source import Gh, ReleaseError, ReleaseInfo, VerifyError
 from ecf_server import db, export_bundle
 from ecf_server.db import write_tx
@@ -298,6 +298,7 @@ def test_cli_refusals(cli: FakeGh, conn: sqlite3.Connection, tmp_path: Path) -> 
     assert isinstance(r.exception, InvalidInputError) and "(v9.0.0)" in str(r.exception)
     r = _upgrade("--to", __version__)
     assert isinstance(r.exception, InvalidInputError) and "already installed" in str(r.exception)
+    assert "this client:" in str(r.exception) and "service runs" not in str(r.exception)
     assert isinstance(_upgrade("--sha256sums", "x").exception, InvalidInputError)
     assert isinstance(_upgrade("--wheel", "x.whl", "--to", "v9.0.0").exception, InvalidInputError)
 
@@ -330,3 +331,36 @@ def test_cli_wheel_with_sums(cli: FakeGh, conn: sqlite3.Connection, tmp_path: Pa
     r = _upgrade("--wheel", str(whl), "--sha256sums", str(sums), "--check")
     assert isinstance(r.exception, VerifyError)
     assert cli.calls == []
+
+
+def test_already_installed_says_which_client_and_what_the_service_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The v2.2.0-rc1 check: a repository's `.venv` ecf, earlier on PATH, answered for itself."""
+    monkeypatch.setenv("ECF_HOME", str(tmp_path))
+    served: dict[str, Any] = {"version": "2.1.0"}
+
+    class Fake:
+        def __init__(self, _p: Paths) -> None:
+            pass
+
+        def __enter__(self) -> Fake:
+            if served.get("down"):
+                raise ServiceUnavailableError("not running")
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            pass
+
+        def get(self, _path: str) -> dict[str, Any]:
+            return served
+
+    monkeypatch.setattr(ecf.cli_upgrade, "LocalClient", Fake)
+    p = paths_for("ecf1009")
+    msg = ecf.cli_upgrade._already(p)  # pyright: ignore[reportPrivateUsage]
+    assert f"ecf {__version__} is already installed (this client: " in msg
+    assert "install ecf1009's service runs 2.1.0" in msg and "which -a ecf" in msg
+    served["version"] = __version__
+    assert "service" not in ecf.cli_upgrade._already(p)  # pyright: ignore[reportPrivateUsage]
+    served["down"] = True
+    assert "ecf1009's service isn't answering" in ecf.cli_upgrade._already(p)  # pyright: ignore[reportPrivateUsage]

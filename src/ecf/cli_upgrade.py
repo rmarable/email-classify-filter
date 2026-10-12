@@ -28,7 +28,7 @@ import typer
 
 from ecf import __version__, release_source, upgrade_check, upgrade_run, watch
 from ecf.client import LocalClient
-from ecf.errors import InvalidInputError
+from ecf.errors import EcfError, InvalidInputError
 from ecf.paths import Paths
 from ecf.service_unit import manager_for
 
@@ -72,7 +72,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                 release_source.check_sums_file(new, Path(os.path.expanduser(sums)))
                 typer.echo(f"{new.name} matches {Path(sums).name}")
         else:
-            back, tag = _target(to)
+            back, tag = _target(to, paths())
             if back is not None:
                 _back(paths(), back)
                 return
@@ -101,7 +101,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
                           affected=report.affected)  # fmt: skip
 
 
-def _target(to: str | None) -> tuple[str | None, str | None]:
+def _target(to: str | None, p: Paths) -> tuple[str | None, str | None]:
     """(an older version to go back to, None) or (None, the release tag to fetch; None for the
     newest). Going back takes a tag or a version (snapshot folders are named by version); going
     forward takes only a release tag."""
@@ -112,7 +112,7 @@ def _target(to: str | None) -> tuple[str | None, str | None]:
     if order < now:
         return version, None
     if order == now:
-        raise InvalidInputError(f"ecf {__version__} is already installed")
+        raise InvalidInputError(_already(p))
     if not release_source.is_tag(to):
         want = release_source.version_tag(version)
         raise InvalidInputError(
@@ -120,6 +120,21 @@ def _target(to: str | None) -> tuple[str | None, str | None]:
             + (f" ({want})" if want else "; use --wheel for a build")
         )
     return None, to
+
+
+def _already(p: Paths) -> str:
+    """Which client says so, and what the install's service runs: a repository's `.venv` `ecf`
+    earlier on PATH than the install's own answers for itself (v2.2.0-rc1 check, SPEC §21.2)."""
+    me = f"ecf {__version__} is already installed (this client: {Path(sys.argv[0]).absolute()})"
+    try:
+        with LocalClient(p) as c:
+            served = str(c.get("/v1/upgrade/state").get("version"))
+    except EcfError:
+        return f"{me}; install {p.install}'s service isn't answering"
+    if served == __version__:
+        return me
+    return (f"{me}, but install {p.install}'s service runs {served}: run that install's own ecf"
+            " (`which -a ecf` lists each one on PATH)")  # fmt: skip
 
 
 def _download(p: Paths, tag: str | None) -> tuple[Path, str] | None:
