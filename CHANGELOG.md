@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## v2.2.0 (not yet tagged)
 
+- Recorded the first batch 1 against batch 5 comparison on `high` (Claude classifier): batch 5 was as accurate and cost about a third less, but the `classifier_high_batch` default stays 1 until cross-item injection can be measured (SPEC §21.2).
 - `/ecf-eval` no longer stops when it loses count of its subagents: if it isn't sure every spawn has finished, it asks the service again instead of waiting (a C eval stalled when two spawns finished at once).
 - While a Claude eval runs, the `ecf claude` status line shows its progress from the service (`ecf eval <run> · N/M scored · K out`), and `/ecf-eval` reports progress only as the service's own line each round, never its own count (SPEC §10.3).
 - `/ecf-review` now carries on while its own claims are still out: `review_queue` says how many are in progress and waits a few seconds for them, and the skill ends only when nothing is waiting and nothing is in progress (SPEC §10.4).
