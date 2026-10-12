@@ -588,12 +588,14 @@ def test_batch_never_groups_the_high_risk_actor(
 
 
 def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path,
-           got: dict[str, Any]) -> str:  # fmt: skip
+           got: dict[str, Any], *, run_id: str = "a" * 32,
+           options: dict[str, Any] | None = None) -> str:  # fmt: skip
     """A saved `ecf eval run` result on the pinned digest, with Gemma's classifications."""
     cases, version = evalrun.load(root, fraud_only=False)
     results = [CaseResult(id=c.id, correct=False, got=got | {"rule": None}) for c in cases]
     summary = evalrun.summarize(results, 0)
-    rf = ResultFile(run_id="a" * 32, pair="gemma4-12b/local", set_version=version,
+    cast(dict[str, Any], summary["options"]).update(options or {})
+    rf = ResultFile(run_id=run_id, pair="gemma4-12b/local", set_version=version,
                     created_at=to_ts(clock.now()), cases=results,
                     digest=claude_pins.local_key(), summary=summary)  # fmt: skip
     evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
@@ -696,6 +698,25 @@ def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(
     m = json.loads(conn.execute("SELECT metrics FROM eval_runs WHERE pair ="
                                 " 'gemma4-12b/claude'").fetchone()[0])  # fmt: skip
     assert m["claude"]["source_run"] == source and m["determinism_diffs"] == 0
+
+
+def test_preset_b_skips_an_experiment_for_its_source(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """A later `--not-for-gate` or switched-off run isn't production's classifications."""
+    source = _a_run(conn, clock, db_path, root, REQUEST)
+    for n, options in enumerate(
+        (
+            {"for_gate": False, "switches_off": ["signals"]},
+            {"for_gate": False},
+            {"switches_off": ["excerpt_prep"]},
+        )
+    ):
+        clock.advance(60)
+        _a_run(conn, clock, db_path, root, BEC, run_id=f"{n + 1}" * 32, options=options)
+    start(db_path, clock, root, preset="B")
+    run = claude_eval.current()
+    assert run is not None and run.source_run == source
 
 
 # ---- one at a time, stop and expiry ----------------------------------------------------------
