@@ -89,6 +89,14 @@ def _fresh_gate_inputs() -> None:
     stages.SEEN.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_eval_run() -> None:
+    """A Claude eval run lives in service memory; the status line reports it, so none leaks."""
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    claude_eval.reset()
+
+
 @pytest.fixture
 def extensions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """Schema extensions on (OD-481: built, off in v2.0.0), for tests of the machinery."""

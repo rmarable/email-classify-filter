@@ -3,7 +3,8 @@
 
 It sends the service only the plan-usage numbers (`rate_limits.five_hour` and `seven_day`:
 `used_percentage` and `resets_at`; Pro and Max plans only, verified 2026-09-27 and seen on Max
-2026-10-02) with the session's WORK token, and prints a short line. Standard library only, so it
+2026-10-02) with the session's WORK token, and prints a short line; while an eval runs, the line
+starts with the run's progress from the service's reply (v2.2.0). Standard library only, so it
 starts fast; it never fails the status line (no answer within a second is skipped). That Claude
 Code passes the session's environment (`ECF_PROFILE_TOKEN`) to the status-line command is
 unverified, confirm in V1.4 step 13.
@@ -53,19 +54,43 @@ def usage(data: Any) -> dict[str, Any]:
     return out
 
 
-def line(u: dict[str, Any]) -> str:
+def _count(ev: dict[str, Any], key: str) -> int | None:
+    v = ev.get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def head(reply: Any) -> str:
+    """`ecf eval <run> · N/M scored · K out` while an eval runs (the service's counts, never the
+    session's), else `ecf review`."""
+    ev: Any = cast(dict[str, Any], reply).get("eval") if isinstance(reply, dict) else None
+    if not isinstance(ev, dict):
+        return "ecf review"
+    e = cast(dict[str, Any], ev)
+    run, scored, total, out = (e.get("run_id"), _count(e, "scored"), _count(e, "total"),
+                               _count(e, "in_progress"))  # fmt: skip
+    if not (isinstance(run, str) and run.isalnum() and len(run) <= 16) or None in (
+            scored, total, out):  # fmt: skip
+        return "ecf review"
+    parts = [f"ecf eval {run}", f"{scored}/{total} scored", f"{out} out"]
+    if repeats := _count(e, "repeats_left"):
+        parts.append(f"{repeats} repeats left")
+    return " · ".join(parts)
+
+
+def line(u: dict[str, Any], reply: Any = None) -> str:
     parts = [f"{label} {u[k]:.0f}%" for k, label in (("five_hour", "5h"), ("seven_day", "7d"))
              if k in u]  # fmt: skip
-    return " · ".join(["ecf review", *parts])
+    return " · ".join([head(reply), *parts])
 
 
-def send(sock: str, token: str, body: dict[str, Any]) -> None:
+def send(sock: str, token: str, body: dict[str, Any]) -> Any:
+    """The service's reply: `recorded` and, while an eval runs, its progress."""
     conn = _UnixConnection(sock)
     try:
         conn.request("POST", "/v1/statusline", body=json.dumps(body),
                      headers={"Authorization": f"Bearer {token}",
                               "Content-Type": "application/json"})  # fmt: skip
-        conn.getresponse().read()
+        return json.loads(conn.getresponse().read() or b"null")
     finally:
         conn.close()
 
@@ -78,10 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         data = None
     u = usage(data)
     token = os.environ.get("ECF_PROFILE_TOKEN", "")
-    if u and token and args:
-        with suppress(OSError, http.client.HTTPException):  # the service is down or slow
-            send(args[0], token, u)
-    sys.stdout.write(line(u) + "\n")
+    reply: Any = None
+    if token and args:  # also without plan numbers (Team, Enterprise): an eval's progress
+        with suppress(OSError, http.client.HTTPException, ValueError):  # down, slow or garbled
+            reply = send(args[0], token, u)
+    sys.stdout.write(line(u, reply) + "\n")
     return 0
 
 

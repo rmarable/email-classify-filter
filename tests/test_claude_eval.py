@@ -290,6 +290,22 @@ def test_an_empty_reply_waits_briefly_while_work_is_out(
     assert sum(slept) == claude_eval.WAIT_S and claude_eval.WAIT_S < 10  # under ecf-mcp's limit
 
 
+def test_progress_is_the_services_count_for_the_status_line_and_the_skill(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The session never counts for itself (run 5f5772a7 reported "items left" from its own
+    reading): `eval_next` carries a fixed `progress` line and the status line the same counts."""
+    assert claude_eval.progress() is None  # no run
+    start(db_path, clock, root)
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)
+    p = claude_eval.progress()
+    assert p is not None and p["scored"] == 0 and p["in_progress"] == 3 and p["round"] == 1
+    assert p["total"] == len(claude_eval.current().works) and p["repeats_left"] == 0  # type: ignore[union-attr]
+    assert set(p) == {"run_id", "scored", "total", "in_progress", "repeats_left", "round"}
+    assert q["progress"] == f"0/{p['total']} scored, 3 in progress, round 1"
+    assert claude_eval.progress_line(p | {"repeats_left": 10}).endswith(", 10 repeats left")
+
+
 def test_a_built_in_agent_in_the_session_stops_it() -> None:
     """Claude Code can deny agents only by name; a built-in one ecf doesn't know yet (the first
     /ecf-eval run handed its loop to `claude`, v1.0.0) stops the session instead of spending."""

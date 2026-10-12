@@ -14,14 +14,17 @@ no other subagent type, and no spawn to wait, track progress or call a tool for 
 Repeat until done:
 
 1. Call `mcp__ecf__review_queue` (no arguments needed).
-2. If `items` is empty, stop and go to the end.
+2. If `items` is empty: when `in_progress` is above 0, call `mcp__ecf__review_queue` again (at
+   most 5 times in a row with no items); otherwise go to the end.
 3. Group the items by `spawn`. Give each group to one spawn of the Agent tool, using the
    group's `agent` value exactly as the subagent type. The prompt holds only one line per item,
    `id=<id> claim_token=<claim_token>`, and nothing else. Hand out one agent type at a time:
    the spawns of the same `agent` may run in parallel, but wait for them all to finish before
    starting another agent's spawns.
 4. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
-   says: outcomes come only from `results` in the next `review_queue` call.
+   says: outcomes come only from `results` in the next `review_queue` call. Never end your turn
+   to wait for a spawn: if you aren't sure every spawn has finished, go back to step 1 anyway;
+   `in_progress` says how many claims are still out.
 
 If `review_queue` returns `stopped`, stop at once and tell the person that line as it is.
 

@@ -236,7 +236,7 @@ TOOLS: tuple[ToolDef, ...] = (
         "minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the "
         "ids and claim tokens in the agent's prompt; only that agent can read the message. "
         "`results` reports how earlier claims ended. `more` is true when more items are "
-        "waiting.",
+        "waiting. `in_progress` counts this session's claims still out.",
         {"address_id": ADDRESS,
          "limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
                    "description": "At most this many items (1-50)."}},
