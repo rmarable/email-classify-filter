@@ -261,8 +261,9 @@ def agents_for(run: Run) -> dict[str, str]:
 
 def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[str, Any]]]:
     """Preset B (OD-289): the latest complete `ecf eval run` with the classifier, on the pinned
-    digest, the effective schema and this version of the set: its run ID and each case's
-    classification."""
+    digest, the effective schema and this version of the set, and not an experiment (a run with
+    `--not-for-gate` or a switch off: its classifications aren't production's): its run ID and
+    each case's classification."""
     schema = config.current_schema(conn)
     digest = claude_pins.local_key(schema)  # Gemma's run with this schema (C5)
     rows = conn.execute("SELECT run_id, metrics, path FROM eval_runs WHERE digest = ? AND"
@@ -273,6 +274,8 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
         opts: dict[str, Any] = metrics.get("options") or {}
         if not (metrics.get("complete") and opts.get("classifier")):
             continue
+        if opts.get("for_gate") is False or opts.get("switches_off"):
+            continue  # an experiment (v2.1.0 run bbcd06e3, signals off, came after d80ea43d)
         if not _same_schema(metrics, schema):
             continue  # asked with another extension (or none): different fields
         if not row["path"] or not Path(row["path"]).is_file():
