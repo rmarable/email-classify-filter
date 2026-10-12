@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## v2.2.0 (not yet tagged)
+## v2.2.0-rc1 (not yet tagged)
 
 - `ecf claude` now refuses to start when it comes from a different install than the service (another version, or different skills or agent prompts), and says where to run it from; a Claude eval's result records which skills and agent prompts it ran with (SPEC §10.3).
 - Recorded the first test of whether Opus as the high-risk actor brings value (preset B): Sonnet in its place was as safe on the synthetic set and cost about half, and the operator judged its actions no worse (three cards differed); the `actor_high` pin and routing stay as they are, to be revisited after v3.0.0 (operator decision) (SPEC §21.2).
