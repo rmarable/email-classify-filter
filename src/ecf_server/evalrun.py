@@ -280,7 +280,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root}")
     rows = label_file.read(root)
-    fixed, _stale = fixed_labels.current(root)  # a stale row's labels are left out
+    fixed, _stale = fixed_labels.current(root, rows)  # a stale row's labels are left out
     out: list[Case] = []
     for r in rows:
         path = (root / r["file"]).resolve()
@@ -290,8 +290,9 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
             continue
         on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
         confirmed = label_file.is_confirmed(r) and on_disk == r["sha256"]
-        exp: dict[str, Any] = with_fixed_labels(with_derived_labels(r["expected"]),
-                                                fixed.get(r["id"]))  # fmt: skip
+        # card-stated > hand-set (fixed_labels.jsonl) > derived (S2 review F4)
+        hand = with_fixed_labels(r["expected"], fixed.get(r["id"]))
+        exp: dict[str, Any] = with_derived_labels(hand)
         safety: dict[str, Any] = exp.get("safety") or {}
         if fraud_only and not (
             exp.get("rule") in ("fraud_guard", "fraud_weak")
@@ -307,7 +308,8 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
 def with_derived_labels(expected: dict[str, Any]) -> dict[str, Any]:
     """A card's expected values with the fixed-item labels its labels imply (schema doc §10,
     P8; `ecf.schema.derive_labels`), derived at load so card text, `labels.jsonl` and the
-    confirmation hashes don't change. A label the card states itself is kept."""
+    confirmation hashes don't change. A label the card states itself, or the operator set by
+    hand (`with_fixed_labels`, applied first), is kept: only items still missing are derived."""
     labels: dict[str, Any] = expected.get("labels") or {}
     extra = derive_labels(labels)
     return expected | {"labels": labels | extra} if extra else expected
@@ -380,6 +382,20 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
                       scored=bool(exp),
                       expected={k: v for k, v in labels_exp.items()
                                 if isinstance(v, str | bool)})  # fmt: skip
+
+
+def asked_only(result: CaseResult, schema: CompiledSchema) -> CaseResult:
+    """A run asked with a schema that lacks the fixed items (`--no-new-wording`: the frozen
+    v2.0.0 text) isn't scored on them: its answers have none, so its per-case fields and
+    expected values leave them out, as its per-field figures already do (`summarize`). Its
+    answers aren't completed (`with_fixed`), so the run stays what v2.0.0's wording gave (S2
+    review F11)."""
+    gone = {k for k in FIXED_ITEMS if k not in schema.fields}
+    if not gone or not gone & (result.fields.keys() | result.expected.keys()):
+        return result
+    return result.model_copy(update={
+        "fields": {k: v for k, v in result.fields.items() if k not in gone},
+        "expected": {k: v for k, v in result.expected.items() if k not in gone}})  # fmt: skip
 
 
 def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float | None]:
@@ -718,7 +734,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                               proposal["target"] or None, known)  # fmt: skip
                         if isinstance(one, policy.Planned):
                             plan.actions.append(one)
-            one_result = score(case, cls, plan, proposal)
+            one_result = asked_only(score(case, cls, plan, proposal), schema)
             if probs is not None or secs is not None:
                 one_result = one_result.model_copy(
                     update={
@@ -760,9 +776,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     schema=schema))  # fmt: skip
         if opts.switches_off:  # which eval-only switches were off (plan 0.3)
             cast(dict[str, Any], summary["options"])["switches_off"] = opts.switches_off
-        # what the models were asked: Gemma, schema v2 for v3 (P6), its answers completed
-        summary["schema_digest"] = (local_schema(schema) if opts.backend == GEMMA
-                                    else schema).digest  # fmt: skip
+        # what the models were asked: Gemma and a decision model, schema v2 for v3 (P6), their
+        # answers completed; the null arm asks nothing
+        summary["schema_digest"] = (schema if opts.backend == NULL
+                                    else local_schema(schema)).digest  # fmt: skip
         if opts.classifier and not stopped:  # which cases repeated, and the flips per field
             summary["determinism"] = {"cases": sorted(repeat), "field_flips": flipped}
         if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)

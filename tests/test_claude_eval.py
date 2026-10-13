@@ -862,6 +862,32 @@ def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(
     assert m["claude"]["source_run"] == source and m["determinism_diffs"] == 0
 
 
+def test_preset_b_scores_a_failed_gemma_case_as_a_failure(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """S2 review F1: a case Gemma failed (`{"rule": None}`) isn't completed to five false
+    fixed items and planned; it stays unclassified and scores as a failure, as before v3."""
+    cases, version = evalrun.load(root, fraud_only=False)
+    results = [CaseResult(id=c.id, correct=False,
+                          got={"rule": None} if c.id == "starter-bec" else REQUEST | {"rule": None})
+               for c in cases]  # fmt: skip
+    rf = ResultFile(run_id="f" * 32, pair="gemma4-12b/local", set_version=version,
+                    created_at=to_ts(clock.now()), cases=results,
+                    digest=claude_pins.local_key(),
+                    summary=evalrun.summarize(results, 0))  # fmt: skip
+    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
+    start(db_path, clock, root, preset="B")
+    run = claude_eval.current()
+    assert run is not None
+    failed = next(w for w in run.works if w.case.id == "starter-bec")
+    assert failed.classification is None and failed.plan is None
+    drain(db_path, clock, lambda _c: REQUEST)
+    path = conn.execute("SELECT path FROM eval_runs WHERE pair = 'gemma4-12b/claude'"
+                        ).fetchone()["path"]  # fmt: skip
+    got = {c.id: c for c in load_result(Path(path)).cases}["starter-bec"]
+    assert not got.correct and got.fields["safety"] is False and got.fields["rule"] is False
+
+
 def test_preset_b_skips_an_experiment_for_its_source(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:

@@ -23,7 +23,7 @@ from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile
-from ecf.schema import FIXED_ITEMS, load_schema
+from ecf.schema import FIXED_ITEMS, derive_fixed, load_schema, local_schema
 from ecf_server import (
     claude_eval,
     claude_pins,
@@ -171,7 +171,12 @@ def test_ask_sends_the_questions_and_the_state() -> None:
     body = seen["body"]
     assert body["model"] == "ecf/test-decision:1"
     assert body["keep_alive"] == "5m"
-    assert body["questions"] == systemone.questions(SCHEMA)
+    # asked schema v2, as Gemma is (P6; S2 review F5): no fixed items asked ...
+    assert body["questions"] == systemone.questions(local_schema(SCHEMA))
+    assert len(body["questions"]) == 8 and not set(FIXED_ITEMS) & set(body["questions"])
+    # ... and the answer completed with them, derived from v2's (the reply's own ignored)
+    assert got.classification["bank_detail_change"] is True
+    assert {k: got.classification[k] for k in FIXED_ITEMS} == derive_fixed(got.classification)
     assert "the email" in body["state"]
 
 
@@ -395,6 +400,7 @@ def test_a_decision_model_run_never_reads_as_gemmas(
     summary = json.loads(Path(row["path"]).read_text())["summary"]
     assert summary["backend"] == "systemone:test-decision"
     assert summary["classifier_digest"] == TEV.digest and summary["actor_digest"] == gemma
+    assert summary["schema_digest"] == local_schema(SCHEMA).digest  # asked v2, as Gemma (F5)
     assert summary["gate_passed"] is False
     assert summary["classifier_latency_s"]["p50"] is not None
     assert summary["power"] == {"ac_at_start": True, "ac_at_end": True, "paused": False}

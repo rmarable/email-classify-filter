@@ -943,6 +943,10 @@ def _import_fixed(root: Path, path: Path) -> None:
     if not isinstance(answers, dict):
         raise InvalidInputError(f"{path}: answers must map case ids to answers")
     given = cast(dict[str, Any], answers)
+    bad = [k for k, a in given.items() if not isinstance(a, dict)]
+    if bad:
+        raise InvalidInputError(f"{path}: each answer must be an object with label and how"
+                                f" (not: {', '.join(map(str, bad[:5]))})")  # fmt: skip
     changed = fixed_labels.record(root, item, given, on)
     yes = sum(1 for a in given.values() if a.get("label") is True)
     typer.echo(f"{item}: {len(given)} cases recorded ({yes} yes), {changed} new or changed;"

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import extend_schema, load_schema
+from ecf.schema import extend_schema, load_schema, with_fixed
 from ecf_server import claude_pins, decide, escalations, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
@@ -100,10 +100,33 @@ def test_fix_records_the_correction_and_whether_the_category_was_right(
     _click(conn, morning, review.FIX, b, {"priority": "high", "payment_related": "false"})
     ra, rb = json.loads(item_row(conn, a)["review"]), json.loads(item_row(conn, b)["review"])
     assert (ra["verdict"], ra["category_ok"]) == ("fixed", False)
-    assert json.loads(item_row(conn, a)["human_correction"]) == {"category": "notification"}
+    assert json.loads(item_row(conn, a)["human_correction"]) == {  # items from the Fix (F3)
+        "category": "notification", "bank_detail_change": False, "regulator_claim": False,
+        "phishing": False}  # fmt: skip
     assert (rb["verdict"], rb["category_ok"]) == ("fixed", True)
+    assert json.loads(item_row(conn, b)["human_correction"]) == {"priority": "high"}
     with pytest.raises(ConflictError, match="already reviewed"):
         review.record(conn, morning, a, actor="t")
+
+
+def test_a_fix_keeps_the_fixed_items_consistent_with_the_corrected_view(
+    conn: sqlite3.Connection, morning: FakeClock
+) -> None:
+    """S2 review F3: a Fix that changes a source field of the fixed table writes the items
+    derived from the corrected view, as migration 0036 does for older Fixes; so a phishing email
+    fixed to `invoice` reads `phishing: false`, while an item whose sources the Fix leaves alone
+    keeps the model's answer."""
+    slack_setup(conn, morning)
+    phish = with_fixed(MARKETING | {"category": "spam_or_phishing", "sender_type": "team"})
+    assert phish["phishing"] and phish["claims_internal"]
+    [sid] = _items(conn, morning, phish)
+    _click(conn, morning, review.FIX, sid, {"category": "invoice"})
+    row = item_row(conn, sid)
+    merged = json.loads(row["classification"]) | json.loads(row["human_correction"])
+    assert merged["category"] == "invoice" and merged["phishing"] is False
+    assert merged["claims_internal"] is True  # sender_type not fixed: the model's answer stays
+    assert "claims_internal" not in json.loads(row["human_correction"])
+    assert json.loads(row["review"])["verdict"] == "fixed"
 
 
 def test_the_fix_form_offers_the_schema_choices(

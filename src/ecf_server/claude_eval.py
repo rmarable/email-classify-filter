@@ -290,13 +290,20 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
         result = load_result(Path(row["path"]))
         if any(not c.got for c in result.cases):
             break  # a run from before OD-259 holds no classifications
-        # completed to v3 (a run from before v3 recorded only v2's answers; OD-498)
-        got = {c.id: with_fixed({k: v for k, v in c.got.items() if k != "rule"})
-               for c in result.cases}  # fmt: skip
+        # completed to v3 (a run from before v3 recorded only v2's answers; OD-498); a failed
+        # case (no answer) stays empty, so it is scored as a failure, not planned
+        got = {c.id: _completed(c.got) for c in result.cases}
         return str(row["run_id"]), got
     raise InvalidInputError("preset B uses Gemma's classifications from a complete `ecf eval run`"
                             " on the pinned model and this version of the set, and there is none:"
                             " run `ecf eval run` first")  # fmt: skip
+
+
+def _completed(got: dict[str, Any]) -> dict[str, Any]:
+    """Gemma's recorded answer without the rule, completed to v3 (`with_fixed`) only when it
+    answered: `with_fixed({})` would be five false items, which policy would plan."""
+    fields = {k: v for k, v in got.items() if k != "rule"}
+    return with_fixed(fields) if fields else {}
 
 
 def _same_schema(metrics: dict[str, Any], schema: CompiledSchema) -> bool:

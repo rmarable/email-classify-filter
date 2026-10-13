@@ -33,7 +33,7 @@ from pydantic import (
 )
 
 from ecf.errors import InvalidInputError
-from ecf.schema import V1_VALUE_ALIASES, CompiledSchema, FieldKind
+from ecf.schema import FIXED_ITEMS, V1_VALUE_ALIASES, CompiledSchema, FieldKind
 from ecf.yamlio import load_yaml
 
 FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
@@ -400,6 +400,10 @@ def _check_cond(c: Compare | And | Or | Not, schema: CompiledSchema, where: str)
 def _allowed_values(c: Compare, schema: CompiledSchema, where: str) -> tuple[str, ...] | None:
     """The values an operand can take (None = boolean). Also rejects gte/lte on non-ordinals."""
     if c.field is not None:
+        if c.field in FIXED_ITEMS:  # rules read the fixed items from a later stage (S3)
+            raise InvalidInputError(f"{where}: field {c.field!r} is a fixed safety item;"
+                                    " rules can't use fixed items yet (a later release"
+                                    " adds them)")  # fmt: skip
         f = schema.fields.get(c.field)
         if f is None:
             raise InvalidInputError(f"{where}: unknown field {c.field!r}")

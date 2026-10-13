@@ -186,7 +186,8 @@ def test_the_eval_set_gets_derived_labels_without_changing_its_files() -> None:
     for c in cases:
         raw: dict[str, Any] = rows[c.id]["expected"].get("labels") or {}
         got: dict[str, Any] = c.expected.get("labels") or {}
-        assert got == hand.get(c.id, {}) | raw | derive_labels(raw)
+        base = hand.get(c.id, {}) | raw  # card-stated > hand-set > derived (S2 review F4)
+        assert got == base | derive_labels(base)
         # phishing is never derived: only the card or the hand-set file gives it
         assert "phishing" not in got or "phishing" in raw or "phishing" in hand.get(c.id, {})
         if "sender_type" not in raw:

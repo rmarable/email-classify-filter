@@ -96,6 +96,41 @@ def test_a_label_the_card_states_wins() -> None:
     assert evalrun.with_fixed_labels(exp, None) is exp
 
 
+def test_a_hand_set_label_beats_a_derived_one(root: Path) -> None:
+    """S2 review F4: card-stated > hand-set > derived. starter-bec's `vendor_change_request`
+    implies `bank_detail_change: true`; the operator's `false` wins."""
+    cases, _ = evalrun.load(root, fraud_only=False)
+    assert {c.id: c for c in cases}["starter-bec"].expected["labels"]["bank_detail_change"]
+    fixed_labels.record(root, "bank_detail_change",
+                        {"starter-bec": {"label": False, "how": "single"}}, DAY)  # fmt: skip
+    cases, _ = evalrun.load(root, fraud_only=False)
+    labels = {c.id: c for c in cases}["starter-bec"].expected["labels"]
+    assert labels["bank_detail_change"] is False
+    assert labels["category"] == "vendor_change_request"  # the card's own labels unchanged
+
+
+def test_a_non_object_answer_is_refused(root: Path, tmp_path: Path) -> None:
+    """S2 review F12: an InvalidInputError, not an AttributeError, and nothing written."""
+    with pytest.raises(InvalidInputError, match="must be an object"):
+        fixed_labels.record(root, "phishing", {"starter-bec": True}, DAY)  # type: ignore[dict-item]
+    assert not (root / fixed_labels.FILE).exists()
+    f = tmp_path / "answers.json"
+    f.write_text(json.dumps({"item": "phishing", "on": "2026-10-13",
+                             "answers": {"starter-bec": True}}))  # fmt: skip
+    r = CliRunner().invoke(app, ["eval", "label", "--import-fixed", str(f), "--root", str(root)])
+    assert r.exit_code != 0 and isinstance(r.exception, InvalidInputError)
+    assert "must be an object" in str(r.exception)
+    assert not (root / fixed_labels.FILE).exists()
+
+
+def test_the_file_is_replaced_atomically(root: Path) -> None:
+    fixed_labels.record(root, "phishing", ANSWERS, DAY)
+    assert [p.name for p in root.iterdir() if p.name.startswith(fixed_labels.FILE)] == [
+        fixed_labels.FILE]  # fmt: skip
+    rows = [json.loads(x) for x in (root / "labels.jsonl").read_text().splitlines()]
+    assert fixed_labels.current(root, rows) == fixed_labels.current(root)  # F13
+
+
 def test_import_from_a_review_page_file(root: Path, tmp_path: Path) -> None:
     f = tmp_path / "answers.json"
     f.write_text(json.dumps({"item": "phishing", "on": "2026-10-13", "answers": ANSWERS}))
