@@ -46,7 +46,6 @@ def test_problem_round_trip(cls: type[e.EcfError]) -> None:
     assert type(back) is cls
     assert back.detail == "short detail"
     assert back.extra == {"nonce_id": "ab" * 16}
-    assert err.to_mcp()["isError"] is True
 
 
 def test_unknown_code_becomes_internal() -> None:

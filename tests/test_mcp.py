@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -110,7 +111,7 @@ def test_names_texts_and_hints() -> None:
     }  # OD-307: no reading or submitting on the main server
     texts = [mcp_server.INSTRUCTIONS]
     for t in mcp_server.TOOLS:
-        assert mcp_server.TOOL_NAME.fullmatch(t.name)
+        assert re.fullmatch(r"[a-z_]{1,64}", t.name)
         tool = t.tool()
         texts += [tool.description or "", tool.title or "", json.dumps(tool.input_schema)]
         assert tool.annotations is not None and tool.annotations.read_only_hint is t.read_only

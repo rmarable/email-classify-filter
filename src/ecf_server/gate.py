@@ -102,12 +102,6 @@ class Gate:
             c.detail for c in self.checks if not c.ok)  # fmt: skip
 
 
-def current_digest(conn: sqlite3.Connection | None = None) -> str:
-    """Preset A's key: the pinned Ollama digest and the effective schema's digest (OD-475,
-    OD-478); the shipped schema without a connection."""
-    return claude_pins.local_key(config.current_schema(conn) if conn is not None else None)
-
-
 def pair_key(preset: str) -> str:
     return claude_pins.PAIR.get(preset, PAIR)
 

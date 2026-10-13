@@ -37,7 +37,7 @@ import sys
 import threading
 import uuid
 from collections import deque
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -542,9 +542,6 @@ def failed_items(conn: sqlite3.Connection) -> list[str]:
         "SELECT stable_id FROM items WHERE model_failed = 1"
         " AND status IN ('new', 'classified', 'clarified', 'awaiting_claude')"
         " ORDER BY model_failed_at")]  # fmt: skip
-
-
-RoundRunner = Callable[[], RoundReport]
 
 
 # ---------------------------------------------------------------------------- when rounds run

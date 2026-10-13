@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextvars
 import os
 import sqlite3
-import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -95,21 +94,6 @@ def write_tx(conn: sqlite3.Connection) -> Generator[sqlite3.Connection]:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-
-
-class ThreadConnections:
-    """A connection per long-lived thread (`threading.local`)."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._local = threading.local()
-
-    def get(self) -> sqlite3.Connection:
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = connect(self._path)
-            self._local.conn = conn
-        return conn
 
 
 def _migration_files() -> list[tuple[int, str, str]]:

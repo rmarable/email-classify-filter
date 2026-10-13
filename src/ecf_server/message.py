@@ -140,10 +140,8 @@ class ParsedMessage:
         return any(t.link_text_mismatch for t in self.texts)
 
     def full_text(self) -> str:
+        """All parts' full text (tests read it; the pipeline uses `excerpt`)."""
         return "\n\n".join(t.full for t in self.texts if t.full)
-
-    def visible_text(self) -> str:
-        return "\n\n".join(t.visible for t in self.texts if t.visible)
 
     def excerpt(self, limit: int, redact: Callable[[str], str] | None = None, *,
                 prep: bool = True) -> str:  # fmt: skip

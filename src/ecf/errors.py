@@ -176,12 +176,6 @@ class EcfError(Exception):
         body.update(self.extra)
         return body
 
-    def to_mcp(self) -> dict[str, Any]:
-        return {
-            "isError": True,
-            "content": [{"type": "text", "text": f"{self.code}: {self.detail}"}],
-        }
-
     @staticmethod
     def from_problem(body: dict[str, Any]) -> EcfError:
         code = body.get("code")
@@ -253,13 +247,3 @@ class SchemaLimitError(EcfError):
 
 
 _BY_CODE: dict[ErrorCode, type[EcfError]] = {c.code: c for c in EcfError.__subclasses__()}
-
-
-def error_table_markdown() -> str:
-    """The generated table (SPEC §15.3 is written from this)."""
-    rows = ["| Code | HTTP | Exit | Slack text |", "|---|---|---|---|"]
-    rows += [
-        f"| `{s.code}` | {s.http_status} | {int(s.exit_code)} | {s.slack_text} |"
-        for s in ERROR_TABLE.values()
-    ]
-    return "\n".join(rows)

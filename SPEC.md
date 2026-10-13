@@ -1351,7 +1351,7 @@ The unit uses the absolute `ecf-server` path from the `uv tool` install. When `E
 
 - `sqlite3.connect(path, autocommit=True, timeout=5.0)` (Python 3.12+); the connection factory sets `PRAGMA synchronous=FULL` (NORMAL can lose the last commits on power loss, which could drop a `sent` or consumed-grant record after a send), `busy_timeout=5000` and `foreign_keys=ON` on every connection; `journal_mode=WAL` persists in the file.
 - A `write_tx` helper issues `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`. **No transaction is held across network or model calls.**
-- Connections: one per long-lived thread (`threading.local`), one per request for HTTP routes.
+- Connections: opened per unit of work (a service tick, a Slack call, an HTTP request) and closed after it; none is shared between threads.
 - Minimum SQLite 3.37 (`STRICT` tables need 3.37; `RETURNING` needs 3.35), checked at connect and by `doctor` (operator decision 2026-09-27, OD-166).
 
 ### 11.3 Job queue
@@ -1886,7 +1886,7 @@ Corpus (OD-466; built 2026-10-07): `corpus.fetched` with counts, bytes, order, w
 
 ### 15.3 Error codes
 
-One hierarchy with a generated table: stable `code` → HTTP status (RFC 9457 problem+json) → CLI exit code → MCP `isError` → Slack text. Rule: exit code 1 for user errors, 2 for refusals, 3 for unavailable, 4 for conflicts, 5 for internal. Initial codes:
+One hierarchy with one hand-written table, checked against `ERROR_TABLE` by a test: stable `code` → HTTP status (RFC 9457 problem+json) → CLI exit code → MCP `isError` → Slack text. Rule: exit code 1 for user errors, 2 for refusals, 3 for unavailable, 4 for conflicts, 5 for internal. Initial codes:
 
 | Code | HTTP | Exit | Meaning |
 |---|---|---|---|
@@ -1985,7 +1985,7 @@ Haiku vs Sonnet vs Opus classifier on the `high` set; 1 vs 5 messages per Sonnet
 
 ### 16.4 Metrics
 
-Per-field accuracy, category macro-F1 and confusion matrix, ordinal MAE, boolean precision/recall, schema-failure rate; actor agreement, unsafe-proposal rate (payment/fraud split out), clarification rate; end-to-end decision correctness and human-touch rate; latency p50/p95, 150-email backlog time, peak memory, thermals (on the 24 GB Air); plan usage per `/ecf-review`; peak memory and time for 64 MB messages; macOS and Linux runs; results per author of synthetic cases. **Calibration** (decision models, §7.8): per field, ECE on the most probable answer's probability (5-10 equal-mass bins, bootstrap intervals), ranked probability score for the ordinal fields and Brier for the booleans, each against a constant predictor at the arm's accuracy, with a reliability table; reported, never gated.
+Per-field accuracy, category macro-F1 and confusion matrix, ordinal MAE, boolean precision/recall (macro-F1, confusion matrix and ordinal MAE exist in `ecf/eval/metrics.py` but no eval report uses them yet; planned for v3.0.0 step 1c, operator decision 2026-10-13), schema-failure rate; actor agreement, unsafe-proposal rate (payment/fraud split out), clarification rate; end-to-end decision correctness and human-touch rate; latency p50/p95, 150-email backlog time, peak memory, thermals (on the 24 GB Air); plan usage per `/ecf-review`; peak memory and time for 64 MB messages; macOS and Linux runs; results per author of synthetic cases. **Calibration** (decision models, §7.8): per field, ECE on the most probable answer's probability (5-10 equal-mass bins, bootstrap intervals), ranked probability score for the ordinal fields and Brier for the booleans, each against a constant predictor at the arm's accuracy, with a reliability table; reported, never gated.
 
 ### 16.5 Statistics and gates
 
@@ -2034,7 +2034,7 @@ Operator decisions 2026-10-07 (OD-466 to OD-468; ADR 0022), after six review rou
 
 ### 17.2 Conventions
 
-Python ≥ 3.12.6 (3.12.6 made `email.utils` address parsing strict, the CVE-2023-27043 fix; earlier releases parse the same address differently, and 3.12.3 failed the synthetic eval build; operator decision 2026-10-05, OD-454); Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` for the rest is not run yet; added in V1.1 with the first untyped runtime library, `imapclient`); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally and `Annotated[str, StringConstraints(...)]` at the API boundary (formats, operator decision 2026-09-27, OD-164: address and install names are lowercase slugs `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`, at most 40 characters; `stable_id` 64 hex; grant, job and nonce IDs 32 random hex; short IDs 8-64 hex); one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
+Python ≥ 3.12.6 (3.12.6 made `email.utils` address parsing strict, the CVE-2023-27043 fix; earlier releases parse the same address differently, and 3.12.3 failed the synthetic eval build; operator decision 2026-10-05, OD-454); Typer; structlog everywhere, rendered through stdlib `logging` with a rotating file handler and one shared no-content processor (operator decision 2026-09-27, OD-126); pyright strict (a typed facade module per untyped library: `dkimpy`, PyObjC, `python-pam`, `imapclient`; `pyright --verifytypes` for the rest is not run yet; added in V1.1 with the first untyped runtime library, `imapclient`); ruff; sync core in the service; the async MCP server uses async httpx, and any sync call goes through `anyio.to_thread.run_sync`; IDs as `NewType` internally, their formats checked with the `ecf/ids.py` patterns where they enter (formats, operator decision 2026-09-27, OD-164: address and install names are lowercase slugs `^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`, at most 40 characters; `stable_id` 64 hex; grant, job and nonce IDs 32 random hex; short IDs 8-64 hex); one error hierarchy (§15.3); `ruamel.yaml` for all config parsed into strict Pydantic fields.
 
 ### 17.3 Testing and development
 

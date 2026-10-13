@@ -274,12 +274,6 @@ def _head(pieces: list[str], limit: int) -> str:
     return "".join(out)[:limit]
 
 
-def html_to_text(html: str) -> tuple[str, str]:
-    """(full, visible) text of an HTML document, whitespace tidied."""
-    t = html_text(html)
-    return t.full, t.visible
-
-
 def tidy(text: str) -> str:
     """Collapse runs of spaces and blank lines; trim each line."""
     lines = [re.sub(r"[ \t\f\v\u00a0]+", " ", ln).strip() for ln in text.splitlines()]

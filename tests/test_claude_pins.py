@@ -235,7 +235,7 @@ def test_a_schema_extension_changes_every_key_alike(
     def keys() -> list[str]:
         unpinned = [claude_eval.Options(tmp_path, preset=p, actor_model=NEW_SONNET)
                     for p in ("B", "C")]  # fmt: skip
-        return [gate.current_digest(conn), fallback.digest(conn),
+        return [claude_pins.local_key(config.current_schema(conn)), fallback.digest(conn),
                 *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B", "C")),
                 *(claude_eval.models_for(conn, o)[2] for o in unpinned)]  # fmt: skip
 
@@ -245,7 +245,7 @@ def test_a_schema_extension_changes_every_key_alike(
     assert all(a != b for a, b in zip(before, after, strict=True))
     effective = claude_pins.local_key(config.current_schema(conn))
     assert effective != LOCAL
-    assert gate.current_digest(conn) == fallback.digest(conn) == effective
+    assert claude_pins.local_key(config.current_schema(conn)) == fallback.digest(conn) == effective
     assert claude_pins.pins(conn, "B")["digest"] == effective
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 

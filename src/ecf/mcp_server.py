@@ -44,7 +44,6 @@ from ecf.status import OPEN, Status
 DEADLINE_S = 115.0  # SPEC §10.4 (OD-088): the backstop
 LAST_START_S = 100.0  # no new service request after this
 REQUEST_S = TIMEOUT_S  # 10 s per request, the enforcing limit
-TOOL_NAME = re.compile(r"^[a-z_]{1,64}$")
 AGENT_NAME = re.compile(r"^ecf-(eval-)?(classifier|actor)(-high)?$")
 LIMIT_MAX = 50
 MORE_PENDING = "ecf took too long to answer this call; call the tool again to carry on"

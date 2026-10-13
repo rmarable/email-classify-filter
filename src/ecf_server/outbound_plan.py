@@ -28,7 +28,7 @@ from ecf.errors import InvalidInputError
 from ecf_server import config, templates
 from ecf_server.outbound_msg import addr_spec
 
-DRAFT_MAX = 4000
+DRAFT_MAX = 4000  # both actors; the local prompt asks for at most 1,500 (actor.py), within this
 SENDS = frozenset({"forward_internal", "reply_template"})
 OUTBOUND = SENDS | {"draft_reply"}
 

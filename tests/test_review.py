@@ -11,7 +11,7 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.schema import extend_schema, load_schema
-from ecf_server import decide, escalations, gate, review, settings, slack_in, stages
+from ecf_server import claude_pins, decide, escalations, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.slack_in import Click
@@ -226,7 +226,7 @@ def test_stage_status_shows_review_progress(conn: sqlite3.Connection, morning: F
     [a, b] = _items(conn, morning, MARKETING, MARKETING)
     with write_tx(conn):  # only reviews of emails classified by the model ecf runs now count
         conn.execute("UPDATE items SET pinned_models = ? WHERE stable_id = ?",
-                     (json.dumps({"digest": gate.current_digest()}), a))  # fmt: skip
+                     (json.dumps({"digest": claude_pins.local_key()}), a))  # fmt: skip
     review.record(conn, morning, a, actor="t")
     review.record(conn, morning, b, actor="t")
     [row] = stages.status(conn, morning.now())
