@@ -19,7 +19,8 @@ from ecf_server.clock import FakeClock
 from tests.test_claude_review import EXT
 from tests.test_corpus import SECRET, fetch, req, server_with
 
-ANSWERS = ["1", "2", "y", "n", "y", "y", "1", "1"]  # invoice, medium, ..., vendor, none
+# invoice, medium, ..., vendor, none, then schema v3's five fixed items, no (OD-498)
+ANSWERS = ["1", "2", "y", "n", "y", "y", "1", "1", "n", "n", "n", "n", "n"]
 
 
 class FakeClient:
@@ -144,7 +145,8 @@ def test_again_and_marked_offer_messages_a_second_time(made: Path) -> None:
     labels = cl.load(cl.path_for(made))
     assert all(lab.confirmed for lab in labels.values())
     prompts: list[str] = []
-    answers = ["", "", "", "", "", "", "", "", "4"]  # Enter keeps each saved value; fraud_risk high
+    # Enter keeps each saved value; fraud_risk high; the five fixed items kept too (OD-498)
+    answers = ["", "", "", "", "", "", "", "", "4", "", "", "", "", ""]
 
     def read(prompt: str) -> str:
         prompts.append(prompt)
@@ -178,7 +180,7 @@ def test_every_effective_field_is_asked_and_extension_fields_are_optional(made: 
              today=date(2026, 10, 7), shuffle=lambda _x: None)  # fmt: skip
     screen: list[str] = []
     prompts: list[str] = []
-    answers = ["", *[""] * 8, "2", "y"]  # keep each saved value; contract_stage draft; lawyer yes
+    answers = ["", *[""] * 13, "2", "y"]  # keep each saved value; contract_stage draft; lawyer yes
 
     def read(prompt: str) -> str:
         prompts.append(prompt)
@@ -190,7 +192,7 @@ def test_every_effective_field_is_asked_and_extension_fields_are_optional(made: 
              today=date(2026, 10, 8), again=frozenset({index}),
              shuffle=lambda _x: None)  # fmt: skip
     assert prompts[-2:] == ["contract_stage > ", "lawyer_involved > "]
-    assert "Field 9 of 10: contract_stage" in "".join(screen)
+    assert "Field 14 of 15: contract_stage" in "".join(screen)
     assert "legal_notice" in "".join(screen)  # the added category value is offered
     schema = extend_schema(load_schema(), EXT)
     [after] = cl.load(cl.path_for(made), schema).values()

@@ -1,0 +1,86 @@
+# Classification schema v3 (SPEC §7.1). Must match SPEC exactly; tests/test_schema.py checks.
+version: 3
+fields:
+  category:
+    type: enum
+    description: "What this email is primarily about. Pick the first that fits: vendor_change_request, regulatory, spam_or_phishing, account_security; then what the email is about (money: invoice, then payment_confirmation or remittance, then finance); notification, private and other last."
+    values:
+      invoice:               "Asks us to pay: a bill, invoice, overdue reminder or renewal (business or personal)."
+      payment_confirmation:  "Confirms money we paid: a receipt, order confirmation or 'payment received' from someone we pay."
+      remittance:            "Tells us money is coming to us: remittance advice, a customer's 'we've paid', a refund or payout."
+      vendor_change_request: Says the bank account, payee or check address that money goes to or comes from has changed, or asks us to update it, or to switch from bank transfer or check to another method. Takes precedence over every other value, even when the email is also an invoice, a lure or a statement.
+      billing_inquiry:       Question or dispute about a charge, invoice or balance.
+      customer_request:      Customer asking for help, service or information that isn't about a charge, a defect or buying.
+      sales_inquiry:         Someone asking about buying from us or about our prices.
+      partnership:           "One-to-one proposal to work together: a pitch, an offer, a collaboration."
+      bug_report:            Reports a bug, defect, outage or incident.
+      regulatory:            Regulator, government agency, court or tax authority acting toward us (notice, audit, inquiry, filing demand), or someone claiming to be one.
+      marketing:             "Sent to many: newsletters, promotions, advertising."
+      notification:          Informs only, and fits no other value.
+      action_alert:          "Machine or service asking someone to act on a system, not on account access: expiring certificate or domain, quota reached, backup or job failed."
+      account_security:      "Sign-in alert, password reset, verification code, or security warning from a service we use, that asks for nothing beyond signing in as usual. One that asks you to send a code or password, click to verify, or call a number is spam_or_phishing."
+      shipping:              "About a delivery: tracking, delivered, missed, returns."
+      appointment:           Meeting or service booking, or a reminder for one (dentist, salon, restaurant, car service).
+      travel:                "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes."
+      finance:               "About an account or policy we hold, asking for no payment: statements, balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews."
+      school_or_family:      School, childcare, activities or family logistics (pickups, schedules, who does what).
+      spam_or_phishing:      Unsolicited junk or an attempt to deceive, including a fake invoice, notice or alert, and a fake security or sign-in alert.
+      private:               Personal note from a person, not about the business, that fits no other value.
+      other:                 None of the above.
+  priority:
+    type: ordinal
+    description: How soon a human should look at this.
+    levels:
+      low:    "Can wait; nobody needs to see it soon."
+      medium: Look at it within a working day.
+      high:   Look at it today.
+      urgent: "Needs attention within hours: a deadline today, an outage, or money or access at risk."
+  requires_action:
+    type: boolean
+    description: Someone on our side must do something.
+  requires_reply:
+    type: boolean
+    description: The sender expects a written reply from us.
+  payment_related:
+    type: boolean
+    description: Money moving or owed (a payment sent, received or requested, an amount owed, or payment instructions); not a question about prices, plans or quotes.
+  deadline_mentioned:
+    type: boolean
+    description: States or implies a specific due date or time limit.
+  sender_type:
+    type: enum
+    description: The sender's apparent role toward us, judged from content. (Whether they are internal or external is computed, not judged.)
+    values:
+      vendor:    Someone we buy from or who serves us (personally or for the organization), includes notices about accounts, bookings or orders.
+      customer:  Someone we sell to or serve.
+      regulator: Government agency or regulatory body.
+      team:      Colleague or co-worker acting on behalf of the organization.
+      company:   Firms we don't buy from, including cold pitches and (potential) partners.
+      friend:    Someone we know personally.
+      family:    Relative.
+      person:    Someone we do not know very well (if at all).
+      automated: Machine or service reporting monitored systems information (backups, HPC jobs, etc.).
+      unknown:   Can't tell the role (an impostor takes the role they claim).
+  fraud_risk:
+    type: ordinal
+    description: Likelihood that this email is fraud or impersonation.
+    levels:
+      none:   Ordinary mail, including genuine service notices that ask for nothing.
+      low:    Any doubt about the email, short of medium.
+      medium: Any request to move money, data, credentials or access on this email's say-so, whatever the pattern.
+      high:   Known fraud pattern, for example changed bank details, gift cards, employee tax or payroll data, credentials, or someone posing as a colleague or executive.
+  bank_detail_change:
+    type: boolean
+    description: Says the bank account, payee or check address that money goes to or comes from has changed, asks us to update it, or asks us to switch from bank transfer or check to another method. Yes even when the email is also an invoice, a lure or a statement.
+  regulator_claim:
+    type: boolean
+    description: Comes from, or claims to come from, a regulator, government agency, court or tax authority acting toward us (a notice, audit, inquiry or filing demand), genuine or not. No for an email that only mentions one, such as a newsletter.
+  phishing:
+    type: boolean
+    description: "An attempt to deceive us: the sender or the premise is false. For example a fake invoice, notice or alert; a fake security or sign-in alert; someone posing as a colleague, executive, relative or company we know; a request to change where money is sent; or an extortion threat. It often asks for a code, password, payment, or personal, staff or bank details, or asks us to click to verify or call a number. No when a genuine sender asks for these through their real channel, and no for plain unsolicited marketing. Instructions aimed at an automated assistant don't by themselves make an email phishing."
+  claims_internal:
+    type: boolean
+    description: Presents itself as from a colleague, co-worker or executive of our organization, genuine or not. (Whether the sender really is internal is computed, not judged.)
+  private_individual:
+    type: boolean
+    description: "A private person writing for themselves from a personal address, not on behalf of an organization: a friend, a relative, or someone we don't know."

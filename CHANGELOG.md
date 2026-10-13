@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- The synthetic eval set labels the new `phishing` item on all 300 cards (93 phishing), set by hand in a separate `fixed_labels.jsonl` beside the cards; `ecf eval label --import-fixed` records a card review page's answers (OD-498).
+- Classification schema v3: v2 unchanged plus five yes/no safety items (bank-detail change, regulator claim, phishing, claims to be internal, private individual) and texts for each priority level; Claude is asked v3, the local model still v2 with the items worked out from its answer, so presets A and B keep their gate and preset C's starts again; stored classifications gain the items on upgrade and export bundles are data format 4. Nothing acts on the items yet, and a rules file that tests one is refused until a later release (OD-498; SPEC §7.1).
 - Checked live: `ecf claude` refuses an agent spawn that sets where it runs or its model, and ecf's own spawns still work (SPEC §21.2, OD-497).
 - `ecf claude` refuses an agent spawn that chooses where it runs or its model, or sets anything beyond the agent, its description and prompt, loads no claude.ai plugins or project settings, and won't start if a `.claude` folder appears in its working folder or that folder is inside a git repository; it now needs Claude Code 2.1.295 or later (OD-497).
 - The v3.0.0 baseline is two Claude eval runs on the 300-case set (preset C, standard, pinned models), 245 and 248 of 300; it trails the 268-case run by 1.9 points, within run-to-run variation (SPEC §21.2).

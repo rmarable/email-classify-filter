@@ -20,7 +20,7 @@ from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, compare, load_result
-from ecf.schema import load_schema
+from ecf.schema import FIXED_ITEMS, load_schema, load_schema_v2
 from ecf_server import evalrun, modelq, policy, ruletest, schedule
 from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
@@ -166,7 +166,8 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert summary["determinism_diffs"] == 0
     every = ["starter-bec", "starter-control", "starter-injection"]  # 3 cases: all repeat
     assert summary["determinism"] == {"cases": every, "field_flips": {}}
-    assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
+    # what the model was asked with: schema v2 under v3 (P6, OD-498)
+    assert summary["schema_digest"] == load_schema_v2().digest
     assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
     assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
     assert summary["rules_digest"] == evalrun.rules.starter_digest()  # step 7
@@ -557,6 +558,14 @@ def test_a_run_with_the_new_wording_off_asks_with_the_v2_0_0_text(
     assert result["options"]["switches_off"] == ["new_wording"]
     assert result["options"]["for_gate"] is False and result["gate_passed"] is False
     assert result["schema_digest"] == load_schema_v2_0_0().digest
+    # S2 review F11: not scored on the fixed items it wasn't asked (starter-bec's derived
+    # bank_detail_change label), and its answers aren't completed
+    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
+    bec = {c.id: c for c in load_result(Path(path)).cases}["starter-bec"]
+    assert bec.fields and not set(FIXED_ITEMS) & (bec.fields.keys() | bec.expected.keys())
+    assert not set(FIXED_ITEMS) & bec.got.keys()
+    cases, _ = evalrun.load(root, fraud_only=False)
+    assert {c.id: c for c in cases}["starter-bec"].expected["labels"]["bank_detail_change"]
 
 
 def test_signals_go_to_the_classifier_unless_switched_off(

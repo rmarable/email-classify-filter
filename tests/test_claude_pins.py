@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
-from ecf.schema import load_schema
+from ecf.schema import load_schema, load_schema_v2
 from ecf_server import (
     classifier,
     claude_pins,
@@ -75,7 +75,8 @@ def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClo
     a, b, c = (claude_pins.pins(conn, p) for p in "ABC")
     assert a == {"digest": LOCAL} and claude_pins.key(a) == LOCAL
     prompt = classifier.prompt_digest(load_schema())[:16]  # no keywords hash in it (Q3)
-    assert f"{DIGEST}+{load_schema().digest}+{prompt}" == LOCAL
+    # the local model is asked schema v2 under v3, so its key keeps v2's digest (P6, OD-498)
+    assert f"{DIGEST}+{load_schema_v2().digest}+{prompt}" == LOCAL
     assert b == {"digest": LOCAL, "actor": lock["actor"], "actor_high": lock["actor_high"]}
     assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt"}
     assert c["prompt"] == claude_review.prompt_digest(load_schema())[:16]  # Q4

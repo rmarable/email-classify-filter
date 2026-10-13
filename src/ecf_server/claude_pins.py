@@ -31,7 +31,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import CompiledSchema, load_schema
+from ecf.schema import CompiledSchema, load_schema, local_schema
 from ecf_server import addresses, config, ollama, slack_admin, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -119,12 +119,14 @@ def local_key(schema: CompiledSchema | None = None) -> str:
     """The local model's gate and eval key: its pinned Ollama digest, the schema it is asked
     with (the schema digest joins the gate key, OD-475) and the classifier's prompt digest
     (plan 0.3): a new schema, a change to the install's extension (OD-478) or new wording is a
-    new gate; a keyword patch isn't (Q3). Callers with a connection pass
-    `config.current_schema(conn)`; without one it is the shipped schema."""
+    new gate; a keyword patch isn't (Q3). The schema is the one the model is asked
+    (`local_schema`): schema v3 asks it v2, so v3 alone isn't a new local gate (P6, OD-498).
+    Callers with a connection pass `config.current_schema(conn)`; without one it is the shipped
+    schema."""
     from ecf_server import classifier  # noqa: PLC0415 - classifier imports this module
 
-    schema = schema or load_schema()
-    return f"{ollama.load_pin().digest}+{schema.digest}+{classifier.prompt_digest(schema)[:16]}"
+    asked = local_schema(schema or load_schema())  # v2 for v3: A's key doesn't move (P6)
+    return f"{ollama.load_pin().digest}+{asked.digest}+{classifier.prompt_digest(asked)[:16]}"
 
 
 def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:

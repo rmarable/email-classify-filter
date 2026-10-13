@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import InvalidInputError
-from ecf.schema import extend_schema, load_schema
+from ecf.schema import FIXED_ITEMS, extend_schema, load_schema
 from ecf_server.rules import Action, Hide, RuleInput, compile_rules, load_starter_rules
 
 SCHEMA = load_schema()
@@ -198,6 +198,19 @@ BAD = {
 def test_bad_rules_rejected(rule: str) -> None:
     with pytest.raises(InvalidInputError):
         compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
+
+
+@pytest.mark.parametrize("item", FIXED_ITEMS)
+def test_fixed_items_are_refused_in_rules_until_s3(item: str) -> None:
+    """S2 review F2: schema v3 asks the fixed items, but rules read them only from S3, in a
+    `when`, a `continue_if` and an action's `if`."""
+    for rule in (
+        f"{{id: a, when: {{field: {item}, eq: true}}}}",
+        f"{{id: a, when: {{not: {{field: {item}, eq: false}}}}, then: [flag]}}",
+        f"{{id: a, then: [{{flag: true, if: {{field: {item}, eq: true}}}}]}}",
+    ):
+        with pytest.raises(InvalidInputError, match=f"{item!r} is a fixed safety item"):
+            compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
 
 
 def test_last_rule_must_catch_all_and_ids_unique() -> None:

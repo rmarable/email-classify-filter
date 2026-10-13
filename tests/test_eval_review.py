@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from ecf import cli_card_review as ui
 from ecf.cli import app
 from ecf.errors import InvalidInputError
-from ecf.eval import labels
+from ecf.eval import fixed_labels, labels
 from ecf.eval import review as rv
 from ecf.eval.builder import build_all
 from ecf.eval.cards import parse_card
@@ -180,7 +180,7 @@ def test_the_cli_checks_its_options(root: Path) -> None:
 
 def test_the_committed_review_log_is_consistent() -> None:
     for x in rv.read_log(SYNTHETIC):
-        assert x["kind"] in (rv.REVIEW, rv.RECHECK)
+        assert x["kind"] in (rv.REVIEW, rv.RECHECK, fixed_labels.KIND)  # fixed: S2 hand labels
         assert x["kind"] == rv.RECHECK or x["outcome"] in rv.OUTCOMES
 
 

@@ -159,6 +159,10 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
     try:
         st = (Path(root) / "labels.jsonl").stat() if root else None
         labels = (st.st_size, st.st_mtime_ns) if st else None
+        fx = Path(root) / "fixed_labels.jsonl" if root else None  # S2: hand-set fixed items
+        if labels and fx and fx.is_file():
+            fst = fx.stat()
+            labels = (*labels, fst.st_size, fst.st_mtime_ns)
     except OSError:
         labels = None
     return (digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0], senders[0],

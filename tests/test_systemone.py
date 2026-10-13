@@ -23,7 +23,7 @@ from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile
-from ecf.schema import load_schema
+from ecf.schema import FIXED_ITEMS, derive_fixed, load_schema, local_schema
 from ecf_server import (
     claude_eval,
     claude_pins,
@@ -53,19 +53,31 @@ def _client(handler: Callable[[httpx.Request], httpx.Response]) -> Client:
 def _answers(**over: Any) -> dict[str, Any]:
     """A full, valid reply: vendor_change_request, fraud_risk high, payment_related."""
     a: dict[str, Any] = {
-        "category": {"type": "choice", "choice": "vendor_change_request",
-                     "probabilities": {"vendor_change_request": 0.9, "invoice": 0.1}},
-        "sender_type": {"type": "choice", "choice": "vendor",
-                        "probabilities": {"vendor": 0.8, "unknown": 0.2}},
-        "priority": {"type": "score", "score": 1.4,
-                     "probabilities": {"0": 0.1, "1": 0.5, "2": 0.3, "3": 0.1}},
-        "fraud_risk": {"type": "score", "score": 2.2,
-                       "probabilities": {"0": 0.05, "1": 0.15, "2": 0.35, "3": 0.45}},
+        "category": {
+            "type": "choice",
+            "choice": "vendor_change_request",
+            "probabilities": {"vendor_change_request": 0.9, "invoice": 0.1},
+        },
+        "sender_type": {
+            "type": "choice",
+            "choice": "vendor",
+            "probabilities": {"vendor": 0.8, "unknown": 0.2},
+        },
+        "priority": {
+            "type": "score",
+            "score": 1.4,
+            "probabilities": {"0": 0.1, "1": 0.5, "2": 0.3, "3": 0.1},
+        },
+        "fraud_risk": {
+            "type": "score",
+            "score": 2.2,
+            "probabilities": {"0": 0.05, "1": 0.15, "2": 0.35, "3": 0.45},
+        },
         "requires_action": {"type": "noul", "noul": 0.7},
         "requires_reply": {"type": "noul", "noul": 0.2},
         "payment_related": {"type": "noul", "noul": 0.5},
         "deadline_mentioned": {"type": "noul", "noul": 0.49},
-    }  # fmt: skip
+    } | {item: {"type": "noul", "noul": 0.1} for item in FIXED_ITEMS}  # schema v3 (OD-498)
     a.update(over)
     return {"model": "test:1", "answers": a, "usage": {"input_tokens": 9000, "output_tokens": 8}}
 
@@ -106,7 +118,7 @@ def test_answers_map_to_a_valid_classification() -> None:
         "category": "vendor_change_request", "sender_type": "vendor", "priority": "medium",
         "fraud_risk": "high", "requires_action": True, "requires_reply": False,
         "payment_related": True, "deadline_mentioned": False,
-    }  # fmt: skip
+    } | dict.fromkeys(FIXED_ITEMS, False)  # fmt: skip
     want = {"none": 0.05, "low": 0.15, "medium": 0.35, "high": 0.45}
     assert got.probabilities["fraud_risk"] == want
     assert got.probabilities["payment_related"] == {"true": 0.5}
@@ -159,7 +171,12 @@ def test_ask_sends_the_questions_and_the_state() -> None:
     body = seen["body"]
     assert body["model"] == "ecf/test-decision:1"
     assert body["keep_alive"] == "5m"
-    assert body["questions"] == systemone.questions(SCHEMA)
+    # asked schema v2, as Gemma is (P6; S2 review F5): no fixed items asked ...
+    assert body["questions"] == systemone.questions(local_schema(SCHEMA))
+    assert len(body["questions"]) == 8 and not set(FIXED_ITEMS) & set(body["questions"])
+    # ... and the answer completed with them, derived from v2's (the reply's own ignored)
+    assert got.classification["bank_detail_change"] is True
+    assert {k: got.classification[k] for k in FIXED_ITEMS} == derive_fixed(got.classification)
     assert "the email" in body["state"]
 
 
@@ -383,6 +400,7 @@ def test_a_decision_model_run_never_reads_as_gemmas(
     summary = json.loads(Path(row["path"]).read_text())["summary"]
     assert summary["backend"] == "systemone:test-decision"
     assert summary["classifier_digest"] == TEV.digest and summary["actor_digest"] == gemma
+    assert summary["schema_digest"] == local_schema(SCHEMA).digest  # asked v2, as Gemma (F5)
     assert summary["gate_passed"] is False
     assert summary["classifier_latency_s"]["p50"] is not None
     assert summary["power"] == {"ac_at_start": True, "ac_at_end": True, "paused": False}
@@ -436,9 +454,15 @@ def test_the_null_arm_runs_without_the_classifier_model(
 
 def test_the_null_classification_is_the_least_risky() -> None:
     assert evalrun.null_classification(SCHEMA) == {
-        "category": "other", "priority": "low", "requires_action": False,
-        "requires_reply": False, "payment_related": False, "deadline_mentioned": False,
-        "sender_type": "unknown", "fraud_risk": "none"}  # fmt: skip
+        "category": "other",
+        "priority": "low",
+        "requires_action": False,
+        "requires_reply": False,
+        "payment_related": False,
+        "deadline_mentioned": False,
+        "sender_type": "unknown",
+        "fraud_risk": "none",
+    } | dict.fromkeys(FIXED_ITEMS, False)
 
 
 def test_no_redact_runs_only_on_the_fraud_subset_and_never_passes(

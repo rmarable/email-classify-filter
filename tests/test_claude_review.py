@@ -17,7 +17,7 @@ import pytest
 
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import AddressId, StableId
-from ecf.schema import load_schema
+from ecf.schema import load_schema, with_fixed
 from ecf_server import (
     claude_pins,
     claude_queue,
@@ -37,8 +37,10 @@ from ecf_server.state_machine import Status, TransitionContext
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
 from tests.test_decide import KNOWN_BULK, MARKETING
 
-REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True,
-                                       "requires_action": True}  # fmt: skip
+# a full schema v3 answer (the fixed items derived, OD-498)
+REQUEST: dict[str, Any] = with_fixed(MARKETING | {"category": "customer_request",
+                                                  "requires_reply": True,
+                                                  "requires_action": True})  # fmt: skip
 ROUTINE: dict[str, Any] = REQUEST | {"requires_reply": False, "requires_action": False}
 S1, S2 = "session-one", "session-two"
 # a schema extension (SCHEMA-V2-PLAN step 4): one enum field, one boolean, one category value

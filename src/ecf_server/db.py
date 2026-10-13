@@ -105,6 +105,10 @@ def _migration_files() -> list[tuple[int, str, str]]:
     return sorted(out)
 
 
+# Migrations that rewrite many rows, after which a WAL checkpoint runs (0036, schema v3)
+CHECKPOINT_AFTER = frozenset({36})
+
+
 def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
     """Apply pending migrations in order, each in its own write transaction; return their names.
     `up_to` stops after that version (import builds an older bundle's schema first, OD-355)."""
@@ -114,6 +118,7 @@ def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
     )
     done = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
     applied: list[str] = []
+    ran: set[int] = set()
     for version, name, sql in _migration_files():
         if version in done:
             continue
@@ -131,6 +136,11 @@ def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
                 (version, name, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
             )
         applied.append(name)
+        ran.add(version)
+    if ran & CHECKPOINT_AFTER and not conn.in_transaction:
+        # a rewrite of every stored classification can leave a large WAL: fold it back now,
+        # without waiting on readers (PASSIVE; schema doc §9, P13)
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
     return applied
 
 

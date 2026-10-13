@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import CompiledSchema, FieldKind
+from ecf.schema import FIXED_FROM_V2, CompiledSchema, FieldKind, derive_fixed
 from ecf_server import (
     cards,
     claude_pins,
@@ -263,7 +263,7 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
     now = to_ts(clock.now())
     review = {"verdict": verdict, "category_ok": "category" not in changed, "bulk": bulk,
               "by": actor, "at": now}  # fmt: skip
-    _set_review(conn, clock.now(), sid, review, changed or None)
+    _set_review(conn, clock.now(), sid, review, _with_items(cls, changed) or None)
     with write_tx(conn):
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
@@ -272,6 +272,19 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
              json.dumps({"verdict": verdict, "bulk": bulk, "fields": sorted(changed)})),
         )  # fmt: skip
     return verdict
+
+
+def _with_items(cls: dict[str, Any], changed: dict[str, Any]) -> dict[str, Any]:
+    """A Fix with the fixed items derived (`derive_fixed`) from the corrected view
+    (`cls | changed`) for each item one of whose source fields it changes, as migration 0036
+    does for older Fixes, so `classification | human_correction` stays consistent (OD-498).
+    The fixed items themselves aren't on the Fix form in S2."""
+    touched = [item for item, sources in FIXED_FROM_V2.items()
+               if any(f in changed for f, _ in sources)]  # fmt: skip
+    if not touched:
+        return changed
+    derived = derive_fixed(cls | changed)
+    return changed | {item: derived[item] for item in touched}
 
 
 def fixable(schema: CompiledSchema) -> tuple[str, ...]:

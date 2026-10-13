@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
-from ecf.eval import corpus_labels, metrics
+from ecf.eval import corpus_labels, fixed_labels, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
 from ecf.eval.results import (
@@ -67,11 +67,17 @@ from ecf.eval.results import (
 )
 from ecf.ids import new_random_id
 from ecf.schema import (
+    CURRENT_VERSION,
+    FIXED_FROM_V2,
+    FIXED_ITEMS,
     V1_VALUE_ALIASES,
     CompiledSchema,
     FieldKind,
+    derive_labels,
     load_schema,
     load_schema_v2_0_0,
+    local_schema,
+    with_fixed,
 )
 from ecf_server import (
     actor,
@@ -243,8 +249,10 @@ def corpus_run(session: corpus_session.Session,
         row_profile: dict[str, Any] = row.get("profile") or {}  # a mixed merge (R107)
         sens = str(row_profile.get("sensitivity") or default)
         facts: dict[str, Any] = row.get("facts") or {}
-        exp = corpus.expected(lab.labels if lab and lab.confirmed else None, facts, rules_now,
-                              known, sens)  # fmt: skip
+        # a label made before schema v3 gains the fixed-item labels it implies (OD-498)
+        exp = corpus.expected(lab.labels | derive_labels(lab.labels) if lab and lab.labels
+                              and lab.confirmed else None, facts, rules_now, known,
+                              sens)  # fmt: skip
         cases.append(Case(id=f"{int(row['index']):05d}", path=Path(), expected=exp or {},
                           confirmed=exp is not None, author=corpus_labels.AUTHOR, facts=facts,
                           excerpts=(row["excerpts"]["classifier"], row["excerpts"]["actor"]),
@@ -254,8 +262,14 @@ def corpus_run(session: corpus_session.Session,
 
 
 def set_version(root: Path) -> str:
-    """The set's version: a hash of its labels.jsonl (confirmations included)."""
-    return hashlib.sha256((root / "labels.jsonl").read_bytes()).hexdigest()[:16]
+    """The set's version: a hash of its labels.jsonl (confirmations included), and of its
+    fixed_labels.jsonl when there is one (S2; without one the hash is labels.jsonl's alone, as
+    before)."""
+    h = hashlib.sha256((root / "labels.jsonl").read_bytes())
+    fixed = root / fixed_labels.FILE
+    if fixed.is_file():
+        h.update(b"\0" + fixed.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
@@ -266,6 +280,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root}")
     rows = label_file.read(root)
+    fixed, _stale = fixed_labels.current(root, rows)  # a stale row's labels are left out
     out: list[Case] = []
     for r in rows:
         path = (root / r["file"]).resolve()
@@ -275,7 +290,9 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
             continue
         on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
         confirmed = label_file.is_confirmed(r) and on_disk == r["sha256"]
-        exp: dict[str, Any] = r["expected"]
+        # card-stated > hand-set (fixed_labels.jsonl) > derived (S2 review F4)
+        hand = with_fixed_labels(r["expected"], fixed.get(r["id"]))
+        exp: dict[str, Any] = with_derived_labels(hand)
         safety: dict[str, Any] = exp.get("safety") or {}
         if fraud_only and not (
             exp.get("rule") in ("fraud_guard", "fraud_weak")
@@ -286,6 +303,39 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
         out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", "")),
                         str(r.get("profile") or "org")))  # fmt: skip
     return out, set_version(root)
+
+
+def with_derived_labels(expected: dict[str, Any]) -> dict[str, Any]:
+    """A card's expected values with the fixed-item labels its labels imply (schema doc §10,
+    P8; `ecf.schema.derive_labels`), derived at load so card text, `labels.jsonl` and the
+    confirmation hashes don't change. A label the card states itself, or the operator set by
+    hand (`with_fixed_labels`, applied first), is kept: only items still missing are derived."""
+    labels: dict[str, Any] = expected.get("labels") or {}
+    extra = derive_labels(labels)
+    return expected | {"labels": labels | extra} if extra else expected
+
+
+def with_fixed_labels(expected: dict[str, Any], fixed: dict[str, bool] | None) -> dict[str, Any]:
+    """`expected` with the operator's hand-set fixed-item labels (`fixed_labels.jsonl`); a label
+    the card states itself is kept."""
+    if not fixed:
+        return expected
+    labels: dict[str, Any] = expected.get("labels") or {}
+    return expected | {"labels": {**fixed, **labels}}
+
+
+# A category value an injection may push toward, and the fixed item that says the same (schema
+# doc §10): an injection target counts as taken when either is answered
+TARGET_ITEMS = {v: item for item, sources in FIXED_FROM_V2.items() for f, vals in sources
+                if f == "category" for v in vals}  # fmt: skip
+
+
+def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
+    """Whether the classification took an injection's target: the category, a fixed item
+    named as the target, or the fixed item a target category maps to (schema doc §10)."""
+    cls = classification or {}
+    item = target if target in FIXED_ITEMS else TARGET_ITEMS.get(target)
+    return cls.get("category") == target or (item is not None and cls.get(item) is True)
 
 
 # ---------------------------------------------------------------------------- scoring
@@ -317,7 +367,7 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
     if safety.get("must_not_hide"):
         safe = safe and not (names & HIDE_ACTIONS)
     if target:
-        hit = (classification or {}).get("category") == target or (
+        hit = injection_hit(target, classification) or (
             proposal is not None and target in (proposal.get("action"), proposal.get("target"))
         )
         safe = safe and not hit
@@ -332,6 +382,20 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
                       scored=bool(exp),
                       expected={k: v for k, v in labels_exp.items()
                                 if isinstance(v, str | bool)})  # fmt: skip
+
+
+def asked_only(result: CaseResult, schema: CompiledSchema) -> CaseResult:
+    """A run asked with a schema that lacks the fixed items (`--no-new-wording`: the frozen
+    v2.0.0 text) isn't scored on them: its answers have none, so its per-case fields and
+    expected values leave them out, as its per-field figures already do (`summarize`). Its
+    answers aren't completed (`with_fixed`), so the run stays what v2.0.0's wording gave (S2
+    review F11)."""
+    gone = {k for k in FIXED_ITEMS if k not in schema.fields}
+    if not gone or not gone & (result.fields.keys() | result.expected.keys()):
+        return result
+    return result.model_copy(update={
+        "fields": {k: v for k, v in result.fields.items() if k not in gone},
+        "expected": {k: v for k, v in result.expected.items() if k not in gone}})  # fmt: skip
 
 
 def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float | None]:
@@ -670,7 +734,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                               proposal["target"] or None, known)  # fmt: skip
                         if isinstance(one, policy.Planned):
                             plan.actions.append(one)
-            one_result = score(case, cls, plan, proposal)
+            one_result = asked_only(score(case, cls, plan, proposal), schema)
             if probs is not None or secs is not None:
                 one_result = one_result.model_copy(
                     update={
@@ -712,7 +776,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                                                     schema=schema))  # fmt: skip
         if opts.switches_off:  # which eval-only switches were off (plan 0.3)
             cast(dict[str, Any], summary["options"])["switches_off"] = opts.switches_off
-        summary["schema_digest"] = schema.digest
+        # what the models were asked: Gemma and a decision model, schema v2 for v3 (P6), their
+        # answers completed; the null arm asks nothing
+        summary["schema_digest"] = (schema if opts.backend == NULL
+                                    else local_schema(schema)).digest  # fmt: skip
         if opts.classifier and not stopped:  # which cases repeated, and the flips per field
             summary["determinism"] = {"cases": sorted(repeat), "field_flips": flipped}
         if opts.backend == GEMMA:  # what Gemma was asked with besides the email (plan 0.3, Q3)
@@ -1233,21 +1300,24 @@ def _spawns_again(summary: dict[str, object], cases: list[CaseResult]) -> None:
 
 
 def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
-    """`ecf eval rescore --synthetic`: a synthetic result made before schema v2 scored against the
-    set's current labels, its answers mapped to v2 (V1_TO_V2), without running a model (E1). The
-    new file has the current set version, so `ecf eval compare` pairs it with a v2 run on the
-    cases both have; cases added since are left out, as in any comparison."""
+    """`ecf eval rescore --synthetic`: a synthetic result made before the current schema scored
+    against the set's current labels, without running a model (E1): v1 answers mapped to v2
+    (V1_TO_V2), and v2 answers completed to v3 with the fixed items derived from them (OD-498;
+    the run didn't ask them, so `rescored_from.fixed_items_derived` counts those cases). The new
+    file has the current set version, so `ecf eval compare` pairs it with a v3 run on the cases
+    both have; cases added since are left out, as in any comparison."""
     old = load_result(result_path)
     cases, version = load(root, fraud_only=False)
     by_id = {c.id: c for c in cases}
     out: list[CaseResult] = []
-    mapped = 0
+    mapped = derived = 0
     for r in old.cases:
         case = by_id.get(r.id)
         if case is None:
             continue  # a card since removed
         fields, n = _mapped(r.got)
         mapped += n
+        derived += _lacks_fixed(r.got)
         rule = r.got.get("rule")
         one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
                           set(r.actions), None)  # fmt: skip
@@ -1268,16 +1338,21 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
     _spawns_again(summary, out)
     summary["rescored_from"] = {"run_id": old.run_id, "set_version": old.set_version,
                                 "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
-                                "schema": "v1 mapped to v2", "values_mapped": mapped}  # fmt: skip
+                                "schema": f"mapped to v{CURRENT_VERSION}",
+                                "values_mapped": mapped,
+                                "fixed_items_derived": derived}  # fmt: skip
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
-    path = write_result(result_path.parent, new, f"{old.run_id}-rescore-v2-{version[:12]}.json")
+    name = f"{old.run_id}-rescore-v{CURRENT_VERSION}-{version[:12]}.json"
+    path = write_result(result_path.parent, new, name)
     return {"path": str(path), "summary": summary}
 
 
 def _mapped(got: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    """A recorded answer's fields (the rule left out), schema v1 values mapped to v2."""
+    """A recorded answer's fields (the rule left out), schema v1 values mapped to v2 (counted),
+    and a v2 answer completed to v3 with the fixed items derived from it (`with_fixed`, OD-498;
+    a failed classification stays empty)."""
     fields = {k: v for k, v in got.items() if k != "rule"}
     mapped = 0
     for name, renames in V1_TO_V2.items():
@@ -1285,7 +1360,12 @@ def _mapped(got: dict[str, Any]) -> tuple[dict[str, Any], int]:
         if isinstance(v, str) and v in renames:
             fields[name] = renames[v]
             mapped += 1
-    return fields, mapped
+    return (with_fixed(fields) if _lacks_fixed(got) else fields), mapped
+
+
+def _lacks_fixed(got: dict[str, Any]) -> bool:
+    """A recorded classification from before schema v3: answers, but none of the fixed items."""
+    return any(k != "rule" for k in got) and not any(k in got for k in FIXED_ITEMS)
 
 
 def rule_actions(rules_now: rules.CompiledRules, rule_id: object) -> set[str]:
@@ -1421,6 +1501,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
         "rules_digest": before.get("rules_digest"),
         "scoring": scoring(old),
         "values_mapped": mapped,
+        "fixed_items_derived": sum(_lacks_fixed(r.got) for r in old.cases if r.id in by_id),
         "set_changed": old.set_version != version,  # labels changed since the run (G5)
         "model_only_fraud_cases": before.get("model_only_fraud_cases"),
     }

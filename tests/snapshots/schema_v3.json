@@ -1,0 +1,122 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "bank_detail_change": {
+      "title": "Bank Detail Change",
+      "type": "boolean"
+    },
+    "category": {
+      "enum": [
+        "invoice",
+        "payment_confirmation",
+        "remittance",
+        "vendor_change_request",
+        "billing_inquiry",
+        "customer_request",
+        "sales_inquiry",
+        "partnership",
+        "bug_report",
+        "regulatory",
+        "marketing",
+        "notification",
+        "action_alert",
+        "account_security",
+        "shipping",
+        "appointment",
+        "travel",
+        "finance",
+        "school_or_family",
+        "spam_or_phishing",
+        "private",
+        "other"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "claims_internal": {
+      "title": "Claims Internal",
+      "type": "boolean"
+    },
+    "deadline_mentioned": {
+      "title": "Deadline Mentioned",
+      "type": "boolean"
+    },
+    "fraud_risk": {
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Fraud Risk",
+      "type": "string"
+    },
+    "payment_related": {
+      "title": "Payment Related",
+      "type": "boolean"
+    },
+    "phishing": {
+      "title": "Phishing",
+      "type": "boolean"
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "private_individual": {
+      "title": "Private Individual",
+      "type": "boolean"
+    },
+    "regulator_claim": {
+      "title": "Regulator Claim",
+      "type": "boolean"
+    },
+    "requires_action": {
+      "title": "Requires Action",
+      "type": "boolean"
+    },
+    "requires_reply": {
+      "title": "Requires Reply",
+      "type": "boolean"
+    },
+    "sender_type": {
+      "enum": [
+        "vendor",
+        "customer",
+        "regulator",
+        "team",
+        "company",
+        "friend",
+        "family",
+        "person",
+        "automated",
+        "unknown"
+      ],
+      "title": "Sender Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "category",
+    "priority",
+    "requires_action",
+    "requires_reply",
+    "payment_related",
+    "deadline_mentioned",
+    "sender_type",
+    "fraud_risk",
+    "bank_detail_change",
+    "regulator_claim",
+    "phishing",
+    "claims_internal",
+    "private_individual"
+  ],
+  "title": "ClassificationV3",
+  "type": "object"
+}

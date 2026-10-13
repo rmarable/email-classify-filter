@@ -24,7 +24,7 @@ from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import load_schema
+from ecf.schema import load_schema, local_schema, with_fixed
 from ecf_server import (
     claude_eval,
     claude_pins,
@@ -44,12 +44,14 @@ from tests.test_claude_review import EXT, extend
 from tests.test_decide import MARKETING
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
-BEC: dict[str, Any] = {"category": "vendor_change_request", "priority": "high",
-                       "requires_action": True, "requires_reply": False, "payment_related": True,
-                       "deadline_mentioned": False, "sender_type": "vendor",
-                       "fraud_risk": "high"}  # fmt: skip
-REQUEST: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True,
-                                       "requires_action": True}  # fmt: skip
+# full schema v3 answers (the fixed items derived, OD-498)
+BEC: dict[str, Any] = with_fixed({"category": "vendor_change_request", "priority": "high",
+                                  "requires_action": True, "requires_reply": False,
+                                  "payment_related": True, "deadline_mentioned": False,
+                                  "sender_type": "vendor", "fraud_risk": "high"})  # fmt: skip
+REQUEST: dict[str, Any] = with_fixed(MARKETING | {"category": "customer_request",
+                                                  "requires_reply": True,
+                                                  "requires_action": True})  # fmt: skip
 S1, S2 = "session-one", "session-two"
 CASES = ("starter-bec", "starter-control", "starter-injection")
 
@@ -800,7 +802,7 @@ def test_a_cards_expected_facts_reach_the_hide_path_as_in_ecf_eval_run(
     labels.confirm(root, "seen-bulk", date(2026, 10, 1))
     labels.confirm(root, "starter-control", date(2026, 10, 1))
     start(db_path, clock, root)
-    drain(db_path, clock, lambda _c: MARKETING)
+    drain(db_path, clock, lambda _c: with_fixed(MARKETING))
     path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
     actions = {c.id: set(c.actions) for c in load_result(Path(path)).cases}
     assert {"archive"} <= actions["seen-bulk"] and not {"archive", "mark_read"} & actions[
@@ -834,7 +836,7 @@ def test_preset_b_takes_only_a_run_on_the_effective_schema(
     results = [CaseResult(id=c.id, correct=False, got=got | {"rule": None}) for c in cases]
     summary: dict[str, object] = evalrun.summarize(results, 0)
     schema = config.current_schema(conn)
-    summary["schema_digest"] = schema.digest
+    summary["schema_digest"] = local_schema(schema).digest  # what Gemma is asked (P6, OD-498)
     rf = ResultFile(run_id="b" * 32, pair="gemma4-12b/local", set_version=version,
                     created_at=to_ts(clock.now()), cases=results,
                     digest=claude_pins.local_key(schema), summary=summary)  # fmt: skip
@@ -858,6 +860,32 @@ def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(
     m = json.loads(conn.execute("SELECT metrics FROM eval_runs WHERE pair ="
                                 " 'gemma4-12b/claude'").fetchone()[0])  # fmt: skip
     assert m["claude"]["source_run"] == source and m["determinism_diffs"] == 0
+
+
+def test_preset_b_scores_a_failed_gemma_case_as_a_failure(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """S2 review F1: a case Gemma failed (`{"rule": None}`) isn't completed to five false
+    fixed items and planned; it stays unclassified and scores as a failure, as before v3."""
+    cases, version = evalrun.load(root, fraud_only=False)
+    results = [CaseResult(id=c.id, correct=False,
+                          got={"rule": None} if c.id == "starter-bec" else REQUEST | {"rule": None})
+               for c in cases]  # fmt: skip
+    rf = ResultFile(run_id="f" * 32, pair="gemma4-12b/local", set_version=version,
+                    created_at=to_ts(clock.now()), cases=results,
+                    digest=claude_pins.local_key(),
+                    summary=evalrun.summarize(results, 0))  # fmt: skip
+    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
+    start(db_path, clock, root, preset="B")
+    run = claude_eval.current()
+    assert run is not None
+    failed = next(w for w in run.works if w.case.id == "starter-bec")
+    assert failed.classification is None and failed.plan is None
+    drain(db_path, clock, lambda _c: REQUEST)
+    path = conn.execute("SELECT path FROM eval_runs WHERE pair = 'gemma4-12b/claude'"
+                        ).fetchone()["path"]  # fmt: skip
+    got = {c.id: c for c in load_result(Path(path)).cases}["starter-bec"]
+    assert not got.correct and got.fields["safety"] is False and got.fields["rule"] is False
 
 
 def test_preset_b_skips_an_experiment_for_its_source(

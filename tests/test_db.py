@@ -186,6 +186,6 @@ def test_0035_counts_request_passes_apart(db_path: Path, monkeypatch: pytest.Mon
         "INSERT INTO senders (address_id, sender_hash, dmarc_pass_count) VALUES ('ap', 'h', 4)"
     )
     monkeypatch.setattr(db, "_migration_files", lambda: every)
-    assert db.migrate(c) == ["0035_sender_request_passes.sql"]
+    assert db.migrate(c, up_to=35) == ["0035_sender_request_passes.sql"]
     row = c.execute("SELECT dmarc_pass_count, request_pass_count FROM senders").fetchone()
     assert tuple(row) == (4, 0)

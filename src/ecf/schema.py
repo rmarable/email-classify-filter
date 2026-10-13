@@ -4,10 +4,15 @@ Enum and ordinal fields become `Literal` types, so the JSON schema is inline (no
 both Ollama's `format` and `record_classification` need. Ordinal fields keep their level order.
 `prompt_block` is a stable text rendering used as an unchanging prompt prefix.
 
-The shipped schema is v2 (`load_schema`; SPEC §7.1, OD-475): one schema for work and personal
-mail. v1 stays loadable for results and labels made before it (`load_schema_v1`). The safety
-core (`SAFETY_FIELDS`, `SAFETY_VALUES`) is what policy, the fraud checks and the starter rules
-rely on; the compiler refuses a shipped schema without it.
+The shipped schema is v3 (`load_schema`; SPEC §7.1, OD-498): v2's fields and values unchanged,
+`priority` with level texts, and five yes/no fixed safety items (`FIXED_ITEMS`) after them
+(v3.0.0 step 1c, stage S2: nothing reads the items yet). v2 stays loadable (`load_schema_v2`):
+the local model (presets A and B) is still asked v2 (`local_schema`) and its answer completed
+with the fixed items derived from it by a fixed table (`with_fixed`, P6), and results, labels
+and stored classifications made before v3 are read through the same table. v1 stays loadable
+for results and labels made before v2 (`load_schema_v1`). The safety core (`SAFETY_FIELDS`,
+`SAFETY_VALUES`) is what policy, the fraud checks and the starter rules rely on; the compiler
+refuses a shipped schema without it.
 
 An install may extend the shipped schema through `ecf config apply` (`schema` section; SPEC
 §7.1, §9.7, OD-478): `extend_schema` appends the extension's fields after the shipped ones and
@@ -26,6 +31,7 @@ import functools
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import resources
@@ -38,8 +44,13 @@ from ecf.yamlio import load_yaml
 
 FIELD_NAME = r"^[a-z][a-z0-9_]{0,39}$"
 VALUE_NAME = r"^[a-z][a-z0-9_]{0,39}$"
-CURRENT_VERSION = 2
-# What policy, the fraud and regulator checks and the starter rules read (SPEC §7.1, OD-475).
+CURRENT_VERSION = 3
+LOCAL_VERSION = 2  # the schema the local model is asked (`local_schema`; P6)
+# The fixed safety items schema v3 adds (OD-498; schema doc §1): yes/no, after v2's fields
+FIXED_ITEMS = ("bank_detail_change", "regulator_claim", "phishing", "claims_internal",
+               "private_individual")  # fmt: skip
+# What policy, the fraud and regulator checks and the starter rules read (SPEC §7.1, OD-475),
+# and the fixed items, which they will read from stage S3 (OD-498).
 SAFETY_FIELDS = {
     "fraud_risk": ("ordinal", ("none", "low", "medium", "high")),
     "payment_related": ("boolean", ()),
@@ -47,7 +58,7 @@ SAFETY_FIELDS = {
     "requires_action": ("boolean", ()),
     "requires_reply": ("boolean", ()),
     "deadline_mentioned": ("boolean", ()),
-}
+} | {name: ("boolean", ()) for name in FIXED_ITEMS}
 SAFETY_VALUES = {
     "category": ("regulatory", "vendor_change_request", "spam_or_phishing", "notification",
                  "action_alert"),
@@ -70,6 +81,61 @@ def v1_values(values: dict[str, Any], schema: CompiledSchema) -> dict[str, Any]:
         if isinstance(v, str) and v in renames and spec is not None and v not in spec.values:
             out[name] = renames[v]
     return out
+
+
+# Schema doc §9 (P13): what a v2 answer says about each fixed item. An item is true when any of
+# its sources holds one of its values. `staff` is v1's name for `team` (OD-475).
+FIXED_FROM_V2: dict[str, tuple[tuple[str, frozenset[str]], ...]] = {
+    "bank_detail_change": (("category", frozenset({"vendor_change_request"})),),
+    "regulator_claim": (("category", frozenset({"regulatory"})),
+                        ("sender_type", frozenset({"regulator"}))),
+    "phishing": (("category", frozenset({"spam_or_phishing"})),),
+    "claims_internal": (("sender_type", frozenset({"team", "staff"})),),
+    "private_individual": (("sender_type", frozenset({"person", "friend", "family"})),),
+}  # fmt: skip
+# Eval labels never derived (schema doc §10, P8): plain spam isn't phishing, so the operator
+# splits `spam_or_phishing` by hand
+NOT_DERIVED_LABELS = frozenset({"phishing"})
+# A label value that says nothing (schema doc §10): the item stays unlabelled
+UNLABELLED = frozenset({"unknown"})
+
+
+def derive_fixed(values: Mapping[str, Any]) -> dict[str, bool]:
+    """Each fixed item from a v2 classification by the §9 table; an absent source is false. The
+    one table preset A (`with_fixed`), migration 0036 (the same rows, in SQL) and the eval
+    labels (`derive_labels`, more strictly) use."""
+    return {item: any(values.get(field) in vals for field, vals in sources)
+            for item, sources in FIXED_FROM_V2.items()}  # fmt: skip
+
+
+def with_fixed(values: Mapping[str, Any]) -> dict[str, Any]:
+    """A v2 classification completed to v3: each fixed item it lacks, derived (`derive_fixed`).
+    Items it has are kept."""
+    return dict(values) | {k: v for k, v in derive_fixed(values).items() if k not in values}
+
+
+def derive_labels(labels: Mapping[str, Any]) -> dict[str, bool]:
+    """The fixed-item labels a card's (or a corpus message's) v2 labels imply (schema doc §10,
+    P8), for each item it doesn't label itself: true when any labelled source holds a mapped
+    value; false only when every source is labelled (not `unknown`) and none does; otherwise
+    left out (unlabelled, never false). `phishing` is never derived."""
+    out: dict[str, bool] = {}
+    for item, sources in FIXED_FROM_V2.items():
+        if item in labels or item in NOT_DERIVED_LABELS:
+            continue
+        known = [(labels[f], vals) for f, vals in sources
+                 if f in labels and labels[f] not in UNLABELLED]  # fmt: skip
+        if any(v in vals for v, vals in known):
+            out[item] = True
+        elif len(known) == len(sources):
+            out[item] = False
+    return out
+
+
+def local_fields(values: Mapping[str, Any]) -> dict[str, Any]:
+    """A classification as the local model knows it (schema v2): without the fixed items, so
+    the local actor is asked as before v3 (P6)."""
+    return {k: v for k, v in values.items() if k not in FIXED_ITEMS}
 
 
 class FieldKind(StrEnum):
@@ -249,10 +315,42 @@ def _load(version: int) -> CompiledSchema:
 
 @functools.cache
 def load_schema() -> CompiledSchema:
-    """The shipped schema (v2)."""
+    """The shipped schema (v3)."""
     schema = _load(CURRENT_VERSION)
     check_safety_core(schema)
     return schema
+
+
+@functools.cache
+def load_schema_v2() -> CompiledSchema:
+    """Schema v2: what the local model is asked (`local_schema`), and for results, labels and
+    rules made before v3 (OD-498)."""
+    return _load(LOCAL_VERSION)
+
+
+def local_schema(schema: CompiledSchema) -> CompiledSchema:
+    """The schema the local model is asked for `schema` (P6): for the shipped v3, schema v2 with
+    the same extension (and the same fallback key), so preset A's prompt, `num_predict`, prompt
+    digest and gate key don't change with v3; its answer is completed with `with_fixed`. Any
+    other version is asked as it is (v1, v2, the frozen v2.0.0 text)."""
+    if schema.version != CURRENT_VERSION:
+        return schema
+    base = _local_extended(_ext_json(schema.extension))
+    if schema.fallback_for is not None:
+        base = dataclasses.replace(base, fallback_for=schema.fallback_for)
+    return base
+
+
+def _ext_json(ext: dict[str, Any] | None) -> str | None:
+    return None if ext is None else json.dumps(ext, ensure_ascii=False)
+
+
+@functools.lru_cache(maxsize=8)
+def _local_extended(ext_json: str | None) -> CompiledSchema:
+    """Schema v2 with an extension, cached on its JSON in order: it was checked against v3,
+    whose names and values include v2's, so it compiles on v2 too."""
+    base = load_schema_v2()
+    return base if ext_json is None else extend_schema(base, json.loads(ext_json))
 
 
 @functools.cache

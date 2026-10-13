@@ -23,9 +23,11 @@ from ecf.schema import (
     extension_text,
     load_schema,
     load_schema_v1,
+    load_schema_v2,
     load_schema_v2_0_0,
     shipped_fallback,
     v1_values,
+    with_fixed,
 )
 from ecf.yamlio import load_yaml
 
@@ -44,30 +46,36 @@ GOOD = {
 
 def test_shipped_schemas_match_spec() -> None:
     spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")
-    section = spec[spec.index("### 7.1 Schema v2") : spec.index("### 7.2")]
+    section = spec[spec.index("### 7.1 Schema v3") : spec.index("### 7.2")]
     blocks = re.findall(r"```yaml\n(.*?)```", section, re.S)
-    assert len(blocks) == 2  # v2, then v1
-    for version, block in zip((2, 1), blocks, strict=True):
+    assert len(blocks) == 3  # v3, v2, then v1
+    for version, block in zip((3, 2, 1), blocks, strict=True):
         shipped = (ROOT / f"src/ecf/data/schema_v{version}.yaml").read_text(encoding="utf-8")
         assert load_yaml(shipped) == load_yaml(block)
 
 
-def test_v2_keeps_the_safety_core_and_is_what_ships() -> None:
-    v2 = load_schema()
-    assert v2.version == 2 and v2 is load_schema()  # cached
-    check_safety_core(v2)
+def test_v2_keeps_the_safety_core() -> None:
+    v2 = load_schema_v2()
+    assert v2.version == 2 and v2 is load_schema_v2()  # cached
     assert "team" in v2.fields["sender_type"].values
     assert "staff" not in v2.fields["sender_type"].values
     assert len(v2.fields["category"].values) == 22
     assert v2.fields["fraud_risk"].values == ("none", "low", "medium", "high")
+    v3_text = (ROOT / "src/ecf/data/schema_v3.yaml").read_text(encoding="utf-8")
     with pytest.raises(InvalidInputError, match="must keep team"):
-        check_safety_core(load_schema_v1())  # v1 says staff
+        check_safety_core(compile_schema(v3_text.replace("      team:", "      staff:")))
+    with pytest.raises(InvalidInputError, match="bank_detail_change must be"):
+        check_safety_core(v2)  # v2 lacks the fixed items (OD-498)
+    with pytest.raises(InvalidInputError):
+        check_safety_core(load_schema_v1())
 
 
 def test_digest_tracks_what_the_model_is_asked() -> None:
     a, b = load_schema(), load_schema_v1()
-    assert a.digest.startswith("schema-") and a.digest != b.digest
-    text = (ROOT / "src/ecf/data/schema_v2.yaml").read_text(encoding="utf-8")
+    assert (
+        a.digest.startswith("schema-") and len({a.digest, b.digest, load_schema_v2().digest}) == 3
+    )
+    text = (ROOT / "src/ecf/data/schema_v3.yaml").read_text(encoding="utf-8")
     assert compile_schema(text).digest == a.digest
     assert compile_schema(text.replace("Relative.", "Relative or in-law.")).digest != a.digest
 
@@ -82,16 +90,19 @@ def test_the_frozen_v2_0_0_text_is_the_released_one() -> None:
     only)."""
     raw = (ROOT / "src/ecf/data/schema_v2_0_0.yaml").read_bytes()
     assert hashlib.sha256(raw).hexdigest() == V2_0_0_SHA256
-    frozen, now = load_schema_v2_0_0(), load_schema()
+    frozen, now = load_schema_v2_0_0(), load_schema_v2()
     assert frozen.version == now.version == 2
     assert {n: (f.kind, f.values) for n, f in frozen.fields.items()} == {
         n: (f.kind, f.values) for n, f in now.fields.items()}  # fmt: skip
 
 
-def test_v2_json_schema_snapshot() -> None:
-    text = json.dumps(load_schema().json_schema(), indent=2, sort_keys=True) + "\n"
+@pytest.mark.parametrize("version", [2, 3])
+def test_v2_and_v3_json_schema_snapshots(version: int) -> None:
+    schema = load_schema() if version == 3 else load_schema_v2()
+    text = json.dumps(schema.json_schema(), indent=2, sort_keys=True) + "\n"
     assert "$ref" not in text and "$defs" not in text
-    assert text == (ROOT / "tests/snapshots/schema_v2.json").read_text(encoding="utf-8")
+    snap = ROOT / f"tests/snapshots/schema_v{version}.json"
+    assert text == snap.read_text(encoding="utf-8")
 
 
 def test_json_schema_snapshot_and_no_refs() -> None:
@@ -207,8 +218,8 @@ def test_an_extension_appends_fields_and_category_values() -> None:
     added = extension_text(s)
     assert "legal_notice: Letter from a lawyer" in added and "- mentions_nda (true/false)" in added
     assert extension_text(base) == ""
-    good = {**GOOD, "category": "legal_notice", "contract_stage": "draft", "legal_risk": "low",
-            "mentions_nda": False}  # fmt: skip
+    good = {**with_fixed(GOOD), "category": "legal_notice", "contract_stage": "draft",
+            "legal_risk": "low", "mentions_nda": False}  # fmt: skip
     s.validate(good)
     with pytest.raises(ValidationError):
         s.validate(GOOD)  # the added fields are required
@@ -371,7 +382,7 @@ def test_the_budget_line_and_near_the_limit() -> None:
 
 
 def test_v1_value_aliases_map_each_renamed_v1_value_to_a_v2_value() -> None:
-    v1, v2 = load_schema_v1(), load_schema()
+    v1, v2 = load_schema_v1(), load_schema_v2()
     for name, renames in V1_VALUE_ALIASES.items():
         for old, new in renames.items():
             assert old in v1.fields[name].values and old not in v2.fields[name].values

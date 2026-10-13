@@ -929,6 +929,30 @@ def _review_cards(root: Path, fields: str | None, *, add: bool, cases: str | Non
     typer.echo("commit reviews.jsonl, labels.jsonl and any changed cards to keep them")
 
 
+def _import_fixed(root: Path, path: Path) -> None:
+    from datetime import date  # noqa: PLC0415
+
+    from ecf.eval import fixed_labels  # noqa: PLC0415
+
+    try:
+        doc: Any = json.loads(path.read_text(encoding="utf-8"))
+        on = date.fromisoformat(doc["on"])
+        item, answers = str(doc["item"]), doc["answers"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
+    if not isinstance(answers, dict):
+        raise InvalidInputError(f"{path}: answers must map case ids to answers")
+    given = cast(dict[str, Any], answers)
+    bad = [k for k, a in given.items() if not isinstance(a, dict)]
+    if bad:
+        raise InvalidInputError(f"{path}: each answer must be an object with label and how"
+                                f" (not: {', '.join(map(str, bad[:5]))})")  # fmt: skip
+    changed = fixed_labels.record(root, item, given, on)
+    yes = sum(1 for a in given.values() if a.get("label") is True)
+    typer.echo(f"{item}: {len(given)} cases recorded ({yes} yes), {changed} new or changed;"
+               " commit fixed_labels.jsonl and reviews.jsonl to keep them")  # fmt: skip
+
+
 def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> None:
     from datetime import date  # noqa: PLC0415
 
@@ -1006,6 +1030,15 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         bool,
         typer.Option("--redo", help="With --review: ask fields already reviewed on this file too."),
     ] = False,
+    import_fixed: Annotated[
+        Path | None,
+        typer.Option(
+            "--import-fixed",
+            help="Record a card review page's answers for one fixed item: a JSON file"
+            ' {"item": ..., "on": "YYYY-MM-DD", "answers": {id: {"label": true|false,'
+            ' "how": "single"|"bulk"}}} (writes fixed_labels.jsonl).',
+        ),
+    ] = None,
     recheck: Annotated[
         int,
         typer.Option(
@@ -1023,6 +1056,9 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
     if corpus is not None or again or marked:
         _label_corpus(corpus, frozenset(again or ()), marked)
         return
+    if import_fixed is not None:
+        _import_fixed(root, import_fixed)
+        return
     if review is not None or add or cases or redo or recheck:
         if case_id or show_flags or results or status_only:
             raise InvalidInputError(
@@ -1037,6 +1073,13 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
     from ecf.prompts import require_terminal  # noqa: PLC0415
 
     n = labels.counts(root)
+    from ecf.eval import fixed_labels  # noqa: PLC0415
+
+    fixed, stale = fixed_labels.current(root)
+    if fixed or stale:
+        typer.echo(f"{len(fixed)} cases with hand-set fixed-item labels"
+                   + (f"; {len(stale)} stale (card changed): {', '.join(stale[:5])}" if stale
+                      else ""))  # fmt: skip
     cards = {c.id: c for c in load_cards(root / "cases")}
     flagged = [r for r in labels.pending(root) if (c := cards.get(r["id"])) and c.review]
     typer.echo(f"{n['confirmed']} of {n['cases']} cases confirmed")
@@ -1339,8 +1382,8 @@ def eval_rescore(
         Path | None,
         typer.Option(
             "--synthetic",
-            help="The synthetic set folder: score a result made before schema v2"
-            " against its current labels, answers mapped to v2.",
+            help="The synthetic set folder: score a result made before schema v3"
+            " against its current labels, answers mapped to v3 (fixed items derived).",
         ),
     ] = None,
     through_policy: Annotated[
@@ -1353,7 +1396,7 @@ def eval_rescore(
     ] = False,
 ) -> None:
     """Score a corpus result again against the corpus's current labels, or a synthetic result
-    against the set's current labels (a pre-v2 one with its answers mapped to v2, or with
+    against the set's current labels (an older one with its answers mapped to v3, or with
     --through-policy planned again with today's facts and rules), without running the models;
     the new file sits beside the original (§16.7, §16.5)."""
     from ecf.eval.results import load_result as load  # noqa: PLC0415
