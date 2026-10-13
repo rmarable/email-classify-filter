@@ -596,15 +596,19 @@ def _round(run: Run, session_id: str, free: list[Work], limit: int,
     answered by `_again` (H1 `ee1915bc`, SPEC §21.2)."""
     grace = {a: t for a, t in run.grace.get(session_id, {}).items() if t > now}
     run.grace[session_id] = grace
-    busy = {w.agent for w in run.works if w.session == session_id and w.claim == "claimed"}
+    claimed = [w.agent for w in run.works if w.session == session_id and w.claim == "claimed"]
+    busy = set(claimed)
     if not free:
         return [], False
     preferred = [w for w in free if _agent_of(run, w) in busy | set(grace)]
     agent = _agent_of(run, (preferred or free)[0])
     if (busy | set(grace)) - {agent}:
         return [], True
+    # The session goes straight back for more, so the service paces it: Claude Code runs a
+    # bounded number of subagents at once, and a claim it can't spawn only expires.
+    room = max(0, min(limit, OUT_LIMITS * limit - claimed.count(agent)))
     same = [w for w in free if _agent_of(run, w) == agent]
-    return same[:limit], len(same) > limit
+    return same[:room], len(same) > room
 
 
 def _next(run: Run, session_id: str, now: datetime) -> dict[str, Any]:
@@ -637,6 +641,10 @@ WAIT_S = 6.0  # under ecf-mcp's 10 s request limit (§15.4)
 POLL_S = 2.0
 GRACE = timedelta(seconds=300)  # an expired claim's agent may still be running (plan S3)
 HOLD_WAIT = timedelta(seconds=120)  # a held submission keeps the session polling this long
+# After its last submission an agent still writes its report (H2 `fc997ef9`: at most 1.2 s), and
+# the session no longer waits for its spawns: its agent counts as out this long (review R1).
+TAIL = timedelta(seconds=15)
+OUT_LIMITS = 2  # a session's claims out per agent type: at most this many `limit`s (review R2)
 
 
 def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str,
@@ -645,9 +653,11 @@ def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, s
     """`eval_next`, but a reply that would be empty only because work is still out or being
     prepared waits up to `WAIT_S` for some: the session can't pause itself (`ecf claude` denies
     every tool that could), so each call it makes waits a little before `next` sends it back."""
-    waited = 0.0
+    waited, results = 0.0, list[dict[str, Any]]()
     while True:
         got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped)
+        results += got["results"]  # each call hands over the outcomes since the last: keep them
+        got["results"] = results
         busy = got.get("in_progress", 0) or got.get("preparing") or got.get("next") == "call again"
         if got.get("items") or got.get("done") or got.get("stopped") or not busy:
             return got
@@ -766,7 +776,7 @@ def record_classification(clock: Clock, session_id: str, ref: str, token: str,
         result, errors = claude_review.check_classification(classification, run.schema)
         if result is None:
             return _invalid(run, w, errors, digest)
-        return _hold(clock, w, session_id, {"classification": result}, digest)
+        return _hold(clock, run, w, session_id, {"classification": result}, digest)
 
 
 def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: dict[str, Any],
@@ -782,7 +792,7 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
                                            actor.allowed(_cls(w)))  # fmt: skip
         if why is not None:
             return _invalid(run, w, [why], digest)
-        return _hold(clock, w, session_id, {"proposal": proposal}, digest)
+        return _hold(clock, run, w, session_id, {"proposal": proposal}, digest)
 
 
 def _run_or_missing() -> Run:
@@ -847,11 +857,14 @@ def _invalid(run: Run, w: Work, errors: list[str], digest: str) -> dict[str, Any
     return reply
 
 
-def _hold(clock: Clock, w: Work, session_id: str, payload: dict[str, Any],
+def _hold(clock: Clock, run: Run, w: Work, session_id: str, payload: dict[str, Any],
           digest: str) -> Hold:  # fmt: skip
     w.claim, w.held_digest = "held", digest
+    now = clock.now()
     if w.claims:
-        w.claims[-1].answered = clock.now()
+        w.claims[-1].answered = now
+    mine = run.grace.setdefault(session_id, {})
+    mine[w.agent] = max(mine.get(w.agent, now), now + TAIL)
     return Hold(session_id, w.ref, w.fence, w.need, w.agent, payload, kind="eval")
 
 

@@ -111,6 +111,8 @@ def test_plugin_has_only_the_skills(tmp_path: Path) -> None:
     for name in ("ecf-review", "ecf-eval"):  # the service says when to stop (dispatch plan S6)
         text = (dest / "skills" / name / "SKILL.md").read_text()
         assert "do what `next` says" in text and "at most 5" not in text
+        # H2 stall: the session miscounted finished spawns and ended its turn to wait for one
+        assert "don't wait for the spawns" in text and "every spawn of the round" not in text
 
 
 def test_agents_each_have_their_pin_and_their_own_server() -> None:

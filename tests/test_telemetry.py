@@ -25,7 +25,15 @@ from ecf import statusline as sl
 from ecf.claude_wrapper import client_doc
 from ecf.doctor import Level
 from ecf.plugin_digest import digest_of, plugin_digest
-from ecf_server import claude_eval, claude_pins, claude_usage, retention, telemetry, telemetry_app
+from ecf_server import (
+    claude_eval,
+    claude_pins,
+    claude_review,
+    claude_usage,
+    retention,
+    telemetry,
+    telemetry_app,
+)
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
@@ -304,6 +312,9 @@ def test_a_submission_is_held_until_telemetry_catches_up(
     )  # classified; on to the actor (OD-269)
     q = api(state, "POST", "/v1/review-queue", {}, work).json()
     assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}]
+    assert isinstance(state.clock, FakeClock)
+    state.clock.advance(claude_review.TAIL.total_seconds() + 1)  # the classifier's tail
+    q = api(state, "POST", "/v1/review-queue", {}, work).json()
     assert q["items"][0]["need"] == "act"
     api(state, "DELETE", f"/v1/sessions/{session}")
     done = conn.execute("SELECT items, submitted, refused FROM claude_sessions").fetchone()
