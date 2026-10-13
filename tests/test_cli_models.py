@@ -55,8 +55,8 @@ def test_installed_but_not_ready_says_why(capsys: pytest.CaptureFixture[str]) ->
 class PruneService:
     """`ecf models prune` against a service with one kept copy (2026-10-08 fix, SPEC §7.5)."""
 
-    def __init__(self, _paths: object, stale: list[str]) -> None:
-        self.stale, self.posted = stale, 0
+    def __init__(self, _paths: object, stale: list[str], retired: list[str]) -> None:
+        self.stale, self.retired, self.posted = stale, retired, 0
 
     def __enter__(self) -> PruneService:
         return self
@@ -65,16 +65,16 @@ class PruneService:
         return None
 
     def get(self, _path: str) -> dict[str, Any]:
-        return {"stale_tags": self.stale}
+        return {"stale_tags": self.stale, "retired_tags": self.retired}
 
     def request(self, _method: str, path: str, _body: dict[str, Any]) -> dict[str, Any]:
         assert path == "/v1/models/prune"
         self.posted += 1
-        return {"removed": self.stale}
+        return {"removed": self.stale + self.retired}
 
 
-def _prune(monkeypatch: pytest.MonkeyPatch, stale: list[str], *args: str,
-           answer: str = "") -> tuple[int, str, PruneService]:  # fmt: skip
+def _prune(monkeypatch: pytest.MonkeyPatch, stale: list[str], *args: str, answer: str = "",
+           retired: list[str] | None = None) -> tuple[int, str, PruneService]:  # fmt: skip
     from typer.testing import CliRunner  # noqa: PLC0415
 
     from ecf.cli import app  # noqa: PLC0415
@@ -82,7 +82,7 @@ def _prune(monkeypatch: pytest.MonkeyPatch, stale: list[str], *args: str,
     made: list[PruneService] = []
 
     def client(p: object) -> PruneService:
-        made.append(PruneService(p, stale))
+        made.append(PruneService(p, stale, retired or []))
         return made[-1]
 
     monkeypatch.setattr(cli_models, "LocalClient", client)
@@ -98,6 +98,13 @@ def test_prune_asks_first_and_names_what_it_removes(monkeypatch: pytest.MonkeyPa
     assert code == 0 and svc.posted == 1 and f"removed {old}" in out
     code, out, svc = _prune(monkeypatch, [old], "--yes")
     assert code == 0 and svc.posted == 1
+
+
+def test_prune_names_retired_copies_without_the_keep_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    gone = "ecf/tev1-4b:2.2.3"
+    code, out, svc = _prune(monkeypatch, [], "--yes", retired=[gone])
+    assert code == 0 and svc.posted == 1 and f"removed {gone}" in out
+    assert "OD-494" in out and "rollback" not in out
 
 
 def test_prune_with_nothing_kept_asks_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `ecf models install --decision` and the `tev1` decision model are removed, since Qwen-based models are banned in every role; `ecf models prune` removes leftover `tev1` copies (OD-494).
 - `/ecf-eval` and `/ecf-review` no longer stop to wait for a round's agents: the session calls the service again at once, so a miscounted agent can't leave it idle (OD-496).
 - `/ecf-eval` and `/ecf-review` no longer stall when Claude Code restarts an agent's tool server mid-round: a repeated submission gets its first answer back, claims last 5 minutes instead of 15, and the service tells the session when to call again or stop (OD-496).
 

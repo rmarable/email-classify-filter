@@ -1311,10 +1311,13 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def install_models(request: Request) -> JSONResponse:
-        """`ecf models install`; with `decision`, an eval-only decision model (SPEC §7.8)."""
-        decision = _opt_str(_body(request), "decision")
-        return JSONResponse(models.start_install(state.connect, state.clock, state.model_client,
-                                                 decision=decision))  # fmt: skip
+        """`ecf models install`. An older client's `decision` is refused: decision-model installs
+        were removed with the Qwen-based models (OD-494)."""
+        if _opt_str(_body(request), "decision") is not None:
+            raise InvalidInputError("decision-model installs were removed (OD-494); run"
+                                    " `ecf models install` for the local model")  # fmt: skip
+        return JSONResponse(models.start_install(state.connect, state.clock,
+                                                 state.model_client))  # fmt: skip
 
     @allow(Caller.CLI)
     def prune_models(_request: Request) -> JSONResponse:

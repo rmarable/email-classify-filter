@@ -1139,7 +1139,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "--classifier-backend",
             help="gemma (default), null, or"
             " systemone:<name> from decision_models.lock (eval only, SPEC §7.8;"
-            " never counts for the go-live gate).",
+            " never counts for the go-live gate; none pinned since OD-494).",
         ),
     ] = "gemma",
     redact: Annotated[

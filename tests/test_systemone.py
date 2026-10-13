@@ -1,4 +1,4 @@
-"""Decision models through `/v1/systemone` (SPEC §7.8; OD-470, OD-471): questions from the schema,
+"""Decision models through `/v1/systemone` (SPEC §7.8; OD-471; ADR 0029): questions from the schema,
 answer mapping, failures, and no request text in errors (R16)."""
 
 from __future__ import annotations
@@ -6,7 +6,6 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
-import re
 import shutil
 import sqlite3
 from collections.abc import Callable
@@ -20,7 +19,6 @@ import pytest
 from typer.testing import CliRunner
 
 from ecf.cli import app
-from ecf.doctor import Level, judge_models
 from ecf.errors import InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
@@ -69,7 +67,7 @@ def _answers(**over: Any) -> dict[str, Any]:
         "deadline_mentioned": {"type": "noul", "noul": 0.49},
     }  # fmt: skip
     a.update(over)
-    return {"model": "tev1:4b", "answers": a, "usage": {"input_tokens": 9000, "output_tokens": 8}}
+    return {"model": "test:1", "answers": a, "usage": {"input_tokens": 9000, "output_tokens": 8}}
 
 
 def test_questions_follow_the_schema() -> None:
@@ -154,12 +152,12 @@ def test_ask_sends_the_questions_and_the_state() -> None:
         seen["body"] = json.loads(req.content)
         return httpx.Response(200, json=_answers())
 
-    got = systemone.ask(_client(handler), "ecf/tev1-4b:1", "the email", SCHEMA)
+    got = systemone.ask(_client(handler), "ecf/test-decision:1", "the email", SCHEMA)
     assert got.classification is not None
     assert seen["path"] == "/v1/systemone"
     assert seen["host"] == "127.0.0.1"
     body = seen["body"]
-    assert body["model"] == "ecf/tev1-4b:1"
+    assert body["model"] == "ecf/test-decision:1"
     assert body["keep_alive"] == "5m"
     assert body["questions"] == systemone.questions(SCHEMA)
     assert "the email" in body["state"]
@@ -216,10 +214,18 @@ def test_the_service_classifier_path_never_imports_systemone() -> None:
         assert "systemone" not in names and "ecf_server.systemone" not in mods, mod
 
 
-# ---- the eval-only lock and `ecf models install --decision` (Phase 2b) -------------------------
+# ---- the eval-only lock (Phase 2b; empty since OD-494) -----------------------------------------
 
 
-TEV = systemone.pin("tev1-4b")
+# No decision model is pinned since OD-494 (tev1 and every Qwen-based model banned), so the eval
+# harness is tested with a test-only pin patched into `load_pins`.
+TEV = ollama.Pin(tag="test-decision:1", digest="9b" * 32, ecf_name="ecf/test-decision")
+REAL_LOAD_PINS = systemone.load_pins
+
+
+@pytest.fixture(autouse=True)
+def _test_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(systemone, "load_pins", lambda: {"test-decision": TEV})
 
 
 class FakeOllama:
@@ -258,20 +264,34 @@ def _idle() -> None:
     models.INSTALLS.set(state="idle", status="", error="", completed=0, total=0)
 
 
-def test_the_lock_holds_only_eval_only_classifiers() -> None:
+def test_the_lock_is_empty_since_qwen_was_banned() -> None:
     raw = json.loads(resources.files("ecf_server.data").joinpath(systemone.LOCK).read_text("utf-8"))
-    assert raw["models"], "the lock names at least one model"
-    for m in raw["models"].values():
-        assert m["role"] == "classifier" and m["eval_only"] is True
-        assert re.fullmatch(r"[0-9a-f]{64}", m["digest"])
-        assert m["license"] and m["source_url"].startswith("https://")
-    assert TEV.tag == "tev1:4b"
-    assert TEV.digest == "9b5bb969e46c4b776826d6f2d401e22893205693f172653af6254897255025b8"
+    assert raw["models"] == {}, "no decision model is pinned (OD-494)"
+    assert REAL_LOAD_PINS() == {}
+    assert "tev1" not in json.dumps(raw["models"])
 
 
 def test_the_production_pin_stays_gemma() -> None:
     assert ollama.load_pin().tag == "gemma4:12b-it-q4_K_M"
-    assert all(p.ecf_name != ollama.load_pin().ecf_name for p in systemone.load_pins().values())
+    assert all(p.ecf_name != ollama.load_pin().ecf_name for p in REAL_LOAD_PINS().values())
+
+
+def test_with_the_shipped_lock_every_decision_backend_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(systemone, "load_pins", REAL_LOAD_PINS)
+    with pytest.raises(InvalidInputError, match=r"known: none"):
+        evalrun.decision_pin("systemone:tev1-4b")
+
+
+def test_a_refused_decision_backend_records_no_run(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    monkeypatch.setattr(systemone, "load_pins", REAL_LOAD_PINS)
+    with pytest.raises(InvalidInputError, match=r"known: none"):
+        _start(db_path, clock, root, DecisionOllama(), backend="systemone:tev1-4b")
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
 
 
 def test_an_unknown_decision_model_is_refused() -> None:
@@ -290,58 +310,6 @@ def test_verify_checks_ecfs_copy() -> None:
     assert err.value.cause == "digest_mismatch"
     fake.models[TEV.ecf_tag] = TEV.digest
     assert systemone.verify(fake.client(), TEV) == TEV.digest
-
-
-def test_decision_install_copies_without_marking_ecfs_model_installed(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
-) -> None:
-    fake = FakeOllama()
-    fake.models[f"{TEV.ecf_name}:0.0.1"] = TEV.digest  # an earlier release's copy
-    fake.models["ecf/gemma4-12b:0.0.1"] = "a" * 64  # the local model's: left alone
-    got = models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline,
-                               decision="tev1-4b")  # fmt: skip
-    assert got["state"] == "done", got
-    assert fake.pulled == ["tev1:4b"]
-    assert fake.models[TEV.ecf_tag] == TEV.digest
-    assert f"{TEV.ecf_name}:0.0.1" in fake.models  # kept: another install may use it
-    assert "ecf/gemma4-12b:0.0.1" in fake.models
-    assert not models.installed(conn)  # no INSTALLED_KEY (R13)
-    [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.installed'").fetchall()
-    assert json.loads(row[0]) == {"tag": TEV.ecf_tag, "digest": TEV.digest, "decision": 1}
-
-
-def test_decision_install_never_retries_held_work(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    called: list[bool] = []
-
-    def retry_all(*_a: object, **_k: object) -> None:
-        called.append(True)
-
-    monkeypatch.setattr(modelq, "retry_all", retry_all)
-    models.start_install(lambda: db.connect(db_path), clock, FakeOllama().client, spawn=_inline,
-                         decision="tev1-4b")  # fmt: skip
-    assert called == []
-
-
-def test_decision_install_refuses_a_moved_tag(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
-) -> None:
-    fake = FakeOllama(upstream="c" * 64)
-    models.start_install(lambda: db.connect(db_path), clock, fake.client, spawn=_inline,
-                         decision="tev1-4b")  # fmt: skip
-    snap = models.INSTALLS.snapshot()
-    assert snap["state"] == "failed" and "no ecf release moves the pin" in snap["error"]
-    assert TEV.ecf_tag not in fake.models
-
-
-def test_decision_install_refuses_an_unknown_name_before_starting(
-    db_path: Path, clock: FakeClock
-) -> None:
-    with pytest.raises(InvalidInputError):
-        models.start_install(lambda: db.connect(db_path), clock, FakeOllama().client,
-                             spawn=_inline, decision="nope")  # fmt: skip
-    assert models.INSTALLS.snapshot()["state"] == "idle"
 
 
 # ---- `ecf eval run --classifier-backend` (Phase 2c) --------------------------------------------
@@ -402,18 +370,18 @@ def test_a_decision_model_run_never_reads_as_gemmas(
     gemma = ollama.load_pin().digest
     before = (gate.inputs(conn, "a1", gemma), fallback.inputs(conn, "a1", gemma))
     fake = DecisionOllama()
-    _start(db_path, clock, root, fake, backend="systemone:tev1-4b")
+    _start(db_path, clock, root, fake, backend="systemone:test-decision")
     snap = evalrun.RUN.snapshot()
     assert snap["state"] == "done", snap
     assert fake.decision_calls >= 3  # every case, then the determinism re-run
     row = conn.execute("SELECT pair, digest, gate_passed, path FROM eval_runs").fetchone()
     assert (row["pair"], row["digest"], row["gate_passed"]) == (
-        "systemone-tev1-4b/local",
+        "systemone-test-decision/local",
         TEV.digest,
         0,
     )
     summary = json.loads(Path(row["path"]).read_text())["summary"]
-    assert summary["backend"] == "systemone:tev1-4b"
+    assert summary["backend"] == "systemone:test-decision"
     assert summary["classifier_digest"] == TEV.digest and summary["actor_digest"] == gemma
     assert summary["gate_passed"] is False
     assert summary["classifier_latency_s"]["p50"] is not None
@@ -434,7 +402,7 @@ def test_a_decision_model_run_needs_the_cache_cap(
 ) -> None:
     for ps in (PS_ENV, PS_ENV + " LLAMA_ARG_CACHE_RAM=8192", PS_ENV + " LLAMA_ARG_CACHE_RAM=-1"):
         with pytest.raises(ServiceUnavailableError, match="LLAMA_ARG_CACHE_RAM"):
-            _start(db_path, clock, root, DecisionOllama(), ps=ps, backend="systemone:tev1-4b")
+            _start(db_path, clock, root, DecisionOllama(), ps=ps, backend="systemone:test-decision")
     assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
 
 
@@ -442,7 +410,7 @@ def test_a_decision_model_run_refuses_a_changed_copy(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     with pytest.raises(ServiceUnavailableError, match="pinned one"):
-        _start(db_path, clock, root, DecisionOllama("c" * 64), backend="systemone:tev1-4b")
+        _start(db_path, clock, root, DecisionOllama("c" * 64), backend="systemone:test-decision")
     assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
 
 
@@ -500,7 +468,7 @@ def test_a_gemma_run_still_records_preset_as_pair(
 def test_a_decision_model_run_reports_calibration_and_under_rating(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    _start(db_path, clock, root, DecisionOllama(), backend="systemone:tev1-4b")
+    _start(db_path, clock, root, DecisionOllama(), backend="systemone:test-decision")
     summary = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
     under = summary["fraud_under"]
     assert under["of"] >= 1 and 0 <= under["under"] <= under["of"]
@@ -539,7 +507,7 @@ def _file(tmp: Path, name: str, backend: str, correct: list[bool], **extra: Any)
 def test_compare_shows_the_experiment_figures(tmp_path: Path) -> None:
     g = _file(tmp_path, "g", "gemma", [True, False] * 10,
               fraud_under={"under": 2, "of": 6})  # fmt: skip
-    d = _file(tmp_path, "d", "systemone:tev1-4b", [True] * 20,
+    d = _file(tmp_path, "d", "systemone:test-decision", [True] * 20,
               fraud_under={"under": 1, "of": 6},
               classifier_latency_s={"p50": 2.5, "p95": 3.1},
               power={"ac_at_start": True, "ac_at_end": True, "paused": False},
@@ -551,7 +519,7 @@ def test_compare_shows_the_experiment_figures(tmp_path: Path) -> None:
     text = out.output
     assert "95% Newcombe interval" in text and "score interval" not in text  # one rule (OD-486)
     assert "confirmatory (exact McNemar, Holm over the two): end-to-end p =" in text
-    assert "B  classifier systemone:tev1-4b" in text
+    assert "B  classifier systemone:test-decision" in text
     assert "B  fraud risk under-rated on 1 of 6" in text
     assert "A  fraud risk under-rated on 2 of 6" in text
     assert "B  classifier call 2.5 s median, 3.1 s p95" in text
@@ -564,28 +532,3 @@ def test_compare_of_two_gemma_runs_is_unchanged(tmp_path: Path) -> None:
     out = CliRunner().invoke(app, ["eval", "compare", str(a), str(b)])
     assert out.exit_code == 0
     assert "score interval" not in out.output and "confirmatory" not in out.output
-
-
-def test_models_status_lists_an_installed_decision_model() -> None:
-    fake = FakeOllama()
-    assert models.decision_status(fake.client()) == []
-    fake.models[TEV.ecf_tag] = TEV.digest
-    assert models.decision_status(fake.client()) == [
-        {"name": "tev1-4b", "ecf_tag": TEV.ecf_tag, "pinned": True}
-    ]
-    fake.models[TEV.ecf_tag] = "c" * 64
-    assert models.decision_status(fake.client())[0]["pinned"] is False
-
-
-def test_doctor_shows_a_decision_model_only_when_installed() -> None:
-    base: dict[str, Any] = {
-        "pin": {"tag": "gemma4:12b", "digest": "a" * 64, "ecf_tag": "ecf/gemma4-12b:1"},
-        "installed_at": "t", "ready": True, "version": "0.35.0", "listener": ["127.0.0.1:11434"],
-        "env": {"OLLAMA_NUM_PARALLEL": "1", "OLLAMA_NO_CLOUD": "1"}}  # fmt: skip
-    assert [c.name for c in judge_models(base)] == ["local model"]
-    ok = judge_models(base | {"decision": [{"name": "tev1-4b", "ecf_tag": "ecf/tev1-4b:1",
-                                            "pinned": True}]})  # fmt: skip
-    assert ok[-1].name == "decision model" and ok[-1].level is Level.OK
-    bad = judge_models(base | {"decision": [{"name": "tev1-4b", "ecf_tag": "ecf/tev1-4b:1",
-                                             "pinned": False}]})  # fmt: skip
-    assert bad[-1].level is Level.WARN and "--decision tev1-4b" in (bad[-1].fix or "")

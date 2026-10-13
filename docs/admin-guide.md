@@ -203,7 +203,8 @@ the addresses using it from `live` to `assist` until their gate passes again (SP
   name; it starts ecf's Ollama login item when nothing serves Ollama.
 - `ecf models status` shows the pin, Ollama's readiness, any install in progress and ecf's
   copies for other releases. Those are kept (another install or `ecf upgrade --to` may run
-  one); `ecf models prune` removes them after asking (SPEC §7.5).
+  one); `ecf models prune` removes them after asking (SPEC §7.5). It also lists, and prune
+  removes, copies of retired models no release runs (the Qwen-based `tev1`, OD-494).
 - `ecf models serve install|uninstall|status` manages ecf's Ollama login item (fixed settings:
   loopback only, one request at a time, cloud off). Don't use `brew services`.
 - macOS: install Ollama with Homebrew and pin it: `brew install ollama && brew pin ollama mlx-c`.

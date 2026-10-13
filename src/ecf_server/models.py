@@ -126,6 +126,11 @@ def recopy(conn: sqlite3.Connection, clock: Clock, client: Client) -> bool:
     return True
 
 
+# ecf names of models no release runs any more; every copy under them is stale. `tev1-4b` was the
+# eval-only decision model, banned with every Qwen-based model (OD-494).
+RETIRED = frozenset({"ecf/tev1-4b"})
+
+
 def owned(pin: ollama.Pin) -> list[ollama.Pin]:
     """The pins whose ecf copies this release owns: the local model's and the eval-only decision
     models' (SPEC §7.8)."""
@@ -146,12 +151,22 @@ def stale_tags(client: Client, pin: ollama.Pin | None = None) -> list[str]:
                   if name.startswith(f"{p.ecf_name}:") and name != p.ecf_tag)  # fmt: skip
 
 
+def retired_tags(client: Client) -> list[str]:
+    """Every copy of a `RETIRED` model, whatever release made it; no release runs them. Empty
+    when Ollama can't list its models."""
+    try:
+        have = client.digests()
+    except OllamaError:
+        return []
+    return sorted(name for name in have if name.split(":")[0] in RETIRED)
+
+
 def prune(conn: sqlite3.Connection, clock: Clock, client: Client) -> list[str]:
-    """`ecf models prune`: remove ecf's copies for other releases (best effort; audited
-    `models.pruned`); the names removed. Never removes this release's copy or a tag ecf doesn't
-    own."""
+    """`ecf models prune`: remove ecf's copies for other releases and every copy of a retired
+    model (best effort; audited `models.pruned`); the names removed. Never removes this release's
+    copy of a pinned model or a tag ecf doesn't own."""
     gone: list[str] = []
-    for name in stale_tags(client):
+    for name in stale_tags(client) + retired_tags(client):
         try:
             client.delete(name)
             gone.append(name)
@@ -206,6 +221,7 @@ def status(conn: sqlite3.Connection, client: Client, **kw: Any) -> dict[str, Any
         "install": INSTALLS.snapshot(),
         "claude": claude_pins.show(conn),  # V1.4 step 2
         "stale_tags": stale_tags(client, pin),  # kept for other installs and rollback
+        "retired_tags": retired_tags(client),  # no release runs them (OD-494)
     }
     try:
         ready = ollama.readiness(client, pin, **kw)
@@ -215,21 +231,7 @@ def status(conn: sqlite3.Connection, client: Client, **kw: Any) -> dict[str, Any
                                                 "summary": fault_summary(e)}}  # fmt: skip
     env = {k: ready.env[k] for k in SHOWN_ENV if k in ready.env}
     return out | {"ready": True, "version": ready.version, "digest": ready.digest,
-                  "listener": list(ready.listener.addresses), "env": env,
-                  "decision": decision_status(client)}  # fmt: skip
-
-
-def decision_status(client: Client) -> list[dict[str, Any]]:
-    """The eval-only decision models whose ecf copy is installed (§7.8): name, tag and whether
-    it is the pinned one. Empty when none is, or Ollama can't list its models."""
-    from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
-
-    try:
-        have = client.digests()
-    except OllamaError:
-        return []
-    return [{"name": name, "ecf_tag": p.ecf_tag, "pinned": have[p.ecf_tag] == p.digest}
-            for name, p in sorted(systemone.load_pins().items()) if p.ecf_tag in have]  # fmt: skip
+                  "listener": list(ready.listener.addresses), "env": env}  # fmt: skip
 
 
 def _setting(conn: sqlite3.Connection, key: str) -> str | None:
@@ -279,14 +281,8 @@ def start_install(
     client_factory: Callable[[], Client],
     *,
     spawn: Spawn = _thread,
-    decision: str | None = None,
 ) -> dict[str, Any]:
-    """Start `install` in a thread (`spawn` runs it inline in tests); refuse a second one. With
-    `decision`, install that eval-only decision model instead (SPEC §7.8)."""
-    if decision is not None:
-        from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
-
-        systemone.pin(decision)  # an unknown name is refused before anything starts
+    """Start `install` in a thread (`spawn` runs it inline in tests); refuse a second one."""
     with INSTALLS.lock:
         if INSTALLS.state in ("pulling", "copying"):
             raise ConflictError("a model install is already running; see `ecf models status`")
@@ -299,10 +295,7 @@ def start_install(
         try:
             conn = connect()
             try:
-                if decision is None:
-                    install(conn, clock, client, INSTALLS)
-                else:
-                    install_decision(conn, clock, client, INSTALLS, decision)
+                install(conn, clock, client, INSTALLS)
             finally:
                 conn.close()
         except OllamaError as e:
@@ -349,34 +342,3 @@ def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Pr
 
     modelq.retry_all(conn, clock, actor="os_user")  # what it gave up on gets another try
     progress.set(state="done", status="installed", ended_at=now)
-
-
-def install_decision(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Progress,
-                     name: str) -> None:  # fmt: skip
-    """`ecf models install --decision <name>` (SPEC §7.8, OD-470): pull, check, copy and re-check
-    an eval-only decision model like the local model, but it is no install of ecf's model:
-    `models.installed_at` is untouched and no held work is retried (R13)."""
-    from ecf_server import systemone  # noqa: PLC0415 - eval only, not a service import
-
-    pin = systemone.pin(name)
-    for event in client.pull(pin.tag):
-        progress.set(status=str(event.get("status", ""))[:60],
-                     completed=int(event.get("completed") or 0),
-                     total=int(event.get("total") or 0))  # fmt: skip
-    got = client.digests().get(pin.tag)
-    if got != pin.digest:
-        was = (got or "missing")[:12]
-        raise OllamaError("digest_mismatch", f"{pin.tag} upstream is {was}, pinned"
-                          f" {pin.digest[:12]}; no ecf release moves the pin yet")  # fmt: skip
-    progress.set(state="copying", status=f"copying to {pin.ecf_tag}")
-    client.copy(pin.tag, pin.ecf_tag)
-    systemone.verify(client, pin)
-    now = to_ts(clock.now())
-    with write_tx(conn):
-        conn.execute(
-            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
-            " VALUES (?, NULL, 'models.installed', 'os_user', 'ok',"
-            " json_object('tag', ?, 'digest', ?, 'decision', 1))",
-            (now, pin.ecf_tag, pin.digest),
-        )
-    progress.set(state="done", status="installed (eval only)", ended_at=now)

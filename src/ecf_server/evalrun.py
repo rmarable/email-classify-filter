@@ -116,9 +116,9 @@ FATAL = frozenset({"not_running", "model_missing", "digest_mismatch", "server"})
 FRAUD_RULES = frozenset({"fraud_guard", "fraud_weak"})
 GEMMA = "gemma"
 NULL = "null"  # the null classifier: every field at its least risky value (§7.8, R5)
-SYSTEMONE = "systemone:"  # + a name in decision_models.lock (§7.8, OD-470)
+SYSTEMONE = "systemone:"  # + a name in decision_models.lock (§7.8; none pinned since OD-494)
 CACHE_CAP_ENV = "LLAMA_ARG_CACHE_RAM"
-CACHE_CAP_MIB = 1024  # both models resident needs the cap (§21.2, OD-470)
+CACHE_CAP_MIB = 1024  # a decision model resident beside Gemma needs the cap (§21.2)
 
 
 @dataclass

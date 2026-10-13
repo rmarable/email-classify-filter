@@ -72,32 +72,22 @@ def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
             raise typer.Exit(1)
 
     @models_app.command("install")
-    def install(
-        decision: Annotated[
-            str | None,
-            typer.Option(
-                "--decision",
-                help="Install an eval-only decision model from decision_models.lock"
-                " (e.g. tev1-4b; SPEC §7.8) instead of the local model.",
-            ),
-        ] = None,
-    ) -> None:
+    def install() -> None:
         """Pull the pinned model into Ollama, check its digest and copy it to ecf's own name.
         Starts ecf's Ollama login item first when nothing else serves Ollama."""
         with LocalClient(paths()) as c:
-            ok = run_install(c, paths().root, decision=decision)
+            ok = run_install(c, paths().root)
         if not ok:
             raise typer.Exit(1)
 
     return models_app
 
 
-def run_install(c: LocalClient, root: Path, *, decision: str | None = None) -> bool:
+def run_install(c: LocalClient, root: Path) -> bool:
     """`ecf models install` (also `ecf init`'s model step): start Ollama if needed, then pull,
-    check and copy the pinned model, printing progress. True when it's installed. With
-    `decision`, an eval-only decision model (SPEC §7.8)."""
+    check and copy the pinned model, printing progress. True when it's installed."""
     _ensure_ollama(c, root)
-    c.request("POST", "/v1/models/install", {"decision": decision} if decision else {})
+    c.request("POST", "/v1/models/install", {})
     last = ""
     while True:
         p: dict[str, Any] = c.get("/v1/models")["install"]
@@ -114,10 +104,6 @@ def run_install(c: LocalClient, root: Path, *, decision: str | None = None) -> b
     if p["state"] == "failed":
         typer.echo(f"install failed: {p['error']}", err=True)
         return False
-    if decision:  # eval only: the local model's readiness doesn't apply
-        typer.echo(f"{decision} installed for evaluation only (ecf eval run"
-                   f" --classifier-backend systemone:{decision})")  # fmt: skip
-        return True
     st: dict[str, Any] = c.get("/v1/models")
     if not st["ready"]:  # installed, but something else stops model work (e.g. the listener)
         typer.echo(f"installed, but not ready: {st['fault']['text']}", err=True)
@@ -163,6 +149,9 @@ def _print(st: dict[str, Any]) -> None:
     typer.echo(f"installed: {st['installed_at'] or 'never on this install'}")
     if st.get("stale_tags"):
         typer.echo(f"kept for other ecf releases: {', '.join(st['stale_tags'])}"
+                   " (ecf models prune removes them)")  # fmt: skip
+    if st.get("retired_tags"):
+        typer.echo(f"retired, no release runs them: {', '.join(st['retired_tags'])}"
                    " (ecf models prune removes them)")  # fmt: skip
     if st["ready"]:
         where = ", ".join(st["listener"])
@@ -270,19 +259,26 @@ def _prune_command(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
     def prune(
         yes: Annotated[bool, typer.Option("--yes", help="Don't ask before removing.")] = False,
     ) -> None:
-        """Remove ecf's copies of the model for other ecf releases (this release's stays)."""
+        """Remove ecf's copies of the model for other ecf releases (this release's stays) and every
+        copy of a retired model."""
         with LocalClient(paths()) as c:
-            stale: list[str] = c.get("/v1/models").get("stale_tags") or []
-            if not stale:
+            st: dict[str, Any] = c.get("/v1/models")
+            stale: list[str] = st.get("stale_tags") or []
+            retired: list[str] = st.get("retired_tags") or []
+            if not stale and not retired:
                 typer.echo("no copies for other ecf releases")
                 return
-            typer.echo("ecf's copies for other releases: " + ", ".join(stale))
-            typer.echo(PRUNE_NOTE)
+            if stale:
+                typer.echo("ecf's copies for other releases: " + ", ".join(stale))
+                typer.echo(PRUNE_NOTE)
+            if retired:
+                typer.echo("retired models no release runs (Qwen-based, banned by OD-494): "
+                           + ", ".join(retired))  # fmt: skip
             if not yes and not typer.confirm("Remove them?", default=False):
                 raise typer.Exit(1)
             r: dict[str, Any] = c.request("POST", "/v1/models/prune", {})
         removed: list[str] = r["removed"]
         typer.echo(f"removed {', '.join(removed)}" if removed else "nothing removed")
-        if len(removed) < len(stale):
+        if len(removed) < len(stale) + len(retired):
             typer.echo("some couldn't be removed; see ecf models status", err=True)
             raise typer.Exit(1)
