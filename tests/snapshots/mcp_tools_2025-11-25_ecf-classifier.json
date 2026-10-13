@@ -11,7 +11,7 @@
         "additionalProperties": false,
         "properties": {
           "claim_token": {
-            "description": "The claim token review_queue gave for this item.",
+            "description": "This item's claim token, from your prompt as review_queue or eval_next wrote it.",
             "type": "string"
           },
           "id": {
@@ -41,7 +41,7 @@
         "additionalProperties": false,
         "properties": {
           "claim_token": {
-            "description": "The claim token review_queue gave for this item.",
+            "description": "This item's claim token, from your prompt as review_queue or eval_next wrote it.",
             "type": "string"
           },
           "classification": {

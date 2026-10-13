@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `/ecf-eval` and `/ecf-review` no longer leave a case idle for about 10 minutes when the session hands an agent the wrong claim token: the service now writes each agent's prompt itself, and a token that belongs to another of the session's cases frees the case at once to be claimed again. Release note: a result file from a run with such a case (outcome `claim_mismatch`) can't be read by `ecf eval compare` from an older ecf (OD-499).
 - The synthetic eval set labels the new `phishing` item on all 300 cards (93 phishing), set by hand in a separate `fixed_labels.jsonl` beside the cards; `ecf eval label --import-fixed` records a card review page's answers (OD-498).
 - Classification schema v3: v2 unchanged plus five yes/no safety items (bank-detail change, regulator claim, phishing, claims to be internal, private individual) and texts for each priority level; Claude is asked v3, the local model still v2 with the items worked out from its answer, so presets A and B keep their gate and preset C's starts again; stored classifications gain the items on upgrade and export bundles are data format 4. Nothing acts on the items yet, and a rules file that tests one is refused until a later release (OD-498; SPEC §7.1).
 - Checked live: `ecf claude` refuses an agent spawn that sets where it runs or its model, and ecf's own spawns still work (SPEC §21.2, OD-497).

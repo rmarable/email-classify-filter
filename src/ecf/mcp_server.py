@@ -136,7 +136,9 @@ def _claim_path(args: dict[str, Any], what: str) -> str:
 
 
 ID = {"type": "string", "pattern": "^[0-9a-f]{8,64}$", "description": "The item ID."}
-CLAIM = {"type": "string", "description": "The claim token review_queue gave for this item."}
+CLAIM = {"type": "string",
+         "description": "This item's claim token, from your prompt as review_queue or eval_next "
+                        "wrote it."}  # fmt: skip
 ADDRESS = {"type": "string", "description": "Only this address (its ecf address ID)."}
 
 
@@ -230,10 +232,11 @@ TOOLS: tuple[ToolDef, ...] = (
     ),
     ToolDef(
         "review_queue", "Claim items to review",
-        "Claims up to `limit` waiting items for this session and returns, for each, its id, "
-        "address, need (classify or act), the agent to hand it to, a claim token (valid 5 "
-        "minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the "
-        "ids and claim tokens in the agent's prompt; only that agent can read the message. "
+        "Claims up to `limit` waiting items for this session (claims last 5 minutes) and "
+        "returns, for each, its id, address, need (classify or act), the agent to hand it to "
+        "and `spawn`; and `spawns`, one per Agent spawn: give each spawn's `prompt` to one "
+        "Agent spawn exactly as given, with its `agent` as the subagent type. Only that agent "
+        "can read the message. "
         "`results` reports how earlier claims ended. `more` is true when more items are "
         "waiting. `in_progress` counts this session's claims still out. With no items, `next` "
         "says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
@@ -288,9 +291,10 @@ TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
         "eval_next", "Claim eval cases",
         "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and "
-        "returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: "
-        "give all items with the same spawn to one Agent spawn, passing only the ids and claim "
-        "tokens; never read a case yourself. `results` reports how earlier claims ended; `done` "
+        "returns, for each, its id, need, the agent to hand it to and `spawn`; and `spawns`, "
+        "one per Agent spawn: give each spawn's `prompt` to one Agent spawn exactly as given, "
+        "with its `agent` as the subagent type; never read a case yourself. `results` reports "
+        "how earlier claims ended; `done` "
         "is true when the eval has ended. With no items, `next` says what to do: `call again` "
         "(`frees_in_s`: seconds until work may free up) or `end`.",
         {"limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,

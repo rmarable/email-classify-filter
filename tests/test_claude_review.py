@@ -15,10 +15,11 @@ import anyio
 import httpx
 import pytest
 
-from ecf.errors import ConflictError, InvalidInputError, NotFoundError
+from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import AddressId, StableId
 from ecf.schema import load_schema, with_fixed
 from ecf_server import (
+    claude_batch,
     claude_pins,
     claude_queue,
     claude_review,
@@ -116,14 +117,31 @@ def drain(conn: sqlite3.Connection, clock: FakeClock) -> list[dict[str, Any]]:
     """Every round until the queue is empty, each by a new session (a round hands out one agent
     type, and a session gets no other type while its claims are out); the rounds' items."""
     rounds: list[list[dict[str, Any]]] = []
-    while items := queue(conn, clock, f"session-drain-{len(rounds)}")["items"]:
+    while items := with_tokens(queue(conn, clock, f"session-drain-{len(rounds)}"))["items"]:
         rounds.append(items)
     assert all(len({i["agent"] for i in r}) == 1 for r in rounds)  # one agent type a round
     return [i for r in rounds for i in r]
 
 
+def tokens_of(q: dict[str, Any]) -> dict[str, str]:
+    """Item -> token, read from the spawn prompts the service wrote (the only place, OD-499)."""
+    out: dict[str, str] = {}
+    for s in q["spawns"]:
+        for line in s["prompt"].splitlines():
+            ref, _, token = line.removeprefix("id=").partition(" claim_token=")
+            assert ref not in out  # each claimed item exactly once
+            out[ref] = token
+    return out
+
+
+def with_tokens(q: dict[str, Any]) -> dict[str, Any]:
+    """The reply with each item's token from its spawn's prompt, as its agent gets it."""
+    tok = tokens_of(q)
+    return q | {"items": [i | {"claim_token": tok[i["id"]]} for i in q["items"]]}
+
+
 def token_for(q: dict[str, Any], sid: str) -> str:
-    return next(i["claim_token"] for i in q["items"] if i["id"] == sid)
+    return tokens_of(q)[sid]
 
 
 def agent_of(conn: sqlite3.Connection, sid: str) -> str:
@@ -173,7 +191,7 @@ def test_the_queue_claims_waiting_items_and_names_their_agent(
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
     b2 = waiting_item(conn, clock, "b", 1, classification=REQUEST,
                       facts=KNOWN_BULK | {"sender_seen_before": False})  # fmt: skip
-    q = queue(conn, clock)
+    q = with_tokens(queue(conn, clock))
     assert [i["id"] for i in q["items"]] == [c1]  # the oldest item's agent type, only that
     items = q["items"] + drain(conn, clock)
     got = {i["id"]: (i["need"], i["agent"]) for i in items}
@@ -271,7 +289,7 @@ def test_a_held_resubmission_is_pending_not_a_conflict(
 ) -> None:
     add(conn, clock, "c", "C")
     sid = waiting_item(conn, clock, "c")
-    item = queue(conn, clock)["items"][0]
+    item = with_tokens(queue(conn, clock))["items"][0]
     got = claude_review.record_classification(conn, clock, S1, sid, item["claim_token"], REQUEST,
                                               item["agent"])  # fmt: skip
     assert isinstance(got, Hold)
@@ -598,6 +616,148 @@ def test_a_hide_in_a_risky_batch_needs_approval() -> None:
 # ---- routes ----------------------------------------------------------------------------------
 
 
+# ---- a mixed-up claim token (OD-499) -----------------------------------------------------------
+
+
+def claim_row(conn: sqlite3.Connection, sid: str) -> tuple[Any, ...]:
+    return tuple(conn.execute("SELECT state, outcome FROM claims WHERE stable_id = ?",
+                              (sid,)).fetchone())  # fmt: skip
+
+
+def test_spawns_carry_the_tokens_per_address_and_items_none(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """`ecf-classifier-high` spawns group by address, up to its `classifier_high_batch`."""
+    add(conn, clock, "h", "C", sensitivity="high")
+    add(conn, clock, "k", "C", sensitivity="high")
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET overrides = ? WHERE address_id = 'h'",
+                     (json.dumps({claude_batch.KEY: 2}),))  # fmt: skip
+    h = [waiting_item(conn, clock, "h", n) for n in range(3)]
+    k = [waiting_item(conn, clock, "k", n) for n in range(2)]
+    q = queue(conn, clock)
+    assert all("claim_token" not in i for i in q["items"])
+    assert set(q["items"][0]) == {"id", "address_id", "need", "agent", "spawn"}
+    assert {s["agent"] for s in q["spawns"]} == {"ecf-classifier-high"}
+    ids = [[ln.split()[0].removeprefix("id=") for ln in s["prompt"].splitlines()]
+           for s in q["spawns"]]  # fmt: skip
+    assert ids == [h[:2], [h[2]], [k[0]], [k[1]]]
+    assert len(q["spawns"]) == len({i["spawn"] for i in q["items"]})
+    tok = tokens_of(q)  # every claimed item exactly once
+    assert sorted(tok) == sorted(h + k)
+    for sid, token in tok.items():
+        assert read_msg(conn, clock, S1, sid, token)["id"] == sid
+    assert queue(conn, clock, S2)["spawns"] == []
+
+
+def test_a_mixed_up_token_frees_the_item_at_once(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    with pytest.raises(ConflictError, match="isn't current"):  # committed, then refused
+        read_msg(conn, clock, S1, x, tok[y])
+    assert claim_row(conn, x) == ("released", "claim_mismatch")
+    assert claim_row(conn, y) == ("claimed", None)  # untouched
+    with pytest.raises(ConflictError):  # X's own token is refused after the free
+        read_msg(conn, clock, S1, x, tok[x])
+    audit = conn.execute("SELECT event, outcome, data FROM audit WHERE stable_id = ?"
+                         " AND event = 'claude.refused'", (x,)).fetchall()  # fmt: skip
+    assert [(a[0], a[1]) for a in audit] == [("claude.refused", "denied")]
+    assert json.loads(audit[0][2]) == {"need": "classify", "agent": "ecf-classifier",
+                                       "claim_mismatch": True, "by": "ecf-classifier"}  # fmt: skip
+    assert conn.execute("SELECT COUNT(*) FROM grants").fetchone()[0] == 0
+    grace = claude_review._grace(S1, clock.now())  # pyright: ignore[reportPrivateUsage]
+    assert grace == {"ecf-classifier": clock.now() + claude_review.TAIL}  # not GRACE
+    q = queue(conn, clock)
+    assert q["results"] == [{"id": x, "outcome": "claim_mismatch"}]
+    assert [i["id"] for i in q["items"]] == [x]  # back at once, not after CLAIM_TTL
+    assert submit_classification(conn, clock, S1, y, tok[y], REQUEST)["accepted"]
+
+
+def test_a_two_way_swap_frees_both_items(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Review R1: the second item's agent presents a token the first free already ended."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    for a, b in ((x, y), (y, x)):
+        with pytest.raises(ConflictError):
+            read_msg(conn, clock, S1, a, tok[b])
+    assert claim_row(conn, x) == claim_row(conn, y) == ("released", "claim_mismatch")
+    claude_review.release_session(conn, S1)
+    assert S1 not in claude_review._FREED  # pyright: ignore[reportPrivateUsage]
+
+
+def test_mix_up_frees_stop_after_mismatch_max(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Review R2: a session that keeps mangling an item gets today's expiry after 3 frees."""
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    for n in range(claude_review.MISMATCH_MAX + 1):
+        tok = token_for(queue(conn, clock), x)
+        with pytest.raises(ForbiddenProfileError):
+            claude_review.get_message(conn, clock, S1, x, tok, "ecf-actor")
+        clock.advance(claude_review.TAIL.total_seconds() + 1)
+        assert claim_row(conn, x)[0] == ("released" if n < claude_review.MISMATCH_MAX
+                                         else "claimed")  # fmt: skip
+
+
+def test_a_failed_mismatch_audit_keeps_the_refusal(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R5: the claim is freed and the agent still gets the conflict, not a 500."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+
+    def busy(*_a: Any, **_k: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(claude_review, "_audit", busy)
+    with pytest.raises(ConflictError, match="isn't current"):
+        read_msg(conn, clock, S1, x, tok[y])
+    assert claim_row(conn, x) == ("released", "claim_mismatch")
+
+
+def test_other_bad_tokens_keep_todays_refusal(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Only the mix-up signature frees (P1): a stale fence, garbage, another session's token and a
+    held claim are refused and left to expire."""
+    add(conn, clock, "c", "C")
+    x, y, z = (waiting_item(conn, clock, "c", n) for n in range(3))
+    old = token_for(queue(conn, clock, limit=1), x)
+    clock.advance(claude_review.CLAIM_TTL.total_seconds() + 1)
+    tok = tokens_of(queue(conn, clock, S2))
+    for token in (old, "1.garbage", ""):
+        with pytest.raises(ConflictError):
+            read_msg(conn, clock, S2, x, token)
+    with pytest.raises(ConflictError):  # another session presenting S2's tokens
+        read_msg(conn, clock, S1, x, tok[y])
+    assert claim_row(conn, x) == ("claimed", None)
+    held = claude_review.record_classification(conn, clock, S2, y, tok[y], REQUEST,
+                                               "ecf-classifier")  # fmt: skip
+    assert isinstance(held, Hold)
+    with pytest.raises(ConflictError):  # a held claim isn't freed by another item's token
+        read_msg(conn, clock, S2, y, tok[z])
+    assert claim_row(conn, y)[0] == "held" and claim_row(conn, z) == ("claimed", None)
+
+
+def test_its_own_token_from_the_wrong_agent_type_frees_the_item(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    tok = token_for(queue(conn, clock), x)
+    with pytest.raises(ForbiddenProfileError, match="that claim is for"):
+        claude_review.get_message(conn, clock, S1, x, tok, "ecf-actor")
+    assert claim_row(conn, x) == ("released", "claim_mismatch")
+    grace = claude_review._grace(S1, clock.now())  # pyright: ignore[reportPrivateUsage]
+    assert grace == {"ecf-actor": clock.now() + claude_review.TAIL}
+    tok = token_for(queue(conn, clock, S2), x)
+    with pytest.raises(ForbiddenProfileError):  # another session's agent: refused, kept
+        claude_review.get_message(conn, clock, S1, x, tok, "ecf-actor")
+    assert claim_row(conn, x) == ("claimed", None)
+
+
 def call(state: ServiceState, path: str, body: Any, token: str) -> httpx.Response:
     async def go() -> httpx.Response:
         transport = httpx.ASGITransport(app=create_app(state))
@@ -620,7 +780,7 @@ def test_the_routes_take_only_a_session(conn: sqlite3.Connection, db_path: Path)
     refused = call(state, "/v1/review-queue", {}, "cli-token")
     assert refused.status_code == 403 and refused.json()["code"] == "forbidden_profile"
     q = call(state, "/v1/review-queue", {"limit": 5}, work).json()
-    tok, name = q["items"][0]["claim_token"], q["items"][0]["agent"]
+    tok, name = token_for(q, sid), q["items"][0]["agent"]
     state.telemetry_wait_s = 0
     state.telemetry.add(made["session_id"], [ApiCall(clock.now().timestamp() + 1,
                                                      claude_pins.effective(conn)["classifier"],

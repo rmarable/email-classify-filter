@@ -19,10 +19,10 @@ Repeat until done:
    that line as it is.
 3. If `items` is empty, do what `next` says: `call again` means go back to step 1, however
    many times it takes; `end` means go to the end. Never decide this yourself.
-4. Group the items by `spawn`. Give each group to one spawn of the Agent tool, using the
-   group's `agent` value exactly as the subagent type; the spawns may run in parallel. The prompt
-   holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing else. Every
-   item returned is already claimed for you: always spawn it, in this round.
+4. For each entry of `spawns`, make one spawn of the Agent tool: its `agent` value exactly
+   as the subagent type, its `prompt` value exactly as given as the prompt (copy it whole; never
+   edit, split, merge or retype it, and add nothing); the spawns may run in parallel. Every
+   entry is already claimed for you: always spawn it, in this round.
 5. Go straight back to step 1: don't wait for the spawns, and don't track which have finished.
    The service knows which claims are out; while they are, `eval_next` waits a little and its
    `next` says `call again`. A spawn finishing needs nothing from you but step 1. Don't use what

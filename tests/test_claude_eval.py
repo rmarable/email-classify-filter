@@ -40,7 +40,7 @@ from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import NullNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
-from tests.test_claude_review import EXT, extend
+from tests.test_claude_review import EXT, extend, tokens_of, with_tokens
 from tests.test_decide import MARKETING
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
@@ -87,6 +87,11 @@ def start(db_path: Path, clock: FakeClock, root: Path, **kw: Any) -> dict[str, A
     return claude_eval.start(connector(db_path), clock, db_path.parent, opts, spawn=_inline)
 
 
+def nxt(db_path: Path, clock: FakeClock, session: str, **kw: Any) -> dict[str, Any]:
+    """`eval_next`, each item with the token its spawn's prompt gives its agent."""
+    return with_tokens(claude_eval.eval_next(connector(db_path), clock, session, **kw))
+
+
 def model_for(agent: str) -> str:
     run = claude_eval.current()
     assert run is not None
@@ -125,7 +130,7 @@ def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, An
     case_of = {w.ref: w.case.id for w in run.works}
     seen: list[dict[str, Any]] = []
     for _ in range(20):
-        q = claude_eval.eval_next(connector(db_path), clock, session)
+        q = nxt(db_path, clock, session)
         if q["done"]:
             return seen
         if not q["items"] and q.get("next") == "call again":  # a held answer's agent (TAIL)
@@ -190,17 +195,17 @@ def test_a_round_hands_out_one_agent_type_and_waits_for_the_others(
     run = claude_eval.current()
     assert run is not None
     case_of = {w.ref: w.case.id for w in run.works}
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    q = nxt(db_path, clock, S1, limit=2)
     first, second = q["items"]  # starter-bec, starter-control: both to classify
     assert {case_of[first["id"]], case_of[second["id"]]} == {"starter-bec", "starter-control"}
     control = first if case_of[first["id"]] == "starter-control" else second
     other = second if control is first else first
     assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # now needs its actor
     # S1 still holds a classifier claim: no actor work for it, only more classifier work
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    q = nxt(db_path, clock, S1, limit=5)
     assert {i["agent"] for i in q["items"]} <= {"ecf-classifier"}
     # another session takes the actor step in a round of its own
-    q2 = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)
+    q2 = nxt(db_path, clock, S2, limit=5)
     assert len({i["agent"] for i in q2["items"]}) == 1
     assert q2["items"] and q2["items"][0]["agent"].startswith("ecf-actor")
     assert answer(db_path, clock, other, S1, BEC)["accepted"]
@@ -210,7 +215,7 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    q = nxt(db_path, clock, S1)
     out = [q]
     for item in q["items"]:
         assert len(item["id"]) == 32 and int(item["id"], 16) >= 0
@@ -232,7 +237,7 @@ def test_cases_go_out_under_random_references_with_no_gold_labels(
 def test_only_the_named_agent_reads_or_submits_a_case(db_path: Path, clock: FakeClock,
                                                        root: Path) -> None:  # fmt: skip
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1)["items"][0]
+    item = nxt(db_path, clock, S1)["items"][0]
     with pytest.raises(ForbiddenProfileError):
         claude_eval.get_message(clock, S1, item["id"], item["claim_token"], "ecf-actor")
     with pytest.raises(ForbiddenProfileError):
@@ -244,7 +249,7 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     got = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
                                             item["agent"])  # fmt: skip
     tel = Telemetry()
@@ -253,11 +258,11 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     assert out["accepted"] is False and "claude-opus-5-5" in out["errors"][0]
     stopped = tel.stopped(S1)
     assert stopped is not None
-    q = claude_eval.eval_next(connector(db_path), clock, S1, stopped=stopped)
+    q = nxt(db_path, clock, S1, stopped=stopped)
     assert q["stopped"] == stopped and not q["items"]
     assert q["results"] == [{"id": item["id"], "outcome": "model_refused"}]
     # the case waits for another session
-    again = claude_eval.eval_next(connector(db_path), clock, S2)
+    again = nxt(db_path, clock, S2)
     assert item["id"] in {i["id"] for i in again["items"]}
 
 
@@ -271,7 +276,7 @@ def test_a_held_submission_blocks_the_next_agent_type_only_for_its_tail(
     run = claude_eval.current()
     assert run is not None
     case_of = {w.ref: w.case.id for w in run.works}
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)
+    q = nxt(db_path, clock, S1, limit=2)
     control = next(i for i in q["items"] if case_of[i["id"]] == "starter-control")
     other = next(i for i in q["items"] if i is not control)
     assert answer(db_path, clock, control, S1, REQUEST)["accepted"]  # needs its actor now
@@ -279,12 +284,12 @@ def test_a_held_submission_blocks_the_next_agent_type_only_for_its_tail(
     claude_eval.get_message(clock, S1, ref, token, agent)
     held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
     assert isinstance(held, Hold)  # submitted, waiting for telemetry: not "claimed" any more
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    q = nxt(db_path, clock, S1, limit=5)
     assert not any(i["agent"].startswith("ecf-actor") for i in q["items"])  # the tail
     for item in q["items"]:  # more of the classifier's work meanwhile
         assert answer(db_path, clock, item, S1, BEC)["accepted"]
     clock.advance(int(claude_eval.TAIL.total_seconds()) + 1)
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    q = nxt(db_path, clock, S1, limit=5)
     assert any(i["agent"].startswith("ecf-actor") for i in q["items"])
 
 
@@ -293,7 +298,7 @@ def test_a_session_has_at_most_two_limits_of_claims_out(
 ) -> None:
     """The session no longer waits for its spawns, so the service paces it (review R2)."""
     start(db_path, clock, root)
-    got = [claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"] for _ in "abc"]
+    got = [nxt(db_path, clock, S1, limit=1)["items"] for _ in "abc"]
     assert [len(g) for g in got] == [1, 1, 0]
     assert len({i["agent"] for g in got for i in g}) == 1
 
@@ -318,7 +323,7 @@ def test_a_waiting_reply_keeps_the_outcomes_of_every_pass(
     """Each `eval_next` hands over the outcomes since the last; the waiting loop calls it several
     times and must return all of them."""
     start(db_path, clock, root)
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=10)
+    q = nxt(db_path, clock, S1, limit=10)
     for item in q["items"]:
         assert answer(db_path, clock, item, S1, REQUEST)["accepted"]
     slept: list[float] = []
@@ -339,13 +344,15 @@ def test_progress_is_the_services_count_for_the_status_line_and_the_skill(
     reading): `eval_next` carries a fixed `progress` line and the status line the same counts."""
     assert claude_eval.progress() is None  # no run
     start(db_path, clock, root)
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)
+    q = nxt(db_path, clock, S1, limit=3)
     p = claude_eval.progress()
     assert p is not None and p["scored"] == 0 and p["in_progress"] == 3 and p["round"] == 1
     assert p["total"] == len(claude_eval.current().works) and p["repeats_left"] == 0  # type: ignore[union-attr]
-    assert set(p) == {"run_id", "scored", "total", "in_progress", "repeats_left", "round"}
+    assert set(p) == {"run_id", "scored", "total", "in_progress", "repeats_left", "round",
+                      "mismatches"}  # fmt: skip
     assert q["progress"] == f"0/{p['total']} scored, 3 in progress, round 1"
     assert claude_eval.progress_line(p | {"repeats_left": 10}).endswith(", 10 repeats left")
+    assert claude_eval.progress_line(p | {"mismatches": 1}).endswith(", 1 mixed-up claims freed")
 
 
 def test_a_built_in_agent_in_the_session_stops_it() -> None:
@@ -364,7 +371,7 @@ def test_three_invalid_tries_score_the_case_as_a_failure(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     tries = [claude_eval.record_classification(clock, S1, item["id"], item["claim_token"],
                                                {"category": "tax"}, item["agent"])
              for _ in range(3)]  # fmt: skip
@@ -374,22 +381,22 @@ def test_three_invalid_tries_score_the_case_as_a_failure(
     assert run is not None
     w = run.by_ref[item["id"]]
     assert w.stage == "done" and w.result is not None and w.result.correct is False
-    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    q = nxt(db_path, clock, S1)
     assert {"id": item["id"], "outcome": "invalid"} in q["results"]
 
 
 def test_claims_expire_and_are_fenced(db_path: Path, clock: FakeClock, root: Path) -> None:
     start(db_path, clock, root)
-    old = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    old = nxt(db_path, clock, S1, limit=1)["items"][0]
     clock.advance(16 * 60)
-    q = claude_eval.eval_next(connector(db_path), clock, S2, limit=3)
+    q = nxt(db_path, clock, S2, limit=3)
     assert q["results"] == []  # S1's outcome goes to S1
     new = next(i for i in q["items"] if i["id"] == old["id"])
     assert new["claim_token"].split(".")[0] == "2"
     with pytest.raises(ConflictError):
         claude_eval.record_classification(clock, S1, old["id"], old["claim_token"], BEC,
                                           old["agent"])  # fmt: skip
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["results"] == [
+    assert nxt(db_path, clock, S1)["results"] == [
         {"id": old["id"], "outcome": "claim_expired"}]  # fmt: skip
 
 
@@ -399,7 +406,7 @@ def test_a_resubmission_after_a_lost_reply_gets_the_same_answer_and_records_once
     """Claude Code restarts an agent's server when a sibling spawn ends; the agent retries a call
     that had succeeded (plan S2)."""
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     ref, token, agent = item["id"], item["claim_token"], item["agent"]
     claude_eval.get_message(clock, S1, ref, token, agent)
     held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
@@ -411,7 +418,7 @@ def test_a_resubmission_after_a_lost_reply_gets_the_same_answer_and_records_once
     assert again == {"accepted": True, "errors": []}
     with pytest.raises(ConflictError):  # only that session's token gets the reply
         claude_eval.record_classification(clock, S2, ref, token, BEC, agent)
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["results"] == [
+    assert nxt(db_path, clock, S1)["results"] == [
         {"id": ref, "outcome": "recorded"}]  # fmt: skip
 
 
@@ -419,9 +426,9 @@ def test_a_late_answer_after_a_reclaim_leaves_the_new_claim_alone(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    old = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    old = nxt(db_path, clock, S1, limit=1)["items"][0]
     clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)
-    new = next(i for i in claude_eval.eval_next(connector(db_path), clock, S2, limit=3)["items"]
+    new = next(i for i in nxt(db_path, clock, S2, limit=3)["items"]
                if i["id"] == old["id"])  # fmt: skip
     with pytest.raises(ConflictError):
         claude_eval.record_classification(clock, S1, old["id"], old["claim_token"], BEC,
@@ -435,12 +442,12 @@ def test_an_expired_claim_goes_back_to_the_same_agent_at_once(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    items = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)["items"]
-    waiting = claude_eval.eval_next(connector(db_path), clock, S1)
+    items = nxt(db_path, clock, S1, limit=3)["items"]
+    waiting = nxt(db_path, clock, S1)
     assert waiting["items"] == [] and waiting["next"] == "call again"
     assert waiting["frees_in_s"] == int(claude_review.CLAIM_TTL.total_seconds())
     clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)
-    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)
+    q = nxt(db_path, clock, S1, limit=3)
     assert {r["outcome"] for r in q["results"]} == {"claim_expired"}
     assert {i["agent"] for i in q["items"]} == {items[0]["agent"]}
 
@@ -452,33 +459,33 @@ def test_another_agent_waits_while_an_expired_claims_agent_may_still_run(
     run = claude_eval.current()
     assert run is not None
     run.grace[S1] = {"ecf-actor-high": clock.now() + timedelta(seconds=10)}
-    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    q = nxt(db_path, clock, S1)
     assert q["items"] == [] and q["next"] == "call again" and q["frees_in_s"] == 10
     clock.advance(11)
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    assert nxt(db_path, clock, S1)["items"]
 
 
 def test_held_answers_keep_the_session_polling_for_a_while_then_it_ends(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    for item in claude_eval.eval_next(connector(db_path), clock, S1, limit=3)["items"]:
+    for item in nxt(db_path, clock, S1, limit=3)["items"]:
         claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
         got = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
                                                 item["agent"])  # fmt: skip
         assert isinstance(got, Hold)  # held: no telemetry yet
-    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    q = nxt(db_path, clock, S1)
     assert q["items"] == [] and q["next"] == "call again"
     assert q["frees_in_s"] == int(claude_eval.TAIL.total_seconds())  # its agent's tail first
     clock.advance(int(claude_eval.HOLD_WAIT.total_seconds()) + 1)
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["next"] == "end"
+    assert nxt(db_path, clock, S1)["next"] == "end"
 
 
 def test_a_different_answer_under_an_answered_claim_is_refused(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     ref, token, agent = item["id"], item["claim_token"], item["agent"]
     held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
     other = BEC | {"priority": "low" if BEC.get("priority") != "low" else "high"}
@@ -506,16 +513,16 @@ def test_another_sessions_claims_keep_next_at_call_again(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root)
-    assert claude_eval.eval_next(connector(db_path), clock, S2, limit=10)["items"]
-    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert nxt(db_path, clock, S2, limit=10)["items"]
+    q = nxt(db_path, clock, S1)
     assert q["items"] == [] and q["next"] == "call again"
 
 
 def test_a_session_ending_frees_its_claims(db_path: Path, clock: FakeClock, root: Path) -> None:
     start(db_path, clock, root)
-    claude_eval.eval_next(connector(db_path), clock, S1)
+    nxt(db_path, clock, S1)
     claude_eval.release_session(S1)
-    assert len(claude_eval.eval_next(connector(db_path), clock, S2)["items"]) == 3
+    assert len(nxt(db_path, clock, S2)["items"]) == 3
 
 
 # ---- claim records (v2.2.0 plan item 2) -------------------------------------------------------
@@ -532,7 +539,7 @@ def test_a_claim_records_its_round_spawn_and_times(
 ) -> None:
     start(db_path, clock, root)
     t0 = clock.now()
-    first, second = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)["items"]
+    first, second = nxt(db_path, clock, S1, limit=2)["items"]
     ref, token, agent = first["id"], first["claim_token"], first["agent"]
     clock.advance(3)
     claude_eval.get_message(clock, S1, ref, token, agent)
@@ -552,7 +559,7 @@ def test_a_claim_records_its_round_spawn_and_times(
     claude_eval.release_session(S1)
     (ended,) = _work(second).claims
     assert ended.outcome == "session_ended" and ended.read is None and ended.answered is None
-    items = claude_eval.eval_next(connector(db_path), clock, S2, limit=5)["items"]
+    items = nxt(db_path, clock, S2, limit=5)["items"]
     assert second["id"] in {i["id"] for i in items}
     again = _work(second).claims[-1]
     assert len(_work(second).claims) == 2
@@ -561,9 +568,9 @@ def test_a_claim_records_its_round_spawn_and_times(
 
 def test_every_way_a_claim_ends_is_recorded(db_path: Path, clock: FakeClock, root: Path) -> None:
     start(db_path, clock, root)
-    expiring = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    expiring = nxt(db_path, clock, S1, limit=1)["items"][0]
     clock.advance(16 * 60)
-    invalid, refused, left = claude_eval.eval_next(connector(db_path), clock, S2, limit=3)["items"]
+    invalid, refused, left = nxt(db_path, clock, S2, limit=3)["items"]
     assert _work(expiring).claims[0].outcome == "claim_expired"
     for _ in range(3):
         claude_eval.record_classification(clock, S2, invalid["id"], invalid["claim_token"],
@@ -580,6 +587,141 @@ def test_every_way_a_claim_ends_is_recorded(db_path: Path, clock: FakeClock, roo
     assert _work(left).claims[-1].outcome == "run_ended"
     run = claude_eval.current()
     assert run is not None and all(c.outcome is not None for w in run.works for c in w.claims)
+
+
+# ---- a mixed-up claim token (OD-499) -----------------------------------------------------------
+
+
+def test_spawns_carry_the_tokens_and_items_none(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The service writes each spawn's prompt (S2 run 2 `d157a948`: the session copied the wrong
+    token); `items` carry no token, so there is nothing to copy by hand."""
+    start(db_path, clock, root, sensitivity="high", batch=2)
+    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert all("claim_token" not in i for i in q["items"])
+    assert set(q["items"][0]) == {"id", "need", "agent", "spawn"}
+    assert [s["agent"] for s in q["spawns"]] == ["ecf-classifier-high"] * 2
+    lines = [s["prompt"].splitlines() for s in q["spawns"]]
+    assert [len(ls) for ls in lines] == [2, 1]  # the spawns' grouping, each item exactly once
+    tok = tokens_of(q)
+    assert sorted(tok) == sorted(i["id"] for i in q["items"])
+    run = claude_eval.current()
+    assert run is not None
+    for ref, token in tok.items():
+        assert claude_eval._hash(token) == run.by_ref[ref].token_hash  # pyright: ignore[reportPrivateUsage]
+    for s in q["spawns"]:
+        assert all(ln.startswith("id=") and " claim_token=" in ln for ln in s["prompt"].split("\n"))
+    assert claude_eval.eval_next(connector(db_path), clock, S1)["spawns"] == []
+
+
+def test_a_mixed_up_token_frees_the_case_at_once(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    clock.advance(10)
+    with pytest.raises(ConflictError, match="isn't current"):  # the agent still moves on
+        claude_eval.get_message(clock, S1, x["id"], y["claim_token"], x["agent"])
+    assert _work(x).claim == "free" and _work(x).claims[-1].outcome == "claim_mismatch"
+    assert _work(y).claim == "claimed" and _work(y).claims[-1].outcome is None  # untouched
+    run = claude_eval.current()
+    assert run is not None
+    assert run.grace[S1][x["agent"]] == clock.now() + claude_eval.TAIL  # not GRACE
+    with pytest.raises(ConflictError):  # X's own token is refused after the free
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    assert claude_eval.get_message(clock, S1, y["id"], y["claim_token"], y["agent"])
+    q = nxt(db_path, clock, S1)
+    assert {"id": x["id"], "outcome": "claim_mismatch"} in q["results"]
+    assert x["id"] in {i["id"] for i in q["items"]}  # back at once, not after CLAIM_TTL
+    assert claude_eval.progress_line(claude_eval.progress() or {}).endswith(
+        ", 1 mixed-up claims freed")  # fmt: skip
+
+
+def test_a_two_way_swap_frees_both_cases(db_path: Path, clock: FakeClock, root: Path) -> None:
+    """Review R1: the second case's agent presents a token the first free already ended."""
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    for a, b in ((x, y), (y, x)):
+        with pytest.raises(ConflictError):
+            claude_eval.get_message(clock, S1, a["id"], b["claim_token"], a["agent"])
+    assert [_work(i).claims[-1].outcome for i in (x, y)] == ["claim_mismatch"] * 2
+    claude_eval.release_session(S1)
+    run = claude_eval.current()
+    assert run is not None and S1 not in run.freed
+
+
+def test_mix_up_frees_stop_after_mismatch_max(db_path: Path, clock: FakeClock, root: Path) -> None:
+    """Review R2: a session that keeps mangling a case gets today's expiry after 3 frees."""
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    for n in range(claude_review.MISMATCH_MAX + 1):
+        with pytest.raises(ForbiddenProfileError):
+            claude_eval.get_message(clock, S1, x["id"], x["claim_token"], "ecf-actor")
+        if n < claude_review.MISMATCH_MAX:
+            clock.advance(claude_eval.TAIL.total_seconds() + 1)
+            (x,) = [i for i in nxt(db_path, clock, S1, limit=1)["items"] if i["id"] == x["id"]]
+    assert _work(x).claim == "claimed"  # the fourth: refused, left to expire
+    outcomes = [c.outcome for c in _work(x).claims]
+    assert outcomes == ["claim_mismatch"] * claude_review.MISMATCH_MAX + [None]
+
+
+def test_other_bad_tokens_still_wait_for_expiry(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Only the mix-up signature frees (P1): a stale fence (a late agent after an expiry),
+    garbage, another session's token and a held claim keep today's refusal."""
+    start(db_path, clock, root)
+    old = nxt(db_path, clock, S1, limit=1)["items"][0]
+    clock.advance(claude_review.CLAIM_TTL.total_seconds() + 1)
+    items = nxt(db_path, clock, S2, limit=3)["items"]
+    (x,) = [i for i in items if i["id"] == old["id"]]
+    y, z = [i for i in items if i is not x]
+    bad = (old["claim_token"], "1.garbage", "")
+    for token in bad:
+        with pytest.raises(ConflictError):
+            claude_eval.get_message(clock, S2, x["id"], token, x["agent"])
+    with pytest.raises(ConflictError):  # another session presenting this session's tokens
+        claude_eval.get_message(clock, S1, x["id"], y["claim_token"], x["agent"])
+    assert _work(x).claim == "claimed" and _work(x).claims[-1].outcome is None
+    held = claude_eval.record_classification(clock, S2, y["id"], y["claim_token"], BEC,
+                                             y["agent"])  # fmt: skip
+    assert isinstance(held, Hold)
+    with pytest.raises(ConflictError):  # a held claim isn't freed by another case's token
+        claude_eval.get_message(clock, S2, y["id"], z["claim_token"], y["agent"])
+    assert _work(y).claim == "held" and _work(z).claim == "claimed"
+
+
+def test_its_own_token_from_the_wrong_agent_type_frees_the_case(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    with pytest.raises(ForbiddenProfileError, match="that claim is for"):
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], "ecf-actor")
+    assert _work(x).claim == "free" and _work(x).claims[-1].outcome == "claim_mismatch"
+    run = claude_eval.current()
+    assert run is not None and run.grace[S1]["ecf-actor"] == clock.now() + claude_eval.TAIL
+    y = nxt(db_path, clock, S2, limit=1)["items"][0]
+    with pytest.raises(ForbiddenProfileError):  # another session's agent: refused, kept
+        claude_eval.get_message(clock, S1, y["id"], y["claim_token"], "ecf-actor")
+    assert _work(y).claim == "claimed"
+
+
+def test_a_run_with_a_mixed_up_claim_saves_its_result(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """`claim_mismatch` is a `ClaimOutcome`: without it the run would end with no result file."""
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    with pytest.raises(ConflictError):
+        claude_eval.get_message(clock, S1, x["id"], y["claim_token"], x["agent"])
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    assert answer(db_path, clock, y, S1, BEC)["accepted"]
+    drain(db_path, clock, lambda cid: by_case[cid])
+    result = load_result(_saved(conn))
+    outcomes = [c.outcome for case in result.cases for c in case.claims]
+    assert outcomes.count("claim_mismatch") == 1
 
 
 def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(
@@ -608,7 +750,7 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
         """Claim a round as soon as the first case is ready, while the rest are prepared."""
         run = claude_eval.current()
         if not seen and run is not None and any(w.stage == "classify" for w in run.works):
-            seen.append(claude_eval.eval_next(connector(db_path), clock, S1))
+            seen.append(nxt(db_path, clock, S1))
         return real(case, *args)
 
     monkeypatch.setattr(evalrun, "_inputs", inputs)
@@ -617,7 +759,7 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
     assert q["preparing"] is True and len(q["items"]) == 1
     (c,) = _work(q["items"][0]).claims
     assert c.preparing is True and c.round == 1 and c.items == 1
-    later = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    later = nxt(db_path, clock, S1)["items"]
     assert later and all(not _work(i).claims[-1].preparing for i in later)
     assert {_work(i).claims[-1].round for i in later} == {2}
 
@@ -702,7 +844,7 @@ def test_a_comparison_run_uses_the_eval_agents_and_never_counts_for_the_gate(
     assert r["pinned"] is False and r["models"]["classifier"] == "claude-opus-5-5"
     info = claude_eval.session_info(connector(db_path), clock)
     assert info is not None and info["agents"]["ecf-eval-classifier"] == "claude-opus-5-5"
-    items = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    items = nxt(db_path, clock, S1)["items"]
     assert {i["agent"] for i in items} == {"ecf-eval-classifier"}
     claude_eval.release_session(S1)
     drain(db_path, clock, lambda _c: BEC)
@@ -724,7 +866,7 @@ def test_high_runs_one_case_per_spawn_unless_batched(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     start(db_path, clock, root, sensitivity="high", batch=2)
-    items = claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+    items = nxt(db_path, clock, S1)["items"]
     assert {i["agent"] for i in items} == {"ecf-classifier-high"}
     assert [i["spawn"] for i in items] == ["ecf-classifier-high-1", "ecf-classifier-high-1",
                                            "ecf-classifier-high-2"]  # fmt: skip
@@ -770,7 +912,7 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     extend(conn, clock)
     schema = config.current_schema(conn)
     start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     msg = claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
     assert msg["schema_text"] == schema.prompt_block and "contract_stage" in msg["schema_text"]
     bad = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
@@ -818,7 +960,7 @@ def test_a_case_goes_out_with_the_signals_gemma_gets(
     shutil.copy(SYNTHETIC / "cases" / "crypto-payment-demand.md", r / "cases")
     assert not build_all(r).findings
     start(db_path, clock, r)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     msg = claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
     assert msg["signals"] == {"crypto_payment": signals.WORDING["crypto_payment"]}
 
@@ -916,13 +1058,13 @@ def test_one_run_at_a_time_and_stop_saves_what_was_scored(
     start(db_path, clock, root)
     with pytest.raises(ConflictError):
         start(db_path, clock, root)
-    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    item = nxt(db_path, clock, S1, limit=1)["items"][0]
     answer(db_path, clock, item, S1, BEC)
     s = claude_eval.stop(connector(db_path), clock)
     assert s is not None and s["state"] == "stopped" and s["done"] == 1
     m = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
     assert m["complete"] is False and m["gate_passed"] is False
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["done"] is True
+    assert nxt(db_path, clock, S1)["done"] is True
     assert claude_eval.session_info(connector(db_path), clock) is None
     start(db_path, clock, root)  # the next one may register
 
@@ -933,7 +1075,7 @@ def test_a_run_expires_after_24_hours(db_path: Path, clock: FakeClock, root: Pat
     st = claude_eval.status(connector(db_path), clock)
     assert st is not None and st["state"] == "expired"
     assert claude_eval.results()["state"] == "expired"
-    assert claude_eval.eval_next(connector(db_path), clock, S1)["done"] is True
+    assert nxt(db_path, clock, S1)["done"] is True
     start(db_path, clock, root)
 
 
@@ -977,7 +1119,8 @@ def test_the_routes_and_their_profiles(
             work = {"Authorization": f"Bearer {sess['profile_token']}"}
             agent = {"Authorization": f"Bearer {sess['agent_token']}"}
             out["cli_next"] = (await h.post("/v1/eval/next", json={}, headers=cli)).status_code
-            q = (await h.post("/v1/eval/next", json={"limit": 1}, headers=work)).json()
+            q = with_tokens((await h.post("/v1/eval/next", json={"limit": 1},
+                                          headers=work)).json())  # fmt: skip
             item = q["items"][0]
             model = claude_pins.effective(conn)["classifier"]
             state.telemetry.add(sess["session_id"], [ApiCall(clock.now().timestamp() + 1, model,
@@ -1018,7 +1161,7 @@ def test_a_held_submission_settles_when_telemetry_arrives_or_is_refused_at_sessi
     start(db_path, clock, root)
     bearer = state.telemetry.open(S1)
     assert bearer
-    items = claude_eval.eval_next(connector(db_path), clock, S1, limit=2)["items"]
+    items = nxt(db_path, clock, S1, limit=2)["items"]
     now = clock.now().timestamp()
     holds: list[Hold] = []
     for n, i in enumerate(items):  # submitted a minute apart

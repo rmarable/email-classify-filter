@@ -38,7 +38,7 @@ from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.notify import FakeNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Swap, Telemetry
-from tests.test_claude_review import REQUEST, add, waiting_item
+from tests.test_claude_review import REQUEST, add, waiting_item, with_tokens
 
 HAIKU = "claude-haiku-4-5-20251001"  # any model ID: parsing and judging don't look at the pins
 CLASSIFIER = claude_pins.load_lock()["classifier"]  # what the model check expects of ecf-classifier
@@ -266,7 +266,8 @@ def test_the_receiver_takes_only_a_sessions_json(conn: sqlite3.Connection,
 
 
 def claim(state: ServiceState, work: str) -> dict[str, Any]:
-    items: list[dict[str, Any]] = api(state, "POST", "/v1/review-queue", {}, work).json()["items"]
+    q = with_tokens(api(state, "POST", "/v1/review-queue", {}, work).json())
+    items: list[dict[str, Any]] = q["items"]
     return items[0]
 
 
@@ -358,6 +359,14 @@ def test_only_the_named_agents_server_reads_and_submits(
     assert classify(state, work, item)["code"] == "forbidden_profile"  # nor may it submit
     r = api(state, "POST", f"/v1/claims/{sid}/message", body | {"agent": "ecf-actor"}, agent)
     assert r.status_code == 403 and "is for ecf-classifier" in r.json()["detail"]
+    # its own token from the wrong agent type: the claim ends at once (OD-499, P6); claim again
+    # after the refused agent's tail
+    assert tuple(conn.execute("SELECT state, outcome FROM claims").fetchone()) == (
+        "released", "claim_mismatch")  # fmt: skip
+    assert isinstance(state.clock, FakeClock)
+    state.clock.advance(claude_review.TAIL.total_seconds() + 1)
+    item = claim(state, work)
+    body = {"claim_token": item["claim_token"], "agent": item["agent"]}
     assert api(state, "POST", "/v1/review-queue", {}, agent).status_code == 403  # nor claim
     r = api(state, "POST", f"/v1/claims/{sid}/message", {"claim_token": item["claim_token"]},
             agent)  # fmt: skip

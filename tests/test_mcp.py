@@ -27,7 +27,7 @@ from ecf_server import claude_pins
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock
 from ecf_server.telemetry import SUBAGENT, ApiCall
-from tests.test_claude_review import REQUEST, add, waiting_item
+from tests.test_claude_review import REQUEST, add, waiting_item, with_tokens
 
 ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOTS = ROOT / "tests" / "snapshots"
@@ -167,19 +167,19 @@ def test_a_review_round(mode: str, conn: sqlite3.Connection, state: ServiceState
                         server(agent, "ecf-actor") as act):  # fmt: skip
                 out["status"] = data(await main.call_tool("status", {}))
                 out["counts"] = data(await main.call_tool("counts", {"address_id": "c"}))
-                q = data(await main.call_tool("review_queue", {"limit": 5}))
+                q = with_tokens(data(await main.call_tool("review_queue", {"limit": 5})))
                 item = q["items"][0]
                 args = {"id": item["id"], "claim_token": item["claim_token"]}
                 out["main_read"] = await main.call_tool("get_message", args)
-                out["wrong_agent"] = await act.call_tool("get_message", args)
                 out["message"] = data(await cls.call_tool("get_message", args))
                 bad = {"classification": {"category": "tax"}}
                 out["bad"] = data(await cls.call_tool("record_classification", args | bad))
                 subagent_request(pins["classifier"])
                 good = {"classification": REQUEST}
                 out["good"] = data(await cls.call_tool("record_classification", args | good))
+                out["wrong_agent"] = await act.call_tool("get_message", args)  # held: no free
                 clock.advance(60)  # the actor's window starts after the classifier's work
-                q2 = data(await main.call_tool("review_queue", {}))
+                q2 = with_tokens(data(await main.call_tool("review_queue", {})))
                 it2 = q2["items"][0]
                 args = {"id": it2["id"], "claim_token": it2["claim_token"]}
                 out["act_message"] = data(await act.call_tool("get_message", args))
