@@ -1,6 +1,6 @@
 # Agent spawn guard: refuse `isolation` and `model` on spawns
 
-- **Status:** draft 1 (2026-10-13). Built on branch `spawn-guard` (2026-10-13; OD-497), not merged; the live check is not yet run. Part of v3.0.0 (step 1d).
+- **Status:** done (2026-10-13; OD-497): merged `f7ecca6`; live check passed (SPEC §21.2). Part of v3.0.0 (step 1d).
 - **Base:** `main` at `47ae2ce`.
 - **Evidence:** B0 run 2 `845303ba` (SPEC §21.2, "Baseline on the 300-card set", Dispatch): the
   main session (Haiku 5.5) launched round 1's `ecf-classifier` spawn with `isolation: "remote"`,
