@@ -409,7 +409,7 @@ def test_an_item_a_claude_session_holds_is_not_handed_off(
     _passed(conn, "C")
     clock.advance(2 * 3600)
     sid = _item(conn, clock, 1)
-    claude_review.review_queue(conn, clock, "s1")  # claimed for 15 minutes
+    claude_review.review_queue(conn, clock, "s1")  # claimed for CLAIM_TTL
     with write_tx(conn):
         conn.execute("UPDATE items SET claude_since = ? WHERE stable_id = ?",
                      (to_ts(clock.now() - timedelta(hours=2)), sid))  # fmt: skip

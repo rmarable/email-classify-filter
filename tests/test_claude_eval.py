@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -281,8 +281,8 @@ def test_a_held_submission_doesnt_block_the_next_agent_type(
 def test_an_empty_reply_waits_briefly_while_work_is_out(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    """The session can't pause and gives up after 5 empty replies; the service waits up to
-    WAIT_S (polling) while work is out, and returns at once when there's nothing to wait for."""
+    """The session can't pause; the service waits up to WAIT_S (polling) while work is out, and
+    returns at once when there's nothing to wait for."""
     start(db_path, clock, root)
     slept: list[float] = []
     q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, limit=10, sleep=slept.append)
@@ -351,6 +351,124 @@ def test_claims_expire_and_are_fenced(db_path: Path, clock: FakeClock, root: Pat
                                           old["agent"])  # fmt: skip
     assert claude_eval.eval_next(connector(db_path), clock, S1)["results"] == [
         {"id": old["id"], "outcome": "claim_expired"}]  # fmt: skip
+
+
+def test_a_resubmission_after_a_lost_reply_gets_the_same_answer_and_records_once(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Claude Code restarts an agent's server when a sibling spawn ends; the agent retries a call
+    that had succeeded (plan S2)."""
+    start(db_path, clock, root)
+    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    ref, token, agent = item["id"], item["claim_token"], item["agent"]
+    claude_eval.get_message(clock, S1, ref, token, agent)
+    held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    assert isinstance(held, Hold)
+    pending: dict[str, Any] = {"accepted": True, "pending": True, "errors": []}
+    assert claude_eval.record_classification(clock, S1, ref, token, BEC, agent) == pending
+    assert settled(db_path, clock, held)["accepted"]
+    again = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    assert again == {"accepted": True, "errors": []}
+    with pytest.raises(ConflictError):  # only that session's token gets the reply
+        claude_eval.record_classification(clock, S2, ref, token, BEC, agent)
+    assert claude_eval.eval_next(connector(db_path), clock, S1)["results"] == [
+        {"id": ref, "outcome": "recorded"}]  # fmt: skip
+
+
+def test_a_late_answer_after_a_reclaim_leaves_the_new_claim_alone(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    old = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)
+    new = next(i for i in claude_eval.eval_next(connector(db_path), clock, S2, limit=3)["items"]
+               if i["id"] == old["id"])  # fmt: skip
+    with pytest.raises(ConflictError):
+        claude_eval.record_classification(clock, S1, old["id"], old["claim_token"], BEC,
+                                          old["agent"])  # fmt: skip
+    w = _work(new)
+    assert w.claim == "claimed" and w.claims[-1].answered is None
+    assert answer(db_path, clock, new, S2, BEC)["accepted"]
+
+
+def test_an_expired_claim_goes_back_to_the_same_agent_at_once(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    items = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)["items"]
+    waiting = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert waiting["items"] == [] and waiting["next"] == "call again"
+    assert waiting["frees_in_s"] == int(claude_review.CLAIM_TTL.total_seconds())
+    clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=3)
+    assert {r["outcome"] for r in q["results"]} == {"claim_expired"}
+    assert {i["agent"] for i in q["items"]} == {items[0]["agent"]}
+
+
+def test_another_agent_waits_while_an_expired_claims_agent_may_still_run(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    run.grace[S1] = {"ecf-actor-high": clock.now() + timedelta(seconds=10)}
+    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert q["items"] == [] and q["next"] == "call again" and q["frees_in_s"] == 10
+    clock.advance(11)
+    assert claude_eval.eval_next(connector(db_path), clock, S1)["items"]
+
+
+def test_held_answers_keep_the_session_polling_for_a_while_then_it_ends(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    for item in claude_eval.eval_next(connector(db_path), clock, S1, limit=3)["items"]:
+        claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
+        got = claude_eval.record_classification(clock, S1, item["id"], item["claim_token"], BEC,
+                                                item["agent"])  # fmt: skip
+        assert isinstance(got, Hold)  # held: no telemetry yet
+    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert q["items"] == [] and q["next"] == "call again"
+    assert q["frees_in_s"] == int(claude_eval.HOLD_WAIT.total_seconds())
+    clock.advance(int(claude_eval.HOLD_WAIT.total_seconds()) + 1)
+    assert claude_eval.eval_next(connector(db_path), clock, S1)["next"] == "end"
+
+
+def test_a_different_answer_under_an_answered_claim_is_refused(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    item = claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"][0]
+    ref, token, agent = item["id"], item["claim_token"], item["agent"]
+    held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
+    other = BEC | {"priority": "low" if BEC.get("priority") != "low" else "high"}
+    with pytest.raises(ConflictError):  # held: only the same answer replays
+        claude_eval.record_classification(clock, S1, ref, token, other, agent)
+    assert settled(db_path, clock, held)["accepted"]
+    with pytest.raises(ConflictError):  # applied: likewise
+        claude_eval.record_classification(clock, S1, ref, token, other, agent)
+
+
+def test_the_wait_goes_on_while_next_says_call_again(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """During grace nothing is in progress, yet the session must not poll at full speed."""
+    start(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    run.grace[S1] = {"ecf-actor-high": clock.now() + timedelta(seconds=60)}
+    slept: list[float] = []
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, sleep=slept.append)
+    assert q["next"] == "call again" and q["in_progress"] == 0 and slept
+
+
+def test_another_sessions_claims_keep_next_at_call_again(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    assert claude_eval.eval_next(connector(db_path), clock, S2, limit=10)["items"]
+    q = claude_eval.eval_next(connector(db_path), clock, S1)
+    assert q["items"] == [] and q["next"] == "call again"
 
 
 def test_a_session_ending_frees_its_claims(db_path: Path, clock: FakeClock, root: Path) -> None:

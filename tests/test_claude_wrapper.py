@@ -108,6 +108,9 @@ def test_plugin_has_only_the_skills(tmp_path: Path) -> None:
     skill = (dest / "skills" / "ecf-eval" / "SKILL.md").read_text()
     assert _frontmatter(skill)["name"] == "ecf-eval"
     assert _frontmatter(skill)["disable-model-invocation"] == "true"
+    for name in ("ecf-review", "ecf-eval"):  # the service says when to stop (dispatch plan S6)
+        text = (dest / "skills" / name / "SKILL.md").read_text()
+        assert "do what `next` says" in text and "at most 5" not in text
 
 
 def test_agents_each_have_their_pin_and_their_own_server() -> None:

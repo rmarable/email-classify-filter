@@ -16,17 +16,15 @@ Repeat until done:
 1. Call `mcp__ecf__eval_next` (no arguments needed).
 2. If `done` is true, go to the end. If `stopped` is present, stop at once and tell the person
    that line as it is.
-3. If `items` is empty: when `preparing` is true or `in_progress` is above 0, call
-   `mcp__ecf__eval_next` again (at most 5 times in a row with no items); otherwise go to the end.
+3. If `items` is empty, do what `next` says: `call again` means go back to step 1, however
+   many times it takes; `end` means go to the end. Never decide this yourself.
 4. Group the items by `spawn`. Give each group to one spawn of the Agent tool, using the
-   group's `agent` value exactly as the subagent type. The prompt holds only one line per item,
-   `id=<id> claim_token=<claim_token>`, and nothing else. Hand out one agent type at a time:
-   spawns of the same `agent` may run in parallel, but wait for them all to finish before
-   starting another agent's spawns.
+   group's `agent` value exactly as the subagent type; the spawns may run in parallel. The prompt
+   holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing else. Every
+   item returned is already claimed for you: always spawn it, in this round.
 5. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
    says: outcomes come only from `results` in the next `eval_next` call. Never end your turn to
-   wait for a spawn: if you aren't sure every spawn has finished, go back to step 1 anyway;
-   `in_progress` says how many claims are still out.
+   wait: the next `eval_next` reply says what to do.
 
 For progress, write only the `progress` line of the latest `eval_next` reply, exactly as given,
 once per round. Never count cases, items or spawns yourself, and never say how many are left.
@@ -37,4 +35,4 @@ the confirmed cases, the accuracy, the unsafe count and whether the gate passed.
 else. If the eval isn't done, say that typing /ecf-eval again carries on.
 
 Stop early if the person asks you to, or if a tool says the session isn't authorized. If a
-spawn fails, don't retry it in this round; its claim expires and the case comes back later.
+spawn fails, don't retry it; its claim expires and the case comes back later.
