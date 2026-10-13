@@ -9,8 +9,12 @@
   `MAX_INPUT_BYTES` of UTF-8: Ollama silently drops the start of an input that is too long and
   keeps the end (measured 2026-09-30), which is the part an attacker controls, so ecf never lets it
   get there. A reply whose prompt count still comes near `num_ctx` counts as truncated, a failure.
-- **Output:** Ollama's `format` is the compiled schema; the service validates the reply strictly
-  against the same schema. Anything else is a failed attempt (the queue marks the item
+- **Schema v3** (P6, OD-498): the local model is still asked schema v2 (`ecf.schema.local_schema`),
+  so its prompt, `num_predict`, prompt digest and gate key are what they were; its answer is then
+  completed with the fixed items derived from it (`ecf.schema.with_fixed`), so every stored
+  classification has v3's fields.
+- **Output:** Ollama's `format` is the compiled schema it is asked; the service validates the reply
+  strictly against the same schema. Anything else is a failed attempt (the queue marks the item
   `model_failed` after two, OD-236). The raw reply is never stored or logged (I5).
 - **Recorded:** the classification, the pinned model and digest (`pinned_models`, which the go-live
   gate binds to) and a `batch_id` (always one message per request here, so the cross-item hide
@@ -30,7 +34,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf.schema import CompiledSchema
+from ecf.schema import CompiledSchema, local_schema, with_fixed
 from ecf_server import claude_pins, config, decide, excerpt, items, ollama, signals
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -65,7 +69,8 @@ Answer with a JSON object that has every field below and nothing else.
 
 
 def system_prompt(schema: CompiledSchema) -> str:
-    return INSTRUCTIONS + schema.prompt_block
+    """The system prompt for the effective `schema`: asked as `local_schema` (v2 for v3, P6)."""
+    return INSTRUCTIONS + local_schema(schema).prompt_block
 
 
 def prompt_digest(schema: CompiledSchema) -> str:
@@ -110,10 +115,16 @@ def _excerpt(conn: sqlite3.Connection, stable_id: str) -> str:
 
 
 def parse(content: str, schema: CompiledSchema) -> dict[str, Any] | None:
-    """The validated classification, or None."""
+    """The validated classification in the effective `schema`, or None: the reply is checked
+    against the schema the model was asked (`local_schema`), then completed with the fixed
+    items derived from it when that was v2 (P6)."""
+    asked = local_schema(schema)
     try:
         data = json.loads(content)
-        return schema.validate(data).model_dump(mode="json")
+        out = asked.validate(data).model_dump(mode="json")
+        if asked is schema:
+            return out
+        return schema.validate(with_fixed(out)).model_dump(mode="json")
     except (ValueError, TypeError):
         return None
 
@@ -124,7 +135,7 @@ def ask(client: Client, text: str, schema: CompiledSchema,
     the signals that are true for it (`signals.sent`)."""
     return client.chat(ollama.load_pin().ecf_tag, system_prompt(schema),
                        user_message(text, secrets.token_hex(8), sent), role="classifier",
-                       fmt=schema.json_schema())  # fmt: skip
+                       fmt=local_schema(schema).json_schema())  # fmt: skip
 
 
 def truncated(reply: ollama.Reply) -> bool:

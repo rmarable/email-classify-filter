@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import CompiledSchema, FieldKind, load_schema, v1_values
+from ecf.schema import FIXED_ITEMS, CompiledSchema, FieldKind, load_schema, v1_values
 
 SUFFIX = ".labels.jsonl"
 MARKS = ("s", "u")
@@ -56,11 +56,12 @@ def path_for(corpus: Path) -> Path:
 
 def check_values(values: dict[str, Any], schema: CompiledSchema) -> dict[str, str | bool]:
     """Every shipped field and any extension fields of `schema`, each a value from its closed
-    vocabulary; no other field."""
-    optional = set(schema.extension_fields)
+    vocabulary; no other field. Extension fields and schema v3's fixed items may be left out (a
+    label made before them; OD-498)."""
+    optional = set(schema.extension_fields) | set(FIXED_ITEMS)
     if not set(schema.fields) - optional <= set(values) <= set(schema.fields):
         raise InvalidInputError("a label needs exactly the schema's fields (extension fields"
-                                " may be left out)")  # fmt: skip
+                                " and the fixed items may be left out)")  # fmt: skip
     out: dict[str, str | bool] = {}
     for name, spec in schema.fields.items():
         if name not in values:
@@ -86,7 +87,8 @@ def make(key: Key, corpus_id: str, values: dict[str, Any] | None, mark: str | No
 
 def load(path: Path, schema: CompiledSchema | None = None) -> dict[Key, Label]:
     """The labels file, each row checked against `schema` (default: the shipped one); a v1 value
-    is read as its v2 value (`ecf.schema.V1_VALUE_ALIASES`)."""
+    is read as its v2 value (`ecf.schema.V1_VALUE_ALIASES`). A label made before schema v3 lacks
+    the fixed items: an eval derives them (`evalrun.corpus_run`), never this file."""
     schema = schema or load_schema()
     if not path.exists():
         return {}

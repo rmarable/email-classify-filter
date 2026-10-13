@@ -36,6 +36,7 @@ import sqlite3
 from typing import Any
 
 from ecf.ids import StableId
+from ecf.schema import local_fields
 from ecf_server import answers, decide, items, ollama, outbound_plan, policy
 from ecf_server.classifier import fit
 from ecf_server.clock import Clock
@@ -133,8 +134,10 @@ def user_message(text: str, classification: dict[str, Any], answered: list[dict[
                  token: str, actions: tuple[str, ...] = ACTIONS, *,
                  templates: frozenset[str] = frozenset(),
                  forwards: frozenset[str] = frozenset()) -> str:  # fmt: skip
+    # schema v2's fields only: the local model is asked as before v3 (P6, OD-498)
+    shown = json.dumps(local_fields(classification), sort_keys=True)
     parts = [f"<<<EMAIL {token}>>>\n{fit(text, MAX_INPUT_BYTES)}\n<<<END EMAIL {token}>>>",
-             f"Classification: {json.dumps(classification, sort_keys=True)}"]  # fmt: skip
+             f"Classification: {shown}"]  # fmt: skip
     for r in answered:
         parts.append(f"Earlier you asked: {r.get('question', '')}\nThe owner answered: "
                      f"{str(r.get('answer', ''))[:answers.ANSWER_MAX]}")  # fmt: skip

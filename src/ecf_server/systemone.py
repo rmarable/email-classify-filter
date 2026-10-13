@@ -154,7 +154,11 @@ def map_answers(raw: dict[str, Any], schema: CompiledSchema) -> Answer:
             out[f.name] = f.values[max(range(len(ps)), key=lambda i: (ps[i], i))]
     if not ok:
         return Answer(None, probs, n_in)
-    return Answer(classifier.parse(json.dumps(out), schema), probs, n_in)
+    try:  # checked against the schema asked, every field (the fixed items too, OD-498)
+        cls = schema.validate(out).model_dump(mode="json")
+    except ValueError:
+        cls = None
+    return Answer(cls, probs, n_in)
 
 
 def ask(client: Client, model: str, text: str, schema: CompiledSchema) -> Answer:

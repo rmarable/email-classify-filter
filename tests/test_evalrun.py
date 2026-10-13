@@ -20,7 +20,7 @@ from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, compare, load_result
-from ecf.schema import load_schema
+from ecf.schema import load_schema, load_schema_v2
 from ecf_server import evalrun, modelq, policy, ruletest, schedule
 from ecf_server.clock import FakeClock, to_ts
 from tests.test_classifier import ChatOllama
@@ -166,7 +166,8 @@ def test_a_run_writes_metrics_only_and_records_the_digest(
     assert summary["determinism_diffs"] == 0
     every = ["starter-bec", "starter-control", "starter-injection"]  # 3 cases: all repeat
     assert summary["determinism"] == {"cases": every, "field_flips": {}}
-    assert summary["schema_digest"] == load_schema().digest  # what the model was asked with
+    # what the model was asked with: schema v2 under v3 (P6, OD-498)
+    assert summary["schema_digest"] == load_schema_v2().digest
     assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
     assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
     assert summary["rules_digest"] == evalrun.rules.starter_digest()  # step 7

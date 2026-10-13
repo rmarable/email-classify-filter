@@ -49,12 +49,12 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
 @pytest.mark.usefixtures("extensions_on")
 def test_schema_row(conn: sqlite3.Connection) -> None:
     row = ops_doctor.schema(conn)
-    assert row == {"name": "schema", "level": "ok", "detail": "v2, built in (no extension)",
+    assert row == {"name": "schema", "level": "ok", "detail": "v3, built in (no extension)",
                    "fix": ""}  # fmt: skip
     _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
     row = ops_doctor.schema(conn)
     assert row["level"] == "ok"
-    assert row["detail"].startswith("v2 with an extension; 1 of 8 fields, 0 of 4 category values")
+    assert row["detail"].startswith("v3 with an extension; 1 of 8 fields, 0 of 4 category values")
     fields = {f"f{i}": {"type": "boolean", "description": "x"} for i in range(7)}
     _set(conn, "config.schema", {"fields": fields})
     row = ops_doctor.schema(conn)
@@ -70,7 +70,7 @@ def test_schema_row_with_extensions_off(conn: sqlite3.Connection) -> None:
     _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
     row = ops_doctor.schema(conn)
     assert row == {"name": "schema", "level": "warn",
-                   "detail": "v2, built in; an extension is stored but extensions are off in"
+                   "detail": "v3, built in; an extension is stored but extensions are off in"
                    " this version",
                    "fix": "`ecf config apply` with `schema: default` removes it"}  # fmt: skip
     _set(conn, "config.schema", {"category_values": {"invoice": "Clashes with a shipped value."}})

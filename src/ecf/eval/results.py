@@ -24,7 +24,7 @@ from ecf.eval.metrics import (
     percentile,
     wilson,
 )
-from ecf.schema import load_schema
+from ecf.schema import load_schema, load_schema_v2
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 # one comparison rule (SPEC §16.5, OD-486): Newcombe's paired score interval against this margin,
@@ -242,15 +242,17 @@ def schema_digest(r: ResultFile) -> str | None:
 
 
 def schema_warning(a: ResultFile, b: ResultFile) -> str | None:
-    """A warning when the two runs were asked with different schemas (an extension added,
-    changed or removed between them): the fields and values they chose from differ. A result
-    that records none is taken as the shipped schema (it predates extensions)."""
-    shipped = load_schema().digest
-    da, db = schema_digest(a) or shipped, schema_digest(b) or shipped
+    """A warning when the two runs were asked with different schemas (another schema version,
+    e.g. the local model's v2 against Claude's v3, or an extension added, changed or removed
+    between them): the fields and values they chose from differ. A result that records none is
+    taken as schema v2 (it predates extensions, and so v3)."""
+    before = load_schema_v2().digest
+    da, db = schema_digest(a) or before, schema_digest(b) or before
     if da == db:
         return None
-    return (f"warning: the runs used different schemas ({da} vs {db}): an extension changed"
-            " between them, so the fields and values they chose from differ")  # fmt: skip
+    return (f"warning: the runs used different schemas ({da} vs {db}): the schema version or"
+            " an extension differs between them, so the fields and values they chose from"
+            " differ")  # fmt: skip
 
 
 def scoring(r: ResultFile) -> str:

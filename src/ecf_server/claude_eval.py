@@ -59,7 +59,7 @@ from ecf.eval.results import (
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import CompiledSchema, load_schema
+from ecf.schema import CompiledSchema, load_schema_v2, local_schema, with_fixed
 from ecf_server import (
     actor,
     alerts,
@@ -290,7 +290,9 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
         result = load_result(Path(row["path"]))
         if any(not c.got for c in result.cases):
             break  # a run from before OD-259 holds no classifications
-        got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
+        # completed to v3 (a run from before v3 recorded only v2's answers; OD-498)
+        got = {c.id: with_fixed({k: v for k, v in c.got.items() if k != "rule"})
+               for c in result.cases}  # fmt: skip
         return str(row["run_id"]), got
     raise InvalidInputError("preset B uses Gemma's classifications from a complete `ecf eval run`"
                             " on the pinned model and this version of the set, and there is none:"
@@ -298,10 +300,12 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
 
 
 def _same_schema(metrics: dict[str, Any], schema: CompiledSchema) -> bool:
-    """Whether a run was asked with `schema`; a run from before the digest was recorded used
-    the shipped schema."""
+    """Whether Gemma's run was asked with `schema`, as the local model is asked it
+    (`local_schema`: v2 for v3, P6); a run from before the digest was recorded used the shipped
+    schema v2."""
+    asked = local_schema(schema).digest
     got = metrics.get("schema_digest")
-    return got == schema.digest if got is not None else schema.digest == load_schema().digest
+    return got == asked if got is not None else asked == load_schema_v2().digest
 
 
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
@@ -465,7 +469,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         return
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 schema=run.schema)  # fmt: skip
-    summary["schema_digest"] = run.schema.digest
+    # what the classifier was asked: B's is Gemma, asked v2 for v3 (P6)
+    asked = local_schema(run.schema) if run.opts.preset == "B" else run.schema
+    summary["schema_digest"] = asked.digest
     if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
     summary["excerpt_prep"] = excerpt.VERSION

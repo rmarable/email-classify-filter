@@ -1762,7 +1762,7 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def rescore(request: Request) -> JSONResponse:
         """`ecf eval rescore`: a corpus result against the session's current labels (R53), a
-        pre-v2 synthetic result against the set's current labels (`synthetic_root`, E1), or a
+        pre-v3 synthetic result against the set's current labels (`synthetic_root`, E1), or a
         synthetic result planned again through today's facts and policy (`through_policy`)."""
         body = _body(request)
         if body.get("synthetic_root") is not None:

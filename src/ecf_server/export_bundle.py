@@ -45,8 +45,10 @@ FORMAT = 1
 # the tables' JSON-lines layout; import accepts this and the one before (§11.9). 2 (V1.6): the
 # settings carry `config.org_addresses`, which a version on 1 would drop silently (OD-442). 3
 # (v2.0.0): classifications follow schema v2 (`team`, the new values), which a version on 2
-# would misread as unknown values; a format-2 bundle is migrated on import (0034; OD-475)
-DATA_FORMAT = 3
+# would misread as unknown values; a format-2 bundle is migrated on import (0034; OD-475). 4
+# (v3.0.0): classifications follow schema v3 (the fixed items, which a version on 3 would ignore);
+# a format-3 bundle is migrated on import (0036; OD-498)
+DATA_FORMAT = 4
 SIG_BYTES = 64
 MAX_HEADER = 16 * 1024
 SUFFIX = ".ecfb"

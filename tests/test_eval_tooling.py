@@ -33,7 +33,7 @@ from ecf.eval.results import (
     scoring,
     spawn_figures,
 )
-from ecf.schema import load_schema
+from ecf.schema import load_schema, load_schema_v2
 
 ROOT = Path(__file__).resolve().parent / "eval" / "synthetic"
 CARD = """---
@@ -311,9 +311,11 @@ def test_compare() -> None:
 
 def test_compare_warns_when_the_schemas_differ() -> None:
     a, b = _run("A", [True]), _run("B", [True])
-    assert schema_warning(a, b) is None  # neither recorded one: both the shipped schema
-    shipped = b.model_copy(update={"summary": {"schema_digest": load_schema().digest}})
+    assert schema_warning(a, b) is None  # neither recorded one: both schema v2 (pre-v3)
+    shipped = b.model_copy(update={"summary": {"schema_digest": load_schema_v2().digest}})
     assert schema_warning(a, shipped) is None
+    v3 = b.model_copy(update={"summary": {"schema_digest": load_schema().digest}})
+    assert schema_warning(shipped, v3) is not None  # a v2 run against a v3 one (OD-498)
     other = b.model_copy(update={"summary": {"schema_digest": "schema-0123456789abcdef"}})
     warning = schema_warning(shipped, other)
     assert warning is not None and "schema-0123456789abcdef" in warning

@@ -14,7 +14,7 @@ import ecf.schema
 from ecf.cli import app
 from ecf.errors import InvalidInputError, SchemaLimitError, StepupRequiredError
 from ecf.paths import Paths
-from ecf.schema import load_schema
+from ecf.schema import load_schema, local_schema
 from ecf_server import (
     addresses,
     claude_pins,
@@ -631,7 +631,8 @@ def test_the_effective_schema_moves_the_gate_key(
     assert claude_pins.address_key(conn, "ap") != before
     schema = config.current_schema(conn)
     assert claude_pins.pins(conn, "A")["digest"] == claude_pins.local_key(schema)
-    assert f"+{schema.digest}+" in claude_pins.pins(conn, "A")["digest"]
+    # the local model is asked v2 with the same extension (P6, OD-498)
+    assert f"+{local_schema(schema).digest}+" in claude_pins.pins(conn, "A")["digest"]
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 
@@ -641,7 +642,7 @@ def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: P
     st = make_state(db_path, None)
     r = call(st, "GET", "/v1/schema")
     assert r.status_code == 200
-    assert r.json() == {"version": 2, "extension": None, "digest": load_schema().digest}
+    assert r.json() == {"version": 3, "extension": None, "digest": load_schema().digest}
     _apply(conn, clock, SCHEMA_DOC)
     got = call(st, "GET", "/v1/schema").json()
     assert got["extension"]["category_values"] == {
