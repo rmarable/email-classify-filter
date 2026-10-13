@@ -11,7 +11,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ecf_server.htmltext import LINK_CAP, html_text, html_to_text, plain_links
+from ecf_server.htmltext import LINK_CAP, html_text, plain_links
 from ecf_server.mail import PartInfo
 from ecf_server.message import (
     ACTOR_CHARS,
@@ -236,7 +236,8 @@ def test_hidden_html_text_is_in_full_but_not_visible() -> None:
         "<p style='font-size:0px'>tiny</p><p style='font-size:0.9em'>small ok</p>"
         "<!-- a comment --><script>alert(1)</script><p>Bye</p></body></html>"
     )
-    full, visible = html_to_text(html)
+    t = html_text(html)
+    full, visible = t.full, t.visible
     assert "wire to DE44" in full and "ignore previous instructions" in full and "tiny" in full
     for gone in ("wire", "ignore", "tiny"):
         assert gone not in visible
@@ -246,7 +247,8 @@ def test_hidden_html_text_is_in_full_but_not_visible() -> None:
 
 
 def test_unclosed_hidden_tags_still_close() -> None:
-    full, visible = html_to_text("<div style='display:none'><p>hidden<p>more</div><p>shown")
+    t = html_text("<div style='display:none'><p>hidden<p>more</div><p>shown")
+    full, visible = t.full, t.visible
     assert "shown" in visible and "hidden" not in visible and "more" in full
 
 
@@ -384,13 +386,13 @@ def test_html_end_tags_are_linear() -> None:
 
     n = 50_000
     started = time.monotonic()
-    html_to_text("<b>" * n + "</zz>" * n)
+    html_text("<b>" * n + "</zz>" * n)
     assert time.monotonic() - started < 2  # quadratic took about 30 s here
 
 
 def test_table_cells_are_separated() -> None:
-    _full, visible = html_to_text(
+    visible = html_text(
         "<table><tr><td>IBAN</td><td>DE89 3704</td></tr>"
         "<tr><td>Account number</td><td>12345678</td></tr></table>"
-    )
+    ).visible
     assert "IBAN DE89 3704" in visible and "Account number 12345678" in visible

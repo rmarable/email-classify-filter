@@ -52,7 +52,6 @@ ACTIONS = ("label", "flag", "escalate", "leave", "mark_read", "archive", "move",
            "needs_clarification")  # fmt: skip
 OUTBOUND = ("draft_reply", "reply_template", "forward_internal")  # offered by `allowed` (V1.5)
 REASON_MAX = 300
-LOCAL_DRAFT_CHARS = 1500
 
 INSTRUCTIONS = """You decide one next step for a business email in a monitored mailbox.
 

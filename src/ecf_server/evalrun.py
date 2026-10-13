@@ -49,7 +49,6 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -1215,10 +1214,6 @@ def latest(conn: sqlite3.Connection, digest: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM eval_runs WHERE digest = ? ORDER BY created_at DESC"
                        " LIMIT 1", (digest,)).fetchone()  # fmt: skip
     return dict(row) | {"metrics": json.loads(row["metrics"])} if row else None
-
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 # What a schema v1 answer means in v2 (OD-475; `ecf.schema.V1_VALUE_ALIASES`). Rules: v2's new

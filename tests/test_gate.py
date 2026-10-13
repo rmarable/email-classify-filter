@@ -20,7 +20,7 @@ from ecf_server.stepper import FakeStepper
 from tests.test_decide import KNOWN_BULK, MARKETING, make_classified
 from tests.test_decide import make_address as _address
 
-DIGEST = gate.current_digest()
+DIGEST = claude_pins.local_key()
 CUSTOMER: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True}
 
 

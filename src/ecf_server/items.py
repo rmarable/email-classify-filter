@@ -56,13 +56,6 @@ def create_item(
             also(conn)
 
 
-def get_status(conn: sqlite3.Connection, stable_id: StableId) -> Status:
-    row = conn.execute("SELECT status FROM items WHERE stable_id = ?", (stable_id,)).fetchone()
-    if row is None:
-        raise NotFoundError(f"no item {stable_id[:8]}")
-    return Status(row["status"])
-
-
 def transition(
     conn: sqlite3.Connection,
     clock: Clock,

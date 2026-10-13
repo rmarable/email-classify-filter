@@ -26,8 +26,13 @@ def item(conn: sqlite3.Connection, clock: FakeClock) -> StableId:
     return SID
 
 
+def _status(conn: sqlite3.Connection, stable_id: str) -> Status:
+    row = conn.execute("SELECT status FROM items WHERE stable_id = ?", (stable_id,)).fetchone()
+    return Status(row["status"])
+
+
 def test_created_at_new_with_audit(conn: sqlite3.Connection, item: StableId) -> None:
-    assert items.get_status(conn, item) is Status.NEW
+    assert _status(conn, item) is Status.NEW
     assert conn.execute("SELECT event FROM audit").fetchone()[0] == "item.created"
 
 
@@ -43,7 +48,7 @@ def test_transition_writes_and_audits(
 ) -> None:
     prev = items.transition(conn, clock, item, Status.CLASSIFIED, TransitionContext(), actor="t")
     assert prev is Status.NEW
-    assert items.get_status(conn, item) is Status.CLASSIFIED
+    assert _status(conn, item) is Status.CLASSIFIED
     ev = conn.execute("SELECT event, data FROM audit ORDER BY id DESC").fetchone()
     assert ev["event"] == "item.transitioned"
     assert '"to": "classified"' in ev["data"]
@@ -73,7 +78,7 @@ def test_refusals_change_nothing(
         items.transition(
             conn, clock, item, Status.PROPOSED, TransitionContext(stage=Stage.ASSIST), actor="t"
         )
-    assert items.get_status(conn, item) is Status.HELD
+    assert _status(conn, item) is Status.HELD
     assert not conn.in_transaction
 
 
@@ -103,7 +108,7 @@ def test_counters_come_from_the_database(
     with pytest.raises(PolicyDeniedError):  # it can't be answered, even if the caller lies
         items.transition(conn, clock, item, Status.CLARIFIED, lying, actor="t")
     items.transition(conn, clock, item, Status.NEEDS_HUMAN, ctx, actor="t")
-    assert items.get_status(conn, item) is Status.NEEDS_HUMAN
+    assert _status(conn, item) is Status.NEEDS_HUMAN
 
 
 def test_no_dead_end_after_the_cap(
@@ -119,7 +124,7 @@ def test_no_dead_end_after_the_cap(
     items.transition(conn, clock, item, Status.NEEDS_CLARIFICATION, ctx, actor="t")
     with pytest.raises(PolicyDeniedError):
         items.transition(conn, clock, item, Status.CLARIFIED, ctx, actor="t")
-    assert items.get_status(conn, item) is Status.NEEDS_CLARIFICATION  # and needs_human is open
+    assert _status(conn, item) is Status.NEEDS_CLARIFICATION  # and needs_human is open
 
 
 def test_transition_is_the_only_status_writer() -> None:
@@ -146,7 +151,7 @@ def test_sqlite_refuses_status_writes_outside_transition(
 ) -> None:
     with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
         conn.execute(sql)
-    assert items.get_status(conn, item) is Status.NEW
+    assert _status(conn, item) is Status.NEW
 
 
 @pytest.mark.parametrize(

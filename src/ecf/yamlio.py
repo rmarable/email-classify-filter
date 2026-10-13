@@ -4,7 +4,6 @@ duplicate keys rejected. Import bundles use the same loader."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 from ruamel.yaml import YAML
@@ -25,7 +24,3 @@ def load_yaml(text: str, *, source: str = "<string>") -> Any:
         return load(text)
     except YAMLError as exc:
         raise InvalidInputError(f"{source}: invalid YAML: {exc}".splitlines()[0]) from exc
-
-
-def load_yaml_file(path: Path) -> Any:
-    return load_yaml(path.read_text(encoding="utf-8"), source=str(path))

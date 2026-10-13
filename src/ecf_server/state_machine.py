@@ -159,4 +159,5 @@ def check_transition(frm: Status, to: Status, ctx: TransitionContext) -> None:
 
 
 def edges() -> list[tuple[Status, Status]]:
+    """Every allowed transition; tests check SPEC §22.1's state diagram against it."""
     return [(f, t) for f in Status for t in sorted(TRANSITIONS[f])]
