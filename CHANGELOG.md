@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- The v3.0.0 baseline is two Claude eval runs on the 300-case set (preset C, standard, pinned models), 245 and 248 of 300; it trails the 268-case run by 1.9 points, within run-to-run variation (SPEC §21.2).
 - The synthetic eval set grows to 300 cases (32 new where coverage was thin; 30 existing cards become known senders so the `actor` role can be measured); it notes that Claude drafted every card.
 - `ecf eval compare` prints per-field figures for each run (recall with a Wilson interval, precision, ordinal error, macro-F1, `category` confusions) and takes `--subset` to compare runs on different sets over shared cases.
 - `ecf models install --decision` and the `tev1` decision model are removed, since Qwen-based models are banned in every role; `ecf models prune` removes leftover `tev1` copies (OD-494).
