@@ -827,3 +827,28 @@ def test_the_measurements_read_as_lines() -> None:
         "history: 4 senders, 9 items",
         "classifier tokens: prompt 1.5/4/9, uncached 1.5/4/9, cached 1.5/4/9, output 1.5/4/9",
     ]
+
+
+def test_a_result_records_the_expected_labels() -> None:
+    case = evalrun.Case("c", Path("x"), {"labels": {"category": "invoice", "payment_related": True,
+                                                    "fraud_risk": "low"}, "rule": "x"},
+                        True, "claude")  # fmt: skip
+    got = evalrun.score(case, {"category": "finance"}, _plan(["flag"], "x"), None)
+    assert got.expected == {"category": "invoice", "payment_related": True, "fraud_risk": "low"}
+
+
+def test_the_eval_scratch_keeps_no_sender_history() -> None:
+    """A card's facts never depend on the cards before it (Phase R P10): analysing records no
+    sender, so every card starts first-time unless it sets `sender_seen_before` itself."""
+    from ecf_server import ruletest  # noqa: PLC0415
+
+    scratch = ruletest.Scratch(FakeClock())
+    try:
+        raw = (SYNTHETIC / "eml" / "starter-control.eml").read_bytes()
+        first = scratch.facts(raw)
+        again = scratch.facts(raw)
+        assert first["sender_seen_before"] is False and again["sender_seen_before"] is False
+        conn = scratch._conn("org")  # pyright: ignore[reportPrivateUsage]
+        assert conn.execute("SELECT count(*) FROM senders").fetchone()[0] == 0
+    finally:
+        scratch.close()

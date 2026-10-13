@@ -1,0 +1,14 @@
+Received: from mail.northwind-retail.example (mail.northwind-retail.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-pay-remittance-advice; Sat,
+ 03 Oct 2026 15:00:00 +0000
+From: Accounts Payable <ap@northwind-retail.example>
+To: ap@acme.example
+Subject: Remittance advice: payment 88214
+Date: Sat, 03 Oct 2026 15:00:00 +0000
+Message-ID: <v3-pay-remittance-advice.6b3fd4a5c8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Please find our remittance for payment 88214: invoices ACME-1102 and ACME-110=
+7, total USD 3,450.00, sent on 2026-10-03.

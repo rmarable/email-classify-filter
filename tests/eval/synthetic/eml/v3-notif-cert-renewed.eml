@@ -1,0 +1,16 @@
+Received: from mail.certs-service.example (mail.certs-service.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-notif-cert-renewed; Mon, 05
+ Oct 2026 03:10:00 +0000
+From: Cert Robot <noreply@certs-service.example>
+To: ap@acme.example
+Subject: Certificate renewed for portal.acme.example
+Date: Mon, 05 Oct 2026 03:10:00 +0000
+Message-ID: <v3-notif-cert-renewed.a82e5c784d@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The certificate for portal.acme.example was renewed automatically. New expiry=
+: 2027-01-03. No action is needed.

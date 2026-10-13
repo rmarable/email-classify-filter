@@ -1,0 +1,16 @@
+Received: from mail.cloud-host.example (mail.cloud-host.example [192.0.2.10])
+ by mx.example.net with ESMTPS id v3-notif-usage-report; Thu, 01 Oct 2026
+ 06:00:00 +0000
+From: Usage Reports <reports@cloud-host.example>
+To: ap@acme.example
+Subject: Your September usage summary
+Date: Thu, 01 Oct 2026 06:00:00 +0000
+Message-ID: <v3-notif-usage-report.f7e90c1dcf@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Your account used 412 compute hours and 1.2 TB of storage in September. This =
+is a summary only; your plan covers it.

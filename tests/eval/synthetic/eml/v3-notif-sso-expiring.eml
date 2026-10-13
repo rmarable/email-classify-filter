@@ -1,0 +1,16 @@
+Received: from mail.sso-provider.example (mail.sso-provider.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-notif-sso-expiring; Fri, 09
+ Oct 2026 08:30:00 +0000
+From: Identity Alerts <alerts@sso-provider.example>
+To: ap@acme.example
+Subject: Your SSO signing certificate expires in 7 days
+Date: Fri, 09 Oct 2026 08:30:00 +0000
+Message-ID: <v3-notif-sso-expiring.33b7c09e65@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+The SAML signing certificate for acme.example expires on 2026-10-16. Sign-in =
+for all users will stop unless an administrator uploads a new certificate.

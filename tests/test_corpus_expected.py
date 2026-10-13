@@ -33,7 +33,10 @@ STRICTER = {"billing-plan-question", "bug-api-rate-limit", "bug-data-loss-urgent
             "v2-fin-tax-preparer-documents", "v2-ship-missed-delivery-pickup",
             "v2-ship-return-label",
             # classifier plan 0.2: a reply needed, and a payment-related receipt
-            "ctrl-vendor-one-opener", "ctrl-exchange-withdrawal-receipt"}  # fmt: skip
+            "ctrl-vendor-one-opener", "ctrl-exchange-withdrawal-receipt",
+            # v3.0.0 S1 cards: action or reply asked, payment mail, a regulator named
+            "v3-bug-minor-typo", "v3-bug-outage-urgent", "v3-de-invoice", "v3-pay-refund-issued",
+            "v3-pi-job-question", "v3-reg-newsletter-mention"}  # fmt: skip
 
 
 def test_nothing_without_labels_or_facts() -> None:

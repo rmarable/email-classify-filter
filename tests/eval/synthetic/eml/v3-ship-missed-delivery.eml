@@ -1,0 +1,14 @@
+Received: from mail.parcel-carrier.example (mail.parcel-carrier.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-ship-missed-delivery; Wed,
+ 07 Oct 2026 17:00:00 +0000
+From: Delivery Updates <updates@parcel-carrier.example>
+To: pat-lee@freemail.example
+Subject: We missed you today
+Date: Wed, 07 Oct 2026 17:00:00 +0000
+Message-ID: <v3-ship-missed-delivery.81f3f504d9@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We tried to deliver your parcel today. We'll try again tomorrow between 9:00 =
+and 13:00, or you can collect it from the depot on Main Street.

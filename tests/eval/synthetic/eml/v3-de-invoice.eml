@@ -1,0 +1,18 @@
+Received: from mail.lieferant-c.example (mail.lieferant-c.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-de-invoice; Wed, 07 Oct
+ 2026 09:00:00 +0000
+From: Buchhaltung <buchhaltung@lieferant-c.example>
+To: ap@acme.example
+Subject: Rechnung RE-2026-118
+Date: Wed, 07 Oct 2026 09:00:00 +0000
+Message-ID: <v3-de-invoice.ac44679e5b@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Sehr geehrte Damen und Herren,
+
+anbei erhalten Sie unsere Rechnung RE-2026-118 ueber 1.240,00 EUR, zahlbar bi=
+s zum 2026-11-06 auf das bekannte Konto.
+
+Mit freundlichen Gruessen

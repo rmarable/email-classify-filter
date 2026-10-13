@@ -1,0 +1,16 @@
+Received: from mail.gadget-store.example (mail.gadget-store.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-mkt-spring-sale; Wed, 07
+ Oct 2026 12:00:00 +0000
+From: Deals <deals@gadget-store.example>
+To: ap@acme.example
+Subject: Spring sale: 30% off headsets
+Date: Wed, 07 Oct 2026 12:00:00 +0000
+Message-ID: <v3-mkt-spring-sale.d3bf3748f6@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+This week only, take 30% off every headset in our store. Free shipping on ord=
+ers over USD 50.

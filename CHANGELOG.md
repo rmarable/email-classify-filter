@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- The synthetic eval set grows to 300 cases (32 new where coverage was thin; 30 existing cards become known senders so the `actor` role can be measured); it notes that Claude drafted every card.
+- `ecf eval compare` prints per-field figures for each run (recall with a Wilson interval, precision, ordinal error, macro-F1, `category` confusions) and takes `--subset` to compare runs on different sets over shared cases.
 - `ecf models install --decision` and the `tev1` decision model are removed, since Qwen-based models are banned in every role; `ecf models prune` removes leftover `tev1` copies (OD-494).
 - `/ecf-eval` and `/ecf-review` no longer stop to wait for a round's agents: the session calls the service again at once, so a miscounted agent can't leave it idle (OD-496).
 - `/ecf-eval` and `/ecf-review` no longer stall when Claude Code restarts an agent's tool server mid-round: a repeated submission gets its first answer back, claims last 5 minutes instead of 15, and the service tells the session when to call again or stop (OD-496).

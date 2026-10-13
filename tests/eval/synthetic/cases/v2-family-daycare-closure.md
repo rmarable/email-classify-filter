@@ -5,6 +5,7 @@ threat: none (control)
 control: childcare logistics that need a reply by a date continue to the actor, never hidden
 why: childcare mail from a service used personally, with a reply deadline
 failure_looks_like: archived as notification, or requires_reply left false
+review: a known sender (passes DMARC, seen before) so it reaches the `actor` role, not `actor_high` (v3.0.0 H5); confirm nothing else changes
 author: claude
 profile: freemail
 from: "Little Acorns Childcare <director@little-acorns.example>"
@@ -13,6 +14,7 @@ date: 2026-10-07T17:00:00Z
 expected:
   labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: none}
   rule: appointment_school_family
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Dear parents,

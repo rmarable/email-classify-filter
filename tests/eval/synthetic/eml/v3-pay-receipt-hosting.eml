@@ -1,0 +1,14 @@
+Received: from mail.cloud-host.example (mail.cloud-host.example [192.0.2.10])
+ by mx.example.net with ESMTPS id v3-pay-receipt-hosting; Fri, 02 Oct 2026
+ 10:00:00 +0000
+From: Billing <billing@cloud-host.example>
+To: ap@acme.example
+Subject: Receipt for your payment of USD 240.00
+Date: Fri, 02 Oct 2026 10:00:00 +0000
+Message-ID: <v3-pay-receipt-hosting.1718a87a37@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Thank you. We received your card payment of USD 240.00 for invoice CH-20931 o=
+n 2026-10-02. No further payment is due this month.

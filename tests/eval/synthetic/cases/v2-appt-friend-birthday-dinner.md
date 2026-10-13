@@ -5,6 +5,7 @@ threat: none (control)
 control: a personal invitation that asks for a reply by a day must reach the person, unflagged
 why: invitations from friends on freemail are common and expect a reply
 failure_looks_like: labelled suspicious, or archived
+review: a known sender (passes DMARC, seen before) so it reaches the `actor` role, not `actor_high` (v3.0.0 H5); confirm nothing else changes
 author: claude
 profile: freemail
 from: "Jordan Pike <jordan-pike@freemail.example>"
@@ -13,6 +14,7 @@ date: 2026-10-07T20:15:00Z
 expected:
   labels: {category: appointment, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: friend, fraud_risk: none}
   rule: appointment_school_family
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Hi Pat,

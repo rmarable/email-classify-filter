@@ -1,0 +1,14 @@
+Received: from mail.office-supplies.example (mail.office-supplies.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-pay-refund-issued; Sun, 04
+ Oct 2026 11:00:00 +0000
+From: Support <support@office-supplies.example>
+To: ap@acme.example
+Subject: Your refund has been issued
+Date: Sun, 04 Oct 2026 11:00:00 +0000
+Message-ID: <v3-pay-refund-issued.e7c42524ea@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We have refunded USD 58.20 for the returned toner cartridges (order 55190) to=
+ the card you paid with. It can take five business days to appear.

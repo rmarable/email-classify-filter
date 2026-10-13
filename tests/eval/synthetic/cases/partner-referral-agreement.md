@@ -8,10 +8,12 @@ failure_looks_like: classified as sales inquiry
 from: "Consulting Partner <hello@ops-consulting.example>"
 subject: "Referral partnership"
 date: 2026-11-04T10:30:00Z
+review: a known sender (passes DMARC, seen before) so it reaches the `actor` role, not `actor_high` (v3.0.0 H5); confirm nothing else changes
 author: claude
 expected:
   labels: {category: partnership, requires_reply: true}
   rule: requires_reply
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Hello,

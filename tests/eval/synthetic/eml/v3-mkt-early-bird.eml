@@ -1,0 +1,16 @@
+Received: from mail.support-summit.example (mail.support-summit.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-mkt-early-bird; Thu, 08 Oct
+ 2026 12:00:00 +0000
+From: Events Team <events@support-summit.example>
+To: ap@acme.example
+Subject: Early-bird tickets for the support summit
+Date: Thu, 08 Oct 2026 12:00:00 +0000
+Message-ID: <v3-mkt-early-bird.25a2d5295f@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Early-bird tickets for the spring support summit are 40% off until 2026-11-01=
+. Join 2,000 support leaders for two days of talks.

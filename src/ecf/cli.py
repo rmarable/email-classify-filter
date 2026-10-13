@@ -1674,6 +1674,14 @@ def eval_compare(
     a: Path,
     b: Path,
     margin: Annotated[float, typer.Option(min=0, help="Non-inferiority margin, in points")] = 5.0,
+    subset: Annotated[
+        Path | None,
+        typer.Option(
+            "--subset",
+            help="Compare only these case ids (a result file, a labels.jsonl, or one id per"
+            " line); needed when the two runs used different sets.",
+        ),
+    ] = None,
 ) -> None:
     """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
     -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486)."""
@@ -1688,7 +1696,12 @@ def eval_compare(
     )
 
     ra, rb = load_result(a), load_result(b)
-    c = compare(ra, rb)
+    ids = _subset_ids(subset) if subset is not None else None
+    c = compare(ra, rb, ids)
+    if ids is not None and subset is not None:
+        typer.echo(f"subset: {len(ids)} case ids from {subset.name}"
+                   + (f"; the sets differ ({ra.set_version[:12]} vs {rb.set_version[:12]})"
+                      if ra.set_version != rb.set_version else ""), err=True)  # fmt: skip
     if warning := schema_warning(ra, rb):
         typer.echo(warning, err=True)
     for warning in input_warnings(ra, rb):
@@ -1711,19 +1724,8 @@ def eval_compare(
             )
         )
     for name, run in (("A", ra), ("B", rb)):
-        if recall := _recall(dict(run.summary or {})):
-            typer.echo(f"{name} {recall.rstrip(',')}")
-        line = _model_figures(run.summary)
-        if line:
-            typer.echo(f"{name}  model: {line}")
-        for role, line in _role_figures(run.summary):
-            typer.echo(f"{name}    {role}: {line}")
-        for line in _latency_lines(run):
-            typer.echo(f"{name}    {line}")
-        for line in _claude_figures(run, len(run.cases)):
-            typer.echo(f"{name}  {line}")
-        for line in _decision_figures(run.summary):
-            typer.echo(f"{name}  {line}")
+        for line in _run_lines(run):
+            typer.echo(f"{name}{line}")
     fields = compare_fields(ra, rb)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
@@ -1731,6 +1733,42 @@ def eval_compare(
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+
+
+def _run_lines(run: ResultFile) -> list[str]:
+    """One run's figures for `ecf eval compare`, each line indented after the run's letter."""
+    from ecf.eval.results import field_lines  # noqa: PLC0415
+
+    out: list[str] = []
+    if recall := _recall(dict(run.summary or {})):
+        out.append(f" {recall.rstrip(',')}")
+    if line := _model_figures(run.summary):
+        out.append(f"  model: {line}")
+    out += [f"    {role}: {line}" for role, line in _role_figures(run.summary)]
+    out += [f"    {line}" for line in _latency_lines(run)]
+    out += [f"  {line}" for line in _claude_figures(run, len(run.cases))]
+    out += [f"  {line}" for line in _decision_figures(run.summary)]
+    out += [f"  {line}" for line in field_lines(run)]
+    return out
+
+
+def _subset_ids(path: Path) -> frozenset[str]:
+    """Case ids from a result file (`.json`), a labels file (`.jsonl`) or one id per line."""
+    from ecf.eval.results import load_result  # noqa: PLC0415
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise InvalidInputError(f"{path}: can't read it: {exc.strerror}") from exc
+    if path.suffix == ".json":
+        ids = {c.id for c in load_result(path).cases}
+    elif path.suffix == ".jsonl":
+        ids = {str(json.loads(line)["id"]) for line in text.splitlines() if line.strip()}
+    else:
+        ids = {line.strip() for line in text.splitlines() if line.strip()}
+    if not ids:
+        raise InvalidInputError(f"{path}: no case ids")
+    return frozenset(ids)
 
 
 def _decision_run(r: ResultFile) -> bool:
