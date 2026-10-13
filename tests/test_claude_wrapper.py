@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import sqlite3
 import stat
 import sys
@@ -52,7 +53,7 @@ print(line.strip(), urllib.request.urlopen(req, timeout=10).status)
 """
 
 
-def fake_claude(bin_dir: Path, record: Path, version: str = "2.1.281") -> None:
+def fake_claude(bin_dir: Path, record: Path, version: str = "2.1.296") -> None:
     bin_dir.mkdir(exist_ok=True)
     session = bin_dir / "fake_session.py"
     session.write_text(FAKE_SESSION)
@@ -87,7 +88,18 @@ def test_settings_document() -> None:
     for tool in ("Bash", "WebFetch", "WebSearch", "Edit", "Write", "Agent(general-purpose)",
                  "Agent(claude)", "Agent(fork)", "Agent(Explore)", "Agent(Plan)"):  # fmt: skip
         assert tool in d["permissions"]["deny"]
-    assert "hooks" not in d
+    # where a spawn runs and on which model aren't the session's choice (OD-497)
+    assert {"Agent(isolation:*)", "Agent(model:*)"} <= set(d["permissions"]["deny"])
+    (group,) = d["hooks"]["PreToolUse"]
+    assert group["matcher"] == "Agent" and list(d["hooks"]) == ["PreToolUse"]
+    (hook,) = group["hooks"]
+    assert hook["type"] == "command" and hook["onFailure"] == "block"
+    assert hook["timeout"] == cw.SPAWN_GUARD_TIMEOUT_S
+    # -I: no module from the working folder or PYTHONPATH can stand in for the guard's imports
+    assert shlex.split(hook["command"]) == [sys.executable, "-I", "-m", "ecf.spawn_guard"]
+    # no claude.ai plugin: a plugin's mod could approve what the rules and the hook refuse
+    assert d["syncClaudeAiPlugins"] is False and d["syncClaudeAiSkills"] is False
+    assert d["enabledPlugins"] == {}
 
 
 def _frontmatter(text: str) -> dict[str, str]:
@@ -113,6 +125,11 @@ def test_plugin_has_only_the_skills(tmp_path: Path) -> None:
         assert "do what `next` says" in text and "at most 5" not in text
         # H2 stall: the session miscounted finished spawns and ended its turn to wait for one
         assert "don't wait for the spawns" in text and "every spawn of the round" not in text
+        assert "sets only `subagent_type`, `description` and `prompt`" in text  # OD-497
+    # no hooks, agents, MCP servers or settings in the plugin: they could undo the lock-down
+    assert sorted(p.name for p in dest.iterdir()) == [".claude-plugin", "skills"]
+    assert sorted(p.name for p in (dest / ".claude-plugin").iterdir()) == ["plugin.json"]
+    assert sorted(p.name for p in (dest / "skills").iterdir()) == ["ecf-eval", "ecf-review"]
 
 
 def test_agents_each_have_their_pin_and_their_own_server() -> None:
@@ -183,6 +200,38 @@ def test_mark_ready_keeps_other_keys(tmp_path: Path) -> None:
     assert json.loads(lay.state.read_text())["hasCompletedOnboarding"] is True
 
 
+def test_refuses_a_project_settings_folder(tmp_path: Path) -> None:
+    """A `.claude` folder in the working folder could turn the spawn guard off (OD-497)."""
+    lay = cw.layout(Paths("t", tmp_path))
+    (lay.work_dir / ".claude").mkdir(parents=True)
+    with pytest.raises(InvalidInputError, match="ecf never creates it"):
+        cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/s.sock"), MODELS)
+    assert not lay.settings.exists()
+
+
+def test_refuses_a_work_folder_inside_a_git_repository(tmp_path: Path) -> None:
+    """Claude Code reads `.claude/settings.local.json` at a repository's root (OD-497)."""
+    (tmp_path / ".git").mkdir()
+    lay = cw.layout(Paths("t", tmp_path / "home"))
+    assert "inside the git repository" in (cw.work_dir_problem(lay) or "")
+    with pytest.raises(InvalidInputError, match="inside the git repository"):
+        cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/s.sock"), MODELS)
+
+
+def test_refusal_opens_no_service_session(running: Paths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The work-folder check runs before `POST /v1/sessions` (OD-497)."""
+    (cw.layout(running).work_dir / ".claude").mkdir(parents=True)
+    monkeypatch.setattr(cw, "find_claude", lambda: "/no/claude")
+    monkeypatch.setattr(cw, "ecf_mcp_path", lambda: Path("/abs/ecf-mcp"))
+    with pytest.raises(InvalidInputError, match="ecf never creates it"):
+        cw.run(running, [], echo=lambda _s: None)
+    db = sqlite3.connect(running.db)
+    try:
+        assert db.execute("SELECT count(*) FROM claude_sessions").fetchone() == (0,)
+    finally:
+        db.close()
+
+
 def test_mcp_document() -> None:
     d = cw.mcp_doc(Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"))["mcpServers"]["ecf"]
     assert d["command"] == "/abs/ecf-mcp" and d["args"] == ["--stdio"]
@@ -209,7 +258,7 @@ def test_version_parsing() -> None:
 def test_version_floor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_claude(tmp_path / "bin", tmp_path / "rec", version="2.1.100")
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
-    with pytest.raises(ServiceUnavailableError, match=r"2\.1\.242"):
+    with pytest.raises(ServiceUnavailableError, match=r"2\.1\.295"):
         cw.find_claude()
 
 
@@ -242,6 +291,8 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
     assert Path(f"{record}.status").read_text().strip() == "ecf review · 5h 12% · 7d 95% 200"
     lay = cw.layout(running)
     args: list[str] = json.loads(Path(f"{record}.args").read_text())
+    assert args[:2] == ["--setting-sources", "user"]  # no project or local settings (OD-497)
+    args = args[2:]
     assert args[:3] == ["--strict-mcp-config", "--mcp-config", str(lay.mcp_config)]
     assert args[3:5] == ["--plugin-dir", str(lay.plugin_dir)] and args[5] == "--agents"
     agents = json.loads(args[6])
@@ -319,10 +370,12 @@ def test_purge_keeps_only_login_and_config(tmp_path: Path) -> None:
     cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
     for name in (".credentials.json", ".claude.json", "history.jsonl"):
         (lay.config_dir / name).write_text("{}")
-    for d in ("projects/p", "debug", "file-history", "plugins/ecf"):
+    for d in ("projects/p", "debug", "file-history", "plugins/synced/x", "plugins/marketplaces"):
         (lay.config_dir / d).mkdir(parents=True)
-    # history.jsonl, projects, debug, file-history, and ecf-plugin (rendered again at each start)
-    assert cw.purge_transcripts(lay) == 5
+    # history.jsonl, projects, debug, file-history, ecf-plugin (rendered again at each start) and
+    # Claude Code's plugin store (OD-497)
+    assert cw.purge_transcripts(lay) == 6
+    assert "plugins" not in cw.KEEP
     assert sorted(p.name for p in lay.config_dir.iterdir()) == sorted(cw.KEEP)
 
 

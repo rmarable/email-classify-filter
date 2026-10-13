@@ -559,7 +559,12 @@ def check_claude(paths: Paths, used: bool | None) -> list[Check]:
     """Claude Code, ecf's own Claude login, and the installed ecf-mcp and plugin (SPEC §13.2;
     V1.4 step 11). A problem fails doctor once an address uses preset B or C, else warns."""
     from ecf import claude_setup  # noqa: PLC0415
-    from ecf.claude_wrapper import MIN_CLAUDE, claude_version, layout  # noqa: PLC0415
+    from ecf.claude_wrapper import (  # noqa: PLC0415
+        MIN_CLAUDE,
+        claude_version,
+        layout,
+        work_dir_problem,
+    )
 
     bad = Level.FAIL if used else Level.WARN
     out = _check_mcp_and_plugin(bad)
@@ -574,6 +579,8 @@ def check_claude(paths: Paths, used: bool | None) -> list[Check]:
         return [Check("claude code", bad, f"version {_v(found) if found else 'unknown'}",
                       f"update Claude Code to {need}+"), *out]  # fmt: skip
     out.insert(0, Check("claude code", Level.OK, _v(found)))
+    if problem := work_dir_problem(layout(paths)):  # `ecf claude` refuses to start (OD-497)
+        out.append(Check("claude work folder", bad, problem))
     if used:
         login = claude_setup.auth_status(claude, layout(paths))
         if login is None:
