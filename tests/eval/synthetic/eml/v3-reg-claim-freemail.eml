@@ -1,0 +1,15 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id v3-reg-claim-freemail; Wed, 07 Oct 2026
+ 08:15:00 +0000
+From: Tax Office Enforcement <tax-office-enforcement@freemail.example>
+To: ap@acme.example
+Subject: Final notice: unpaid tax penalty
+Date: Wed, 07 Oct 2026 08:15:00 +0000
+Message-ID: <v3-reg-claim-freemail.c3e1421ed7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+This is the tax authority. Your business owes a penalty of USD 2,300.00. Pay =
+today by gift cards or wire to avoid legal action. Reply with your payment co=
+nfirmation.

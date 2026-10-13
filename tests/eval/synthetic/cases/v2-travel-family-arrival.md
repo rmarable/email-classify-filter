@@ -14,6 +14,7 @@ date: 2026-10-14T22:05:00Z
 expected:
   labels: {category: travel, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: family, fraud_risk: none}
   rule: travel_finance
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Hey,

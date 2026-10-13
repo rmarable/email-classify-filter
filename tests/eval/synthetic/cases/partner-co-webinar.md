@@ -13,6 +13,7 @@ author: claude
 expected:
   labels: {category: partnership, requires_reply: true, fraud_risk: none}
   rule: requires_reply
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Hi ACME team,

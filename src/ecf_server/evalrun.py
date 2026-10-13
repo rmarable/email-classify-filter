@@ -329,7 +329,9 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
     return CaseResult(id=case.id, correct=category_ok and rule_ok and safe, fields=fields,
                       confirmed=case.confirmed, safety=safe, got=got, fraud=fraud,
                       fraud_guard=exp.get("rule") == "fraud_guard", actions=sorted(names),
-                      scored=bool(exp))  # fmt: skip
+                      scored=bool(exp),
+                      expected={k: v for k, v in labels_exp.items()
+                                if isinstance(v, str | bool)})  # fmt: skip
 
 
 def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float | None]:

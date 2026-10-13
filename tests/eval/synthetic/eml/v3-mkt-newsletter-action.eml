@@ -1,0 +1,18 @@
+Received: from mail.crm-tool.example (mail.crm-tool.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id v3-mkt-newsletter-action; Fri, 09 Oct 2026
+ 12:00:00 +0000
+From: Product News <news@crm-tool.example>
+To: ap@acme.example
+Subject: October product news
+Date: Fri, 09 Oct 2026 12:00:00 +0000
+Message-ID: <v3-mkt-newsletter-action.8331d64532@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+New this month: shared inboxes and faster search.
+
+Action required for account owners: confirm your admin contact by 2026-10-17,=
+ or security notices will go to the old address.

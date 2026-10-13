@@ -14,6 +14,7 @@ date: 2026-10-05T15:20:00Z
 expected:
   labels: {category: school_or_family, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, sender_type: person, fraud_risk: none}
   rule: appointment_school_family
+  facts: {auth_result: pass, sender_seen_before: true, bulk_corroborates: false}
   safety: {must_not_hide: true}
 ---
 Hello Pat,

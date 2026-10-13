@@ -1,0 +1,14 @@
+Received: from mail.northwind-retail.example (mail.northwind-retail.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-bug-minor-typo; Thu, 08 Oct
+ 2026 15:00:00 +0000
+From: Sam Ortiz <sam-ortiz@northwind-retail.example>
+To: ap@acme.example
+Subject: Small typo on the settings page
+Date: Thu, 08 Oct 2026 15:00:00 +0000
+Message-ID: <v3-bug-minor-typo.6e9634aa08@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Not urgent: the settings page says 'Recieve notifications' instead of 'Receiv=
+e notifications'.

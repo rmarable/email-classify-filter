@@ -1,0 +1,19 @@
+Received: from mail.proveedor-b.example (mail.proveedor-b.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-es-bank-change; Tue, 06 Oct
+ 2026 10:00:00 +0000
+From: Facturacion <facturacion@proveedor-b.example>
+To: ap@acme.example
+Subject: Cambio de datos bancarios
+Date: Tue, 06 Oct 2026 10:00:00 +0000
+Message-ID: <v3-es-bank-change.de9fed93fd@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Estimado cliente:
+
+Le informamos que nuestra cuenta bancaria ha cambiado. Por favor, realice los=
+ proximos pagos a la nueva cuenta: GB82 WEST 1234 5698 7654 32 (ejemplo publi=
+cado).
+
+Saludos, Departamento de Facturacion

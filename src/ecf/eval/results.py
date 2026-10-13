@@ -14,7 +14,16 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
-from ecf.eval.metrics import holm, mcnemar_exact, newcombe_paired, percentile, wilson
+from ecf.eval.metrics import (
+    confusion,
+    holm,
+    macro_f1,
+    mcnemar_exact,
+    newcombe_paired,
+    ordinal_mae,
+    percentile,
+    wilson,
+)
 from ecf.schema import load_schema
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -107,6 +116,10 @@ class CaseResult(BaseModel):
     hide_blocked: list[str] = Field(default_factory=list[str])
     # a Claude eval case's claims, in order (v2.2.0); empty for a local run and in older files
     claims: list[ClaimRecord] = Field(default_factory=list[ClaimRecord])
+    # the case's expected labels (closed-vocabulary values only), so a report can count each
+    # field's positives, precision and recall from the file alone (v3.0.0 S1); empty in older
+    # files
+    expected: dict[str, str | bool] = Field(default_factory=dict[str, str | bool])
 
 
 class ResultFile(BaseModel):
@@ -145,13 +158,17 @@ class Comparison:
         return self.diff_ci[0] > -margin
 
 
-def compare(a: ResultFile, b: ResultFile) -> Comparison:
+def compare(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None) -> Comparison:
     """Paired comparison of B against A on the confirmed cases both ran and scored (SPEC §16.5,
-    R157)."""
-    if a.set_version != b.set_version:
-        raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version}")
+    R157). Runs on different sets compare only on an explicit `subset` of case ids (v3.0.0 S1:
+    a set that grew, or whose labels changed, against its older baseline); the caller reports
+    every input that differs."""
+    if a.set_version != b.set_version and subset is None:
+        raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version};"
+                                " compare a shared subset with --subset")  # fmt: skip
     bm = {c.id: c.correct for c in b.cases if _counts(c)}
-    pairs = [(c.correct, bm[c.id]) for c in a.cases if _counts(c) and c.id in bm]
+    pairs = [(c.correct, bm[c.id]) for c in a.cases
+             if _counts(c) and c.id in bm and (subset is None or c.id in subset)]  # fmt: skip
     if not pairs:
         raise InvalidInputError("no cases in common")
     n = len(pairs)
@@ -576,3 +593,83 @@ def _p(values: list[float]) -> tuple[float, float]:
 
 def _pi(values: list[int], p: float) -> int:
     return int(cast(float, percentile(values, p)))
+
+
+# ---------------------------------------------------------------------------- field metrics
+
+REPORT_ONLY_BELOW = 20  # positives: fewer and an item's recall decides nothing (Phase R P8)
+CONFUSION_FIELDS = ("category",)  # matrices only where they stay readable (P15)
+
+
+def field_metrics(r: ResultFile, kinds: Mapping[str, tuple[str, tuple[str, ...]]] | None = None
+                  ) -> dict[str, dict[str, Any]]:  # fmt: skip
+    """Per labelled field, from each confirmed case's expected labels and answer (SPEC §16.4;
+    v3.0.0 S1): yes/no fields get positives, precision and recall with a Wilson interval
+    (`report_only` under 20 positives); ordinal fields the mean absolute error in levels and how
+    many answers were under or over the label; enum fields macro-F1, and for `category` the
+    confusion cells that aren't zero. A missing answer counts as wrong. Empty for files without
+    expected labels (before v3.0.0)."""
+    if kinds is None:
+        kinds = {n: (f.kind.value, tuple(f.values or ())) for n, f in load_schema().fields.items()}
+    cases = [c for c in r.cases if _counts(c) and c.expected]
+    out: dict[str, dict[str, Any]] = {}
+    for name, (kind, values) in kinds.items():
+        pairs = [(c.expected[name], c.got.get(name)) for c in cases if name in c.expected]
+        if not pairs:
+            continue
+        if kind == "boolean":
+            pos = sum(g is True for g, _ in pairs)
+            tp = sum(g is True and p is True for g, p in pairs)
+            fp = sum(g is False and p is True for g, p in pairs)
+            lo, hi = wilson(tp, pos) if pos else (0.0, 0.0)
+            out[name] = {"n": len(pairs), "positives": pos, "tp": tp, "fp": fp,
+                         "fn": pos - tp,
+                         "precision": round(100 * tp / (tp + fp), 1) if tp + fp else None,
+                         "recall": round(100 * tp / pos, 1) if pos else None,
+                         "recall_wilson95": [round(100 * lo, 1), round(100 * hi, 1)],
+                         "report_only": pos < REPORT_ONLY_BELOW}  # fmt: skip
+        elif kind == "ordinal":
+            idx = {v: i for i, v in enumerate(values)}
+            ok = [(str(g), str(p)) for g, p in pairs if g in idx and p in idx]
+            out[name] = {"n": len(pairs), "answered": len(ok),
+                         "mae": round(ordinal_mae([g for g, _ in ok], [p for _, p in ok], values),
+                                      3) if ok else None,
+                         "under": sum(idx[p] < idx[g] for g, p in ok),
+                         "over": sum(idx[p] > idx[g] for g, p in ok)}  # fmt: skip
+        else:
+            gold = [str(g) for g, _ in pairs]
+            pred = [str(p) if p is not None else "(none)" for _, p in pairs]
+            labels = sorted(set(gold) | set(pred))
+            entry: dict[str, Any] = {
+                "n": len(pairs),
+                "macro_f1": round(macro_f1(gold, pred, labels), 3),
+            }
+            if name in CONFUSION_FIELDS:
+                m = confusion(gold, pred, labels)
+                entry["confusion"] = [[g, p, k] for g in labels for p, k in m[g].items() if k]
+            out[name] = entry
+    return out
+
+
+def field_lines(r: ResultFile) -> list[str]:
+    """`field_metrics` as report lines; confusion cells off the diagonal only."""
+    lines: list[str] = []
+    for name, m in field_metrics(r).items():
+        if "recall" in m:
+            note = "  (report only: under 20 positives)" if m["report_only"] else ""
+            lines.append(
+                f"{name}: positives {m['positives']}/{m['n']}, recall {m['recall']}%"
+                f" (Wilson {m['recall_wilson95']}), precision {m['precision']}%{note}"
+            )
+        elif "mae" in m:
+            lines.append(
+                f"{name}: MAE {m['mae']} levels over {m['answered']}/{m['n']},"
+                f" under {m['under']}, over {m['over']}"
+            )
+        else:
+            off = [f"{g}->{p} {k}" for g, p, k in m.get("confusion", []) if g != p]
+            lines.append(
+                f"{name}: macro-F1 {m['macro_f1']} over {m['n']}"
+                + (f"; confused: {', '.join(off)}" if off else "")
+            )
+    return lines

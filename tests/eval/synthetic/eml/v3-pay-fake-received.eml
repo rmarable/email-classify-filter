@@ -1,0 +1,15 @@
+Received: from mail.pay-notice.test (mail.pay-notice.test [192.0.2.10]) by
+ mx.example.net with ESMTPS id v3-pay-fake-received; Mon, 05 Oct 2026 09:40:00
+ +0000
+From: Payments Team <payments@pay-notice.test>
+To: ap@acme.example
+Subject: Payment received - confirm your account to release funds
+Date: Mon, 05 Oct 2026 09:40:00 +0000
+Message-ID: <v3-pay-fake-received.ec428bbd5f@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+We received a payment of USD 4,980.00 for your account. To release the funds,=
+ confirm your account by entering your online banking username and password o=
+n our secure page within 24 hours.

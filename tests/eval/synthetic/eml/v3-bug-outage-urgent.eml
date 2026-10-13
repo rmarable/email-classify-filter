@@ -1,0 +1,14 @@
+Received: from mail.northwind-retail.example (mail.northwind-retail.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-bug-outage-urgent; Thu, 08
+ Oct 2026 05:50:00 +0000
+From: Morgan Hale <morgan-hale@northwind-retail.example>
+To: ap@acme.example
+Subject: URGENT: nobody can log in
+Date: Thu, 08 Oct 2026 05:50:00 +0000
+Message-ID: <v3-bug-outage-urgent.57a5a4b6a4@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Since 05:30 none of our 40 agents can sign in; every attempt shows error 503.=
+ Our support desk is down. Please help as soon as possible.

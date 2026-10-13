@@ -26,6 +26,8 @@ from ecf.eval.results import (
     compare,
     compare_fields,
     differences,
+    field_lines,
+    field_metrics,
     input_warnings,
     schema_warning,
     scoring,
@@ -530,3 +532,76 @@ def test_call_figures_leave_out_cold_starts() -> None:
         {"after": "other", "calls": 2, "short": 0, "prompt_s": None},
     ]
     assert call_figures([]) == {"cache_short": []}
+
+
+def test_compare_on_a_subset_of_two_different_sets() -> None:
+    a = _run("A", [True, False, True, False])
+    b = _run("B", [True, True, True, True, False]).model_copy(update={"set_version": "v2"})
+    with pytest.raises(InvalidInputError, match="--subset"):
+        compare(a, b)
+    c = compare(a, b, frozenset({"0", "1", "2"}))
+    assert (c.n, c.b_only, c.a_only) == (3, 1, 0)
+
+
+def _labelled(
+    cases: list[tuple[dict[str, str | bool], dict[str, str | bool | None]]],
+) -> ResultFile:
+    return ResultFile(run_id="r", pair="claude/claude", set_version="v1", created_at="t",
+                      cases=[CaseResult(id=str(i), correct=True, expected=e, got=g)
+                             for i, (e, g) in enumerate(cases)])  # fmt: skip
+
+
+def test_field_metrics_count_positives_and_intervals() -> None:
+    r = _labelled([({"payment_related": True}, {"payment_related": True}),
+                   ({"payment_related": True}, {"payment_related": False}),
+                   ({"payment_related": True}, {}),  # no answer counts as a miss
+                   ({"payment_related": False}, {"payment_related": True}),
+                   ({"payment_related": False}, {"payment_related": False})])  # fmt: skip
+    m = field_metrics(r)["payment_related"]
+    assert (m["n"], m["positives"], m["tp"], m["fp"], m["fn"]) == (5, 3, 1, 1, 2)
+    assert m["recall"] == pytest.approx(33.3) and m["precision"] == pytest.approx(50.0)
+    lo, hi = m["recall_wilson95"]
+    assert lo < 33.3 < hi and m["report_only"] is True  # fewer than 20 positives
+
+
+def test_field_metrics_ordinal_mae_and_direction() -> None:
+    r = _labelled([({"fraud_risk": "high"}, {"fraud_risk": "high"}),
+                   ({"fraud_risk": "high"}, {"fraud_risk": "medium"}),
+                   ({"fraud_risk": "none"}, {"fraud_risk": "high"}),
+                   ({"fraud_risk": "low"}, {"fraud_risk": "none"})])  # fmt: skip
+    m = field_metrics(r)["fraud_risk"]
+    assert m["mae"] == pytest.approx(1.25) and (m["under"], m["over"]) == (2, 1)
+
+
+def test_field_metrics_confusion_only_for_category() -> None:
+    r = _labelled([({"category": "invoice", "sender_type": "vendor"},
+                    {"category": "invoice", "sender_type": "customer"}),
+                   ({"category": "invoice", "sender_type": "vendor"},
+                    {"category": "finance", "sender_type": "vendor"})])  # fmt: skip
+    got = field_metrics(r)
+    assert ["invoice", "finance", 1] in got["category"]["confusion"]
+    assert "confusion" not in got["sender_type"] and "macro_f1" in got["sender_type"]
+    lines = field_lines(r)
+    assert any("confused: invoice->finance 1" in line for line in lines)
+
+
+def test_field_metrics_are_empty_for_older_files() -> None:
+    assert field_metrics(_run("A", [True, False])) == {}
+
+
+def test_cli_compare_subset(tmp_path: Path) -> None:
+    a = _run("A", [True, False, True])
+    b = _run("B", [True, True, True, False]).model_copy(update={"set_version": "v2"})
+    fa, fb, ids = tmp_path / "a.json", tmp_path / "b.json", tmp_path / "ids.txt"
+    fa.write_text(a.model_dump_json())
+    fb.write_text(b.model_dump_json())
+    r = CliRunner()
+    refused = r.invoke(app, ["eval", "compare", str(fa), str(fb)])
+    assert refused.exit_code != 0 and "--subset" in str(refused.exception)
+    ids.write_text("0\n1\n2\n")
+    out = r.invoke(app, ["eval", "compare", str(fa), str(fb), "--subset", str(ids)])
+    assert (
+        out.exit_code == 0 and "paired cases: 3" in out.output and "the sets differ" in out.output
+    )
+    same = r.invoke(app, ["eval", "compare", str(fa), str(fb), "--subset", str(fa)])
+    assert same.exit_code == 0 and "paired cases: 3" in same.output
