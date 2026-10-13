@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +229,58 @@ def test_in_progress_counts_the_sessions_claims_and_an_empty_reply_waits_for_the
     assert q5["items"] == [] and q5["in_progress"] == 0 and slept == []  # nothing to wait for
 
 
+def test_an_expired_claims_agent_holds_back_other_agent_types(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """An expired claim's agent may still be running (dispatch plan S3): no other agent type
+    starts for that session for GRACE, and the same agent is re-handed its work at once."""
+    add(conn, clock, "c", "C")
+    waiting_item(conn, clock, "c")
+    first = queue(conn, clock)["items"][0]
+    assert queue(conn, clock)["next"] == "call again"
+    clock.advance(int(claude_review.CLAIM_TTL.total_seconds()) + 1)
+    again = queue(conn, clock)
+    assert again["results"] == [{"id": first["id"], "outcome": "claim_expired"}]
+    assert [i["agent"] for i in again["items"]] == [first["agent"]]
+    claude_review._GRACE[S1] = {"ecf-actor-high": clock.now() + timedelta(seconds=10)}  # pyright: ignore[reportPrivateUsage]
+    waiting_item(conn, clock, "c", 1)
+    q = queue(conn, clock, session=S1)
+    assert q["items"] == [] and q["next"] == "call again" and q["more"] is True
+
+
+def test_the_review_wait_goes_on_while_next_says_call_again(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    waiting_item(conn, clock, "c")
+    claude_review._GRACE[S1] = {"ecf-actor-high": clock.now() + timedelta(seconds=60)}  # pyright: ignore[reportPrivateUsage]
+    slept: list[float] = []
+    q = claude_review.review_queue_waiting(conn, clock, S1, sleep=slept.append)
+    assert q["next"] == "call again" and q["in_progress"] == 0 and slept
+
+
+def test_an_empty_queue_says_end(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    add(conn, clock, "c", "C")
+    assert queue(conn, clock)["next"] == "end"
+
+
+def test_a_held_resubmission_is_pending_not_a_conflict(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    sid = waiting_item(conn, clock, "c")
+    item = queue(conn, clock)["items"][0]
+    got = claude_review.record_classification(conn, clock, S1, sid, item["claim_token"], REQUEST,
+                                              item["agent"])  # fmt: skip
+    assert isinstance(got, Hold)
+    again = claude_review.record_classification(conn, clock, S1, sid, item["claim_token"],
+                                                REQUEST, item["agent"])  # fmt: skip
+    assert again == {"accepted": True, "pending": True, "errors": []}
+    with pytest.raises(ConflictError):  # another session's token never replays
+        claude_review.record_classification(conn, clock, S2, sid, item["claim_token"], REQUEST,
+                                            item["agent"])  # fmt: skip
+
+
 def test_limit_more_address_and_paused(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add(conn, clock, "c", "C")
     add(conn, clock, "d", "C")
@@ -237,6 +290,7 @@ def test_limit_more_address_and_paused(conn: sqlite3.Connection, clock: FakeCloc
     assert [i["id"] for i in q["items"]] == sids[:2] and q["more"] is True
     with write_tx(conn):
         conn.execute("UPDATE addresses SET paused = 1 WHERE address_id = 'c'")
+    claude_review.release_session(conn, S1)  # a session gets nothing while its claims are out
     assert [i["id"] for i in queue(conn, clock)["items"]] == [d1]
     for bad in (0, 51):
         with pytest.raises(InvalidInputError):
@@ -389,7 +443,7 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     pinned = json.loads(r["pinned_models"])
     assert pinned["classifier"] == claude_pins.load_lock()["classifier"]
     assert pinned["agent"] == "ecf-classifier"
-    with pytest.raises(ConflictError):  # one submission per claim
+    with pytest.raises(ConflictError):  # one submission per claim (applied: has ended)
         submit_classification(conn, clock, S1, sid, tok, REQUEST)
     q = queue(conn, clock)
     assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}]

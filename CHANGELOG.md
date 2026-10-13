@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- `/ecf-eval` and `/ecf-review` no longer stall when Claude Code restarts an agent's tool server mid-round: a repeated submission gets its first answer back, claims last 5 minutes instead of 15, and the service tells the session when to call again or stop (OD-496).
+
 ## v2.2.3 (2026-10-12)
 
 - `ecf models install` and the model copy after an upgrade work again with Ollama 0.40 on Apple silicon, which pulls a different (MLX) build for `gemma4:12b`: ecf now pulls the same pinned model as `gemma4:12b-it-q4_K_M`, and uses a copy Ollama already holds before pulling (SPEC §7.5, §21.2).

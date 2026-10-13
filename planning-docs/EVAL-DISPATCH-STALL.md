@@ -1,7 +1,13 @@
 # Eval and review dispatch stalls
 
-- **Status:** draft 2 (2026-10-12), findings S1-S13 accepted by the operator; not built. No release
-  assigned.
+- **Status:** draft 2 (2026-10-12), findings S1-S13 accepted by the operator; built on branch
+  `dispatch-stall` (OD-496). No release assigned. As built, after a two-agent diff review (D1-D10,
+  `state-archive/eval-dispatch-stall/`), where it differs: change 1 (one spawn per round) was
+  dropped: about 6x the wall time at `high` batch 1, and change 2 alone answers the cut calls;
+  the grace window holds back only other agent types; replay checks the submission's content,
+  `/ecf-review` replays only held submissions, and a non-final invalid reply isn't replayed; the
+  services wait while `next` says `call again`; review holds count for `next` until the claim's
+  original expiry.
 - **Base:** `main` at `ed31aaa` (2.2.3).
 - **Evidence:** run H1 `ee1915bc` (SPEC §21.2, "Haiku 5.5 as the classifier", Stalls), the
   `d739c93b` stall (SPEC §21.2, timing plan 6a), and Claude Code's MCP logs for the `ecf claude`

@@ -232,11 +232,12 @@ TOOLS: tuple[ToolDef, ...] = (
     ToolDef(
         "review_queue", "Claim items to review",
         "Claims up to `limit` waiting items for this session and returns, for each, its id, "
-        "address, need (classify or act), the agent to hand it to, a claim token (valid 15 "
+        "address, need (classify or act), the agent to hand it to, a claim token (valid 5 "
         "minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the "
         "ids and claim tokens in the agent's prompt; only that agent can read the message. "
         "`results` reports how earlier claims ended. `more` is true when more items are "
-        "waiting. `in_progress` counts this session's claims still out.",
+        "waiting. `in_progress` counts this session's claims still out. With no items, `next` "
+        "says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
         {"address_id": ADDRESS,
          "limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
                    "description": "At most this many items (1-50)."}},
@@ -291,7 +292,8 @@ TOOLS: tuple[ToolDef, ...] = (
         "returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: "
         "give all items with the same spawn to one Agent spawn, passing only the ids and claim "
         "tokens; never read a case yourself. `results` reports how earlier claims ended; `done` "
-        "is true when the eval has ended.",
+        "is true when the eval has ended. With no items, `next` says what to do: `call again` "
+        "(`frees_in_s`: seconds until work may free up) or `end`.",
         {"limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
                    "description": "At most this many cases (1-50)."}},
         (), read_only=False, work_only=True, handler=_eval_next,

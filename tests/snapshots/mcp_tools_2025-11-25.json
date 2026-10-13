@@ -42,7 +42,7 @@
         "readOnlyHint": false,
         "title": "Claim items to review"
       },
-      "description": "Claims up to `limit` waiting items for this session and returns, for each, its id, address, need (classify or act), the agent to hand it to, a claim token (valid 15 minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the ids and claim tokens in the agent's prompt; only that agent can read the message. `results` reports how earlier claims ended. `more` is true when more items are waiting. `in_progress` counts this session's claims still out.",
+      "description": "Claims up to `limit` waiting items for this session and returns, for each, its id, address, need (classify or act), the agent to hand it to, a claim token (valid 5 minutes) and `spawn`: give all items with the same spawn to one Agent spawn. Pass the ids and claim tokens in the agent's prompt; only that agent can read the message. `results` reports how earlier claims ended. `more` is true when more items are waiting. `in_progress` counts this session's claims still out. With no items, `next` says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -70,7 +70,7 @@
         "readOnlyHint": false,
         "title": "Claim eval cases"
       },
-      "description": "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: give all items with the same spawn to one Agent spawn, passing only the ids and claim tokens; never read a case yourself. `results` reports how earlier claims ended; `done` is true when the eval has ended.",
+      "description": "For /ecf-eval: claims up to `limit` cases of the eval registered for this session and returns, for each, its id, need, the agent to hand it to, a claim token and `spawn`: give all items with the same spawn to one Agent spawn, passing only the ids and claim tokens; never read a case yourself. `results` reports how earlier claims ended; `done` is true when the eval has ended. With no items, `next` says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

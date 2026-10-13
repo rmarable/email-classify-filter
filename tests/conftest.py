@@ -92,9 +92,10 @@ def _fresh_gate_inputs() -> None:
 @pytest.fixture(autouse=True)
 def _no_eval_run() -> None:
     """A Claude eval run lives in service memory; the status line reports it, so none leaks."""
-    from ecf_server import claude_eval  # noqa: PLC0415
+    from ecf_server import claude_eval, claude_review  # noqa: PLC0415
 
     claude_eval.reset()
+    claude_review.reset()
 
 
 @pytest.fixture

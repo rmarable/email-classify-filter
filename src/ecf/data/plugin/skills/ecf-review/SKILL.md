@@ -14,22 +14,19 @@ no other subagent type, and no spawn to wait, track progress or call a tool for 
 Repeat until done:
 
 1. Call `mcp__ecf__review_queue` (no arguments needed).
-2. If `items` is empty: when `in_progress` is above 0, call `mcp__ecf__review_queue` again (at
-   most 5 times in a row with no items); otherwise go to the end.
+2. If `stopped` is present, stop at once and tell the person that line as it is. If `items` is
+   empty, do what `next` says: `call again` means go back to step 1, however many times it
+   takes; `end` means go to the end. Never decide this yourself.
 3. Group the items by `spawn`. Give each group to one spawn of the Agent tool, using the
-   group's `agent` value exactly as the subagent type. The prompt holds only one line per item,
-   `id=<id> claim_token=<claim_token>`, and nothing else. Hand out one agent type at a time:
-   the spawns of the same `agent` may run in parallel, but wait for them all to finish before
-   starting another agent's spawns.
-4. When every spawn of the round has finished, go back to step 1. Don't use what a subagent
-   says: outcomes come only from `results` in the next `review_queue` call. Never end your turn
-   to wait for a spawn: if you aren't sure every spawn has finished, go back to step 1 anyway;
-   `in_progress` says how many claims are still out.
-
-If `review_queue` returns `stopped`, stop at once and tell the person that line as it is.
+   group's `agent` value exactly as the subagent type; the spawns may run in parallel. The prompt
+   holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing else. Every
+   item returned is already claimed for you: always spawn it, in this round.
+4. When every spawn of the round has finished, go back to step 1. Don't use what a
+   subagent says: outcomes come only from `results` in the next `review_queue` call. Never end
+   your turn to wait: the next `review_queue` reply says what to do.
 
 At the end, tell the person, in two or three lines: how many items were handed out, and the
 outcomes from `results` counted by outcome. Quote nothing else.
 
 Stop early if the person asks you to, or if a tool says the session isn't authorized. If a
-spawn fails, don't retry it in this round; its claim expires and the item comes back later.
+spawn fails, don't retry it; its claim expires and the item comes back later.

@@ -149,6 +149,10 @@ class Work:
     agent: str = ""
     invalid: int = 0
     claims: list[Claim] = field(default_factory=list[Claim])  # every claim, the current last
+    # the reply to the last submission that ended a claim: (session, fence, token hash, agent,
+    # reply); a resubmission with that token gets it again (a lost reply, not a new answer)
+    last: tuple[str, int, str, str, str, bool, dict[str, Any]] | None = None  # + digest, ended
+    held_digest: str = ""  # the held submission's payload digest
 
 
 @dataclass
@@ -174,6 +178,8 @@ class Run:
     repeats_started: bool = False
     diffs: int = 0
     rounds: int = 0  # `eval_next` replies that handed out items
+    # session -> agent -> until when an expired claim's agent may still be running
+    grace: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     summary: dict[str, Any] | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -551,9 +557,11 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
     with run.lock:
         _check_expiry(connect, clock, run)
         now = clock.now()
-        for w in run.works:  # expired claims go back
+        for w in run.works:  # expired claims go back; their agent may still be running
             if w.claim == "claimed" and w.expires is not None and w.expires <= now:
                 _outcome(run, w, "claim_expired")
+                if w.session is not None:
+                    run.grace.setdefault(w.session, {})[w.agent] = now + GRACE
                 w.claim, w.session = "free", None
         results = run.outcomes.pop(session_id, [])
         base: dict[str, Any] = {"run_id": run.run_id[:8], "results": results,
@@ -566,27 +574,54 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
             run.sessions.append(session_id)
         free = [w for w in run.works if w.stage in ("classify", "act", "repeat")
                 and w.claim == "free"]  # fmt: skip
-        # One agent type per round, and none while this session's claims for another are out:
-        # the model check can't tell overlapping work of two models apart (telemetry.py), so the
-        # service keeps them apart instead of relying on the session to (V1.0.0 run 6cea77b1).
-        # only claims still being worked on: a held submission's window has closed (its spawn
-        # finished), so new work on another model can't overlap it (C high run 9e745b99 ended
-        # its loop on empty rounds while holds settled)
-        out_agents = {w.agent for w in run.works
-                      if w.session == session_id and w.claim == "claimed"}  # fmt: skip
-        agent = _agent_of(run, free[0]) if free else None
-        if agent is not None and out_agents - {agent}:
-            free = []
-        free = [w for w in free if _agent_of(run, w) == agent]
-        picked = free[:limit]
+        picked, more = _round(run, session_id, free, limit, now)
         out = [_claim(run, w, session_id, now) for w in picked]
         _spawns(run, out)
         if out:
             _record_claims(run, picked, out, session_id, limit, now)
         busy = sum(w.claim != "free" for w in run.works)
-        return base | {"items": out, "more": len(free) > limit, "done": False,
-                       "preparing": run.state == "preparing", "in_progress": busy,
-                       "progress": progress_line(_progress(run))}  # fmt: skip
+        reply = base | {"items": out, "more": more, "done": False,
+                        "preparing": run.state == "preparing", "in_progress": busy,
+                        "progress": progress_line(_progress(run))}  # fmt: skip
+        return reply if out else reply | _next(run, session_id, now)
+
+
+def _round(run: Run, session_id: str, free: list[Work], limit: int,
+           now: datetime) -> tuple[list[Work], bool]:  # fmt: skip
+    """The cases this round hands out: one agent type at a time per session. Two agent types at
+    once would defeat the model check, which can't tell their work apart (telemetry.py; V1.0.0
+    run 6cea77b1). An expired claim's agent may still be running for `GRACE`: until then no other
+    agent type starts, and that agent is preferred. Parallel spawns of one type stay: Claude Code
+    restarts their shared `ecf-mcp` server when one ends, and a call cut that way is retried and
+    answered by `_again` (H1 `ee1915bc`, SPEC §21.2)."""
+    grace = {a: t for a, t in run.grace.get(session_id, {}).items() if t > now}
+    run.grace[session_id] = grace
+    busy = {w.agent for w in run.works if w.session == session_id and w.claim == "claimed"}
+    if not free:
+        return [], False
+    preferred = [w for w in free if _agent_of(run, w) in busy | set(grace)]
+    agent = _agent_of(run, (preferred or free)[0])
+    if (busy | set(grace)) - {agent}:
+        return [], True
+    same = [w for w in free if _agent_of(run, w) == agent]
+    return same[:limit], len(same) > limit
+
+
+def _next(run: Run, session_id: str, now: datetime) -> dict[str, Any]:
+    """What the session does after a reply with no items (the skills obey it, so the session never
+    judges): call again while work may still free up, with the seconds until the soonest change;
+    otherwise end. A held submission counts for `HOLD_WAIT` after its answer; after that it is
+    judged at session end, as before."""
+    ends = [w.expires for w in run.works if w.claim == "claimed" and w.expires is not None]
+    ends += [t for t in run.grace.get(session_id, {}).values() if t > now]
+    ends += [w.claims[-1].answered + HOLD_WAIT for w in run.works
+             if w.session == session_id and w.claim == "held" and w.claims
+             and w.claims[-1].answered is not None
+             and w.claims[-1].answered + HOLD_WAIT > now]  # fmt: skip
+    if run.state == "preparing" or ends:
+        soonest = min(ends, default=now)
+        return {"next": "call again", "frees_in_s": max(0, round((soonest - now).total_seconds()))}
+    return {"next": "end"}
 
 
 def _agent_of(run: Run, w: Work) -> str:
@@ -600,6 +635,8 @@ def _agent_of(run: Run, w: Work) -> str:
 
 WAIT_S = 6.0  # under ecf-mcp's 10 s request limit (§15.4)
 POLL_S = 2.0
+GRACE = timedelta(seconds=300)  # an expired claim's agent may still be running (plan S3)
+HOLD_WAIT = timedelta(seconds=120)  # a held submission keeps the session polling this long
 
 
 def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str,
@@ -607,11 +644,11 @@ def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, s
                       sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
     """`eval_next`, but a reply that would be empty only because work is still out or being
     prepared waits up to `WAIT_S` for some: the session can't pause itself (`ecf claude` denies
-    every tool that could), and gives up after 5 empty replies (C high run 9e745b99)."""
+    every tool that could), so each call it makes waits a little before `next` sends it back."""
     waited = 0.0
     while True:
         got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped)
-        busy = got.get("in_progress", 0) or got.get("preparing")
+        busy = got.get("in_progress", 0) or got.get("preparing") or got.get("next") == "call again"
         if got.get("items") or got.get("done") or got.get("stopped") or not busy:
             return got
         if waited >= WAIT_S:
@@ -674,11 +711,11 @@ def owns(ref: str) -> bool:
     return run is not None and any(w.ref == ref for w in run.works)
 
 
-def _claimed(clock: Clock, session_id: str, ref: str, token: str, agent: str,
-             need: str | None = None) -> tuple[Run, Work]:  # fmt: skip
-    run = current()
-    w = run.by_ref.get(ref) if run is not None else None
-    if run is None or w is None:
+def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agent: str,
+             need: str | None = None) -> Work:  # fmt: skip
+    """The claim the token names, checked; the caller holds `run.lock`."""
+    w = run.by_ref.get(ref)
+    if w is None:
         raise NotFoundError("no claim on that item")
     if w.agent != agent:
         raise ForbiddenProfileError(f"that claim is for {w.agent}, not {agent}")
@@ -691,15 +728,16 @@ def _claimed(clock: Clock, session_id: str, ref: str, token: str, agent: str,
         raise ConflictError("that claim has ended; run eval_next again")
     if need is not None and w.need != need:
         raise ConflictError(f"that claim is to {w.need}, not to {need}")
-    return run, w
+    return w
 
 
 def get_message(clock: Clock, session_id: str, ref: str, token: str,
                 agent: str) -> dict[str, Any]:  # fmt: skip
     """As `/ecf-review`'s: only the named agent's server gets the text (OD-307); no facts but the
     derived signals (OD-484), no labels."""
-    run, w = _claimed(clock, session_id, ref, token, agent)
+    run = _run_or_missing()
     with run.lock:
+        w = _claimed(run, clock, session_id, ref, token, agent)
         if w.claims and w.claims[-1].read is None:
             w.claims[-1].read = clock.now()
         text = w.cls_text if w.need == "classify" else w.act_text
@@ -719,32 +757,84 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
 
 def record_classification(clock: Clock, session_id: str, ref: str, token: str,
                           classification: Any, agent: str) -> dict[str, Any] | Hold:  # fmt: skip
-    run, w = _claimed(clock, session_id, ref, token, agent, "classify")
-    result, errors = claude_review.check_classification(classification, run.schema)
-    with run.lock:
+    run = _run_or_missing()
+    with run.lock:  # the claim is checked and held in one step (plan S4)
+        digest = _digest({"classification": classification})
+        if (again := _again(run, session_id, ref, token, agent, digest)) is not None:
+            return again
+        w = _claimed(run, clock, session_id, ref, token, agent, "classify")
+        result, errors = claude_review.check_classification(classification, run.schema)
         if result is None:
-            return _invalid(run, w, errors)
-        return _hold(clock, w, session_id, {"classification": result})
+            return _invalid(run, w, errors, digest)
+        return _hold(clock, w, session_id, {"classification": result}, digest)
 
 
 def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: dict[str, Any],
                    agent: str) -> dict[str, Any] | Hold:  # fmt: skip
-    run, w = _claimed(clock, session_id, ref, token, agent, "act")
+    run = _run_or_missing()
     proposal = {k: body.get(k) for k in ("action", "target", "reason", "question", "text")}
     with run.lock:
+        digest = _digest({"proposal": proposal})
+        if (again := _again(run, session_id, ref, token, agent, digest)) is not None:
+            return again
+        w = _claimed(run, clock, session_id, ref, token, agent, "act")
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
                                            actor.allowed(_cls(w)))  # fmt: skip
         if why is not None:
-            return _invalid(run, w, [why])
-        return _hold(clock, w, session_id, {"proposal": proposal})
+            return _invalid(run, w, [why], digest)
+        return _hold(clock, w, session_id, {"proposal": proposal}, digest)
 
 
-def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
+def _run_or_missing() -> Run:
+    run = current()
+    if run is None:
+        raise NotFoundError("no claim on that item")
+    return run
+
+
+def _digest(payload: Any) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _again(run: Run, session_id: str, ref: str, token: str, agent: str,
+           digest: str) -> dict[str, Any] | None:  # fmt: skip
+    """A resubmission of a submission already taken (its reply was lost when Claude Code
+    restarted the agent's server; plan S2): the same submission gets the same reply again, never
+    a second record; a different one under a claim that already has its answer is refused."""
+    w = run.by_ref.get(ref)
+    if w is None:
+        return None
+    fence, h = token.partition(".")[0], _hash(token)
+    if (w.claim == "held" and w.session == session_id and fence == str(w.fence)
+            and w.agent == agent and hmac.compare_digest(h, w.token_hash)):  # fmt: skip
+        if digest != w.held_digest:
+            raise ConflictError("that claim already has an answer")
+        return {"accepted": True, "pending": True, "errors": []}
+    if w.last is not None:
+        s_id, f, th, a, d, ended, reply = w.last
+        if s_id == session_id and fence == str(f) and a == agent and hmac.compare_digest(h, th):
+            if d == digest:
+                return dict(reply)
+            if ended:
+                raise ConflictError("that claim already has an answer")
+    return None
+
+
+def _keep(w: Work, digest: str, reply: dict[str, Any], *, ended: bool) -> None:
+    """Keep the reply to the current claim's last submission, for `_again`."""
+    if w.session is not None:
+        w.last = (w.session, w.fence, w.token_hash, w.agent, digest, ended, dict(reply))
+
+
+def _invalid(run: Run, w: Work, errors: list[str], digest: str) -> dict[str, Any]:
     """As `/ecf-review`: 3 tries per claim; after the last, the case is scored as the local
     model's failures are (no classification, or no proposal)."""
     w.invalid += 1
     ended = w.invalid >= claude_review.INVALID_MAX
-    if ended:
+    reply = {"accepted": False, "errors": errors,
+             "tries_left": 0 if ended else claude_review.INVALID_MAX - w.invalid}  # fmt: skip
+    if ended:  # a lost non-final reply costs a try: replaying it could loop forever
+        _keep(w, digest, reply, ended=True)
         _outcome(run, w, "invalid")
         w.claim, w.session = "free", None
         if w.stage == "classify":
@@ -754,12 +844,12 @@ def _invalid(run: Run, w: Work, errors: list[str]) -> dict[str, Any]:
         else:  # repeat: no second classification differs from the first
             run.diffs += w.classification is not None
             w.stage = "done"
-    return {"accepted": False, "errors": errors,
-            "tries_left": 0 if ended else claude_review.INVALID_MAX - w.invalid}  # fmt: skip
+    return reply
 
 
-def _hold(clock: Clock, w: Work, session_id: str, payload: dict[str, Any]) -> Hold:
-    w.claim = "held"
+def _hold(clock: Clock, w: Work, session_id: str, payload: dict[str, Any],
+          digest: str) -> Hold:  # fmt: skip
+    w.claim, w.held_digest = "held", digest
     if w.claims:
         w.claims[-1].answered = clock.now()
     return Hold(session_id, w.ref, w.fence, w.need, w.agent, payload, kind="eval")
@@ -783,6 +873,7 @@ def settle(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: No
         if seen is None or seen.model != expected:
             return _refuse(connect, clock, notifier, tel, run, w, seen, expected)
         _outcome(run, w, "recorded")
+        _keep(w, w.held_digest, {"accepted": True, "errors": []}, ended=True)
         w.claim, w.session = "free", None
         if hold.need == "classify":
             cls: dict[str, Any] = hold.payload["classification"]
@@ -807,6 +898,8 @@ def _refuse(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: N
     else:
         model, why = seen.model, "model"
     _outcome(run, w, "model_refused")
+    why_text = f"refused: the call came from {model}; this agent's model is {expected}"
+    _keep(w, w.held_digest, {"accepted": False, "tries_left": 0, "errors": [why_text]}, ended=True)
     w.claim, w.session = "free", None  # the case waits for another round
     log.warning("claude_eval.model_refused", run_id=run.run_id[:8], check=why)
     if tel.refused(session_id, model, expected):
@@ -818,7 +911,6 @@ def _refuse(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: N
                          " this session; see ecf doctor.")  # fmt: skip
         finally:
             conn.close()
-    why_text = f"refused: the call came from {model}; this agent's model is {expected}"
     return {"accepted": False, "tries_left": 0, "errors": [why_text]}
 
 
