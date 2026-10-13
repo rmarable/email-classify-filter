@@ -42,7 +42,7 @@ from ecf.errors import EcfError, InvalidInputError, ServiceUnavailableError
 from ecf.paths import Paths
 from ecf.plugin_digest import plugin_digest
 
-MIN_CLAUDE = (2, 1, 242)
+MIN_CLAUDE = (2, 1, 295)  # `onFailure: block` on the spawn guard hook (OD-497)
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
 MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results"]
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
@@ -59,6 +59,11 @@ DENIED_TOOLS = [
     "Write",
     "NotebookEdit",
     *(f"Agent({a})" for a in BUILTIN_AGENTS),
+    # Where a spawn runs and on which model aren't the main session's choice (OD-497): B0 run 2
+    # spawned with `isolation: "remote"` (SPEC §21.2). `*` matches any explicit value; the hook
+    # (spawn_guard_hook) refuses what these can't match.
+    "Agent(isolation:*)",
+    "Agent(model:*)",
 ]
 # Agent name -> (template, role in models.lock, description).
 AGENTS = {
@@ -123,7 +128,9 @@ PASSTHROUGH_WITH_VALUE = frozenset({"--model"})
 PASSTHROUGH_FLAGS = frozenset({"--verbose"})
 # What the purge keeps in the config folder: ecf's own files and the login. `.claude.json` held no
 # prompt text in the 2026-10-02 test (SPEC §10.3). The plugin is rendered again at each start.
-KEEP = frozenset({"settings.json", "ecf-mcp.json", ".credentials.json", ".claude.json", "plugins"})
+# Claude Code's plugin store (`plugins`: synced claude.ai plugins, marketplaces) isn't kept: a
+# plugin's mod can approve a call the deny rules or the spawn guard refused (OD-497).
+KEEP = frozenset({"settings.json", "ecf-mcp.json", ".credentials.json", ".claude.json"})
 # Forced in the process environment so a value in the user's shell can't change them.
 PRIVACY_ENV = {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",  # on only with the receiver's settings (telemetry_env)
@@ -156,7 +163,21 @@ def telemetry_env(port: int, bearer: str) -> dict[str, str]:
 
 
 def statusline_command(socket: Path) -> str:
-    return shlex.join([sys.executable, "-m", "ecf.statusline", str(socket)])
+    # -I: nothing from the working folder or the environment reaches the import path (OD-497)
+    return shlex.join([sys.executable, "-I", "-m", "ecf.statusline", str(socket)])
+
+
+SPAWN_GUARD_TIMEOUT_S = 30  # a slow interpreter start under memory pressure isn't a refusal
+
+
+def spawn_guard_hook() -> dict[str, Any]:
+    """`PreToolUse` on Agent: `ecf.spawn_guard` refuses a spawn with any key beyond
+    subagent_type, description and prompt (OD-497). `onFailure: block` (Claude Code 2.1.295+,
+    code.claude.com hooks, read 2026-10-13) refuses the spawn if the hook can't run."""
+    command = shlex.join([sys.executable, "-I", "-m", "ecf.spawn_guard"])
+    return {"PreToolUse": [{"matcher": "Agent", "hooks": [
+        {"type": "command", "command": command, "timeout": SPAWN_GUARD_TIMEOUT_S,
+         "onFailure": "block"}]}]}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -190,6 +211,13 @@ def settings_doc(main_model: str, statusline: str) -> dict[str, Any]:
         "promptSuggestionEnabled": False,
         "awaySummaryEnabled": False,
         "statusLine": {"type": "command", "command": statusline},
+        "hooks": spawn_guard_hook(),
+        # No plugin but ecf's own (`--plugin-dir`): a plugin's mod can approve what the deny
+        # rules and the hook refuse (OD-497; code.claude.com permissions and settings, read
+        # 2026-10-13: a user-level `false` for the sync keys is honored over managed `true`).
+        "syncClaudeAiPlugins": False,
+        "syncClaudeAiSkills": False,
+        "enabledPlugins": {},
         "permissions": {
             "defaultMode": "dontAsk",
             "allow": ALLOWED_TOOLS,
@@ -270,7 +298,29 @@ def mark_ready(lay: Layout) -> None:
     _write(lay.state, json.dumps(state, indent=2) + "\n")
 
 
+def work_dir_problem(lay: Layout) -> str | None:
+    """Why the working folder can't hold a session, or None (OD-497). Sessions load only user
+    settings (`--setting-sources user`); this is the second layer: a `.claude` folder there could
+    hold project settings that turn hooks off, and inside a git repository Claude Code reads
+    `.claude/settings.local.json` at the repository root (code.claude.com settings, read
+    2026-10-13). ecf never creates either."""
+    if (lay.work_dir / ".claude").exists():
+        return (f"{lay.work_dir / '.claude'} exists; ecf never creates it: look at it, remove it,"
+                " and run `ecf claude` again")  # fmt: skip
+    for parent in lay.work_dir.absolute().parents:
+        if (parent / ".git").exists():
+            return (f"{lay.work_dir} is inside the git repository {parent}; move ecf's data"
+                    " folder (ECF_HOME) out of it")  # fmt: skip
+    return None
+
+
+def check_work_dir(lay: Layout) -> None:
+    if problem := work_dir_problem(lay):
+        raise InvalidInputError(f"ecf claude won't start: {problem}")
+
+
 def write_config(lay: Layout, ecf_mcp: Path, socket: Path, models: dict[str, str]) -> None:
+    check_work_dir(lay)
     for d in (lay.config_dir, lay.work_dir):
         d.mkdir(mode=0o700, parents=True, exist_ok=True)
         d.chmod(0o700)
@@ -386,6 +436,7 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
     claude = find_claude()
     ecf_mcp = ecf_mcp_path()
     lay = layout(paths)
+    check_work_dir(lay)  # before a service session is opened
     purge_transcripts(lay)  # a crashed earlier session may have left some behind
     with LocalClient(paths) as c:
         session: dict[str, Any] = c.request("POST", "/v1/sessions", client_doc())
@@ -405,7 +456,9 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
              " left); type /ecf-eval to run it.")  # fmt: skip
     if line := plan_line(session.get("last_plan")):
         echo(line)
-    args = [claude, "--strict-mcp-config", "--mcp-config", str(lay.mcp_config),
+    # only ecf's own settings: no project or local settings file can turn the hook off (OD-497)
+    args = [claude, "--setting-sources", "user", "--strict-mcp-config", "--mcp-config",
+            str(lay.mcp_config),
             "--plugin-dir", str(lay.plugin_dir), "--agents", json.dumps(agents),
             *extra_args]  # fmt: skip
     port = session.get("telemetry_port")

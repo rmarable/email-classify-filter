@@ -1,7 +1,7 @@
 # Agent spawn guard: refuse `isolation` and `model` on spawns
 
-- **Status:** draft 1 (2026-10-13). Not built; part of v3.0.0 (step 1d). Decision number when adopted: OD-497 (next free).
-- **Base:** `main` at `d686d74`.
+- **Status:** draft 1 (2026-10-13). Built on branch `spawn-guard` (2026-10-13; OD-497), not merged; the live check is not yet run. Part of v3.0.0 (step 1d).
+- **Base:** `main` at `47ae2ce`.
 - **Evidence:** B0 run 2 `845303ba` (SPEC §21.2, "Baseline on the 300-card set", Dispatch): the
   main session (Haiku 5.5) launched round 1's `ecf-classifier` spawn with `isolation: "remote"`,
   which the skill doesn't ask for. Claude Code 2.1.296 ran it as a local background agent (local
@@ -53,6 +53,13 @@
    project settings file there could turn hooks off). The deny rules don't depend on hooks.
 5. **No plugin mods:** a test asserts the rendered plugin has only `.claude-plugin` and `skills`.
 
+6. **Floor** (operator 2026-10-13): `MIN_CLAUDE` 2.1.295, for `onFailure`.
+7. **Diff review F1-F10** (operator accepted all, 2026-10-13; `state-archive/v3.0.0/spawn-guard-review.md`):
+   no claude.ai plugins (`syncClaudeAiPlugins`/`syncClaudeAiSkills` false, `enabledPlugins` {},
+   `plugins` purged); hook and status line run with `python -I`; `--setting-sources user`;
+   refuse a work folder inside a git repository, `doctor` row; timeout 30 s; the hook checks
+   `tool_name` and refuses blank values; the work-folder check runs before the service session.
+
 Not used: `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (blocks per-call `model`, but the docs don't say it
 keeps each agent's own `model` from `--agents`).
 
@@ -64,8 +71,12 @@ keeps each agent's own `model` from `--agents`).
   codes).
 - **Live check** (real service, operator's go-ahead, uses the plan; throwaway prompts in the
   scratchpad): on the `accept` install, first a logging run (the hook records the stdin JSON) to
-  confirm the matcher, that background spawns fire the hook, and the `isolation` field's name;
-  then ask the main session to spawn `ecf-classifier` with `isolation: "remote"`, then with
+  confirm the matcher, that background spawns fire the hook, the `isolation` field's name, and
+  whether Claude Code itself adds `run_in_background` (refused until then; operator 2026-10-13);
+  count refusals of keys Claude Code adds itself (`run_in_background`, `name`); confirm
+  `--setting-sources user` still loads ecf's settings, status line and plugin; restart the `accept`
+  service first (the skill text changes the plugin digest, so the old service refuses the new
+  client; later eval runs differ from B0 by this one input); then ask the main session to spawn `ecf-classifier` with `isolation: "remote"`, then with
   `model: "opus"`: both refused, a plain spawn still works. Result in SPEC §21.2.
 
 ## Docs

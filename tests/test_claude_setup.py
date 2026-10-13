@@ -21,7 +21,7 @@ from ecf.paths import Paths
 
 # Claude Code's `auth status --json` (shape of 2.1.287), and `auth login` that logs in.
 FAKE_CLAUDE = """#!/bin/sh
-if [ "$1" = "--version" ]; then echo "2.1.287 (Claude Code)"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "2.1.296 (Claude Code)"; exit 0; fi
 echo "$* CFG=$CLAUDE_CONFIG_DIR KEY=$ANTHROPIC_API_KEY PWD=$(pwd)" >> "{record}"
 if [ "$1 $2" = "auth login" ]; then touch "$CLAUDE_CONFIG_DIR/in"; exit 0; fi
 if [ -f "$CLAUDE_CONFIG_DIR/in" ]; then
@@ -145,12 +145,23 @@ def test_editable_is_read_from_direct_url(tmp_path: Path) -> None:
 # ---- doctor
 
 
+def test_doctor_reports_a_work_folder_ecf_claude_refuses(
+    claude: tuple[str, Path], tmp_path: Path
+) -> None:
+    """OD-497: a `.claude` folder in claude-work stops `ecf claude`; doctor says so first."""
+    paths = Paths("t", tmp_path / "home")
+    (cw.layout(paths).work_dir / ".claude").mkdir(parents=True)
+    checks = {c.name: c for c in doctor.check_claude(paths, False)}
+    assert checks["claude work folder"].level is Level.WARN
+    assert "ecf never creates it" in checks["claude work folder"].detail
+
+
 def test_doctor_fails_claude_problems_only_once_b_or_c_is_used(
     claude: tuple[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = Paths("t", tmp_path / "home")
     checks = {c.name: c for c in doctor.check_claude(paths, True)}
-    assert checks["claude code"].level is Level.OK and checks["claude code"].detail == "2.1.287"
+    assert checks["claude code"].level is Level.OK and checks["claude code"].detail == "2.1.296"
     assert checks["ecf-mcp"].level is Level.OK and checks["claude plugin"].level is Level.OK
     assert checks["claude login"].level is Level.FAIL
     assert checks["claude login"].fix == "ecf claude --login"
