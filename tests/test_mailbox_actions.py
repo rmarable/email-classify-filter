@@ -343,7 +343,7 @@ def test_archive_and_undo_on_a_real_server(conn: sqlite3.Connection, clock: Fake
 # ---- Gmail (V1.6 step 4, OD-438) ----------------------------------------------------------------
 
 ALL, SPAM, TRASH = GMAIL_ALL, GMAIL_SPAM, GMAIL_TRASH
-SPAM_CLS = MARKETING | {"category": "spam_or_phishing"}
+SPAM_CLS = MARKETING | {"category": "other", "phishing": True}  # S3b: the item
 
 
 def _gmail(conn: sqlite3.Connection, clock: FakeClock, folders: tuple[Folder, ...] = GMAIL_FOLDERS

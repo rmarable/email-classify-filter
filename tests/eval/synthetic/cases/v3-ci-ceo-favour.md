@@ -10,7 +10,7 @@ from: "Office of the CEO <ceo-office@acme-exec.test>"
 subject: "Are you at your desk?"
 date: 2026-10-08T09:02:00Z
 expected:
-  labels: {category: spam_or_phishing, sender_type: unknown, priority: high, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: high}
+  labels: {category: other, sender_type: unknown, priority: high, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

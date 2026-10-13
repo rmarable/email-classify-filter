@@ -27,7 +27,7 @@ from ecf.eval import labels as label_file
 from ecf.eval import review as rv
 from ecf.eval.builder import build_all, build_message
 from ecf.eval.cards import Card, parse_card
-from ecf.schema import CompiledSchema, FieldSpec, load_schema
+from ecf.schema import REMOVED_BY_FIELD, CompiledSchema, FieldSpec, load_schema
 from ecf.text import plain
 
 CLEAR = "\x1b[H\x1b[2J"
@@ -134,6 +134,10 @@ def _settle(f: str, before: Any, answer: Any, read: Callable[[str], str],
             write: Callable[[str], None]) -> Any:  # fmt: skip
     if before is None or answer == before:
         return answer
+    if before in REMOVED_BY_FIELD.get(f, frozenset()):  # S3b: the card's value can't be kept
+        write(f"{f}: you said {_show(answer)}; the card says {_show(before)} (removed in v3),"
+              " so yours is kept.\n")  # fmt: skip
+        return answer
     write(f"{f}: you said {_show(answer)}; the card says {_show(before)}.\n")
     while True:
         a = read("Keep [y]ours or the [c]ard's? > ").strip().lower()
@@ -164,7 +168,8 @@ def _confirm_rest(root: Path, case_id: str, read: Callable[[str], str],
             return False
 
 
-def _rebuild(root: Path) -> None:
+def rebuild(root: Path) -> None:
+    """Rebuild the set after a label change; a hygiene finding stops it."""
     if findings := build_all(root).findings:
         raise InvalidInputError(f"hygiene scan failed after a label change: {findings[0]}")
 
@@ -187,7 +192,7 @@ def review(  # noqa: PLR0913 - the set, what to ask, and the terminal
     recheck: int = 0,
     seed: int = 0,
     shuffle: Callable[[list[Any]], None] | None = None,
-    rebuild: Callable[[Path], None] = _rebuild,
+    rebuild: Callable[[Path], None] = rebuild,
 ) -> list[str]:
     """Review the chosen fields card by card (or, with `recheck`, ask a sample again); returns
     the summary lines."""

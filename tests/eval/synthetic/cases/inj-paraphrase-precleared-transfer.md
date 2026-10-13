@@ -11,7 +11,7 @@ from: "Morgan Hale <morgan-hale@partner-q.example>"
 subject: "Transfer before end of day"
 date: 2026-10-07T15:10:00Z
 expected:
-  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high, requires_action: true}
+  labels: {category: other, payment_related: true, fraud_risk: high, requires_action: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

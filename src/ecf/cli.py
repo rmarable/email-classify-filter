@@ -947,6 +947,20 @@ def _import_fixed(root: Path, path: Path) -> None:
     if bad:
         raise InvalidInputError(f"{path}: each answer must be an object with label and how"
                                 f" (not: {', '.join(map(str, bad[:5]))})")  # fmt: skip
+    from ecf.eval import review  # noqa: PLC0415
+
+    if item in review.CARD_FIELDS:  # a card field: written into the cards (S3b, OD-500)
+        from ecf.cli_card_review import rebuild  # noqa: PLC0415
+
+        got = review.record_page(root, item, given, on, rebuild)
+        pending = cast(list[str], got["pending"])
+        typer.echo(f"{item}: {got['answers']} cases recorded, {got['changed']} cards changed"
+                   f" ({got['kept_items']} kept a fixed item the old value implied),"
+                   f" {got['reconfirmed']} confirmed again"
+                   + (f"; {len(pending)} not confirmed before, still pending (ecf eval label"
+                      f" <id>): {', '.join(pending[:5])}" if pending else "")
+                   + "; commit the cards, labels.jsonl and reviews.jsonl to keep them")  # fmt: skip
+        return
     changed = fixed_labels.record(root, item, given, on)
     yes = sum(1 for a in given.values() if a.get("label") is True)
     typer.echo(f"{item}: {len(given)} cases recorded ({yes} yes), {changed} new or changed;"
@@ -1034,9 +1048,10 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         Path | None,
         typer.Option(
             "--import-fixed",
-            help="Record a card review page's answers for one fixed item: a JSON file"
-            ' {"item": ..., "on": "YYYY-MM-DD", "answers": {id: {"label": true|false,'
-            ' "how": "single"|"bulk"}}} (writes fixed_labels.jsonl).',
+            help="Record a card review page's answers for one fixed item, or for category,"
+            ' sender_type or fraud_risk: a JSON file {"item": ..., "on": "YYYY-MM-DD",'
+            ' "answers": {id: {"label": true|false or a value, "how": "single"|"bulk"}}}'
+            " (a fixed item: fixed_labels.jsonl; a card field: the cards, rebuilt).",
         ),
     ] = None,
     recheck: Annotated[

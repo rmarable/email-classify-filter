@@ -10,7 +10,7 @@ from: "\"dana-chief@acme.example\" <exec-desk-dc@freemail.example>"
 subject: "Staff directory"
 date: 2026-10-05T10:05:00Z
 expected:
-  labels: {category: spam_or_phishing, payment_related: false, fraud_risk: high, sender_type: team, requires_reply: true}
+  labels: {category: other, payment_related: false, fraud_risk: high, sender_type: unknown, requires_reply: true, regulator_claim: false, claims_internal: true, private_individual: false}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

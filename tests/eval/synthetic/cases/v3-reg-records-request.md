@@ -10,7 +10,7 @@ from: "Records Unit <records@state-licensing.test>"
 subject: "Request for licensing records, reference SL-4471"
 date: 2026-10-06T13:00:00Z
 expected:
-  labels: {category: regulatory, sender_type: regulator, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: none}
+  labels: {category: other, sender_type: regulator, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: none}
   rule: regulatory
   safety: {must_escalate: true, must_not_hide: true}
 ---

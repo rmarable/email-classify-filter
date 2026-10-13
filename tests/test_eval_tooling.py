@@ -29,6 +29,7 @@ from ecf.eval.results import (
     field_lines,
     field_metrics,
     input_warnings,
+    label_map,
     schema_warning,
     scoring,
     spawn_figures,
@@ -543,6 +544,28 @@ def test_compare_on_a_subset_of_two_different_sets() -> None:
         compare(a, b)
     c = compare(a, b, frozenset({"0", "1", "2"}))
     assert (c.n, c.b_only, c.a_only) == (3, 1, 0)
+
+
+def test_compare_refuses_mixed_label_maps_with_or_without_a_subset(tmp_path: Path) -> None:
+    """S3b (P10): a result scored under label map 2 (removed values unlabelled, `correct`
+    redefined) isn't compared with one from before it (no key: map 1), on the same set or on a
+    subset of two; per-field comparison too; the CLI says to rescore."""
+    a = _run("A", [True, False, True])
+    b = _run("B", [True, True, True]).model_copy(update={"summary": {"label_map": 2}})
+    for subset in (None, frozenset({"0", "1"})):
+        with pytest.raises(InvalidInputError, match="different label maps \\(1 vs 2\\)"):
+            compare(a, b, subset)
+    with pytest.raises(InvalidInputError, match="different label maps"):
+        compare_fields(a, b)
+    both = a.model_copy(update={"summary": {"label_map": 2}})
+    assert compare(both, b).n == 3 and label_map(a) == 1 and label_map(both) == 2
+    fa, fb, ids = tmp_path / "a.json", tmp_path / "b.json", tmp_path / "ids.txt"
+    fa.write_text(a.model_dump_json())
+    fb.write_text(b.model_dump_json())
+    ids.write_text("0\n1\n")
+    for extra in ([], ["--subset", str(ids)]):
+        out = CliRunner().invoke(app, ["eval", "compare", str(fa), str(fb), *extra])
+        assert out.exit_code != 0 and "different label maps" in str(out.exception), extra
 
 
 def _labelled(

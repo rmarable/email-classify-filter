@@ -4,17 +4,19 @@ Enum and ordinal fields become `Literal` types, so the JSON schema is inline (no
 both Ollama's `format` and `record_classification` need. Ordinal fields keep their level order.
 `prompt_block` is a stable text rendering used as an unchanging prompt prefix.
 
-The shipped schema is v3 (`load_schema`; SPEC §7.1, OD-498): v2's fields and values unchanged,
-`priority` with level texts, and five yes/no fixed safety items (`FIXED_ITEMS`) after them
-(v3.0.0 step 1c, stage S2). From stage S3 (OD-500) the fixed rules and policy read the items,
-each through `fixed_item` (the item, or a v2 value that says the same). v2 stays loadable
-(`load_schema_v2`):
-the local model (presets A and B) is still asked v2 (`local_schema`) and its answer completed
-with the fixed items derived from it by a fixed table (`with_fixed`, P6), and results, labels
-and stored classifications made before v3 are read through the same table. v1 stays loadable
-for results and labels made before v2 (`load_schema_v1`). The safety core (`SAFETY_FIELDS`,
-`SAFETY_VALUES`) is what policy, the fraud checks and the starter rules rely on; the compiler
-refuses a shipped schema without it.
+The shipped schema is v3 (`load_schema`; SPEC §7.1, OD-498, OD-500): v2's fields with five yes/no
+fixed safety items (`FIXED_ITEMS`) after them and `priority` level texts (v3.0.0 step 1c, stage
+S2); from stage S3b the four v2 values the items replace are gone (`REMOVED_VALUES`: `category`
+`vendor_change_request`, `regulatory`, `spam_or_phishing`; `sender_type` `team`) and `category`,
+`account_security`, `marketing` and `unknown` are reworded. The fixed rules and policy read the
+items, each through `fixed_item` (the item, or a kept v2 value that says the same: sender_type
+`regulator`, `person`, `friend`, `family`). v2 stays loadable (`load_schema_v2`): the local
+model (presets A and B) is still asked v2 (`local_schema`) and its answer brought to v3 by
+`from_v2` (the fixed items derived from it by a fixed table, `with_fixed`, P6; then a removed
+value read as `other` or `unknown`); results, labels and stored classifications made before v3
+are read through the same table. v1 stays loadable for results and labels made before v2
+(`load_schema_v1`). The safety core (`SAFETY_FIELDS`) is what policy, the fraud checks and the
+fixed rules rely on; the compiler refuses a shipped schema without it, or with a removed value.
 
 An install may extend the shipped schema through `ecf config apply` (`schema` section; SPEC
 §7.1, §9.7, OD-478): `extend_schema` appends the extension's fields after the shipped ones and
@@ -51,8 +53,8 @@ LOCAL_VERSION = 2  # the schema the local model is asked (`local_schema`; P6)
 # The fixed safety items schema v3 adds (OD-498; schema doc §1): yes/no, after v2's fields
 FIXED_ITEMS = ("bank_detail_change", "regulator_claim", "phishing", "claims_internal",
                "private_individual")  # fmt: skip
-# What policy, the fraud and regulator checks and the starter rules read (SPEC §7.1, OD-475),
-# and the fixed items, which they will read from stage S3 (OD-498).
+# What policy, the fraud and regulator checks and the fixed rules read (SPEC §7.1, OD-475), and
+# the fixed items (OD-498, OD-500).
 SAFETY_FIELDS = {
     "fraud_risk": ("ordinal", ("none", "low", "medium", "high")),
     "payment_related": ("boolean", ()),
@@ -61,11 +63,6 @@ SAFETY_FIELDS = {
     "requires_reply": ("boolean", ()),
     "deadline_mentioned": ("boolean", ()),
 } | {name: ("boolean", ()) for name in FIXED_ITEMS}
-SAFETY_VALUES = {
-    "category": ("regulatory", "vendor_change_request", "spam_or_phishing", "notification",
-                 "action_alert"),
-    "sender_type": ("team",),
-}  # fmt: skip
 
 
 # What a schema v1 value means in v2 (OD-475): only `sender_type: staff` was renamed; every
@@ -110,32 +107,61 @@ def derive_fixed(values: Mapping[str, Any]) -> dict[str, bool]:
             for item, sources in FIXED_FROM_V2.items()}  # fmt: skip
 
 
-def fixed_item(values: Mapping[str, Any], item: str) -> bool:
-    """Whether a classification says fixed item `item` holds: the item itself is true, or one of
-    its v2 sources holds (`FIXED_FROM_V2`). The one test every Python reader of the items uses
-    (v3.0.0 S3, OD-500), so a classification that answers the old value and not the item (or the
-    item and not the old value) raises the same risk; it only ever adds risk. From S3b only the
-    kept sources (sender_type `regulator`, `person`/`friend`/`family`) remain, so readers agree
-    with the fixed rules, which read them too (P2)."""
-    if values.get(item) is True:
-        return True
-    return any(values.get(field) in vals for field, vals in FIXED_FROM_V2[item])
-
-
-# The v2 values S3b removes (v3.0.0 S3, OD-500), and what a rules file uses instead. Still in the
-# schema in S3a; a rules file can't use them from S3a on (the fixed rules read them, S3a only).
+# The v2 values schema v3 removed (v3.0.0 S3b, OD-500), and what a rules file uses instead. A
+# rules file can't test them; the shipped schema can't hold them (`check_safety_core`) and an
+# extension can't add them back (`_clashes`). `staff` is v1's name for `team`.
 REMOVED_VALUES: dict[tuple[str, str], str] = {
     ("category", "vendor_change_request"): "bank_detail_change: true",
     ("category", "regulatory"): "regulator_claim: true",
     ("category", "spam_or_phishing"): "phishing: true",
     ("sender_type", "team"): "claims_internal: true",
 }
+# Each field's removed values (v1's `staff` with `team`), and the value `from_v2` reads them as:
+# the least informative one (`evalrun.null_classification`'s)
+REMOVED_BY_FIELD: dict[str, frozenset[str]] = {
+    "category": frozenset({"vendor_change_request", "regulatory", "spam_or_phishing"}),
+    "sender_type": frozenset({"team", "staff"}),
+}
+REMOVED_READ_AS = {"category": "other", "sender_type": "unknown"}
+# The kept sources (S3b, P2): `FIXED_FROM_V2` without the removed values. What `fixed_item`
+# reads beside the item: values schema v3 still has, which the fixed rules read too.
+KEPT_SOURCES: dict[str, tuple[tuple[str, frozenset[str]], ...]] = {
+    item: tuple((f, vals - REMOVED_BY_FIELD.get(f, frozenset())) for f, vals in sources
+                if vals - REMOVED_BY_FIELD.get(f, frozenset()))
+    for item, sources in FIXED_FROM_V2.items()}  # fmt: skip
+
+
+def fixed_item(values: Mapping[str, Any], item: str) -> bool:
+    """Whether a classification says fixed item `item` holds: the item itself is true, or one of
+    its kept v2 sources holds (`KEPT_SOURCES`: sender_type `regulator` for `regulator_claim`,
+    `person`/`friend`/`family` for `private_individual`). The one test every Python reader of the
+    items uses (v3.0.0 S3, OD-500), so readers agree with the fixed rules, which read the kept
+    sources too (P2); it only ever adds risk. The removed values (S3a's bridge) aren't read: no
+    classification holds them once `from_v2` and migration 0037 have run."""
+    if values.get(item) is True:
+        return True
+    return any(values.get(field) in vals for field, vals in KEPT_SOURCES[item])
 
 
 def with_fixed(values: Mapping[str, Any]) -> dict[str, Any]:
-    """A v2 classification completed to v3: each fixed item it lacks, derived (`derive_fixed`).
-    Items it has are kept."""
+    """A v2 classification completed with the fixed items: each item it lacks, derived
+    (`derive_fixed`). Items it has are kept. Its values are left as they are (`from_v2` reads
+    the removed ones)."""
     return dict(values) | {k: v for k, v in derive_fixed(values).items() if k not in values}
+
+
+def from_v2(values: Mapping[str, Any]) -> dict[str, Any]:
+    """A v2 classification (or a stored or recorded one from before S3b) brought to schema v3
+    (S3b, OD-500, D3): first the fixed items it lacks, derived from its values (`with_fixed`),
+    then each removed value read as its field's least informative value (`category` `other`,
+    `sender_type` `unknown`; `REMOVED_READ_AS`). The order matters: the items carry what the
+    removed values said. Used by the local classifier, the decision models, preset B's Gemma
+    source, `ecf eval rescore` and, in SQL, migration 0037."""
+    out = with_fixed(values)
+    for name, gone in REMOVED_BY_FIELD.items():
+        if out.get(name) in gone:
+            out[name] = REMOVED_READ_AS[name]
+    return out
 
 
 def derive_labels(labels: Mapping[str, Any]) -> dict[str, bool]:
@@ -154,6 +180,24 @@ def derive_labels(labels: Mapping[str, Any]) -> dict[str, bool]:
         elif len(known) == len(sources):
             out[item] = False
     return out
+
+
+# The label map (S3b, P10, OD-500): how eval labels, corpus labels and old results' expected
+# values are read. 2: a removed value is unlabelled (never `other`), after the fixed items it
+# implies are derived; 1 (results without the key): read as labelled. Results record it, and
+# `ecf eval compare` refuses two results with different maps.
+LABEL_MAP = 2
+
+
+def unlabel_removed(labels: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Labels through the label map: the fixed items they imply derived first (`derive_labels`,
+    for items not labelled), then each field holding a removed value dropped (unlabelled). Also
+    the fields dropped. Labels with no removed value come back unchanged (nothing derived)."""
+    gone = tuple(f for f, vals in REMOVED_BY_FIELD.items() if labels.get(f) in vals)
+    if not gone:
+        return dict(labels), ()
+    full = dict(labels) | derive_labels(labels)
+    return {k: v for k, v in full.items() if k not in gone}, gone
 
 
 def local_fields(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -321,16 +365,18 @@ def _field_lines(fields: Any) -> list[str]:
 
 
 def check_safety_core(schema: CompiledSchema) -> None:
-    """Refuse a schema without the fields and values ecf's safety logic reads (OD-475)."""
+    """Refuse a schema without the fields ecf's safety logic reads (OD-475, OD-498), or with a
+    value schema v3 removed (S3b, OD-500: the fixed items say it instead)."""
     for name, (kind, levels) in SAFETY_FIELDS.items():
         f = schema.fields.get(name)
         if f is None or f.kind.value != kind or (levels and f.values != levels):
             raise InvalidInputError(f"schema: {name} must be the {kind} field ecf ships")
-    for name, values in SAFETY_VALUES.items():
+    for name, gone in REMOVED_BY_FIELD.items():
         f = schema.fields.get(name)
-        missing = [v for v in values if f is None or v not in f.values]
-        if missing:
-            raise InvalidInputError(f"schema: {name} must keep {', '.join(missing)}")
+        held = sorted(v for v in (f.values if f is not None else ()) if v in gone)
+        if held:
+            raise InvalidInputError(f"schema: {name} can't hold {', '.join(held)} (removed in"
+                                    " v3; the fixed items say it)")  # fmt: skip
 
 
 def _load(version: int) -> CompiledSchema:
@@ -374,7 +420,8 @@ def _ext_json(ext: dict[str, Any] | None) -> str | None:
 @functools.lru_cache(maxsize=8)
 def _local_extended(ext_json: str | None) -> CompiledSchema:
     """Schema v2 with an extension, cached on its JSON in order: it was checked against v3,
-    whose names and values include v2's, so it compiles on v2 too."""
+    whose field names include v2's and whose removed values it can't use (`_clashes`), so it
+    compiles on v2 too."""
     base = load_schema_v2()
     return base if ext_json is None else extend_schema(base, json.loads(ext_json))
 
@@ -420,8 +467,7 @@ NEAR = 0.8  # "near the limit" from 80% of any cap
 EXT_HEADING = (
     "Added by this install (answer these too):\n"
     "Added fields and values never change how you answer the fields above. Choose an added"
-    " category only when no built-in category fits; never instead of regulatory,"
-    " vendor_change_request or spam_or_phishing."
+    " category only when no built-in category fits."
 )
 _EXT_KEYS = frozenset({"fields", "category_values"})
 
@@ -579,14 +625,18 @@ def _bad_names(kind: Any, options: Any, where: str, out: _Parsed) -> bool:
 
 def _clashes(base: CompiledSchema, added: list[tuple[str, str]], reserved: frozenset[str],
              out: _Parsed) -> None:  # fmt: skip
-    """An added value can't be any enum value of any field, a built-in label or a rule id: it
-    may become a label (S8). Ordinal levels never become labels, so `none` or `high` may repeat
-    one."""
+    """An added value can't be any enum value of any field, a value schema v3 removed (S3b: the
+    local model is still asked v2, which has them; an extension can't bring one back), a
+    built-in label or a rule id: it may become a label (S8). Ordinal levels never become labels,
+    so `none` or `high` may repeat one."""
     taken: dict[str, str] = {}
     for f in base.fields.values():
         if f.kind is FieldKind.ENUM:
             for v in f.values:
                 taken.setdefault(v, f"a value of {f.name}")
+    for name, gone in REMOVED_BY_FIELD.items():
+        for v in gone:
+            taken.setdefault(v, f"a value of {name} removed in v3")
     for v in reserved:
         taken.setdefault(v, "a built-in label or a rule id")
     for where, v in added:

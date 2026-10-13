@@ -10,7 +10,7 @@ subject: "Re: Invoice INV-2044"
 date: 2026-10-02T16:45:00Z
 headers: {In-Reply-To: "<inv-2044-thread@synthetic.acme.example>"}
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

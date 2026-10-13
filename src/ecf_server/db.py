@@ -105,8 +105,9 @@ def _migration_files() -> list[tuple[int, str, str]]:
     return sorted(out)
 
 
-# Migrations that rewrite many rows, after which a WAL checkpoint runs (0036, schema v3)
-CHECKPOINT_AFTER = frozenset({36})
+# Migrations that rewrite many rows, after which a WAL checkpoint runs (0036 schema v3, 0037 its
+# removed values)
+CHECKPOINT_AFTER = frozenset({36, 37})
 
 
 def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:

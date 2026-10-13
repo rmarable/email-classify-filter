@@ -288,6 +288,51 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
                   f" ecf stage set {aid} live")  # fmt: skip
 
 
+GATE_CHANGED = "stages.gate_v2_demoted"  # setting: the S3b one-time demotion ran (B1)
+GATE_CHANGED_REASON = ("the gate definition changed (S3b); back to assist until its gate passes"
+                       " (§9.3)")  # fmt: skip
+
+
+def demote_after_gate_change(conn: sqlite3.Connection, clock: Clock) -> list[str]:
+    """Once, at the first service start on schema 37 (v3.0.0 S3b, diff review B1, OD-500):
+    migration 0037 clears every stored gate pass (accuracy is now reviews with no Fix, P4), but
+    the tick demotes a `live` address only when its key changes, which an A or B key doesn't. So
+    each `live` address with no stored pass goes to `assist` through `set_stage` (audited and
+    posted), except one that went live by override (OD-234: its latest go-live audit row says
+    `override`), which never had a pass to lose. A setting marks it done; a second start does
+    nothing. Returns the demoted ids."""
+    if slack_admin.setting(conn, GATE_CHANGED):
+        return []
+    out: list[str] = []
+    for a in addresses.list_addresses(conn):
+        aid = str(a["address_id"])
+        if a["stage"] != "live" or _went_live_by_override(conn, aid):
+            continue
+        row = gate.stored(conn, aid)
+        if row is not None and row["passed_at"] is not None:
+            continue  # passed under the new definition
+        set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
+                  reason=GATE_CHANGED_REASON)  # fmt: skip
+        out.append(aid)
+    with write_tx(conn):
+        slack_admin.put_setting(conn, GATE_CHANGED, to_ts(clock.now()), to_ts(clock.now()),
+                                actor="service")  # fmt: skip
+    if out:
+        log.info("stages.gate_changed_demoted", addresses=len(out))
+    return out
+
+
+def _went_live_by_override(conn: sqlite3.Connection, aid: str) -> bool:
+    """Whether the address's latest move to `live` was an override (`stage.changed` audit data,
+    `override` true; OD-234)."""
+    for r in conn.execute("SELECT data FROM audit WHERE event = 'stage.changed' AND address_id = ?"
+                          " ORDER BY id DESC", (aid,)):  # fmt: skip
+        data: dict[str, Any] = json.loads(r[0] or "{}")
+        if data.get("to") == "live":
+            return bool(data.get("override"))
+    return False
+
+
 SCHEMA_REASON = ("the classification schema changed (ecf config apply); back to assist until its"
                  " gate passes (§9.3)")  # fmt: skip
 

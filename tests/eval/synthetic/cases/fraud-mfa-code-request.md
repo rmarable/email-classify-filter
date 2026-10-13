@@ -10,7 +10,7 @@ subject: "Mailbox migration - verify your account"
 date: 2026-10-18T08:30:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, fraud_risk: high}
+  labels: {category: account_security, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true}
 ---

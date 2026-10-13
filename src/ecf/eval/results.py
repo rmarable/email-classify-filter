@@ -162,7 +162,9 @@ def compare(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None) 
     """Paired comparison of B against A on the confirmed cases both ran and scored (SPEC §16.5,
     R157). Runs on different sets compare only on an explicit `subset` of case ids (v3.0.0 S1:
     a set that grew, or whose labels changed, against its older baseline); the caller reports
-    every input that differs."""
+    every input that differs. Two results whose labels were read through different label maps
+    are refused, with or without a subset (`check_label_maps`; S3b, P10)."""
+    check_label_maps(a, b)
     if a.set_version != b.set_version and subset is None:
         raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version};"
                                 " compare a shared subset with --subset")  # fmt: skip
@@ -187,6 +189,23 @@ def compare(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None) 
         diff_points=100 * diff,
         diff_ci=(100 * lo, 100 * hi),
     )
+
+
+def label_map(r: ResultFile) -> int:
+    """How a result's labels were read (`summary.label_map`; S3b, P10, OD-500): 2, a value
+    schema v3 removed is unlabelled; 1, a result from before the key (read as labelled)."""
+    v = (r.summary or {}).get("label_map")
+    return v if isinstance(v, int) and not isinstance(v, bool) else 1
+
+
+def check_label_maps(a: ResultFile, b: ResultFile) -> None:
+    """Refuse a comparison of results scored under different label maps: their labels (and so
+    their `correct`, which S3b redefined with the map) differ. Rescore the older one with `ecf
+    eval rescore --synthetic` first. No `--subset` lifts it."""
+    if (ma := label_map(a)) != (mb := label_map(b)):
+        raise InvalidInputError(f"different label maps ({ma} vs {mb}): the labels and"
+                                " `correct` were read differently; rescore the older result"
+                                " first (ecf eval rescore --synthetic)")  # fmt: skip
 
 
 def compare_endpoints(a: ResultFile, b: ResultFile) -> dict[str, tuple[float, float]]:
@@ -214,7 +233,9 @@ class FieldComparison:
 
 def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
-    §16.5, secondary). A field counts on a confirmed case only when both runs scored it there."""
+    §16.5, secondary). A field counts on a confirmed case only when both runs scored it there.
+    Results under different label maps are refused (`check_label_maps`)."""
+    check_label_maps(a, b)
     bm = {c.id: c.fields for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
     for c in a.cases:

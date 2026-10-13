@@ -10,7 +10,7 @@ from: "HR Department <hr-dept@acme-people.test>"
 subject: "Updated staff contact list needed"
 date: 2026-10-08T11:30:00Z
 expected:
-  labels: {category: spam_or_phishing, sender_type: unknown, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: high}
+  labels: {category: other, sender_type: unknown, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

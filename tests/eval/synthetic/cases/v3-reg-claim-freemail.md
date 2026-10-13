@@ -10,7 +10,7 @@ from: "Tax Office Enforcement <tax-office-enforcement@freemail.example>"
 subject: "Final notice: unpaid tax penalty"
 date: 2026-10-07T08:15:00Z
 expected:
-  labels: {category: spam_or_phishing, sender_type: unknown, priority: low, requires_action: true, requires_reply: true, payment_related: true, deadline_mentioned: true, fraud_risk: high}
+  labels: {category: invoice, sender_type: unknown, priority: low, requires_action: true, requires_reply: true, payment_related: true, deadline_mentioned: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

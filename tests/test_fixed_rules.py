@@ -1,6 +1,8 @@
 """ecf's fixed rules (v3.0.0 step 1c S3a, OD-500; SPEC §8.6): composition and order, the refusal
 of fixed ids and removed values, the appended catch-all, the S3a bridge clauses, the cache (P8),
-the v2 applied-rules conversion (P7), the `fixed_item` helper and the rules test's stand-in."""
+the v2 applied-rules conversion (P7), the `fixed_item` helper and the rules test's stand-in. From
+S3b the bridge clauses are gone: a removed value reaches a fixed rule only through the item
+`from_v2` derives from it."""
 
 from __future__ import annotations
 
@@ -16,15 +18,18 @@ from ecf.errors import InvalidInputError
 from ecf.schema import (
     FIXED_FROM_V2,
     FIXED_ITEMS,
+    KEPT_SOURCES,
+    REMOVED_BY_FIELD,
     REMOVED_VALUES,
     extend_schema,
     fixed_item,
+    from_v2,
     load_schema,
     load_schema_v2,
     load_schema_v2_0_0,
 )
 from ecf.yamlio import load_yaml
-from ecf_server import config, health, rules, ruletest
+from ecf_server import config, evalrun, health, rules, ruletest
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.rules import RuleInput
@@ -88,15 +93,19 @@ def test_the_digest_covers_both_files() -> None:
 @pytest.mark.parametrize("schema", [load_schema_v2(), load_schema_v2_0_0()],
                          ids=["v2", "v2.0.0"])  # fmt: skip
 def test_the_fixed_rules_compile_on_a_schema_without_the_items(schema: Any) -> None:
-    """Results asked with an older schema (`--no-new-wording`) lack the items: false (P13)."""
+    """Results asked with an older schema (`--no-new-wording`) lack the items: false (P13). From
+    S3b the fixed rules read only the items, so such a run plans on its answer with the items
+    derived (`evalrun.planned_view`): a vendor change request still reaches the fraud guard."""
     old = rules.load_starter_rules(schema)
     no_items = {k: v for k, v in BASE.items() if k not in FIXED_ITEMS}
-    inp = RuleInput(no_items | {"category": "vendor_change_request"}, {})
-    assert old.evaluate(inp).rule_id == "fraud_guard"
+    vcr = no_items | {"category": "vendor_change_request"}
+    assert old.evaluate(RuleInput(evalrun.planned_view(vcr, schema), {})).rule_id == "fraud_guard"
+    assert old.evaluate(RuleInput(vcr, {})).rule_id == "otherwise"  # no bridge clause (S3b)
     assert old.evaluate(RuleInput(no_items, {})).rule_id == "otherwise"
+    assert evalrun.planned_view(BASE, SCHEMA) is BASE  # v3: answered as it is
 
 
-# ---- the fixed items and the S3a bridge (P1, P2, P3) -------------------------------------------
+# ---- the fixed items, their kept sources and from_v2 (P1, P2, P3; S3b) ------------------------
 
 
 EXTERNAL_MONEY = {"sender_origin": "external", "payment_keyword": True}
@@ -106,20 +115,20 @@ EXTERNAL_MONEY = {"sender_origin": "external", "payment_keyword": True}
     ("cls", "facts", "rule"),
     [
         ({"bank_detail_change": True}, {}, "fraud_guard"),
-        ({"category": "vendor_change_request"}, {}, "fraud_guard"),  # bridge
+        (from_v2({"category": "vendor_change_request"}), {}, "fraud_guard"),  # S3b: the item
         ({"claims_internal": True}, EXTERNAL_MONEY, "fraud_guard"),
-        ({"sender_type": "team"}, EXTERNAL_MONEY, "fraud_guard"),  # bridge
+        (from_v2({"sender_type": "team"}), EXTERNAL_MONEY, "fraud_guard"),
         ({"regulator_claim": True}, {}, "regulatory"),
-        ({"category": "regulatory"}, {}, "regulatory"),  # bridge
+        (from_v2({"category": "regulatory"}), {}, "regulatory"),
         ({"sender_type": "regulator"}, {}, "regulatory"),  # kept source (P1)
         ({"claims_internal": True}, {"sender_origin": "external"}, "fraud_weak"),
-        ({"sender_type": "team"}, {"sender_origin": "external"}, "fraud_weak"),  # bridge
+        (from_v2({"sender_type": "team"}), {"sender_origin": "external"}, "fraud_weak"),
         ({"private_individual": True}, EXTERNAL_MONEY, "fraud_weak"),
         ({"sender_type": "person"}, EXTERNAL_MONEY, "fraud_weak"),
         ({"sender_type": "friend"}, EXTERNAL_MONEY, "fraud_weak"),  # kept source (P2)
         ({"sender_type": "family"}, EXTERNAL_MONEY, "fraud_weak"),  # kept source (P2)
         ({"phishing": True}, {}, "spam_or_phishing"),
-        ({"category": "spam_or_phishing"}, {}, "spam_or_phishing"),  # bridge
+        (from_v2({"category": "spam_or_phishing"}), {}, "spam_or_phishing"),
         ({"claims_internal": True}, {}, "otherwise"),  # from inside: nothing
         ({"private_individual": True}, {"sender_origin": "external"}, "otherwise"),  # no money
     ],
@@ -131,13 +140,31 @@ def test_each_item_and_its_sources_reach_the_fixed_rule(cls: dict[str, Any],
 
 
 @pytest.mark.parametrize("item", FIXED_ITEMS)
-def test_fixed_item_reads_the_item_or_any_source(item: str) -> None:
+def test_fixed_item_reads_the_item_or_a_kept_source(item: str) -> None:
+    """S3b: the kept sources still count (raise only, P2); the removed values don't (no
+    classification holds them once from_v2 and 0037 have run)."""
     assert fixed_item({item: True}, item)
     assert not fixed_item({item: False}, item) and not fixed_item({}, item)
-    for field, values in FIXED_FROM_V2[item]:
+    for field, values in KEPT_SOURCES[item]:
         for v in values:
             assert fixed_item({field: v, item: False}, item), (field, v)  # raise only
+    for field, values in FIXED_FROM_V2[item]:
+        for v in values & REMOVED_BY_FIELD.get(field, frozenset()):
+            assert not fixed_item({field: v, item: False}, item), (field, v)
+            assert fixed_item(from_v2({field: v}), item), (field, v)  # through from_v2
     assert not fixed_item({"category": "invoice", "sender_type": "vendor"}, item)
+
+
+def test_the_kept_sources_are_the_fixed_rules_kept_clauses() -> None:
+    assert {i: s for i, s in KEPT_SOURCES.items() if s} == {
+        "regulator_claim": (("sender_type", frozenset({"regulator"})),),
+        "private_individual": (("sender_type", frozenset({"person", "friend", "family"})),),
+    }
+    text = resources.files("ecf_server.data").joinpath("fixed_rules.yaml").read_text("utf-8")
+    body = "\n".join(line.split("#")[0] for line in text.splitlines())  # comments aside
+    for clause in ("field: category", "vendor_change_request", "eq: team", "eq: regulatory"):
+        assert clause not in body, clause  # S3b: no bridge clause (the junk rule's id and
+        # label `spam_or_phishing` are kept, P16)
 
 
 # ---- refusals and the catch-all --------------------------------------------------------------
@@ -295,6 +322,8 @@ def test_the_rules_test_stand_in_reaches_fraud_guard_through_the_items() -> None
     assert proposed.evaluate(RuleInput(got, {})).rule_id == "fraud_guard"
     derived = ruletest.stand_in(labels | {"category": "vendor_change_request"}, None)
     assert derived["bank_detail_change"] is True  # derived from the v2 label
+    assert "category" not in derived  # S3b, the label map: then unlabelled, never `other`
+    assert proposed.evaluate(RuleInput(derived, {})).rule_id == "fraud_guard"
 
 
 # ---- diff review A4, A7 (2026-10-13) ----------------------------------------------------------

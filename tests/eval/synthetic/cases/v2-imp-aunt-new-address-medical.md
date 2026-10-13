@@ -12,7 +12,7 @@ from: "Aunt Ruth <ruth-lee-new@freemail.example>"
 subject: "My new email, and a favour"
 date: 2026-10-06T10:55:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: false, sender_type: family, fraud_risk: medium}
+  labels: {category: private, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: false, sender_type: family, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

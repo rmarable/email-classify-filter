@@ -11,7 +11,7 @@ from: "Jordan Pike <jordan-pike-office@freemail.example>"
 subject: "Quick favour before noon"
 date: 2026-10-08T08:05:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: urgent, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: team, fraud_risk: high}
+  labels: {category: other, priority: urgent, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: unknown, fraud_risk: high, regulator_claim: false, claims_internal: true, private_individual: false}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

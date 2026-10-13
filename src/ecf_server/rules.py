@@ -16,7 +16,7 @@ by `compose`: ecf's fixed rules (`fixed_rules.yaml`: fraud_guard, regulatory, fr
 unverified_payment_sender, spam_or_phishing) first, then the applied rules or, when none are
 applied, the default rules (`starter_rules.yaml`), then a catch-all when the file doesn't end
 with one. A rules file (`compile_rules`) can't use a fixed rule's id, nor a condition on a v2
-value S3b removes (`REMOVED_VALUES`; the fixed rules still read them in S3a), and may read the
+value schema v3 removed (`REMOVED_VALUES`, refused with its replacement; S3b), and may read the
 fixed items. Applied sets copied from the v2 starter rules hold the fixed ids: `convert_v2`
 strips each fixed-id rule identical to the v2 starter text (`starter_rules_v2.yaml`, frozen) and
 keeps the rest; a customised one is left for the caller to refuse. Compiled sets are cached on
@@ -403,7 +403,7 @@ def _compile(text: str, schema: CompiledSchema, *, source: str, fixed: bool) -> 
 
 def _check_user_rule(r: Rule, *, last: bool, source: str) -> None:
     """A rules file can't redefine a fixed rule, can't use `otherwise` but for a last rule with
-    no `when` (ecf appends one otherwise), and can't test a value S3b removes (OD-500)."""
+    no `when` (ecf appends one otherwise), and can't test a value schema v3 removed (OD-500)."""
     where = f"{source}: rule {r.id}"
     if r.id in fixed_ids():
         raise InvalidInputError(f"{where} is one of ecf's fixed rules, run first; remove it from"
@@ -596,8 +596,9 @@ class Conversion:
 
 
 def load_v2_starter(schema: CompiledSchema) -> CompiledRules:
-    """The v2 starter rules as v2.0.0-v2.2.3 shipped them, fixed rules inline: what the composed
-    rules are compared with (the S3a invariant, `tests/test_policy.py`); never used for mail."""
+    """The v2 starter rules as v2.0.0-v2.2.3 shipped them, fixed rules inline, compiled against a
+    schema with the removed values (v2): what the composed rules are compared with on preset A's
+    path (`tests/test_policy.py`); never used for mail."""
     return _cached((_schema_key(schema), V2_STARTER_FILE, None),
                    lambda: _compile(_data(V2_STARTER_FILE), schema, source=V2_STARTER_FILE,
                                     fixed=True))  # fmt: skip

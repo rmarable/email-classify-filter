@@ -69,7 +69,9 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   the mailbox. It needs a real terminal (hidden prompt). Org domains are asked with the first
   address only; later changes go through `ecf config apply`.
 - One install can watch work and personal addresses together; from v2.0.0 one classification
-  schema serves both (SPEC §7.1).
+  schema serves both (SPEC §7.1). From v3.0.0 safety rests on five yes/no fixed items (bank-detail
+  change, regulator claim, phishing, claims to be a colleague, private individual), not on the
+  category (OD-500).
 - **Presets** (SPEC §4.2): A all-local, B local classifier + Claude actor, C all-Claude.
 - **Sensitivity** `standard` or `high` (finance mailboxes: stricter gate, extra checks, a
   10-minute delay on sends). `ecf sensitivity set <address> high` is instant; lowering needs a
@@ -160,6 +162,13 @@ ecf rules test rules.yaml        # run proposed rules on the synthetic set; show
 ecf config apply config.yaml     # validated, diff shown, step-up, announced in Slack
 ```
 
+**Rules** (from v3.0.0, SPEC §8.6, OD-500): ecf's fixed rules (fraud guard, regulatory, weak
+fraud, unverified payment sender, the junk rule) always run first; your file replaces only the
+default rules. It can't reuse a fixed rule's id, can't test a removed value (`category`
+`vendor_change_request`, `regulatory`, `spam_or_phishing`; `sender_type` `team`: use
+`bank_detail_change`, `regulator_claim`, `phishing` or `claims_internal: true`), and needn't end
+with a catch-all (ecf adds one).
+
 A change to a template or the forward allow-list makes sends approved before it fail at execution
 (OD-317).
 
@@ -182,8 +191,9 @@ a Security Notice). The audit log and items with fraud or regulator signals are 
 | `assist` | labels, flags, escalates; other actions are held | `ecf stage set <a> assist` (step-up) |
 | `live` | full policy | `ecf stage set <a> live` (step-up, the go-live gate) |
 
-The gate (SPEC §9.3): `standard` needs 100 reviewed items at ≥ 85% category accuracy, `high`
-200 at ≥ 90%, and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
+The gate (SPEC §9.3): `standard` needs 100 reviewed items at ≥ 85% accuracy, `high`
+200 at ≥ 90% (from v3.0.0 accuracy is the share of reviews with no Fix; before, category
+accuracy; the upgrade clears earlier passes), and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
 injection set at 0 on the synthetic eval for the address's model pair. `stage set live` names a missing eval
 result. `--override --reason <text>` waives the review count or accuracy, never the safety gates.
 `--held run|resolve-older|resolve-all` decides what happens to held emails (default `run`: up to 7
@@ -334,8 +344,8 @@ ecf stage set <a> live                # step-up, once the safety gates pass on v
 
 **Rules files:** a file written for v1 still applies; `staff` is read as `team` and the rules that
 used it are named. To update the file, change `staff` to `team` (and use the new values if you
-want), then `ecf rules test rules.yaml` and `ecf config apply config.yaml`. The upgrade never
-rewrites applied rules (SPEC §8.6).
+want), then `ecf rules test rules.yaml` and `ecf config apply config.yaml`. The upgrade to v2
+never rewrote applied rules; the upgrade to v3.0.0 does, once (below; SPEC §8.6).
 
 **Starter rules 5a-5d** label the new categories and flag account-security mail, and appointment
 or school and family mail with a deadline. None hides mail: personal-category mail stays in the
@@ -349,6 +359,25 @@ colleague writing from a personal address is still checked (OD-476).
 **Backups:** bundles are now data format 3; v2.0.0 imports and restores formats 3 and 2, but
 `v1.0.0` can't import a v2 bundle (SPEC §11.9). `ecf upgrade --to v1.0.0` goes back through the
 upgrade's snapshot, as above (SPEC §11.10).
+
+## Upgrading to v3.0.0 (schema v3)
+
+Not released yet; built in stages (SPEC §7.1, ADR 0030, OD-498, OD-500).
+
+**What changes:** five yes/no fixed safety items are asked beside the categories, and the four
+values they replace are gone: `category` `vendor_change_request`, `regulatory` and
+`spam_or_phishing`, and `sender_type` `team`. A fake email gets the category of what it pretends
+to be. Stored mail is migrated on upgrade (migrations 0036 and 0037: the items set, the removed
+values read as `other` or `unknown`).
+
+**Rules files:** applied rules copied from the v2 starter rules lose their unchanged copies of the
+fixed rules once, at service start (audited); a changed copy stops that, shows as a System Error
+and in `ecf doctor`, and the starter rules apply until you remove it. A file that tests a removed
+value is refused with its replacement.
+
+**The go-live gate starts again** for preset C addresses (the schema is part of their key), and
+every address's stored pass is cleared (accuracy is now reviews with no Fix). Presets A and B are
+still asked schema v2.
 
 ## Removing an install
 

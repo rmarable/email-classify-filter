@@ -3,8 +3,9 @@
 - **Draft 2, 2026-10-13: draft 1 + Phase R P1-P20, operator accepted all**
   (`state-archive/v3.0.0/s3-review-findings.md`). Operator 2026-10-13: wording (§12) approved;
   §11 decided as recommended. Approved for build.
-- **Status:** S3a built, uncommitted (2026-10-13, branch `s3a-readers-switch`; OD-500). S3b not
-  started.
+- **Status:** S3a built and merged (2026-10-13, `fb49b30`; OD-500). S3b built, uncommitted
+  (2026-10-13, branch `s3b-values-removed`): not measured (§7 S3b criteria need the operator's
+  go-ahead per run); the four new regulatory cards await the operator's `ecf eval label`.
 - **Base:** `main` at `5a46634` (S2 merged, `845af58`). File:line refers to `src/` there unless
   stated. "Unverified" = not checked in code or docs.
 - **Scope:** schema doc draft 3 §15, S3 bullet; step 1c Phase R P1, P4, P5, P13, P14 honoured.
@@ -315,7 +316,9 @@ runs rescored once under S3b code with the redefined `correct` (P10). All must h
    (`regulator_claim`, `claims_internal`, under 20 positives): recall **and** precision reported
    (P19), no criterion.
 3. Rule right: Newcombe lower bound > -2.0 points in each of the four cross pairings.
-4. Every trigger-less regulatory card reaches `regulatory` in both runs (P1).
+4. Every trigger-less regulatory card is answered `regulator_claim: yes` in both runs and is escalated by
+   the regulatory or the fraud rule (P1; operator 2026-10-13, after the card review: the fraud rule
+   runs first, and a payment or call request can fairly read as medium fraud risk).
 5. Listed for the operator regardless of p: every rule loss on a card expecting `fraud_guard`,
    `regulatory` or `fraud_weak`; every case whose `rule_alone` (`evalrun.py:962`) isn't the
    expected fraud or regulatory rule; removed-value labels that fall to `otherwise` in rescore,
@@ -384,6 +387,9 @@ about 160 tokens per classify read; measured 2026-10-13 by compiling the §12 te
   0037, bridge clauses removed, `_with_items` removed, label map, `correct`, `label_map`, docs,
   ADR. ~14 source files, ~350 lines plus ~28 test files' fixtures. Measured by §7 S3b criteria
   (operator go-ahead per run).
+- **For S4** (S3b diff review B5, 2026-10-13): the local actor (presets A and B) now sees
+  `other` or `unknown` where it saw a removed value, and no fixed items; consider passing it the
+  planned rule or the items.
 - Each: two-agent diff review, macOS gate with 0 skipped, CHANGELOG line.
 
 ## 11. Decisions (operator 2026-10-13: all as recommended)

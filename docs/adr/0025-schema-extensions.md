@@ -5,6 +5,8 @@
   but off in `v2.0.0` (`ecf.schema.EXTENSIONS_ENABLED`), planned for `v2.1.0` once their
   dilution of the built-in fields is fixed and SPEC §1.5a item 2 passes (run `6b80a149` failed
   it: −4.3 points on the built-in fields, fraud-guard recall 89/90; SPEC §21.2)
+- **Superseded** (2026-10-13, OD-500) by ADR 0030 (the fixed safety layer, v3.0.0); the user
+  layer that replaces this extension model is decided in v3.0.0 stage S4, which amends ADR 0030.
 - **Context source:** SPEC §7.1, §7.4, §9.3, §9.7, §13.2, §15.1, §15.3;
   `planning-docs/SCHEMA-V2-PLAN.md` step 4 (draft 1, after Phase R)
 

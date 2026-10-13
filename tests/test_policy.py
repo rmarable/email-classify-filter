@@ -12,7 +12,16 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FIXED_ITEMS, FieldKind, extend_schema, fixed_item, load_schema, with_fixed
+from ecf.schema import (
+    FIXED_ITEMS,
+    FieldKind,
+    extend_schema,
+    fixed_item,
+    from_v2,
+    load_schema,
+    load_schema_v2,
+    with_fixed,
+)
 from ecf_server import policy, precheck, rules
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
@@ -101,7 +110,7 @@ def test_i1_a_hide_survives_only_when_facts_allow_it(ctx: Context) -> None:
         t = ctx.facts["triggers"]
         assert not (t["fraud"] or t["fraud_weak"] or t["regulator"] or t["lookalikes"])
         assert ctx.classification["fraud_risk"] == "none"
-        assert ctx.classification["category"] != "regulatory"
+        assert not fixed_item(ctx.classification, "regulator_claim")  # the item or regulator
         assert ctx.facts["bulk_corroborates"] or (
             ctx.facts["auth_result"] == "pass"
             and ctx.confirmed_category == ctx.classification["category"]
@@ -225,7 +234,7 @@ def test_a_confirmed_category_corroborates_only_when_it_matches_and_mail_authent
 
 
 def test_rules_6_to_8_are_label_and_leave_on_high_addresses() -> None:
-    for category, extra in (("spam_or_phishing", {}), ("marketing", {}),
+    for category, extra in (("other", {"phishing": True}), ("marketing", {}),
                             ("notification", {"sender_type": "automated"})):  # fmt: skip
         p = policy.plan(_ctx(sensitivity="high",
                              classification={"category": category} | extra), LABELS)  # fmt: skip
@@ -356,7 +365,11 @@ def test_labels_include_what_the_extension_adds() -> None:
 # ---- v3.0.0 S3: fixed items, fixed rules (OD-500; plan §5 invariants) -------------------------
 
 FIXED = rules.load_fixed_rules(SCHEMA)
-V2_STARTER = rules.load_v2_starter(SCHEMA)
+# preset A's path (S3b): the local model answers v2, which still has the removed values; the
+# composed rules compiled on v2 against the v2 starter rules
+V2 = load_schema_v2()
+V2_COMPOSED = load_starter_rules(V2)
+V2_STARTER = rules.load_v2_starter(V2)
 KEPT_SOURCES = (
     "regulator",
     "friend",
@@ -433,35 +446,52 @@ def test_s3_inv5_a_missing_fixed_item_is_false(ctx: Context, item: str) -> None:
     assert (a.rule_id, a.actions, a.dropped) == (b.rule_id, b.actions, b.dropped)
 
 
-V2_CLASSIFICATIONS = st.fixed_dictionaries({n: _field(s) for n, s in SCHEMA.fields.items()
-                                            if n not in FIXED_ITEMS})  # fmt: skip
+V2_CLASSIFICATIONS = st.fixed_dictionaries({n: _field(s) for n, s in V2.fields.items()})
 
 
 @settings(max_examples=3000, deadline=None)
 @given(V2_CLASSIFICATIONS, FACTS)
-def test_s3a_inv6_the_composed_rules_decide_as_the_v2_starter_rules(
+def test_s3_inv6_the_composed_rules_decide_as_the_v2_starter_rules(
     cls: dict[str, Any], facts: dict[str, Any]
 ) -> None:
-    """Invariant 6 (S3a): when the items agree with the old values (`with_fixed` of a v2
-    answer), the composed rules decide exactly as the v2 starter rules did, but for the
-    expected causes: the kept-source clauses on sender_type regulator, friend and family."""
+    """Invariant 6 (S3a; from S3b on preset A's path): when the items are derived from a v2
+    answer (`with_fixed`), the composed rules (no bridge clauses from S3b) decide exactly as the
+    v2 starter rules did, but for the expected causes: the kept-source clauses on sender_type
+    regulator, friend and family."""
     if cls["sender_type"] in KEPT_SOURCES:
         return
-    inp = policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts))
-    assert STARTER.evaluate(inp) == V2_STARTER.evaluate(inp)
+    inp = policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts, rules=V2_COMPOSED))
+    assert V2_COMPOSED.evaluate(inp) == V2_STARTER.evaluate(inp)
+
+
+@settings(max_examples=2000, deadline=None)
+@given(V2_CLASSIFICATIONS, FACTS)
+def test_s3b_from_v2_plans_as_the_v2_answer_on_v3(cls: dict[str, Any], facts: dict[str, Any]
+                                                 ) -> None:  # fmt: skip
+    """S3b (D3): a v2 answer brought to v3 (`from_v2`: items derived, removed values read as
+    other/unknown) reaches the same fixed rule on the v3 rules as the v2 answer with its items
+    on v2's: reading a removed value as `other` or `unknown` loses no fixed-rule decision."""
+    on_v2 = V2_COMPOSED.evaluate(
+        policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts, rules=V2_COMPOSED))
+    )
+    on_v3 = STARTER.evaluate(policy.rule_input(_ctx(classification=from_v2(cls), facts=facts)))
+    if on_v2.rule_id in rules.fixed_ids():
+        assert on_v3.rule_id == on_v2.rule_id
+    else:
+        assert on_v3.rule_id not in rules.fixed_ids()
 
 
 @pytest.mark.parametrize(
     ("cls", "facts", "why"),
     [
         ({"bank_detail_change": True}, {}, "bank detail change"),
-        ({"category": "vendor_change_request"}, {}, "bank detail change"),  # S3a bridge
+        (from_v2({"category": "vendor_change_request"}), {}, "bank detail change"),  # S3b
         ({"regulator_claim": True}, {}, "regulatory"),
         ({"sender_type": "regulator"}, {}, "regulatory"),  # kept source
         ({"claims_internal": True}, {"sender_origin": "external"},
          "claims to be a colleague, from outside"),
-        ({"sender_type": "team"}, {"sender_origin": "external"},
-         "claims to be a colleague, from outside"),  # S3a bridge
+        (from_v2({"sender_type": "team"}), {"sender_origin": "external"},
+         "claims to be a colleague, from outside"),  # S3b: the item from_v2 derives
         ({"phishing": True}, {}, "phishing"),
     ],
 )  # fmt: skip

@@ -11,7 +11,7 @@ from: "\"sam-rivera@freemail.example\" <sr-cabin-share@freemail.example>"
 subject: "Your share of the cabin"
 date: 2026-10-04T10:15:00Z
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high, sender_type: friend, deadline_mentioned: true}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, sender_type: friend, deadline_mentioned: true, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

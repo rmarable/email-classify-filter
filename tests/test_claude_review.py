@@ -593,8 +593,9 @@ def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
     assert claude_queue.batch_risky(conn, a)  # b isn't classified yet: unknown is risky
     assert not claude_queue.batch_risky(conn, h)  # classifier-high: one per spawn, no batch
     submit_classification(conn, clock, S1, b, token_for(q, b),
-                                        ROUTINE | {"category": "spam_or_phishing"})  # fmt: skip
-    assert claude_queue.batch_risky(conn, a)
+                                        ROUTINE | {"category": "marketing"})  # fmt: skip
+    # plain unsolicited bulk mail (marketing from S3b) doesn't make the batch risky (P14)
+    assert not claude_queue.batch_risky(conn, a)
     with write_tx(conn):
         conn.execute("UPDATE items SET classification = ? WHERE stable_id = ?",
                      (json.dumps(ROUTINE), b))  # fmt: skip

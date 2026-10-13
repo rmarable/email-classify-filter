@@ -10,7 +10,7 @@ subject: "Payment approval needed"
 date: 2026-10-19T11:30:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high}
+  labels: {category: invoice, payment_related: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

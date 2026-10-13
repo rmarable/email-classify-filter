@@ -20,6 +20,7 @@ from ecf.schema import (
     derive_fixed,
     derive_labels,
     extend_schema,
+    from_v2,
     load_schema,
     load_schema_v2,
     local_fields,
@@ -61,6 +62,22 @@ PRIORITY = (
     "Look at it today.",
     "Needs attention within hours: a deadline today, an outage, or money or access at risk.",
 )
+# S3b (OD-500; plan §12, operator-approved 2026-10-13, verbatim): the reworded texts
+S3B_TEXTS = {
+    ("category", None): "What this email is primarily about. A fake email gets the value of what"
+    " it pretends to be (a fake invoice is an invoice). When several fit, choose in this order: a"
+    " sign-in or security alert; money (a bill to pay, then a payment made or received, then an"
+    " account or policy we hold); then what the email is about; a plain notice, a personal note"
+    " or none of these last.",
+    ("category", "account_security"): "Sign-in alert, password reset, verification code, or"
+    " security warning about an account, genuine or fake.",
+    ("category", "marketing"): "Sent to many: newsletters, promotions, advertising, and other"
+    " unsolicited bulk mail.",
+    ("sender_type", "unknown"): "Can't tell the role, or a colleague or co-worker of ours,"
+    " genuine or not. Otherwise an impostor takes the role they claim.",
+}
+REMOVED = {"category": ("vendor_change_request", "regulatory", "spam_or_phishing"),
+           "sender_type": ("team",)}  # fmt: skip
 V2_ANSWER: dict[str, Any] = {
     "category": "invoice", "priority": "high", "requires_action": True, "requires_reply": False,
     "payment_related": True, "deadline_mentioned": False, "sender_type": "vendor",
@@ -77,6 +94,8 @@ def test_v3_is_v2_plus_the_fixed_items_and_priority_texts() -> None:
     check_safety_core(v3)
     assert list(v3.fields) == [*v2.fields, *FIXED_ITEMS]  # after v2's: v2's prefix order kept
     for name, f in v2.fields.items():
+        if name in REMOVED:  # category and sender_type: checked below (S3b)
+            continue
         g = v3.fields[name]
         assert (g.kind, g.description, g.values) == (f.kind, f.description, f.values), name
         if name != "priority":
@@ -88,8 +107,16 @@ def test_v3_is_v2_plus_the_fixed_items_and_priority_texts() -> None:
         assert v3.fields[name].description == text
         assert SAFETY_FIELDS[name] == ("boolean", ())
     for name in ("fraud_risk", "payment_related", "requires_action", "requires_reply",
-                 "deadline_mentioned", "category", "sender_type"):  # fmt: skip
+                 "deadline_mentioned"):  # fmt: skip
         assert v3.fields[name] == v2.fields[name]  # v2 wording exactly
+    for name, gone in REMOVED.items():  # S3b: four values removed, four texts reworded
+        f, g = v2.fields[name], v3.fields[name]
+        assert g.values == tuple(v for v in f.values if v not in gone), name
+        assert g.description == S3B_TEXTS.get((name, None), f.description), name
+        for v, d in zip(g.values, g.value_descriptions, strict=True):
+            assert d == S3B_TEXTS.get((name, v), f.value_descriptions[f.values.index(v)]), v
+        for removed in gone:  # P12: no text names a removed value
+            assert removed not in g.description + " ".join(g.value_descriptions)
 
 
 def test_an_extension_cant_take_a_fixed_item_name() -> None:
@@ -140,11 +167,27 @@ def test_every_other_v2_value_derives_nothing() -> None:
 
 def test_with_fixed_completes_a_v2_answer_and_keeps_given_items() -> None:
     full = with_fixed(V2_ANSWER | {"category": "spam_or_phishing"})
-    load_schema().validate(full)
     assert full["phishing"] is True and full["bank_detail_change"] is False
+    assert full["category"] == "spam_or_phishing"  # values left as they are (from_v2 maps them)
     kept = with_fixed(V2_ANSWER | {"phishing": False, "category": "spam_or_phishing"})
     assert kept["phishing"] is False
     assert local_fields(full) == V2_ANSWER | {"category": "spam_or_phishing"}
+
+
+def test_from_v2_derives_the_items_then_reads_removed_values_as_least_informative() -> None:
+    """S3b (D3): a v2 answer brought to v3: the items first (they carry what the removed value
+    said), then category -> other, sender_type team/staff -> unknown; valid v3."""
+    for field, value, item in ROWS:
+        got = from_v2(V2_ANSWER | {field: value})
+        load_schema().validate(got)
+        assert got[item] is True, (field, value)
+        if value in REMOVED.get(field, ()) or value == "staff":
+            assert got[field] == {"category": "other", "sender_type": "unknown"}[field]
+        else:
+            assert got[field] == value  # a kept value stays
+    kept = from_v2(V2_ANSWER | {"category": "vendor_change_request", "bank_detail_change": False})
+    assert kept["bank_detail_change"] is False and kept["category"] == "other"  # given item kept
+    assert from_v2(V2_ANSWER) == with_fixed(V2_ANSWER)  # nothing removed: only the items
 
 
 # ---- eval labels (§10, P8) -------------------------------------------------------------------
@@ -209,10 +252,24 @@ def test_an_injection_target_extends_to_the_fixed_items() -> None:
 
 def test_a_v2_result_is_completed_to_v3_when_rescored() -> None:
     fields, mapped = evalrun._mapped(V2_ANSWER | {"sender_type": "staff", "rule": "x"})  # pyright: ignore[reportPrivateUsage]
-    assert mapped == 1 and fields["claims_internal"] is True and "rule" not in fields
+    # staff -> team (v1), then team (removed in S3b) -> unknown, the item kept: two mapped
+    assert mapped == 2 and fields["claims_internal"] is True and "rule" not in fields
+    assert fields["sender_type"] == "unknown"
     assert evalrun._mapped({"rule": None}) == ({}, 0)  # pyright: ignore[reportPrivateUsage]
     v3 = with_fixed(V2_ANSWER) | {"phishing": True}
     assert evalrun._mapped(v3)[0] == v3  # pyright: ignore[reportPrivateUsage]
+    # an S2-era v3 answer (items given) with a removed value: the value is read, and its implied
+    # item set true even where the answer said false, as 0037 does (B2), and counted
+    s2 = with_fixed(V2_ANSWER) | {"category": "regulatory", "regulator_claim": False}
+    got, n = evalrun._mapped(s2)  # pyright: ignore[reportPrivateUsage]
+    assert n == 1 and got["category"] == "other" and got["regulator_claim"] is True
+    assert got["phishing"] is False  # other items as answered
+    assert evalrun._raised(s2 | {"rule": "x"})  # pyright: ignore[reportPrivateUsage]
+    assert not evalrun._raised(s2 | {"regulator_claim": True})  # pyright: ignore[reportPrivateUsage]
+    assert not evalrun._raised(with_fixed(V2_ANSWER))  # pyright: ignore[reportPrivateUsage]
+    staff = V2_ANSWER | {"sender_type": "staff", "claims_internal": False}  # v1 staff -> team
+    assert evalrun._raised(staff)  # pyright: ignore[reportPrivateUsage]
+    assert evalrun._mapped(staff)[0]["claims_internal"] is True  # pyright: ignore[reportPrivateUsage]
     r = CaseResult(id="x", correct=True, got=V2_ANSWER)
     assert evalrun._lacks_fixed(r.got)  # pyright: ignore[reportPrivateUsage]
 
@@ -248,6 +305,12 @@ def test_a_v2_reply_is_completed_and_a_v3_shaped_reply_refused() -> None:
     got = classifier.parse(json.dumps(V2_ANSWER | {"sender_type": "family"}), v3)
     assert got is not None and got["private_individual"] is True and got["phishing"] is False
     v3.validate(got)
+    # S3b (D3): a removed v2 value is brought to v3 (`from_v2`): the item, then other/unknown
+    vcr = classifier.parse(json.dumps(V2_ANSWER | {"category": "vendor_change_request",
+                                                   "sender_type": "team"}), v3)  # fmt: skip
+    assert vcr is not None and vcr["bank_detail_change"] is True and vcr["claims_internal"]
+    assert (vcr["category"], vcr["sender_type"]) == ("other", "unknown")
+    v3.validate(vcr)
     # the model is asked v2 strictly: an answer with the fixed items isn't what it was asked
     assert classifier.parse(json.dumps(with_fixed(V2_ANSWER)), v3) is None
     assert classifier.parse(json.dumps(V2_ANSWER), load_schema_v2()) == V2_ANSWER
@@ -262,14 +325,17 @@ def test_the_local_actor_sees_only_v2_fields() -> None:
 # ---- migration 0036 --------------------------------------------------------------------------
 
 
-def _v2_db(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+def _v2_db(db_path: Path, monkeypatch: pytest.MonkeyPatch, *, before: int = 36,
+           then: int = 36) -> sqlite3.Connection:  # fmt: skip
+    """A database migrated to just before `before`, with an address; the next `db.migrate`
+    runs up to `then` (0036 alone by default; 0037, S3b, has its own tests below)."""
     every = db._migration_files()  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < 36])
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] < before])
     c = db.connect(db_path)
     db.migrate(c)
     c.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
               " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')")  # fmt: skip
-    monkeypatch.setattr(db, "_migration_files", lambda: every)
+    monkeypatch.setattr(db, "_migration_files", lambda: [m for m in every if m[0] <= then])
     return c
 
 
@@ -350,3 +416,77 @@ def test_the_python_table_names_only_v2_values() -> None:
     for sources in FIXED_FROM_V2.values():
         for field, values in sources:
             assert values - {"staff"} <= set(v2.fields[field].values)
+
+
+# ---- migration 0037 (S3b, OD-500, P9, P4) ----------------------------------------------------
+
+
+def test_0037_reads_removed_values_on_values_only_and_clears_gate_passes(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With 0036 applied, S2-era v3 rows (schema_version 3) holding a removed value: the item it
+    implied set true (a Fix's own answer kept), then the value read as `from_v2` reads it; rows
+    with no removed value untouched; `gate.passed_at` cleared, counts kept; idempotent."""
+    c = _v2_db(db_path, monkeypatch, before=37, then=37)
+    v3 = with_fixed(V2_ANSWER)
+    rows = {
+        "vcr": v3 | {"category": "vendor_change_request"},  # item false: the old value says it
+        "reg": v3 | {"category": "regulatory", "regulator_claim": True},
+        "spam": v3 | {"category": "spam_or_phishing"},
+        "team": v3 | {"sender_type": "team"},
+        "staff": v3 | {"sender_type": "staff"},
+        "plain": v3 | {"category": "invoice", "sender_type": "regulator"},
+    }
+    for sid, cls in rows.items():
+        create_item(c, FakeClock(), stable_id=StableId(sid), address_id=AddressId("ap"),
+                    content_hash=sid, classification=json.dumps(cls))  # fmt: skip
+        c.execute("INSERT INTO fallback_shadow (stable_id, address_id, digest, outcome,"
+                  " classification, created_at) VALUES (?, 'ap', 'd', 'ok', ?, 't')",
+                  (sid, json.dumps(cls)))  # fmt: skip
+    c.execute("UPDATE items SET schema_version = 3")
+    fixes = {"vcr": {"category": "vendor_change_request", "bank_detail_change": False},
+             "spam": {"category": "spam_or_phishing"}, "team": {"sender_type": "team"},
+             "plain": {"priority": "low"}}  # fmt: skip
+    for sid, fix in fixes.items():
+        c.execute("UPDATE items SET human_correction = ? WHERE stable_id = ?",
+                  (json.dumps(fix), sid))  # fmt: skip
+    c.execute("INSERT INTO gate (address_id, pair_key, reviewed, correct, passed_at)"
+              " VALUES ('ap', 'A', 120, 110, '2026-10-01T00:00:00Z')")  # fmt: skip
+    for h, cat in (("s1", "regulatory"), ("s2", "spam_or_phishing"), ("s3", "marketing")):
+        c.execute("INSERT INTO senders (address_id, sender_hash, confirmed_category,"
+                  " confirmed_at, dmarc_pass_count) VALUES ('ap', ?, ?, 't', 3)",
+                  (h, cat))  # fmt: skip
+    plain_before = c.execute("SELECT classification, human_correction FROM items"
+                             " WHERE stable_id = 'plain'").fetchone()  # fmt: skip
+    assert db.migrate(c) == ["0037_schema_v3_values_removed.sql"]
+    want_item = {"vcr": "bank_detail_change", "reg": "regulator_claim", "spam": "phishing",
+                 "team": "claims_internal", "staff": "claims_internal"}  # fmt: skip
+    for sid, item in want_item.items():
+        for table in ("items", "fallback_shadow"):
+            got = json.loads(c.execute(f"SELECT classification FROM {table}"  # noqa: S608
+                                       " WHERE stable_id = ?", (sid,)).fetchone()[0])  # fmt: skip
+            assert got[item] is True, (table, sid)
+            load_schema().validate(got)  # a valid v3 classification now
+            assert got == from_v2(rows[sid]) | {item: True}, (table, sid)
+    fix = {sid: json.loads(c.execute("SELECT human_correction FROM items WHERE stable_id = ?",
+                                     (sid,)).fetchone()[0]) for sid in fixes}  # fmt: skip
+    assert fix["vcr"] == {"category": "other", "bank_detail_change": False}  # the Fix's answer
+    assert fix["spam"] == {"category": "other", "phishing": True}
+    assert fix["team"] == {"sender_type": "unknown", "claims_internal": True}
+    after = c.execute("SELECT classification, human_correction FROM items"
+                      " WHERE stable_id = 'plain'").fetchone()  # fmt: skip
+    assert tuple(after) == tuple(plain_before)  # no removed value: untouched
+    g = c.execute("SELECT reviewed, correct, passed_at FROM gate").fetchone()
+    assert tuple(g) == (120, 110, None)  # P4, A3: no category-era pass carries over
+    senders = {r[0]: (r[1], r[2]) for r in c.execute(
+        "SELECT sender_hash, confirmed_category, dmarc_pass_count FROM senders")}  # fmt: skip
+    assert senders == {"s1": (None, 3), "s2": (None, 3), "s3": ("marketing", 3)}  # B4
+    assert db.migrate(c) == []
+    c.close()
+
+
+def test_0037_checkpoints_and_the_release_names_it() -> None:
+    assert 37 in db.CHECKPOINT_AFTER
+    release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
+    newest = max(m[0] for m in db._migration_files())  # pyright: ignore[reportPrivateUsage]
+    assert release["schema_version"] == newest == 37

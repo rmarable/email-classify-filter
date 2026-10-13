@@ -59,7 +59,7 @@ from ecf.eval.results import (
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import CompiledSchema, load_schema_v2, local_schema, with_fixed
+from ecf.schema import CompiledSchema, from_v2, load_schema_v2, local_schema
 from ecf_server import (
     actor,
     alerts,
@@ -302,10 +302,11 @@ def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[
 
 
 def _completed(got: dict[str, Any]) -> dict[str, Any]:
-    """Gemma's recorded answer without the rule, completed to v3 (`with_fixed`) only when it
-    answered: `with_fixed({})` would be five false items, which policy would plan."""
+    """Gemma's recorded answer without the rule, brought to v3 (`from_v2`: the fixed items
+    derived, removed values read as `other`/`unknown`, S3b) only when it answered: `from_v2({})`
+    would be five false items, which policy would plan."""
     fields = {k: v for k, v in got.items() if k != "rule"}
-    return with_fixed(fields) if fields else {}
+    return from_v2(fields) if fields else {}
 
 
 def _same_schema(metrics: dict[str, Any], schema: CompiledSchema) -> bool:
@@ -486,6 +487,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()
+    summary["label_map_unlabelled"] = evalrun.map_effect([w.case for w in run.works])
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)

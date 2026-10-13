@@ -18,14 +18,22 @@ import json
 import random
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, parse_card
-from ecf.schema import CompiledSchema
+from ecf.schema import (
+    NOT_DERIVED_LABELS,
+    REMOVED_BY_FIELD,
+    CompiledSchema,
+    derive_labels,
+    load_schema,
+)
 
 LOG = "reviews.jsonl"
 REVIEW, RECHECK = "review", "recheck"
@@ -195,3 +203,95 @@ def summary(log: list[dict[str, Any]], since: int = 0) -> list[str]:
         lines.append("rechecks (your answer again vs your review's):")
         lines += [f"  {f}: {sum(a)} of {len(a)} the same" for f, a in agree.items()]
     return lines
+
+
+# ------------------------------------------------- a card review page's answers (S3b, OD-500)
+
+# Card fields a page's answers can set (`ecf eval label --import-fixed`, beside the fixed items):
+# the two whose values schema v3 removed (P11), and `fraud_risk` (a new card's blind labels)
+CARD_FIELDS = ("category", "sender_type", "fraud_risk")
+PAGE = "page"  # the reviews.jsonl kind of a card review page's answer to a card field
+HOW = frozenset({"single", "bulk"})
+
+
+def kept_items(field: str, old: dict[str, Any], new: dict[str, Any]) -> dict[str, bool]:
+    """When a page replaces a removed value (S3b), the fixed-item labels the card's old labels
+    implied (`derive_labels`) that its new labels no longer imply the same way: kept on the card
+    as stated labels, so the relabel moves no item label (`category: vendor_change_request` to
+    `invoice` keeps `bank_detail_change: true` rather than deriving it false; `sender_type: team`
+    to `unknown` keeps `claims_internal: true` and the items `team` made false). `phishing` is
+    never kept (`NOT_DERIVED_LABELS`): the operator split `spam_or_phishing` by hand, in
+    `fixed_labels.jsonl`. Items the card states itself stay as they are."""
+    if old.get(field) not in REMOVED_BY_FIELD.get(field, frozenset()) or new == old:
+        return {}
+    before, after = derive_labels(old), derive_labels(new)
+    return {
+        k: v
+        for k, v in before.items()
+        if k not in NOT_DERIVED_LABELS and k not in old and after.get(k) != v
+    }
+
+
+def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
+                rebuild: Callable[[Path], None]) -> dict[str, Any]:  # fmt: skip
+    """Write a card review page's answers for one card field (`{case id: {"label": value, "how":
+    "single" | "bulk"}}`) into each card's `labels:` line, with the fixed items a replaced
+    removed value implied (`kept_items`); rebuild the set once (`rebuild(root)`); log each
+    answer in `reviews.jsonl` (kind `page`, with how); and confirm again, as the operator's,
+    each card that was confirmed before (the answers are the operator's own; the rest of its
+    expected values were confirmed already). A card that wasn't confirmed stays pending: its
+    rule, safety and other labels need `ecf eval label <id>`. Every id must be a case and every
+    value one of the field's values in the shipped schema; nothing is written otherwise."""
+    spec = load_schema().fields.get(field)
+    if field not in CARD_FIELDS or spec is None:
+        raise InvalidInputError(f"{field!r} isn't a card field a page sets"
+                                f" ({', '.join(CARD_FIELDS)})")  # fmt: skip
+    rows = {r["id"]: r for r in label_file.read(root)}
+    unknown = sorted(set(answers) - set(rows))
+    if unknown:
+        raise InvalidInputError(f"not cases in labels.jsonl: {', '.join(unknown[:5])}")
+    for case_id, given in answers.items():
+        a: dict[str, Any] = cast(dict[str, Any], given) if isinstance(given, dict) else {}
+        if a.get("how") not in HOW:
+            raise InvalidInputError(f"{case_id}: needs label and how single/bulk")
+        if _str(a.get("label")) not in spec.values:
+            raise InvalidInputError(f"{case_id}: {a.get('label')!r} isn't a {field} value")
+    paths = {parse_card(p.read_text(encoding="utf-8"), source=p.name).id: p
+             for p in sorted((root / "cases").glob("*.md"))}  # fmt: skip
+    missing = sorted(set(answers) - set(paths))
+    if missing:
+        raise InvalidInputError(f"no card file for: {', '.join(missing[:5])}")
+    was_confirmed = {i for i in answers if label_file.is_confirmed(rows[i])}
+    log: list[dict[str, Any]] = []
+    changed: list[str] = []
+    for case_id, a in answers.items():
+        path = paths[case_id]
+        old = parse_card(path.read_text(encoding="utf-8"), source=path.name).expected.labels
+        before = old.get(field)
+        keep = kept_items(field, old, merged(old, {field: a["label"]}))
+        new = merged(old, {field: a["label"]} | keep)
+        if new != old:
+            set_labels(path, new)
+            changed.append(case_id)
+        log.append(entry(rows[case_id], field, before=before, answer=a["label"],
+                         final=a["label"], outcome=outcome(before, a["label"], a["label"]),
+                         on=on, kind=PAGE) | {"how": a["how"]}
+                   | ({"kept_items": sorted(keep)} if keep else {}))  # fmt: skip
+    if changed:
+        rebuild(root)
+    append_log(root, log)
+    reconfirmed = [i for i in sorted(was_confirmed)
+                   if not label_file.is_confirmed(_row(root, i))]  # fmt: skip
+    for case_id in reconfirmed:
+        label_file.confirm(root, case_id, on)
+    return {"answers": len(answers), "changed": len(changed), "reconfirmed": len(reconfirmed),
+            "pending": sorted(set(answers) - was_confirmed),
+            "kept_items": sum(1 for e in log if e.get("kept_items"))}  # fmt: skip
+
+
+def _str(v: Any) -> str | None:
+    return v if isinstance(v, str) else None
+
+
+def _row(root: Path, case_id: str) -> dict[str, Any]:
+    return next(r for r in label_file.read(root) if r["id"] == case_id)

@@ -607,6 +607,7 @@ class Service:
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
         config.convert_rules(conn, to_ts(self.clock.now()))  # v2 applied rules (P7, OD-500)
+        stages.demote_after_gate_change(conn, self.clock)  # 0037 cleared gate passes (B1)
         _clear_stale(conn)
         self._prepare_state(conn)
         conn.close()

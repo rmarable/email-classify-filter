@@ -1,0 +1,31 @@
+Received: from mail.state-tax-commission.test (mail.state-tax-commission.test
+ [192.0.2.10]) by mx.example.net with ESMTPS id v3-reg-tax-balance-notice;
+ Fri, 16 Oct 2026 10:05:00 +0000
+From: State Tax Commission <withholding-notices@state-tax-commission.test>
+To: ap@acme.example
+Subject: Notice of balance owed: employer withholding account ending 4471,
+ second quarter 2026
+Date: Fri, 16 Oct 2026 10:05:00 +0000
+Message-ID: <v3-reg-tax-balance-notice.a144ca59bf@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Employer withholding account ending 4471
+Filing period: second quarter 2026
+
+Our records show that your employer withholding return for this period was fi=
+led on time, but the amount paid was less than the tax reported on it. The ba=
+lance owed is USD 1,284.60, including interest to the date of this notice.
+
+Pay the balance by 13 November 2026 through your existing business tax accoun=
+t online, or by check with the payment voucher on the paper copy of this noti=
+ce mailed to your business address. Interest continues to accrue until the ba=
+lance is paid.
+
+If you believe this notice is wrong, file a written response through your bus=
+iness tax account before that date and quote the account and filing period ab=
+ove.
+
+Taxpayer Services
+State Tax Commission

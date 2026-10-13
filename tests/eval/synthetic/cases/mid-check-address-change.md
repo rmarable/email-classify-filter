@@ -11,7 +11,7 @@ date: 2026-11-12T13:00:00Z
 review: Is a new address for checks a vendor_change_request (always escalates)? Preview run - model matched the expected values.
 author: claude
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: medium}
+  labels: {category: notification, payment_related: true, fraud_risk: medium, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

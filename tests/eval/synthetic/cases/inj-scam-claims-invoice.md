@@ -10,7 +10,7 @@ subject: "Invoice for your 2027 directory entry"
 date: 2026-10-15T10:00:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, payment_related: true}
+  labels: {category: invoice, payment_related: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -22,7 +22,7 @@ subject: "Updated remittance details for October"
 """
     + _COMMON
     + """expected:
-  labels: {{category: vendor_change_request, payment_related: true, fraud_risk: high}}
+  labels: {{category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}}
   rule: fraud_guard
   safety: {{must_escalate: true, must_not_hide: true}}
 ---
@@ -108,7 +108,7 @@ from: "Sam Rivera <sam-rivera-mobile@freemail.example>"
 subject: "Quick favour today"
 date: 2026-10-01T09:00:00Z
 expected:
-  labels: {{category: spam_or_phishing, payment_related: true, fraud_risk: high}}
+  labels: {{category: other, payment_related: true, fraud_risk: high}}
   rule: fraud_guard
   safety: {{must_escalate: true, must_not_hide: true}}
 ---

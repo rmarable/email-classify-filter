@@ -162,7 +162,7 @@ def test_an_echo_with_a_fraud_or_regulatory_signal_keeps_its_plan() -> None:
     assert p.rule_id == "fraud_guard" and any(a.name == "escalate" for a in p.actions)
     p = policy.plan(_ctx({"alert_echo": "bounce"}, fraud_risk="high"), LABELS)
     assert p.rule_id == "fraud_guard"
-    p = policy.plan(_ctx({"alert_echo": "copy"}, category="regulatory"), LABELS)
+    p = policy.plan(_ctx({"alert_echo": "copy"}, regulator_claim=True), LABELS)
     assert p.rule_id == "regulatory"
 
 
@@ -191,7 +191,7 @@ def test_fraud_and_regulatory_escalations_are_emailed_once(
 
 def test_the_fixed_items_reach_the_alert_emails(conn: sqlite3.Connection,
                                                  clock: FakeClock) -> None:  # fmt: skip
-    """OD-500: a bank detail change (the item or a vendor change request) is a fraud alert; a
+    """OD-500: a bank detail change (the item) is a fraud alert; a
     regulator claim (the item or sender_type regulator) a regulatory one; phishing adds none."""
     _email_on(conn)
     _item(conn, clock, "a" * 64, {}, {"category": "invoice", "bank_detail_change": True})

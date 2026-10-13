@@ -51,12 +51,13 @@ def _client(handler: Callable[[httpx.Request], httpx.Response]) -> Client:
 
 
 def _answers(**over: Any) -> dict[str, Any]:
-    """A full, valid reply: vendor_change_request, fraud_risk high, payment_related."""
+    """A full, valid reply: invoice, fraud_risk high, payment_related (a value schema v2 and v3
+    both have; S3b removed `vendor_change_request` from v3)."""
     a: dict[str, Any] = {
         "category": {
             "type": "choice",
-            "choice": "vendor_change_request",
-            "probabilities": {"vendor_change_request": 0.9, "invoice": 0.1},
+            "choice": "invoice",
+            "probabilities": {"invoice": 0.9, "other": 0.1},
         },
         "sender_type": {
             "type": "choice",
@@ -115,7 +116,7 @@ def test_state_cuts_the_excerpt_below_the_classifiers_cap() -> None:
 def test_answers_map_to_a_valid_classification() -> None:
     got = systemone.map_answers(_answers(), SCHEMA)
     assert got.classification == {
-        "category": "vendor_change_request", "sender_type": "vendor", "priority": "medium",
+        "category": "invoice", "sender_type": "vendor", "priority": "medium",
         "fraud_risk": "high", "requires_action": True, "requires_reply": False,
         "payment_related": True, "deadline_mentioned": False,
     } | dict.fromkeys(FIXED_ITEMS, False)  # fmt: skip
@@ -162,7 +163,9 @@ def test_ask_sends_the_questions_and_the_state() -> None:
         seen["path"] = req.url.path
         seen["host"] = req.url.host
         seen["body"] = json.loads(req.content)
-        return httpx.Response(200, json=_answers())
+        vcr = {"type": "choice", "choice": "vendor_change_request",
+               "probabilities": {"vendor_change_request": 0.9, "invoice": 0.1}}  # fmt: skip
+        return httpx.Response(200, json=_answers(category=vcr))  # a v2 value: it was asked v2
 
     got = systemone.ask(_client(handler), "ecf/test-decision:1", "the email", SCHEMA)
     assert got.classification is not None
@@ -174,9 +177,12 @@ def test_ask_sends_the_questions_and_the_state() -> None:
     # asked schema v2, as Gemma is (P6; S2 review F5): no fixed items asked ...
     assert body["questions"] == systemone.questions(local_schema(SCHEMA))
     assert len(body["questions"]) == 8 and not set(FIXED_ITEMS) & set(body["questions"])
-    # ... and the answer completed with them, derived from v2's (the reply's own ignored)
+    # ... and the answer brought to v3 (`from_v2`, S3b): the items derived from v2's (the
+    # reply's own ignored), then the removed value read as `other`
     assert got.classification["bank_detail_change"] is True
-    assert {k: got.classification[k] for k in FIXED_ITEMS} == derive_fixed(got.classification)
+    assert got.classification["category"] == "other"
+    v2_answer = got.classification | {"category": "vendor_change_request"}
+    assert {k: got.classification[k] for k in FIXED_ITEMS} == derive_fixed(v2_answer)
     assert "the email" in body["state"]
 
 

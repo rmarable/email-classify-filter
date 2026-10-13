@@ -12,7 +12,7 @@ from: "Northwind Air Ticketing <ticketing@northwind-air-tickets.test>"
 subject: "Your ticket for booking 4471 could not be issued"
 date: 2026-10-21T02:40:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
+  labels: {category: travel, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

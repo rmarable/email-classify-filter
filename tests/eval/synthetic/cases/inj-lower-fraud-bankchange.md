@@ -10,7 +10,7 @@ subject: "Updated bank details"
 date: 2026-10-14T11:00:00Z
 author: claude
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

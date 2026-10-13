@@ -21,7 +21,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FIXED_ITEMS, CompiledSchema, FieldKind, load_schema, v1_values
+from ecf.schema import (
+    FIXED_ITEMS,
+    CompiledSchema,
+    FieldKind,
+    load_schema,
+    unlabel_removed,
+    v1_values,
+)
 
 SUFFIX = ".labels.jsonl"
 MARKS = ("s", "u")
@@ -54,11 +61,14 @@ def path_for(corpus: Path) -> Path:
     return corpus.with_name(corpus.name + SUFFIX)
 
 
-def check_values(values: dict[str, Any], schema: CompiledSchema) -> dict[str, str | bool]:
+def check_values(values: dict[str, Any], schema: CompiledSchema,
+                 unlabelled: tuple[str, ...] = ()) -> dict[str, str | bool]:  # fmt: skip
     """Every shipped field and any extension fields of `schema`, each a value from its closed
     vocabulary; no other field. Extension fields and schema v3's fixed items may be left out (a
-    label made before them; OD-498)."""
-    optional = set(schema.extension_fields) | set(FIXED_ITEMS)
+    label made before them; OD-498), and so may the `unlabelled` fields (a stored label whose
+    value schema v3 removed, read through the label map; S3b). A new label can't use a removed
+    value: it isn't one of the field's values."""
+    optional = set(schema.extension_fields) | set(FIXED_ITEMS) | set(unlabelled)
     if not set(schema.fields) - optional <= set(values) <= set(schema.fields):
         raise InvalidInputError("a label needs exactly the schema's fields (extension fields"
                                 " and the fixed items may be left out)")  # fmt: skip
@@ -88,7 +98,10 @@ def make(key: Key, corpus_id: str, values: dict[str, Any] | None, mark: str | No
 def load(path: Path, schema: CompiledSchema | None = None) -> dict[Key, Label]:
     """The labels file, each row checked against `schema` (default: the shipped one); a v1 value
     is read as its v2 value (`ecf.schema.V1_VALUE_ALIASES`). A label made before schema v3 lacks
-    the fixed items: an eval derives them (`evalrun.corpus_run`), never this file."""
+    the fixed items: an eval derives them (`evalrun.corpus_run`), never this file. A value schema
+    v3 removed is read through the label map (`ecf.schema.unlabel_removed`, S3b): the fixed
+    items it implies are derived, then it is unlabelled, as a v1 alias is read (the file isn't
+    rewritten)."""
     schema = schema or load_schema()
     if not path.exists():
         return {}
@@ -101,11 +114,17 @@ def load(path: Path, schema: CompiledSchema | None = None) -> dict[Key, Label]:
             key = (str(r["key"]["content_hash"]), str(r["key"]["identity_digest"]))
             raw = r.get("labels")
             # a label made under schema v1 reads its v1 values as v2's (`staff` -> `team`)
-            values = check_values(v1_values(raw, schema), schema) if raw is not None else None
+            values = _mapped(raw, schema) if raw is not None else None
             out[key] = Label(key, str(r["corpus_id"]), values, r.get("mark"), str(r["date"]))
         except (ValueError, KeyError, TypeError) as exc:
             raise InvalidInputError(f"{path}: line {n} isn't a label row") from exc
     return out
+
+
+def _mapped(raw: dict[str, Any], schema: CompiledSchema) -> dict[str, str | bool]:
+    """A stored row's values: v1 values as v2's, then the label map, then checked."""
+    mapped, unlabelled = unlabel_removed(v1_values(raw, schema))
+    return check_values(mapped, schema, unlabelled)
 
 
 def put(labels: dict[Key, Label], new: Label) -> bool:

@@ -10,7 +10,7 @@ subject: "Action required: your payment failed"
 date: 2026-10-07T07:07:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing}
+  labels: {category: invoice}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: false}
 ---
