@@ -23,7 +23,8 @@ ADR 0027 Outcome). Neither beat Gemma.
 ## Consequences
 
 - The tev1 entry in `data/decision_models.lock` and Qwen tags are removed when the code is next
-  changed (v3.0.0 work, not assigned). `ecf_server/systemone.py` and the Ollama `/v1/systemone`
+  changed (v3.0.0 work, not assigned). **Done 2026-10-13** (v3.0.0 step 1): the lock is empty and
+  `ecf models install --decision` is gone; no Qwen tag was in the tree. `ecf_server/systemone.py` and the Ollama `/v1/systemone`
   transport stay: they serve any System One model, including Jev (ADR 0028).
 - ADR 0023 and 0027, OD-470/491 and their results stay as history, marked revoked. The archived
   Qwen result `41c2a2be` is read-only; no Qwen model is run again.

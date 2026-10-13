@@ -210,21 +210,22 @@ def test_install_keeps_ecfs_copies_for_other_releases(
 def test_prune_removes_only_ecfs_copies_for_other_releases(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    from ecf_server import systemone  # noqa: PLC0415
-
-    tev = systemone.pin("tev1-4b")
     fake = FakeOllama()
-    stale = [f"{PIN.ecf_name}:1.0.0", f"{tev.ecf_name}:0.0.1"]
+    # an earlier release's copy, and every copy of the retired decision model (OD-494)
+    this_release = PIN.ecf_tag.split(":")[1]
+    stale = [f"{PIN.ecf_name}:1.0.0", "ecf/tev1-4b:2.0.0", f"ecf/tev1-4b:{this_release}"]
     for name in stale:
         fake.models[name] = PIN.digest
-    fake.models[tev.ecf_tag] = tev.digest  # this release's decision copy
     fake.models["other/model:1"] = "d" * 64
     fake.models["ecf/someone-elses:1.0.0"] = "e" * 64  # an ecf/ name no pin owns
-    keep = {PIN.tag, PIN.ecf_tag, tev.ecf_tag, "other/model:1", "ecf/someone-elses:1.0.0"}
-    assert models.prune(conn, clock, fake.client()) == sorted(stale)
+    fake.models["tev1:4b"] = "f" * 64  # the upstream tag: not ecf's, left alone
+    keep = {PIN.tag, PIN.ecf_tag, "other/model:1", "ecf/someone-elses:1.0.0", "tev1:4b"}
+    assert models.stale_tags(fake.client()) == [f"{PIN.ecf_name}:1.0.0"]
+    assert models.retired_tags(fake.client()) == sorted(stale[1:])
+    assert sorted(models.prune(conn, clock, fake.client())) == sorted(stale)
     assert set(fake.models) == keep
     [row] = conn.execute("SELECT data FROM audit WHERE event = 'models.pruned'").fetchall()
-    assert json.loads(row[0]) == {"tags": sorted(stale)}
+    assert sorted(json.loads(row[0])["tags"]) == sorted(stale)
     assert models.prune(conn, clock, fake.client()) == []  # nothing left: no audit row
     n = conn.execute("SELECT count(*) FROM audit WHERE event = 'models.pruned'").fetchone()[0]
     assert n == 1
@@ -236,6 +237,11 @@ def test_status_lists_the_kept_copies(conn: sqlite3.Connection) -> None:
     fake.models[f"{PIN.ecf_name}:1.0.0"] = PIN.digest
     st = models.status(conn, fake.client(), **check_kw())
     assert st["ready"] and st["stale_tags"] == [f"{PIN.ecf_name}:1.0.0"]
+    assert st["retired_tags"] == []
+    fake.models["ecf/tev1-4b:2.2.3"] = "c" * 64  # the retired decision model (OD-494)
+    st = models.status(conn, fake.client(), **check_kw())
+    assert st["stale_tags"] == [f"{PIN.ecf_name}:1.0.0"]
+    assert st["retired_tags"] == ["ecf/tev1-4b:2.2.3"]
 
 
 def test_after_an_upgrade_the_check_copies_the_pinned_model_again(
@@ -330,11 +336,11 @@ def test_the_routes(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -
                          clock=clock, db_path=db_path, model_client=fake.client,
                          model_check=check_kw())  # fmt: skip
 
-    async def call(method: str, path: str) -> httpx.Response:
+    async def call(method: str, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
         transport = httpx.ASGITransport(app=create_app(state))
         async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
             return await c.request(method, path, headers={"Authorization": "Bearer tok"},
-                                   json={} if method == "POST" else None)  # fmt: skip
+                                   json=(body or {}) if method == "POST" else None)  # fmt: skip
 
     r = anyio.run(call, "GET", "/v1/models")
     assert r.status_code == 200 and r.json()["ready"] is True
@@ -342,6 +348,10 @@ def test_the_routes(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -
     r = anyio.run(call, "POST", "/v1/models/prune")
     assert r.status_code == 200 and r.json() == {"removed": [f"{PIN.ecf_name}:1.0.0"]}
     assert PIN.ecf_tag in fake.models
+    # an older client's decision-model install is refused, never run as the local model's (OD-494)
+    r = anyio.run(call, "POST", "/v1/models/install", {"decision": "tev1-4b"})
+    assert r.status_code == 400 and "OD-494" in r.text
+    assert models.INSTALLS.snapshot()["state"] == "idle"
 
 
 # ---- doctor (pure) ---------------------------------------------------------------------------
@@ -368,6 +378,12 @@ def test_doctor_lists_kept_copies_without_failing() -> None:
     fault = {"cause": "not_running", "detail": "", "fix": "x", "text": "t", "summary": "s."}
     rows = judge_models(_st(ready=False, fault=fault, stale_tags=[old]))
     assert [r.name for r in rows] == ["local model", "model copies"]
+
+
+def test_doctor_lists_retired_copies_without_a_keep_note() -> None:
+    [_, c] = judge_models(_st(retired_tags=["ecf/tev1-4b:2.2.3"]))
+    assert c.level is Level.OK and "retired, no release runs them" in c.detail
+    assert "rollback" not in c.detail and "ecf models prune" in c.detail
 
 
 def test_doctor_reports_settings_that_differ() -> None:

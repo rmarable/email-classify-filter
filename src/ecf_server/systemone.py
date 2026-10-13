@@ -1,4 +1,4 @@
-"""Decision models through Ollama's `/v1/systemone` (SPEC §7.8; OD-470, OD-471; eval only).
+"""Decision models through Ollama's `/v1/systemone` (SPEC §7.8; OD-471; eval only; ADR 0029).
 
 A decision model answers typed questions about a `state` with a probability per option. ecf asks it
 the classifier's eight questions about one email and maps the answers to a classification that goes
@@ -19,6 +19,9 @@ through the same strict `parse` as Gemma's, so rules, policy and the actor see n
   endpoint never truncates), is a failed attempt like a Gemma schema failure. Probabilities are
   returned for calibration only, never for routing (OD-054 wording).
 - **Never production:** nothing in the service's classifier path imports this module.
+- **No model pinned** since OD-494 (2026-10-12): `tev1` and every other Qwen-based model are
+  banned, so `decision_models.lock` is empty. The mapper and the Ollama transport stay for the
+  Jev adapter and later local decision models (v3.0.0 planning §4.2).
 """
 
 from __future__ import annotations
@@ -56,7 +59,7 @@ LOCK = "decision_models.lock"
 
 def load_pins() -> dict[str, Pin]:
     """The eval-only decision models (`data/decision_models.lock`), by ecf's short name. Only
-    entries in the classifier role and marked eval-only are read (OD-470)."""
+    entries in the classifier role and marked eval-only are read (§7.8)."""
     raw = json.loads(resources.files("ecf_server.data").joinpath(LOCK).read_text("utf-8"))
     out: dict[str, Pin] = {}
     for name, m in cast("dict[str, dict[str, Any]]", raw["models"]).items():
