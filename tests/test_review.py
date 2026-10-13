@@ -88,7 +88,8 @@ def test_all_others_correct_never_counts_items_needing_their_own_review(
         review.record(conn, morning, pay, actor="t", bulk=True)
     _click(conn, morning, review.CORRECT, pay)
     counts = review.reviewed(conn, "ap")
-    assert counts == {"reviewed": 3, "category_ok": 2, "individual": 2, "bulk": 1}
+    assert counts == {"reviewed": 3, "no_fix": 2, "category_ok": 2, "fixed_ok": 3,
+                      "individual": 2, "bulk": 1}  # fmt: skip
 
 
 def test_fix_records_the_correction_and_whether_the_category_was_right(
@@ -127,6 +128,57 @@ def test_a_fix_keeps_the_fixed_items_consistent_with_the_corrected_view(
     assert merged["claims_internal"] is True  # sender_type not fixed: the model's answer stays
     assert "claims_internal" not in json.loads(row["human_correction"])
     assert json.loads(row["review"])["verdict"] == "fixed"
+
+
+def test_a_fix_keeps_the_items_the_person_answered(
+    conn: sqlite3.Connection, morning: FakeClock
+) -> None:
+    """S3 (OD-500): the items are on the Fix form; one the person answers (or leaves as shown,
+    which the form submits) is kept as given, never derived from a changed category."""
+    slack_setup(conn, morning)
+    bank = with_fixed(MARKETING | {"category": "vendor_change_request"})
+    [sid] = _items(conn, morning, bank)
+    _click(conn, morning, review.FIX, sid, {"category": "invoice", "bank_detail_change": "true"})
+    row = item_row(conn, sid)
+    merged = json.loads(row["classification"]) | json.loads(row["human_correction"])
+    assert merged["category"] == "invoice" and merged["bank_detail_change"] is True
+    assert merged["phishing"] is False  # not answered: derived from the corrected view
+
+
+def test_s3_the_fixed_items_need_their_own_review_and_show_on_the_line(
+    conn: sqlite3.Connection, morning: FakeClock
+) -> None:
+    slack_setup(conn, morning)
+    phish = MARKETING | {"phishing": True, "bank_detail_change": True}
+    ok, risky = _items(conn, morning, MARKETING, phish)
+    assert review.run(conn, morning) == 1
+    card = _review_post(conn)["card"]
+    assert "marketing, low, fraud none, bank change, phishing" in card["text"]
+    assert card["text"].count("(needs its own review)") == 1
+    with pytest.raises(ConflictError, match="its own review"):
+        review.record(conn, morning, risky, actor="t", bulk=True)
+    review.record(conn, morning, ok, actor="t", bulk=True)
+
+
+def test_s3_the_fix_form_has_the_fixed_fields() -> None:
+    assert len(review.FIXABLE) == 13
+    assert review.fixable(load_schema()) == review.FIXABLE
+    assert set(review.FIXED_FIELDS) < set(review.FIXABLE)
+    assert {"category", "priority", "sender_type"} == set(review.FIXABLE) - set(review.FIXED_FIELDS)
+
+
+def test_s3_accuracy_is_reviews_with_no_fix(conn: sqlite3.Connection, morning: FakeClock) -> None:
+    """P4 (OD-500): the gated figure is reviews with no Fix; a Fix to a fixed field counts
+    against fixed-field accuracy, not category accuracy."""
+    slack_setup(conn, morning)
+    a, b, c = _items(conn, morning, MARKETING, MARKETING, MARKETING)
+    review.record(conn, morning, a, actor="t")
+    _click(conn, morning, review.FIX, b, {"phishing": "true"})
+    _click(conn, morning, review.FIX, c, {"priority": "high"})
+    counts = review.reviewed(conn, "ap")
+    assert counts == {"reviewed": 3, "no_fix": 1, "category_ok": 3, "fixed_ok": 2,
+                           "individual": 3, "bulk": 0}  # fmt: skip
+    assert review.progress(conn, "ap", "standard")["accuracy"] == 33
 
 
 def test_the_fix_form_offers_the_schema_choices(

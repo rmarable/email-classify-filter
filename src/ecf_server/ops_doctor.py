@@ -68,11 +68,14 @@ def schema(conn: sqlite3.Connection) -> dict[str, str]:
         return _c("schema", FAIL, f"v{v}; the extension no longer compiles ({problem[:200]}),"
                   " so the built-in schema is used", "change the extension, or `schema:"
                   " default`, with ecf config apply")  # fmt: skip
-    broken = config.rules_problem(conn)  # the applied rules use an extension that isn't in use
+    # the applied rules use an extension that isn't in use, or redefine one of ecf's fixed
+    # rules (a customised copy the v2 conversion left; OD-500)
+    broken = config.rules_problem(conn)
     if broken is not None:
         return _c("schema", FAIL, f"v{v}; the applied rules don't compile against the schema in"
                   f" use ({broken[:200]}), so the starter rules are used", "apply rules that"
-                  " don't use the schema extension, with ecf config apply")  # fmt: skip
+                  " don't use the schema extension or ecf's fixed rules, with ecf config"
+                  " apply")  # fmt: skip
     if ext is None:
         return _c("schema", OK, f"v{v}, built in (no extension)")
     if not extensions_enabled():  # OD-481: kept but ignored

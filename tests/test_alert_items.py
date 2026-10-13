@@ -189,6 +189,25 @@ def test_fraud_and_regulatory_escalations_are_emailed_once(
     assert "fraud risk high" in _outbox(conn)[2]["body"]
 
 
+def test_the_fixed_items_reach_the_alert_emails(conn: sqlite3.Connection,
+                                                 clock: FakeClock) -> None:  # fmt: skip
+    """OD-500: a bank detail change (the item or a vendor change request) is a fraud alert; a
+    regulator claim (the item or sender_type regulator) a regulatory one; phishing adds none."""
+    _email_on(conn)
+    _item(conn, clock, "a" * 64, {}, {"category": "invoice", "bank_detail_change": True})
+    _item(conn, clock, "c" * 64, {}, {"category": "other", "regulator_claim": True})
+    _item(conn, clock, "d" * 64, {}, {"category": "other", "sender_type": "regulator"})
+    _item(conn, clock, "p" * 64, {}, {"category": "other", "phishing": True})
+    assert alert_items.sweep(conn, clock) == 4  # every escalation is looked at
+    got = [(r["subject"], r["body"].split(" (")[0]) for r in _outbox(conn)]
+    assert got == [
+        ("[ecf-alert] Possible Fraud Attempt", "ap: possible fraud in item aaaaaaaa"),
+        ("[ecf-alert] Regulatory Mail Notice", "ap: regulatory mail in item cccccccc"),
+        ("[ecf-alert] Regulatory Mail Notice", "ap: regulatory mail in item dddddddd"),
+    ]
+    assert "a bank detail change" in _outbox(conn)[0]["body"]
+
+
 def test_not_emailed_while_the_install_routes_lack_email(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

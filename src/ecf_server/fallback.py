@@ -13,7 +13,9 @@
 - **Its own gate** (`gate` row `fallback/B` or `fallback/C`, bound to the Ollama digest; §9.3's
   thresholds): your reviews of the address's emails (of Claude's output) give the truth that the
   shadow classification is scored against, so there is no separate review (operator decision
-  2026-10-02): reviewed count, category accuracy and fraud-guard misses; unsafe proposals from the
+  2026-10-02): reviewed count, accuracy (the shadow agrees with the reviewed truth on every Fix
+  form field, the analogue of a review with no Fix: v3.0.0 S3, P4, OD-500; category accuracy is
+  shown, not gated) and fraud-guard misses; unsafe proposals from the
   shadow actor; the synthetic set from the latest `ecf eval run` on the digest. Nothing in it can
   be waived (operator decision 2026-10-02). Shadow runs stop once it passes, and start again
   when the digest changes.
@@ -36,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
+from ecf.schema import FIXED_ITEMS, CompiledSchema, local_schema
 from ecf_server import (
     actor,
     addresses,
@@ -188,8 +191,10 @@ def compute(conn: sqlite3.Connection, address_id: str) -> gate.Gate:
         "SELECT i.*, s.classification AS s_cls, s.plan AS s_plan FROM items i"
         " JOIN fallback_shadow s USING (stable_id) WHERE i.address_id = ? AND s.digest = ?"
         " AND s.outcome = 'ok'", (address_id, d)).fetchall()  # fmt: skip
-    labels = policy.labels(config.current_schema(conn), config.current_rules(conn))
-    n = ok = misses = unsafe = 0
+    schema = config.current_schema(conn)
+    labels = policy.labels(schema, config.current_rules(conn))
+    fields = compared_fields(schema)
+    n = ok = cat_ok = misses = unsafe = 0
     for r in rows:
         unsafe += gate.unsafe(json.loads(r["s_plan"] or "{}"), fallback=True)
         rv: dict[str, Any] = json.loads(r["review"] or "{}")
@@ -200,7 +205,8 @@ def compute(conn: sqlite3.Connection, address_id: str) -> gate.Gate:
             truth |= json.loads(r["human_correction"])
         shadow: dict[str, Any] = json.loads(r["s_cls"] or "{}")
         n += 1
-        ok += shadow.get("category") == truth.get("category")
+        ok += agrees(shadow, truth, fields)
+        cat_ok += shadow.get("category") == truth.get("category")
         ctx = decide.context(conn, r)
         right = policy.plan(replace(ctx, classification=truth), labels).rule_id
         mine = policy.plan(replace(ctx, classification=shadow), labels).rule_id
@@ -211,7 +217,8 @@ def compute(conn: sqlite3.Connection, address_id: str) -> gate.Gate:
         gate.Check("reviewed", n >= target,
                    f"{n}/{target} reviewed emails the local model also ran on"),
         gate.Check("accuracy", n > 0 and acc >= threshold,
-                   f"{acc:.0f}% accurate (need {threshold}%)" if n
+                   f"{acc:.0f}% accurate, every reviewed field (need {threshold}%); category"
+                   f" {100 * cat_ok / n:.0f}% (not gated)" if n
                    else f"no reviews yet (need {threshold}% accurate)"),
         gate.Check("fraud_misses", misses == 0,
                    f"{misses} fraud-guard miss(es) among reviewed emails"),
@@ -221,6 +228,28 @@ def compute(conn: sqlite3.Connection, address_id: str) -> gate.Gate:
     )  # fmt: skip
     return gate.Gate(address_id, sens, d, checks, n, ok, misses, unsafe, preset,
                      (("digest", d),))  # fmt: skip
+
+
+def compared_fields(schema: CompiledSchema) -> tuple[str, ...]:
+    """The fields both sides were asked (A8): the shipped Fix-form fields the local model's
+    schema has, plus the fixed items (derived for it); never an extension or a v3-only field
+    the local model isn't asked."""
+    local = local_schema(schema).fields
+    return tuple(f for f in review.FIXABLE if f in local or f in FIXED_ITEMS)
+
+
+def agrees(shadow: dict[str, Any], truth: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    """The shadow answered every Fix-form field the truth holds as the truth does; a fixed item
+    either lacks is false (step 1c P13)."""
+    for f in fields:
+        if f not in truth and f not in FIXED_ITEMS:
+            continue
+        if f in FIXED_ITEMS:
+            if (shadow.get(f) is True) != (truth.get(f) is True):
+                return False
+        elif shadow.get(f) != truth[f]:
+            return False
+    return True
 
 
 def inputs(conn: sqlite3.Connection, address_id: str, d: str) -> tuple[Any, ...]:
@@ -242,7 +271,7 @@ def inputs(conn: sqlite3.Connection, address_id: str, d: str) -> tuple[Any, ...]
             labels = (*labels, fst.st_size, fst.st_mtime_ns)
     except OSError:
         labels = None
-    return (d, tuple(shadow), cfg[0], run[0], root, labels)
+    return (gate.GATE_VERSION, d, tuple(shadow), cfg[0], run[0], root, labels)
 
 
 SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the inputs last computed (this process)

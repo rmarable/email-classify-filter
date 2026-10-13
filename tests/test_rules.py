@@ -201,21 +201,28 @@ def test_bad_rules_rejected(rule: str) -> None:
 
 
 @pytest.mark.parametrize("item", FIXED_ITEMS)
-def test_fixed_items_are_refused_in_rules_until_s3(item: str) -> None:
-    """S2 review F2: schema v3 asks the fixed items, but rules read them only from S3, in a
-    `when`, a `continue_if` and an action's `if`."""
+def test_rules_may_read_the_fixed_items(item: str) -> None:
+    """S3 (OD-500): rules read the fixed items, in a `when`, a `continue_if` and an action's
+    `if` (S2 review F2 refused them until S3)."""
     for rule in (
-        f"{{id: a, when: {{field: {item}, eq: true}}}}",
+        f"{{id: a, when: {{field: {item}, eq: true}}, then: [flag]}}",
         f"{{id: a, when: {{not: {{field: {item}, eq: false}}}}, then: [flag]}}",
         f"{{id: a, then: [{{flag: true, if: {{field: {item}, eq: true}}}}]}}",
     ):
-        with pytest.raises(InvalidInputError, match=f"{item!r} is a fixed safety item"):
-            compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
+        rules = compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
+        d = rules.evaluate(RuleInput({**BASE, item: True}, FACTS))
+        assert d.rule_id == "a" and names(d) == [("flag", None)]
 
 
-def test_last_rule_must_catch_all_and_ids_unique() -> None:
-    with pytest.raises(InvalidInputError, match="catch-all"):
-        compile_rules("version: 1\nrules:\n  - {id: a, when: {trigger: fraud}}\n", SCHEMA)
+def test_a_catch_all_is_appended_and_ids_unique() -> None:
+    """S3 (OD-500): a file needn't end with a catch-all; ecf appends `otherwise`."""
+    rules = compile_rules("version: 1\nrules:\n  - {id: a, when: {trigger: fraud}}\n", SCHEMA)
+    assert [r.id for r in rules.rules] == ["a", "otherwise"]
+    d = rules.evaluate(RuleInput(BASE, FACTS))
+    assert (d.rule_id, d.actions, d.to_actor) == ("otherwise", (), True)
+    kept = compile_rules("version: 1\nrules:\n  - {id: a, when: {trigger: fraud}}\n"
+                         "  - {id: rest}\n", SCHEMA)  # fmt: skip
+    assert [r.id for r in kept.rules] == ["a", "rest"]
     with pytest.raises(InvalidInputError, match="duplicate"):
         compile_rules("version: 1\nrules:\n  - {id: a}\n  - {id: a}\n", SCHEMA)
 
@@ -238,14 +245,14 @@ def test_label_from_a_field_the_item_lacks_is_dropped() -> None:
     assert [a.name for a in d.actions] == ["flag"]
 
 
-def test_v1_values_in_a_rules_file_are_read_as_v2_and_named() -> None:
-    """A rules file written for schema v1 still applies (OD-475): `staff` is read as `team`."""
+def test_v1_staff_in_a_rules_file_is_team_which_rules_no_longer_test() -> None:
+    """A rules file written for schema v1 reads `staff` as `team` (OD-475); from S3 (OD-500) a
+    condition on `team`, a value S3b removes, is refused with its replacement."""
     text = ("version: 1\nrules:\n  - {id: old, when: {field: sender_type, in: [staff]},"
             " then: [flag]}\n  - {id: rest, actor: continue}\n")  # fmt: skip
-    rules = compile_rules(text, SCHEMA)
-    assert rules.aliased == ("old",)
-    assert rules.evaluate(RuleInput({"sender_type": "team"}, FACTS)).rule_id == "old"
-    assert compile_rules(text.replace("staff", "team"), SCHEMA).aliased == ()
+    for t in (text, text.replace("staff", "team")):
+        with pytest.raises(InvalidInputError, match="use `claims_internal: true`"):
+            compile_rules(t, SCHEMA)
 
 
 EXTENDED = extend_schema(SCHEMA, {

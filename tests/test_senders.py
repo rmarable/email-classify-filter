@@ -199,3 +199,23 @@ def test_confirming_an_old_record_fills_in_its_domain(
     _with_step_up(conn, clock, lambda n: senders.confirm(
         conn, clock, VENDOR, "invoice", address=None, nonce=n))  # fmt: skip
     assert facts.known_vendor_domains(conn, "ap") == ["vendor-a.example"]
+
+
+def test_confirming_needs_a_category_field(conn: sqlite3.Connection,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """S3 (OD-500): with no category field, confirming is refused with a message, not a
+    KeyError (confirming without one is a later stage, S4b)."""
+    import dataclasses  # noqa: PLC0415
+
+    from ecf_server import config  # noqa: PLC0415
+
+    schema = load_schema()
+    no_cat = dataclasses.replace(schema, fields={k: v for k, v in schema.fields.items()
+                                                 if k != "category"})  # fmt: skip
+
+    def schema_of(_c: sqlite3.Connection) -> Any:
+        return no_cat
+
+    monkeypatch.setattr(config, "current_schema", schema_of)
+    with pytest.raises(InvalidInputError, match="no category field"):
+        senders.confirm(conn, FakeClock(), "a@b.example", "invoice", address=None, nonce=None)

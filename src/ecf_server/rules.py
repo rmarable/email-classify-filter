@@ -10,11 +10,25 @@ propagates (Kleene logic: `not` unknown is unknown; `and` is false if any part i
 true if any part is true), and a condition matches only when it is true, so `not` over a missing
 field can't match old mail.
 Rules may only emit non-sending actions; sends and drafts come from actor proposals (OD-170).
+
+**Fixed and default rules (v3.0.0 S3, OD-500; SPEC §8.6).** Every rule set in force is composed
+by `compose`: ecf's fixed rules (`fixed_rules.yaml`: fraud_guard, regulatory, fraud_weak,
+unverified_payment_sender, spam_or_phishing) first, then the applied rules or, when none are
+applied, the default rules (`starter_rules.yaml`), then a catch-all when the file doesn't end
+with one. A rules file (`compile_rules`) can't use a fixed rule's id, nor a condition on a v2
+value S3b removes (`REMOVED_VALUES`; the fixed rules still read them in S3a), and may read the
+fixed items. Applied sets copied from the v2 starter rules hold the fixed ids: `convert_v2`
+strips each fixed-id rule identical to the v2 starter text (`starter_rules_v2.yaml`, frozen) and
+keeps the rest; a customised one is left for the caller to refuse. Compiled sets are cached on
+the schema and the text (P8): rules are evaluated per item.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib import resources
@@ -33,7 +47,13 @@ from pydantic import (
 )
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FIXED_ITEMS, V1_VALUE_ALIASES, CompiledSchema, FieldKind
+from ecf.schema import (
+    FIXED_ITEMS,
+    REMOVED_VALUES,
+    V1_VALUE_ALIASES,
+    CompiledSchema,
+    FieldKind,
+)
 from ecf.yamlio import load_yaml
 
 FACTS: dict[str, tuple[str, ...] | None] = {  # None = boolean fact
@@ -330,7 +350,32 @@ def _alias_v1(node: Any, schema: CompiledSchema, hits: set[str], rule: str = "")
     return {k: _alias_v1(v, schema, hits, rule) if k != "id" else v for k, v in d.items()}
 
 
+FIXED_FILE = "fixed_rules.yaml"
+DEFAULT_FILE = "starter_rules.yaml"
+V2_STARTER_FILE = "starter_rules_v2.yaml"  # v2.0.0-v2.2.3's starter rules, byte for byte (P7)
+CATCH_ALL = "otherwise"
+
+
+@functools.cache
+def _data(name: str) -> str:
+    return resources.files("ecf_server.data").joinpath(name).read_text("utf-8")
+
+
+@functools.cache
+def fixed_ids() -> tuple[str, ...]:
+    """The fixed rules' ids, in order."""
+    raw = cast(dict[str, Any], load_yaml(_data(FIXED_FILE), source=FIXED_FILE))
+    return tuple(str(r["id"]) for r in cast(list[dict[str, Any]], raw["rules"]))
+
+
 def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -> CompiledRules:
+    """A rules file (applied, proposed or the default rules) on its own, checked; with
+    `otherwise` (no actions, `actor: continue`) appended when its last rule has a `when`. Mail
+    is decided by `compose`, which puts the fixed rules first."""
+    return _compile(text, schema, source=source, fixed=False)
+
+
+def _compile(text: str, schema: CompiledSchema, *, source: str, fixed: bool) -> CompiledRules:
     hits: set[str] = set()
     raw = _alias_v1(load_yaml(text, source=source), schema, hits)
     try:
@@ -343,14 +388,52 @@ def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -
     if len(set(ids)) != len(ids):
         raise InvalidInputError(f"{source}: duplicate rule ids")
     added = added_values(schema)
-    for r in rs.rules:
+    for i, r in enumerate(rs.rules):
         if r.id in added:  # a rule id may name a label; an added value would too (S8)
             raise InvalidInputError(f"{source}: rule id {r.id} is a value the schema extension"
                                     " adds; rename the rule")  # fmt: skip
+        if not fixed:
+            _check_user_rule(r, last=i == len(rs.rules) - 1, source=source)
         _check_rule(r, schema, source)
-    if rs.rules[-1].when is not None:
-        raise InvalidInputError(f"{source}: the last rule must have no `when` (a catch-all)")
-    return CompiledRules(tuple(rs.rules), schema, tuple(sorted(hits)))
+    out = tuple(rs.rules)
+    if not fixed and out[-1].when is not None:
+        out = (*out, Rule(id=CATCH_ALL, actor="continue"))
+    return CompiledRules(out, schema, tuple(sorted(hits)))
+
+
+def _check_user_rule(r: Rule, *, last: bool, source: str) -> None:
+    """A rules file can't redefine a fixed rule, can't use `otherwise` but for a last rule with
+    no `when` (ecf appends one otherwise), and can't test a value S3b removes (OD-500)."""
+    where = f"{source}: rule {r.id}"
+    if r.id in fixed_ids():
+        raise InvalidInputError(f"{where} is one of ecf's fixed rules, run first; remove it from"
+                                " your file")  # fmt: skip
+    if r.id == CATCH_ALL and not (last and r.when is None):
+        raise InvalidInputError(f"{where}: the id {CATCH_ALL} is only for a last rule with no"
+                                " `when` (ecf adds one when your file has none)")  # fmt: skip
+    conds = [r.when, r.actor.continue_if if isinstance(r.actor, ContinueIf) else None]
+    conds += [a.if_ for a in r.then]
+    for cond in conds:
+        for c in _compares(cond):
+            for v in _wanted(c):
+                use = REMOVED_VALUES.get((str(c.field), str(v))) if c.field else None
+                if use is not None:
+                    raise InvalidInputError(f"{where}: {c.field}: {v} is no longer a value ecf"
+                                            f" asks for; use `{use}`")  # fmt: skip
+
+
+def _compares(c: Compare | And | Or | Not | None) -> list[Compare]:
+    if c is None:
+        return []
+    if isinstance(c, And | Or):
+        return [x for part in (c.and_ if isinstance(c, And) else c.or_) for x in _compares(part)]
+    if isinstance(c, Not):
+        return _compares(c.not_)
+    return [c]
+
+
+def _wanted(c: Compare) -> list[str | bool]:
+    return [x for x in (c.eq, c.gte, c.lte) if x is not None] + list(c.in_ or [])
 
 
 def added_values(schema: CompiledSchema) -> set[str]:
@@ -400,11 +483,9 @@ def _check_cond(c: Compare | And | Or | Not, schema: CompiledSchema, where: str)
 def _allowed_values(c: Compare, schema: CompiledSchema, where: str) -> tuple[str, ...] | None:
     """The values an operand can take (None = boolean). Also rejects gte/lte on non-ordinals."""
     if c.field is not None:
-        if c.field in FIXED_ITEMS:  # rules read the fixed items from a later stage (S3)
-            raise InvalidInputError(f"{where}: field {c.field!r} is a fixed safety item;"
-                                    " rules can't use fixed items yet (a later release"
-                                    " adds them)")  # fmt: skip
         f = schema.fields.get(c.field)
+        if f is None and c.field in FIXED_ITEMS:  # a schema before v3 (an eval's frozen text):
+            return None  # the item is absent from its answers, so false (step 1c P13)
         if f is None:
             raise InvalidInputError(f"{where}: unknown field {c.field!r}")
         if (c.gte or c.lte) and f.kind is not FieldKind.ORDINAL:
@@ -431,13 +512,139 @@ def _check_values(c: Compare, values: tuple[str, ...] | None, where: str) -> Non
             raise InvalidInputError(f"{where}: {w!r} is not a valid value")
 
 
+# ---------------------------------------------------------------------------- compose
+
+
+# a compiled set, or the refusal it raised (A4: a refused applied set is re-raised from here, not
+# compiled again for every item)
+_CACHE: dict[tuple[str, str, str | None], CompiledRules | InvalidInputError] = {}
+_CACHE_MAX = 32
+
+
+def _schema_key(schema: CompiledSchema) -> str:
+    """What compiling against `schema` depends on: its digest (fields, values, any fallback) and
+    its extension (which fields are extension fields, and the values it adds)."""
+    ext = json.dumps(schema.extension, sort_keys=True) if schema.extension is not None else ""
+    return f"{schema.digest}|{ext}"
+
+
+def _cached(key: tuple[str, str, str | None], build: Callable[[], CompiledRules]) -> CompiledRules:
+    hit = _CACHE.get(key)
+    if hit is None:
+        try:
+            hit = build()
+        except InvalidInputError as exc:
+            hit = exc
+        if len(_CACHE) >= _CACHE_MAX:
+            _CACHE.clear()
+        _CACHE[key] = hit
+    if isinstance(hit, InvalidInputError):
+        raise InvalidInputError(hit.detail, **hit.extra)
+    return hit
+
+
+def load_fixed_rules(schema: CompiledSchema) -> CompiledRules:
+    """ecf's fixed rules, compiled against `schema` (cached per schema, P8)."""
+    return _cached((_schema_key(schema), FIXED_FILE, None),
+                   lambda: _compile(_data(FIXED_FILE), schema, source=FIXED_FILE,
+                                    fixed=True))  # fmt: skip
+
+
+def compose(schema: CompiledSchema, text: str | None = None, *,
+            source: str = "rules") -> CompiledRules:  # fmt: skip
+    """The rules in force: the fixed rules, then the rules file `text` (an applied or proposed
+    set) or, when it is None, the default rules, then `otherwise` when the file has no catch-all.
+    Cached on the schema and the text (P8). Raises InvalidInputError when `text` is refused."""
+    body = _data(DEFAULT_FILE) if text is None else text
+    where = DEFAULT_FILE if text is None else source
+
+    def build() -> CompiledRules:
+        fixed = load_fixed_rules(schema)
+        user = compile_rules(body, schema, source=where)
+        return CompiledRules((*fixed.rules, *user.rules), schema, user.aliased)
+
+    return _cached((_schema_key(schema), body, where), build)
+
+
 def load_starter_rules(schema: CompiledSchema) -> CompiledRules:
-    text = resources.files("ecf_server.data").joinpath("starter_rules.yaml").read_text("utf-8")
-    return compile_rules(text, schema, source="starter_rules.yaml")
+    """The rules in force when none are applied: the fixed rules, then the default rules."""
+    return compose(schema)
 
 
 def starter_digest() -> str:
-    """SHA-256 of the shipped starter_rules.yaml, recorded beside an eval result's keywords
-    digest (pre-classifier plan step 7)."""
-    raw = resources.files("ecf_server.data").joinpath("starter_rules.yaml").read_bytes()
-    return hashlib.sha256(raw).hexdigest()
+    """SHA-256 of the shipped fixed and default rules files (`fixed_rules.yaml`, then
+    `starter_rules.yaml`), recorded beside an eval result's keywords digest (pre-classifier plan
+    step 7)."""
+    h = hashlib.sha256()
+    for name in (FIXED_FILE, DEFAULT_FILE):
+        h.update(resources.files("ecf_server.data").joinpath(name).read_bytes())
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------- v2 applied rules
+
+
+@dataclass(frozen=True)
+class Conversion:
+    """`convert_v2`'s answer: the rules document to store (None: leave it as it is), the fixed
+    rules it strips, and the customised fixed rules that stop it."""
+
+    doc: dict[str, Any] | None
+    stripped: tuple[str, ...] = ()
+    customised: tuple[str, ...] = ()
+    to_default: bool = False  # only fixed rules were left: the default rules apply (A7)
+
+
+def load_v2_starter(schema: CompiledSchema) -> CompiledRules:
+    """The v2 starter rules as v2.0.0-v2.2.3 shipped them, fixed rules inline: what the composed
+    rules are compared with (the S3a invariant, `tests/test_policy.py`); never used for mail."""
+    return _cached((_schema_key(schema), V2_STARTER_FILE, None),
+                   lambda: _compile(_data(V2_STARTER_FILE), schema, source=V2_STARTER_FILE,
+                                    fixed=True))  # fmt: skip
+
+
+@functools.cache
+def _v2_fixed() -> dict[str, str]:
+    raw = cast(dict[str, Any], load_yaml(_data(V2_STARTER_FILE), source=V2_STARTER_FILE))
+    return {str(r["id"]): _canonical(r) for r in cast(list[dict[str, Any]], raw["rules"])
+            if r["id"] in fixed_ids()}  # fmt: skip
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def convert_v2(doc: Any) -> Conversion:
+    """P7: an applied rules document from v2 without ecf's fixed rules. Each rule with a fixed
+    id identical to the v2 starter text is stripped (the fixed rule, run first, does the same
+    and more); the rest are kept in order. A rule with a fixed id that differs (customised) stops
+    the conversion: the document is left as it is, and it doesn't compile (`compile_rules`
+    refuses fixed ids), so the starter rules apply and a System Error names it. A document of
+    only unchanged fixed rules leaves nothing: `to_default` (the default rules apply). Idempotent:
+    a document with no fixed id needs nothing."""
+    if not isinstance(doc, dict):
+        return Conversion(None)
+    d = cast(dict[str, Any], doc)
+    raw_rules: Any = d.get("rules")
+    if not isinstance(raw_rules, list):
+        return Conversion(None)
+    listed = cast(list[Any], raw_rules)
+    v2 = _v2_fixed()
+    stripped: list[str] = []
+    customised: list[str] = []
+    kept: list[Any] = []
+    for r in listed:
+        rid = cast(dict[str, Any], r).get("id") if isinstance(r, dict) else None
+        if rid not in fixed_ids():
+            kept.append(r)
+        elif v2.get(str(rid)) == _canonical(r):
+            stripped.append(str(rid))
+        else:
+            customised.append(str(rid))
+    if customised:
+        return Conversion(None, (), tuple(customised))
+    if not stripped:  # nothing to do
+        return Conversion(None)
+    if not kept:  # only fixed rules: what is left is the default rules (`rules: default`)
+        return Conversion(None, tuple(stripped), to_default=True)
+    return Conversion(d | {"rules": kept}, tuple(stripped))

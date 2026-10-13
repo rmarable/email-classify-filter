@@ -29,8 +29,13 @@ than `default` is refused, `schema: default` still removes a stored extension, a
 (applied on an rc, or imported in a bundle) is kept but ignored: the effective schema is the
 shipped one, so the gate key, prompts and rules use it. Applied rules that don't compile
 against this version (they use the ignored extension, or a field or fact a later release added
-and a rollback or older bundle left in place) give way to the starter rules and a System Error
-until they are changed (`current_rules`, `schema_tick`; classifier plan item 6).
+and a rollback or older bundle left in place, or a fixed rule's id) give way to the starter rules
+and a System Error until they are changed (`current_rules`, `schema_tick`; classifier plan item
+6).
+
+`rules` replaces the default rules, never ecf's fixed rules, which always run first (v3.0.0 S3,
+OD-500; `rules.compose`). Applied rules from v2 hold copies of the fixed rules: `convert_rules`
+strips the unchanged copies once, at service start and on import (P7).
 
 What reads each section in V1.2: `org_domains` (facts and triggers, §7.2, §8.5). The others are
 validated and stored for their consumers: rules and the action policy (V1.3, with the classifier),
@@ -185,7 +190,8 @@ def schema_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> N
                           f"the applied rules don't compile with this version"
                           f" ({broken[:200]}); ecf uses the starter rules until they change."
                           " Fix: apply rules this version accepts (no field or fact it doesn't"
-                          " know), or `rules: default`, with ecf config apply")  # fmt: skip
+                          " know, none of ecf's fixed rules), or `rules: default`, with ecf"
+                          " config apply")  # fmt: skip
         return
     health.resolve_alert(conn, clock, notifier, SCHEMA_ALERT, None)
 
@@ -197,6 +203,11 @@ def rules_problem(conn: sqlite3.Connection) -> str | None:
     stored = _stored(conn, "rules")
     if stored is None:
         return None
+    changed = rules.convert_v2(stored).customised  # what stopped the v2 conversion (P7)
+    if changed:
+        return (f"applied rules: rule {', '.join(changed)} is a changed copy of one of ecf's"
+                " fixed rules, which run first; remove it and the other fixed rules"
+                f" ({', '.join(rules.fixed_ids())}) from your file")  # fmt: skip
     try:
         rules.compile_rules(canonical_json(stored), current_schema(conn), source="applied rules")
     except InvalidInputError as exc:
@@ -214,11 +225,77 @@ def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
     stored = _stored(conn, "rules")
     if stored is None:
         return rules.load_starter_rules(schema)
-    try:
-        return rules.compile_rules(canonical_json(stored), schema, source="applied rules")
+    text = canonical_json(stored)
+    try:  # fixed rules first (OD-500); cached on the schema and the stored JSON (P8), a refusal too
+        return rules.compose(schema, text, source="applied rules")
     except InvalidInputError:
-        log.error("config.rules_broken")
+        key = (schema.digest, hashlib.sha256(text.encode()).hexdigest())
+        if key not in _BROKEN_LOGGED:  # once per schema and rules, not per item (A4)
+            if len(_BROKEN_LOGGED) >= 32:
+                _BROKEN_LOGGED.clear()
+            _BROKEN_LOGGED.add(key)
+            log.error("config.rules_broken")
         return rules.load_starter_rules(schema)
+
+
+_BROKEN_LOGGED: set[tuple[str, str]] = set()
+
+
+def convert_rules(conn: sqlite3.Connection, now: str, *, actor: str = "service") -> dict[str, Any]:
+    """P7 (v3.0.0 S3, OD-500): applied rules copied from the v2 starter rules hold ecf's fixed
+    rules, which a rules file can no longer define. Each one identical to the v2 starter text is
+    stripped and the rest kept (`rules.convert_v2`), audited `config.rules_converted`. A
+    customised fixed rule stops it: the stored rules stay as they are, don't compile, and the
+    starter rules apply with a System Error naming the rule (`schema_tick`). Run once at service
+    start after the migrations, and on an imported or restored bundle's staged copy (A2: the
+    bundle isn't refused for it); idempotent. The refusal is audited once per stored document
+    (outcome `denied`). A document of only unchanged fixed rules becomes `rules: default`."""
+    stored = _stored(conn, "rules")
+    c = rules.convert_v2(stored)
+    if c.customised:
+        log.error("config.rules_customised_fixed", rules=len(c.customised))
+        data = json.dumps(
+            {
+                "customised": list(c.customised),
+                "sha256": hashlib.sha256(canonical_json(stored).encode()).hexdigest(),
+            }
+        )
+        with write_tx(conn):
+            seen = conn.execute(
+                "SELECT 1 FROM audit WHERE event = 'config.rules_converted'"
+                " AND outcome = 'denied' AND data = ?",
+                (data,),
+            ).fetchone()
+            if seen is None:
+                conn.execute(
+                    "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                    " VALUES (?, NULL, 'config.rules_converted', ?, 'denied', ?)",
+                    (now, actor, data),
+                )
+        return {"converted": False, "customised": list(c.customised)}
+    if c.doc is None and not c.to_default:
+        return {"converted": False}
+    with write_tx(conn):
+        if c.to_default:
+            conn.execute("DELETE FROM settings WHERE key = ?", (KEY["rules"],))
+        else:
+            conn.execute(
+                "UPDATE settings SET value = ?, updated_at = ?, updated_by = ? WHERE key = ?",
+                (canonical_json(c.doc), now, actor, KEY["rules"]),
+            )
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+            " VALUES (?, NULL, 'config.rules_converted', ?, 'ok', ?)",
+            (
+                now,
+                actor,
+                json.dumps(
+                    {"stripped": list(c.stripped)} | ({"default": True} if c.to_default else {})
+                ),
+            ),
+        )
+    out: dict[str, Any] = {"converted": True, "stripped": list(c.stripped)}
+    return out | ({"default": True} if c.to_default else {})
 
 
 # ---------------------------------------------------------------------------- parse and validate
@@ -301,7 +378,7 @@ def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[s
         _check_sender_categories(conn, now["schema"], None)
     schema = _effective_schema(_effective(out, now, "schema"))
     if rules_doc is not None:
-        out["rules"] = _rules(rules_doc, folders, schema)
+        out["rules"] = _rules(rules_doc, folders, schema, imported=imported)
     elif "move_folders" in doc or "schema" in doc or doc.get("rules") == DEFAULT:
         # `rules: default` too: the starter rule ids must not be values the extension adds
         # the rules in force must still move only to allowed folders, and still compile
@@ -453,9 +530,20 @@ def _policy(v: Any) -> dict[str, dict[str, str]]:
     return {"standard": DEFAULT_POLICY | cast("dict[str, str]", std)}
 
 
-def _rules(v: Any, folders: list[str], schema: CompiledSchema) -> Any:
+def _rules(v: Any, folders: list[str], schema: CompiledSchema, *,
+           imported: bool = False) -> Any:  # fmt: skip
     # compile_rules refuses a rule id that is a value the extension adds (S8)
-    compiled = rules.compile_rules(canonical_json(v), schema, source="config: rules")
+    checked = v
+    if imported and rules.convert_v2(v).customised:
+        # A2 (OD-500): a bundle's v2 rules with a changed fixed rule are kept, as at service
+        # start (the starter rules apply, with a System Error); the rest must still be valid
+        rest: list[Any] = [r for r in cast("list[Any]", v["rules"])
+                if not (isinstance(r, dict) and cast("dict[str, Any]", r).get("id")
+                        in rules.fixed_ids())]  # fmt: skip
+        if not rest:
+            return v
+        checked = v | {"rules": rest}
+    compiled = rules.compile_rules(canonical_json(checked), schema, source="config: rules")
     for r in compiled.rules:
         for a in r.then:
             if a.action == "move" and (not isinstance(a.target, str) or a.target not in folders):
@@ -471,7 +559,7 @@ def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
     if v is None:
         raise InvalidInputError("config: schema: a mapping with fields and/or category_values,"
                                 " or `default` to remove the extension")  # fmt: skip
-    ids = _rule_ids(rules_doc if rules_doc is not None else _starter())
+    ids = _rule_ids(rules_doc if rules_doc is not None else _starter()) | set(rules.fixed_ids())
     try:
         extend_schema(load_schema(), v, policy.BUILTIN_LABELS | ids)
     except (InvalidInputError, SchemaLimitError) as exc:

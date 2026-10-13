@@ -97,7 +97,7 @@ def _checked(name: str, value: Any, schema: CompiledSchema) -> Any:
     """The value as the change itself would accept it, before it reaches the dialog (V1.2
     review, 2026-09-30)."""
     if name == "sender_confirm":
-        values = schema.fields["category"].values or ()
+        values = category_values(schema)
         if value not in values:
             raise InvalidInputError(f"category is one of {', '.join(values)}")
         return value
@@ -106,6 +106,16 @@ def _checked(name: str, value: Any, schema: CompiledSchema) -> Any:
     if value is not True:
         raise InvalidInputError("only turning human-verified on needs step-up")
     return value
+
+
+def category_values(schema: CompiledSchema) -> tuple[str, ...]:
+    """The values a sender can be confirmed as; a schema without `category` has none, and
+    confirming is refused until a later release confirms without one (S4b; v3.0.0 S3, OD-500)."""
+    f = schema.fields.get("category")
+    if f is None or not f.values:
+        raise InvalidInputError("this schema has no category field, so a sender's category can't"
+                                " be confirmed")  # fmt: skip
+    return f.values
 
 
 @stepup.purpose("sender_confirm")
@@ -166,7 +176,7 @@ def confirm(
     nonce: str | None,
     actor: str = "os_user",
 ) -> dict[str, Any]:
-    values = config.current_schema(conn).fields["category"].values or ()
+    values = category_values(config.current_schema(conn))
     if category not in values:
         raise InvalidInputError(f"category is one of {', '.join(values)}")
     a = _address(conn, address)

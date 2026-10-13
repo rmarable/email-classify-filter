@@ -6,8 +6,11 @@ digest and the Claude actors; C the Claude classifiers and actors; V1.4 step 2),
 key, so a change to any pin starts the count again and drops a `live` address to `assist`:
 
 - **Reviewed** (waivable by a go-live override, OD-234): at least 100 reviews on `standard`, 200 on
-  `high`, of emails classified by this digest; **accuracy** (category right) at least 85% or 90%.
-  The Wilson 95% lower bound is shown, not gated.
+  `high`, of emails classified by this digest; **accuracy** (reviews with no Fix, v3.0.0 S3, P4,
+  OD-500; category right before) at least 85% or 90%. The Wilson 95% lower bound, fixed-field
+  accuracy and category accuracy are shown, not gated. `GATE_VERSION` joins the gate's in-memory
+  inputs, so the tick recomputes a gate not yet passed; an address already live or announced keeps
+  its category-era pass until migration 0037 (S3b) clears it. S3a is never released alone.
 - **Fraud-guard misses** (never waivable; OD-069): a reviewed email whose Fix gives labels that
   would have matched rules 1, 1a, 1b or 2 (fraud guard, unverified payment sender, weak fraud
   signal, regulatory) when the model's own labels matched none of them.
@@ -49,7 +52,8 @@ from ecf_server.clock import to_ts
 from ecf_server.rules import HIDE_ACTIONS
 
 PAIR = claude_pins.PAIR["A"]  # preset A's pair, as `ecf eval run` records it
-THRESHOLD = {"standard": 85, "high": 90}  # percent category accuracy (§9.3)
+THRESHOLD = {"standard": 85, "high": 90}  # percent of reviews with no Fix (§9.3; P4)
+GATE_VERSION = 2  # 2: accuracy = reviews with no Fix (v3.0.0 S3, OD-500); 1: category right
 FRAUD_RULES = frozenset({"fraud_guard", "unverified_payment_sender", "fraud_weak", "regulatory"})
 # an item's pin key in SQL (`claude_pins.item_key`): `pin_key` from V1.4, the digest before
 ITEM_KEY = ("coalesce(json_extract(pinned_models, '$.pin_key'),"
@@ -113,9 +117,11 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
     digest = claude_pins.key(pins)
     c = review.reviewed(conn, address_id, digest)
     target, threshold = review.GATE_COUNT[sens], THRESHOLD[sens]
-    n, ok = c["reviewed"], c["category_ok"]
+    n, ok = c["reviewed"], c["no_fix"]
     acc = 100 * ok / n if n else 0.0
     lo = 100 * wilson(ok, n)[0] if n else 0.0
+    shown = (f"; fixed fields {100 * c['fixed_ok'] / n:.0f}%, category"
+             f" {100 * c['category_ok'] / n:.0f}% (not gated)") if n else ""  # fmt: skip
     misses = fraud_misses(conn, address_id, digest)
     unsafe = unsafe_proposals(conn, address_id, digest)
     checks = (
@@ -123,7 +129,8 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
         Check(
             "accuracy",
             n > 0 and acc >= threshold,
-            f"{acc:.0f}% accurate (need {threshold}%; 95% lower bound {lo:.0f}%)"
+            f"{acc:.0f}% accurate, reviews with no Fix (need {threshold}%; 95% lower bound"
+            f" {lo:.0f}%){shown}"
             if n
             else f"no reviews yet (need {threshold}% accurate)",
             waivable=True,
@@ -165,8 +172,8 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
             labels = (*labels, fst.st_size, fst.st_mtime_ns)
     except OSError:
         labels = None
-    return (digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0], senders[0],
-            run[0], root, labels)  # fmt: skip
+    return (GATE_VERSION, digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0],
+            senders[0], run[0], root, labels)  # fmt: skip
 
 
 def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:

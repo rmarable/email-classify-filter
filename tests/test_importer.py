@@ -287,6 +287,86 @@ def test_a_bundles_extension_is_kept_but_ignored_while_extensions_are_off(
     assert ops_doctor.schema(target)["level"] == "warn"
 
 
+def _v2_rules() -> dict[str, Any]:
+    from importlib import resources  # noqa: PLC0415
+
+    from ecf.yamlio import load_yaml  # noqa: PLC0415
+
+    text = resources.files("ecf_server.data").joinpath("starter_rules_v2.yaml").read_text("utf-8")
+    return dict(load_yaml(text, source="v2"))
+
+
+def test_a_bundles_v2_rules_lose_their_unchanged_fixed_rules(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    """P7 (OD-500): a bundle from v2 whose applied rules copy the starter rules is converted as
+    the service converts at start; a changed fixed rule makes the bundle's config fail."""
+    from ecf_server import config, rules  # noqa: PLC0415
+
+    doc = _v2_rules()
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    parsed.tables["settings"].append(_setting("config.rules", json.dumps(doc)))
+
+    def go(nonce: str | None) -> dict[str, Any]:
+        return importer.apply(target, clock, FakeNotifier(), conn_dir(target), "t", parsed,
+                              str(path), replace=False, typed_install=None,
+                              nonce=nonce)  # fmt: skip
+
+    _with_step_up(target, clock, go)
+    stored = config.current(target)["rules"]
+    assert [r["id"] for r in stored["rules"]] == [
+        r["id"] for r in doc["rules"] if r["id"] not in rules.fixed_ids()
+    ]
+    assert _one(target, "SELECT count(*) FROM audit WHERE event = 'config.rules_converted'") == 1
+
+
+def test_a_bundle_with_a_changed_fixed_rule_is_kept_as_at_service_start(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    """A2 (OD-500): not refused; the rules are kept, the refusal audited, and the starter rules
+    apply with the System Error and doctor path naming the changed rule."""
+    from ecf_server import config, rules  # noqa: PLC0415
+
+    doc = _v2_rules()
+    doc["rules"][0]["then"] = ["flag"]
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    parsed.tables["settings"].append(_setting("config.rules", json.dumps(doc)))
+
+    def go(nonce: str | None) -> dict[str, Any]:
+        return importer.apply(target, clock, FakeNotifier(), conn_dir(target), "t", parsed,
+                              str(path), replace=False, typed_install=None,
+                              nonce=nonce)  # fmt: skip
+
+    _with_step_up(target, clock, go)
+    assert config.current(target)["rules"] == doc
+    assert "rule fraud_guard is a changed copy" in str(config.rules_problem(target))
+    assert config.current_rules(target).rules == rules.load_starter_rules(
+        config.current_schema(target)).rules  # fmt: skip
+    assert _one(target, "SELECT count(*) FROM audit WHERE event = 'config.rules_converted'"
+                " AND outcome = 'denied'") == 1  # fmt: skip
+
+
+def test_a_bundles_other_rules_are_still_checked(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    doc = _v2_rules()
+    doc["rules"][0]["then"] = ["flag"]
+    doc["rules"].insert(5, {"id": "bad", "when": {"field": "nope", "eq": True}})
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    parsed.tables["settings"].append(_setting("config.rules", json.dumps(doc)))
+
+    def go(nonce: str | None) -> dict[str, Any]:
+        return importer.apply(target, clock, FakeNotifier(), conn_dir(target), "t", parsed,
+                              str(path), replace=False, typed_install=None,
+                              nonce=nonce)  # fmt: skip
+
+    with pytest.raises(bundle_reader.BadBundleError, match="unknown field 'nope'"):
+        _with_step_up(target, clock, go)
+
+
 # ---- routes and CLI -----------------------------------------------------------------------------
 
 

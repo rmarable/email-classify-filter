@@ -10,7 +10,10 @@ provider, standing in for gmail.com). There is no DNS (so `auth_result` is `none
 case's expected facts say otherwise). The case's expected facts then override the computed ones,
 except the internal set's (`sender_origin`, `from_org_address`, `impersonates_internal`), and the
 derived `bulk_corroborates` is recomputed from the result (`with_expected`, shared with `ecf eval
-run`); its expected labels stand in for the classifier's output. Nothing is written to the live
+run`); its expected labels stand in for the classifier's output, with the operator's hand-set
+fixed-item labels (`fixed_labels.jsonl`) and the fixed items its labels imply (`derive_labels`)
+added (v3.0.0 S3, OD-500). The proposed rules are composed with ecf's fixed rules first
+(`rules.compose`), as the rules in force are. Nothing is written to the live
 database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones,
 `ecf eval build`) are skipped and listed. A card over a `standard` address's limit (16 MB) is read
 as the service reads such a message (`read_case`), not skipped.
@@ -25,7 +28,9 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
+from ecf.eval import fixed_labels
 from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
+from ecf.schema import derive_labels
 from ecf_server import db, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
@@ -109,6 +114,7 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
         raise InvalidInputError(f"labels.jsonl is over {MAX_INDEX_BYTES // 1024 // 1024} MB")
     cases: list[Case] = []
     missing: list[str] = []
+    hand = _hand_set(root)
     for n, line in enumerate(index.read_text("utf-8").splitlines(), 1):
         if not line.strip():
             continue
@@ -116,7 +122,8 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             row = json.loads(line)
             path = (root / row["file"]).resolve()
             expected = row["expected"]
-            case = Case(str(row["id"]), path, dict(expected.get("labels") or {}),
+            case = Case(str(row["id"]), path, stand_in(dict(expected.get("labels") or {}),
+                                                        hand.get(str(row["id"]))),
                         dict(expected.get("facts") or {}), expected.get("rule"),
                         str(row.get("profile") or "org"))  # fmt: skip
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -138,6 +145,21 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
         if len(cases) + len(missing) > MAX_CASES:
             raise InvalidInputError(f"more than {MAX_CASES} cases")
     return cases, missing
+
+
+def _hand_set(root: Path) -> dict[str, dict[str, bool]]:
+    """The operator's hand-set fixed items by case; a stale row's are left out (S2)."""
+    try:
+        return fixed_labels.current(root)[0]
+    except (InvalidInputError, ValueError, KeyError, TypeError, OSError):
+        return {}  # a malformed labels.jsonl is reported by load_cases, line by line
+
+
+def stand_in(labels: dict[str, Any], hand: dict[str, bool] | None) -> dict[str, Any]:
+    """A card's labels as the classifier's stand-in: card-stated > hand-set > derived (as `ecf
+    eval run` loads them, S2 review F4)."""
+    out = {**(hand or {}), **labels}
+    return out | derive_labels(out)
 
 
 class Scratch:
@@ -215,7 +237,7 @@ def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, A
 def run(
     clock: Clock, current: rules.CompiledRules, proposed_text: str, root: Path
 ) -> dict[str, Any]:
-    proposed = rules.compile_rules(proposed_text, current.schema, source="proposed rules")
+    proposed = rules.compose(current.schema, proposed_text, source="proposed rules")
     cases, missing = load_cases(root)
     scratch = Scratch(clock)
     rows: list[dict[str, Any]] = []

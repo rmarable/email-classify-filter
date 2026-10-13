@@ -599,6 +599,10 @@ def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
         conn.execute("UPDATE items SET classification = ? WHERE stable_id = ?",
                      (json.dumps(ROUTINE), b))  # fmt: skip
     assert not claude_queue.batch_risky(conn, a)
+    with write_tx(conn):  # the phishing item alone (OD-500, P14)
+        conn.execute("UPDATE items SET classification = ? WHERE stable_id = ?",
+                     (json.dumps(ROUTINE | {"phishing": True}), b))  # fmt: skip
+    assert claude_queue.batch_risky(conn, a)
 
 
 def test_a_hide_in_a_risky_batch_needs_approval() -> None:

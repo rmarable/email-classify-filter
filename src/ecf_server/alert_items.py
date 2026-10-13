@@ -6,10 +6,12 @@ address and item IDs and give commands, never a subject, sender or excerpt (OD-3
 (10 an hour per type, then an hourly roll-up) are alert_mail's.
 
 - **Possible Fraud Attempt:** one per escalated item with a fraud signal: a fraud trigger,
-  quarantine, the fraud guard rule, a classifier fraud risk of medium or high, or a vendor change
-  request. The weak first-time + payment case isn't escalated, so it goes to the digest only.
-- **Regulatory Mail Notice:** one per escalated item with the regulator trigger, the `regulatory`
-  category or rule, and no fraud signal.
+  quarantine, the fraud guard rule, a classifier fraud risk of medium or high, or a bank detail
+  change (the fixed item or a vendor change request; `ecf.schema.fixed_item`, OD-500). The weak
+  first-time + payment case isn't escalated, so it goes to the digest only.
+- **Regulatory Mail Notice:** one per escalated item with the regulator trigger, a regulator
+  claim (the fixed item, the `regulatory` category or sender_type `regulator`) or the `regulatory`
+  rule, and no fraud signal. Phishing adds no alert email.
 - **Unverified Payment Sender:** on `high` addresses only, at most one email an hour listing the
   items rule 1a flagged since the last one (a human-verified sender doesn't fire it, OD-065);
   items escalated as fraud are left to their own email.
@@ -25,6 +27,7 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
+from ecf.schema import fixed_item
 from ecf_server import alert_mail, alerts, slack_admin
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -129,13 +132,13 @@ def _kind(r: sqlite3.Row) -> tuple[str | None, str]:
         (facts.get("quarantined"), "quarantined"),
         (plan.get("rule") == "fraud_guard", "the fraud guard rule"),
         (cls.get("fraud_risk") in ("medium", "high"), f"fraud risk {cls.get('fraud_risk')}"),
-        (cls.get("category") == "vendor_change_request", "a vendor change request"),
+        (fixed_item(cls, "bank_detail_change"), "a bank detail change"),  # OD-500
     ) if hit]  # fmt: skip
     if fraud:
         return FRAUD, ", ".join(fraud)
     reg = [why for hit, why in (
         (t.get("regulator"), "a regulator trigger"),
-        (cls.get("category") == "regulatory" or plan.get("rule") == "regulatory",
+        (fixed_item(cls, "regulator_claim") or plan.get("rule") == "regulatory",
          "classified regulatory"),
     ) if hit]  # fmt: skip
     if reg:

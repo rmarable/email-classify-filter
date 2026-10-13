@@ -8,10 +8,12 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   junk) survives only when the rule allows hiding, the stage allows it (`live`; step 4b), the
   address isn't `high` (rules 6-8 become label + leave there, §8.3), none of the blockers is set
   (`content_unscanned`, quarantine, the regulator trigger, any fraud signal: a fraud or weak fraud
-  trigger, a lookalike domain, or `fraud_risk` of low or more; a risky attachment, v2.1.0), and
-  it is corroborated from facts alone: authenticated bulk mail from a sender seen before
-  (`bulk_corroborates`), or a category a person confirmed for this sender that matches this
-  classification, on a message whose `auth_result` is pass (OD-057). A hide that doesn't
+  trigger, a lookalike domain, or `fraud_risk` of low or more; a risky attachment, v2.1.0; from
+  v3.0.0 S3, OD-500, the fixed items, each through `ecf.schema.fixed_item`: a bank detail change,
+  a regulator claim, a claimed colleague from outside, and phishing, which blocks every hide but
+  `junk`), and it is corroborated from facts alone: authenticated bulk mail from a sender seen
+  before (`bulk_corroborates`), or a category a person confirmed for this sender that matches
+  this classification, on a message whose `auth_result` is pass (OD-057). A hide that doesn't
   survive leaves the label and adds `leave`; the digest may offer "confirm this sender's
   category".
 - **I2:** nothing here removes a label or flag; the pre-check's actions are never undone by a
@@ -23,9 +25,11 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   move target must be in `move_folders` (checked again at execution, step 5).
 - **Modes:** each surviving action is `auto` or `approve`. On `standard` the action policy decides
   hide actions (default auto, §8.3); on `high` hide actions need approval, and so do hides decided
-  in a Claude batch that held a risky or still unclassified item (§5.6, V1.4 step 3). High-risk
-  items on the local pair follow `local_high_risk` (§8.2, OD-056): label, flag, escalate and leave
-  are automatic; hide actions need approval; sends are rejected; drafts need approval.
+  in a Claude batch that held a risky or still unclassified item (§5.6, V1.4 step 3), and any hide
+  of phishing (P6, OD-500: a compromised, confirmed sender's phishing is never auto-junked).
+  High-risk items on the local pair follow `local_high_risk` (§8.2, OD-056): label, flag,
+  escalate and leave are automatic; hide actions need approval; sends are rejected; drafts need
+  approval.
 - **Drafts and sends** (V1.5, OD-317): always need approval. A send's target must be an enabled
   template or a forward allow-list entry, the email must pass §8.4's guardrails
   (send_refusal), and outbound must be on for the address; while it's off the proposal is
@@ -39,7 +43,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ecf.schema import CompiledSchema
+from ecf.schema import CompiledSchema, fixed_item
 from ecf_server import precheck
 from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, LabelFrom, RuleInput
 
@@ -105,7 +109,8 @@ def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
     """Every label name ecf may write: built-ins, category values (with any the install's
     extension adds), the rules' own names, and the values of extension enum fields a rule
     labels from (`{label: {field: x}}`; OD-478)."""
-    names = set(BUILTIN_LABELS) | set(schema.fields["category"].values)
+    category = schema.fields.get("category")  # a schema without category: no category labels
+    names = set(BUILTIN_LABELS) | set(category.values if category is not None else ())
     ext = set(schema.extension_fields)
     for r in rules.rules:
         for a in r.then:
@@ -125,17 +130,27 @@ def fraud_signal(ctx: Context) -> bool:
                 or ctx.classification.get("fraud_risk") in FRAUD_RISKY)  # fmt: skip
 
 
-def hide_blockers(ctx: Context) -> list[str]:
+def hide_blockers(ctx: Context, action: str | None = None) -> list[str]:
+    """What refuses a hide on this item (I1), by fixed name. `action`: the hide action asked
+    about; phishing blocks every hide but `junk`, so the fixed rule can still junk it (OD-500).
+    Without one, every blocker is listed."""
     t: dict[str, Any] = ctx.facts.get("triggers") or {}
+    cls = ctx.classification
     out: list[str] = []
     if ctx.facts.get("content_unscanned"):
         out.append("content not fully scanned")
-    if t.get("regulator") or ctx.classification.get("category") == "regulatory":
-        out.append("regulatory")
+    if t.get("regulator") or fixed_item(cls, "regulator_claim"):
+        out.append("regulatory")  # the name _alert_echo reads
     if fraud_signal(ctx):
         out.append("fraud signal")
     if ctx.facts.get("risky_attachment"):
         out.append("risky attachment")
+    if fixed_item(cls, "bank_detail_change"):
+        out.append("bank detail change")
+    if fixed_item(cls, "claims_internal") and ctx.facts.get("sender_origin") == "external":
+        out.append("claims to be a colleague, from outside")
+    if fixed_item(cls, "phishing") and action != "junk":
+        out.append("phishing")
     return out
 
 
@@ -188,11 +203,10 @@ def plan(ctx: Context, known_labels: frozenset[str]) -> Plan:
     decision = ctx.rules.evaluate(rule_input(ctx))
     p = Plan(decision.rule_id, to_actor=decision.to_actor, high_risk=high_risk(ctx),
              payment_or_fraud=payment_or_fraud(ctx))  # fmt: skip
-    blockers = hide_blockers(ctx)
     for a in decision.actions:
         why = _refuse(ctx, a.name, a.target, known_labels)
         if why is None and a.name in HIDE_ACTIONS:
-            why = _hide_refusal(ctx, decision.hide, blockers)
+            why = _hide_refusal(ctx, decision.hide, hide_blockers(ctx, a.name))
             if why == "not corroborated":
                 p.offer_confirm = True
         if why is not None:
@@ -231,7 +245,7 @@ def proposal(ctx: Context, p: Plan, name: str, target: str | None,
         return Planned(name, target if name in SENDS else None, "approve")
     why = _refuse(ctx, name, target, known_labels)
     if why is None and name in HIDE_ACTIONS:
-        why = _hide_refusal(ctx, Hide.CORROBORATED, hide_blockers(ctx))
+        why = _hide_refusal(ctx, Hide.CORROBORATED, hide_blockers(ctx, name))
     if why is not None:
         return Dropped(name, target, why)
     return Planned(name, target, _mode(ctx, name, p.high_risk))
@@ -300,6 +314,8 @@ def _mode(ctx: Context, name: str, high_risk: bool) -> Mode:
         return "auto"
     if name in HIDE_ACTIONS:
         if high_risk or ctx.sensitivity == "high" or ctx.batch_risky:
+            return "approve"
+        if fixed_item(ctx.classification, "phishing"):  # P6 (OD-500)
             return "approve"
         return "auto" if ctx.action_policy.get(name, "auto") == "auto" else "approve"
     return "approve"

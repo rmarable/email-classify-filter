@@ -4,14 +4,16 @@ plus the concrete cases of SPEC §8.2, §8.3 and §8.6."""
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ecf.schema import FieldKind, extend_schema, load_schema
-from ecf_server import policy, precheck
+from ecf.errors import InvalidInputError
+from ecf.schema import FIXED_ITEMS, FieldKind, extend_schema, fixed_item, load_schema, with_fixed
+from ecf_server import policy, precheck, rules
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
 
@@ -57,8 +59,7 @@ FACTS = st.fixed_dictionaries({
 })  # fmt: skip
 # A hand-written custom set that tries to hide mail rule 1 escalates: the invariants hold for any
 # rules, not only the starter ones (v2.1.0's starter rules are v2.0.0's, unchanged).
-CUSTOM = compile_rules(
-    """
+CUSTOM_TEXT = """
 version: 1
 rules:
   - id: impersonators_to_junk
@@ -69,11 +70,11 @@ rules:
     then: [{label: marketing}, mark_read, archive]
   - id: otherwise
     actor: continue
-""",
-    SCHEMA,
-    source="custom",
-)
-RULE_SETS = (STARTER, CUSTOM)
+"""
+CUSTOM = compile_rules(CUSTOM_TEXT, SCHEMA, source="custom")  # on its own, not composed
+# composed as `ecf config apply` would put it in force: the fixed rules first (OD-500)
+COMPOSED = rules.compose(SCHEMA, CUSTOM_TEXT, source="custom")
+RULE_SETS = (STARTER, CUSTOM, COMPOSED)
 CONTEXTS = st.builds(
     Context,
     classification=CLASSIFICATIONS,
@@ -350,3 +351,152 @@ def test_labels_include_what_the_extension_adds() -> None:
     assert not {"emea", "apac"} & got  # no rule labels from region
     assert "vendor" not in got  # sender_type isn't an extension field
     assert "legal_notice" not in LABELS and "draft" not in LABELS
+
+
+# ---- v3.0.0 S3: fixed items, fixed rules (OD-500; plan §5 invariants) -------------------------
+
+FIXED = rules.load_fixed_rules(SCHEMA)
+V2_STARTER = rules.load_v2_starter(SCHEMA)
+KEPT_SOURCES = (
+    "regulator",
+    "friend",
+    "family",
+)  # the fixed rules' new kept-source clauses (P1, P2)
+
+
+def _blocked_by_items(ctx: Context) -> bool:
+    c = ctx.classification
+    return (
+        fixed_item(c, "bank_detail_change")
+        or fixed_item(c, "regulator_claim")
+        or (fixed_item(c, "claims_internal") and ctx.facts["sender_origin"] == "external")
+    )
+
+
+@settings(max_examples=3000, deadline=None)
+@given(CONTEXTS)
+def test_s3_inv1_the_fixed_items_block_every_hide(ctx: Context) -> None:
+    """Invariant 1: a bank detail change, a regulator claim (or sender_type regulator), or a
+    claimed colleague from outside: no hide survives, for any rule set and any proposal."""
+    p = policy.plan(ctx, policy.labels(SCHEMA, ctx.rules))
+    if _blocked_by_items(ctx):
+        assert not p.hides
+        for name in sorted(HIDE_ACTIONS):
+            got = policy.proposal(ctx, p, name, "Receipts" if name == "move" else None,
+                                  policy.labels(SCHEMA, ctx.rules))  # fmt: skip
+            assert isinstance(got, Dropped), name
+
+
+@settings(max_examples=3000, deadline=None)
+@given(CONTEXTS)
+def test_s3_inv2_phishing_is_only_ever_junked_with_approval(ctx: Context) -> None:
+    """Invariant 2 (P6): phishing: no mark_read, archive or move survives; junk only when
+    corroborated, with no other blocker, and in mode approve."""
+    if not fixed_item(ctx.classification, "phishing"):
+        return
+    labels = policy.labels(SCHEMA, ctx.rules)
+    p = policy.plan(ctx, labels)
+    proposed = [policy.proposal(ctx, p, n, "Receipts" if n == "move" else None, labels)
+                for n in sorted(HIDE_ACTIONS)]  # fmt: skip
+    for a in [*p.hides, *(x for x in proposed if isinstance(x, Planned))]:
+        assert a.name == "junk" and a.mode == "approve"
+        assert policy.corroborated(ctx) and policy.hide_blockers(ctx, "junk") == []
+
+
+@settings(max_examples=2000, deadline=None)
+@given(CLASSIFICATIONS, FACTS, st.sampled_from([STARTER, COMPOSED]))
+def test_s3_inv3_a_fixed_rule_that_matches_decides(
+    cls: dict[str, Any], facts: dict[str, Any], rule_set: rules.CompiledRules
+) -> None:
+    """Invariant 3 (and 4): in every composed set, the first fixed rule whose `when` holds
+    decides; every composed set ends in a catch-all, so evaluating never raises."""
+    inp = policy.rule_input(_ctx(classification=cls, facts=facts))
+    assert rule_set.rules[-1].when is None
+    got = rule_set.evaluate(inp)
+    try:
+        first = FIXED.evaluate(inp).rule_id
+    except InvalidInputError:  # no fixed rule matched
+        assert got.rule_id not in rules.fixed_ids()
+    else:
+        assert got.rule_id == first
+
+
+@settings(max_examples=2000, deadline=None)
+@given(CONTEXTS, st.sampled_from(FIXED_ITEMS))
+def test_s3_inv5_a_missing_fixed_item_is_false(ctx: Context, item: str) -> None:
+    """Invariant 5 (step 1c P13): a classification without a fixed item is planned as with it
+    false."""
+    labels = policy.labels(SCHEMA, ctx.rules)
+    absent = {k: v for k, v in ctx.classification.items() if k != item}
+    a = policy.plan(dataclasses.replace(ctx, classification=absent), labels)
+    b = policy.plan(dataclasses.replace(ctx, classification=absent | {item: False}), labels)
+    assert (a.rule_id, a.actions, a.dropped) == (b.rule_id, b.actions, b.dropped)
+
+
+V2_CLASSIFICATIONS = st.fixed_dictionaries({n: _field(s) for n, s in SCHEMA.fields.items()
+                                            if n not in FIXED_ITEMS})  # fmt: skip
+
+
+@settings(max_examples=3000, deadline=None)
+@given(V2_CLASSIFICATIONS, FACTS)
+def test_s3a_inv6_the_composed_rules_decide_as_the_v2_starter_rules(
+    cls: dict[str, Any], facts: dict[str, Any]
+) -> None:
+    """Invariant 6 (S3a): when the items agree with the old values (`with_fixed` of a v2
+    answer), the composed rules decide exactly as the v2 starter rules did, but for the
+    expected causes: the kept-source clauses on sender_type regulator, friend and family."""
+    if cls["sender_type"] in KEPT_SOURCES:
+        return
+    inp = policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts))
+    assert STARTER.evaluate(inp) == V2_STARTER.evaluate(inp)
+
+
+@pytest.mark.parametrize(
+    ("cls", "facts", "why"),
+    [
+        ({"bank_detail_change": True}, {}, "bank detail change"),
+        ({"category": "vendor_change_request"}, {}, "bank detail change"),  # S3a bridge
+        ({"regulator_claim": True}, {}, "regulatory"),
+        ({"sender_type": "regulator"}, {}, "regulatory"),  # kept source
+        ({"claims_internal": True}, {"sender_origin": "external"},
+         "claims to be a colleague, from outside"),
+        ({"sender_type": "team"}, {"sender_origin": "external"},
+         "claims to be a colleague, from outside"),  # S3a bridge
+        ({"phishing": True}, {}, "phishing"),
+    ],
+)  # fmt: skip
+def test_s3_each_fixed_item_is_a_hide_blocker(cls: dict[str, Any], facts: dict[str, Any],
+                                              why: str) -> None:  # fmt: skip
+    ctx = _ctx(classification=cls, facts=facts, rules=CUSTOM)  # tries to hide everything
+    assert why in policy.hide_blockers(ctx, "archive")
+    got = policy.proposal(ctx, policy.plan(ctx, LABELS), "archive", None, LABELS)
+    assert isinstance(got, Dropped) and why in got.why
+
+
+def test_s3_a_claimed_colleague_from_inside_doesnt_block() -> None:
+    ctx = _ctx(classification={"claims_internal": True}, facts={"sender_origin": "internal"})
+    assert policy.hide_blockers(ctx, "archive") == []
+
+
+def test_s3_phishing_can_be_junked_but_only_with_approval() -> None:
+    """P6: a corroborated phishing email (a compromised, confirmed sender) is junked only with
+    approval; the other hides are refused."""
+    ctx = _ctx(classification={"category": "account_security", "phishing": True},
+               facts={"sender_origin": "external"})  # fmt: skip
+    p = policy.plan(ctx, LABELS)
+    assert p.rule_id == "spam_or_phishing"  # before the default account_security rule
+    assert ("junk", None, "approve") in _names(p)
+    assert "phishing" not in policy.hide_blockers(ctx, "junk")
+    got = policy.proposal(ctx, p, "archive", None, LABELS)
+    assert isinstance(got, Dropped) and "phishing" in got.why
+    plain = policy.plan(_ctx(classification={"category": "marketing"}), LABELS)
+    assert ("archive", None, "auto") in _names(plain)  # no phishing: unchanged
+
+
+def test_s3_labels_without_a_category_field() -> None:
+    """A schema without `category` (S4): no category labels, and nothing raises."""
+    no_cat = dataclasses.replace(SCHEMA, fields={k: v for k, v in SCHEMA.fields.items()
+                                                 if k != "category"})  # fmt: skip
+    got = policy.labels(no_cat, STARTER)
+    assert "suspicious" in got and "shipping" in got  # a rule's own label stays
+    assert "remittance" not in got

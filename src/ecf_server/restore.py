@@ -153,7 +153,7 @@ def restore(  # noqa: PLR0913 - the service state it needs, then the request
         staged = db.connect(Path(tmp.name))
         try:
             try:
-                importer.load(staged, parsed)
+                importer.load(staged, parsed, to_ts(clock.now()))
                 with write_tx(staged):
                     staged.execute("UPDATE addresses SET paused = 1")
                 importer.validate(staged, importer.kept_settings(staged))

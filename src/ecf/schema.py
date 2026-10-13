@@ -6,7 +6,9 @@ both Ollama's `format` and `record_classification` need. Ordinal fields keep the
 
 The shipped schema is v3 (`load_schema`; SPEC §7.1, OD-498): v2's fields and values unchanged,
 `priority` with level texts, and five yes/no fixed safety items (`FIXED_ITEMS`) after them
-(v3.0.0 step 1c, stage S2: nothing reads the items yet). v2 stays loadable (`load_schema_v2`):
+(v3.0.0 step 1c, stage S2). From stage S3 (OD-500) the fixed rules and policy read the items,
+each through `fixed_item` (the item, or a v2 value that says the same). v2 stays loadable
+(`load_schema_v2`):
 the local model (presets A and B) is still asked v2 (`local_schema`) and its answer completed
 with the fixed items derived from it by a fixed table (`with_fixed`, P6), and results, labels
 and stored classifications made before v3 are read through the same table. v1 stays loadable
@@ -108,6 +110,28 @@ def derive_fixed(values: Mapping[str, Any]) -> dict[str, bool]:
             for item, sources in FIXED_FROM_V2.items()}  # fmt: skip
 
 
+def fixed_item(values: Mapping[str, Any], item: str) -> bool:
+    """Whether a classification says fixed item `item` holds: the item itself is true, or one of
+    its v2 sources holds (`FIXED_FROM_V2`). The one test every Python reader of the items uses
+    (v3.0.0 S3, OD-500), so a classification that answers the old value and not the item (or the
+    item and not the old value) raises the same risk; it only ever adds risk. From S3b only the
+    kept sources (sender_type `regulator`, `person`/`friend`/`family`) remain, so readers agree
+    with the fixed rules, which read them too (P2)."""
+    if values.get(item) is True:
+        return True
+    return any(values.get(field) in vals for field, vals in FIXED_FROM_V2[item])
+
+
+# The v2 values S3b removes (v3.0.0 S3, OD-500), and what a rules file uses instead. Still in the
+# schema in S3a; a rules file can't use them from S3a on (the fixed rules read them, S3a only).
+REMOVED_VALUES: dict[tuple[str, str], str] = {
+    ("category", "vendor_change_request"): "bank_detail_change: true",
+    ("category", "regulatory"): "regulator_claim: true",
+    ("category", "spam_or_phishing"): "phishing: true",
+    ("sender_type", "team"): "claims_internal: true",
+}
+
+
 def with_fixed(values: Mapping[str, Any]) -> dict[str, Any]:
     """A v2 classification completed to v3: each fixed item it lacks, derived (`derive_fixed`).
     Items it has are kept."""
@@ -180,10 +204,12 @@ class CompiledSchema:
     def validate(self, data: Any) -> BaseModel:
         return self.model.model_validate(data)
 
-    @property
+    @functools.cached_property
     def digest(self) -> str:
         """A short hash of what the models are asked: the version, then each field's name, kind,
-        description, values and value descriptions in order (the gate key, SPEC §9.3)."""
+        description, values and value descriptions in order (the gate key, SPEC §9.3). Computed
+        once per schema (A10; the dataclass is frozen and has no slots, so the cache lands in the
+        instance's own dict)."""
         doc: list[Any] = [
             self.version,
             [
