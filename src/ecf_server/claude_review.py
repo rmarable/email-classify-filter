@@ -162,9 +162,10 @@ def review_queue(
         # eval run). An expired claim's agent may still be running for `GRACE`: until then no
         # other agent type starts, and that agent is preferred. Parallel spawns of one type stay:
         # a call cut when Claude Code restarts their shared server is retried (`_again`).
-        busy_agents = {str(r["agent"]) for r in conn.execute(
+        claimed = [str(r["agent"]) for r in conn.execute(
             "SELECT agent FROM claims WHERE session_id = ? AND state = 'claimed'"
-            " AND expires_at > ?", (session_id, to_ts(now)))}  # fmt: skip
+            " AND expires_at > ?", (session_id, to_ts(now)))]  # fmt: skip
+        busy_agents = set(claimed)
         grace = _grace(session_id, now)
         held_back = busy_agents | set(grace)
         picked = [(item, need_of(item)) for item in rows]
@@ -175,7 +176,9 @@ def review_queue(
         if first is not None and held_back - {first}:
             picked = []
         same = [p for p in picked if p[2] == first]
-        for item, need, agent in same[:limit]:
+        # The session goes straight back for more, so the service paces it (as claude_eval).
+        room = max(0, min(limit, OUT_LIMITS * limit - claimed.count(first))) if first else 0
+        for item, need, agent in same[:room]:
             sid = str(item["stable_id"])
             spawn = _spawn(conn, agent, str(item["address_id"]), sid, batches)
             batch = f"claude:{round_id}:{spawn}"
@@ -206,6 +209,8 @@ def review_queue(
 WAIT_S = 6.0  # as claude_eval: under ecf-mcp's 10 s request limit (§15.4)
 POLL_S = 2.0
 GRACE = timedelta(seconds=300)  # an expired claim's agent may still be running (dispatch plan)
+TAIL = timedelta(seconds=15)  # as claude_eval: a held submission's agent still writes its report
+OUT_LIMITS = 2  # as claude_eval: a session's claims out per agent type, in `limit`s
 
 
 _GRACE: dict[str, dict[str, datetime]] = {}  # session -> agent -> until (in memory, as eval's)
@@ -256,10 +261,12 @@ def review_queue_waiting(
     """`review_queue`, but a reply that would be empty only because this session's claims are
     still out waits up to `WAIT_S` for them: the session can't pause itself, so each call waits
     a little before `next` sends it back."""
-    waited = 0.0
+    waited, results = 0.0, list[dict[str, Any]]()
     while True:
         got = review_queue(conn, clock, session_id, address=address, limit=limit,
                            stopped=stopped)  # fmt: skip
+        results += got["results"]  # each call hands over the outcomes since the last: keep them
+        got["results"] = results
         if got["items"] or got.get("stopped"):
             return got
         busy = got["in_progress"] or got.get("next") == "call again"
@@ -460,9 +467,8 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
     result, errors = check_classification(classification, schema)
     if result is None:
         return _invalid(conn, clock, claim, errors)
-    return _hold(
-        conn, claim, session_id, {"classification": result, "schema": schema.digest}, digest
-    )
+    return _hold(conn, clock, claim, session_id,
+                 {"classification": result, "schema": schema.digest}, digest)  # fmt: skip
 
 
 def prompt_digest(schema: CompiledSchema) -> str:
@@ -517,7 +523,8 @@ def propose_action(conn: sqlite3.Connection, clock: Clock, session_id: str, sid:
     why = _proposal_problem(conn, item, proposal)
     if why is not None:
         return _invalid(conn, clock, claim, [why])
-    return _hold(conn, claim, session_id, {"proposal": proposal}, _digest({"proposal": proposal}))
+    return _hold(conn, clock, claim, session_id, {"proposal": proposal},
+                 _digest({"proposal": proposal}))  # fmt: skip
 
 
 def _proposal_of(body: dict[str, Any]) -> dict[str, Any]:
@@ -552,7 +559,7 @@ def check_proposal(proposal: dict[str, Any], labels: frozenset[str], folders: fr
     return why
 
 
-def _hold(conn: sqlite3.Connection, claim: sqlite3.Row, session_id: str,
+def _hold(conn: sqlite3.Connection, clock: Clock, claim: sqlite3.Row, session_id: str,
           payload: dict[str, Any], digest: str) -> Hold:  # fmt: skip
     """End the claim's tries, fenced: a second submission under it is refused."""
     with write_tx(conn):
@@ -563,8 +570,11 @@ def _hold(conn: sqlite3.Connection, claim: sqlite3.Row, session_id: str,
         )
     if cur.rowcount != 1:
         raise ConflictError("that claim has ended")
+    now, agent = clock.now(), str(claim["agent"])
     with _MEM:
         _HELD[(str(claim["stable_id"]), int(claim["fence"]))] = digest
+        mine = _GRACE.setdefault(session_id, {})  # its agent still writes its report (TAIL)
+        mine[agent] = max(mine.get(agent, now), now + TAIL)
     return Hold(session_id, str(claim["stable_id"]), int(claim["fence"]),
                 str(claim["need"]), str(claim["agent"]), payload)  # fmt: skip
 

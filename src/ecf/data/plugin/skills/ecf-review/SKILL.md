@@ -21,9 +21,11 @@ Repeat until done:
    group's `agent` value exactly as the subagent type; the spawns may run in parallel. The prompt
    holds only one line per item, `id=<id> claim_token=<claim_token>`, and nothing else. Every
    item returned is already claimed for you: always spawn it, in this round.
-4. When every spawn of the round has finished, go back to step 1. Don't use what a
-   subagent says: outcomes come only from `results` in the next `review_queue` call. Never end
-   your turn to wait: the next `review_queue` reply says what to do.
+4. Go straight back to step 1: don't wait for the spawns, and don't track which have finished.
+   The service knows which claims are out; while they are, `review_queue` waits a little and its
+   `next` says `call again`. A spawn finishing needs nothing from you but step 1. Don't use what
+   a subagent says: outcomes come only from `results`. Never end your turn to wait: only `next`
+   saying `end` ends the loop.
 
 At the end, tell the person, in two or three lines: how many items were handed out, and the
 outcomes from `results` counted by outcome. Quote nothing else.

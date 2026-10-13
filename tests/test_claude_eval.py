@@ -126,6 +126,8 @@ def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, An
         q = claude_eval.eval_next(connector(db_path), clock, session)
         if q["done"]:
             return seen
+        if not q["items"] and q.get("next") == "call again":  # a held answer's agent (TAIL)
+            clock.advance(q["frees_in_s"])
         # one agent type a round: the model check can't tell two models' overlapping work apart
         assert len({i["agent"] for i in q["items"]}) <= 1, q["items"]
         for item in q["items"]:
@@ -257,11 +259,12 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
     assert item["id"] in {i["id"] for i in again["items"]}
 
 
-def test_a_held_submission_doesnt_block_the_next_agent_type(
+def test_a_held_submission_blocks_the_next_agent_type_only_for_its_tail(
     db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    """A submission waiting for telemetry has finished its spawn: the session may take other
-    agents' work meanwhile, or its loop sees empty rounds and ends (run 9e745b99)."""
+    """A submission waiting for telemetry doesn't block other agents' work for long, or the loop
+    sees empty rounds (run 9e745b99); but its agent still writes its report, and the session no
+    longer waits for its spawns, so another agent type waits `TAIL` (review R1)."""
     start(db_path, clock, root)
     run = claude_eval.current()
     assert run is not None
@@ -275,7 +278,22 @@ def test_a_held_submission_doesnt_block_the_next_agent_type(
     held = claude_eval.record_classification(clock, S1, ref, token, BEC, agent)
     assert isinstance(held, Hold)  # submitted, waiting for telemetry: not "claimed" any more
     q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
+    assert not any(i["agent"].startswith("ecf-actor") for i in q["items"])  # the tail
+    for item in q["items"]:  # more of the classifier's work meanwhile
+        assert answer(db_path, clock, item, S1, BEC)["accepted"]
+    clock.advance(int(claude_eval.TAIL.total_seconds()) + 1)
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=5)
     assert any(i["agent"].startswith("ecf-actor") for i in q["items"])
+
+
+def test_a_session_has_at_most_two_limits_of_claims_out(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The session no longer waits for its spawns, so the service paces it (review R2)."""
+    start(db_path, clock, root)
+    got = [claude_eval.eval_next(connector(db_path), clock, S1, limit=1)["items"] for _ in "abc"]
+    assert [len(g) for g in got] == [1, 1, 0]
+    assert len({i["agent"] for g in got for i in g}) == 1
 
 
 def test_an_empty_reply_waits_briefly_while_work_is_out(
@@ -290,6 +308,26 @@ def test_an_empty_reply_waits_briefly_while_work_is_out(
     q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, sleep=slept.append)
     assert q["items"] == [] and q["in_progress"] > 0
     assert sum(slept) == claude_eval.WAIT_S and claude_eval.WAIT_S < 10  # under ecf-mcp's limit
+
+
+def test_a_waiting_reply_keeps_the_outcomes_of_every_pass(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Each `eval_next` hands over the outcomes since the last; the waiting loop calls it several
+    times and must return all of them."""
+    start(db_path, clock, root)
+    q = claude_eval.eval_next(connector(db_path), clock, S1, limit=10)
+    for item in q["items"]:
+        assert answer(db_path, clock, item, S1, REQUEST)["accepted"]
+    slept: list[float] = []
+
+    def sleep(s: float) -> None:
+        slept.append(s)
+        clock.advance(s)
+
+    q = claude_eval.eval_next_waiting(connector(db_path), clock, S1, sleep=sleep)
+    assert slept  # the actor waits out the classifier's tail: several passes
+    assert len(q["results"]) == 3  # one per answered case, from the first pass
 
 
 def test_progress_is_the_services_count_for_the_status_line_and_the_skill(
@@ -429,7 +467,7 @@ def test_held_answers_keep_the_session_polling_for_a_while_then_it_ends(
         assert isinstance(got, Hold)  # held: no telemetry yet
     q = claude_eval.eval_next(connector(db_path), clock, S1)
     assert q["items"] == [] and q["next"] == "call again"
-    assert q["frees_in_s"] == int(claude_eval.HOLD_WAIT.total_seconds())
+    assert q["frees_in_s"] == int(claude_eval.TAIL.total_seconds())  # its agent's tail first
     clock.advance(int(claude_eval.HOLD_WAIT.total_seconds()) + 1)
     assert claude_eval.eval_next(connector(db_path), clock, S1)["next"] == "end"
 
@@ -606,8 +644,9 @@ def test_the_result_carries_each_cases_claims_in_seconds_from_registration(
         assert case.classifier_ms is None
         assert [(c.stage, c.spawn, c.round, c.session, c.outcome) for c in case.claims] == [
             (c.stage, c.spawn, c.round, c.session, c.outcome) for c in w.claims]  # fmt: skip
-        assert all(c.claimed_s == 10 and c.read_s == c.answered_s == c.settled_s == 10
-                   for c in case.claims)  # fmt: skip
+        for c in case.claims:  # later stages wait out a held answer's tail (TAIL)
+            assert c.claimed_s is not None and c.claimed_s >= 10
+            assert c.claimed_s == c.read_s == c.answered_s == c.settled_s
     first = next(c for c in result.cases if c.id == run.works[0].case.id)
     assert [c.stage for c in first.claims] == ["classify", "repeat"]
     acts = [c for r in result.cases for c in r.claims if c.stage == "act"]

@@ -445,8 +445,10 @@ def test_a_claude_classification_goes_through_the_rules(conn: sqlite3.Connection
     assert pinned["agent"] == "ecf-classifier"
     with pytest.raises(ConflictError):  # one submission per claim (applied: has ended)
         submit_classification(conn, clock, S1, sid, tok, REQUEST)
+    q = queue(conn, clock)  # the classifier still writes its report: the actor waits (TAIL)
+    assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}] and q["items"] == []
+    clock.advance(claude_review.TAIL.total_seconds() + 1)
     q = queue(conn, clock)
-    assert q["results"] == [{"id": sid, "outcome": "awaiting_claude"}]
     assert [(i["id"], i["need"]) for i in q["items"]] == [(sid, "act")]
 
 
@@ -642,6 +644,7 @@ def test_the_routes_take_only_a_session(conn: sqlite3.Connection, db_path: Path)
             return await c.delete(f"/v1/sessions/{made['session_id']}",
                                   headers={"Authorization": "Bearer cli-token"})  # fmt: skip
 
+    clock.advance(claude_review.TAIL.total_seconds() + 1)  # the classifier's tail
     q2 = call(state, "/v1/review-queue", {}, work).json()
     assert [i["need"] for i in q2["items"]] == ["act"]
     assert anyio.run(revoke).status_code == 200
