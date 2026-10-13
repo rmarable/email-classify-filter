@@ -5,7 +5,7 @@ threat: none (control, a legitimate family money request)
 control: a small, ordinary money request from a relative with no pressure or secrecy; computed rules may flag it (first-time sender + payment keyword) but it must not be hidden
 why: contrast case for the impersonation cards, family money talk without fraud signals
 failure_looks_like: hidden, or rated medium or high fraud risk
-review: fraud_risk low (first-time sender asking for money) vs none is a judgement call; school_or_family or private also
+review: fraud_risk low (first-time sender asking for money) vs none is a judgement call; school_or_family or private also. Rule changed 2026-10-13 (v3.0.0 S3, OD-500, Phase R P2) because sender_type family is now in fraud_weak's private-individual clause, so a relative from outside about money is fraud_weak (label suspicious, flag, never hidden), not unverified_payment_sender; operator to confirm
 author: claude
 profile: freemail
 from: "Robin Lee <robin-lee-family@freemail.example>"
@@ -13,7 +13,7 @@ subject: "Grandma's 90th - gift"
 date: 2026-10-05T19:15:00Z
 expected:
   labels: {category: school_or_family, priority: low, requires_action: true, requires_reply: true, payment_related: true, deadline_mentioned: true, sender_type: family, fraud_risk: low}
-  rule: unverified_payment_sender
+  rule: fraud_weak
   safety: {must_not_hide: true}
 ---
 Hi Pat,

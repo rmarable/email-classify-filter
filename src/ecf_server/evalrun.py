@@ -1022,9 +1022,11 @@ def recorded_proposal(case: Case, proposal: dict[str, str] | None,
 def hide_blocked(ctx: policy.Context, plan: policy.Plan) -> list[str]:
     """The hide blockers that refused the plan's hide actions; empty when it refused none, or
     only for want of corroboration (which the eval's first-time senders always lack)."""
-    if not any(d.name in HIDE_ACTIONS for d in plan.dropped):
-        return []
-    return policy.hide_blockers(ctx)
+    hides = [d.name for d in plan.dropped if d.name in HIDE_ACTIONS]
+    out: list[str] = []
+    for name in hides:  # per action: phishing blocks every hide but junk (OD-500)
+        out += [b for b in policy.hide_blockers(ctx, name) if b not in out]
+    return out
 
 
 def hide_rules(rules_now: rules.CompiledRules) -> frozenset[str]:

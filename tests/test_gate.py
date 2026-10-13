@@ -308,6 +308,33 @@ def test_the_tick_computes_a_gate_only_when_its_inputs_change(
     assert computed == ["ap", "ap"]  # announced for this model: never computed again
 
 
+def test_s3_accuracy_is_reviews_with_no_fix(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """P4 (OD-500): the gated accuracy counts reviews with no Fix; a Fix that left the category
+    right still counts against it. Fixed-field and category accuracy are shown, not gated."""
+    make_address(conn, clock, "assist")
+    _reviewed(conn, clock, 100)
+    with write_tx(conn):  # 20 Fixes that kept the category: category accuracy stays 100%
+        conn.execute("UPDATE items SET review = ?, human_correction = ? WHERE stable_id IN"
+                     " (SELECT stable_id FROM items ORDER BY stable_id LIMIT 20)",
+                     (json.dumps({"verdict": "fixed", "category_ok": True, "bulk": False}),
+                      json.dumps({"bank_detail_change": True})))  # fmt: skip
+    g = gate.compute(conn, "ap")
+    acc = next(c for c in g.checks if c.name == "accuracy")
+    assert not acc.ok and g.correct == 80
+    assert acc.detail.startswith("80% accurate, reviews with no Fix (need 85%")
+    assert "fixed fields 80%, category 100% (not gated)" in acc.detail
+
+
+def test_s3_the_gate_version_is_an_input(conn: sqlite3.Connection, clock: FakeClock,
+                                         monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """A gate computed under the old accuracy definition isn't reused (P4, OD-500)."""
+    make_address(conn, clock, "assist")
+    before = gate.inputs(conn, "ap", DIGEST)
+    assert before[0] == gate.GATE_VERSION == 2
+    monkeypatch.setattr(gate, "GATE_VERSION", 3)
+    assert gate.inputs(conn, "ap", DIGEST) != before
+
+
 def test_recording_a_review_marks_the_email_changed(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

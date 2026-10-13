@@ -194,8 +194,9 @@ def test_applied_rules_replace_the_starter_rules(
         config.apply(conn, clock, FakeNotifier(), doc, dry_run=False, nonce=None)
     r = config.apply(conn, clock, FakeNotifier(), doc, dry_run=False,
                      nonce=_nonce(conn, clock, ei.value))  # fmt: skip
-    assert r.changes[0]["change"].startswith("from the starter rules: +only, -fraud_guard")
-    assert [x.id for x in config.current_rules(conn).rules] == ["only"]
+    # the applied rules replace the default rules; ecf's fixed rules stay first (OD-500)
+    assert r.changes[0]["change"].startswith("from the starter rules: +only, -bug_report")
+    assert [x.id for x in config.current_rules(conn).rules] == [*rules.fixed_ids(), "only"]
 
 
 def _apply(conn: sqlite3.Connection, clock: FakeClock, doc: str) -> config.Result:
@@ -221,7 +222,7 @@ def test_default_returns_each_section_to_its_shipped_value(
         "rules": changes["rules"],
         "templates": changes["templates"],
     }
-    assert changes["rules"].startswith("reset to the starter rules: +fraud_guard")
+    assert changes["rules"].startswith("reset to the starter rules: +bug_report")
     assert changes["templates"].startswith("reset to the shipped templates: ")
     now = config.current(conn)
     assert all(now[s] is None for s in config.SECTIONS if s != "org_domains")
@@ -273,11 +274,13 @@ def test_rules_test_shows_what_a_change_would_do(
     by_id = {c["id"]: c for c in same["cases"]}
     # the fraud trigger comes from the offline analysis of the .eml (hidden HTML text)
     assert by_id["fraud-hidden-html"]["current"]["rule"] == "fraud_guard"
-    r = ruletest.run(clock, starter, _drop_rule(STARTER.read_text("utf-8"), "fraud_guard"),
-                     small_set)  # fmt: skip
+    # the proposed rules replace the default rules only: the fixed rules still run first
+    # (OD-500), so the fraud cases don't change and the rest do
+    r = ruletest.run(clock, starter, FLAG_ALL, small_set)
     changed = {c["id"] for c in r["cases"] if c["changed"]}
-    assert {"fraud-hidden-html", "starter-bec"} <= changed
-    assert r["expected_matched"]["proposed"] < r["expected_matched"]["current"]
+    assert not {"fraud-hidden-html", "starter-bec"} & changed
+    assert by_id["starter-bec"]["current"]["rule"] == "fraud_guard"
+    assert changed and r["expected_matched"]["proposed"] < r["expected_matched"]["current"]
 
 
 def test_the_quick_favour_opener_escalates_without_the_model(
@@ -317,6 +320,9 @@ def _schema() -> Any:
     from ecf.schema import load_schema  # noqa: PLC0415
 
     return load_schema()
+
+
+FLAG_ALL = "version: 1\nrules:\n  - {id: flag_all, then: [flag]}\n"
 
 
 def _drop_rule(text: str, rule_id: str) -> str:
@@ -413,11 +419,11 @@ def test_rules_test_skips_unbuilt_cases_and_refuses_paths_outside(
 
 def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small_set: Path) -> None:
     rules_file = tmp_path / "rules.yaml"
-    rules_file.write_text(_drop_rule(STARTER.read_text("utf-8"), "fraud_guard"))
+    rules_file.write_text(_drop_rule(STARTER.read_text("utf-8"), "invoice"))
     r = CliRunner().invoke(app, ["--install", "t", "rules", "test", str(rules_file),
                                  "--cases", str(small_set)])  # fmt: skip
     assert r.exit_code == 0, r.output
-    assert "CHANGED fraud-hidden-html (expected rule: fraud_guard)" in r.output
+    assert "(expected rule: invoice)" in r.output and "CHANGED" in r.output
     assert "case(s) change; expected rule matched" in r.output
     cfg = tmp_path / "config.yaml"
     cfg.write_text("version: 1\nmove_folders: [Receipts]\n")
@@ -597,7 +603,8 @@ def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
     with pytest.raises(InvalidInputError, match="unknown field 'contract_stage'"):
         config.parse(conn, "version: 1\n" + LABEL_STAGE)  # no extension yet
     _apply(conn, clock, SCHEMA_DOC + LABEL_STAGE)  # schema validated first, then the rules
-    assert [r.id for r in config.current_rules(conn).rules] == ["stage", "rest"]
+    assert [r.id for r in config.current_rules(conn).rules] == [*rules.fixed_ids(), "stage",
+                                                                 "rest"]  # fmt: skip
     with pytest.raises(InvalidInputError, match="rule stage: unknown field 'contract_stage'"):
         config.parse(conn, "version: 1\nschema: default")
     other = SCHEMA_DOC.replace("contract_stage", "deal_stage")
@@ -716,10 +723,13 @@ def test_rules_default_rechecks_the_starter_ids_against_added_values(
 ) -> None:
     _setup(conn, clock)
     _apply(conn, clock, "version: 1\nrules: {version: 1, rules: [{id: only, then: [leave]}]}\n")
-    # with custom rules in force, an added value may be a starter rule id ...
-    _apply(conn, clock, "version: 1\nschema: {category_values: {fraud_guard: Added.}}\n")
-    # ... but going back to the starter rules is refused while it is
-    with pytest.raises(InvalidInputError, match="rule id fraud_guard is a value"):
+    # a fixed rule's id is never an added value (OD-500) ...
+    with pytest.raises(InvalidInputError, match="'fraud_guard' is already a built-in label or a"):
+        config.parse(conn, "version: 1\nschema: {category_values: {fraud_guard: Added.}}\n")
+    # ... with custom rules in force, an added value may be a default rule id ...
+    _apply(conn, clock, "version: 1\nschema: {category_values: {travel_finance: Added.}}\n")
+    # ... but going back to the default rules is refused while it is
+    with pytest.raises(InvalidInputError, match="rule id travel_finance is a value"):
         config.parse(conn, "version: 1\nrules: default\n")
 
 

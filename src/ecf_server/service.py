@@ -606,6 +606,7 @@ class Service:
         """Migrate the database and fill the shared service state; returns migrations applied."""
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
+        config.convert_rules(conn, to_ts(self.clock.now()))  # v2 applied rules (P7, OD-500)
         _clear_stale(conn)
         self._prepare_state(conn)
         conn.close()

@@ -1,0 +1,133 @@
+# Starter rules (SPEC §8.6). First match wins. On `high` addresses the policy layer turns
+# rules 6-8 into label + leave (SPEC §8.3); that is not done here.
+version: 1
+rules:
+  - id: fraud_guard                      # 1
+    when:
+      or:
+        - {field: fraud_risk, in: [medium, high]}
+        - {field: category, eq: vendor_change_request}
+        - and:                           # "team" from outside, about money (OD-262;
+            - {field: sender_type, eq: team}   # "staff" in schema v1)
+            - {fact: sender_origin, eq: external}
+            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
+        - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
+        - and:                           # impersonating someone internal, about money (OD-436);
+            - {fact: impersonates_internal, eq: true}   # gift cards count here only (OD-457)
+            - or:
+                - {field: payment_related, eq: true}
+                - {fact: payment_keyword, eq: true}
+                - {fact: gift_card_keyword, eq: true}
+        - and:                           # an executive-impersonation opener from outside, before
+            - {fact: bec_opener, eq: true}               # any money is named (OD-479)
+            - {fact: sender_origin, eq: external}
+            - not: {fact: self_sent, eq: true}
+        - and:                           # employee tax forms asked for from outside, no money
+            - {fact: tax_form_request, eq: true}         # named: the W-2 scam (OD-482)
+            - {fact: sender_origin, eq: external}
+            - not: {fact: self_sent, eq: true}
+        - {trigger: fraud}
+    then: [{label: suspicious}, flag, escalate]
+    actor: none
+    hide: never
+
+  - id: regulatory                       # 2: before 1b and 1a, so a regulator trigger always
+                                         # escalates (operator decision 2026-10-01, OD-253)
+    when:
+      or: [{field: category, eq: regulatory}, {trigger: regulator}]
+    then: [{label: regulatory}, flag, escalate]
+    actor: none
+    hide: never
+
+  - id: fraud_weak                       # 1b: first-time + payment, no second signal; or a lone
+    when:                                # Reply-To mismatch on a payment item; or "team" from
+      or:                                # outside with no money (OD-262). Digest section.
+        - {trigger: fraud_weak}
+        - and: [{field: sender_type, eq: team}, {fact: sender_origin, eq: external}]
+        - {fact: impersonates_internal, eq: true}   # without money (OD-436)
+        - and:                           # a "person" from outside about money: a colleague on a
+            - {field: sender_type, eq: person}   # personal address the model can't place (OD-476)
+            - {fact: sender_origin, eq: external}
+            - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
+    then: [{label: suspicious}, flag]
+    actor: none
+    hide: never
+
+  - id: unverified_payment_sender        # 1a
+    when:
+      and:
+        - {field: payment_related, eq: true}
+        - {fact: auth_result, eq: none}
+        - not: {fact: sender_verified, eq: true}  # `ecf sender set-verified` (OD-065)
+        - not: {fact: self_sent, eq: true}  # Gmail: your own note to yourself (OD-446)
+    then: [{label: unverified_sender}, flag]
+    actor: none
+    hide: never
+
+  - id: bug_report                       # 3
+    when: {field: category, eq: bug_report}
+    then:
+      - {label: bug_report}
+      - {flag: true, if: {field: priority, gte: high}}
+      - {escalate: true, if: {field: priority, eq: urgent}}
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: invoice                          # 4
+    when: {field: category, eq: invoice}
+    then:
+      - {label: invoice}
+      - {flag: true, if: {field: deadline_mentioned, eq: true}}
+      - leave
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: payment_confirmation_remittance  # 5
+    when: {field: category, in: [payment_confirmation, remittance]}
+    then: [{label: {field: category}}]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: account_security                 # 5a-5d: schema v2's personal categories (OD-475);
+    when: {field: category, eq: account_security}   # none of them hides mail
+    then: [{label: account_security}, flag]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: shipping                         # 5b
+    when: {field: category, eq: shipping}
+    then: [{label: shipping}, leave]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: appointment_school_family        # 5c
+    when: {field: category, in: [appointment, school_or_family]}
+    then:
+      - {label: {field: category}}
+      - {flag: true, if: {field: deadline_mentioned, eq: true}}
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: travel_finance                   # 5d
+    when: {field: category, in: [travel, finance]}
+    then: [{label: {field: category}}]
+    actor: {continue_if: {field: requires_reply, eq: true}}
+
+  - id: spam_or_phishing                 # 6
+    when: {field: category, eq: spam_or_phishing}
+    then: [{label: spam_or_phishing}, junk]
+
+  - id: marketing                        # 7
+    when:
+      and: [{field: category, eq: marketing}, {field: requires_action, eq: false}]
+    then: [{label: marketing}, archive]
+
+  - id: automated_notification           # 8
+    when:
+      and:
+        - {field: category, eq: notification}
+        - {field: sender_type, eq: automated}
+        - {field: requires_action, eq: false}
+    then: [{label: notification}, mark_read, archive]
+
+  - id: requires_reply                   # 9
+    when: {field: requires_reply, eq: true}
+    then: [{label: {field: category}}, flag]
+    actor: continue
+
+  - id: otherwise                        # 10
+    actor: continue

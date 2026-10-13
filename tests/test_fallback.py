@@ -506,3 +506,33 @@ def test_doctor_reminds_when_off_and_shows_the_gate_while_in_shadow() -> None:
     assert b.level is Level.WARN and "claude_queue_timeout" in b.fix
     assert c.level is Level.WARN and "3/100 reviewed" in c.detail
     assert d.level is Level.OK and "2 handed" in d.detail
+
+
+def test_s3_the_shadow_must_agree_on_every_fix_form_field() -> None:
+    """P4 (OD-500): the fallback's gated accuracy is the analogue of a review with no Fix: the
+    shadow agrees with the reviewed truth on every Fix-form field the truth holds; a fixed item
+    either lacks is false."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+
+    fields = fallback.compared_fields(load_schema())
+    truth = {"category": "invoice", "priority": "low", "phishing": False}
+    assert fallback.agrees({"category": "invoice", "priority": "low"}, truth, fields)
+    assert not fallback.agrees({"category": "invoice", "priority": "high"}, truth, fields)
+    assert not fallback.agrees({"category": "invoice", "priority": "low", "phishing": True},
+                               truth, fields)  # fmt: skip
+    assert not fallback.agrees({"category": "invoice", "priority": "low"},
+                               truth | {"bank_detail_change": True}, fields)  # fmt: skip
+
+
+def test_s3_agrees_compares_only_what_both_sides_were_asked() -> None:
+    """A8: an extension field, and any field the local model isn't asked, is left out."""
+    from ecf.schema import extend_schema, load_schema  # noqa: PLC0415
+
+    ext = extend_schema(load_schema(), {"fields": {"contract_stage": {
+        "type": "enum", "description": "Where a contract stands.",
+        "values": {"draft": "A draft.", "signature": "To sign."}}}})  # fmt: skip
+    fields = fallback.compared_fields(ext)
+    assert "contract_stage" not in fields and "phishing" in fields and "category" in fields
+    truth = {"category": "invoice", "priority": "low", "contract_stage": "draft"}
+    shadow = {"category": "invoice", "priority": "low", "contract_stage": "signature"}
+    assert fallback.agrees(shadow, truth, fields)

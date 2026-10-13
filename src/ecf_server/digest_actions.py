@@ -23,7 +23,15 @@ from email.utils import parseaddr
 from typing import Any
 
 from ecf.errors import ConflictError, EcfError
-from ecf_server import approvals, cards, mailbox_actions, slack_admin, slack_in, slack_out
+from ecf_server import (
+    approvals,
+    cards,
+    config,
+    mailbox_actions,
+    slack_admin,
+    slack_in,
+    slack_out,
+)
 from ecf_server.chat import Button, RouteRef
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -166,6 +174,12 @@ def _confirm(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> N
         raise ConflictError("nothing to confirm")
     category = json.loads(item["classification"]).get("category", "")
     sender = parseaddr(str(item["sender"] or ""))[1] or "<sender>"
+    cat = config.current_schema(conn).fields.get("category")
+    if cat is None or category not in cat.values:  # `ecf sender confirm` would refuse it
+        _tell(conn, clock, click,
+              f"This email's category ({str(category)[:40] or 'none'}) isn't one a sender can be"
+              " confirmed as in this version, so there is nothing to confirm.")  # fmt: skip
+        return
     _tell(conn, clock, click,
           "Confirming a sender's category counts for the bank-detail check, so it needs your"
           f" computer. Run: ecf sender confirm {sender} --category {category}"

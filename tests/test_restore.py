@@ -36,7 +36,11 @@ from ecf_server.secretstore.memory import MemorySecretStore
 from ecf_server.stepper import FakeStepper
 from tests.test_addresses import TOKEN, call, make_state
 from tests.test_export_keys import ApiClient
-from tests.test_importer import _source, conn_dir  # pyright: ignore[reportPrivateUsage]
+from tests.test_importer import (  # pyright: ignore[reportPrivateUsage]
+    _source,  # pyright: ignore[reportPrivateUsage]
+    _v2_rules,  # pyright: ignore[reportPrivateUsage]
+    conn_dir,
+)
 from tests.test_scheduled_export import ROOT, _set, _set_up  # pyright: ignore[reportPrivateUsage]
 
 KEY_TEXT = backup_key.key_text(ROOT)
@@ -130,6 +134,25 @@ def test_restore_on_a_new_computer(conn: sqlite3.Connection, clock: FakeClock, t
     assert data["generation"] == 1 and data["safety_copy"] is False
     assert any("restored from a backup" in t for h, t in n.sent if "Security Notice" in h)
     assert not list(conn_dir(fresh).glob(".restore-*"))
+
+
+def test_restore_keeps_a_changed_fixed_rule_as_service_start_does(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, fresh: sqlite3.Connection
+) -> None:
+    """A2 (OD-500): a v2 backup whose applied rules change a fixed rule restores; the rules are
+    kept, the refusal audited, and the starter rules apply until it's removed."""
+    from ecf_server import config, rules  # noqa: PLC0415
+
+    doc = _v2_rules()
+    doc["rules"][1]["then"] = ["flag"]  # regulatory, customised
+    _set(conn, "config.rules", doc)
+    _restore(fresh, clock, _backup(conn, clock, tmp_path))
+    assert config.current(fresh)["rules"] == doc
+    assert "rule regulatory is a changed copy" in str(config.rules_problem(fresh))
+    assert config.current_rules(fresh).rules == rules.load_starter_rules(
+        config.current_schema(fresh)).rules  # fmt: skip
+    assert _one(fresh, "SELECT count(*) FROM audit WHERE event = 'config.rules_converted'"
+                " AND outcome = 'denied'") == 1  # fmt: skip
 
 
 # ---- the same computer --------------------------------------------------------------------------

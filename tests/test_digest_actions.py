@@ -134,3 +134,9 @@ def test_uncorroborated_hides_offer_a_category_confirmation_via_the_computer(
         in (post["text"])
     )
     assert item_row(conn, sid)["status"] == before  # the click changes nothing
+    with write_tx(conn):  # a category this version can't confirm: no refused command (OD-500)
+        conn.execute("UPDATE items SET classification = json_set(classification, '$.category',"
+                     " 'gone_value') WHERE stable_id = ?", (sid,))  # fmt: skip
+    _click(conn, morning, digest_actions.CONFIRM, button.ref)
+    [post] = [json.loads(r[0]) for r in conn.execute(last)]
+    assert "ecf sender confirm" not in post["text"] and "gone_value" in post["text"]

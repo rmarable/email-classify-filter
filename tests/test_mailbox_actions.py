@@ -13,7 +13,17 @@ import pytest
 
 from ecf.errors import MailUnavailableError
 from ecf.ids import AddressId, StableId
-from ecf_server import decide, digests, execute, inbox, items, jobs, mailbox_actions, probe
+from ecf_server import (
+    approvals,
+    decide,
+    digests,
+    execute,
+    inbox,
+    items,
+    jobs,
+    mailbox_actions,
+    probe,
+)
 from ecf_server.actions import MessageChangedError, keyword
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -27,6 +37,7 @@ from ecf_server.mail.fake import (
     GmailFakeSource,
 )
 from ecf_server.message import parse
+from ecf_server.notify import FakeNotifier
 from ecf_server.state_machine import Stage, Status, TransitionContext
 from tests.mail_contract import message
 from tests.test_decide import KNOWN_BULK, MARKETING, item_row
@@ -391,6 +402,9 @@ def test_gmail_junk_undo_moves_it_back_by_gmail_id(
     src = _gmail(conn, clock)
     sid = _mail_item(conn, clock, src, 0, SPAM_CLS, KNOWN_BULK, src.deliver)
     decide.apply(conn, clock, sid)
+    # a junk of phishing always waits for approval (P6, OD-500)
+    assert item_row(conn, sid)["status"] == Status.AWAITING_APPROVAL
+    approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")
     _run(conn, clock, src)
     assert src.uids_after(0) == [] and json.loads(item_row(conn, sid)["proposal"])["done"][-1][
         "folder"] == SPAM  # fmt: skip

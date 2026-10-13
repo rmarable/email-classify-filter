@@ -99,7 +99,7 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         staged = db.connect(Path(tmp.name))
         try:
             try:
-                _stage(staged, parsed, source)
+                _stage(staged, parsed, source, to_ts(clock.now()))
                 kept = kept_settings(staged)
                 config_doc = validate(staged, kept)
             except sqlite3.Error as exc:  # malformed JSON in a row, a value of the wrong type
@@ -137,9 +137,10 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
 # ---- staging ------------------------------------------------------------------------------------
 
 
-def load(staged: sqlite3.Connection, parsed: Parsed) -> None:
+def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> None:
     """Load the bundle's rows into a temporary database built at its schema version, then bring
-    it up to date with the normal migrations (OD-355). Restore uses this too."""
+    it up to date with the normal migrations (OD-355), and convert applied rules from v2 as the
+    service does at start (`config.convert_rules`, P7; OD-500). Restore uses this too."""
     db.migrate(staged, up_to=int(parsed.manifest["schema_version"]))
     with write_tx(staged), db.items_writer("create"):
         for table in (*COPY, "routes", "alerts"):
@@ -150,13 +151,14 @@ def load(staged: sqlite3.Connection, parsed: Parsed) -> None:
         if rows:
             insert(staged, "settings", rows, replace=True)
     db.migrate(staged)
+    config.convert_rules(staged, now, actor="import")
     items.map_imported(staged, import_plan.REPOST, import_plan.UNKNOWN)
     with write_tx(staged):
         staged.execute("UPDATE eval_runs SET path = ''")  # the result file stayed behind
 
 
-def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str) -> None:
-    load(staged, parsed)
+def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str, now: str) -> None:
+    load(staged, parsed, now)
     with write_tx(staged):
         staged.execute("UPDATE addresses SET paused = 1, outbound = 0, stage ="
                        " CASE WHEN stage = 'live' THEN 'assist' ELSE stage END")  # fmt: skip
