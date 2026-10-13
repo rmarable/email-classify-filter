@@ -1,7 +1,7 @@
 # Eval claim-token mix-up: fix plan
 
 Draft 2, 2026-10-13 (draft 1 + Phase R P1-P9, operator accepted all, P5 option a; findings in
-`state-archive/eval-claim-mix-up/review-findings.md`). Status: planned; build on `main` (S2 merged
+`state-archive/eval-claim-mix-up/review-findings.md`). Status: built, diff review fixes R1-R6 and R8 applied (uncommitted); build on `main` (S2 merged
 at `845af58`). OD-499.
 
 ## What went wrong
@@ -44,6 +44,9 @@ Rate: first expired claim in the last five full runs (6846d041, e11c92a3, 845303
   new outcome `claim_mismatch` and return X to the free pool. Y's claim is untouched.
 - **Wrong agent type (P6):** an agent of the wrong type presenting X's own live token from the
   same session (today `ForbiddenProfileError`, checked before the token) frees X the same way.
+- **Diff review (R1, R2):** a token a mix-up freed still counts until its claim would have
+  expired (a two-way swap frees both); at most `MISMATCH_MAX` (3) frees per case, then today's
+  expiry (`/ecf-review` counts in memory).
 - **Everything else keeps today's refusal** and expiry: a stale-fence token (a late agent after
   an expiry, the case GRACE exists for), a garbage token, another session's token, a held claim.
   This also bounds abuse: an agent can free only cases whose tokens it already holds.

@@ -180,6 +180,8 @@ class Run:
     rounds: int = 0  # `eval_next` replies that handed out items
     # session -> agent -> until when an expired claim's agent may still be running
     grace: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    # session -> token hash -> its claim's expiry: tokens a mix-up freed, still mix-up tokens
+    freed: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     summary: dict[str, Any] | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -560,8 +562,9 @@ def session_info(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dic
 def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str, *,
               limit: int = claude_review.LIMIT_DEFAULT,
               stopped: str | None = None) -> dict[str, Any]:  # fmt: skip
-    """Claim the next cases for this session: `{id, need, agent, claim_token, spawn}` each; the
-    items of one `spawn` go to one Agent spawn. `results` reports this session's earlier claims."""
+    """Claim the next cases for this session: `{id, need, agent, spawn}` each, and `spawns`, one
+    `{agent, prompt}` per Agent spawn, the prompt written by the service: the tokens are only there
+    (OD-499). `results` reports this session's earlier claims."""
     if not 1 <= limit <= claude_review.LIMIT_MAX:
         raise InvalidInputError(f"limit must be between 1 and {claude_review.LIMIT_MAX}")
     run = current()
@@ -580,20 +583,24 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
         base: dict[str, Any] = {"run_id": run.run_id[:8], "results": results,
                                 "left": sum(w.stage != "done" for w in run.works)}  # fmt: skip
         if not run.open:
-            return base | {"items": [], "more": False, "done": True, "state": run.state}
+            return base | {"items": [], "spawns": [], "more": False, "done": True,
+                           "state": run.state}  # fmt: skip
         if stopped is not None:
-            return base | {"items": [], "more": False, "done": False, "stopped": stopped}
+            return base | {"items": [], "spawns": [], "more": False, "done": False,
+                           "stopped": stopped}  # fmt: skip
         if session_id not in run.sessions:
             run.sessions.append(session_id)
         free = [w for w in run.works if w.stage in ("classify", "act", "repeat")
                 and w.claim == "free"]  # fmt: skip
         picked, more = _round(run, session_id, free, limit, now)
-        out = [_claim(run, w, session_id, now) for w in picked]
+        tokens = [_claim(run, w, session_id, now) for w in picked]
+        out = [{"id": w.ref, "need": w.need, "agent": w.agent} for w in picked]
         _spawns(run, out)
         if out:
             _record_claims(run, picked, out, session_id, limit, now)
         busy = sum(w.claim != "free" for w in run.works)
-        reply = base | {"items": out, "more": more, "done": False,
+        reply = base | {"items": out, "spawns": claude_review.spawn_prompts(out, tokens),
+                        "more": more, "done": False,
                         "preparing": run.state == "preparing", "in_progress": busy,
                         "progress": progress_line(_progress(run))}  # fmt: skip
         return reply if out else reply | _next(run, session_id, now)
@@ -680,13 +687,14 @@ def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, s
         waited += POLL_S
 
 
-def _claim(run: Run, w: Work, session_id: str, now: datetime) -> dict[str, Any]:
+def _claim(run: Run, w: Work, session_id: str, now: datetime) -> str:
+    """Claim the case; its token, for the spawn's prompt only."""
     need = "act" if w.stage == "act" else "classify"
     w.fence += 1
     token = f"{w.fence}.{secrets.token_urlsafe(24)}"
     w.session, w.token_hash, w.expires = session_id, _hash(token), now + claude_review.CLAIM_TTL
     w.claim, w.need, w.agent, w.invalid = "claimed", need, _agent_of(run, w), 0
-    return {"id": w.ref, "need": need, "agent": w.agent, "claim_token": token}
+    return token
 
 
 def _spawns(run: Run, items: list[dict[str, Any]]) -> None:
@@ -740,11 +748,16 @@ def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agen
     w = run.by_ref.get(ref)
     if w is None:
         raise NotFoundError("no claim on that item")
-    if w.agent != agent:
-        raise ForbiddenProfileError(f"that claim is for {w.agent}, not {agent}")
     fence = token.partition(".")[0]
-    if not (w.session == session_id and fence == str(w.fence)
-            and hmac.compare_digest(_hash(token), w.token_hash)):  # fmt: skip
+    own = (w.session == session_id and fence == str(w.fence)
+           and hmac.compare_digest(_hash(token), w.token_hash))  # fmt: skip
+    if w.agent != agent:
+        if own:  # this case's own token from an agent of the wrong type (P6)
+            _mismatch(run, clock, w, session_id, agent)
+        raise ForbiddenProfileError(f"that claim is for {w.agent}, not {agent}")
+    if not own:
+        if _anothers(run, clock, w, session_id, token):
+            _mismatch(run, clock, w, session_id, agent)
         raise ConflictError("that claim isn't current: the item was claimed again or by another"
                             " session")  # fmt: skip
     if w.claim != "claimed" or w.expires is None or w.expires <= clock.now():
@@ -752,6 +765,39 @@ def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agen
     if need is not None and w.need != need:
         raise ConflictError(f"that claim is to {w.need}, not to {need}")
     return w
+
+
+def _anothers(run: Run, clock: Clock, w: Work, session_id: str, token: str) -> bool:
+    """The token is the live one of another case this session claimed, or one a mix-up freed
+    before its claim would have expired (a two-way swap, review R1): the session put the wrong
+    token in this case's spawn prompt (d157a948; OD-499)."""
+    now, h = clock.now(), _hash(token)
+    live = any(y is not w and y.session == session_id
+               and (y.claim == "held" or (y.claim == "claimed" and y.expires is not None
+                                          and y.expires > now))
+               and hmac.compare_digest(h, y.token_hash) for y in run.works)  # fmt: skip
+    freed = [hmac.compare_digest(h, t) for t, until in run.freed.get(session_id, {}).items()
+             if until > now and t != w.token_hash]  # fmt: skip
+    return live or any(freed)
+
+
+def _mismatch(run: Run, clock: Clock, w: Work, session_id: str, agent: str) -> None:
+    """A mixed-up token: this case's claim, still out to this session, ends now and the case goes
+    back (`claim_mismatch`), instead of waiting `CLAIM_TTL` and then `GRACE` (OD-499). The
+    refused agent still makes its final request: its type counts as out for `TAIL`, as `_hold`."""
+    now = clock.now()
+    if not (w.claim == "claimed" and w.session == session_id and w.expires is not None
+            and w.expires > now):  # fmt: skip
+        return
+    if sum(c.outcome == "claim_mismatch" for c in w.claims) >= claude_review.MISMATCH_MAX:
+        return  # a session that keeps mangling it: today's expiry (review R2)
+    mine_freed = run.freed.setdefault(session_id, {})
+    mine_freed[w.token_hash] = w.expires
+    _outcome(run, w, "claim_mismatch")
+    w.claim, w.session = "free", None
+    mine = run.grace.setdefault(session_id, {})
+    mine[agent] = max(mine.get(agent, now), now + TAIL)
+    log.warning("claude_eval.claim_mismatch", run_id=run.run_id[:8])
 
 
 def get_message(clock: Clock, session_id: str, ref: str, token: str,
@@ -951,6 +997,7 @@ def release_session(session_id: str) -> None:
                 _ended(w, "session_ended")
                 w.claim, w.session = "free", None
         run.outcomes.pop(session_id, None)
+        run.freed.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------- status
@@ -1005,13 +1052,16 @@ def _progress(run: Run) -> dict[str, Any]:
     return {"run_id": run.run_id[:8], "scored": sum(w.result is not None for w in run.works),
             "total": len(run.works), "in_progress": sum(w.claim != "free" for w in run.works),
             "repeats_left": sum(w.stage == "repeat" for w in run.works),
-            "round": run.rounds}  # fmt: skip
+            "round": run.rounds,
+            "mismatches": sum(c.outcome == "claim_mismatch" for w in run.works
+                              for c in w.claims)}  # fmt: skip
 
 
 def progress_line(p: dict[str, Any]) -> str:
     """The line `/ecf-eval` quotes after each round, so the session never counts for itself."""
     line = f"{p['scored']}/{p['total']} scored, {p['in_progress']} in progress, round {p['round']}"
-    return line + (f", {p['repeats_left']} repeats left" if p["repeats_left"] else "")
+    line += f", {p['repeats_left']} repeats left" if p["repeats_left"] else ""
+    return line + (f", {p['mismatches']} mixed-up claims freed" if p.get("mismatches") else "")
 
 
 def results() -> dict[str, Any]:

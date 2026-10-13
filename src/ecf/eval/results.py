@@ -52,8 +52,8 @@ class CallMetrics(BaseModel):
 
 
 ClaimStage = Literal["classify", "act", "repeat"]
-ClaimOutcome = Literal["recorded", "invalid", "claim_expired", "model_refused", "session_ended",
-                       "run_ended"]  # fmt: skip
+ClaimOutcome = Literal["recorded", "invalid", "claim_expired", "claim_mismatch", "model_refused",
+                       "session_ended", "run_ended"]  # fmt: skip
 # why an act claim went to the high-risk actor: ecf_server.policy.HighRiskReason's values (§8.2)
 HighRiskReason = Literal["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
 
