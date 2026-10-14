@@ -505,6 +505,7 @@ def test_layer_lines_say_how_the_file_layers() -> None:
 
 def test_the_cache_is_keyed_on_the_off_list() -> None:
     body = "rules:\n  - {id: mine, when: {field: priority, eq: urgent}, then: [flag]}\n"
+    rules._CACHE.clear()  # pyright: ignore[reportPrivateUsage]  # a full cache clears between calls
     a = rules.compose(SCHEMA, f"version: 1\n{body}")
     b = rules.compose(SCHEMA, f"version: 1\ndefault_rules_off: [invoice]\n{body}")
     assert "invoice" in _ids(a) and "invoice" not in _ids(b)
