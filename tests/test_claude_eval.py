@@ -351,7 +351,7 @@ def test_progress_is_the_services_count_for_the_status_line_and_the_skill(
     assert p is not None and p["scored"] == 0 and p["in_progress"] == 3 and p["round"] == 1
     assert p["total"] == len(claude_eval.current().works) and p["repeats_left"] == 0  # type: ignore[union-attr]
     assert set(p) == {"run_id", "scored", "total", "in_progress", "repeats_left", "round",
-                      "mismatches"}  # fmt: skip
+                      "mismatches", "unread", "late"}  # fmt: skip
     assert q["progress"] == f"0/{p['total']} scored, 3 in progress, round 1"
     assert claude_eval.progress_line(p | {"repeats_left": 10}).endswith(", 10 repeats left")
     assert claude_eval.progress_line(p | {"mismatches": 1}).endswith(", 1 mixed-up claims freed")
@@ -445,6 +445,8 @@ def test_an_expired_claim_goes_back_to_the_same_agent_at_once(
 ) -> None:
     start(db_path, clock, root)
     items = nxt(db_path, clock, S1, limit=3)["items"]
+    for item in items:  # read: the spawn runs, so only the expiry frees it (OD-501)
+        claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
     waiting = nxt(db_path, clock, S1)
     assert waiting["items"] == [] and waiting["next"] == "call again"
     assert waiting["frees_in_s"] == int(claude_review.CLAIM_TTL.total_seconds())
@@ -724,6 +726,195 @@ def test_a_run_with_a_mixed_up_claim_saves_its_result(
     result = load_result(_saved(conn))
     outcomes = [c.outcome for case in result.cases for c in case.claims]
     assert outcomes.count("claim_mismatch") == 1
+
+
+# ---- a dropped spawn (OD-501) ----------------------------------------------------------------
+
+
+UNREAD_S = int(claude_review.UNREAD_MIN.total_seconds())
+
+
+def _dropped(db_path: Path, clock: FakeClock, root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """S3b run 1 `08016ba3`: round 1's spawn (x) is never made; round 2's (y) runs. x is freed
+    `UNREAD_MIN` after the session's next call, and not before."""
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    clock.advance(5)
+    y = nxt(db_path, clock, S1, limit=1)["items"][0]  # the session's next call
+    claude_eval.get_message(clock, S1, y["id"], y["claim_token"], y["agent"])
+    clock.advance(UNREAD_S - 1)
+    q = nxt(db_path, clock, S1, limit=1)
+    assert q["items"] == [] and q["results"] == [] and _work(x).claim == "claimed"
+    assert q["next"] == "call again" and q["frees_in_s"] == 1  # the free, not CLAIM_TTL (P7)
+    clock.advance(1)
+    return x, y
+
+
+def test_a_dropped_spawn_is_freed_unread_min_after_the_sessions_next_call(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    x, y = _dropped(db_path, clock, root)
+    q = nxt(db_path, clock, S1, limit=1)
+    assert q["results"] == [{"id": x["id"], "outcome": "claim_unread"}]
+    assert _work(x).claims[0].outcome == "claim_unread"
+    assert _work(y).claim == "claimed" and _work(y).claims[-1].outcome is None  # it runs
+    run = claude_eval.current()
+    assert run is not None
+    assert run.grace[S1] == {x["agent"]: clock.now() + claude_eval.TAIL}  # TAIL, not GRACE
+    assert x["id"] in {i["id"] for i in q["items"]}  # back at once
+    assert q["progress"].endswith(", 1 unread claims freed")
+    assert claude_eval.progress_line(claude_eval.progress() or {}).endswith(
+        ", 1 unread claims freed")  # fmt: skip
+
+
+def test_a_spawn_with_any_claim_read_is_never_freed_unread(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]  # one spawn of two
+    assert x["spawn"] == y["spawn"]
+    claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    clock.advance(5)
+    nxt(db_path, clock, S1, limit=2)
+    clock.advance(4 * UNREAD_S)
+    q = nxt(db_path, clock, S1, limit=2)
+    assert q["results"] == [] and _work(y).claim == "claimed"  # its unread claim waits
+    assert q["frees_in_s"] == int(claude_review.CLAIM_TTL.total_seconds()) - 5 - 4 * UNREAD_S
+    clock.advance(q["frees_in_s"])
+    q = nxt(db_path, clock, S1, limit=2)
+    assert {r["outcome"] for r in q["results"]} == {"claim_expired"}  # as today, with GRACE
+    run = claude_eval.current()
+    assert run is not None and run.grace[S1][x["agent"]] == clock.now() + claude_eval.GRACE
+
+
+def test_a_reclaimed_siblings_new_claim_doesnt_make_a_running_spawn_look_unread(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """P3: the spawn is judged over every claim of its round, not each case's latest."""
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    claude_eval.get_message(clock, S1, y["id"], y["claim_token"], y["agent"])
+    with pytest.raises(ForbiddenProfileError):  # y's claim freed (mix-up), its read stays
+        claude_eval.get_message(clock, S1, y["id"], y["claim_token"], "ecf-actor")
+    clock.advance(claude_eval.TAIL.total_seconds() + 1)
+    q = nxt(db_path, clock, S1, limit=2)  # y claimed again, in round 2
+    assert y["id"] in {i["id"] for i in q["items"]} and _work(y).claims[-1].round == 2
+    clock.advance(UNREAD_S + 1)
+    assert nxt(db_path, clock, S1, limit=2)["results"] == []
+    assert _work(x).claim == "claimed" and [c.outcome for c in _work(x).claims] == [None]
+
+
+def test_another_sessions_calls_dont_count(db_path: Path, clock: FakeClock, root: Path) -> None:
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    for _ in range(3):
+        clock.advance(UNREAD_S)
+        nxt(db_path, clock, S2, limit=1)
+    assert _work(x).claim == "claimed"  # S1 hasn't called since
+    nxt(db_path, clock, S1, limit=1)
+    clock.advance(UNREAD_S - 1)
+    nxt(db_path, clock, S2, limit=1)
+    assert _work(x).claim == "claimed"
+    clock.advance(1)
+    nxt(db_path, clock, S2, limit=1)  # any call frees it once S1's signal holds
+    assert _work(x).claims[0].outcome == "claim_unread"
+    assert nxt(db_path, clock, S1)["results"][0] == {"id": x["id"], "outcome": "claim_unread"}
+
+
+def test_a_late_agents_refused_call_extends_tail_and_isnt_a_mix_up(
+    db_path: Path, clock: FakeClock, root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P2: the spawn started after all; its agent's request is refused, its type counts as out
+    for `TAIL` from then, and nothing is freed as a mix-up."""
+    x, y = _dropped(db_path, clock, root)
+    q = nxt(db_path, clock, S1, limit=1)
+    assert x["id"] in {i["id"] for i in q["items"]}  # claimed again, a new token
+    clock.advance(claude_eval.TAIL.total_seconds() + 5)
+    run = claude_eval.current()
+    assert run is not None
+    with pytest.raises(ConflictError, match="isn't current"):
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    assert run.grace[S1][x["agent"]] == clock.now() + claude_eval.TAIL
+    assert "claude_eval.claim_unread_late" in capsys.readouterr().out  # review R1
+    with pytest.raises(ConflictError):  # counted once per token
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    assert "claim_unread_late" not in capsys.readouterr().out
+    p = claude_eval.progress() or {}
+    assert p["late"] == 1
+    assert claude_eval.progress_line(p).endswith(", 1 late after an unread free")
+    with pytest.raises(ConflictError):  # nor for another case
+        claude_eval.get_message(clock, S1, y["id"], x["claim_token"], y["agent"])
+    assert _work(x).claim == "claimed" and _work(y).claim == "claimed"
+    assert all(c.outcome != "claim_mismatch" for w in run.works for c in w.claims)
+    with pytest.raises(ForbiddenProfileError):  # garbage extends nothing
+        claude_eval.get_message(clock, S1, x["id"], "1.garbage", "ecf-actor")
+    assert "ecf-actor" not in run.grace[S1]
+
+
+def test_a_cases_own_earlier_token_never_frees_its_new_claim(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """P4: a mix-up freed x; its late agent presents x's old token after x was claimed again."""
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    with pytest.raises(ForbiddenProfileError):
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], "ecf-actor")
+    clock.advance(claude_eval.TAIL.total_seconds() + 1)
+    (new,) = [i for i in nxt(db_path, clock, S1, limit=1)["items"] if i["id"] == x["id"]]
+    with pytest.raises(ConflictError, match="isn't current"):
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    assert _work(x).claim == "claimed" and _work(x).claims[-1].outcome is None
+    assert answer(db_path, clock, new, S1, BEC)["accepted"]
+
+
+def test_a_run_with_an_unread_claim_saves_its_result(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """`claim_unread` is a `ClaimOutcome`: the result file holds it."""
+    _x, y = _dropped(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    assert answer(db_path, clock, y, S1, by_case[_work(y).case.id])["accepted"]
+    drain(db_path, clock, lambda cid: by_case[cid])
+    result = load_result(_saved(conn))
+    outcomes = [c.outcome for case in result.cases for c in case.claims]
+    assert outcomes.count("claim_unread") == 1
+    # each round's next call, for read minus next call per spawn (review R1): round 1's at 5 s
+    claude = cast(dict[str, Any], (result.summary or {})["claude"])
+    assert claude["next_call_s"]["1"] == 5.0
+    assert set(claude["next_call_s"]) <= {str(c.round) for case in result.cases
+                                          for c in case.claims}  # fmt: skip
+
+
+def test_a_mix_up_alone_counts_as_an_agent_running(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The only call under the spawn is y's own token from the wrong agent type (P6): x, skipped,
+    waits as today rather than being freed unread."""
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    with pytest.raises(ForbiddenProfileError):
+        claude_eval.get_message(clock, S1, y["id"], y["claim_token"], "ecf-actor")
+    clock.advance(claude_eval.TAIL.total_seconds() + 1)
+    nxt(db_path, clock, S1, limit=2)
+    clock.advance(UNREAD_S + 1)
+    assert nxt(db_path, clock, S1, limit=2)["results"] == []
+    assert [c.outcome for c in _work(x).claims] == [None]
+
+
+def test_a_wrong_need_first_call_counts_as_an_agent_running(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Review R2: the stamp is set before the need check."""
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    with pytest.raises(ConflictError, match="is to classify"):
+        claude_eval.propose_action(clock, S1, x["id"], x["claim_token"],
+                                   {"action": "flag", "reason": "r"}, x["agent"])  # fmt: skip
+    clock.advance(5)
+    nxt(db_path, clock, S1, limit=1)
+    clock.advance(UNREAD_S + 1)
+    assert nxt(db_path, clock, S1, limit=1)["results"] == []
+    assert [c.outcome for c in _work(x).claims] == [None]
 
 
 def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(

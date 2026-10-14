@@ -122,6 +122,8 @@ class Claim:
     settled: datetime | None = None  # the held submission applied or refused
     outcome: Outcome | None = None
     high_risk: tuple[policy.HighRiskReason, ...] = ()  # an act claim's reasons (§8.2)
+    # an agent called under it, or named it with a mixed-up token: its spawn runs (OD-501)
+    called: bool = False
 
 
 @dataclass
@@ -142,6 +144,7 @@ class Work:
     # the claim
     session: str | None = None
     token_hash: str = ""
+    hashes: set[str] = field(default_factory=set[str])  # its earlier claims' tokens (OD-501 P4)
     fence: int = 0
     expires: datetime | None = None
     claim: str = "free"  # free | claimed | held
@@ -182,6 +185,12 @@ class Run:
     grace: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     # session -> token hash -> its claim's expiry: tokens a mix-up freed, still mix-up tokens
     freed: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    # session -> token hash -> the unread free that ended it (OD-501 P2)
+    unread: dict[str, dict[str, claude_review.Unread]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    late: int = 0  # freed tokens a late agent presented (review R1): each a false free
+    # session -> rounds handed out since its last `eval_next`; round -> that next call (OD-501)
+    awaiting: dict[str, list[int]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    next_call: dict[int, datetime] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     summary: dict[str, Any] | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -531,6 +540,12 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
         "source_run": run.source_run,
         "sessions": len(run.sessions),
         "registered_at": to_ts(run.created),  # claims' times count from here (item 3)
+        # round -> its session's next `eval_next`, in seconds as the claims' (review R1): read
+        # minus next call per spawn is the margin under `UNREAD_MIN`
+        "next_call_s": {
+            str(r): round((t - run.created).total_seconds(), 3)
+            for r, t in sorted(run.next_call.items())
+        },
     } | claude_usage.run_report(conn, run.sessions, run.created)
 
 
@@ -575,12 +590,15 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
     with run.lock:
         _check_expiry(connect, clock, run)
         now = clock.now()
+        for r in run.awaiting.pop(session_id, []):  # this call follows the session's rounds
+            run.next_call.setdefault(r, now)
         for w in run.works:  # expired claims go back; their agent may still be running
             if w.claim == "claimed" and w.expires is not None and w.expires <= now:
                 _outcome(run, w, "claim_expired")
                 if w.session is not None:
                     run.grace.setdefault(w.session, {})[w.agent] = now + GRACE
                 w.claim, w.session = "free", None
+        _free_unread(run, now)
         results = run.outcomes.pop(session_id, [])
         base: dict[str, Any] = {"run_id": run.run_id[:8], "results": results,
                                 "left": sum(w.stage != "done" for w in run.works)}  # fmt: skip
@@ -600,6 +618,7 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
         _spawns(run, out)
         if out:
             _record_claims(run, picked, out, session_id, limit, now)
+            run.awaiting.setdefault(session_id, []).append(run.rounds)
         busy = sum(w.claim != "free" for w in run.works)
         reply = base | {"items": out, "spawns": claude_review.spawn_prompts(out, tokens),
                         "more": more, "done": False,
@@ -644,10 +663,50 @@ def _next(run: Run, session_id: str, now: datetime) -> dict[str, Any]:
              if w.session == session_id and w.claim == "held" and w.claims
              and w.claims[-1].answered is not None
              and w.claims[-1].answered + HOLD_WAIT > now]  # fmt: skip
+    ends += [at for at, _ws in _unread_spawns(run).values()]  # a dropped spawn's free (P7)
     if run.state == "preparing" or ends:
         soonest = min(ends, default=now)
         return {"next": "call again", "frees_in_s": max(0, round((soonest - now).total_seconds()))}
     return {"next": "end"}
+
+
+def _unread_spawns(run: Run) -> dict[tuple[int, str], tuple[datetime, list[Work]]]:
+    """Each spawn out with none of its claims called under (P3: every claim of its round and
+    label, a re-claimed sibling's too) and a later `eval_next` from its session: when it counts as
+    dropped (`UNREAD_MIN` after that call) and its live claims. The session issues every Agent
+    call of a round before its next call, so a spawn no agent has read by then was never made."""
+    out: dict[tuple[int, str], tuple[datetime, list[Work]]] = {}
+    for w in run.works:
+        if w.claim != "claimed" or not w.claims:
+            continue
+        c = w.claims[-1]
+        if (t := run.next_call.get(c.round)) is not None:
+            out.setdefault((c.round, c.spawn), (t + claude_review.UNREAD_MIN, []))[1].append(w)
+    if out:
+        called = {(c.round, c.spawn) for w in run.works for c in w.claims if c.called}
+        out = {k: v for k, v in out.items() if k not in called}
+    return out
+
+
+def _free_unread(run: Run, now: datetime) -> None:
+    """A dropped spawn's claims go back at once (`claim_unread`, OD-501), not after `CLAIM_TTL`
+    and then `GRACE`: nothing ran. Its agent type counts as out for `TAIL`, as `_mismatch`, and
+    its tokens are kept, so a late agent's refused request extends that (`_late`, P2)."""
+    for (rnd, _spawn), (at, ws) in _unread_spawns(run).items():
+        if at > now:
+            continue
+        for w in ws:
+            session = w.session or ""
+            if w.expires is not None:
+                freed = claude_review.Unread(w.expires, str(rnd), now)
+                run.unread.setdefault(session, {})[w.token_hash] = freed
+            _outcome(run, w, "claim_unread")
+            mine = run.grace.setdefault(session, {})
+            mine[w.agent] = max(mine.get(w.agent, now), now + TAIL)
+            w.claim, w.session = "free", None
+        after = (now - ws[0].claims[-1].claimed).total_seconds()
+        log.warning("claude_eval.claim_unread", run_id=run.run_id[:8], round=rnd, items=len(ws),
+                    after_s=round(after))  # fmt: skip
 
 
 def _agent_of(run: Run, w: Work) -> str:
@@ -692,6 +751,8 @@ def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, s
 def _claim(run: Run, w: Work, session_id: str, now: datetime) -> str:
     """Claim the case; its token, for the spawn's prompt only."""
     need = "act" if w.stage == "act" else "classify"
+    if w.token_hash:
+        w.hashes.add(w.token_hash)
     w.fence += 1
     token = f"{w.fence}.{secrets.token_urlsafe(24)}"
     w.session, w.token_hash, w.expires = session_id, _hash(token), now + claude_review.CLAIM_TTL
@@ -753,6 +814,8 @@ def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agen
     fence = token.partition(".")[0]
     own = (w.session == session_id and fence == str(w.fence)
            and hmac.compare_digest(_hash(token), w.token_hash))  # fmt: skip
+    if not own:
+        _late(run, clock, session_id, token, agent)
     if w.agent != agent:
         if own:  # this case's own token from an agent of the wrong type (P6)
             _mismatch(run, clock, w, session_id, agent)
@@ -764,9 +827,31 @@ def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agen
                             " session")  # fmt: skip
     if w.claim != "claimed" or w.expires is None or w.expires <= clock.now():
         raise ConflictError("that claim has ended; run eval_next again")
+    if w.claims:  # before the need check: a wrong-need call is a running agent too (review R2)
+        w.claims[-1].called = True
     if need is not None and w.need != need:
         raise ConflictError(f"that claim is to {w.need}, not to {need}")
     return w
+
+
+def _late(run: Run, clock: Clock, session_id: str, token: str, agent: str) -> None:
+    """A token an unread free ended: that spawn started after all (P2). The refusal stands, and
+    its agent's final request is still to come: its type counts as out for `TAIL` from now."""
+    now, h = clock.now(), _hash(token)
+    if session_id not in run.unread:
+        return
+    mine = {t: u for t, u in run.unread[session_id].items() if u.until > now}
+    run.unread[session_id] = mine
+    hit = [u for t, u in mine.items() if hmac.compare_digest(h, t)]
+    if not hit:
+        return
+    grace = run.grace.setdefault(session_id, {})
+    grace[agent] = max(grace.get(agent, now), now + TAIL)
+    if not hit[0].late:  # counted and logged once per token (review R1)
+        hit[0].late = True
+        run.late += 1
+        log.warning("claude_eval.claim_unread_late", run_id=run.run_id[:8], round=hit[0].round,
+                    agent=agent, after_s=round((now - hit[0].at).total_seconds()))  # fmt: skip
 
 
 def _anothers(run: Run, clock: Clock, w: Work, session_id: str, token: str) -> bool:
@@ -778,8 +863,9 @@ def _anothers(run: Run, clock: Clock, w: Work, session_id: str, token: str) -> b
                and (y.claim == "held" or (y.claim == "claimed" and y.expires is not None
                                           and y.expires > now))
                and hmac.compare_digest(h, y.token_hash) for y in run.works)  # fmt: skip
+    # never this case's own tokens: its late agent's, after a re-claim, isn't a mix-up (P4)
     freed = [hmac.compare_digest(h, t) for t, until in run.freed.get(session_id, {}).items()
-             if until > now and t != w.token_hash]  # fmt: skip
+             if until > now and t != w.token_hash and t not in w.hashes]  # fmt: skip
     return live or any(freed)
 
 
@@ -791,6 +877,8 @@ def _mismatch(run: Run, clock: Clock, w: Work, session_id: str, agent: str) -> N
     if not (w.claim == "claimed" and w.session == session_id and w.expires is not None
             and w.expires > now):  # fmt: skip
         return
+    if w.claims:  # an agent of its spawn called (OD-501)
+        w.claims[-1].called = True
     if sum(c.outcome == "claim_mismatch" for c in w.claims) >= claude_review.MISMATCH_MAX:
         return  # a session that keeps mangling it: today's expiry (review R2)
     mine_freed = run.freed.setdefault(session_id, {})
@@ -1000,6 +1088,8 @@ def release_session(session_id: str) -> None:
                 w.claim, w.session = "free", None
         run.outcomes.pop(session_id, None)
         run.freed.pop(session_id, None)
+        run.unread.pop(session_id, None)
+        run.awaiting.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------- status
@@ -1056,14 +1146,19 @@ def _progress(run: Run) -> dict[str, Any]:
             "repeats_left": sum(w.stage == "repeat" for w in run.works),
             "round": run.rounds,
             "mismatches": sum(c.outcome == "claim_mismatch" for w in run.works
-                              for c in w.claims)}  # fmt: skip
+                              for c in w.claims),
+            "unread": sum(c.outcome == "claim_unread" for w in run.works
+                          for c in w.claims),
+            "late": run.late}  # fmt: skip
 
 
 def progress_line(p: dict[str, Any]) -> str:
     """The line `/ecf-eval` quotes after each round, so the session never counts for itself."""
     line = f"{p['scored']}/{p['total']} scored, {p['in_progress']} in progress, round {p['round']}"
     line += f", {p['repeats_left']} repeats left" if p["repeats_left"] else ""
-    return line + (f", {p['mismatches']} mixed-up claims freed" if p.get("mismatches") else "")
+    line += f", {p['mismatches']} mixed-up claims freed" if p.get("mismatches") else ""
+    line += f", {p['unread']} unread claims freed" if p.get("unread") else ""
+    return line + (f", {p['late']} late after an unread free" if p.get("late") else "")
 
 
 def results() -> dict[str, Any]:
