@@ -703,6 +703,7 @@ def _with_description(schema: CompiledSchema, name: str, text: str) -> CompiledS
 
 
 USER_RULES = """version: 1
+default_rules_off: [automated_notification]  # the default that archives on sender_type (S4)
 rules:
   - id: tidy
     when: {field: category, eq: marketing}
