@@ -1,5 +1,5 @@
 """The pinned Claude models, the family override and what each preset's gate binds to (V1.4 step 2;
-SPEC §7.5, §9.3; OD-014)."""
+SPEC §7.5, §9.3; OD-014). Presets A and B, and the local key, went in v3.0.0 (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -14,18 +14,15 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
-from ecf.schema import load_schema, load_schema_v2
+from ecf.schema import load_schema
 from ecf_server import (
-    classifier,
     claude_pins,
     claude_review,
     gate,
-    ollama,
     review,
     signals,
     stages,
     stepup,
-    triggers,
 )
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
@@ -37,8 +34,8 @@ from tests.test_gate import make_address
 
 from .conftest import stop, wait_answering
 
-DIGEST = ollama.load_pin().digest
-LOCAL = claude_pins.local_key()  # the digest and the schema (OD-475)
+DIGEST = "6114515d" + "0" * 56  # an Ollama digest, as items before V1.4 recorded it
+LOCAL = f"{DIGEST}+schema-x+0123456789abcdef"  # preset A's key before v3.0.0 (OD-475)
 NEW_SONNET = "claude-sonnet-5-6"
 
 
@@ -71,24 +68,23 @@ def test_the_lock_names_every_role_with_a_claude_id() -> None:
 
 
 def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    lock = claude_pins.load_lock()
-    a, b, c = (claude_pins.pins(conn, p) for p in "ABC")
-    assert a == {"digest": LOCAL} and claude_pins.key(a) == LOCAL
-    prompt = classifier.prompt_digest(load_schema())[:16]  # no keywords hash in it (Q3)
-    # the local model is asked schema v2 under v3, so its key keeps v2's digest (P6, OD-498)
-    assert f"{DIGEST}+{load_schema_v2().digest}+{prompt}" == LOCAL
-    assert b == {"digest": LOCAL, "actor": lock["actor"], "actor_high": lock["actor_high"]}
+    assert claude_pins.GATE_ROLES == {"C": ("classifier", "classifier_high", "actor",
+                                            "actor_high")}  # D from step 4  # fmt: skip
+    assert claude_pins.PAIR == {"C": "claude/claude"}
+    c = claude_pins.pins(conn, "C")
     assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt"}
     assert c["prompt"] == claude_review.prompt_digest(load_schema())[:16]  # Q4
-    assert len({claude_pins.key(p) for p in (a, b, c)}) == 3
-    assert claude_pins.key(b).startswith("pins-")
+    assert claude_pins.key(c).startswith("pins-")
+    assert claude_pins.key({"digest": DIGEST}) == DIGEST  # a pre-V1.4 record still reads
+    for gone in ("A", "B"):
+        with pytest.raises(KeyError):
+            claude_pins.pins(conn, gone)
 
 
 def test_the_override_replaces_its_family_with_step_up_and_a_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     make_address(conn, clock, "assist")
-    _preset(conn, "B")
     before = claude_pins.address_key(conn, "ap")
     out = _override(conn, clock, NEW_SONNET)
     eff = claude_pins.effective(conn)
@@ -96,7 +92,6 @@ def test_the_override_replaces_its_family_with_step_up_and_a_notice(
     assert eff["actor_high"] == "claude-opus-5-5"  # other families keep their pin
     assert out["affected"] == ["ap@acme.example"]
     assert claude_pins.address_key(conn, "ap") != before
-    assert claude_pins.pins(conn, "A") == {"digest": LOCAL}  # A has no Claude pin
     posts = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM jobs")]
     assert any("Security Notice" in p["card"]["title"] and NEW_SONNET in p["card"]["text"]
                for p in posts)  # fmt: skip
@@ -152,8 +147,7 @@ def test_a_step_up_is_bound_to_the_override_it_was_issued_for(
 
 def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -> None:
     make_address(conn, clock, "assist")
-    _preset(conn, "B")
-    b_key = claude_pins.address_key(conn, "ap")
+    b_key = claude_pins.address_key(conn, "ap")  # C's (every address from v3.0.0, ADR 0031)
     for i, key in enumerate((b_key, LOCAL, None)):
         sid = make_classified(conn, clock, MARKETING, KNOWN_BULK, sid=f"k{i}")
         pinned = {"digest": DIGEST} | ({"pin_key": key} if key else {})
@@ -162,11 +156,11 @@ def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -
                          (json.dumps(pinned), json.dumps({"verdict": "correct",
                           "category_ok": True}), sid))  # fmt: skip
     assert review.reviewed(conn, "ap", b_key)["reviewed"] == 1
-    assert review.reviewed(conn, "ap", LOCAL)["reviewed"] == 1  # an A key under this schema
+    assert review.reviewed(conn, "ap", LOCAL)["reviewed"] == 1  # an A key, before v3.0.0
     assert review.reviewed(conn, "ap", DIGEST)["reviewed"] == 1  # no pin_key: before V1.4, and
     # before v2's schema, so it no longer counts for the gate (OD-475)
     g = gate.compute(conn, "ap")
-    assert (g.digest, g.reviewed, g.preset) == (b_key, 1, "B")
+    assert (g.digest, g.reviewed, g.preset) == (b_key, 1, "C")
     assert dict(g.pins)["actor"] == "claude-sonnet-5-5"
     synthetic = next(c for c in g.checks if c.name == "synthetic")
     assert not synthetic.ok and "/ecf-eval" in synthetic.detail
@@ -181,24 +175,13 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     with write_tx(conn):
         gate.record(conn, g, clock.now(), passed=True)
     row = gate.stored(conn, "ap")
-    assert row is not None and row["pair_key"] == "claude/claude" and row["ollama_digest"] is None
+    assert row is not None and row["pair_key"] == "claude/claude"
     assert gate.stored_key(row) == g.digest
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"  # unchanged pins
     _override(conn, clock, "claude-opus-5-6")  # actor_high: a C pin
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
-
-
-def test_a_preset_a_gate_row_keeps_its_pre_v14_shape(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    make_address(conn, clock, "assist")
-    with write_tx(conn):
-        gate.record(conn, gate.compute(conn, "ap"), clock.now(), passed=True)
-    row = gate.stored(conn, "ap")
-    assert row is not None and row["pinned_ids"] is None and row["ollama_digest"] == LOCAL
-    assert row["pair_key"] == gate.PAIR
 
 
 def test_the_override_from_the_cli(home: Path) -> None:
@@ -225,67 +208,34 @@ def test_the_override_from_the_cli(home: Path) -> None:
 
 
 @pytest.mark.usefixtures("extensions_on")
-def test_user_fields_move_only_the_claude_classifier_keys(
+def test_user_fields_move_the_claude_classifier_keys(
     conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path
 ) -> None:
-    """S4 (D3, D8; OD-502): C's pins and an unpinned C eval key hold the whole effective schema
-    digest, so your own fields move them; the local model is never asked them (`local_schema`
-    is plain v2), so preset A's and the fallback's gate, B's pins and an unpinned B eval key
-    don't move."""
-    from ecf_server import claude_eval, config, fallback  # noqa: PLC0415
+    """S4 (D3; OD-502): C's pins and an unpinned C eval key hold the whole effective schema
+    digest, so your own fields move them."""
+    from ecf_server import claude_eval, config  # noqa: PLC0415
     from tests.test_claude_review import extend  # noqa: PLC0415
-
-    def local_keys() -> list[str]:
-        b = claude_eval.Options(tmp_path, preset="B", actor_model=NEW_SONNET)
-        return [claude_pins.local_key(config.current_schema(conn)), fallback.digest(conn),
-                *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B")),
-                claude_eval.models_for(conn, b)[2]]  # fmt: skip
 
     def c_keys() -> list[str]:
         c = claude_eval.Options(tmp_path, preset="C", actor_model=NEW_SONNET)
         return [claude_pins.key(claude_pins.pins(conn, "C")), claude_eval.models_for(conn, c)[2]]
 
-    before_local, before_c = local_keys(), c_keys()
+    before_c = c_keys()
     extend(conn, clock)
-    assert local_keys() == before_local
     assert all(a != b for a, b in zip(before_c, c_keys(), strict=True))
-    assert claude_pins.local_key(config.current_schema(conn)) == fallback.digest(conn) == LOCAL
-    assert claude_pins.pins(conn, "B")["digest"] == LOCAL
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 
-def test_the_prompt_digest_moves_with_the_prompt_not_the_keywords(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    schema = load_schema()
-    before, key, words = (classifier.prompt_digest(schema), claude_pins.local_key(),
-                          triggers.keywords_digest())  # fmt: skip
-    changes = [("INSTRUCTIONS", classifier.INSTRUCTIONS + "Be brief.\n"),
-               ("MAX_INPUT_BYTES", classifier.MAX_INPUT_BYTES - 1)]  # fmt: skip
-    for name, value in changes:
-        with monkeypatch.context() as m:
-            m.setattr(classifier, name, value)
-            assert classifier.prompt_digest(schema) != before and claude_pins.local_key() != key
-    with monkeypatch.context() as m:
-        m.setattr(ollama, "OPTIONS", ollama.OPTIONS | {"temperature": 0.1})
-        assert classifier.prompt_digest(schema) != before
-    monkeypatch.setattr(triggers, "keywords_digest", lambda: "0" * 64)  # a keyword patch
-    assert claude_pins.local_key() == key and len(words) == 64  # restarts no gate (Q3)
-
-
-def test_the_c_key_moves_with_what_claude_is_asked_not_with_gemmas_prompt(
-    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+def test_the_c_key_moves_with_what_claude_is_asked(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Q4: the C pin key takes a Claude-side digest (the schema and the signals' wording), so a
-    Gemma-only change doesn't restart C's gate, and a signal reworded does."""
+    signal reworded restarts C's gate."""
 
     def c_key() -> str:
         return claude_pins.key(claude_pins.pins(conn, "C"))
 
-    before, local = c_key(), claude_pins.local_key()
-    with monkeypatch.context() as m:
-        m.setattr(classifier, "INSTRUCTIONS", classifier.INSTRUCTIONS + "Be brief.\n")
-        assert claude_pins.local_key() != local and c_key() == before
+    before = c_key()
     reworded = signals.WORDING | {"crypto_payment": "Pay this wallet."}
     monkeypatch.setattr(signals, "WORDING", reworded)
     assert c_key() != before

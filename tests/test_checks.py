@@ -47,7 +47,7 @@ class Box:
 def env(conn: sqlite3.Connection, db_path: Path) -> tuple[sqlite3.Connection, Path]:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')"
     )
     conn.execute(
         "INSERT INTO probe (address_id, host, probed_at) VALUES ('ap', 'imap.acme.example', 'now')"
@@ -190,9 +190,11 @@ def post(st: ServiceState, path: str, body: dict[str, Any]) -> tuple[int, list[d
     return anyio.run(go)
 
 
-def test_checks_route_streams_and_until_empty_drains_the_backlog(
+def test_checks_route_streams_one_check_per_address(
     env: tuple[sqlite3.Connection, Path], clock: FakeClock
 ) -> None:
+    """`--until-empty` and the model round went in v3.0.0 (ADR 0031, P17): one check each; an
+    older client's `until_empty` is ignored."""
     _, path = env
     box = Box()
     st = state_for(path, box, clock)
@@ -201,9 +203,9 @@ def test_checks_route_streams_and_until_empty_drains_the_backlog(
     for i in range(35):
         box.fake.deliver(mail(f"note {i}"))
     code, lines = post(st, "/v1/checks", {"address_id": "ap", "until_empty": True})
-    reports = [x for x in lines if not x.get("done") and "model" not in x]
-    assert [r["created"] for r in reports] == [30, 5] and reports[-1]["remaining"] == 0
-    assert [x["model"]["status"] for x in lines if "model" in x] == ["off"]  # no model here
+    reports = [x for x in lines if not x.get("done")]
+    assert [r["created"] for r in reports] == [30] and reports[-1]["remaining"] == 5
+    assert not any("model" in x for x in lines)
     code, lines = post(st, "/v1/checks", {"address_id": "nope"})
     assert code == 404
 

@@ -37,7 +37,7 @@ ALERT_ID = "<0123abcd.ecf@acme.example>"
 def _email_on(conn: sqlite3.Connection, *, routes: list[str] | None = None) -> None:
     with write_tx(conn):
         conn.execute("INSERT OR IGNORE INTO addresses (address_id, email, sensitivity, preset,"
-                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'A',"
+                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'C',"
                      " 't')")  # fmt: skip
         for k, v in ((alert_mail.FROM_KEY, "ap"), (alert_mail.TO_KEY, "owner@home.example"),
                      ("alerts.routes", routes or ["slack", "email"])):  # fmt: skip
@@ -236,7 +236,7 @@ def test_unverified_payment_on_high_addresses_is_batched_hourly(
     _email_on(conn)
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('hi', 'hi@acme.example', 'high', 'A', 't')")  # fmt: skip
+                     " VALUES ('hi', 'hi@acme.example', 'high', 'C', 't')")  # fmt: skip
     unverified = {"triggers": {"unverified_payment": True}}
     _item(conn, clock, "1" * 64, unverified, escalate=False, address="hi")
     _item(conn, clock, "2" * 64, unverified, escalate=False, address="ap")  # standard: no email

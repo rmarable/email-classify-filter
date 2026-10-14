@@ -20,7 +20,6 @@ import secrets
 import sqlite3
 import sys
 import threading
-import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
@@ -76,7 +75,6 @@ from ecf_server import (
     digests,
     evalrun,
     export_keys,
-    fallback,
     gate,
     health,
     import_plan,
@@ -86,9 +84,6 @@ from ecf_server import (
     internal,
     manual_export,
     model_watch,
-    modelq,
-    models,
-    ollama,
     ops_doctor,
     outbound,
     outbound_remind,
@@ -189,12 +184,6 @@ class ServiceState:
     jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
-    model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
-    model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
-    model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
-    shadow_work: modelq.Work | None = field(default=None, repr=False)  # the fallback's (V1.4)
-    # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
-    throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
     # Claude Code telemetry per `ecf claude` session, and how long a read or submission waits for
     # its call's events (V1.4 step 6; logs are exported every second)
@@ -281,9 +270,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
-                "model": _model_status(state),
                 "claude": _claude_status(state),
-                "fallback": _with_db(state, fallback.status, []),
                 "model_watch": _with_db(state, model_watch.status, None),
             }
         )
@@ -386,15 +373,6 @@ def create_app(state: ServiceState) -> Starlette:
 
 
 Allow = Callable[..., Callable[[Handler], Handler]]
-MAX_ROUNDS = 100  # `--until-empty` stops after this many checks per address
-UNTIL_EMPTY_MAX_S = 3 * 3600  # `--until-empty` stops waiting after this long
-BUSY_POLL_S = 5.0  # while the scheduled check holds an address
-WORKER_POLL_S = 10.0  # while the service's own model rounds hold the waiting emails
-
-
-def _wait(seconds: float) -> None:
-    """Sleep inside a streaming response (Starlette runs the generator on a worker thread)."""
-    time.sleep(seconds)
 
 
 def _bearer(request: Request) -> str:
@@ -543,11 +521,11 @@ def _alerts(state: ServiceState) -> list[dict[str, Any]]:
 def _check_lines(
     state: ServiceState,
     ids: list[str],
-    until_empty: bool,
     secrets: SecretStore,
     factory: addresses.MailFactory,
 ) -> Iterator[str]:
-    """The `POST /v1/checks` stream. A connection per check: Starlette may run each step of this
+    """The `POST /v1/checks` stream: one check per address (`--until-empty` and the local-model
+    round went in v3.0.0, ADR 0031). A connection per check: Starlette may run each step of this
     generator on a different thread, and a SQLite connection belongs to one (V1.1 review)."""
 
     def one(address_id: str) -> checks.CheckReport:
@@ -567,99 +545,17 @@ def _check_lines(
         finally:
             conn.close()
 
-    deadline = state.clock.monotonic() + UNTIL_EMPTY_MAX_S
     for address_id in ids:
-        rounds, told = 0, False
-        while rounds < (MAX_ROUNDS if until_empty else 1):
-            try:
-                r = one(address_id)
-            except Exception as exc:  # the response has started: report it, don't cut off
-                log.error("api.check_failed", error_type=type(exc).__name__)
-                failed = {"address_id": address_id, "status": "internal_error"}
-                yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
-                yield "\n"
-                break
-            if r.status == "busy" and until_empty and state.clock.monotonic() < deadline:
-                if not told:  # the scheduled check holds it: wait for it, then check (12a)
-                    yield json.dumps({"address_id": address_id, "status": "waiting"}) + "\n"
-                    told = True
-                _wait(BUSY_POLL_S)
-                continue
-            rounds += 1
-            yield json.dumps(r.to_json()) + "\n"
-            if not r.more:
-                break
-    for line in _model_lines(state, until_empty, deadline):
-        yield json.dumps({"model": line}) + "\n"
+        try:
+            r = one(address_id)
+        except Exception as exc:  # the response has started: report it, don't cut off
+            log.error("api.check_failed", error_type=type(exc).__name__)
+            failed = {"address_id": address_id, "status": "internal_error"}
+            yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
+            yield "\n"
+            continue
+        yield json.dumps(r.to_json()) + "\n"
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
-
-
-def _model_lines(state: ServiceState, until_empty: bool,
-                 deadline: float | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
-    """`ecf check` runs the local model on what waits (V1.3 step 7): one round, or with
-    `--until-empty` rounds until nothing waits. The model worker may run rounds too; each item is
-    taken under its address's lock and lease, so the two never work on the same one. With
-    `--until-empty` (step 12a fix) a heat pause is waited out, and when the worker holds the
-    waiting emails this waits for it, reporting the count as it falls, until nothing waits, the
-    model isn't ready, an eval holds it or `UNTIL_EMPTY_MAX_S` has passed."""
-    work = state.model_work
-    if work is None:
-        yield {"status": "off", "detail": "this service doesn't run the local model"}
-        return
-    end = deadline if deadline is not None else state.clock.monotonic() + UNTIL_EMPTY_MAX_S
-    shown: int | None = None
-    for _ in range(MAX_ROUNDS * 100 if until_empty else 1):
-        line = _model_round(state, work)
-        settled = line["status"] in ("not_ready", "eval", "stopped") or line["waiting"] == 0
-        if not until_empty or settled:
-            yield line
-            return
-        if state.clock.monotonic() >= end:
-            yield line | {"status": "gave_up", "minutes": round(UNTIL_EMPTY_MAX_S / 60)}
-            return
-        if line["status"] == "hot":
-            yield line
-            _wait(modelq.HEAT_PAUSE.total_seconds())
-        elif line["done"] == 0 and line["failed"] == 0:  # the worker holds them: wait for it
-            if line["waiting"] != shown:
-                yield {"status": "worker", "done": 0, "failed": 0, "waiting": line["waiting"]}
-                shown = line["waiting"]
-            _wait(WORKER_POLL_S)
-        else:
-            yield line
-
-
-def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
-    conn, client = state.connect(), state.model_client()
-    power = state.power()
-    state.throttle.power(not (power.laptop and not power.on_ac))
-    try:
-        r = modelq.run_round(conn, state.clock, state.notifier, client, work,
-                             resident=modelq.resident(conn), check_kw=state.model_check,
-                             throttle=state.throttle, shadow=state.shadow_work)  # fmt: skip
-        line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
-                                "waiting": r.waiting}  # fmt: skip
-        if r.status == "not_ready":
-            row = conn.execute(
-                "SELECT detail FROM alerts WHERE kind IN ('local_model',"
-                " 'local_model_unsafe') AND resolved_at IS NULL"
-            ).fetchone()
-            line["detail"] = row[0] if row else "the local model isn't ready"
-        return line
-    finally:
-        client.close()
-        conn.close()
-
-
-def _model_status(state: ServiceState) -> dict[str, Any] | None:
-    if state.db_path is None:
-        return None
-    power = state.power()
-    conn = state.connect()
-    try:
-        return modelq.status(conn, laptop=power.laptop, on_ac=power.on_ac)
-    finally:
-        conn.close()
 
 
 def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -849,12 +745,6 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_setting(request: Request) -> JSONResponse:
         body = _body(request)
         key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
-        if key == settings.FALLBACK_KEY:  # the local fallback: step-up to turn it on (V1.4)
-            if not aid:
-                raise InvalidInputError(f"{key} is per address: add --address")
-            nonce = _opt_str(body, "nonce_id")
-            return _with_conn(lambda c: fallback.set_timeout(c, state.clock, state.notifier, aid,
-                                                             value, nonce=nonce))  # fmt: skip
         if key == settings.HIGH_BATCH_KEY:  # step-up to raise it (V1.4 step 9)
             if not aid:
                 raise InvalidInputError(f"{key} is per address: add --address")
@@ -1002,31 +892,7 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _corpus_run(sid: str | None, *, fraud_only: bool,
-                connect: Callable[[], sqlite3.Connection] | None = None
-                ) -> evalrun.CorpusRun | None:  # fmt: skip
-    """The open corpus session an eval run takes over (R154); None for the synthetic set. Its
-    labels are checked against the effective schema."""
-    if not sid:
-        return None
-    if fraud_only:
-        raise InvalidInputError("--fraud-only is for the synthetic set")
-    schema = None
-    if connect is not None:
-        conn = connect()
-        try:
-            schema = config.current_schema(conn)
-        finally:
-            conn.close()
-    session = corpus_session.set_busy(sid, True)
-    try:
-        return evalrun.corpus_run(session, schema)
-    except Exception:
-        corpus_session.set_busy(sid, False)
-        raise
-
-
-def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - route table
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
     also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
     `_review_routes`)."""
@@ -1034,50 +900,28 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
         body = _body(request)
-        sid = _opt_str(body, "corpus_session")  # a real-mail corpus instead (§16.7)
-        root = Path(_str(body, "root")).expanduser() if not sid else Path("/")
-        if not sid and (not root.is_absolute() or not (root / "labels.jsonl").is_file()):
+        if body.get("corpus_session") is not None:  # R-D5: no model runs over real mail here
+            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031); `ecf"
+                                    " eval routes --corpus` and `ecf eval rescore --corpus`"
+                                    " still read a corpus")  # fmt: skip
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
-        floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
-        if isinstance(floor, bool) or not isinstance(floor, int) or not 0 <= floor <= 100:
-            raise InvalidInputError("battery_floor: a percent from 0 to 100")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
-        copy_to = _copy_to(body)
-        if sid and copy_to is not None:
-            raise InvalidInputError("copy_to: a corpus run's result stays in the install (R2)")
-        corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True,
-                                 connect=state.connect)  # fmt: skip
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
-                               actor=body.get("actor") is not False,
                                fraud_only=body.get("fraud_only") is True,
-                               battery_floor=floor,
-                               backend=_opt_str(body, "backend") or evalrun.GEMMA,
+                               backend=_opt_str(body, "backend") or evalrun.NULL,
                                redact=body.get("redact") is not False,
-                               corpus=corpus_run,
                                for_gate=body.get("for_gate") is not False,
-                               copy_to=copy_to,
-                               new_wording=body.get("new_wording") is not False,
-                               signals=body.get("signals") is not False,
-                               new_signals=body.get("new_signals") is not False,
-                               excerpt_prep=body.get("excerpt_prep") is not False,
-                               message_signals=(body.get("message_signals")
-                                                is not False))  # fmt: skip
-        try:
-            run = evalrun.start(state.connect, state.clock, state.model_client,
-                                state.db_path.parent, opts, power=state.power,
-                                check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
-        except Exception:
-            if sid:
-                corpus_session.set_busy(sid, False)
-            raise
+                               copy_to=_copy_to(body),
+                               signals=body.get("signals") is not False)  # fmt: skip
+        run = evalrun.start(state.connect, state.clock, state.db_path.parent, opts,
+                            power=state.power)  # fmt: skip
         evalrun.note(state.connect, state.clock,
-                     f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
-                     " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
-        power = state.power()
-        on_battery = power.laptop and not power.on_ac
-        pct = schedule.battery_percent() if on_battery else None
-        return JSONResponse(run | {"on_battery": on_battery, "battery": pct})
+                     f"Eval {run['run_id'][:8]} started ({run['total']} cases,"
+                     f" {opts.backend} backend).")  # fmt: skip
+        return JSONResponse(run)
 
     @allow(Caller.CLI)
     def eval_status(_request: Request) -> JSONResponse:
@@ -1096,7 +940,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
 
     @allow(Caller.CLI)
     def stop_eval(_request: Request) -> JSONResponse:
-        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] in ("running", "paused") else None
+        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] == "running" else None
         claude = claude_eval.stop(state.connect, state.clock)
         if local is None and claude is None:
             raise NotFoundError("no eval is running")
@@ -1310,18 +1154,18 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §7.5, §13.2 (V1.3 step 1b): the local model's status and `ecf models install`."""
+    """SPEC §7.5, §13.2: `ecf models status` (the Claude pins) and the Claude model override;
+    the local model's routes went in v3.0.0 (ADR 0031)."""
 
     @allow(Caller.CLI)
-    def show_models(_request: Request) -> JSONResponse:
-        conn, client = state.connect(), state.model_client()
+    def claude_models(_request: Request) -> JSONResponse:
+        """`ecf models status` (v3.0.0, ADR 0031): the Claude pins, any override and the weekly
+        watch; `GET /v1/models`, the local model's status, went with it."""
+        conn = state.connect()
         try:
-            return JSONResponse(
-                models.status(conn, client, **state.model_check)
-                | {"watch": model_watch.status(conn)}
-            )  # V1.4 step 10
+            return JSONResponse({"claude": claude_pins.show(conn),
+                                 "watch": model_watch.status(conn)})  # fmt: skip
         finally:
-            client.close()
             conn.close()
 
     @allow(Caller.CLI)
@@ -1337,29 +1181,10 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
-    def install_models(request: Request) -> JSONResponse:
-        """`ecf models install`. An older client's `decision` is refused: decision-model installs
-        were removed with the Qwen-based models (OD-494)."""
-        if _opt_str(_body(request), "decision") is not None:
-            raise InvalidInputError("decision-model installs were removed (OD-494); run"
-                                    " `ecf models install` for the local model")  # fmt: skip
-        return JSONResponse(models.start_install(state.connect, state.clock,
-                                                 state.model_client))  # fmt: skip
-
-    @allow(Caller.CLI)
-    def prune_models(_request: Request) -> JSONResponse:
-        """`ecf models prune`: remove ecf's model copies for other releases (SPEC §7.5)."""
-        conn, client = state.connect(), state.model_client()
-        try:
-            return JSONResponse({"removed": models.prune(conn, state.clock, client)})
-        finally:
-            client.close()
-            conn.close()
-
-    @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
         """SPEC §13.4 (V1.3 step 9): `ecf stats`; Claude's part (V1.4 step 6) isn't split by
-        address, so it comes only without `address` and for presets B and C."""
+        address, so it comes only without `address` and for preset C (A and B went in v3.0.0;
+        their `model_calls` rows stay until pruned with the logs)."""
         q = request.query_params
         try:
             hours = float(q.get("hours", "168"))
@@ -1374,16 +1199,14 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             since = state.clock.now() - timedelta(hours=hours)
             preset = q.get("preset")
             out = stats.report(conn, since, address=aid, preset=preset)
-            if aid is None and preset in (None, "B", "C"):
+            if aid is None and preset in (None, "C"):
                 out["claude"] = claude_usage.report(conn, since)
             return JSONResponse(out)
         finally:
             conn.close()
 
     return [
-        Route("/v1/models", show_models, methods=["GET"]),
-        Route("/v1/models/install", install_models, methods=["POST"]),
-        Route("/v1/models/prune", prune_models, methods=["POST"]),
+        Route("/v1/models/claude", claude_models, methods=["GET"]),
         Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
@@ -1922,13 +1745,16 @@ def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §15.1 (V1.2 step 8a): pause and resume one address, or all of them. Instant, no
     step-up (§9.1); the pre-check and fraud flagging never pause."""
 
-    def change(ref: str, paused: bool) -> JSONResponse:
+    def change(ref: str, paused: bool, *, owner_agreed: bool = False) -> JSONResponse:
         conn = state.connect()
         try:
-            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user")
+            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user",
+                                       owner_agreed=owner_agreed)  # fmt: skip
+            waiting = pause.awaiting_consent(conn) if ref == pause.ALL else None
         finally:
             conn.close()
-        return JSONResponse({"changed": changed, "message": pause.describe(changed, paused)})
+        return JSONResponse({"changed": changed,
+                             "message": pause.describe(changed, paused, waiting)})  # fmt: skip
 
     @allow(Caller.CLI)
     def pause_one(request: Request) -> JSONResponse:
@@ -1936,7 +1762,10 @@ def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def resume_one(request: Request) -> JSONResponse:
-        return change(str(request.path_params["ref"]), False)
+        """A converted address (v3.0.0, P3) needs `owner_agreed: true`, which `ecf resume`
+        sends only after asking in a terminal."""
+        agreed = _body(request).get("owner_agreed") is True
+        return change(str(request.path_params["ref"]), False, owner_agreed=agreed)
 
     @allow(Caller.CLI)
     def pause_all(_request: Request) -> JSONResponse:
@@ -2118,7 +1947,6 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
         """SPEC §15.1 `POST /v1/checks`: one JSON line per check, then a summary line."""
         body = _body(request)
         wanted = body.get("address_id")
-        until_empty = bool(body.get("until_empty", False))
         secrets, factory = state.store(), state.mail_factory
         if factory is None:
             raise ServiceUnavailableError("mail access isn't configured in this service")
@@ -2132,7 +1960,7 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 raise NotFoundError(f"no address {wanted!r}")
             ids = [wanted]
 
-        lines = _check_lines(state, ids, until_empty, secrets, factory)
+        lines = _check_lines(state, ids, secrets, factory)
         return StreamingResponse(lines, media_type="application/x-ndjson")
 
     @allow(Caller.CLI)

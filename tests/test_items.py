@@ -20,7 +20,7 @@ ADDR = AddressId("billing")
 def item(conn: sqlite3.Connection, clock: FakeClock) -> StableId:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at) "
-        "VALUES ('billing', 'billing@acme.example', 'high', 'A', 't')"
+        "VALUES ('billing', 'billing@acme.example', 'high', 'C', 't')"
     )
     items.create_item(conn, clock, stable_id=SID, address_id=ADDR, content_hash="c" * 64)
     return SID

@@ -52,7 +52,7 @@ def _slack(conn: sqlite3.Connection, clock: FakeClock, *, route: bool = True) ->
             slack_admin.put_setting(conn, k, v, now, actor="test")
         conn.execute(
             "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-            " VALUES ('ap', 'ap@acme.example', 'high', 'A', ?)",
+            " VALUES ('ap', 'ap@acme.example', 'high', 'C', ?)",
             (now,),
         )
         if route:

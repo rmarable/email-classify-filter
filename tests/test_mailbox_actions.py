@@ -50,7 +50,7 @@ def _address(conn: sqlite3.Connection, clock: FakeClock, stage: str = "live",
              overrides: dict[str, Any] | None = None) -> None:  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " stage, overrides) VALUES ('ap', 'ap@acme.example', 'standard', 'A', ?, ?,"
+                     " stage, overrides) VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?, ?,"
                      " ?)", (to_ts(clock.now()), stage, json.dumps(overrides or {})))  # fmt: skip
 
 

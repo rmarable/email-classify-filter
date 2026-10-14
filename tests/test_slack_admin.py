@@ -376,7 +376,7 @@ def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
 
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
     one, two = "1" * 64, "2" * 64
     for sid in (one, two):
         items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),

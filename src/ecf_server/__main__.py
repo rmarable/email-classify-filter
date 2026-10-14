@@ -61,8 +61,13 @@ def main(argv: list[str] | None = None) -> None:
             from ecf_server import db  # noqa: PLC0415
 
             conn = db.connect(paths.db)
-            applied = db.migrate(conn)
-            conn.close()
+            try:
+                applied = db.migrate(conn)
+            except db.MigrationError as exc:  # named rows and a hint (review R4); ecf upgrade
+                sys.stderr.write(f"ecf-server: {exc}\n")  # shows it and rolls back
+                raise SystemExit(1) from exc
+            finally:
+                conn.close()
             sys.stdout.write(f"applied: {', '.join(applied) or 'none'}\n")
             return
         from ecf_server import breaker  # noqa: PLC0415

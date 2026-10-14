@@ -647,7 +647,7 @@ def test_analyzer_reads_org_addresses_and_flags_an_impersonator(
                  " 'test')", (ORG_ADDRESSES_KEY,
                               '[{"address": "patlee@gmail.com", "name": "Pat Lee"}]'))  # fmt: skip
     conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                 " VALUES ('me', 'me.myself@gmail.com', 'standard', 'A', 'now')")  # fmt: skip
+                 " VALUES ('me', 'me.myself@gmail.com', 'standard', 'C', 'now')")  # fmt: skip
     analyzer = MessageAnalyzer(conn, clock, AddressInfo("me", "me.myself@gmail.com", "standard"),
                                DnsCache(conn, clock, lookup=FakeDns()))  # fmt: skip
     raw = mail("Are you at your desk?", sender='"Pat Lee" <random123@gmail.com>')

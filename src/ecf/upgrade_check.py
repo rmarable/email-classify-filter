@@ -3,8 +3,11 @@
 it imports nothing from the service package.
 
 - **The wheel** (OD-375): `ecf_server/data/release.json` (product, version, `api_version`,
-  `data_format`, `schema_version`, `min_client`) and its model pins (`models.lock`,
-  `ollama.lock`), read without installing it.
+  `data_format`, `schema_version`, `min_client`) and its Claude pins (`models.lock`), read
+  without installing it. A wheel's `ollama.lock` (the local model's pin before v3.0.0) is read
+  only when there: its digest is the "local" pin of a release before v3.0.0. From v3.0.0 it is a
+  stub `{"retired": true}` through v3.0.x (R-D9), which has no digest: a v2.2.x client, which
+  requires the file, reads it and names a "local" pin change for its A and B addresses.
 - **The install** (OD-380): ecf must run from a `uv tool` environment (its `uv-receipt.toml`
   names this package); an editable or other install is refused with instructions.
 - **Compatibility**: the same product; a newer version (an older one is `--to`, step 11c); a
@@ -13,8 +16,14 @@ it imports nothing from the service package.
 - **Model pins** (OD-381): families whose pin changes, and the addresses that use them, which
   drop to `assist` when the upgrade completes.
 - **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the shipped classifier prompt's
-  digest (shipped schema). It is in the local gate key, so a different one, or one either side
-  lacks (before v2.1.0), counts as "prompt" and every address is affected.
+  digest (shipped schema). It was in the local gate key, so a different one, or one either side
+  lacks (before v2.1.0), counts as "prompt" and every address is affected. From v3.0.0 it is
+  Claude's (`claude_review.prompt_digest`, ADR 0031, P4), which C's gate key doesn't hold either
+  way; after an upgrade from before 3.0 its change is expected and affects no address
+  (`after_upgrade`). A v2.2.x client's pre-check still says every address drops (it can't be
+  patched; the release notes say so).
+- **Converted addresses** (v3.0.0, P3): the new service's `converted` (A and B addresses made C
+  and paused by migration 0038, with their waiting emails), printed after the upgrade.
 - **Your own fields** (v3.0.0 S4, P11): stored but not yet in use, they reach the classifier at
   the new version's first start (announced then); the C addresses that drop to assist with them
   (`extension_pending` in the state) are listed. A service from before S4 doesn't report it.
@@ -37,6 +46,7 @@ PRODUCT = "email-classify-filter"
 DATA = "ecf_server/data/"
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:(rc)(\d+)|\.dev(\d+))?$")
 CLAUDE_FAMILIES = ("main_session", "classifier", "classifier_high", "actor", "actor_high")
+CLAUDE_PROMPT_MAJOR = 3  # release.json's prompt_digest is Claude's from v3.0.0 (P4)
 
 
 def version_key(v: str) -> tuple[int, int, int, int, int]:
@@ -56,7 +66,7 @@ def version_key(v: str) -> tuple[int, int, int, int, int]:
 class Release:
     wheel: Path
     info: dict[str, Any]
-    pins: dict[str, str]  # Claude family -> model ID, and "local" -> the Ollama digest
+    pins: dict[str, str]  # Claude family -> model ID; "local" -> the Ollama digest before v3.0.0
 
     @property
     def version(self) -> str:
@@ -70,14 +80,18 @@ def read_wheel(path: Path) -> Release:
         with zipfile.ZipFile(path) as z:
             info = json.loads(z.read(DATA + "release.json"))
             claude = json.loads(z.read(DATA + "models.lock"))
-            local = json.loads(z.read(DATA + "ollama.lock"))
+            names = set(z.namelist())
+            local: Any = (json.loads(z.read(DATA + "ollama.lock"))
+                          if DATA + "ollama.lock" in names else {})  # fmt: skip
     except (zipfile.BadZipFile, KeyError, ValueError) as exc:
         raise InvalidInputError(f"{path.name} isn't an ecf wheel with release information"
                                 f" ({type(exc).__name__})") from None  # fmt: skip
     if not isinstance(info, dict) or cast("dict[str, Any]", info).get("product") != PRODUCT:
         raise InvalidInputError(f"{path.name} isn't an {PRODUCT} wheel")
     pins = {f: str(cast("dict[str, Any]", claude).get(f)) for f in CLAUDE_FAMILIES}
-    pins["local"] = str(cast("dict[str, Any]", local).get("digest"))
+    digest = cast("dict[str, Any]", local).get("digest") if isinstance(local, dict) else None
+    if isinstance(digest, str):
+        pins["local"] = digest
     return Release(path, cast("dict[str, Any]", info), pins)
 
 
@@ -132,10 +146,12 @@ def _names(receipt: dict[str, Any]) -> list[str]:
 @dataclass
 class Report:
     problems: list[str] = field(default_factory=list[str])
-    pin_changes: list[str] = field(default_factory=list[str])  # families, and "local"
+    pin_changes: list[str] = field(default_factory=list[str])  # families, "schema", "prompt"
     affected: list[str] = field(default_factory=list[str])  # addresses that drop to assist
     # C addresses your stored, not yet used fields move to assist at the first start (S4, P11)
     schema_pending: list[str] = field(default_factory=list[str])
+    # A and B addresses the new version made C and paused: {address_id, from, waiting} (P3)
+    converted: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
 
 def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
@@ -184,13 +200,25 @@ def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str
     return fams, affected
 
 
+def crosses_to_claude_prompt(old_version: str, state: dict[str, Any]) -> bool:
+    """An upgrade from before v3.0.0 to v3.0.0 or later: release.json's `prompt_digest` went from
+    the local model's to Claude's (P4), an expected change that moves no address."""
+    try:
+        new = version_key(str(state.get("version")))[0]
+    except InvalidInputError:
+        return False
+    return version_key(old_version)[0] < CLAUDE_PROMPT_MAJOR <= new
+
+
 def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> Report:
     """Phase 2 of `ecf upgrade` (the new CLI): the pins and schema that changed, by this
     version's rules, between the kept old wheel and the new service's `GET /v1/upgrade/state`.
     The old CLI's pre-check can't see a change it doesn't know of (v1.0.0 doesn't know
     `classifier_schema`), so the new CLI names the affected addresses after the upgrade (SPEC
     §11.10; operator decision 2026-10-09). If the old wheel can't be read, only the schema is
-    compared: a 1.x release has no `classifier_schema`, so it was 1."""
+    compared: a 1.x release has no `classifier_schema`, so it was 1. From before 3.0 the prompt
+    digest was the local model's, and v3.0.0's is Claude's (P4): the change is expected and isn't
+    compared. The addresses the new version converted to C (`converted`, P3) are listed."""
     try:
         old = read_wheel(old_wheel)
         old_pins = old.pins
@@ -201,8 +229,11 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
         old_schema = 1 if version_key(old_version)[0] < 2 else None
         old_prompt = None  # unknown: counts as a new prompt
     r = Report()
-    prompts = (old_prompt, state.get("prompt_digest"))
+    prompts = None if crosses_to_claude_prompt(old_version, state) else (
+        old_prompt, state.get("prompt_digest"))  # fmt: skip
     r.pin_changes, r.affected = changes(old_pins, old_schema, state["pins"],
                                         int(state.get("classifier_schema", 1)),
                                         state["pin_users"], prompts=prompts)  # fmt: skip
+    listed: list[Any] = state.get("converted") or []
+    r.converted = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]
     return r

@@ -52,12 +52,12 @@ def test_backoff_then_dead(conn: sqlite3.Connection, clock: FakeClock) -> None:
 
 
 def test_expired_claim_returns_to_queue(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    jid = jobs.enqueue(conn, clock, Queue.MODEL, A, {}, timeout_s=10)
-    assert jobs.claim(conn, clock, Queue.MODEL, "crashed") is not None
+    jid = jobs.enqueue(conn, clock, Queue.ACTIONS, A, {}, timeout_s=10)
+    assert jobs.claim(conn, clock, Queue.ACTIONS, "crashed") is not None
     clock.advance(10 * jobs.CLAIM_FACTOR - 1)
-    assert jobs.claim(conn, clock, Queue.MODEL, "w2") is None
+    assert jobs.claim(conn, clock, Queue.ACTIONS, "w2") is None
     clock.advance(2)
-    again = jobs.claim(conn, clock, Queue.MODEL, "w2")
+    again = jobs.claim(conn, clock, Queue.ACTIONS, "w2")
     assert again is not None and again.job_id == jid and again.attempts == 2
     with pytest.raises(ConflictError):
         jobs.complete(conn, jid, "crashed")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ecf import __version__
 from ecf.schema import load_schema
-from ecf_server import api, classifier, db, export_bundle
+from ecf_server import api, claude_review, db, export_bundle
 
 
 def test_release_json_matches_the_code() -> None:
@@ -19,7 +19,8 @@ def test_release_json_matches_the_code() -> None:
     assert r["data_format"] == export_bundle.DATA_FORMAT
     assert r["api_version"] == api.API_VERSION
     assert r["classifier_schema"] == load_schema().version
-    assert r["prompt_digest"] == classifier.prompt_digest(load_schema())  # new wording: update it
+    # Claude's from v3.0.0 (ADR 0031, R-D10); a new wording: update it
+    assert r["prompt_digest"] == claude_review.prompt_digest(load_schema())
     assert isinstance(r["min_client"], str)
 
 

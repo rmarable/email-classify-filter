@@ -248,7 +248,7 @@ def test_a_gone_channel_is_forgotten_and_its_escalation_queued_again(
     s = _sender(web, clock, n)
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
         conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
                      " VALUES ('ap', 'slack', ?, 'ecf-default-ap')", (C1.channel,))  # fmt: skip
     items.create_item(conn, clock, stable_id=StableId("e" * 64), address_id=AddressId("ap"),

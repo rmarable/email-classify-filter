@@ -24,10 +24,9 @@ from ecf.schema import (
     load_schema,
     read_bytes,
     with_fixed,
-    without_extension,
 )
 from ecf.yamlio import load_yaml
-from ecf_server import classifier, claude_review, config, policy, rules, ruletest
+from ecf_server import claude_review, config, policy, rules, ruletest
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
@@ -291,10 +290,6 @@ def test_read_bytes_is_the_schema_text_and_json_schema() -> None:
     assert read_bytes(EXTENDED) > read_bytes(SCHEMA)
 
 
-def test_without_extension_is_the_shipped_schema() -> None:
-    assert without_extension(EXTENDED) is SCHEMA and without_extension(SCHEMA) is SCHEMA
-
-
 # ---- C9, P14: unknown for every non-fixed field -----------------------------------------------
 
 NOT_RULES = """version: 1
@@ -353,26 +348,8 @@ def test_an_absent_fixed_item_plans_as_false_under_not() -> None:
 
 
 def test_every_accepted_classification_has_every_required_field() -> None:
-    """P28: what the local classifier and a Claude submission are accepted with validates
-    against its schema's required fields, so a stored one never lacks a fixed field."""
-    v2 = {
-        k: BASE[k]
-        for k in (
-            "category",
-            "priority",
-            "requires_action",
-            "requires_reply",
-            "payment_related",
-            "deadline_mentioned",
-            "sender_type",
-            "fraud_risk",
-        )
-    }
-    for schema in (SCHEMA, EXTENDED):
-        got = classifier.parse(json.dumps(v2), schema)
-        assert got is not None
-        without_extension(schema).validate(got)
-        assert set(FIXED_FIELDS) <= got.keys()
+    """P28: what a Claude submission is accepted with validates against its schema's required
+    fields, so a stored one never lacks a fixed field (the local classifier went in v3.0.0)."""
     full = BASE | {"contract_stage": "draft", "vendor_tier": "minor", "needs_signature": False}
     ok, errors = claude_review.check_classification(full, EXTENDED)
     assert errors == [] and ok is not None and set(FIXED_FIELDS) <= ok.keys()

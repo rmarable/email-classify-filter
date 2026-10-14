@@ -1,6 +1,8 @@
 # ADR 0017: No `/loop`; Claude runs only on demand
 
 - **Status:** accepted (OD-018, 2026-09-26); implemented in V1.4 (`ecf claude` and `/ecf-review`)
+- **Amended by ADR 0031** (2026-10-14, OD-506): the local fallback (`claude_queue_timeout`) is
+  removed; waiting C mail raises a second, loud alert at 48 h instead.
 - **Context source:** SPEC §4.1, §4.3, §10.3; design plan
   (`docs/history/design-plan-2026-09-27.md`) §1 "Operating model", decision 4, the superseded
   list ("`/loop` removed from v1") and the Claude Code notes on `/loop`

@@ -1,5 +1,6 @@
-"""Local-model token and speed figures (V1.3 step 9; SPEC §13.4): stats.py, `ecf stats`, the daily
-summary's line and `ecf eval compare`."""
+"""Model-call token and speed figures (V1.3 step 9; SPEC §13.4): stats.py, `ecf stats`, the daily
+summary's line and `ecf eval compare` (the local model's calls before v3.0.0, ADR 0031, and
+archived results)."""
 
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from typer.testing import CliRunner
 from ecf import cli_stats
 from ecf.cli import app
 from ecf.eval.results import CaseResult, ResultFile
-from ecf_server import daily, ollama, stats
+from ecf_server import daily, stats
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 
@@ -55,10 +56,15 @@ def test_a_summary_counts_tokens_speeds_and_cold_starts() -> None:
 
 def _record(conn: sqlite3.Connection, clock: FakeClock, role: str, *, address: str = "ap",
             outcome: str = "ok", digest: str = "sha256:aaa") -> None:  # fmt: skip
-    m = ollama.Metrics(820, 520, 60, 3 * S, 2 * S, S // 10, 5 * S)
-    ollama.record_call(conn, clock, role=role, outcome=outcome, digest=digest,  # type: ignore[arg-type]
-                       metrics=m if outcome == "ok" else None, address_id=address, preset="A",
-                       stage="shadow")  # fmt: skip
+    """A `model_calls` row as the local model's calls were recorded before v3.0.0 (Jev's, step
+    4, will be too); the rows stay until pruned with the logs."""
+    m = (820, 520, 60, 3 * S, 2 * S, S // 10, 5 * S) if outcome == "ok" else (None,) * 7
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO model_calls (ts, address_id, preset, stage, role, outcome, digest,"
+            " prompt_tokens, cached_tokens, output_tokens, prompt_ns, eval_ns, load_ns, total_ns)"
+            " VALUES (?, ?, 'A', 'shadow', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (to_ts(clock.now()), address, role, outcome, digest, *m))  # fmt: skip
 
 
 def test_the_report_groups_by_model_and_role_and_filters(conn: sqlite3.Connection,
@@ -93,7 +99,7 @@ def test_the_daily_summary_gets_one_line(conn: sqlite3.Connection, clock: FakeCl
     )
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', ?)",
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
                      (to_ts(clock.now()),))  # fmt: skip
     assert line in daily.card(conn, clock.now(), "2026-10-01").text.splitlines()
 
@@ -104,7 +110,7 @@ def test_the_route_and_the_cli_screen(conn: sqlite3.Connection, db_path: Path, c
 
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', ?)",
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
                      (to_ts(clock.now()),))  # fmt: skip
     _record(conn, clock, "classifier")
     state = ServiceState(install="t", token="tok", started_at="2026-10-01T12:00:00.000000Z",
@@ -127,7 +133,7 @@ def test_the_route_and_the_cli_screen(conn: sqlite3.Connection, db_path: Path, c
     assert "  writing: 30.0 tokens/s median, slowest 5% 30.0" in out
     assert "  model load: 0.10 s median, 0.10 s p95, 0 cold start(s)" in out
     cli_stats.show(body | {"all": body["all"] | {"calls": 0}})
-    assert "wasn't used in this period" in capsys.readouterr().out
+    assert "no recorded model calls in this period" in capsys.readouterr().out
 
 
 def test_since_takes_hours_or_days() -> None:

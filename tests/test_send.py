@@ -32,7 +32,7 @@ def _address(conn: sqlite3.Connection, clock: FakeClock, *, saves: bool | None,
              sent_folder: bool = True) -> None:  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 't')")  # fmt: skip
         r = probe.ProbeResult(roles={"\\Sent": "Sent"} if sent_folder else {},
                               custom_keywords=True, move=True, uidplus=True, condstore=True,
                               append_limit=None, saves_sent=saves, max_message_bytes=None,

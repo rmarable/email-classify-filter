@@ -68,7 +68,6 @@ SAFETY_KEEP = timedelta(days=7)
 MACHINE_LOCAL = frozenset({
     INTERPRETER_KEY, export_keys.DIR_KEY, scheduled_export.LAST_OK, scheduled_export.FAILURES,
     scheduled_export.LAST_ERROR, scheduled_export.NEXT_TRY, "audit.flushed_id",
-    "models.installed_at",
 })  # fmt: skip
 EXTRA_COPIED = ("routes", "alerts")  # beside `importer.COPY` (read at call time: importer ->
 # approvals -> pause -> this module is an import cycle, so `importer` may not be loaded yet)
@@ -185,6 +184,11 @@ def restore(  # noqa: PLR0913 - the service state it needs, then the request
                        f" (generation now {install_identity.generation(conn)}). Addresses are"
                        " paused until a mail check passes and you resume them. If this wasn't"
                        " you, check the computer ecf runs on.")  # fmt: skip
+    # the bundle's settings replaced this install's: a bundle from before 0038 names its A and B
+    # addresses as converted again, and they are announced again (P3, P12)
+    from ecf_server import stages  # noqa: PLC0415 - stages -> pause -> this module
+
+    stages.announce_converted(conn, clock, notifier)
     return {"counts": counts, "generation": install_identity.generation(conn),
             "safety_copy": safety, "addresses": [a["address_id"] for a in preview["addresses"]],
             "config_changes": preview["config_changes"], "schema_dropped": dropped}  # fmt: skip

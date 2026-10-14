@@ -1,5 +1,7 @@
-"""Local-model token and speed figures (SPEC §13.4; OD-116; V1.3 step 9): `ecf stats`, the daily
-summary's line and each eval run's figures, all from Ollama's own counts (never content, I5).
+"""Model-call token and speed figures (SPEC §13.4; OD-116; V1.3 step 9): `ecf stats`, the daily
+summary's line and each eval run's figures, from the counts a model call reports (never content,
+I5): the local model's, Ollama's own, before v3.0.0 (ADR 0031; its rows stay until pruned with
+the logs); Jev's from v3.0.0 step 4.
 
 - **Tokens:** input (including cached), cached and output, summed; tokens per email is every
   role's tokens divided by the emails classified (successful classifier calls).

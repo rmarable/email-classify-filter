@@ -66,7 +66,7 @@ def checks(
 # ---- schema -------------------------------------------------------------------------------------
 
 
-def schema(conn: sqlite3.Connection) -> dict[str, str]:  # noqa: PLR0911 - one per state
+def schema(conn: sqlite3.Connection) -> dict[str, str]:
     ext = config.current(conn)["schema"]
     v = load_schema().version
     problem = config.extension_problem(conn)  # re-checked: a new release may clash with it
@@ -85,19 +85,6 @@ def schema(conn: sqlite3.Connection) -> dict[str, str]:  # noqa: PLR0911 - one p
     if ext is None:
         return _c("schema", OK, f"v{v}, built in (no fields of your own);"
                   f" {read_bytes(load_schema()):,} bytes of schema per classify read")  # fmt: skip
-    local, held = config.at_odds(conn)
-    if local:  # pre-S4 state D8 now refuses both ways (operator decision 2026-10-14)
-        return _c("schema", WARN, f"v{v}; your own fields are stored while"
-                  f" {', '.join(local[:5])} {'is' if len(local) == 1 else 'are'} preset A or B,"
-                  " which the local model isn't measured with (SPEC §1.5a item 2)", "remove the"
-                  " fields (`schema: default` with ecf config apply), or the preset A and B"
-                  " addresses (ecf address remove; add them again with --preset C)")  # fmt: skip
-    if held:  # P1, review R5: a C fallback on from before S4 isn't asked the fields
-        return _c("schema", WARN, f"v{v}; your own fields are stored while"
-                  f" {', '.join(held[:5])} {'has' if len(held) == 1 else 'have'} the local"
-                  " fallback on, which the local model answers without them", "turn the"
-                  " fallback off (ecf settings set claude_queue_timeout off --address <address>),"
-                  " or remove the fields (`schema: default` with ecf config apply)")  # fmt: skip
     if not extensions_enabled():  # OD-481: kept but ignored
         return _c("schema", WARN, f"v{v}, built in; an extension is stored but extensions are"
                   " off in this version", "`ecf config apply` with `schema: default` removes"

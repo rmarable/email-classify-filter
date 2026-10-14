@@ -7,7 +7,7 @@ background unit, and put the unit back afterwards.
 3. The service runs as a child process with an allow-listed environment (the security review of the
    V1.3 plan): HOME, PATH, LANG, TZ and ECF_HOME; on macOS TMPDIR; on Linux the session variables
    the secret store and desktop notifications need. Nothing else from this shell reaches it (no
-   OLLAMA_HOST, no proxy variables). Ctrl-C stops it.
+   proxy variables, for one). Ctrl-C stops it.
 4. When it ends, the marker goes and the unit is started again if it was running before.
 
 If `ecf watch` itself is killed, the marker stays: `ecf status` and `ecf doctor` say so and

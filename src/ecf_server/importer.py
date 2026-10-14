@@ -38,6 +38,7 @@ from typing import Any, cast
 from ecf.errors import ConflictError, InvalidInputError, SchemaLimitError
 from ecf.ids import SLUG_PATTERN
 from ecf_server import (
+    addresses,
     approvals,
     config,
     db,
@@ -61,9 +62,9 @@ NOT_COPIED = ("settings", "schema_migrations", "routes", "alerts")
 NEW_IDS = ("audit", "model_calls", "claude_calls")  # INTEGER PRIMARY KEY: appended here
 # what --replace clears, children first; jobs and Slack messages of the old items go too
 CLEAR = ("grants", "delays", "claim_batches", "claims", "escalations", "excerpts",
-         "fallback_shadow", "processing", "leases", "check_state", "routes", "probe", "cursors",
-         "items", "alerts", "addresses", "senders", "sent", "threads", "gate", "eval_runs",
-         "eval_results", "model_calls", "claude_calls", "claude_sessions")  # fmt: skip
+         "processing", "leases", "check_state", "routes", "probe", "cursors", "items", "alerts",
+         "addresses", "senders", "sent", "threads", "gate", "eval_runs", "eval_results",
+         "model_calls", "claude_calls", "claude_sessions")  # fmt: skip
 
 
 @stepup.purpose("import")
@@ -89,6 +90,8 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
     typed_install: str | None,
     nonce: str | None,
 ) -> dict[str, Any]:
+    from ecf_server import stages  # noqa: PLC0415 - stages -> pause -> restore -> this module
+
     if not import_plan.target_empty(conn):
         if not replace:
             raise ConflictError("this install already has addresses or items; to replace them,"
@@ -104,6 +107,7 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         try:
             try:
                 dropped = _stage(staged, parsed, source, to_ts(clock.now()))
+                was = converted_in(staged)
                 kept = kept_settings(staged)
                 config_doc = validate(staged, kept)
             except sqlite3.Error as exc:  # malformed JSON in a row, a value of the wrong type
@@ -115,6 +119,8 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
     changes = config.diff(before, config_doc) if config_doc else []
     now = to_ts(clock.now())
     with write_tx(conn):
+        if was:  # settings don't carry over: the converted addresses are named here (P3, P8)
+            stages.add_converted(conn, was, now)
         conn.execute(
             "INSERT INTO audit (ts, event, actor, outcome, data, origin) VALUES (?,"
             " 'import.completed', 'os_user', 'ok', ?, ?)",
@@ -134,10 +140,28 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         text += f" Security-relevant config changed: {config.summary(changes, 200)}."
     if dropped:
         text += f" {dropped['text'][0].upper()}{dropped['text'][1:]}."
+    if was:
+        text += (f" Converted to C, paused (their local model was removed in v3.0.0):"
+                 f" {', '.join(sorted(was))}.")  # fmt: skip
     export_keys.notice(conn, clock, notifier, text + " If this wasn't you, check the computer"
                                                      " ecf runs on.")  # fmt: skip
+    stages.announce_converted(conn, clock, notifier)
     return {"source_install": source, "counts": counts, "config_changes": changes,
-            "replace": replace, "schema_dropped": dropped}  # fmt: skip
+            "replace": replace, "schema_dropped": dropped,
+            "converted": sorted(was)}  # fmt: skip
+
+
+def converted_in(staged: sqlite3.Connection) -> dict[str, str]:
+    """The staged copy's converted addresses (0038, or the bundle's own record): id -> old
+    preset, for those the bundle didn't mark removed."""
+    from ecf_server import stages  # noqa: PLC0415 - stages -> pause -> restore -> this module
+
+    row = staged.execute("SELECT value FROM settings WHERE key = ?",
+                         (stages.CONVERTED,)).fetchone()  # fmt: skip
+    was: dict[str, Any] = json.loads(row[0]) if row else {}
+    live = {str(r[0]) for r in staged.execute("SELECT address_id FROM addresses WHERE"
+                                              " removed_at IS NULL")}  # fmt: skip
+    return {str(k): str(v) for k, v in was.items() if k in live}
 
 
 # ---- staging ------------------------------------------------------------------------------------
@@ -177,8 +201,6 @@ def drop_schema(staged: sqlite3.Connection) -> dict[str, Any] | None:
     if row is None:
         return None
     ext: Any = json.loads(row[0])
-    local = [str(r[0]) for r in staged.execute("SELECT address_id FROM addresses WHERE removed_at"
-                                               " IS NULL AND preset IN ('A', 'B')")]  # fmt: skip
     found = staged.execute("SELECT value FROM settings WHERE key = ?",
                            (config.KEY["rules"],)).fetchone()  # fmt: skip
     doc: Any = json.loads(found[0]) if found else None
@@ -196,7 +218,7 @@ def drop_schema(staged: sqlite3.Connection) -> dict[str, Any] | None:
                                 config.KEY["rules"]))  # fmt: skip
             else:  # nothing left: the default rules apply
                 staged.execute("DELETE FROM settings WHERE key = ?", (config.KEY["rules"],))
-    return schema_note(ext, local, gone)
+    return schema_note(ext, gone)
 
 
 def rules_on_fields(doc: Any, ext: Any) -> list[str]:
@@ -231,7 +253,7 @@ def rules_on_fields(doc: Any, ext: Any) -> list[str]:
             if isinstance(r, dict) and reads(r)]  # fmt: skip
 
 
-def schema_note(ext: Any, local: list[str], rules_gone: list[str] | None = None) -> dict[str, Any]:
+def schema_note(ext: Any, rules_gone: list[str] | None = None) -> dict[str, Any]:
     """What the import and restore output say about a bundle's schema fields, and the rules
     reading them, that they leave out."""
     d = cast("dict[str, Any]", ext) if isinstance(ext, dict) else {}
@@ -244,11 +266,8 @@ def schema_note(ext: Any, local: list[str], rules_gone: list[str] | None = None)
     if gone:
         what += (f" and the {len(gone)} rule{'s' if len(gone) != 1 else ''} that read them"
                  f" ({', '.join(gone[:5])}{' +more' if len(gone) > 5 else ''})")  # fmt: skip
-    if local:
-        why = f"not imported: {', '.join(local[:5])} use preset A or B, and {config.LOCAL_REASON}"
-    else:
-        why = ("not imported: re-apply your config file (fields and rules) with ecf config apply"
-               " (a dialog, step-up and a Security Notice) before ecf uses them")  # fmt: skip
+    why = ("not imported: re-apply your config file (fields and rules) with ecf config apply"
+           " (a dialog, step-up and a Security Notice) before ecf uses them")  # fmt: skip
     return {"fields": fields, "category_values": cats, "rules": gone, "text": f"{what}: {why}"}
 
 
@@ -292,9 +311,12 @@ def kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
 
 def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]:
     """Re-check what the schema can't: addresses, kept settings, and the config (OD-359)."""
-    for a in staged.execute("SELECT address_id, email, overrides FROM addresses"):
+    for a in staged.execute("SELECT address_id, email, overrides, preset FROM addresses"):
         if not re.fullmatch(SLUG_PATTERN, str(a["address_id"])):
             raise BadBundleError("an address ID isn't valid")
+        if a["preset"] not in addresses.PRESETS:  # after 0038 only D can be left (review R11)
+            raise BadBundleError(f"address {a['address_id']}: preset {a['preset']} isn't"
+                                 " available until Jev's step 4")  # fmt: skip
         try:
             addr_spec(str(a["email"]))
         except InvalidInputError:
@@ -342,6 +364,9 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
                 conn.execute("DELETE FROM main.jobs WHERE address_id IN (SELECT value FROM"
                              " json_each(?))", (json.dumps(old),))  # fmt: skip
                 conn.execute("DELETE FROM main.slack_messages WHERE key LIKE 'item:%'")
+                # the old install's converted record goes with its addresses (review R7)
+                conn.execute("DELETE FROM main.settings WHERE key IN (SELECT value FROM"
+                             " json_each(?))", (json.dumps(addresses.CONVERTED_KEYS),))  # fmt: skip
             counts: dict[str, int] = {}
             for table in COPY:
                 counts[table] = copy(conn, table)
@@ -368,7 +393,8 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
 def copy(conn: sqlite3.Connection, table: str, *, keep_ids: bool = False) -> int:
     """Copy the attached `imp` table into `main`; audit, model-call and Claude-call rows get new
     row IDs unless `keep_ids` (restore into an emptied table)."""
-    cols = [r[1] for r in conn.execute(f'PRAGMA imp.table_info("{table}")')]
+    unused = db.UNUSED_COLUMNS.get(table, ())  # an older bundle's values aren't carried (R1)
+    cols = [r[1] for r in conn.execute(f'PRAGMA imp.table_info("{table}")') if r[1] not in unused]
     if table in NEW_IDS and not keep_ids:
         cols = [c for c in cols if c != "id"]
     names = ", ".join(f"[{c}]" for c in cols)

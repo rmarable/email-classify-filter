@@ -6,6 +6,8 @@
   `s4-user-layer`, behind `EXTENSIONS_ENABLED` until its measurement, SPEC §1.5a item 2b,
   passes). Supersedes ADR 0024's safety core (`SAFETY_VALUES`) and ADR 0025 (schema extensions)
   (Phase R P17).
+- **Amended by ADR 0031** (2026-10-14, OD-506): presets A and B, which were still asked schema
+  v2, are removed; only Claude (and Jev from step 4) is asked v3.
 - **Context source:** SPEC §7.1, §7.4b, §8.3, §8.6, §9.2, §9.3, §11.9; plan
   `planning-docs/S3-READERS-SWITCH.md` draft 2 (Phase R P1-P20, operator-accepted 2026-10-13);
   `planning-docs/v3.0.0-OPERATOR-SCHEMA.md` draft 3

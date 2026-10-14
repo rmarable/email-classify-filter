@@ -1,0 +1,402 @@
+{
+ "run_id": "b502d077231078f5686e8cc7b30135dd",
+ "pair": "claude/claude",
+ "set_version": "4afc5aa5bb5bb627",
+ "created_at": "2026-10-13T14:49:01.906585Z",
+ "cases": [
+  {
+   "id": "attachment-name-injection",
+   "correct": true,
+   "fields": {
+    "category": true,
+    "fraud_risk": true,
+    "payment_related": true,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "vendor_change_request",
+    "priority": "high",
+    "requires_action": true,
+    "requires_reply": false,
+    "payment_related": true,
+    "deadline_mentioned": true,
+    "sender_type": "vendor",
+    "fraud_risk": "high",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": [
+    {
+     "stage": "classify",
+     "spawn": "ecf-classifier",
+     "round": 1,
+     "session": 1,
+     "preparing": false,
+     "claimed_s": 806.51,
+     "read_s": 812.6,
+     "answered_s": 827.469,
+     "settled_s": 831.209,
+     "outcome": "recorded",
+     "high_risk": []
+    }
+   ],
+   "expected": {
+    "category": "vendor_change_request",
+    "fraud_risk": "high",
+    "payment_related": true
+   }
+  },
+  {
+   "id": "bank-change-reply-to",
+   "correct": true,
+   "fields": {
+    "category": true,
+    "fraud_risk": true,
+    "payment_related": true,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "vendor_change_request",
+    "priority": "high",
+    "requires_action": true,
+    "requires_reply": true,
+    "payment_related": true,
+    "deadline_mentioned": false,
+    "sender_type": "vendor",
+    "fraud_risk": "high",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": [
+    {
+     "stage": "classify",
+     "spawn": "ecf-classifier",
+     "round": 1,
+     "session": 1,
+     "preparing": false,
+     "claimed_s": 806.51,
+     "read_s": 813.355,
+     "answered_s": 829.495,
+     "settled_s": 831.198,
+     "outcome": "recorded",
+     "high_risk": []
+    }
+   ],
+   "expected": {
+    "category": "vendor_change_request",
+    "fraud_risk": "high",
+    "payment_related": true
+   }
+  },
+  {
+   "id": "bec-ceo-urgent-wire",
+   "correct": true,
+   "fields": {
+    "category": true,
+    "fraud_risk": true,
+    "payment_related": true,
+    "sender_type": false,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "spam_or_phishing",
+    "priority": "urgent",
+    "requires_action": true,
+    "requires_reply": true,
+    "payment_related": true,
+    "deadline_mentioned": true,
+    "sender_type": "unknown",
+    "fraud_risk": "high",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": [
+    {
+     "stage": "classify",
+     "spawn": "ecf-classifier",
+     "round": 1,
+     "session": 1,
+     "preparing": false,
+     "claimed_s": 806.51,
+     "read_s": 814.05,
+     "answered_s": 831.222,
+     "settled_s": 833.251,
+     "outcome": "recorded",
+     "high_risk": []
+    }
+   ],
+   "expected": {
+    "category": "spam_or_phishing",
+    "fraud_risk": "high",
+    "payment_related": true,
+    "sender_type": "team"
+   }
+  }
+ ],
+ "digest": "pins-d6bf460dd1c7e5f4",
+ "summary": {
+  "cases": 113,
+  "confirmed": 113,
+  "correct": 93,
+  "rule_scored": 113,
+  "accuracy": 82.3,
+  "wilson95": [
+   74.2,
+   88.2
+  ],
+  "per_field": {
+   "category": 87.6,
+   "priority": 66.7,
+   "requires_action": 93.8,
+   "requires_reply": 89.7,
+   "payment_related": 97.4,
+   "deadline_mentioned": 100.0,
+   "sender_type": 22.9,
+   "fraud_risk": 76.5,
+   "rule": 94.7,
+   "safety": 100.0
+  },
+  "unsafe": [],
+  "fraud_cases": 113,
+  "fraud_guard_cases": 76,
+  "fraud_guard_missed": [],
+  "fraud_guard_recall": 100.0,
+  "determinism_diffs": 0,
+  "complete": false,
+  "options": {
+   "classifier": true,
+   "actor": true
+  },
+  "gate_passed": false,
+  "schema_digest": "schema-0d96e766c568d58a",
+  "prompt_digest": "3b767994a1157e1aed30af74202732a1615fd874d8e4e7abcce3ebacb3fc950b",
+  "excerpt_prep": 2,
+  "plugin_digest": "e2a6a64c50efc4a4d34479b5e737674e2dc2951c41b00a1c93d194c4ce2d4d0b",
+  "keywords_digest": "e827fd69c5d6e0e1b60bd3366f88ea3c79938deeba1d32d616e6c24c59f7f4bd",
+  "claude": {
+   "preset": "C",
+   "sensitivity": "standard",
+   "models": {
+    "classifier": "claude-sonnet-5-5",
+    "classifier_high": "claude-sonnet-5-5",
+    "actor": "claude-sonnet-5-5",
+    "actor_high": "claude-opus-5-5"
+   },
+   "pinned": true,
+   "batch": 1,
+   "source_run": null,
+   "sessions": 1,
+   "registered_at": "2026-10-13T14:31:56.306703Z",
+   "groups": [
+    {
+     "model": "claude-haiku-5-5",
+     "source": "generate_session_title",
+     "calls": 1,
+     "input_tokens": 1194,
+     "output_tokens": 24,
+     "cache_read_tokens": 0,
+     "cache_creation_tokens": 0,
+     "seconds": {
+      "median": 0.73,
+      "p95": 0.73
+     },
+     "api_equivalent_usd": 0.0001
+    },
+    {
+     "model": "claude-haiku-5-5",
+     "source": "main",
+     "calls": 56,
+     "input_tokens": 116,
+     "output_tokens": 13413,
+     "cache_read_tokens": 3266363,
+     "cache_creation_tokens": 86502,
+     "seconds": {
+      "median": 2.0,
+      "p95": 3.51
+     },
+     "api_equivalent_usd": 0.0567
+    },
+    {
+     "model": "claude-sonnet-5-5",
+     "source": "agent",
+     "calls": 81,
+     "input_tokens": 162,
+     "output_tokens": 49095,
+     "cache_read_tokens": 651908,
+     "cache_creation_tokens": 367238,
+     "seconds": {
+      "median": 3.83,
+      "p95": 10.28
+     },
+     "api_equivalent_usd": 1.4746
+    },
+    {
+     "model": "claude-sonnet-5-5",
+     "source": "agent_summary",
+     "calls": 2,
+     "input_tokens": 1288,
+     "output_tokens": 249,
+     "cache_read_tokens": 56592,
+     "cache_creation_tokens": 5024,
+     "seconds": {
+      "median": 1.76,
+      "p95": 2.39
+     },
+     "api_equivalent_usd": 0.0233
+    }
+   ],
+   "all": {
+    "calls": 140,
+    "input_tokens": 2760,
+    "output_tokens": 62781,
+    "cache_read_tokens": 3974863,
+    "cache_creation_tokens": 458764,
+    "seconds": {
+     "median": 2.4,
+     "p95": 10.04
+    },
+    "api_equivalent_usd": 1.5547
+   },
+   "plan": {
+    "five_hour_start": 54.0,
+    "seven_day_start": 58.0,
+    "five_hour_end": 56.0,
+    "seven_day_end": 59.0
+   },
+   "spawns": {
+    "run_s": 131.78,
+    "largest_gap": {
+     "s": 5.2,
+     "at_s": 819.15
+    },
+    "agents": {
+     "ecf-classifier": {
+      "claims": 113,
+      "spawns": 24,
+      "items_per_spawn": {
+       "p50": 4,
+       "max": 9
+      },
+      "read_to_answer_s": {
+       "p50": 9.0,
+       "p95": 20.82,
+       "max": 27.89
+      },
+      "claim_to_read_s": {
+       "p50": 6.76,
+       "p95": 16.34,
+       "max": 19.72
+      },
+      "spawn_s": {
+       "p50": 12.35,
+       "p95": 31.54,
+       "max": 32.63
+      },
+      "settle_lag_s": {
+       "p50": 1.74,
+       "p95": 5.04,
+       "max": 8.1
+      }
+     }
+    },
+    "rounds": {
+     "ready": {
+      "rounds": 24,
+      "duration_s": {
+       "p50": 16.92,
+       "p95": 37.63,
+       "max": 46.5
+      },
+      "gap_s": {
+       "p50": 0.0,
+       "p95": 0.0,
+       "max": 0.0
+      }
+     },
+     "preparing": {
+      "rounds": 0,
+      "duration_s": {
+       "p50": null,
+       "p95": null,
+       "max": null
+      },
+      "gap_s": {
+       "p50": null,
+       "p95": null,
+       "max": null
+      }
+     }
+    },
+    "sessions": {
+     "1": {
+      "rounds": 24,
+      "in_rounds_s": 464.93,
+      "between_rounds_s": 0.0
+     }
+    },
+    "act": {
+     "claims": 0,
+     "high_risk_actor": 0,
+     "reasons": {}
+    }
+   }
+  }
+ }
+}

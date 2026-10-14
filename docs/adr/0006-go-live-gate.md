@@ -2,6 +2,8 @@
 
 - **Status:** accepted (OD-069, 2026-09-26; OD-159, 2026-09-27; OD-234, 2026-09-30; OD-260,
   OD-261, OD-263, 2026-10-01); implemented in V1.3 (steps 6b and 12b)
+- **Amended by ADR 0031** (2026-10-14, OD-506): no gate is bound to an Ollama digest; the
+  local-model and fallback gates are removed, and C's gate binds to Claude's pins.
 - **Context source:** SPEC §9.1, §9.3, §16.2, §16.5; `ecf_server/gate.py`, `stages.py`,
   `evalrun.py`
 

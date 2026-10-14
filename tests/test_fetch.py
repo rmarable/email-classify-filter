@@ -35,7 +35,7 @@ ADDR = "ap"
 def setup(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES (?, 'ap@acme.example', 'high', 'A', '2026-10-01T12:00:00.000000Z')",
+        " VALUES (?, 'ap@acme.example', 'high', 'C', '2026-10-01T12:00:00.000000Z')",
         (ADDR,),
     )
     yield conn

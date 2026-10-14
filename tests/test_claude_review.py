@@ -184,8 +184,7 @@ def test_the_queue_claims_waiting_items_and_names_their_agent(
 ) -> None:
     add(conn, clock, "c", "C")
     add(conn, clock, "h", "C", sensitivity="high")
-    add(conn, clock, "b", "B")
-    add(conn, clock, "a", "A")
+    add(conn, clock, "b", "C")
     c1 = waiting_item(conn, clock, "c")
     h1 = waiting_item(conn, clock, "h")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
@@ -210,7 +209,7 @@ def test_a_session_gets_one_agent_type_at_a_time(
     """The model check can't tell overlapping work of two models apart (telemetry.py): while a
     session's classifier claims are out it gets no actor work; another session can."""
     add(conn, clock, "c", "C")
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     c1 = waiting_item(conn, clock, "c")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
     assert [i["id"] for i in queue(conn, clock)["items"]] == [c1]
@@ -371,7 +370,7 @@ def test_claims_end_with_the_session_and_at_start(conn: sqlite3.Connection,
 def test_the_message_is_wrapped_and_carries_no_facts_but_signals(conn: sqlite3.Connection,
                                                       clock: FakeClock) -> None:  # fmt: skip
     add(conn, clock, "c", "C")
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     c1 = waiting_item(conn, clock, "c")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)
     q, q2 = queue(conn, clock), queue(conn, clock, S2)  # one agent type a round
@@ -516,7 +515,7 @@ def test_an_invalid_classification_keeps_the_claim_three_times(
 def test_a_claude_proposal_is_checked_like_the_local_actors(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     sid = waiting_item(conn, clock, "b", classification=REQUEST)
     tok = token_for(queue(conn, clock), sid)
 
@@ -542,7 +541,7 @@ def test_a_claude_proposal_is_checked_like_the_local_actors(
 def test_a_question_from_claude_goes_to_you_even_on_a_high_risk_item(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     sid = waiting_item(conn, clock, "b", classification=REQUEST,
                        facts=KNOWN_BULK | {"sender_seen_before": False})  # fmt: skip
     q = queue(conn, clock)
@@ -560,14 +559,14 @@ def test_a_question_from_claude_goes_to_you_even_on_a_high_risk_item(
            "question": "Is this Ann from Cust?"}  # fmt: skip
     submit_proposal(conn, clock, S1, sid, tok, ask)
     r = row(conn, sid)
-    assert r["status"] == "needs_clarification"  # local_high_risk is the local pair's (§8.2)
+    assert r["status"] == "needs_clarification"  # a question goes to you (§8.2)
     assert json.loads(r["proposal"])["question"] == "Is this Ann from Cust?"
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 0
 
 
 def test_an_item_resolved_meanwhile_ends_the_claim(conn: sqlite3.Connection,
                                                    clock: FakeClock) -> None:  # fmt: skip
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     sid = waiting_item(conn, clock, "b", classification=REQUEST)
     tok = token_for(queue(conn, clock), sid)
     items.transition(conn, clock, StableId(sid), Status.RESOLVED_MANUAL, TransitionContext(),

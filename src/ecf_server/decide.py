@@ -36,7 +36,6 @@ from ecf_server import (
     config,
     items,
     jobs,
-    modelq,
     outbound_plan,
     policy,
     probe,
@@ -54,12 +53,12 @@ MAILBOX = frozenset({"label", "flag", "mark_read", "archive", "move", "junk", "d
 ASSIST_SAFE = frozenset({"label", "flag"})
 AUTO_GRANT_TTL_S = 3600
 EXECUTE_ATTEMPTS = 3
-BACKLOG_BATCH = modelq.BACKLOG_BATCH  # §5.3: above this, approvals go to digests, not cards
+BACKLOG_BATCH = claude_queue.BACKLOG_BATCH  # §5.3: above this, approvals go to digests
 
 
 def context(conn: sqlite3.Connection, item: sqlite3.Row,
             classification: dict[str, Any] | None = None) -> Context:  # fmt: skip
-    """`classification`: another than the item's (the local fallback's shadow run, V1.4)."""
+    """`classification`: another than the item's."""
     addr = conn.execute("SELECT sensitivity, outbound, preset FROM addresses"
                         " WHERE address_id = ?", (item["address_id"],)).fetchone()  # fmt: skip
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
@@ -86,7 +85,6 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
         confirmed_category=confirmed,
         batch_risky=claude_queue.batch_risky(conn, item["stable_id"]),
         outbound=bool(addr["outbound"]) if addr else False,
-        local_pair=addr is None or addr["preset"] == "A" or bool(item["fallback_at"]),
         templates=frozenset(outbound_plan.enabled_templates(conn)),
         forwards=frozenset(outbound_plan.forward_entries(conn)),
         keywords_stored=probe.keywords_stored(conn, item["address_id"]),
@@ -111,7 +109,7 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     mailbox = [MailAction(a.name, a.target, a.payload) for a in p.actions if a.name in MAILBOX]
     needs_person = any(a.mode == "approve" for a in p.actions if a.name in MAILBOX)
     _record(conn, clock, sid, p, mailbox, source)
-    if p.to_actor and source == "rule":  # the actor decides next: local (4c) or Claude (V1.4)
+    if p.to_actor and source == "rule":  # the actor decides next: Claude (V1.4)
         return claude_queue.to_actor(conn, clock, sid)
     ctx = TransitionContext(stage=stage)
     if item["status"] != Status.PROPOSED:  # from classified, or clarified after an answer
@@ -126,7 +124,7 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
         items.transition(conn, clock, StableId(sid), Status.HELD, ctx, actor="service")
         return Status.HELD
     if needs_person:
-        backlog = sum(modelq.waiting(conn).values())
+        backlog = claude_queue.backlog(conn)
         approvals.request(conn, clock, sid, mailbox, card=backlog <= BACKLOG_BATCH)
         return Status.AWAITING_APPROVAL
     _run(conn, clock, sid, mailbox, ctx)
@@ -218,7 +216,7 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
     before = to_ts(clock.now() - STRANDED_AFTER)
     rows = conn.execute(
         "SELECT stable_id FROM items WHERE status = 'classified' AND (proposal IS NULL"
-        " OR (updated_at < ? AND model_failed = 0 AND NOT (decision_source = 'rule'"
+        " OR (updated_at < ? AND NOT (decision_source = 'rule'"
         " AND json_extract(proposal, '$.plan.to_actor') = 1)))"
         " ORDER BY updated_at LIMIT ?",
         (before, limit),

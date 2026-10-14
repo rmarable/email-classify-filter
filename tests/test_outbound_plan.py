@@ -39,7 +39,7 @@ def _config(conn: sqlite3.Connection, key: str, value: Any) -> None:
 def live(conn: sqlite3.Connection, clock: FakeClock) -> str:
     make_address(conn, clock, "live")
     with write_tx(conn):
-        conn.execute("UPDATE addresses SET outbound = 1, preset = 'B'")
+        conn.execute("UPDATE addresses SET outbound = 1, preset = 'C'")
     _config(conn, "templates", TEMPLATES)
     _config(conn, "forward_allow_list", [{"id": "ap_lead", "address": "lead@acme.example"}])
     sid = make_classified(conn, clock, INVOICE, FACTS)
@@ -53,7 +53,7 @@ def _propose(conn: sqlite3.Connection, clock: FakeClock, sid: str, action: str,
     item = item_row(conn, sid)
     ctx, p = decide.plan_for(conn, item)
     got = {"action": action, "target": target, "reason": "r"} | ({"text": text} if text else {})
-    actor.decide_one(conn, clock, item, ctx, p, got, frozenset(), local=False)
+    actor.decide_one(conn, clock, item, ctx, p, got, frozenset())
     return json.loads(item_row(conn, sid)["proposal"])
 
 

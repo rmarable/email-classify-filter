@@ -74,7 +74,7 @@ def _scheduled(conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out: 
 def _data(conn: sqlite3.Connection) -> None:
     with write_tx(conn), db.items_writer("create"):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset,"
-                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'A',"
+                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'C',"
                      " 't')")  # fmt: skip
         for i, status in enumerate(("awaiting_approval", "delayed", "executing", "executed")):
             conn.execute("INSERT INTO items (stable_id, address_id, uid, uidvalidity, status,"

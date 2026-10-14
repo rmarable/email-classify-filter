@@ -182,7 +182,7 @@ class Scratch:
         conn.row_factory = sqlite3.Row
         db.migrate(conn)
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES (?, ?, ?, 'A', 'now')",
+                     " VALUES (?, ?, ?, 'C', 'now')",
                      (p.address.address_id, p.address.email, p.address.sensitivity))  # fmt: skip
         conn.executemany(
             "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, 'now',"

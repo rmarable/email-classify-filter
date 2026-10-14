@@ -1,5 +1,5 @@
-"""The Claude queue (V1.4 step 1): presets B and C stop at `awaiting_claude`; the local model
-queue leaves their Claude work alone."""
+"""The Claude queue (V1.4 step 1): preset C stops at `awaiting_claude`. Preset B's edges and the
+local model queue went in v3.0.0 (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ecf.ids import AddressId, StableId
-from ecf_server import claude_queue, decide, items, modelq, precheck
+from ecf_server import claude_queue, decide, items, precheck
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail.fake import FakeMailSource
@@ -58,37 +58,20 @@ def test_preset_c_mail_waits_for_claude_after_the_precheck(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     add(conn, clock, "c", "C")
-    add(conn, clock, "a", "A")
-    c_sid, a_sid = new_item(conn, clock, "c"), new_item(conn, clock, "a")
+    c_sid = new_item(conn, clock, "c")
+    assert status(conn, c_sid) == "new"  # not pre-checked yet
     run_precheck(conn, clock, "c", [c_sid])
-    run_precheck(conn, clock, "a", [a_sid])
     row = conn.execute("SELECT status, prechecked FROM items WHERE stable_id = ?",
                        (c_sid,)).fetchone()  # fmt: skip
     assert tuple(row) == ("awaiting_claude", 1)  # the pre-check's decision still stands
-    assert status(conn, a_sid) == "new"  # preset A: the local classifier's
-    assert modelq.waiting(conn) == {"a": 1}
     assert claude_queue.waiting(conn) == {"c": 1}
 
 
-def test_preset_b_classifies_locally_and_the_actor_waits_for_claude(
+def test_without_the_actor_an_item_goes_on_by_its_rule(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    add(conn, clock, "b", "B")
-    sid = new_item(conn, clock, "b")
-    run_precheck(conn, clock, "b", [sid])
-    assert status(conn, sid) == "new" and modelq.waiting(conn) == {"b": 1}  # Gemma classifies
-    classify(conn, clock, sid, REQUEST)
-    assert decide.apply(conn, clock, sid) is Status.AWAITING_CLAUDE
-    assert status(conn, sid) == "awaiting_claude"
-    assert json.loads(conn.execute("SELECT proposal FROM items").fetchone()[0])["plan"]["to_actor"]
-    assert modelq.waiting(conn) == {} and claude_queue.waiting(conn) == {"b": 1}
-
-
-def test_preset_b_without_the_actor_goes_on_by_its_rule(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    add(conn, clock, "b", "B")
-    sid = new_item(conn, clock, "b")
+    add(conn, clock, "c", "C")
+    sid = new_item(conn, clock, "c")
     classify(conn, clock, sid, MARKETING)
     assert decide.apply(conn, clock, sid) is Status.OBSERVED
     assert claude_queue.waiting(conn) == {}
@@ -105,38 +88,25 @@ def test_preset_c_after_a_claude_classification_the_actor_waits_for_claude(
     assert status(conn, sid) == "awaiting_claude"
 
 
-def test_answered_questions_on_b_and_c_wait_for_claude(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    for aid, preset in (("a", "A"), ("b", "B")):
-        add(conn, clock, aid, preset)
-        sid = new_item(conn, clock, aid)
-        for to in (Status.CLASSIFIED, Status.PROPOSED, Status.NEEDS_CLARIFICATION,
-                   Status.CLARIFIED):  # the actor asked and you answered  # fmt: skip
-            items.transition(conn, clock, StableId(sid), to, TransitionContext(), actor="t")
-    assert modelq.waiting(conn) == {"a": 1}
-    assert claude_queue.waiting(conn) == {"b": 1}
-
-
-def test_the_local_queue_never_gives_claude_work_to_gemma(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
+def test_answered_questions_wait_for_claude(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add(conn, clock, "c", "C")
-    sid = new_item(conn, clock, "c")  # not pre-checked yet: still `new`
-    assert status(conn, sid) == "new" and modelq.waiting(conn) == {}
+    sid = new_item(conn, clock, "c")
+    for to in (Status.CLASSIFIED, Status.PROPOSED, Status.NEEDS_CLARIFICATION,
+               Status.CLARIFIED):  # the actor asked and you answered  # fmt: skip
+        items.transition(conn, clock, StableId(sid), to, TransitionContext(), actor="t")
+    assert claude_queue.waiting(conn) == {"c": 1}
 
 
-@pytest.mark.parametrize("preset", ["B", "C"])
 def test_the_sweep_queues_a_classified_item_left_short(
-    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, preset: str
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    add(conn, clock, "x", preset)
+    add(conn, clock, "x", "C")
     sid = new_item(conn, clock, "x")
     with write_tx(conn):
         conn.execute("UPDATE items SET prechecked = 1 WHERE stable_id = ?", (sid,))
-    if preset == "C":
-        items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE, TransitionContext(),
-                         actor="service")  # fmt: skip
+    items.transition(
+        conn, clock, StableId(sid), Status.AWAITING_CLAUDE, TransitionContext(), actor="service"
+    )
     classify(conn, clock, sid, REQUEST)
 
     def crashed(*_a: object) -> Status:  # the move to the queue never happened
@@ -169,11 +139,20 @@ def test_the_sweep_queues_prechecked_c_mail_but_not_records_only_backfill(
         "awaiting_claude", "new", "new"]  # fmt: skip
 
 
-def test_preset_a_is_unchanged(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    add(conn, clock, "a", "A")
-    sid = new_item(conn, clock, "a")
-    classify(conn, clock, sid, REQUEST)
-    assert decide.apply(conn, clock, sid) is Status.CLASSIFIED  # the local actor's
-    assert modelq.waiting(conn) == {"a": 1}
-    clock.advance(3600)
-    assert claude_queue.sweep(conn, clock) == 0
+def test_the_backlog_counts_what_waits_at_awaiting_claude(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """§5.3 (v3.0.0, P9): paused and removed addresses don't count."""
+    for aid in ("c", "p", "r"):
+        add(conn, clock, aid, "C")
+        for n in range(2):
+            sid = new_item(conn, clock, aid, n)
+            items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE,
+                             TransitionContext(), actor="service")  # fmt: skip
+    new_item(conn, clock, "c", 9)  # still new: not in the backlog
+    assert claude_queue.backlog(conn) == 6
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET paused = 1 WHERE address_id = 'p'")
+        conn.execute("UPDATE addresses SET removed_at = ? WHERE address_id = 'r'",
+                     (to_ts(clock.now()),))  # fmt: skip
+    assert claude_queue.backlog(conn) == 2

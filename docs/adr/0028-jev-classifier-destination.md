@@ -2,6 +2,8 @@
 
 - **Status:** accepted (operator decision 2026-10-12, OD-493); decided, not built; amends the
   privacy rule ("never add another destination", CLAUDE.md; SPEC §12.4) for this one destination
+- **Amended by ADR 0031** (2026-10-14, OD-506): Jev is compared with C only, and Bedrock, not a
+  local model, is the stated path to revisit.
 - **Context source:** `planning-docs/v3.0.0-RAW.md` (operator draft, not approved); its Phase R
   review of 2026-10-12 (eight agents, findings P1-P26 in `state-archive/v3.0.0/`, gitignored);
   SPEC §7.8, §12.4; ADR 0005, ADR 0023

@@ -74,11 +74,6 @@ ecf doesn't protect against these (SPEC §12.2 has the details and measurements)
 - Step-up confirms your intent inside one OS account; it isn't a boundary against malware running
   as you.
 - MCP profiles are hygiene, not a boundary.
-- Any process on this computer that can bind Ollama's port (127.0.0.1:11434) or write `~/.ollama`
-  can answer as the local model; ecf checks the model's digest and that Ollama listens only on
-  loopback, not the server itself.
-- Local web pages can call Ollama, which by default allows local origins; ecf's digest check stops
-  a swapped model from being used.
 - DKIM key lookups use ordinary DNS, which can be forged on a hostile network. Opt-in DNS over
   HTTPS is in the design (OD-050) but not built yet.
 - Time Machine or another live copy of the data folder is not a backup; the scheduled export is.

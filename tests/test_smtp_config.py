@@ -123,7 +123,7 @@ def test_migration_fills_the_default_for_existing_addresses(
     for aid, host in (("ap", "imap.purelymail.com"), ("ops", "mail.acme.example")):
         conn.execute(
             "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-            " VALUES (?, ?, 'high', 'A', ?)",
+            " VALUES (?, ?, 'high', 'C', ?)",
             (aid, f"{aid}@acme.example", now),
         )
         conn.execute(
@@ -142,7 +142,7 @@ def test_api_smtp_change_needs_step_up(conn: sqlite3.Connection, db_path: Path) 
     st = make_state(db_path, MemorySecretStore())
     st.sender_factory = Senders()
     body = {"email": "ap@acme.example", "imap_host": "imap.acme.example", "sensitivity": "high",
-            "preset": "A", "app_password": GOOD, "org_domains": ["acme.example"],
+            "preset": "C", "app_password": GOOD, "org_domains": ["acme.example"],
             "smtp_port": 587, "smtp_host": "smtp.acme.example"}  # fmt: skip
     r = call(st, "POST", "/v1/addresses", body)
     assert r.status_code == 201 and r.json()["smtp_port"] == 587

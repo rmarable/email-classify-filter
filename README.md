@@ -3,8 +3,8 @@
 ecf watches business mailboxes (for example `billing@` or `accounts-payable@`) over IMAP and
 classifies each message. It flags likely invoice and payment fraud and regulator mail with
 deterministic rules, and asks you to approve actions in Slack before anything risky happens. v1 runs
-on one Mac (Linux isn't supported yet; it is roadmap milestone M5) with a local model or
-Claude, and needs no cloud infrastructure.
+on one Mac (Linux isn't supported yet; it is roadmap milestone M5) with Claude, and needs no cloud
+infrastructure of your own.
 
 ## Status
 
@@ -47,24 +47,26 @@ on Linux, Secret Service or `systemd-creds`. Full messages are held in memory on
 to disk. The `ecf` command and the Claude Code plugin talk to it over a private socket and hold no
 rules of their own.
 
-Each address uses one of three presets:
+Each address uses a preset:
 
 | Preset | Classifier | Actor | Runs |
 |---|---|---|---|
-| A | Gemma 4 12B on Ollama | Gemma | on this computer, every check |
-| B | Gemma | Claude | Claude only when you type `/ecf-review` in `ecf claude` |
-| C | Claude | Claude | the same |
+| C | Claude | Claude | only when you type `/ecf-review` in `ecf claude` |
+| D (planned, v3.0.0 step 4) | TypeSafe Jev | Claude | Jev when mail arrives; Claude at `/ecf-review` |
 
-Preset A needs about 9 GB of free memory while the model is loaded and is about three times
-slower on battery (SPEC §7.5, §21.2).
+Nothing classifies a C address's mail until someone runs `/ecf-review`; the fraud and regulator
+rules still flag mail as it arrives (SPEC §4.1). v3.0.0 removes presets A and B, the local model
+(Gemma on Ollama): an A or B address becomes C at upgrade and is paused until you resume it, which
+confirms its owner agreed to mail going to Anthropic (ADR 0031;
+[admin guide](docs/admin-guide.md#v300-converted-addresses)).
 
 ## Install
 
 Requirements: macOS (Linux isn't supported until milestone M5); Python 3.12.6 or newer
 and [uv](https://docs.astral.sh/uv/); full-disk encryption and a screen lock; a Slack workspace
 where you can install an app; an IMAP mailbox with app passwords (Purelymail is tested; Microsoft
-365 isn't supported, as it needs OAuth); Ollama for presets A and B; Claude Code and a separate
-Claude login for presets B and C.
+365 isn't supported, as it needs OAuth); Claude Code and a separate Claude login for
+`ecf claude`.
 
 Personal Gmail accounts (gmail.com) are supported over IMAP with an app password; Google
 Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
@@ -99,8 +101,8 @@ ecf init
 `init` prints a "have ready" list, then walks through: the background service, disk-encryption and
 secret-store checks, whether this install is `prod` or `test`, the Slack app, your first mailbox
 (its app password, your org domains, a probe of the mailbox, the preset), alert email (optional),
-backups (the backup key, shown once for your password manager, and a folder off this disk), the
-local model, and Claude for presets B and C. `ecf init --resume` picks up where you stopped;
+backups (the backup key, shown once for your password manager, and a folder off this disk), and
+Claude's login. `ecf init --resume` picks up where you stopped;
 `ecf init status` shows each step. Every address starts in `shadow` with sending off.
 
 Then:
@@ -137,7 +139,8 @@ again; other approvals last 14 days. A computer left on keeps working around the
 
 Email content goes only to your mail provider, this computer, Slack (subjects, senders,
 classifications, the model's reason, your answers, and short excerpts when you ask), and Anthropic
-while you run `/ecf-review` (presets B and C). Alert email carries no subject, sender or text.
+while you run `/ecf-review`. Once preset D exists, TypeSafe receives what its classifier
+needs (SPEC §12.4). Alert email carries no subject, sender or text.
 Backups are encrypted to your backup key. ecf logs no message content. The full statement is SPEC
 §12.4.
 

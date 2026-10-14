@@ -3,21 +3,21 @@ OD-014, OD-273, OD-461, OD-474; V1.4 step 2).
 
 - **`data/models.lock`** names the Claude model for each role: the main session (Haiku, OD-474;
   Sonnet in v1.0.0, OD-461), `classifier`, `classifier_high` and `actor` (Sonnet), `actor_high`
-  (Opus). It ships in the wheel, like `ollama.lock`; only an ecf release changes it. Its
+  (Opus). It ships in the wheel; only an ecf release changes it. Its
   `lifecycle` records each pinned ID's state and retirement date from Anthropic's deprecations
   page (V1.4 step 10; OD-299), which the weekly model watch (`model_watch.py`) announces and the
   CI canary keeps current.
 - **Override** (`ecf settings set claude_model_override <id>|none`; operator decision 2026-10-02):
   an ID replaces every pin in its family (a `claude-sonnet-*` ID replaces the Sonnet pins), one
   override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused. It
-  needs step-up and sends a Security Notice. An override of a gate pin changes the pins of every B
-  and C address using it, which drop to assist until their gate passes again (§7.5); a Haiku
-  override replaces only the main session, which isn't a gate pin (OD-474).
+  needs step-up and sends a Security Notice. An override of a gate pin changes the pins of every
+  address using it, which drop to assist until their gate passes again (§7.5); a Haiku override
+  replaces only the main session, which isn't a gate pin (OD-474).
 - **Pins per address** (operator decision 2026-10-02): everything its preset uses, whatever its
-  sensitivity. A: the Ollama digest; B: the digest and both actors; C: both classifiers and both
-  actors. The main session classifies nothing, so it isn't a gate pin.
-- **Key**: what reviews, eval runs and the gate row are matched on. For A it is the digest itself
-  (so records made before V1.4 still count); otherwise a short hash of the pins.
+  sensitivity. C: both classifiers and both actors (preset D's from v3.0.0 step 4; A and B were
+  removed in v3.0.0, ADR 0031). The main session classifies nothing, so it isn't a gate pin.
+- **Key**: what reviews, eval runs and the gate row are matched on: a short hash of the pins (a
+  record made before V1.4 holds preset A's Ollama digest, which `key` still reads).
 """
 
 from __future__ import annotations
@@ -31,17 +31,14 @@ from importlib import resources
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import CompiledSchema, load_schema, local_schema
-from ecf_server import addresses, config, ollama, slack_admin, stepup
+from ecf_server import addresses, config, slack_admin, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import Notifier
 
 ROLES = ("main_session", "classifier", "classifier_high", "actor", "actor_high")
-GATE_ROLES = {"A": (), "B": ("actor", "actor_high"),
-              "C": ("classifier", "classifier_high", "actor", "actor_high")}  # fmt: skip
-LOCAL_PRESETS = frozenset({"A", "B"})  # the gate binds the Ollama digest too
-PAIR = {"A": "gemma4-12b/local", "B": "gemma4-12b/claude", "C": "claude/claude"}  # gate.pair_key
+GATE_ROLES = {"C": ("classifier", "classifier_high", "actor", "actor_high")}  # D: step 4
+PAIR = {"C": "claude/claude"}  # gate.pair_key
 OVERRIDE_KEY = "claude_model_override"  # settings row: {family: id}
 _ID = re.compile(r"claude-(haiku|sonnet|opus)-[0-9][a-z0-9-]{0,40}")
 
@@ -102,49 +99,32 @@ def _applied(over: dict[str, str]) -> dict[str, str]:
 
 
 def _gate_changes(conn: sqlite3.Connection, new: dict[str, str]) -> list[str]:
-    """The B and C addresses whose gate pins the override map `new` changes. The main session
-    isn't a gate pin, so a Haiku override (OD-474) moves no address back to assist."""
+    """The addresses whose gate pins the override map `new` changes. The main session isn't a
+    gate pin, so a Haiku override (OD-474) moves no address back to assist."""
     old_pins, new_pins = effective(conn), _applied(new)
-    return [a["email"] for a in addresses.list_addresses(conn) if a["preset"] in ("B", "C")
+    return [a["email"] for a in addresses.list_addresses(conn) if a["preset"] in GATE_ROLES
             and any(old_pins[r] != new_pins[r] for r in GATE_ROLES[a["preset"]])]  # fmt: skip
 
 
 def in_use(conn: sqlite3.Connection) -> bool:
-    """Whether any address uses Claude (preset B or C)."""
-    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL AND preset IN"
-                        " ('B', 'C') LIMIT 1").fetchone() is not None  # fmt: skip
-
-
-def local_key(schema: CompiledSchema | None = None) -> str:
-    """The local model's gate and eval key: its pinned Ollama digest, the schema it is asked
-    with (the schema digest joins the gate key, OD-475) and the classifier's prompt digest
-    (plan 0.3): a new schema or new wording is a new gate; a keyword patch isn't (Q3). The
-    schema is the one the model is asked (`local_schema`): schema v3 asks it v2, so v3 alone
-    isn't a new local gate (P6, OD-498), and never the install's own fields (v3.0.0 S4, D8), so
-    they don't move A's or B's key (C's pins hold the whole effective schema, below; D3).
-    Callers with a connection pass `config.current_schema(conn)`; without one it is the shipped
-    schema."""
-    from ecf_server import classifier  # noqa: PLC0415 - classifier imports this module
-
-    asked = local_schema(schema or load_schema())  # v2 for v3: A's key doesn't move (P6)
-    return f"{ollama.load_pin().digest}+{asked.digest}+{classifier.prompt_digest(asked)[:16]}"
+    """Whether any address uses Claude (every address does since v3.0.0, ADR 0031)."""
+    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL"
+                        " LIMIT 1").fetchone() is not None  # fmt: skip
 
 
 def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
     eff = effective(conn)
     schema = config.current_schema(conn)
-    out = {r: eff[r] for r in GATE_ROLES[preset]}
-    if preset in LOCAL_PRESETS:
-        out["digest"] = local_key(schema)
-    else:
-        from ecf_server import claude_review  # noqa: PLC0415 - claude_review imports this module
+    from ecf_server import claude_review  # noqa: PLC0415 - claude_review imports this module
 
-        out["schema"] = schema.digest  # Claude classifies with it too (OD-475, OD-478)
-        out["prompt"] = claude_review.prompt_digest(schema)[:16]  # and the signals (Q4, OD-484)
+    out = {r: eff[r] for r in GATE_ROLES[preset]}
+    out["schema"] = schema.digest  # Claude classifies with it too (OD-475, OD-478)
+    out["prompt"] = claude_review.prompt_digest(schema)[:16]  # and the signals (Q4, OD-484)
     return out
 
 
 def key(p: dict[str, str]) -> str:
+    """The pins' key; a record from before V1.4 (preset A's Ollama digest alone) is the digest."""
     if set(p) == {"digest"}:
         return p["digest"]
     return "pins-" + stepup.digest(sorted(p.items()))[:16]
@@ -154,7 +134,7 @@ def for_address(conn: sqlite3.Connection, address_id: str) -> tuple[str, dict[st
     """(preset, pins) for this address now."""
     row = conn.execute("SELECT preset FROM addresses WHERE address_id = ?",
                        (address_id,)).fetchone()  # fmt: skip
-    preset = str(row["preset"]) if row else "A"
+    preset = str(row["preset"]) if row else "C"
     return preset, pins(conn, preset)
 
 
@@ -196,7 +176,7 @@ def _proposed(conn: sqlite3.Connection, value: str) -> dict[str, str]:
 def _describe_override(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     new = _proposed(conn, str(target.get("value", "")))
     what = ", ".join(f"{f} -> {i}" for f, i in sorted(new.items())) or "the pinned models"
-    gate = "; live B and C addresses go back to assist" if _gate_changes(conn, new) else ""
+    gate = "; live addresses go back to assist" if _gate_changes(conn, new) else ""
     return stepup.Bound(stepup.digest("claude_model_override", overrides(conn), new),
                         f"ecf: run Claude reviews with {what}{gate}")  # fmt: skip
 

@@ -1,5 +1,7 @@
-"""`ecf eval run` (V1.3 step 8c; SPEC §16, OD-237, OD-241): which cases count, scoring, the result
-file and its metrics-only content, the battery pause, one run at a time."""
+"""`ecf eval run` (V1.3 step 8c; SPEC §16, OD-241): which cases count, scoring, the result file and
+its metrics-only content, one run at a time, and the rescores. From v3.0.0 (ADR 0031, R-D6) the
+runner's only backend is `null` (the rules alone), which never passes the go-live gate (P5); the
+Gemma and decision-model backends, the battery pause and the model queue are gone."""
 
 from __future__ import annotations
 
@@ -13,23 +15,18 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, cast
 
-import httpx
 import pytest
 
-from ecf.errors import ConflictError, InvalidInputError, ServiceUnavailableError
+from ecf.errors import ConflictError, InvalidInputError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
-from ecf.eval.results import CaseResult, ResultFile, compare, load_result
-from ecf.schema import FIXED_ITEMS, load_schema, load_schema_v2, load_schema_v2_0_0
-from ecf_server import evalrun, modelq, policy, ruletest, schedule
-from ecf_server.clock import FakeClock, to_ts
-from tests.test_classifier import ChatOllama
-from tests.test_models import check_kw
+from ecf.eval.results import CaseResult, ResultFile, call_figures, compare, load_result
+from ecf.schema import FIXED_ITEMS, from_v2, load_schema
+from ecf_server import db, evalrun, policy, ruletest, schedule, triggers
+from ecf_server.clock import FakeClock
+from tests.helpers import BEC
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
-BEC = {"category": "vendor_change_request", "priority": "high", "requires_action": True,
-       "requires_reply": False, "payment_related": True, "deadline_mentioned": False,
-       "sender_type": "vendor", "fraud_risk": "high"}  # fmt: skip
 AC = schedule.Power(laptop=True, on_ac=True)
 
 
@@ -48,8 +45,6 @@ def root(tmp_path: Path) -> Path:
 def _clear() -> None:
     evalrun.RUN.set(state="idle", run_id="", done=0, total=0, result=None, detail="")
     evalrun.RUN.stop.clear()
-    if modelq.EXCLUSIVE.held():
-        modelq.EXCLUSIVE.release()
 
 
 @pytest.fixture(autouse=True)
@@ -61,6 +56,13 @@ def _reset() -> Iterator[None]:
 
 def _inline(work: Any) -> None:
     work()
+
+
+def _start(db_path: Path, clock: FakeClock, root: Path, **opts: Any) -> dict[str, Any]:
+    """A run inline (`spawn`), on AC power, with fixed machine figures."""
+    return evalrun.start(lambda: db.connect(db_path), clock, db_path.parent,
+                         evalrun.Options(root, **opts), power=lambda: AC, battery=lambda: 90,
+                         spawn=_inline, thermal=lambda: {"CPU_Speed_Limit": 100})  # fmt: skip
 
 
 def test_only_confirmed_unchanged_cases_count(root: Path) -> None:
@@ -142,125 +144,109 @@ def test_a_result_keeps_what_the_model_returned() -> None:
     assert evalrun.score(case, None, None, None).got == {"rule": None}
 
 
-def test_a_run_writes_metrics_only_and_records_the_digest(
+def test_a_null_run_writes_metrics_only_and_never_passes_the_gate(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    fake = ChatOllama(json.dumps(BEC))
-    evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
-                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
-                  spawn=_inline, check_kw=check_kw(),
-                  thermal=lambda: {"CPU_Speed_Limit": 100})  # fmt: skip
+    """R-D6, P5, P16, P28: the null classifier (every field at its least risky value) runs the
+    rules alone: `null/local`, digest `null`, no actor (`options.actor` false), no determinism
+    figure, never `gate_passed`, and it doesn't re-point the go-live gate's set."""
+    _start(db_path, clock, root)
     snap = evalrun.RUN.snapshot()
     assert snap["state"] == "done", snap
     result = snap["result"]
     assert result["confirmed"] == 2 and result["cases"] == 3
-    row = conn.execute("SELECT digest, gate_passed, path FROM eval_runs").fetchone()
-    assert row["digest"] == evalrun.claude_pins.local_key()  # digest + schema (OD-475)
+    assert result["options"] == {"classifier": True, "actor": False} and result["complete"]
+    # the rules alone still escalate both confirmed fraud cards: 0 unsafe, recall 100%, and yet
+    assert result["unsafe"] == [] and result["fraud_guard_recall"] == 100.0
+    assert result["gate_passed"] is False
+    row = conn.execute("SELECT pair, digest, gate_passed, path FROM eval_runs").fetchone()
+    assert (row["pair"], row["digest"], row["gate_passed"]) == ("null/local", "null", 0)
+    assert evalrun.pair_for(evalrun.NULL) == "null/local"
     path = Path(row["path"])
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     text = path.read_text()
     assert "bank has changed" not in text and "SYSTEM NOTE" not in text  # no message text (I5)
     summary = json.loads(text)["summary"]
-    assert summary["determinism_diffs"] == 0
-    every = ["starter-bec", "starter-control", "starter-injection"]  # 3 cases: all repeat
-    assert summary["determinism"] == {"cases": every, "field_flips": {}}
-    # what the model was asked with: schema v2 under v3 (P6, OD-498)
-    assert summary["schema_digest"] == load_schema_v2().digest
-    assert summary["prompt_digest"] == evalrun.classifier.prompt_digest(load_schema())
-    assert summary["keywords_digest"] == evalrun.triggers.keywords_digest()  # beside it (Q3)
+    assert summary["determinism_diffs"] == 0 and "determinism" not in summary
+    assert summary["backend"] == "null" and summary["classifier_digest"] == "null"
+    assert summary["actor_digest"] is None and "model" not in summary and "roles" not in summary
+    assert summary["schema_digest"] == load_schema().digest
+    assert "prompt_digest" not in summary  # the null arm asks nothing
+    assert summary["keywords_digest"] == triggers.keywords_digest()  # (Q3)
     assert summary["rules_digest"] == evalrun.rules.starter_digest()  # step 7
     assert summary["scoring"] == "live"
+    assert summary["excerpt_prep"] == evalrun.excerpt.VERSION
     assert conn.execute("SELECT value FROM settings WHERE key = ?",
-                        (evalrun.EVAL_ROOT,)).fetchone() is not None  # fmt: skip
-    model = summary["model"]  # the run's own token and speed figures (step 9)
-    assert model["calls"] > 0 and model["emails"] == 3 and model["output_tokens"] > 0
-    assert model["generation_tps"]["median"] is not None
-    env = summary["environment"]  # the machine and Ollama at the start and end (plan 0.3)
+                        (evalrun.EVAL_ROOT,)).fetchone() is None  # P16: only /ecf-eval  # fmt: skip
+    env = summary["environment"]  # the machine at the start and end (plan 0.3); no model server
     for when in ("start", "end"):
-        assert env[when]["ollama_version"] == "0.35.0" and env[when]["num_ctx"] == 6144
         assert env[when]["power"] == {"laptop": True, "on_ac": True, "battery": 90}
         assert env[when]["thermal"] == {"CPU_Speed_Limit": 100}
-        assert env[when]["loaded"][0]["context_length"] == 6144
-        assert "expires_at" not in env[when]["loaded"][0]
-    roles = summary["roles"]  # per role, so the classifier's figures aren't mixed (plan 0.3)
-    assert roles["classifier"]["emails"] == 3 and roles["classifier"]["calls"] == 3
-    assert set(roles) == {"classifier", "determinism"}  # every plan escalates: no actor call
-    assert roles["determinism"]["calls"] == 3
-    assert model["calls"] == sum(r["calls"] for r in roles.values())
+        assert not {"ollama_version", "num_ctx", "loaded"} & env[when].keys()
     cases = load_result(path).cases
-    assert all(c.classifier is not None and c.classifier.output_tokens for c in cases)
-    assert all(c.actor is None for c in cases)
-    # per-stage measurements (pre-classifier plan step 7d)
-    m = summary["measurements"]
+    assert all(c.classifier is None and c.actor is None and c.proposal is None for c in cases)
+    assert all(c.rule_alone == c.got["rule"] for c in cases)  # null is the rules alone
+    m = summary["measurements"]  # per-stage measurements (pre-classifier plan step 7d)
     assert m["facts_ms"]["p50"] is not None and m["facts_ms"]["max"] >= m["facts_ms"]["p50"]
     assert m["scan_ms"]["p95"] is not None and m["excerpt_chars"]["p50"] > 0
-    assert m["keyword_patterns"] == evalrun.triggers.pattern_count() > 0
-    assert m["signals"]["of"] == 3 and m["signals"]["cases"] <= 3
-    cls = m["calls"]["classifier"]
-    assert cls["calls"] == 3 and cls["uncached_tokens"] == {"p50": 69, "p95": 69, "max": 69}
-    assert "actor" not in m["calls"] and m["calls"]["cache_short"][0]["after"] == "an actor call"
+    assert m["keyword_patterns"] == triggers.pattern_count() > 0
+    assert m["signals"]["of"] == 3
     assert env["start"]["rows"] == {"senders": 0, "items": 0} and "rows" not in env["end"]
 
 
-def test_a_cases_metrics_are_its_own_successful_call() -> None:
-    from ecf_server import stats  # noqa: PLC0415
-
-    ok = stats.Call(True, 588, 519, 57, 1, 1_900_000_000, 1, 2)
-    failed = stats.Call(False, None, None, None, None, None, None, None)
-    m = evalrun._metrics([ok], 0)  # pyright: ignore[reportPrivateUsage]
-    assert m is not None and (m.prompt_tokens, m.cached_tokens, m.output_tokens) == (588, 519, 57)
-    assert evalrun._metrics([ok], 1) is None  # pyright: ignore[reportPrivateUsage] - no call
-    assert evalrun._metrics([ok, failed], 1) is None  # pyright: ignore[reportPrivateUsage]
-
-
-class RoleOllama(ChatOllama):
-    """Answers the actor (told apart by its `num_predict`) with its own reply."""
-
-    def __init__(self, classifier: str, actor: str) -> None:
-        super().__init__(classifier)
-        self.classifier_reply, self.actor_reply = classifier, actor
-
-    def handler(self, req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/api/chat":
-            body = json.loads(req.content)
-            actor = body["options"]["num_predict"] == evalrun.ollama.NUM_PREDICT["actor"]
-            self.reply = self.actor_reply if actor else self.classifier_reply
-        return super().handler(req)
+def test_no_backend_is_gate_eligible_until_step_4(
+    monkeypatch: pytest.MonkeyPatch, db_path: Path, clock: FakeClock, root: Path,
+    conn: sqlite3.Connection,
+) -> None:  # fmt: skip
+    """P5: `gate_eligible = backend in GATE_BACKENDS and redact`, and `GATE_BACKENDS` is empty
+    until v3.0.0 step 4. Even listed there, a null run has no actor, so it never passes."""
+    assert not evalrun.GATE_BACKENDS
+    monkeypatch.setattr(evalrun, "GATE_BACKENDS", frozenset({evalrun.NULL}))
+    _start(db_path, clock, root)
+    assert evalrun.RUN.snapshot()["result"]["gate_passed"] is False
+    assert conn.execute("SELECT max(gate_passed) FROM eval_runs").fetchone()[0] == 0
 
 
-def test_a_successful_actor_call_is_recorded(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+@pytest.mark.parametrize(("backend", "why"), [
+    ("gemma", "removed in v3.0.0"),
+    ("systemone:tev1-4b", "removed in v3.0.0"),
+    ("systemone:", "removed in v3.0.0"),
+    ("llama", "classifier backend 'llama': null"),
+])  # fmt: skip
+def test_removed_and_unknown_backends_are_refused(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, backend: str, why: str
 ) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    bug = BEC | {"category": "bug_report", "priority": "medium", "requires_reply": True,
-                 "payment_related": False, "fraud_risk": "none"}  # fmt: skip
-    flag = {"action": "flag", "target": "", "reason": "a customer is waiting", "text": ""}
-    fake = RoleOllama(json.dumps(bug), json.dumps(flag))
-    evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
-                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90,
-                  spawn=_inline, check_kw=check_kw(), thermal=dict)  # fmt: skip
-    snap = evalrun.RUN.snapshot()
-    assert snap["state"] == "done", snap
-    roles = snap["result"]["roles"]
-    assert roles["actor"]["calls"] > 0 and roles["actor"]["failed"] == 0
-    path = Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
-    acted = [c for c in load_result(path).cases if c.actor is not None]
-    assert len(acted) == roles["actor"]["calls"]  # each case that reached the actor has its call
-    assert all(c.actor is not None and c.actor.output_tokens == 57 for c in acted)
-    assert all("flag" in c.actions for c in acted)
+    """R-D12: only `eval run` refuses them; their old results still load and rescore
+    (tests/test_archived_results.py)."""
+    with pytest.raises(InvalidInputError, match=why):
+        _start(db_path, clock, root, backend=backend)
+    assert evalrun.RUN.snapshot()["state"] == "idle"
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
 
 
-def test_an_unreadable_environment_figure_is_none() -> None:
-    def refuse(req: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("refused", request=req)
+def test_no_signals_is_for_a_model_backend(db_path: Path, clock: FakeClock, root: Path) -> None:
+    with pytest.raises(InvalidInputError, match="--no-signals"):
+        _start(db_path, clock, root, signals=False)
+    assert evalrun.Options(root, signals=False).switches_off == ["signals"]
+    assert evalrun.Options(root).sent({}) == ()
 
-    gone = evalrun.ollama.Client(transport=httpx.MockTransport(refuse))
-    env = evalrun.environment(gone, lambda: AC, lambda: None, dict)
-    assert env["ollama_version"] is None and env["loaded"] is None and env["thermal"] == {}
-    assert env["power"] == {"laptop": True, "on_ac": True, "battery": None}
+
+def test_the_null_classification_is_the_least_risky() -> None:
+    assert evalrun.null_classification(load_schema()) == {
+        "category": "other",
+        "priority": "low",
+        "requires_action": False,
+        "requires_reply": False,
+        "payment_related": False,
+        "deadline_mentioned": False,
+        "sender_type": "unknown",
+        "fraud_risk": "none",
+    } | dict.fromkeys(FIXED_ITEMS, False)
+
+
+def test_the_environment_records_the_machine_only() -> None:
+    env = evalrun.environment(lambda: AC, lambda: None, dict)
+    assert env == {"power": {"laptop": True, "on_ac": True, "battery": None}, "thermal": {}}
 
 
 def test_the_determinism_sample_is_seeded_and_spread_across_the_set() -> None:
@@ -283,35 +269,25 @@ def test_field_flips() -> None:
     assert evalrun.field_flips(a, None) == ["failed"] and evalrun.field_flips(None, None) == []
 
 
-def test_the_injection_case_counts_as_unsafe_when_the_model_obeys(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    fooled = BEC | {"category": "marketing", "fraud_risk": "none", "payment_related": False}
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(fooled)).client,
-                  db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    result = evalrun.RUN.snapshot()["result"]
-    # a fooled model gets both categories wrong, but I1 holds: the fraud trigger still escalates
-    # the BEC, and the injected email's archive isn't corroborated, so nothing is hidden; a run
-    # without the actor never passes the gate, though. From S3b (P10) `correct` is rule, safety
-    # and the labelled fixed items: the BEC misses its bank change, the injection case is right
-    assert (result["correct"], result["unsafe"], result["gate_passed"]) == (1, [], False)
-    assert result["label_map"] == 2 and result["category_labelled"] == 2
-    assert result["options"] == {"classifier": True, "actor": False} and result["complete"]
-    assert result["fraud_cases"] == 2  # both confirmed cases expect fraud_guard; not the control
-    assert (result["fraud_guard_cases"], result["fraud_guard_missed"]) == (2, [])  # I1 again
+def _answered(root: Path, tmp_path: Path, answer: dict[str, Any]) -> Path:
+    """A result recording `answer` for every case (no plan yet), for `rescore_through_policy`
+    to plan as a run would: the cards' facts computed, their expected facts applied (Q1)."""
+    cases, version = evalrun.load(root, fraud_only=False)
+    rows = [CaseResult(id=c.id, correct=False, confirmed=c.confirmed, got=answer | {"rule": None},
+                       classifier=None) for c in cases]  # fmt: skip
+    old = ResultFile(run_id="a" * 32, pair="test/local", set_version=version,
+                     created_at="2026-10-14T00:00:00Z", cases=rows, digest="d",
+                     summary={"complete": True,
+                              "options": {"classifier": True, "actor": False}})  # fmt: skip
+    return evalrun.write_result(tmp_path, old, "answered.json")
 
 
 def test_a_cards_expected_facts_reach_the_hide_path(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+    root: Path, tmp_path: Path, clock: FakeClock
 ) -> None:
     """Q1: the eval applies a card's expected facts as `ecf rules test` does and recomputes
     `bulk_corroborates`, so an authenticated bulk notice from a seen sender, answered benignly,
     is archived; the same notice without those facts isn't."""
-    from ecf_server import db  # noqa: PLC0415
-
     card = (root / "cases" / "starter-control.md").read_text()
     seen = card.replace("id: starter-control", "id: seen-bulk").replace(
         "  rule: marketing", "  facts: {auth_result: pass, sender_seen_before: true}\n"
@@ -321,24 +297,18 @@ def test_a_cards_expected_facts_reach_the_hide_path(
     labels.confirm(root, "seen-bulk", date(2026, 10, 1))
     benign = BEC | {"category": "marketing", "priority": "low", "requires_action": False,
                     "payment_related": False, "fraud_risk": "none"}  # fmt: skip
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(benign)).client,
-                  db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    assert evalrun.RUN.snapshot()["state"] == "done"
-    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
-    actions = {c.id: set(c.actions) for c in load_result(Path(path)).cases}
+    out = evalrun.rescore_through_policy(root, _answered(root, tmp_path, benign), clock)
+    actions = {c.id: set(c.actions) for c in load_result(Path(out["path"])).cases}
     assert {"archive"} <= actions["seen-bulk"] and not {"archive", "mark_read"} & actions[
         "starter-control"]  # fmt: skip
 
 
 def test_the_fraud_figures_catch_a_hidden_fraud_card(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+    root: Path, tmp_path: Path, clock: FakeClock
 ) -> None:
     """Plan 0.3: a card labelled fraud that only the model can route to fraud_guard, answered
     as harmless marketing from a known, authenticated sender, is archived: the fraud figures
     show it hidden, answered `none` and under-rated among the model-only cases."""
-    from ecf_server import db  # noqa: PLC0415
-
     card = (root / "cases" / "starter-control.md").read_text()
     lure = card.replace("id: starter-control", "id: seen-lure").replace(
         "labels: {category: marketing, requires_action: false, fraud_risk: none}\n"
@@ -351,10 +321,8 @@ def test_the_fraud_figures_catch_a_hidden_fraud_card(
     labels.confirm(root, "seen-lure", date(2026, 10, 1))
     benign = BEC | {"category": "marketing", "priority": "low", "requires_action": False,
                     "payment_related": False, "fraud_risk": "none"}  # fmt: skip
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(benign)).client,
-                  db_path.parent, evalrun.Options(root, actor=False), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    result = evalrun.RUN.snapshot()["result"]
+    out = evalrun.rescore_through_policy(root, _answered(root, tmp_path, benign), clock)
+    result = out["summary"]
     assert result["fraud_hidden"] == ["seen-lure"]
     # starter-bec (high) and seen-lure are the confirmed cases labelled medium or high
     assert result["fraud_answered_none"] == {"none": 2, "of": 2}
@@ -368,104 +336,31 @@ def test_the_fraud_figures_catch_a_hidden_fraud_card(
     assert "under-rated on 1 of 1 cases only the model routes to fraud_guard" in lines
 
 
-def test_a_low_battery_pauses_and_releases_the_queue(
-    monkeypatch: pytest.MonkeyPatch, root: Path, clock: FakeClock
-) -> None:
-    monkeypatch.setattr(evalrun, "PAUSE_POLL_S", 0.01)
-    plugged = {"ac": False}
-
-    def power() -> schedule.Power:
-        return schedule.Power(laptop=True, on_ac=plugged["ac"])
-
-    seen: list[bool] = []
-
-    def battery() -> int:
-        seen.append(modelq.EXCLUSIVE.held())
-        if len(seen) > 2:
-            plugged["ac"] = True
-        return 10
-
-    told: list[tuple[str, bool]] = []
-    lines: list[str | None] = []
-
-    def tell(text: str, desktop: bool) -> None:
-        told.append((text, desktop))
-        lines.append(evalrun.slack_line())
-
-    opts = evalrun.Options(root, battery_floor=15)
-    evalrun.RUN.set(run_id="abcdef1234", state="running", done=4, total=10)
-    assert evalrun._hold(opts, power, battery, started=evalrun.time.monotonic(), clock=clock,  # pyright: ignore[reportPrivateUsage]
-                         tell=tell)  # fmt: skip
-    assert len(seen) >= 3 and not any(seen)  # released while paused
-    assert modelq.EXCLUSIVE.held()  # held again once on AC
-    assert modelq.EXCLUSIVE.since == to_ts(clock.now())  # for the digest's line
-    assert told == [
-        ("Eval abcdef12 paused on battery (10%, floor 15%) after case 4 of 10: plug in to resume."
-         " Model checks for new mail run meanwhile.", True),
-        ("Eval abcdef12 resumed on AC power (4 of 10 cases done): model checks for new mail wait"
-         " until it ends.", False),
-    ]  # once each, however long the pause  # fmt: skip
-    assert lines[1] == ("Eval abcdef12 paused (battery 10%, at or below 15%: plug in to resume);"
-                        " model checks for new mail run meanwhile (ecf eval status)")  # fmt: skip
-    evalrun.RUN.set(state="idle")
-    modelq.EXCLUSIVE.release()
-
-
 def test_one_run_at_a_time(db_path: Path, clock: FakeClock, root: Path) -> None:
-    from ecf_server import db  # noqa: PLC0415
+    def start() -> dict[str, Any]:
+        return evalrun.start(lambda: db.connect(db_path), clock, db_path.parent,
+                             evalrun.Options(root), spawn=lambda _w: None)  # fmt: skip
 
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client, db_path.parent,
-                  evalrun.Options(root), spawn=lambda _w: None, check_kw=check_kw())  # fmt: skip
+    start()
     with pytest.raises(ConflictError, match="already running"):
-        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client,
-                      db_path.parent, evalrun.Options(root), spawn=lambda _w: None,
-                      check_kw=check_kw())  # fmt: skip
-
-
-def test_a_run_refuses_to_start_when_ollama_isnt_ready(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    with pytest.raises(ServiceUnavailableError, match="Ollama isn't running"):
-        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client,
-                      db_path.parent, evalrun.Options(root), spawn=_inline,
-                      check_kw=check_kw(lsof=""))  # fmt: skip
-    assert evalrun.RUN.snapshot()["state"] == "idle"
-    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
-
-
-def test_ollama_going_away_mid_run_fails_the_run_without_a_result(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    gone = ChatOllama(httpx.ConnectError("refused"))  # readiness passes; every chat fails
-    evalrun.start(lambda: db.connect(db_path), clock, gone.client, db_path.parent,
-                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90, spawn=_inline,
-                  check_kw=check_kw())  # fmt: skip
-    snap = evalrun.RUN.snapshot()
-    assert snap["state"] == "failed" and "Ollama isn't running" in snap["detail"]
-    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
-    assert not modelq.EXCLUSIVE.held()
+        start()
 
 
 def test_a_stopped_run_is_saved_but_never_passes_the_gate(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    from ecf_server import db  # noqa: PLC0415
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    alone = evalrun.rules_alone
+    seen: list[str] = []
 
-    calls = {"n": 0}
-
-    def battery() -> int:  # `ecf eval stop` arrives during the second case (read 1: environment)
-        calls["n"] += 1
-        if calls["n"] > 2:
+    def stop_after_two(*args: Any) -> str:  # `ecf eval stop` arrives during the second case
+        seen.append("x")
+        if len(seen) == 2:
             evalrun.stop()
-        return 90
+        return alone(*args)
 
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(root), power=lambda: AC, battery=battery,
-                  spawn=_inline, check_kw=check_kw())  # fmt: skip
+    monkeypatch.setattr(evalrun, "rules_alone", stop_after_two)
+    _start(db_path, clock, root)
     snap = evalrun.RUN.snapshot()
     assert (snap["state"], snap["detail"]) == ("stopped", "stopped after 2 of 3")
     assert snap["result"]["complete"] is False and snap["result"]["unsafe"] == []
@@ -475,11 +370,7 @@ def test_a_stopped_run_is_saved_but_never_passes_the_gate(
 def test_a_run_marked_not_for_the_gate_is_saved_but_never_passes(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(root, for_gate=False), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    _start(db_path, clock, root, for_gate=False)
     result = evalrun.RUN.snapshot()["result"]
     assert result["complete"] and result["options"]["for_gate"] is False
     assert result["gate_passed"] is False
@@ -495,12 +386,8 @@ def test_a_run_copies_its_result_out_of_the_install(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
     """`ecf eval run --copy-to` (plan 0.3): the same file, 0600, beside the install's."""
-    from ecf_server import db  # noqa: PLC0415
-
     copy = tmp_path / "kept" / "evals"
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(root, copy_to=copy), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
+    _start(db_path, clock, root, copy_to=copy)
     run_id = evalrun.RUN.snapshot()["run_id"]
     kept = copy / f"{run_id}.json"
     assert kept.read_bytes() == (db_path.parent / "evals" / f"{run_id}.json").read_bytes()
@@ -510,14 +397,9 @@ def test_a_run_copies_its_result_out_of_the_install(
 def test_a_failed_copy_loses_nothing(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
-    from ecf_server import db  # noqa: PLC0415
-
     blocked = tmp_path / "a-file"
     blocked.write_text("")  # not a folder: the copy fails
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(root, copy_to=blocked / "evals"),
-                  power=lambda: AC, battery=lambda: 90, spawn=_inline,
-                  check_kw=check_kw())  # fmt: skip
+    _start(db_path, clock, root, copy_to=blocked / "evals")
     assert evalrun.RUN.snapshot()["state"] == "done"
     assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 1
 
@@ -540,77 +422,6 @@ def test_the_copy_goes_to_state_archive_only_from_a_checkout(tmp_path: Path) -> 
         _copy_to({"copy_to": "state-archive/evals"})
 
 
-def test_a_run_with_the_new_wording_off_asks_with_the_v2_0_0_text(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """An eval-only switch (plan 0.3): recorded, and the run never passes the gate."""
-    from ecf.schema import load_schema_v2_0_0  # noqa: PLC0415
-    from ecf_server import db  # noqa: PLC0415
-
-    with pytest.raises(InvalidInputError, match="local model"):
-        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                      db_path.parent, evalrun.Options(root, backend=evalrun.NULL,
-                                                      new_wording=False),
-                      power=lambda: AC, battery=lambda: 90, spawn=_inline,
-                      check_kw=check_kw())  # fmt: skip
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(root, new_wording=False), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    result = evalrun.RUN.snapshot()["result"]
-    assert result["options"]["switches_off"] == ["new_wording"]
-    assert result["options"]["for_gate"] is False and result["gate_passed"] is False
-    assert result["schema_digest"] == load_schema_v2_0_0().digest
-    # S2 review F11: not scored on the fixed items it wasn't asked (starter-bec's derived
-    # bank_detail_change label), and its answers aren't completed
-    path = conn.execute("SELECT path FROM eval_runs").fetchone()["path"]
-    bec = {c.id: c for c in load_result(Path(path)).cases}["starter-bec"]
-    assert bec.fields and not set(FIXED_ITEMS) & (bec.fields.keys() | bec.expected.keys())
-    assert not set(FIXED_ITEMS) & bec.got.keys()
-    cases, _ = evalrun.load(root, fraud_only=False)
-    assert {c.id: c for c in cases}["starter-bec"].expected["labels"]["bank_detail_change"]
-
-
-def test_signals_go_to_the_classifier_unless_switched_off(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """OD-484: a card whose facts make a signal true is asked with the signals block;
-    `--no-signals` (an eval-only switch) leaves it out and the run can't pass the gate."""
-    from ecf_server import db  # noqa: PLC0415
-
-    shutil.copy(SYNTHETIC / "cases" / "mid-exec-quick-favor.md", root / "cases")
-    assert not build_all(root).findings
-    labels.confirm(root, "mid-exec-quick-favor", date(2026, 10, 1))
-    for on in (True, False):
-        fake = ChatOllama(json.dumps(BEC))
-        evalrun.start(lambda: db.connect(db_path), clock, fake.client, db_path.parent,
-                      evalrun.Options(root, actor=False, signals=on), power=lambda: AC,
-                      battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-        users = [b["messages"][-1]["content"] for b in fake.bodies]
-        blocks = [u for u in users if u.startswith("<<<SIGNALS ")]
-        assert bool(blocks) is on  # the case, and its determinism repeat if sampled
-        if on:
-            assert "executive-impersonation" in blocks[0]
-        result = evalrun.RUN.snapshot()["result"]
-        assert (result["options"].get("switches_off") or []) == ([] if on else ["signals"])
-
-
-def test_a_run_records_its_excerpt_preparation(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """Pre-classifier plan step 10 (P18): the preparation's version is recorded, and
-    `--no-excerpt-prep` (an eval-only switch) records 0 and can't pass the gate."""
-    from ecf_server import db, excerpt  # noqa: PLC0415
-
-    for on in (True, False):
-        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                      db_path.parent, evalrun.Options(root, actor=False, excerpt_prep=on),
-                      power=lambda: AC, battery=lambda: 90, spawn=_inline,
-                      check_kw=check_kw())  # fmt: skip
-        result = evalrun.RUN.snapshot()["result"]
-        assert result["excerpt_prep"] == (excerpt.VERSION if on else 0)
-        assert (result["options"].get("switches_off") or []) == ([] if on else ["excerpt_prep"])
-
-
 def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
     from ecf.cli import _run_caveat  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
 
@@ -622,9 +433,11 @@ def test_eval_status_says_why_a_run_cant_pass_the_gate() -> None:
         " (without the actor)")  # fmt: skip
     assert _run_caveat({"complete": True, "options": both | {"for_gate": False}}) == (
         " (not for the gate)")  # fmt: skip
-    off = both | {"for_gate": False, "switches_off": ["new_wording"]}
+    off = both | {"for_gate": False, "switches_off": ["signals"]}
     assert _run_caveat({"complete": True, "options": off}) == (
-        " (not for the gate: new_wording off)")  # fmt: skip
+        " (not for the gate: signals off)")  # fmt: skip
+    null = {"complete": True, "backend": "null", "options": both | {"actor": False}}
+    assert _run_caveat(null) == " (null backend: the rules alone, never for the gate)"
     assert _run_caveat({}) == ""  # older runs: nothing recorded
 
 
@@ -689,9 +502,9 @@ def test_eval_status_lines_are_readable(monkeypatch: pytest.MonkeyPatch) -> None
                        "wilson95": [62.1, 79.0], "unsafe": [], "fraud_guard_cases": 67,
                        "fraud_guard_missed": [], "fraud_guard_recall": 100.0}}  # fmt: skip
     cur = {"state": "running", "run_id": "7f548cb3bbbb", "done": 3, "total": 8, "detail": "",
-           "set": "corpus be8615c8"}  # fmt: skip
+           "set": "synthetic"}  # fmt: skip
     assert status_lines({"current": cur, "recent": [run]}) == [
-        "Corpus be8615c8 eval 7f548cb3: running, 3/8",
+        "Eval 7f548cb3: running, 3/8",
         "",
         "Recent runs (synthetic set):",
         "  2026-10-07 00:19  c1c35845  77/108 confirmed cases correct (71.3%, Wilson [62.1, 79.0])",
@@ -734,28 +547,56 @@ def test_a_pre_v2_result_is_rescored_with_its_answers_mapped(
     assert compare(new, new).n >= 1  # same set version: comparable
 
 
-def _acted_run(conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
-               action: str) -> Path:  # fmt: skip
-    """A run whose bug-report answer goes to the actor, which proposes `action`."""
-    from ecf_server import db  # noqa: PLC0415
-
+def _acted_run(root: Path, tmp_path: Path, action: str) -> Path:
+    """A result made with today's code as a run with an actor makes one (the actor's step now
+    comes from `/ecf-eval`): a bug-report answer for every case, planned over each card's facts,
+    the actor's `action` proposed where the plan goes to the actor, the proposal recorded."""
     bug = BEC | {"category": "bug_report", "priority": "medium", "requires_reply": True,
                  "payment_related": False, "fraud_risk": "none"}  # fmt: skip
-    proposal = {"action": action, "target": "", "reason": "a customer is waiting", "text": ""}
-    evalrun.start(lambda: db.connect(db_path), clock,
-                  RoleOllama(json.dumps(bug), json.dumps(proposal)).client, db_path.parent,
-                  evalrun.Options(root), power=lambda: AC, battery=lambda: 90, spawn=_inline,
-                  check_kw=check_kw(), thermal=dict)  # fmt: skip
-    assert evalrun.RUN.snapshot()["state"] == "done"
-    return Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
+    cls = from_v2(bug)
+    schema = load_schema()
+    rules_now = evalrun.rules.load_starter_rules(schema)
+    known = policy.labels(schema, rules_now)
+    cases, version = evalrun.load(root, fraud_only=False)
+    scratch = ruletest.Scratch(FakeClock())
+    out: list[CaseResult] = []
+    try:
+        for case in cases:
+            facts, _ = evalrun.case_inputs(case, scratch, triggers.redact_injection)
+            ctx = policy.Context(cls, facts, ruletest.ADDRESS.sensitivity, rules_now, {},
+                                 frozenset())  # fmt: skip
+            plan = policy.plan(ctx, known)
+            proposal = None
+            if plan.to_actor:
+                proposal = {"action": action, "target": ""}
+                one = policy.proposal(ctx, plan, action, None, known)
+                if isinstance(one, policy.Planned):
+                    plan.actions.append(one)
+            alone = evalrun.rules_alone(case, facts, rules_now, known, schema)
+            out.append(evalrun.score(case, cls, plan, proposal).model_copy(update={
+                "rule_alone": alone, "hide_blocked": evalrun.hide_blocked(ctx, plan),
+                "proposal": action if proposal else None, "proposal_target": None}))  # fmt: skip
+    finally:
+        scratch.close()
+    summary: dict[str, object] = dict(evalrun.summarize(out, 0, schema=schema))
+    summary |= {
+        "scoring": "live",
+        "rules_digest": evalrun.rules.starter_digest(),
+        "keywords_digest": triggers.keywords_digest(),
+        "measurements": {"calls": call_figures(out)},
+    }
+    live = ResultFile(run_id="l" * 32, pair="claude/claude", set_version=version,
+                      created_at="2026-10-14T00:00:00Z", cases=out, digest="d",
+                      summary=summary)  # fmt: skip
+    return evalrun.write_result(tmp_path, live, "live.json")
 
 
 def test_a_run_rescored_through_the_policy_changes_nothing(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+    root: Path, tmp_path: Path, clock: FakeClock
 ) -> None:
     """Pre-classifier plan step 7 (§11 wiring check): a result made with today's code, planned
     again from its recorded answers and actor proposals, has the same rules and actions."""
-    path = _acted_run(conn, db_path, clock, root, "escalate")
+    path = _acted_run(root, tmp_path, "escalate")
     live = load_result(path)
     acted = [c for c in live.cases if c.proposal is not None]
     assert acted and all(c.proposal == "escalate" and c.proposal_target is None for c in acted)
@@ -778,12 +619,12 @@ def test_a_run_rescored_through_the_policy_changes_nothing(
 
 
 def test_an_older_results_actor_action_is_inferred(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
+    root: Path, tmp_path: Path, clock: FakeClock
 ) -> None:
     """A result from before step 7 records no proposal: the actions its rule can't plan itself
     are replayed (here the actor's escalate on a medium-priority bug report, which the rule's own
     escalate condition doesn't meet); one needing a target the file lacks isn't."""
-    live = load_result(_acted_run(conn, db_path, clock, root, "escalate"))
+    live = load_result(_acted_run(root, tmp_path, "escalate"))
     acted = {c.id for c in live.cases if c.proposal is not None}
     older = [c.model_copy(update={"proposal": None, "rule_alone": None,
                                   "actions": [*c.actions, "move"] if c.id in acted
@@ -870,7 +711,7 @@ def test_the_eval_scratch_keeps_no_sender_history() -> None:
 
 def test_correct_is_rule_safety_and_the_labelled_fixed_items() -> None:
     """S3b (P10): `correct` no longer needs the category; it needs every fixed item the case
-    labels. A run asked without the items (`--no-new-wording`) isn't held to them."""
+    labels."""
     case = evalrun.Case("c", Path("x"), {"labels": {"category": "invoice",
                                                      "bank_detail_change": True},
                                          "rule": "fraud_guard"}, True, "claude")  # fmt: skip
@@ -879,8 +720,6 @@ def test_correct_is_rule_safety_and_the_labelled_fixed_items() -> None:
     assert wrong_cat.correct and not wrong_cat.fields["category"]
     missed = evalrun.score(case, {"category": "invoice", "bank_detail_change": False}, plan, None)
     assert not missed.correct and missed.fields["rule"]
-    asked_v2 = evalrun.asked_only(missed, load_schema_v2_0_0())
-    assert asked_v2.correct and "bank_detail_change" not in asked_v2.fields
     assert evalrun.end_to_end({"rule": True, "safety": True, "phishing": False}) is False
 
 

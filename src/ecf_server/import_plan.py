@@ -8,10 +8,11 @@ email itself doesn't carry over). Everything else in `settings` is the source co
 (install identity, Slack identity, backup key and folder, alert email, the secret store's
 interpreter, marks and timestamps) and is dropped; the target keeps its own.
 
-**Rows**: addresses arrive paused, at stage `assist` at most, outbound off. Slack routes are
-dropped (reconnect Slack). Items waiting for a decision (`awaiting_approval`, `awaiting_stepup`,
-`approved`, `delayed`) go back to `awaiting_approval` to be re-posted for a fresh decision (one
-with no actions to approve becomes `needs_human`); items
+**Rows**: addresses arrive paused, at stage `assist` at most, outbound off; an A or B address
+(an older bundle's) arrives as C (migration 0038; v3.0.0, P8), and the preview says so. Slack
+routes are dropped (reconnect Slack). Items waiting for a decision (`awaiting_approval`,
+`awaiting_stepup`, `approved`, `delayed`) go back to `awaiting_approval` to be re-posted for a
+fresh decision (one with no actions to approve becomes `needs_human`); items
 `executing` or `undoing` become `failed_unknown`, since they may have run on the other computer.
 """
 
@@ -29,6 +30,9 @@ UNKNOWN = ("executing", "undoing")
 STAGE_CAP = "assist"
 STAGES_ABOVE_CAP = ("live",)
 ROUTE_CLASSES = ("mail", "system", "operator", "slack")
+REMOVED_PRESETS = ("A", "B")  # converted on the way in by migration 0038 (v3.0.0; P8)
+CONVERTED_NOTE = ("converted to C, paused: resume it only after the account's owner agrees to its"
+                  " mail going to Anthropic (OD-427), or remove it")  # fmt: skip
 
 
 def setting_kept(key: str) -> bool:
@@ -82,9 +86,12 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
                 "email": a.get("email"),
                 "stage": STAGE_CAP if a.get("stage") in STAGES_ABOVE_CAP else a.get("stage"),
             }
+            | ({"note": CONVERTED_NOTE} if a.get("preset") in REMOVED_PRESETS else {})
             for a in t.get("addresses", [])
             if a.get("removed_at") is None
         ],
+        # A and B addresses (their local model went in v3.0.0) arrive as C, paused (0038; P3, P8)
+        "converted": converted(t.get("addresses", [])),
         "reposted": len(repost),
         "needs_human": sum(s in REPOST for s in statuses) - len(repost),
         "failed_unknown": sum(s in UNKNOWN for s in statuses),
@@ -104,17 +111,21 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
     }
 
 
+def converted(rows: list[dict[str, Any]]) -> list[str]:
+    """The bundle's A and B addresses (not removed), which arrive as C, paused (0038; P8)."""
+    return sorted(str(a.get("address_id")) for a in rows if a.get("removed_at") is None
+                  and a.get("preset") in REMOVED_PRESETS)  # fmt: skip
+
+
 def schema_dropped(tables: dict[str, list[dict[str, Any]]], ext: str) -> dict[str, Any]:
     """The preview's note on a bundle's own schema fields (`importer.schema_note`'s)."""
     from ecf_server import importer  # noqa: PLC0415 - importer imports this module
 
-    local = [str(a.get("address_id")) for a in tables.get("addresses", [])
-             if a.get("removed_at") is None and a.get("preset") in ("A", "B")]  # fmt: skip
     found = next((r.get("value") for r in tables.get("settings", [])
                   if r.get("key") == config.KEY["rules"]), None)  # fmt: skip
     doc: Any = json.loads(str(found)) if found is not None else None
     parsed: Any = json.loads(ext)
-    return importer.schema_note(parsed, local, importer.rules_on_fields(doc, parsed))
+    return importer.schema_note(parsed, importer.rules_on_fields(doc, parsed))
 
 
 def _has_actions(item: dict[str, Any]) -> bool:

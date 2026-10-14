@@ -47,7 +47,7 @@ def test_no_token_is_observe_status_and_counts_only() -> None:
     """V1.4 step 3 (operator decision 2026-10-02): no Authorization header at all is OBSERVE."""
     assert get("/v1/status").status_code == 200
     assert get("/v1/counts").status_code in (200, 503)  # no database in this app
-    for path in ("/v1/inbox", "/v1/settings", "/v1/models"):
+    for path in ("/v1/inbox", "/v1/settings", "/v1/models/claude"):
         r = get(path)
         assert r.status_code == 401 and body(r)["code"] == "unauthorized", path
     r = request("POST", "/v1/review-queue")

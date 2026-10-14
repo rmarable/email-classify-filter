@@ -27,7 +27,6 @@ class Queue(StrEnum):
     SLACK_OUT = "slack_out"
     SLACK_IN = "slack_in"  # clicks and form submissions (migration 0012)
     FETCH = "fetch"
-    MODEL = "model"
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,8 @@
 """Schema compiler (SPEC §7.4): classification schema YAML -> CompiledSchema.
 
 Enum and ordinal fields become `Literal` types, so the JSON schema is inline (no `$ref`), which
-both Ollama's `format` and `record_classification` need. Ordinal fields keep their level order.
-`prompt_block` is a stable text rendering used as an unchanging prompt prefix.
+`record_classification` needs (and Ollama's `format` did, before v3.0.0). Ordinal fields keep their
+level order. `prompt_block` is a stable text rendering used as an unchanging prompt prefix.
 
 The shipped schema is v3 (`load_schema`; SPEC §7.1, OD-498, OD-500): v2's fields with five yes/no
 fixed safety items (`FIXED_ITEMS`) after them and `priority` level texts (v3.0.0 step 1c, stage
@@ -10,13 +10,13 @@ S2); from stage S3b the four v2 values the items replace are gone (`REMOVED_VALU
 `vendor_change_request`, `regulatory`, `spam_or_phishing`; `sender_type` `team`) and `category`,
 `account_security`, `marketing` and `unknown` are reworded. The fixed rules and policy read the
 items, each through `fixed_item` (the item, or a kept v2 value that says the same: sender_type
-`regulator`, `person`, `friend`, `family`). v2 stays loadable (`load_schema_v2`): the local
-model (presets A and B) is still asked v2 (`local_schema`) and its answer brought to v3 by
-`from_v2` (the fixed items derived from it by a fixed table, `with_fixed`, P6; then a removed
-value read as `other` or `unknown`); results, labels and stored classifications made before v3
-are read through the same table. v1 stays loadable for results and labels made before v2
-(`load_schema_v1`). The safety core (`SAFETY_FIELDS`) is what policy, the fraud checks and the
-fixed rules rely on; the compiler refuses a shipped schema without it, or with a removed value.
+`regulator`, `person`, `friend`, `family`). v2 stays loadable (`load_schema_v2`): results, labels
+and stored classifications made before v3 (the local model's included, which was asked v2 until
+v3.0.0 removed it, ADR 0031) are brought to v3 by `from_v2` (the fixed items derived by a fixed
+table, `with_fixed`, P6; then a removed value read as `other` or `unknown`). v1 stays loadable
+for results and labels made before v2 (`load_schema_v1`). The safety core (`SAFETY_FIELDS`) is
+what policy, the fraud checks and the fixed rules rely on; the compiler refuses a shipped schema
+without it, or with a removed value.
 
 An install on preset C may add its own fields (the user layer, v3.0.0 S4, OD-502; SPEC §7.1,
 §9.7) through `ecf config apply` (`schema` section): `extend_schema` appends them after the
@@ -27,10 +27,7 @@ to text), no fixed field's name in a description (`FIXED_FIELDS`), new names for
 except the catch-alls (`CATCH_ALLS`, which a user field may reuse); `extension_warnings` lists
 what is allowed but likely wrong (an enum with no catch-all, a description naming a default or
 another user field). The fixed fields (`FIXED_FIELDS`: the safety set, `priority` and the workflow
-fields) and the default fields (`category`, `sender_type`) can't be changed; S4 only adds. The
-local model (presets A and B) is never asked user fields (`local_schema` is plain v2; the
-service refuses user fields while any A or B address exists, D8), and its answer is checked
-against `without_extension`.
+fields) and the default fields (`category`, `sender_type`) can't be changed; S4 only adds.
 
 The layer is behind one switch, `EXTENSIONS_ENABLED` (OD-481, kept by OD-502 until the S4
 measurement M2 passes): while it is False the service refuses a `schema` section other than
@@ -59,7 +56,6 @@ from ecf.yamlio import load_yaml
 FIELD_NAME = r"^[a-z][a-z0-9_]{0,39}$"
 VALUE_NAME = r"^[a-z][a-z0-9_]{0,39}$"
 CURRENT_VERSION = 3
-LOCAL_VERSION = 2  # the schema the local model is asked (`local_schema`; P6)
 # The fixed safety items schema v3 adds (OD-498; schema doc §1): yes/no, after v2's fields
 FIXED_ITEMS = ("bank_detail_change", "regulator_claim", "phishing", "claims_internal",
                "private_individual")  # fmt: skip
@@ -120,8 +116,8 @@ UNLABELLED = frozenset({"unknown"})
 
 def derive_fixed(values: Mapping[str, Any]) -> dict[str, bool]:
     """Each fixed item from a v2 classification by the §9 table; an absent source is false. The
-    one table preset A (`with_fixed`), migration 0036 (the same rows, in SQL) and the eval
-    labels (`derive_labels`, more strictly) use."""
+    one table `with_fixed` (preset A's answers before v3.0.0, and old results), migration 0036
+    (the same rows, in SQL) and the eval labels (`derive_labels`, more strictly) use."""
     return {item: any(values.get(field) in vals for field, vals in sources)
             for item, sources in FIXED_FROM_V2.items()}  # fmt: skip
 
@@ -174,8 +170,8 @@ def from_v2(values: Mapping[str, Any]) -> dict[str, Any]:
     (S3b, OD-500, D3): first the fixed items it lacks, derived from its values (`with_fixed`),
     then each removed value read as its field's least informative value (`category` `other`,
     `sender_type` `unknown`; `REMOVED_READ_AS`). The order matters: the items carry what the
-    removed values said. Used by the local classifier, the decision models, preset B's Gemma
-    source, `ecf eval rescore` and, in SQL, migration 0037."""
+    removed values said. Used by `ecf eval rescore` and, in SQL, migration 0037 (before v3.0.0
+    also the local classifier, the decision models and preset B's Gemma source)."""
     out = with_fixed(values)
     for name, gone in REMOVED_BY_FIELD.items():
         if out.get(name) in gone:
@@ -217,12 +213,6 @@ def unlabel_removed(labels: Mapping[str, Any]) -> tuple[dict[str, Any], tuple[st
         return dict(labels), ()
     full = dict(labels) | derive_labels(labels)
     return {k: v for k, v in full.items() if k not in gone}, gone
-
-
-def local_fields(values: Mapping[str, Any]) -> dict[str, Any]:
-    """A classification as the local model knows it (schema v2): without the fixed items, so
-    the local actor is asked as before v3 (P6)."""
-    return {k: v for k, v in values.items() if k not in FIXED_ITEMS}
 
 
 class FieldKind(StrEnum):
@@ -414,33 +404,8 @@ def load_schema() -> CompiledSchema:
 
 @functools.cache
 def load_schema_v2() -> CompiledSchema:
-    """Schema v2: what the local model is asked (`local_schema`), and for results, labels and
-    rules made before v3 (OD-498)."""
-    return _load(LOCAL_VERSION)
-
-
-def local_schema(schema: CompiledSchema) -> CompiledSchema:
-    """The schema the local model is asked for `schema` (P6): for the shipped v3, plain schema v2
-    (with the same fallback key), so preset A's prompt, `num_predict`, prompt digest and gate key
-    don't change with v3; its answer is completed with `with_fixed`. Never the install's user
-    fields (S4, D8: the local model isn't measured with them, SPEC §1.5a item 2; the service
-    refuses them while any A or B address exists), so A's and B's keys don't move with them. Any
-    other version is asked as it is (v1, v2, the frozen v2.0.0 text)."""
-    if schema.version != CURRENT_VERSION:
-        return schema
-    base = load_schema_v2()
-    if schema.fallback_for is not None:
-        base = dataclasses.replace(base, fallback_for=schema.fallback_for)
-    return base
-
-
-def without_extension(schema: CompiledSchema) -> CompiledSchema:
-    """What a local answer (asked `local_schema`, so without user fields) is checked against once
-    brought to v3: `schema` without the install's user fields and values (the shipped schema; P1).
-    A rule reads the absent user fields as unknown (P14). `schema` itself when it has none."""
-    if schema.extension is None:
-        return schema
-    return load_schema()
+    """Schema v2, for results, labels, rules and classifications made before v3 (OD-498)."""
+    return _load(2)
 
 
 @functools.cache

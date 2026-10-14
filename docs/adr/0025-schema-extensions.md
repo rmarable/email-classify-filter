@@ -9,6 +9,8 @@
   layer that replaces this extension model was decided in v3.0.0 stage S4 (2026-10-14, OD-502,
   which supersedes OD-478 and OD-481), amending ADR 0030. The caps and content rules here stay,
   with S4's additions (SPEC §7.1).
+- **Amended by ADR 0031** (2026-10-14, OD-506): Gemma's caps and the preset A and B paths are
+  gone with the local model.
 - **Context source:** SPEC §7.1, §7.4, §9.3, §9.7, §13.2, §15.1, §15.3;
   `planning-docs/SCHEMA-V2-PLAN.md` step 4 (draft 1, after Phase R)
 

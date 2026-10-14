@@ -17,8 +17,7 @@ waits for the go-live gate (OD-209).
 - `expire` (each tick): an approval whose grant ran out goes to `expired`, its grant voided;
   after a first expiry it is offered again with a fresh grant ("expired, decide again"), after a
   second it stays `expired` (listed in the daily summary, §6.2).
-- `requeue`: a failed or stuck action runs again under a new grant; a send needs step-up again.
-"""
+- `requeue`: a failed or stuck action runs again under a new grant; a send needs step-up again."""
 
 from __future__ import annotations
 
@@ -35,10 +34,10 @@ from ecf.status import Status
 from ecf_server import (
     alerts,
     cards,
+    claude_queue,
     inbox,
     items,
     jobs,
-    modelq,
     pause,
     slack_in,
     slack_out,
@@ -512,13 +511,10 @@ def _describe_requeue(conn: sqlite3.Connection, target: dict[str, Any]) -> stepu
 def requeue(
     conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str, nonce: str | None
 ) -> dict[str, Any]:
-    """Run a failed or stuck action again under a new grant (§6.2); a send needs step-up again.
-    An email the local model gave up on (OD-236) goes back to the model instead."""
+    """Run a failed or stuck action again under a new grant (§6.2); a send needs step-up again."""
     item = inbox.find(conn, ref)
     sid = StableId(item["stable_id"])
     status = Status(item["status"])
-    if item["model_failed"] and modelq.retry(conn, clock, sid, actor=actor):
-        return {"stable_id": sid, "status": str(status), "model": "retry"}
     if status is Status.EXECUTING:
         busy = conn.execute(
             "SELECT 1 FROM jobs WHERE queue = 'actions' AND state IN ('queued', 'claimed')"
@@ -672,7 +668,7 @@ def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_P
     during it didn't get (§5.3): the digest's "Approve all" lists only the reversible ones, so
     the rest would otherwise reach Slack only when they expire. Each tick, a few at a time;
     returns how many were posted."""
-    if sum(modelq.waiting(conn).values()) > modelq.BACKLOG_BATCH:
+    if claude_queue.backlog(conn) > claude_queue.BACKLOG_BATCH:
         return 0
     rows = conn.execute(
         "SELECT i.*, g.grant_id FROM items i JOIN grants g USING (stable_id)"

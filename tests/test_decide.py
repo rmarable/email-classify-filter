@@ -28,7 +28,7 @@ def make_address(
 ) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " stage) VALUES ('ap', 'ap@acme.example', ?, 'A', ?, ?)",
+                     " stage) VALUES ('ap', 'ap@acme.example', ?, 'C', ?, ?)",
                      (sensitivity, to_ts(clock.now()), stage))  # fmt: skip
 
 
@@ -141,7 +141,7 @@ def test_the_actor_decides_next_when_the_rule_says_so(
     make_address(conn, clock, "live")
     sid = make_classified(conn, clock, MARKETING | {"category": "customer_request",
                                                 "requires_reply": True}, KNOWN_BULK)  # fmt: skip
-    assert decide.apply(conn, clock, sid) is Status.CLASSIFIED
+    assert decide.apply(conn, clock, sid) is Status.AWAITING_CLAUDE  # C: Claude's actor (OD-269)
     assert json.loads(item_row(conn, sid)["proposal"])["plan"]["to_actor"] is True
 
 
@@ -184,6 +184,6 @@ def test_the_sweep_leaves_items_waiting_for_the_actor(
     request = MARKETING | {"category": "customer_request", "requires_reply": True,
                            "requires_action": True}  # fmt: skip
     sid = make_classified(conn, clock, request, KNOWN_BULK)
-    assert decide.apply(conn, clock, sid).value == "classified"  # the actor decides next
+    assert decide.apply(conn, clock, sid).value == "awaiting_claude"  # the actor decides next
     clock.advance(3600)
     assert decide.sweep(conn, clock) == 0

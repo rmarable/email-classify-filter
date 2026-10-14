@@ -23,8 +23,8 @@ from ecf_server import corpus_session as cs
 from ecf_server import evalrun, routereport, triggers
 from ecf_server.clock import FakeClock
 from tests.corpus_fakes import FakeMessage, FakeServer
+from tests.helpers import BEC
 from tests.test_corpus import SECRET, fetch, mail, req
-from tests.test_evalrun import BEC
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 CARDS = ("starter-control", "mid-giftcard-staff-rewards", "v2-acct-unrecognised-device-review",

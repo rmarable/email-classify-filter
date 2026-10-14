@@ -28,7 +28,7 @@ def _address(conn: sqlite3.Connection, clock: FakeClock, aid: str) -> None:
     with write_tx(conn):
         conn.execute(
             "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-            " VALUES (?, ?, 'standard', 'A', ?)",
+            " VALUES (?, ?, 'standard', 'C', ?)",
             (aid, f"{aid}@acme.example", to_ts(clock.now())),
         )
 

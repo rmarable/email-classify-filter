@@ -36,25 +36,16 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
                   "org_addresses": 0, "public_only": False,
-                  "models": {"needed": False, "installed": False},
-                  "fallback_off": [], "claude_needed": False, "smtp_addresses": [],
+                  "claude_needed": False, "smtp_addresses": [],
                   "alert_email": None, "skipped": {},
                   "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None},
                   }  # fmt: skip
-    with write_tx(conn):
+    with write_tx(conn):  # C: no local model (no fallback, no A or B from v3.0.0, ADR 0031)
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
     st = initsetup.status(conn)
-    assert st["addresses"] == ["ap"] and st["models"] == {"needed": True, "installed": False}
-    with write_tx(conn):  # preset C runs no local model while its fallback is off
-        conn.execute("UPDATE addresses SET preset = 'C'")
-    st = initsetup.status(conn)
-    assert st["models"]["needed"] is False and st["fallback_off"] == ["ap"]
+    assert st["addresses"] == ["ap"] and "models" not in st and "fallback_off" not in st
     assert st["claude_needed"] is True
-    with write_tx(conn):  # ... and needs it with the fallback on (V1.4 step 8)
-        conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4")
-    st = initsetup.status(conn)
-    assert st["models"]["needed"] is True and st["fallback_off"] == []
 
 
 def test_describe_org_domains_for_a_gmail_only_install() -> None:
@@ -62,7 +53,6 @@ def test_describe_org_domains_for_a_gmail_only_install() -> None:
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
           "slack_pending_app": None, "org_domains": [], "addresses": ["pat"],
           "public_only": True, "org_addresses": 2,
-          "models": {"needed": False, "installed": False},
           "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
     row = cli_init.describe(st, installed=True, running=True)[3]
     assert row == ("org domains   done   none needed: every address is at a public provider;"
@@ -75,34 +65,19 @@ def test_describe_org_domains_for_a_gmail_only_install() -> None:
 def test_describe() -> None:
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": None,
           "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": [],
-          "models": {"needed": False, "installed": False},
           "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
     lines = cli_init.describe(st, installed=True, running=True)
     assert lines[0].split()[:2] == ["service", "done"]
     assert "click Confirm" in lines[2] and "to do" in lines[2]
     assert lines[3].endswith("acme.example") and "ecf address add" in lines[4]
-    assert lines[5] == (
-        "models        done   not needed: no address uses preset A or B (or C"
-        " with the local fallback)"
-    )
-    assert lines[6] == "fallback      done   on, or no address uses preset B or C"
-    st["fallback_off"] = ["ap"]
-    assert cli_init.describe(st, installed=True, running=True)[6].startswith(
-        "fallback      to do  off for ap: ecf settings set claude_queue_timeout"
-    )
-    st["models"] = {"needed": True, "installed": False}
-    assert cli_init.describe(st, installed=True, running=True)[5] == (
-        "models        to do  ecf models install"
-    )
-    st["models"] = {"needed": True, "installed": True}
-    assert "installed (ecf models status)" in cli_init.describe(st, installed=True, running=True)[5]
-    assert lines[7] == "claude        done   not needed: no address uses preset B or C"
+    assert not any(line.startswith(("models", "fallback")) for line in lines)  # v3.0.0
+    assert lines[5] == "claude        done   not needed yet: no address"
     st["claude_needed"] = True
-    assert cli_init.describe(st, installed=True, running=True)[7] == (
+    assert cli_init.describe(st, installed=True, running=True)[5] == (
         "claude        to do  ecf claude --login (needs Claude Code; ecf doctor checks it)"
     )
     login = cli_init.Login(True, "claude.ai", "max")
-    assert cli_init.describe(st, installed=True, running=True, login=login)[7] == (
+    assert cli_init.describe(st, installed=True, running=True, login=login)[5] == (
         "claude        done   ecf's own configuration is logged in (claude.ai, max)"
     )
 
@@ -142,7 +117,7 @@ def _app(paths: Paths, added: list[tuple[Any, ...]]) -> typer.Typer:
     def add(c: LocalClient, *args: Any) -> None:
         added.append(args)
         _write(paths, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                      " VALUES ('ap', ?, 'high', 'A', 'now')", args[0])  # fmt: skip
+                      " VALUES ('ap', ?, 'high', 'C', 'now')", args[0])  # fmt: skip
 
     cli_init.make_commands(app, lambda: paths, add)
     return app
@@ -161,18 +136,14 @@ def quiet(monkeypatch: pytest.MonkeyPatch) -> FakeManager:
     monkeypatch.setattr(cli_init, "manager_for", manager_for)
     monkeypatch.setattr(cli_init, "secret_store", secret_store)
     monkeypatch.setattr(cli_init, "require_terminal", lambda: None)
-    model = {"ready": False}  # the host's own Ollama varies (ready on a dev Mac, absent in CI)
+    # never the real `claude auth login`: ecf's Claude configuration reads as logged in (a test
+    # of the login step sets its own)
+    monkeypatch.setattr(cli_init, "find_claude", lambda: "/bin/claude")
 
-    def run_install(_c: LocalClient, _root: Any) -> bool:
-        m.calls.append("models")
-        model["ready"] = True
-        return True
+    def logged_in(_c: str, _l: object) -> cli_init.Login:
+        return cli_init.Login(True, "claude.ai", "max")
 
-    def model_ready(_c: LocalClient) -> bool:
-        return model["ready"]
-
-    monkeypatch.setattr(cli_init, "model_ready", model_ready)
-    monkeypatch.setattr(cli_init, "run_install", run_install)
+    monkeypatch.setattr(cli_init.claude_setup, "auth_status", logged_in)
     monkeypatch.setattr(cli_init.doctor, "check_disk_encryption",
                         lambda: doctor.Check("disk encryption", doctor.Level.OK, "On"))  # fmt: skip
     return m
@@ -184,23 +155,24 @@ def test_init_runs_the_steps_then_resumes_without_repeating_them(
     quiet.s = UnitStatus(installed=True, running=True)  # the service answering is the unit
     added: list[tuple[Any, ...]] = []
     app = _app(running, added)
-    # checklist, Ready, role, skip Slack, add the first mailbox, no backups, install the model
+    # checklist, Ready, role, skip Slack, add the first mailbox, no backups (C: no local model)
     r = CliRunner().invoke(
-        app, ["init"], input="\ntest\nn\ny\nap@acme.example\nimap.acme.example\nn\ny\n"
+        app, ["init"], input="\ntest\nn\ny\nap@acme.example\nimap.acme.example\nn\n"
     )
     assert r.exit_code == 0, r.output
     assert "Have ready" in r.output and "service: running" in r.output
     assert "secret store:" in r.output and "install role: test" in r.output
     assert "slack: skipped" in r.output
     assert added == [("ap@acme.example", "imap.acme.example", None, None, None)]
-    assert "Install the local model now?" in r.output and quiet.calls == ["models"]
+    assert "Install the local model now?" not in r.output and quiet.calls == []
+    assert "models:" not in r.output  # no model step from v3.0.0 (ADR 0031)
     assert "service unit: installed and running" in r.output
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\n")  # only Slack is left to ask
     assert "backups: skipped earlier" in r.output
     assert r.exit_code == 0, r.output
     assert "Have ready" not in r.output and "first address: added" in r.output
-    assert "models: installed and ready" in r.output
-    assert len(added) == 1 and quiet.calls == ["models"]  # nothing done twice
+    assert "models:" not in r.output
+    assert len(added) == 1 and quiet.calls == []  # nothing done twice
     r = CliRunner().invoke(app, ["init", "status"])
     assert r.exit_code == 0, r.output
     assert "install role  done   test" in r.output and "first address done   ap" in r.output
@@ -225,10 +197,10 @@ def test_a_foreground_service_is_left_alone(running: Paths, quiet: FakeManager) 
     _write(running, "INSERT INTO settings (key, value, updated_at, updated_by)"
                     " VALUES ('install_role', '\"test\"', 'now', 't')")  # fmt: skip
     _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                    " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\nn\n")  # no Slack, backups, model
+                    " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # no Slack, no backups
     assert r.exit_code == 0, r.output
-    assert "models: skipped; later: ecf models install" in r.output
+    assert "models:" not in r.output
     assert "outside its unit" in r.output and quiet.calls == []
 
 
@@ -243,35 +215,12 @@ def test_no_usable_secret_store_stops_init(
     assert r.exit_code == 3 and "secret store: unavailable (no keyring)" in r.output
 
 
-def test_a_missing_ollama_is_explained_and_init_goes_on(
-    running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from ecf.errors import ServiceUnavailableError  # noqa: PLC0415
-
-    def no_ollama(_c: LocalClient, _root: Any) -> bool:
-        raise ServiceUnavailableError("Ollama isn't installed (macOS: `brew install ollama &&"
-                                      " brew pin ollama mlx-c`)")  # fmt: skip
-
-    monkeypatch.setattr(cli_init, "run_install", no_ollama)
-    quiet.s = UnitStatus(installed=True, running=True)
-    app = _app(running, [])
-    _write(running, "INSERT INTO settings (key, value, updated_at, updated_by)"
-                    " VALUES ('install_role', '\"test\"', 'now', 't')")  # fmt: skip
-    _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                    " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\ny\n")  # Slack, backups; model
-    assert r.exit_code == 0, r.output
-    assert "models: Ollama isn't installed (macOS: `brew install ollama && brew pin ollama" \
-        " mlx-c`); then: ecf models install" in r.output  # fmt: skip
-    assert "service unit: installed and running" in r.output  # the last step still ran
-
-
-def test_init_offers_the_claude_login_once_an_address_uses_b_or_c(
+def test_init_offers_the_claude_login_once_an_address_uses_c(
     running: Paths, quiet: FakeManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     quiet.s = UnitStatus(installed=True, running=True)
     _write(running, "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                    " VALUES ('ap', 'ap@acme.example', 'standard', 'B', 'now')")  # fmt: skip
+                    " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 'now')")  # fmt: skip
     _write(running, "INSERT INTO settings (key, value, updated_at, updated_by)"
                     " VALUES ('install_role', '\"test\"', 'now', 'os_user')")  # fmt: skip
     state = {"logged_in": False}
@@ -290,15 +239,13 @@ def test_init_offers_the_claude_login_once_an_address_uses_b_or_c(
 
     monkeypatch.setattr(cli_init.claude_setup, "run_login", run_login)
     app = _app(running, [])
-    r = CliRunner().invoke(
-        app, ["init", "--resume"], input="n\nn\nn\nn\n"
-    )  # Slack/backups/model/login
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\nn\n")  # Slack/backups/login
     assert r.exit_code == 0, r.output
     assert "Log in to Claude for `ecf claude` now?" in r.output
     assert "claude: skipped; later: ecf claude --login" in r.output and logins == []
     r = CliRunner().invoke(app, ["init", "status"])
     assert "claude        to do  ecf claude --login" in r.output
-    r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\ny\n")
+    r = CliRunner().invoke(app, ["init", "--resume"], input="n\ny\n")  # Slack; login
     assert r.exit_code == 0, r.output
     assert logins == ["login"]
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # nothing to ask now
@@ -324,11 +271,11 @@ def test_describe_alert_email_and_export() -> None:
     export = {"key": None, "dir": None, "schedule": "daily", "last_ok": None}
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
           "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": ["ap"],
-          "models": {"needed": False, "installed": False}, "export": export}  # fmt: skip
+          "export": export}  # fmt: skip
 
     def rows() -> tuple[str, str]:
         lines = cli_init.describe(st, installed=True, running=True)
-        return lines[8], lines[9]
+        return lines[6], lines[7]
 
     email, exp = rows()
     assert email.startswith("alert email   to do  asked by ecf init (optional)")

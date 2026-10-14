@@ -33,7 +33,7 @@ def paths(tmp_path: Path) -> Paths:
     db.migrate(c)
     with write_tx(c), db.items_writer("create"):
         c.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset,"
-                  " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'A',"
+                  " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'C',"
                   " 't')")  # fmt: skip
         for sid, status in (("aa00aa00", "awaiting_approval"), ("bb00bb00", "approved"),
                             ("cc00cc00", "executing"), ("dd00dd00", "executed")):  # fmt: skip
@@ -64,7 +64,7 @@ def test_the_merged_database(paths: Paths) -> None:
         c.execute("INSERT INTO senders (address_id, sender_hash, dmarc_pass_count,"
                   " confirmed_category) VALUES ('ap', 's1', 3, 'invoice')")  # fmt: skip
         c.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                  " VALUES ('new', 'new@acme.example', 'standard', 'A', 't')")  # fmt: skip
+                  " VALUES ('new', 'new@acme.example', 'standard', 'C', 't')")  # fmt: skip
         c.execute("INSERT INTO sent (message_id_hash, address_id, content_hash, kind, sent_at)"
                   " VALUES ('m2', 'new', 'h', 'reply', 't')")  # fmt: skip
     c.close()

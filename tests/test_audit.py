@@ -121,7 +121,7 @@ def test_audit_lines_carry_no_message_content(
 ) -> None:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')"
     )
     conn.execute(
         "INSERT INTO probe (address_id, host, probed_at) VALUES ('ap', 'imap.acme.example', 'now')"

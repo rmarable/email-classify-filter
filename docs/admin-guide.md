@@ -30,7 +30,7 @@ done (SPEC §13.1):
    Gmail address);
 6. alert email (optional, default no);
 7. backups: a backup key, a folder, a first backup (default yes);
-8. the local model (presets A and B), then Claude's login for `ecf claude` (presets B and C);
+8. Claude's login for `ecf claude`;
 9. confirms the unit is installed and running.
 
 - `ecf init --resume` continues without the checklist; a step you declined isn't asked again.
@@ -52,8 +52,9 @@ Then run `ecf doctor`. Every address starts in `shadow` with outbound off.
 | `ecf service regrant` | macOS: re-allow Keychain reads after Python changed (see Recovery) |
 | `ecf watch` | run the service in this terminal; the unit is stopped first and started afterwards |
 
-The service runs only while the computer is on and awake (SPEC §4.1). On a computer left on, set
-`ecf settings set resident true` to keep the local model loaded (§5.2).
+The service runs only while the computer is on and awake (SPEC §4.1). Nothing classifies a C
+address's mail until someone runs `/ecf-review` in `ecf claude`; the fraud and regulator rules
+still flag mail as it arrives.
 
 Linux (unverified): the unit runs in your login session; `loginctl enable-linger` lets it run
 without one (SPEC §11.14).
@@ -62,7 +63,7 @@ without one (SPEC §11.14).
 
 ```sh
 ecf address add ap@acme.example --imap-host imap.acme.example \
-    --sensitivity high --preset A [--id ap] [--smtp-host … --smtp-port 465|587]
+    --sensitivity high --preset C [--id ap] [--smtp-host … --smtp-port 465|587]
 ```
 
 - `add` logs in over IMAP (and SMTP, sending nothing) before storing the app password, then probes
@@ -72,7 +73,8 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   schema serves both (SPEC §7.1). From v3.0.0 safety rests on five yes/no fixed items (bank-detail
   change, regulator claim, phishing, claims to be a colleague, private individual), not on the
   category (OD-500).
-- **Presets** (SPEC §4.2): A all-local, B local classifier + Claude actor, C all-Claude.
+- **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor, from v3.0.0
+  step 4. A and B (the local model) are removed in v3.0.0 (below).
 - **Sensitivity** `standard` or `high` (finance mailboxes: stricter gate, extra checks, a
   10-minute delay on sends). `ecf sensitivity set <address> high` is instant; lowering needs a
   reason and step-up, and sends a Security Notice (§9.1).
@@ -93,7 +95,7 @@ first: [Gmail setup](gmail-setup.md) (2-Step Verification, the app password, two
 someone else's account).
 
 ```sh
-ecf address add pat.lee@gmail.com --sensitivity high --preset A
+ecf address add pat.lee@gmail.com --sensitivity high --preset C
 ```
 
 - No `--imap-host`: ecf uses `imap.gmail.com`, and SMTP `smtp.gmail.com` on port 465.
@@ -238,9 +240,7 @@ schema:
 - **Caps:** 8 fields, 16 values or levels each, 4 category values, 180 characters per
   description, 4,000 characters of prompt text. The dry run and `ecf doctor` print the bytes of
   schema each Claude classification carries (7,663 shipped; about 13 KB at the caps).
-- **Preset C only:** refused while any address is preset A or B (the local model isn't measured
-  with them), and an A or B address can't be added while they are applied. Preset C has no local
-  fallback: `claude_queue_timeout` can't be turned on for a C address (C is Claude-only).
+- **Preset C only** (D's handling is decided in v3.0.0 step 4).
 - **Gate cost of an edit:** any change, a description typo included, drops live C addresses to
   `assist`, and live needs a passing `/ecf-eval` run (full or `--fraud-only`) and 100 reviews
   (200 on `high`) again; the step-up dialog says so per address. Step 4 of v3.0.0 narrows this.
@@ -278,32 +278,23 @@ The gate (SPEC §9.3): `standard` needs 100 reviewed items at ≥ 85% accuracy, 
 200 at ≥ 90% (from v3.0.0 accuracy is the share of reviews whose Fix changed none of ecf's
 fixed fields, `category` or `sender_type`, so a Fix to one of your own fields doesn't count against
 it; before, category accuracy; the upgrade clears earlier passes), and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
-injection set at 0 on the synthetic eval for the address's model pair. `stage set live` names a missing eval
+injection set at 0 on the synthetic eval for the address's model pair (for C, a `/ecf-eval` run). `stage set live` names a missing eval
 result. `--override --reason <text>` waives the review count or accuracy, never the safety gates.
 `--held run|resolve-older|resolve-all` decides what happens to held emails (default `run`: up to 7
 days old run, older stay held).
 
-**Eval:** `ecf eval run` runs the synthetic set through the local model (about 40 minutes on a
-MacBook Air on AC; run it on AC power); `ecf eval run --fraud-only` runs only the safety cases;
-`ecf eval run --claude --preset B|C` registers a run that you start with `/ecf-eval` in
-`ecf claude`. `ecf eval status|stop|compare`. Results are keyed by the pinned models.
+**Eval:** `ecf eval run --claude --preset C [--fraud-only]` registers a run that you start with
+`/ecf-eval` in `ecf claude`; it uses your Claude plan. `ecf eval run --classifier-backend null`
+runs the rules alone (a floor and a wiring check; it never counts for the gate); Jev runs arrive
+in v3.0.0 step 2d. `ecf eval status|stop|compare`. Results are keyed by the pinned models. Old
+results from the local model can still be read and rescored (`ecf eval rescore`).
 
-**Pinned models:** a release that changes a pinned model (Ollama digest or Claude model ID) drops
+**Pinned models:** a release that changes a pinned model (a Claude model ID) drops
 the addresses using it from `live` to `assist` until their gate passes again (SPEC §9.3, OD-381).
 
-## Local model
+## Models
 
-- `ecf models install` pulls the pinned Gemma model, checks its digest and copies it to ecf's own
-  name; it starts ecf's Ollama login item when nothing serves Ollama.
-- `ecf models status` shows the pin, Ollama's readiness, any install in progress and ecf's
-  copies for other releases. Those are kept (another install or `ecf upgrade --to` may run
-  one); `ecf models prune` removes them after asking (SPEC §7.5). It also lists, and prune
-  removes, copies of retired models no release runs (the Qwen-based `tev1`, OD-494).
-- `ecf models serve install|uninstall|status` manages ecf's Ollama login item (fixed settings:
-  loopback only, one request at a time, cloud off). Don't use `brew services`.
-- macOS: install Ollama with Homebrew and pin it: `brew install ollama && brew pin ollama mlx-c`.
-  To upgrade it on purpose, unpin, upgrade, re-pin, run `ecf models serve install`, and rerun
-  the eval (CONTRIBUTING has the exact commands).
+- `ecf models status` shows the pinned Claude models and any override.
 - `ecf models api-key set|clear --provider anthropic|typesafe` stores or removes an API key:
   `anthropic`, the optional Anthropic Models API key for the weekly model watch; `typesafe`, the
   TypeSafe key for Jev (eval only for now). `--provider` is required. Each key is checked by one
@@ -424,8 +415,8 @@ the models, so v1 eval results no longer count and `live` addresses drop to `ass
 `ecf upgrade` lists every address as affected. Then, per address:
 
 ```sh
-ecf eval run                          # preset A, and the local half of preset B
-ecf eval run --claude --preset B|C    # presets B and C; start it with /ecf-eval in ecf claude
+ecf eval run --claude --preset C      # start it with /ecf-eval in ecf claude (v2.x also had
+                                      # local runs for presets A and B, removed in v3.0.0)
 ecf stage set <a> live                # step-up, once the safety gates pass on v2
 ```
 
@@ -463,8 +454,33 @@ and in `ecf doctor`, and the starter rules apply until you remove it. A file tha
 value is refused with its replacement.
 
 **The go-live gate starts again** for preset C addresses (the schema is part of their key), and
-every address's stored pass is cleared (accuracy is now reviews with no Fix). Presets A and B are
-still asked schema v2.
+every address's stored pass is cleared (accuracy is now reviews with no Fix).
+
+## v3.0.0: converted addresses
+
+v3.0.0 removes presets A and B, Gemma and Ollama (ADR 0031, SPEC §4.3). Not released yet.
+
+- **At upgrade** every A or B address becomes C and is **paused**. The new `ecf upgrade` output,
+  a Security Notice and `ecf doctor` name each one with how many items wait. While paused, the
+  fraud and regulator rules still run on new mail, but nothing goes to Anthropic for it.
+- **Consent first.** A C address's mail goes to Anthropic at each `/ecf-review`. If the mailbox
+  belongs to someone else (for example a Gmail account you watch with its owner's agreement,
+  OD-427), ask the owner before you resume it.
+- **Resume:** `ecf resume <address>` confirms the owner agreed; its waiting mail is
+  classified at the next `/ecf-review`. It restarts at `assist`: live again needs a passing
+  `/ecf-eval` run and reviews (SPEC §9.3).
+- **Or remove:** `ecf address remove <address>`.
+- **What changes for it:** mail is classified only when someone runs `/ecf-review`, not at every
+  check; plan on a review at least once a working day. A reminder comes after
+  `claude_review_reminder_hours` (24 h) and a louder alert after twice that. Each item uses about
+  1.7-2.3k input tokens of your Claude plan (SPEC §4.1). A high-risk item that isn't fraud can now
+  get a send proposed (approval and step-up still apply).
+- **Ollama:** once the upgrade settles, ecf removes its own Ollama login item and log folder.
+  Ollama and the model copies are yours to remove (`ollama rm` for each `ecf/gemma4-12b:*` copy).
+- **Rollback** (`ecf upgrade --to <v2.2.x>`) brings A and B back from the snapshot (SPEC §11.10),
+  with Ollama still in place.
+- **Backups:** v3.0.0 reads bundles of format 3 and 4; re-export an older bundle on v2.2.x first.
+  Importing a bundle with A or B addresses converts and pauses them the same way.
 
 ## Removing an install
 
@@ -473,13 +489,13 @@ settled; offers an export when none was made in 24 hours; asks you to type the i
 archives the Slack channels, deletes the Slack app (with `--config-token`; otherwise turns its bot
 off), deletes every secret, removes the unit, signs `ecf claude` out and deletes the data folder.
 Backups and mailboxes are untouched. It ends with what's left for you: app passwords to revoke at
-your provider, the Slack app if kept, Ollama if no other install uses it. Running it again finishes
-an interrupted destroy (SPEC §11.11).
+your provider, the Slack app if kept, Ollama if you ran it for ecf before v3.0.0. Running it
+again finishes an interrupted destroy (SPEC §11.11).
 
 ## Health: `ecf doctor`
 
 `ecf doctor` checks the service, secret store, disk encryption, Slack, each address's IMAP and
-SMTP, the local model and Ollama's settings, Claude (presets B and C), alert email and backups,
+SMTP, Claude, addresses converted and paused at the v3.0.0 upgrade, alert email and backups,
 and prints a fix for each failure (SPEC §13.2). `ecf status` shows addresses, backlog and the
 service; `ecf logs [--address] [--event] [--since] [-f]` shows the audit log (no message content).
 
@@ -489,8 +505,7 @@ service; `ecf logs [--address] [--event] [--since] [-f]` shows the audit log (no
 one. For `failed`, `failed_unknown` and stuck `executing`: `ecf item requeue <id>` runs the action
 again (a send only once it surely failed: refused by the server, or missing from Sent on two later
 checks; it needs a new approval and step-up, OD-322), or `ecf item resolve <id> --reason <text>`
-closes it. `needs_human` goes back through a new proposal or `ecf item resolve`. An email marked
-"the local model gave up" goes back to the model with `ecf item requeue <id>`.
+closes it. `needs_human` goes back through a new proposal or `ecf item resolve`.
 Bulk: `ecf item resolve --older-than <days> [--address <a>] --reason <text>`.
 
 **Revoked Slack token:** `ecf slack set-tokens`, then `ecf slack reauthorize`.

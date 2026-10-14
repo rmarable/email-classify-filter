@@ -31,7 +31,7 @@ def _address(conn: sqlite3.Connection, aid: str = "ap", *, smtp: str | None = "s
              probed_at: str = "2026-10-01T00:00:00.000000Z") -> None:  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " smtp_host, smtp_port, outbound) VALUES (?, ?, 'standard', 'A', 't', ?, ?,"
+                     " smtp_host, smtp_port, outbound) VALUES (?, ?, 'standard', 'C', 't', ?, ?,"
                      " ?)", (aid, f"{aid}@acme.example", smtp, 465 if smtp else None,
                              int(outbound)))  # fmt: skip
         conn.execute("INSERT INTO probe (address_id, host, probed_at, smtp)"
@@ -87,35 +87,6 @@ def test_s4_the_rules_row_warns_never_fails(conn: sqlite3.Connection, clock: Fak
     assert "no catch-all; since v3.0.0" in rows[1]["detail"]
     names = [r["name"] for r in ops_doctor.checks(conn, clock, data_dir, "off")]
     assert names.count("rules") == 2
-
-
-@pytest.mark.parametrize("on", [True, False])
-def test_schema_row_warns_on_stored_fields_beside_an_a_or_b_address(
-    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, on: bool
-) -> None:
-    """Pre-S4 state that D8 now refuses both ways: a WARN naming both fixes, switch on or off."""
-    import ecf.schema  # noqa: PLC0415
-
-    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", on)
-    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
-    _address(conn, "ap")  # preset A
-    row = ops_doctor.schema(conn)
-    assert row["level"] == "warn" and "ap is preset A or B" in row["detail"]
-    assert "`schema: default`" in row["fix"] and "ecf address remove" in row["fix"]
-    with write_tx(conn):
-        conn.execute("UPDATE addresses SET preset = 'C'")
-    assert "preset A or B" not in ops_doctor.schema(conn)["detail"]
-
-
-def test_r5_schema_row_warns_on_stored_fields_beside_a_c_fallback(conn: sqlite3.Connection) -> None:
-    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
-    _address(conn, "cfb")
-    with write_tx(conn):
-        conn.execute("UPDATE addresses SET preset = 'C', fallback_enabled = 1,"
-                     " claude_queue_timeout_h = 4")  # fmt: skip
-    row = ops_doctor.schema(conn)
-    assert row["level"] == "warn" and "cfb has the local fallback on" in row["detail"]
-    assert "claude_queue_timeout off" in row["fix"] and "`schema: default`" in row["fix"]
 
 
 @pytest.mark.usefixtures("extensions_off")

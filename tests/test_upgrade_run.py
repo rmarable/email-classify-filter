@@ -435,3 +435,37 @@ def test_finish_is_for_this_version(conn: sqlite3.Connection, clock: FakeClock) 
     rec = upgrade_state.finish(conn, clock, {"from": "0.0.1", "to": __version__})
     row = conn.execute("SELECT value FROM settings WHERE key = 'upgrade.current'").fetchone()
     assert rec["finished_at"] and json.loads(row[0])["to"] == __version__
+
+
+def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addresses(
+    paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """v3.0.0 (P3, P4): a v2.2.x phase 1 counts the new prompt digest and the retired local pin
+    against every address; the new CLI's rules replace that, and it names the A and B addresses
+    the upgrade made C and paused."""
+    old = _release_wheel(tmp_path / "old-2.2.3.whl", "2.2.3", 3, PROMPT)
+    new = _release_wheel(tmp_path / "new-3.0.0.whl", "3.0.0", 3, "c" * 64)
+    tools, _m, _ran = _tools(paths)
+    with pytest.raises(Handover):
+        upgrade_run.start(paths, tools, old_version="2.2.3", new_version="3.0.0", new_wheel=new,
+                          old_wheel=old, pin_changes=["local", "prompt"],
+                          affected=["ap", "b"])  # fmt: skip
+    service = NewService({"version": "3.0.0", "classifier_schema": 3, "prompt_digest": "c" * 64,
+                          "pins": LOCK, "pin_users": {"actor": ["ap", "b"]},
+                          "converted": [{"address_id": "ap", "from": "A",
+                                         "waiting": 2}]})  # fmt: skip
+    monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
+    tools, _m, _ran = _tools(paths)
+
+    def same(_p: Paths) -> upgrade_run.Tools:
+        return tools
+
+    monkeypatch.setattr(ecf.cli_upgrade, "_tools", same)
+    ecf.cli_upgrade._continue(paths)  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert service.finished[0]["affected"] == [] and service.finished[0]["pin_changes"] == []
+    assert "drop to assist" not in out
+    said = "ap was preset A, whose local model is removed: now C and paused, 2 emails waiting"
+    assert said in out
+    assert "(OD-427)" in out

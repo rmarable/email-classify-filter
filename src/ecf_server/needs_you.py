@@ -48,8 +48,6 @@ LABELS = {
 
 
 def _label(i: dict[str, Any]) -> str:
-    if i.get("model_failed"):  # OD-236: the local model gave up on it
-        return "the local model gave up (ecf item requeue)"
     status = str(i["status"])
     return LABELS.get(status, status)
 

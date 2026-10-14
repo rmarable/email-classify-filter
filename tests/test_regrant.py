@@ -27,7 +27,7 @@ def _addresses(conn: sqlite3.Connection) -> None:
     with write_tx(conn):
         for aid, removed in (("ap", None), ("old", "t")):
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                         " created_at, removed_at) VALUES (?, ?, 'standard', 'A', 't', ?)",
+                         " created_at, removed_at) VALUES (?, ?, 'standard', 'C', 't', ?)",
                          (aid, f"{aid}@acme.example", removed))  # fmt: skip
 
 

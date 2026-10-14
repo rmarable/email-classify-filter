@@ -1,181 +1,46 @@
-"""`ecf models status|install|prune` and `ecf models serve install|uninstall|status` (SPEC §7.5;
-V1.3 steps 1b, 1c; OD-246); `ecf models api-key set|clear --provider anthropic|typesafe` (v3.0.0
-step 2a, OD-503) and `ecf models watch`, the weekly model watch (SPEC §7.6; V1.4 step 10).
-`prune`: 2026-10-08, operator-approved fix (§7.5)."""
+"""`ecf models status` (the Claude pins, SPEC §7.5), `ecf models api-key set|clear --provider
+anthropic|typesafe` (v3.0.0 step 2a, OD-503) and `ecf models watch`, the weekly model watch
+(SPEC §7.6; V1.4 step 10). `ecf models install|prune|serve`, for the local model, went in v3.0.0
+(ADR 0031)."""
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
-from ecf import __version__, api_keys, ollama_unit
+from ecf import __version__, api_keys
 from ecf.client import LocalClient
-from ecf.errors import ConflictError, ServiceUnavailableError
+from ecf.errors import ConflictError
 from ecf.paths import Paths
 from ecf.prompts import hidden, require_terminal
 from ecf.upgrade_check import version_key
 
-POLL_S = 2.0
-START_WAIT_S = 30.0
-PRUNE_NOTE = ("Another ecf install on this computer still on one of those releases, or a rollback"
-              " with `ecf upgrade --to`, needs its copy (copied again only while Ollama still"
-              " holds the pinned tag). Copies of the same pinned model share its files, so removing"
-              " them frees no disk.")  # fmt: skip
-
 
 def make_models_app(paths: Callable[[], Paths]) -> typer.Typer:
-    models_app = typer.Typer(
-        no_args_is_help=True, help="The local model (Ollama) and the pinned Claude models."
-    )
+    models_app = typer.Typer(no_args_is_help=True, help="The pinned Claude models and API keys.")
 
     @models_app.command("status")
     def status() -> None:
-        """The pinned model, whether Ollama is ready to use, and any install in progress."""
+        """The pinned Claude models, any override, and the weekly model watch."""
         with LocalClient(paths()) as c:
-            st: dict[str, Any] = c.get("/v1/models")
+            st: dict[str, Any] = c.get("/v1/models/claude")
         _print(st)
-        if not st["ready"]:
-            raise typer.Exit(1)
 
     _watch_commands(models_app, paths)
-    _prune_command(models_app, paths)
-
-    serve_app = typer.Typer(no_args_is_help=True, help="ecf's login item that runs Ollama.")
-    models_app.add_typer(serve_app, name="serve")
-
-    @serve_app.command("install")
-    def serve_install() -> None:
-        """Run Ollama from ecf's login item with ecf's fixed settings (replaces `brew services`)."""
-        unit = ollama_unit.manager_for(paths().root)
-        unit.install()
-        typer.echo(f"installed {unit.unit_path}; Ollama runs with "
-                   + " ".join(f"{k}={v}" for k, v in ollama_unit.ENV.items()))  # fmt: skip
-
-    @serve_app.command("uninstall")
-    def serve_uninstall() -> None:
-        """Stop Ollama's login item and remove it (the pulled model stays)."""
-        unit = ollama_unit.manager_for(paths().root)
-        unit.uninstall()
-        typer.echo(f"removed {unit.unit_path}")
-
-    @serve_app.command("status")
-    def serve_status() -> None:
-        """Whether ecf's Ollama login item is installed and running."""
-        st = ollama_unit.manager_for(paths().root).status()
-        typer.echo(f"installed: {'yes' if st.installed else 'no'}; running:"
-                   f" {'yes' if st.running else 'no'}")  # fmt: skip
-        if st.detail.startswith("its program"):
-            typer.echo(st.detail, err=True)
-        if not st.running:
-            raise typer.Exit(1)
-
-    @models_app.command("install")
-    def install() -> None:
-        """Pull the pinned model into Ollama, check its digest and copy it to ecf's own name.
-        Starts ecf's Ollama login item first when nothing else serves Ollama."""
-        with LocalClient(paths()) as c:
-            ok = run_install(c, paths().root)
-        if not ok:
-            raise typer.Exit(1)
-
     return models_app
 
 
-def run_install(c: LocalClient, root: Path) -> bool:
-    """`ecf models install` (also `ecf init`'s model step): start Ollama if needed, then pull,
-    check and copy the pinned model, printing progress. True when it's installed."""
-    _ensure_ollama(c, root)
-    c.request("POST", "/v1/models/install", {})
-    last = ""
-    while True:
-        p: dict[str, Any] = c.get("/v1/models")["install"]
-        line = _progress(p)
-        if line != last:
-            typer.echo(line)
-            last = line
-        if p["state"] in ("done", "failed"):
-            break
-        if p["state"] == "idle":  # the install's progress lives in the service's memory
-            raise ServiceUnavailableError("the service restarted during the install: run"
-                                          " `ecf models install` again")  # fmt: skip
-        time.sleep(POLL_S)
-    if p["state"] == "failed":
-        typer.echo(f"install failed: {p['error']}", err=True)
-        return False
-    st: dict[str, Any] = c.get("/v1/models")
-    if not st["ready"]:  # installed, but something else stops model work (e.g. the listener)
-        typer.echo(f"installed, but not ready: {st['fault']['text']}", err=True)
-        return False
-    typer.echo("installed and ready; check it any time with: ecf models status")
-    return True
-
-
-def _cause(c: LocalClient) -> str | None:
-    fault: dict[str, Any] = c.get("/v1/models").get("fault") or {}
-    return fault.get("cause")
-
-
-def _ensure_ollama(c: LocalClient, root: Path) -> None:
-    cause = _cause(c)
-    unit = ollama_unit.manager_for(root)
-    if cause == "not_running":
-        if not unit.status().installed:
-            typer.echo("starting Ollama from ecf's login item (ecf models serve install)")
-        unit.install()
-        deadline = time.monotonic() + START_WAIT_S
-        while _cause(c) == "not_running":
-            if time.monotonic() > deadline:
-                raise ServiceUnavailableError(f"Ollama didn't start within {START_WAIT_S:.0f} s;"
-                                              " see `ecf models serve status`")  # fmt: skip
-            time.sleep(1)
-    elif not unit.status().running:
-        typer.echo("note: Ollama is running outside ecf's login item, so ecf can't set its"
-                   " settings; ecf doctor shows any that differ (ecf models serve install"
-                   " replaces it once you stop the other one)")  # fmt: skip
-
-
-def _progress(p: dict[str, Any]) -> str:
-    if p["total"]:
-        pct = int(100 * p["completed"] / p["total"])
-        return f"{p['state']}: {p['status']} {pct // 10 * 10}%"
-    return f"{p['state']}: {p['status']}"
-
-
 def _print(st: dict[str, Any]) -> None:
-    pin = st["pin"]
-    typer.echo(f"pinned: {pin['tag']} ({pin['digest'][:12]}), ecf's copy {pin['ecf_tag']}")
-    typer.echo(f"installed: {st['installed_at'] or 'never on this install'}")
-    if st.get("stale_tags"):
-        typer.echo(f"kept for other ecf releases: {', '.join(st['stale_tags'])}"
-                   " (ecf models prune removes them)")  # fmt: skip
-    if st.get("retired_tags"):
-        typer.echo(f"retired, no release runs them: {', '.join(st['retired_tags'])}"
-                   " (ecf models prune removes them)")  # fmt: skip
-    if st["ready"]:
-        where = ", ".join(st["listener"])
-        typer.echo(f"ready: Ollama {st['version']}, the pinned model, listening on {where} only")
-        for k, v in sorted(st.get("env", {}).items()):
-            typer.echo(f"  {k}={v}")
-    else:
-        typer.echo(f"not ready: {st['fault']['text']}")
-    cl = st.get("claude")
-    if cl:  # V1.4 step 2: the Claude models presets B and C use
-        typer.echo("Claude pins (models.lock): " + ", ".join(
-            f"{r} {i}" for r, i in cl["effective"].items()))  # fmt: skip
-        for fam, i in sorted(cl["overrides"].items()):
-            typer.echo(f"  override: {fam} -> {i} (ecf settings set claude_model_override none"
-                       " clears it)")  # fmt: skip
+    cl: dict[str, Any] = st["claude"]
+    typer.echo("Claude pins (models.lock): " + ", ".join(
+        f"{r} {i}" for r, i in cl["effective"].items()))  # fmt: skip
+    for fam, i in sorted(cl["overrides"].items()):
+        typer.echo(f"  override: {fam} -> {i} (ecf settings set claude_model_override none"
+                   " clears it)")  # fmt: skip
     for line in watch_lines(st.get("watch")):
         typer.echo(line)
-    if st["install"]["state"] not in ("idle",):
-        typer.echo(
-            f"last install: {_progress(st['install'])}"
-            + (f" ({st['install']['error']})" if st["install"]["error"] else "")
-        )
 
 
 def watch_lines(w: dict[str, Any] | None) -> list[str]:
@@ -204,13 +69,6 @@ def watch_lines(w: dict[str, Any] | None) -> list[str]:
                 out.append(f"  newer in a pinned family: {', '.join(sorted(cl['newer']))}")
         else:
             out.append(f"model watch: Models API not read yet; next run {nxt}")
-    ol: dict[str, Any] = w.get("ollama") or {}
-    if ol.get("error"):
-        out.append(f"  Ollama library: couldn't read the {ol.get('repo') or 'model'} tags page"
-                   f" ({ol['error']})")  # fmt: skip
-    elif ol.get("checked_at"):
-        out.append(f"  Ollama library: {len(ol['tags'])} {ol['repo']} tags,"
-                   f" read {str(ol['checked_at'])[:10]}")  # fmt: skip
     return out + _release_lines(w.get("release") or {})
 
 
@@ -280,35 +138,3 @@ def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None
         with LocalClient(paths()) as c:
             c.request("POST", "/v1/models/watch", {})
         typer.echo("The model watch runs within a minute; see ecf models status.")
-
-
-def _prune_command(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
-    """`ecf models prune` (SPEC §7.5; 2026-10-08, operator-approved fix)."""
-
-    @models_app.command("prune")
-    def prune(
-        yes: Annotated[bool, typer.Option("--yes", help="Don't ask before removing.")] = False,
-    ) -> None:
-        """Remove ecf's copies of the model for other ecf releases (this release's stays) and every
-        copy of a retired model."""
-        with LocalClient(paths()) as c:
-            st: dict[str, Any] = c.get("/v1/models")
-            stale: list[str] = st.get("stale_tags") or []
-            retired: list[str] = st.get("retired_tags") or []
-            if not stale and not retired:
-                typer.echo("no copies for other ecf releases")
-                return
-            if stale:
-                typer.echo("ecf's copies for other releases: " + ", ".join(stale))
-                typer.echo(PRUNE_NOTE)
-            if retired:
-                typer.echo("retired models no release runs (Qwen-based, banned by OD-494): "
-                           + ", ".join(retired))  # fmt: skip
-            if not yes and not typer.confirm("Remove them?", default=False):
-                raise typer.Exit(1)
-            r: dict[str, Any] = c.request("POST", "/v1/models/prune", {})
-        removed: list[str] = r["removed"]
-        typer.echo(f"removed {', '.join(removed)}" if removed else "nothing removed")
-        if len(removed) < len(stale) + len(retired):
-            typer.echo("some couldn't be removed; see ecf models status", err=True)
-            raise typer.Exit(1)

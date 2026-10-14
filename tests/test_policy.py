@@ -288,12 +288,14 @@ def test_actor_proposals_get_the_same_checks(name: str, target: str | None, expe
         assert got.mode == "approve"
 
 
-def test_sends_are_rejected_for_high_risk_items() -> None:
-    ctx = _ctx(classification={"payment_related": True}, templates=frozenset({"ack"}),
-               outbound=True)  # fmt: skip
+def test_a_send_on_a_high_risk_item_needs_approval() -> None:
+    """`local_high_risk` (sends rejected on the local pair) went in v3.0.0 (ADR 0031, P22): a
+    high-risk item's send is proposed for approval, with step-up, as any send."""
+    ctx = _send_ctx(facts={"sender_seen_before": False})
     p = policy.plan(ctx, LABELS)
+    assert p.high_risk
     got = policy.proposal(ctx, p, "reply_template", "ack", LABELS)
-    assert isinstance(got, Dropped) and "rejected" in got.why
+    assert isinstance(got, Planned) and got.mode == "approve"
 
 
 def _send_ctx(**kw: Any) -> Context:
@@ -311,13 +313,10 @@ def test_a_valid_send_needs_approval(name: str, target: str) -> None:
     assert isinstance(got, Planned) and (got.target, got.mode) == (target, "approve")
 
 
-def test_sends_on_high_addresses_are_allowed_for_claude_not_the_local_pair() -> None:
-    claude = _send_ctx(sensitivity="high", local_pair=False)
+def test_sends_on_high_addresses_are_allowed() -> None:
+    claude = _send_ctx(sensitivity="high")
     got = policy.proposal(claude, policy.plan(claude, LABELS), "reply_template", "ack", LABELS)
     assert isinstance(got, Planned)
-    local = _send_ctx(sensitivity="high")
-    got = policy.proposal(local, policy.plan(local, LABELS), "reply_template", "ack", LABELS)
-    assert isinstance(got, Dropped) and "local_high_risk" in got.why
 
 
 @pytest.mark.parametrize(
@@ -334,7 +333,7 @@ def test_sends_on_high_addresses_are_allowed_for_claude_not_the_local_pair() -> 
     ],
 )  # fmt: skip
 def test_send_guardrails(name: str, target: str | None, facts: dict[str, Any], why: str) -> None:
-    ctx = _send_ctx(facts=facts, local_pair=False)
+    ctx = _send_ctx(facts=facts)
     got = policy.proposal(ctx, policy.plan(ctx, LABELS), name, target, LABELS)
     assert isinstance(got, Dropped) and why in got.why, got
 
@@ -371,11 +370,10 @@ def test_labels_include_what_the_extension_adds() -> None:
 # ---- v3.0.0 S3: fixed items, fixed rules (OD-500; plan §5 invariants) -------------------------
 
 FIXED = rules.load_fixed_rules(SCHEMA)
-# preset A's path (S3b): the local model answers v2, which still has the removed values; the
-# composed rules compiled on v2 against the v2 starter rules
+# v2 answers (results and stored classifications from before v3), which still have the removed
+# values; the composed rules compiled on v2
 V2 = load_schema_v2()
 V2_COMPOSED = load_starter_rules(V2)
-V2_STARTER = rules.load_v2_starter(V2)
 KEPT_SOURCES = (
     "regulator",
     "friend",
@@ -453,21 +451,6 @@ def test_s3_inv5_a_missing_fixed_item_is_false(ctx: Context, item: str) -> None:
 
 
 V2_CLASSIFICATIONS = st.fixed_dictionaries({n: _field(s) for n, s in V2.fields.items()})
-
-
-@settings(max_examples=3000, deadline=None)
-@given(V2_CLASSIFICATIONS, FACTS)
-def test_s3_inv6_the_composed_rules_decide_as_the_v2_starter_rules(
-    cls: dict[str, Any], facts: dict[str, Any]
-) -> None:
-    """Invariant 6 (S3a; from S3b on preset A's path): when the items are derived from a v2
-    answer (`with_fixed`), the composed rules (no bridge clauses from S3b) decide exactly as the
-    v2 starter rules did, but for the expected causes: the kept-source clauses on sender_type
-    regulator, friend and family."""
-    if cls["sender_type"] in KEPT_SOURCES:
-        return
-    inp = policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts, rules=V2_COMPOSED))
-    assert V2_COMPOSED.evaluate(inp) == V2_STARTER.evaluate(inp)
 
 
 @settings(max_examples=2000, deadline=None)

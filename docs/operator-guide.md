@@ -43,7 +43,7 @@ not-fully-scanned or `high`-address items (SPEC §9.5).
 model said about each email. See [Reviewing](#reviewing-shadow-and-assist).
 
 **The daily summary** posts at the start of business hours: open, stale and expired items,
-not-fully-scanned counts, held-back sends, the last backup, backlog and hours on battery, newer
+not-fully-scanned counts, held-back sends, the last backup, backlog, newer
 models and releases, and anyone in ecf's channels besides you and the bot (SPEC §10.1).
 
 **Alerts** read `[ecf-alert] <Title>`, and `[ecf-alert] Resolved: <Title>` when they clear. The
@@ -224,9 +224,11 @@ of the address (nothing is lost) and raises `Operator Input Needed: send limit r
 (<address>)` until you check what happened and run `ecf outbound resume <address>` (step-up). It
 doesn't turn outbound back on if you turned it off.
 
-## Claude review (presets B and C)
+## Claude review
 
-Addresses on presets B and C wait for you to run Claude:
+Nothing classifies a C address's mail until you run Claude (preset D's actor items wait the same
+way, from v3.0.0 step 4); the fraud and regulator rules still flag mail as it arrives. Plan on a
+review at least once a working day:
 
 ```sh
 ecf claude          # opens Claude Code with ecf's own config and login
@@ -235,7 +237,8 @@ ecf claude          # opens Claude Code with ecf's own config and login
 
 The session works through the queue; its proposals arrive in Slack like any others, and Claude
 never approves. When items have waited more than 24 hours (`claude_review_reminder_hours`) ecf
-raises `Operator Input Needed: Claude review waiting (<address>)` (SPEC §10.3, §13.3).
+raises `Operator Input Needed: Claude review waiting (<address>)`, and from v3.0.0 a louder alert
+that mentions you after twice that (48 hours) (SPEC §10.3, §13.3).
 
 ## Notifications and alert email
 
@@ -249,9 +252,9 @@ raises `Operator Input Needed: Claude review waiting (<address>)` (SPEC §10.3, 
 ## Checking on ecf
 
 ```sh
-ecf status                           # service, each address, backlog and estimate, outbound
+ecf status                           # service, each address, backlog, outbound
 ecf logs [--address <a>] [--since 2h] [--event check.] [-f]   # audit log, never message content
-ecf stats [--since 7d] [--address <a>] [--preset A|B|C]       # model tokens, speed, plan usage
+ecf stats [--since 7d] [--address <a>] [--preset <p>]          # model tokens, speed, plan usage
 ecf doctor                           # everything ecf depends on, with fixes
 ```
 
@@ -263,4 +266,4 @@ ecf works only while the computer is on and awake (README, "When you're away"). 
 2. Read "Needs you" or `ecf inbox`; escalations first.
 3. Approvals of sends older than 4 days have expired; approve again if still wanted.
 4. Run `ecf approve --pending` for anything queued for step-up.
-5. Presets B and C: `ecf claude`, then `/ecf-review`.
+5. `ecf claude`, then `/ecf-review`.

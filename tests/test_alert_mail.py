@@ -40,7 +40,7 @@ def _addresses(conn: sqlite3.Connection) -> None:
     with write_tx(conn):
         for aid in ("ap", "ar"):
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                         " created_at, smtp_host, smtp_port) VALUES (?, ?, 'standard', 'A', 't',"
+                         " created_at, smtp_host, smtp_port) VALUES (?, ?, 'standard', 'C', 't',"
                          " 'smtp.acme.example', 465)", (aid, f"{aid}@acme.example"))  # fmt: skip
 
 

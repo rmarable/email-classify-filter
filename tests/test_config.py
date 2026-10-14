@@ -14,7 +14,7 @@ import ecf.schema
 from ecf.cli import app
 from ecf.errors import InvalidInputError, SchemaLimitError, StepupRequiredError
 from ecf.paths import Paths
-from ecf.schema import load_schema, local_schema
+from ecf.schema import load_schema
 from ecf_server import (
     addresses,
     claude_pins,
@@ -36,7 +36,7 @@ SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 STARTER = Path(__file__).parents[1] / "src" / "ecf_server" / "data" / "starter_rules.yaml"
 
 
-def _setup(conn: sqlite3.Connection, clock: FakeClock, preset: str = "A") -> None:
+def _setup(conn: sqlite3.Connection, clock: FakeClock, preset: str = "C") -> None:
     """One `high` address; preset C where your own fields are applied (D8: C only)."""
     now = to_ts(clock.now())
     with write_tx(conn):
@@ -649,10 +649,6 @@ def test_the_effective_schema_moves_the_gate_key(
     before = claude_pins.address_key(conn, "ap")
     _apply(conn, clock, SCHEMA_DOC)
     assert claude_pins.address_key(conn, "ap") != before
-    schema = config.current_schema(conn)
-    assert claude_pins.pins(conn, "A")["digest"] == claude_pins.local_key(schema)
-    # the local model is asked v2 with the same extension (P6, OD-498)
-    assert f"+{local_schema(schema).digest}+" in claude_pins.pins(conn, "A")["digest"]
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 

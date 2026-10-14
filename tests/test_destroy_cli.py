@@ -135,7 +135,7 @@ def test_whole_run(st: ServiceState, env: Env, paths: Paths) -> None:
     assert "No export in the last 24 hours." in out
     assert "Slack app A1 still exists" in out
     assert "revoke the app password for ap@acme.example" in out
-    assert "no other ecf install is left: `ecf models serve uninstall`" in out
+    assert "no other ecf install is left: `uv tool uninstall email-classify-filter`" in out
     assert f"kept at {cli_destroy.record_path(paths)}" in out
     assert env.store.get("slack/bot") is None
     # run again: it says so and prints what's left
@@ -259,7 +259,7 @@ def test_resumes_after_the_service_part(
     assert f.ran == []  # no claude-config folder: nothing to sign out of
     out = f.text()
     assert "a line from before" in out
-    assert "shared with other, so they stay" in out
+    assert "shared with other, so it stays" in out
 
 
 def test_a_symlinked_data_folder_is_unlinked_not_followed(tmp_path: Path) -> None:

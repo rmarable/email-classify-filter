@@ -107,7 +107,7 @@ def test_appendlimit_parsing() -> None:
 def test_store_and_load_round_trip(conn: sqlite3.Connection, clock: FakeClock) -> None:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')"
     )
     r = probe.probe(FakeMailSource(caps=FULL), "imap.other.example")
     with write_tx(conn):
@@ -132,7 +132,7 @@ def test_adding_an_address_stores_its_probe(conn: sqlite3.Connection, clock: Fak
         return FakeMailSource(caps=FULL)
 
     req = ad.AddRequest(
-        "ap@acme.example", "imap.purelymail.com", "high", "A", "pw", org_domains=["acme.example"]
+        "ap@acme.example", "imap.purelymail.com", "high", "C", "pw", org_domains=["acme.example"]
     )
     a = ad.add_address(conn, clock, MemorySecretStore(), factory, req, actor="os_user")
     assert a["probe"]["saves_sent"] is False and a["probe"]["warnings"] == []

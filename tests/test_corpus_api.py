@@ -86,7 +86,7 @@ def test_the_body_needs_the_owner_typed_and_a_one_off_for_an_unwatched_mailbox(
     with pytest.raises(InvalidInputError, match="app password"):
         corpus.from_body(conn, body(tmp_path / "c.ecfcorpus", app_password=""), no_secret)
     conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                 " VALUES ('pat', 'pat@acme.example', 'standard', 'A',"
+                 " VALUES ('pat', 'pat@acme.example', 'standard', 'C',"
                  " '2026-10-01T12:00:00Z')")  # fmt: skip
     with pytest.raises(InvalidInputError, match="use --address pat"):
         corpus.from_body(conn, body(tmp_path / "c.ecfcorpus"), no_secret)

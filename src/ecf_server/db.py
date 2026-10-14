@@ -11,7 +11,7 @@ import contextvars
 import os
 import sqlite3
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -106,8 +106,28 @@ def _migration_files() -> list[tuple[int, str, str]]:
 
 
 # Migrations that rewrite many rows, after which a WAL checkpoint runs (0036 schema v3, 0037 its
-# removed values)
-CHECKPOINT_AFTER = frozenset({36, 37})
+# removed values, 0038 the local models' columns and the `addresses` rebuild; P27)
+CHECKPOINT_AFTER = frozenset({36, 37, 38})
+# Migrations that rebuild a table other tables reference (0038 `addresses`; P1), with that table:
+# SQLite ignores `PRAGMA foreign_keys` inside a transaction, and with enforcement on, dropping the
+# old table would delete or refuse its children. So enforcement goes off before the transaction,
+# `PRAGMA foreign_key_check` on the rebuilt table's children (only those; review R4) must find no
+# row pointing at it before it commits (a row found rolls it all back, and the error names the
+# first few by table and rowid), and the connection's setting comes back afterwards, whatever
+# happened (best effort; review R10).
+NO_FK: dict[int, str] = {38: "addresses"}
+ORPHANS_NAMED = 5  # rows a failed check names
+# Columns kept in the schema though nothing reads or writes them, until a later major version
+# drops them (v4): dropping a column rewrites the whole table (review R1). Export leaves them out
+# and import doesn't copy them.
+UNUSED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "items": ("fallback_at", "model_attempts", "model_failed", "model_failed_at"),  # 0038
+}
+
+
+class MigrationError(sqlite3.IntegrityError):
+    """A migration would leave the database inconsistent; its transaction was rolled back (an
+    IntegrityError, so import and restore report it as rows that don't load)."""
 
 
 def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
@@ -125,17 +145,8 @@ def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
             continue
         if up_to is not None and version > up_to:
             break
-        with write_tx(conn):
-            # another migrator may have applied it since we looked
-            again = "SELECT 1 FROM schema_migrations WHERE version = ?"
-            if conn.execute(again, (version,)).fetchone():
-                continue
-            for statement in _split(sql):
-                conn.execute(statement)
-            conn.execute(
-                "INSERT INTO schema_migrations VALUES (?, ?, ?)",
-                (version, name, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
-            )
+        if not _apply(conn, version, name, sql):
+            continue
         applied.append(name)
         ran.add(version)
     if ran & CHECKPOINT_AFTER and not conn.in_transaction:
@@ -143,6 +154,61 @@ def migrate(conn: sqlite3.Connection, up_to: int | None = None) -> list[str]:
         # without waiting on readers (PASSIVE; schema doc §9, P13)
         conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
     return applied
+
+
+def _apply(conn: sqlite3.Connection, version: int, name: str, sql: str) -> bool:
+    """One migration in its own write transaction; False if another migrator applied it first."""
+    parent = NO_FK.get(version)
+    was = int(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    began = False
+    try:
+        if parent is not None:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            if conn.execute("PRAGMA foreign_keys").fetchone()[0]:  # inside a caller's transaction
+                raise MigrationError(f"migration {name} needs foreign keys off, and they can't"
+                                     " be turned off inside a transaction")  # fmt: skip
+        began = True
+        with write_tx(conn):
+            # another migrator may have applied it since we looked
+            again = "SELECT 1 FROM schema_migrations WHERE version = ?"
+            if conn.execute(again, (version,)).fetchone():
+                return False
+            for statement in _split(sql):
+                conn.execute(statement)
+            if parent is not None and (found := orphans(conn, parent)):
+                named = ", ".join(f"{t} rowid {r} -> {p}" for t, r, p in found[:ORPHANS_NAMED])
+                raise MigrationError(
+                    f"migration {name} would leave rows whose parent is missing ({named}"
+                    f"{', ...' if len(found) > ORPHANS_NAMED else ''}); nothing was changed, and"
+                    " ecf upgrade puts the previous version back. Report it with these names"
+                    " (table and row only); don't delete rows without a copy of the database"
+                )
+            conn.execute(
+                "INSERT INTO schema_migrations VALUES (?, ?, ?)",
+                (version, name, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
+            )
+        return True
+    finally:
+        if parent is not None:  # best effort, whatever happened above (review R10)
+            with suppress(sqlite3.Error):
+                if began and conn.in_transaction:  # our own, left open by a failed ROLLBACK
+                    conn.execute("ROLLBACK")
+            with suppress(sqlite3.Error):
+                conn.execute(f"PRAGMA foreign_keys={'ON' if was else 'OFF'}")
+
+
+def orphans(conn: sqlite3.Connection, parent: str) -> list[tuple[str, int | None, str]]:
+    """Rows of `parent`'s child tables whose `parent` row is missing: (table, rowid, parent),
+    from `PRAGMA foreign_key_check` on each child only, not the whole database (review R4)."""
+    children = [r[0] for r in conn.execute(
+        "SELECT DISTINCT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f"
+        " WHERE m.type = 'table' AND f.\"table\" = ? ORDER BY m.name", (parent,))]  # fmt: skip
+    out: list[tuple[str, int | None, str]] = []
+    for child in children:
+        for r in conn.execute(f'PRAGMA foreign_key_check("{child}")'):
+            if r[2] == parent:
+                out.append((str(r[0]), r[1], str(r[2])))
+    return out
 
 
 def _split(sql: str) -> list[str]:

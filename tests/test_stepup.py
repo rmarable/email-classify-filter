@@ -251,6 +251,6 @@ def test_made_up_values_never_reach_the_dialog(
 
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
     with pytest.raises(InvalidInputError):
         stepup.issue(conn, clock, FakeStepper(), purpose, target)

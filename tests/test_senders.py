@@ -32,7 +32,7 @@ def _setup(conn: sqlite3.Connection, clock: FakeClock, *, second: bool = False) 
     with write_tx(conn):
         for aid, email in rows:
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                         " created_at) VALUES (?, ?, 'standard', 'A', ?)",
+                         " created_at) VALUES (?, ?, 'standard', 'C', ?)",
                          (aid, email, now))  # fmt: skip
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
                      " VALUES ('org_domains', ?, ?, 'test')",

@@ -1,5 +1,6 @@
 """Schema v3, stage S2 (OD-498; schema doc draft 3 §9, §10, §15): v2 plus the fixed safety items,
-preset A still asked v2, the migration, derived eval labels."""
+the migration, derived eval labels. Preset A, which was still asked v2, went in v3.0.0 (ADR
+0031)."""
 
 import itertools
 import json
@@ -23,13 +24,9 @@ from ecf.schema import (
     from_v2,
     load_schema,
     load_schema_v2,
-    local_fields,
-    local_schema,
-    shipped_fallback,
     with_fixed,
-    without_extension,
 )
-from ecf_server import actor, classifier, claude_pins, db, evalrun
+from ecf_server import db, evalrun
 from ecf_server.clock import FakeClock
 from ecf_server.items import create_item
 
@@ -182,7 +179,6 @@ def test_with_fixed_completes_a_v2_answer_and_keeps_given_items() -> None:
     assert full["category"] == "spam_or_phishing"  # values left as they are (from_v2 maps them)
     kept = with_fixed(V2_ANSWER | {"phishing": False, "category": "spam_or_phishing"})
     assert kept["phishing"] is False
-    assert local_fields(full) == V2_ANSWER | {"category": "spam_or_phishing"}
 
 
 def test_from_v2_derives_the_items_then_reads_removed_values_as_least_informative() -> None:
@@ -283,61 +279,6 @@ def test_a_v2_result_is_completed_to_v3_when_rescored() -> None:
     assert evalrun._mapped(staff)[0]["claims_internal"] is True  # pyright: ignore[reportPrivateUsage]
     r = CaseResult(id="x", correct=True, got=V2_ANSWER)
     assert evalrun._lacks_fixed(r.got)  # pyright: ignore[reportPrivateUsage]
-
-
-# ---- preset A: still asked v2 (P6) ---------------------------------------------------------
-
-
-def test_the_local_model_is_asked_v2_and_its_prompt_digest_and_key_dont_move() -> None:
-    v2, v3 = load_schema_v2(), load_schema()
-    assert local_schema(v3) is v2 and local_schema(v2) is v2
-    release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
-    # the v2.2.3 classifier prompt digest, unchanged by schema v3
-    assert release["prompt_digest"] == classifier.prompt_digest(v3) == classifier.prompt_digest(v2)
-    assert classifier.system_prompt(v3) == classifier.INSTRUCTIONS + v2.prompt_block
-    for name in FIXED_ITEMS:
-        assert f"- {name} " not in classifier.system_prompt(v3)
-    assert claude_pins.local_key(v3) == claude_pins.local_key(v2)
-
-
-def test_a_fallback_or_extended_schema_is_asked_as_plain_v2() -> None:
-    """S4 (D8, OD-502): the local model is never asked the install's own fields, so A's and B's
-    prompt and key don't move with them; a fallback key still carries over (fail closed)."""
-    ext: dict[str, Any] = {
-        "fields": {"mentions_nda": {"type": "boolean", "description": "Mentions an NDA."}}
-    }
-    extended = extend_schema(load_schema(), ext)
-    asked = local_schema(extended)
-    assert asked is load_schema_v2() and "mentions_nda" not in asked.fields
-    assert without_extension(extended) is load_schema()
-    assert without_extension(load_schema()) is load_schema()
-    # a local answer (plain v2) is completed and checked without the user field (P1)
-    got = classifier.parse(json.dumps(V2_ANSWER), extended)
-    assert got is not None and "mentions_nda" not in got
-    fb = local_schema(shipped_fallback("x"))
-    assert fb.fallback_for == shipped_fallback("x").fallback_for and fb.version == 2
-
-
-def test_a_v2_reply_is_completed_and_a_v3_shaped_reply_refused() -> None:
-    v3 = load_schema()
-    got = classifier.parse(json.dumps(V2_ANSWER | {"sender_type": "family"}), v3)
-    assert got is not None and got["private_individual"] is True and got["phishing"] is False
-    v3.validate(got)
-    # S3b (D3): a removed v2 value is brought to v3 (`from_v2`): the item, then other/unknown
-    vcr = classifier.parse(json.dumps(V2_ANSWER | {"category": "vendor_change_request",
-                                                   "sender_type": "team"}), v3)  # fmt: skip
-    assert vcr is not None and vcr["bank_detail_change"] is True and vcr["claims_internal"]
-    assert (vcr["category"], vcr["sender_type"]) == ("other", "unknown")
-    v3.validate(vcr)
-    # the model is asked v2 strictly: an answer with the fixed items isn't what it was asked
-    assert classifier.parse(json.dumps(with_fixed(V2_ANSWER)), v3) is None
-    assert classifier.parse(json.dumps(V2_ANSWER), load_schema_v2()) == V2_ANSWER
-
-
-def test_the_local_actor_sees_only_v2_fields() -> None:
-    msg = actor.user_message("hi", with_fixed(V2_ANSWER), [], "tok")
-    shown = json.loads(msg.split("Classification: ", 1)[1].split("\n", 1)[0])
-    assert shown == V2_ANSWER
 
 
 # ---- migration 0036 --------------------------------------------------------------------------
@@ -507,4 +448,4 @@ def test_0037_checkpoints_and_the_release_names_it() -> None:
     assert 37 in db.CHECKPOINT_AFTER
     release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
     newest = max(m[0] for m in db._migration_files())  # pyright: ignore[reportPrivateUsage]
-    assert release["schema_version"] == newest == 37
+    assert release["schema_version"] == newest >= 37  # 38 from v3.0.0 (ADR 0031)

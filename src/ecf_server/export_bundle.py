@@ -36,7 +36,7 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
 from ecf import __version__
-from ecf_server import install_identity
+from ecf_server import db, install_identity
 from ecf_server.secretstore.select import INTERPRETER_KEY
 from ecf_server.stepup import person
 
@@ -47,7 +47,10 @@ FORMAT = 1
 # (v2.0.0): classifications follow schema v2 (`team`, the new values), which a version on 2
 # would misread as unknown values; a format-2 bundle is migrated on import (0034; OD-475). 4
 # (v3.0.0): classifications follow schema v3 (the fixed items, which a version on 3 would ignore);
-# a format-3 bundle is migrated on import (0036; OD-498)
+# a format-3 bundle is migrated on import (0036; OD-498). Still 4 with the local models removed
+# (never released with 4; R-D8, P2): `addresses` loses its fallback columns and `items` its model
+# queue's (still in the schema until v4, never exported: `db.UNUSED_COLUMNS`), and an older
+# bundle's A and B addresses arrive as C, paused (0038)
 DATA_FORMAT = 4
 SIG_BYTES = 64
 MAX_HEADER = 16 * 1024
@@ -60,7 +63,7 @@ INCLUDED = (
 )  # fmt: skip
 EXCLUDED = (
     "alert_outbox", "check_state", "claim_batches", "claims", "corpus_downloads", "delays",
-    "dns_cache", "downloads", "fallback_shadow", "grants", "heartbeats", "jobs", "leases",
+    "dns_cache", "downloads", "grants", "heartbeats", "jobs", "leases",
     "nonces", "processing", "rate", "slack_dedupe", "slack_messages",
 )  # fmt: skip
 SETTINGS_LEFT_OUT = (INTERPRETER_KEY,)  # this computer's interpreter; restore resets it
@@ -88,6 +91,9 @@ def snapshot_tables(conn: sqlite3.Connection, scratch_dir: Path) -> dict[str, li
 
 def _rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     rows = [dict(r) for r in conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid')]  # noqa: S608 - fixed names
+    unused = db.UNUSED_COLUMNS.get(table, ())
+    if unused:  # kept in the schema until v4, never exported (review R1)
+        rows = [{k: v for k, v in r.items() if k not in unused} for r in rows]
     if table == "settings":
         rows = [r for r in rows if r["key"] not in SETTINGS_LEFT_OUT]
     return rows

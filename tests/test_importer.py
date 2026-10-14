@@ -52,7 +52,7 @@ def _source(conn: sqlite3.Connection) -> None:
     with write_tx(conn), db.items_writer("create"):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, outbound,"
                      " preset, created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 1,"
-                     " 'A', 't')")  # fmt: skip
+                     " 'C', 't')")  # fmt: skip
         rows = [("00aa00bb", "awaiting_approval", LABEL), ("11aa00bb", "delayed", LABEL),
                 ("22aa00bb", "executing", LABEL), ("33aa00bb", "executed", LABEL),
                 ("44aa00bb", "awaiting_approval", None)]  # fmt: skip
@@ -183,7 +183,7 @@ def test_a_non_empty_target_needs_replace_and_the_name(
                        replace=True, typed_install="other", nonce=None)  # fmt: skip
     with write_tx(target):
         target.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                       " created_at) VALUES ('old', 'old@acme.example', 'standard', 'A',"
+                       " created_at) VALUES ('old', 'old@acme.example', 'standard', 'C',"
                        " 't')")  # fmt: skip
     r = _import(target, clock, path, replace=True, typed="t")
     assert r["replace"] is True
@@ -273,7 +273,7 @@ EXT = {
 }
 
 
-@pytest.mark.parametrize("preset", ["A", "C"])
+@pytest.mark.parametrize("preset", ["C"])
 @pytest.mark.parametrize("over_cap", [False, True])
 def test_s4_a_bundles_own_fields_are_dropped_and_named(
     conn: sqlite3.Connection,
@@ -284,9 +284,9 @@ def test_s4_a_bundles_own_fields_are_dropped_and_named(
     over_cap: bool,
 ) -> None:
     """P11 (OD-502): no stored-but-unused copy. A bundle's `config.schema` is dropped from the
-    staged copy, the preview, the result and the Security Notice name its fields: with an A or B
-    address, why they can't be used; C-only, that they need `ecf config apply` here. One over a
-    cap is dropped too, not refused."""
+    staged copy, the preview, the result and the Security Notice name its fields and that they
+    need `ecf config apply` here (an A or B address gets the same text from v3.0.0, ADR 0031).
+    One over a cap is dropped too, not refused."""
     from ecf.schema import load_schema  # noqa: PLC0415
     from ecf_server import config, import_plan  # noqa: PLC0415
 
@@ -308,10 +308,7 @@ def test_s4_a_bundles_own_fields_are_dropped_and_named(
     assert note == preview
     assert note["fields"] == sorted(ext.get("fields", {}))
     assert note["category_values"] == sorted(ext["category_values"])
-    if preset == "A":
-        assert "ap use preset A or B" in note["text"] and "isn't measured" in note["text"]
-    else:
-        assert "re-apply your config file" in note["text"]
+    assert "re-apply your config file" in note["text"] and "preset A" not in note["text"]
     assert config.current(target)["schema"] is None
     assert config.current_schema(target).digest == load_schema().digest
     assert all(s["section"] != "schema" for s in done["config_changes"])
