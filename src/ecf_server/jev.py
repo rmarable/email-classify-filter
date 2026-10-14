@@ -707,7 +707,8 @@ class Client:
         self.timeout_s = timeout_s
         self.http = http_client(transport, read_s=timeout_s)
         self.budget = WaitBudget(budget_s)
-        self.aimd = Aimd(limit=concurrency)
+        # the run's concurrency is AIMD's ceiling: a serial run stays at 1 (P6, P14)
+        self.aimd = Aimd(limit=concurrency, ceiling=concurrency)
         self.breaker = Breaker()
         self.stats = Stats()
         self._pace_until: float | None = None

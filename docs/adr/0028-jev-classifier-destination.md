@@ -1,6 +1,7 @@
 # ADR 0028: TypeSafe Jev may receive email content as the classifier
 
-- **Status:** accepted (operator decision 2026-10-12, OD-493); decided, not built; amends the
+- **Status:** accepted (operator decision 2026-10-12, OD-493); built for the eval only (v3.0.0
+  step 2, OD-503/504; synthetic text only until step 4); amends the
   privacy rule ("never add another destination", CLAUDE.md; SPEC §12.4) for this one destination
 - **Amended by ADR 0031** (2026-10-14, OD-506): Jev is compared with C only, and Bedrock, not a
   local model, is the stated path to revisit.
@@ -26,6 +27,10 @@ then go local again. Jev is a hosted "System One" model: it answers typed questi
 
 ## Open before building (from the review)
 
+- **Answered (v3.0.0 step 2, OD-503/504):** Payload OD-504 (SPEC §12.4; a test bounds the
+  request size); Pin `jev.lock`, checked per reply, in the gate key; Key `jev-api-key` via `ecf
+  models api-key --provider typesafe`. Built for the eval only (step 2). Vendor terms and Consent
+  stay open; Lineage is parked.
 - **Payload:** what goes to Jev (today the Claude classifier gets a capped, redacted excerpt and
   fixed-wording signals, OD-483); a test bounds the request size.
 - **Vendor terms (unverified unless marked):** retention period for `state` (not published; zero

@@ -2,11 +2,11 @@
 decisions 2026-10-02, OD-287 to OD-292).
 
 - **A run is registered from the command line** (`ecf eval run --claude`, OD-288), never through
-  MCP: preset C (D from v3.0.0 step 2d), the sensitivity it runs as, `--fraud-only`, other
-  models for the classifier or actor roles, and how many items a `-high` spawn takes
-  (`--batch`). One run at a time. The cases are prepared in a service thread (ecf's own analysis
-  and the excerpts, as `ecf eval run` does: about 40 s for the 158-case set); each becomes
-  claimable as soon as it is ready.
+  MCP: preset C or D, the sensitivity it runs as, `--fraud-only`, other models for the
+  classifier or actor roles, and how many items a `-high` spawn takes (`--batch`). One run at a
+  time. The cases are prepared in a service thread (ecf's own analysis and the excerpts, as `ecf
+  eval run` does: about 40 s for the 158-case set); each becomes claimable as soon as it is
+  ready.
 - **The same agents and tools** (OD-287): `eval_next` claims cases like `review_queue` claims
   items, under a random reference (never the case ID, whose name gives the answer away), and the
   subagents read and submit through `get_message`, `record_classification` and `propose_action`,
@@ -19,6 +19,12 @@ decisions 2026-10-02, OD-287 to OD-292).
   run's models), is keyed `eval-...`, and is for comparison only.
 - **Preset B** (OD-289), which took Gemma's classifications from an `ecf eval run`, was removed
   with Gemma in v3.0.0 (ADR 0031); its result files still load and rescore (R-D12).
+- **Preset D** (v3.0.0 step 2d; D5, P15): Jev's classifications from the latest complete `ecf
+  eval run --classifier-backend jev` on the pinned Jev version, its prompt digest, the default
+  schema and this version of the set, not an experiment, its result file present; Claude is the
+  actor. A faulted Jev case (no answer) is scored as a failure (P1). Comparison only (an
+  `eval-...` key) until step 4 adds D to `claude_pins.PAIR`; its schema, prompt digest, input
+  format and excerpt cap are the source run's.
 - **Scoring** is `ecf eval run`'s (`evalrun.score`, the starter rules, policy, the safety checks);
   the result file and `eval_runs` row have its format, plus the run's Claude figures. Preset C
   classifies its first 10 cases twice (determinism, §16.5).
@@ -54,6 +60,7 @@ from ecf.eval.results import (
     ClaimRecord,
     ClaimStage,
     ResultFile,
+    load_result,
     spawn_figures,
 )
 from ecf.ids import new_random_id
@@ -84,6 +91,13 @@ EXPIRY = timedelta(hours=24)
 BATCH_MAX = 5
 ACTOR_CHARS = 4000  # as `ecf eval run` and the stored actor excerpt
 ROLES = ("classifier", "classifier_high", "actor", "actor_high")
+# the Claude roles each preset's eval uses: C's are its gate pins; D's actor (D isn't in
+# `claude_pins.GATE_ROLES` or `PAIR` until step 4, so a D run is comparison only)
+USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": ("actor", "actor_high")}
+D_PAIR = "jev/claude"  # a D run's `eval_runs.pair` until step 4 adds D to `claude_pins.PAIR`
+CLAUDE_INPUT_FORMAT = "claude-v1"  # a C run's `input_format`, so Jev vs C prints the difference
+# the inputs a D run takes from its source Jev run (P13)
+SOURCE_KEYS = ("schema_digest", "prompt_digest", "input_format", "excerpt_cap")
 NO_RUN = ("no Claude eval is waiting: register one with `ecf eval run --claude`, then open"
           " `ecf claude`")  # fmt: skip
 
@@ -91,7 +105,7 @@ NO_RUN = ("no Claude eval is waiting: register one with `ecf eval run --claude`,
 @dataclass(frozen=True)
 class Options:
     root: Path
-    preset: str = "C"  # C; D from v3.0.0 step 2d
+    preset: str = "C"  # C, or D (Jev's classifications, Claude's actor; comparison only)
     sensitivity: str = "standard"  # the address sensitivity the cases run as
     fraud_only: bool = False
     classifier_model: str | None = None
@@ -172,6 +186,8 @@ class Run:
     known: frozenset[str]
     data_dir: Path
     schema: CompiledSchema  # the effective schema at registration (with any extension)
+    source_run: str | None = None  # preset D: the `ecf eval run` whose classifications it uses
+    source: dict[str, Any] = field(default_factory=dict[str, Any])  # D: its SOURCE_KEYS
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -240,9 +256,11 @@ def role_of(agent: str) -> str:
     return agent.removeprefix("ecf-").removeprefix("eval-").replace("-", "_")
 
 
-def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str], bool, str]:
+def models_for(conn: sqlite3.Connection, opts: Options,
+               source_key: str | None = None) -> tuple[dict[str, str], bool, str]:  # fmt: skip
     """The run's model per role, whether they are the pins in force for the preset's roles, and
-    the run's key (the gate's pin key, or `eval-...`)."""
+    the run's key (the gate's pin key, or `eval-...`). A D run is never pinned until step 4: its
+    key binds the actor models, its source Jev run's gate key and the schema."""
     eff = claude_pins.effective(conn)
     models = {r: eff[r] for r in ROLES}
     for model, roles in ((opts.classifier_model, ("classifier", "classifier_high")),
@@ -253,12 +271,14 @@ def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str],
             raise InvalidInputError(f"{model!r} isn't a Claude model ID (claude-haiku-*,"
                                     " claude-sonnet-*, claude-opus-*)")  # fmt: skip
         models |= dict.fromkeys(roles, model)
-    used = claude_pins.GATE_ROLES[opts.preset]
-    pinned = all(models[r] == eff[r] for r in used)
+    used = USED_ROLES[opts.preset]
+    pinned = opts.preset in claude_pins.PAIR and all(models[r] == eff[r] for r in used)
     if pinned:
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
     keyed["schema"] = config.current_schema(conn).digest  # as in `claude_pins.pins` (OD-478)
+    if source_key is not None:
+        keyed["jev"] = source_key
     return models, False, "eval-" + claude_pins.key(keyed)
 
 
@@ -272,12 +292,48 @@ def agents_for(run: Run) -> dict[str, str]:
 # ---------------------------------------------------------------------------- registering
 
 
+def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema
+             ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any]]:  # fmt: skip
+    """Preset D's source (D5, P15): the latest `ecf eval run --classifier-backend jev` on the
+    pinned Jev version, its prompt digest and `schema` (v3, the default: D9), on this version of
+    the set, complete, redacted and not an experiment, its result file present: its run ID, each
+    case's classification (a faulted case's is empty, so it is scored as a failure, P1) and its
+    inputs (SOURCE_KEYS). Which other sources D may take is open (removal P19)."""
+    from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
+
+    pin, prompt = evaljev.source_inputs(schema)
+    rows = conn.execute("SELECT run_id, metrics, path FROM eval_runs WHERE pair = ? AND"
+                        " set_version = ? ORDER BY created_at DESC",
+                        (evalrun.pair_for(evalrun.JEV), version)).fetchall()  # fmt: skip
+    for row in rows:
+        m: dict[str, Any] = json.loads(row["metrics"])
+        o: dict[str, Any] = m.get("options") or {}
+        figures: dict[str, Any] = m.get("jev") or {}
+        if (m.get("backend") != evalrun.JEV or figures.get("pin") != pin
+                or m.get("prompt_digest") != prompt or m.get("schema_digest") != schema.digest
+                or m.get("complete") is not True or m.get("redact") is False):  # fmt: skip
+            continue
+        if o.get("for_gate") is False or o.get("switches_off") or o.get("measuring"):
+            continue  # an experiment: its classifications aren't production's
+        if not row["path"] or not Path(row["path"]).is_file():
+            continue  # an imported run: its result file stayed on the other computer
+        result = load_result(Path(row["path"]))
+        got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
+        return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}
+    raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
+                            " --classifier-backend jev` on the pinned Jev version, the default"
+                            " schema and this version of the set, and there is none: run it"
+                            " first")  # fmt: skip
+
+
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
           *, spawn: Callable[[Callable[[], None]], None] | None = None,
           ) -> dict[str, Any]:  # fmt: skip
-    if opts.preset != "C":
-        raise InvalidInputError("a Claude eval runs preset C (preset B was removed in v3.0.0,"
-                                " ADR 0031)")  # fmt: skip
+    if opts.preset not in USED_ROLES:
+        raise InvalidInputError("a Claude eval runs preset C or D (preset B was removed in"
+                                " v3.0.0, ADR 0031)")  # fmt: skip
+    if opts.preset == "D" and opts.classifier_model is not None:
+        raise InvalidInputError("preset D classifies with Jev: no classifier model")
     if opts.sensitivity not in ("standard", "high"):
         raise InvalidInputError("sensitivity must be standard or high")
     if not 1 <= opts.batch <= BATCH_MAX:
@@ -286,9 +342,14 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
     conn = connect()
+    source_run: str | None = None
+    got: dict[str, dict[str, Any]] = {}
+    source: dict[str, Any] = {}
     try:
-        models, pinned, key = models_for(conn, opts)
         schema = config.current_schema(conn)
+        if opts.preset == "D":
+            source_run, got, source = _jev_run(conn, version, schema)
+        models, pinned, key = models_for(conn, opts, _source_key(conn, source_run))
     finally:
         conn.close()
     starter = rules.load_starter_rules(schema)
@@ -299,7 +360,8 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
             raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
                                 " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
         run = Run(new_random_id(), opts, models, pinned, key, version, clock.now(), works,
-                  starter, policy.labels(schema, starter), data_dir, schema)  # fmt: skip
+                  starter, policy.labels(schema, starter), data_dir, schema, source_run,
+                  source)  # fmt: skip
         _SLOT.run = run
     evalrun.remember_root(connect, clock, opts.root)  # only here (P16)
     log.info("claude_eval.registered", run_id=run.run_id[:8], cases=len(works),
@@ -307,7 +369,7 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
 
     def work() -> None:
         try:
-            _prepare(connect, clock, run)
+            _prepare(connect, clock, run, got)
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("claude_eval.prepare_failed", error_type=type(exc).__name__)
             with run.lock:
@@ -322,8 +384,18 @@ def _thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name="ecf-claude-eval", daemon=True).start()
 
 
-def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
-    """ecf's analysis and the excerpts for each case, in order; each is claimable once ready."""
+def _source_key(conn: sqlite3.Connection, source_run: str | None) -> str | None:
+    """A D run's source: its `eval_runs.digest` (the Jev gate key)."""
+    if source_run is None:
+        return None
+    row = conn.execute("SELECT digest FROM eval_runs WHERE run_id = ?", (source_run,)).fetchone()
+    return str(row["digest"]) if row else None
+
+
+def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
+             got: dict[str, dict[str, Any]] | None = None) -> None:  # fmt: skip
+    """ecf's analysis and the excerpts for each case, in order; each is claimable once ready. A
+    D case is planned at once on its Jev classification (`got`), so only its actor is asked."""
     scratch = ruletest.Scratch(clock)
     try:
         for w in run.works:
@@ -346,7 +418,11 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) 
                 if not run.open:
                     return
                 w.facts, w.email, w.cls_text, w.act_text = facts, email, cls_text, act_text
-                w.stage = "classify"
+                if run.opts.preset == "D":  # an empty answer (a faulted case) fails (P1)
+                    w.classification = (got or {}).get(w.case.id) or None
+                    _classified(run, w)
+                else:
+                    w.stage = "classify"
         with run.lock:
             if run.state == "preparing":
                 run.state = "ready"
@@ -399,10 +475,11 @@ def _score(w: Work) -> None:
 
 
 def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
-    """Every case done: the first cases are classified again (§16.5), then the result."""
+    """Every case done: preset C classifies its first cases again (§16.5; D's classifications
+    are its source run's), then the result."""
     if run.state != "ready" or any(w.stage != "done" for w in run.works):
         return
-    if not run.repeats_started:
+    if run.opts.preset == "C" and not run.repeats_started:
         run.repeats_started = True
         for w in run.works[: evalrun.DETERMINISM_CASES]:
             w.stage = "repeat"
@@ -425,9 +502,13 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         return
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 schema=run.schema)  # fmt: skip
-    summary["schema_digest"] = run.schema.digest  # what the classifier was asked
-    summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
-    summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields too (R9)
+    if run.opts.preset == "D":  # what Jev was asked, with what: the source run's (P13)
+        summary.update(run.source)
+    else:
+        summary["schema_digest"] = run.schema.digest  # what the classifier was asked
+        summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
+        summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields (R9)
+        summary["input_format"] = CLAUDE_INPUT_FORMAT  # Jev vs C prints "different inputs"
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()
@@ -437,7 +518,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         summary["claude"] = _figures(conn, run)
         if (spawns := spawn_figures(results)) is not None:
             summary["claude"]["spawns"] = spawns
-        result = ResultFile(run_id=run.run_id, pair=claude_pins.PAIR[run.opts.preset],
+        result = ResultFile(run_id=run.run_id, pair=claude_pins.PAIR.get(run.opts.preset, D_PAIR),
                             set_version=run.version, created_at=to_ts(clock.now()),
                             cases=results, digest=run.key, summary=summary)  # fmt: skip
         evalrun._save(conn, clock, run.data_dir, result,  # pyright: ignore[reportPrivateUsage]
@@ -465,9 +546,10 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
     """The run's Claude figures (OD-290): its sessions' API requests since it was registered,
     by model and source; plan usage at the first and last reading of those sessions. Approximate
     when `/ecf-review` ran in the same session."""
-    used = claude_pins.GATE_ROLES[run.opts.preset]
+    used = USED_ROLES[run.opts.preset]
     return {
         "preset": run.opts.preset,
+        **({"source_run": run.source_run} if run.source_run is not None else {}),
         "sensitivity": run.opts.sensitivity,
         "models": {r: run.models[r] for r in used},
         "pinned": run.pinned,
@@ -1053,7 +1135,7 @@ def snapshot(run: Run) -> dict[str, Any]:
             "prepared": sum(w.stage != "preparing" for w in run.works),
             "preset": run.opts.preset, "sensitivity": run.opts.sensitivity,
             "pinned": run.pinned, "batch": run.opts.batch,
-            "models": {r: run.models[r] for r in claude_pins.GATE_ROLES[run.opts.preset]},
+            "models": {r: run.models[r] for r in USED_ROLES[run.opts.preset]},
             "created_at": to_ts(run.created), "result": run.summary,
         }  # fmt: skip
 

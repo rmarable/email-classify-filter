@@ -3,6 +3,7 @@ text) and the paired comparison `ecf eval compare` prints (SPEC §16.2, §16.5).
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from collections.abc import Mapping
@@ -38,6 +39,9 @@ INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different in
               # bytes of schema per Claude classify read (v3.0.0 S4, review R9; C runs)
               "read_bytes": "different inputs"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
+# the result file's format (v3.0.0 step 2, P16): 1 for files without the key; 2 adds the Jev
+# per-case fields. A file of a later format is refused with a reason, not a validation dump
+RESULT_FORMAT = 2
 
 
 class CallMetrics(BaseModel):
@@ -125,6 +129,19 @@ class CaseResult(BaseModel):
     # field's positives, precision and recall from the file alone (v3.0.0 S1); empty in older
     # files
     expected: dict[str, str | bool] = Field(default_factory=dict[str, str | bool])
+    # a Jev case (v3.0.0 step 2, format 2; §5.5): why it failed without an answer (`provider`,
+    # `request_error`; None otherwise) and that reply's HTTP status, its tries, the seconds spent
+    # waiting (backoff, Retry-After, breaker) and for a concurrency slot, the concurrency, each
+    # answer's confidence and the tokens TypeSafe reported. Never a request ID (D7)
+    fault: str | None = None
+    status: int | None = None
+    tries: int | None = None
+    wait_ms: int | None = None
+    queue_ms: int | None = None
+    concurrency: int | None = None
+    confidence: dict[str, float] | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class ResultFile(BaseModel):
@@ -136,12 +153,24 @@ class ResultFile(BaseModel):
     cases: list[CaseResult]
     digest: str | None = None  # the local model's manifest digest (V1.3)
     summary: dict[str, object] | None = None  # metrics (V1.3); never message or model text
+    format: int = 1  # RESULT_FORMAT when written from v3.0.0 step 2; 1 in older files (P16)
 
 
 def load_result(path: Path) -> ResultFile:
+    """A result file; one written by a newer ecf (a later `format`) is refused with a reason
+    (P16)."""
     try:
-        return ResultFile.model_validate_json(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        raw: Any = json.loads(text)
     except (OSError, ValueError) as exc:
+        raise InvalidInputError(f"{path}: not a valid result file: {exc}") from exc
+    fmt = cast(dict[str, Any], raw).get("format") if isinstance(raw, dict) else None
+    if isinstance(fmt, int) and not isinstance(fmt, bool) and fmt > RESULT_FORMAT:
+        raise InvalidInputError(f"{path}: this result was written by a newer ecf (format {fmt});"
+                                " run `uv run ecf` from the newer checkout or upgrade")  # fmt: skip
+    try:
+        return ResultFile.model_validate_json(text)
+    except ValueError as exc:
         raise InvalidInputError(f"{path}: not a valid result file: {exc}") from exc
 
 

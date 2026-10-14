@@ -900,10 +900,11 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
         body = _body(request)
-        if body.get("corpus_session") is not None:  # R-D5: no model runs over real mail here
-            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031); `ecf"
-                                    " eval routes --corpus` and `ecf eval rescore --corpus`"
-                                    " still read a corpus")  # fmt: skip
+        if body.get("corpus_session") is not None:  # R-D5, P5: no model runs over real mail
+            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031); real"
+                                    " mail goes to Jev only through a preset D address (step"
+                                    " 4). `ecf eval routes --corpus` and `ecf eval rescore"
+                                    " --corpus` still read a corpus")  # fmt: skip
         root = Path(_str(body, "root")).expanduser()
         if not root.is_absolute() or not (root / "labels.jsonl").is_file():
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
@@ -915,9 +916,22 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                redact=body.get("redact") is not False,
                                for_gate=body.get("for_gate") is not False,
                                copy_to=_copy_to(body),
-                               signals=body.get("signals") is not False)  # fmt: skip
+                               signals=body.get("signals") is not False,
+                               jev_state=_opt_str(body, "jev_state") or "s1",
+                               jev_preamble=_opt_str(body, "jev_preamble") or "state",
+                               jev_concurrency=_jev_concurrency(body))  # fmt: skip
+        asker = None
+        if opts.backend == evalrun.JEV:  # the key is read here, then re-read per case (P12)
+            from ecf_server import evaljev, jev  # noqa: PLC0415 - eval only, not a service import
+
+            store = state.store()
+            if not store.get(jev.KEY_SECRET):
+                raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
+                                        " --provider typesafe`")  # fmt: skip
+            asker = evaljev.factory(evaljev.Setup(lambda: store.get(jev.KEY_SECRET),
+                                                  state.jev_transport))  # fmt: skip
         run = evalrun.start(state.connect, state.clock, state.db_path.parent, opts,
-                            power=state.power)  # fmt: skip
+                            power=state.power, asker=asker)  # fmt: skip
         evalrun.note(state.connect, state.clock,
                      f"Eval {run['run_id'][:8]} started ({run['total']} cases,"
                      f" {opts.backend} backend).")  # fmt: skip
@@ -1096,6 +1110,13 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/eval/results", eval_results, methods=["POST"]),
         Route("/v1/statusline", statusline, methods=["POST"]),
     ]
+
+
+def _jev_concurrency(body: dict[str, Any]) -> int:
+    v = body.get("jev_concurrency", 1)
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise InvalidInputError("jev_concurrency must be a whole number")
+    return v
 
 
 def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:

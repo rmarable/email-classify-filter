@@ -1122,7 +1122,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     claude: Annotated[
         bool, typer.Option("--claude", help="Register a run for /ecf-eval in `ecf claude`.")
     ] = False,
-    preset: Annotated[str, typer.Option("--preset", help="With --claude: C.")] = "C",
+    preset: Annotated[
+        str,
+        typer.Option(
+            "--preset",
+            help="With --claude: C, or D (Jev's classifications from the latest complete"
+            " `ecf eval run --classifier-backend jev`, Claude as the actor; comparison only).",
+        ),
+    ] = "C",
     sensitivity: Annotated[
         str, typer.Option("--sensitivity", help="With --claude: standard or high.")
     ] = "standard",
@@ -1140,8 +1147,10 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         typer.Option(
             "--classifier-backend",
             help="null (default): every field at its least risky value, the rules alone (SPEC"
-            " §7.8; never counts for the go-live gate). gemma and systemone:<name> were"
-            " removed in v3.0.0 (ADR 0031).",
+            " §7.8; never counts for the go-live gate). jev: TypeSafe Jev (needs `ecf models"
+            " api-key set --provider typesafe`; sends the synthetic cards to TypeSafe; not for"
+            " the gate until v3.0.0 step 4). gemma and systemone:<name> were removed in v3.0.0"
+            " (ADR 0031).",
         ),
     ] = "null",
     redact: Annotated[
@@ -1180,6 +1189,26 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " backend only; an experiment, never counts for the go-live gate).",
         ),
     ] = True,
+    jev_state: Annotated[
+        str,
+        typer.Option(
+            "--jev-state",
+            help="With jev: the state's format, s1 (default) or s2;"
+            " s2 is a measurement, not for the gate.",
+        ),
+    ] = "s1",
+    jev_preamble: Annotated[
+        str,
+        typer.Option(
+            "--jev-preamble",
+            help="With jev: where ecf's preamble goes, state"
+            " (default) or instructions; instructions is a measurement, not for the"
+            " gate.",
+        ),
+    ] = "state",
+    jev_concurrency: Annotated[
+        int, typer.Option("--jev-concurrency", help="With jev: 1 (the only value in step 2).")
+    ] = 1,
 ) -> None:
     """Run the synthetic set through ecf's rules with the null classifier (every field at its
     least risky value; seconds, no model): the rules-alone floor and a wiring check, never
@@ -1193,10 +1222,11 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if claude:
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
-        if classifier_backend != "null" or not redact or not_for_gate or not signals:
-            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate and"
-                                    " --no-signals are for `ecf eval run` without"
-                                    " --claude")  # fmt: skip
+        jev_opts = (jev_state, jev_preamble, jev_concurrency) != ("s1", "state", 1)
+        if classifier_backend != "null" or not redact or not_for_gate or not signals or jev_opts:
+            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
+                                    " --no-signals and the --jev-* options are for `ecf eval"
+                                    " run` without --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy)  # fmt: skip
         return
@@ -1204,7 +1234,9 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         r = c.request("POST", "/v1/eval/runs", {
             "root": str(root.resolve()), "classifier": classifier, "fraud_only": fraud_only,
             "backend": classifier_backend, "redact": redact, "for_gate": not not_for_gate,
-            "signals": signals, "copy_to": str(copy) if copy else None})  # fmt: skip
+            "signals": signals, "copy_to": str(copy) if copy else None,
+            "jev_state": jev_state, "jev_preamble": jev_preamble,
+            "jev_concurrency": jev_concurrency})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:
         typer.echo(f"  The result is also written to {copy}/ when the run ends.")
@@ -1565,17 +1597,36 @@ def _recall(m: dict[str, Any]) -> str:
     return f" fraud-guard recall {hit}/{n} ({m['fraud_guard_recall']}%),"
 
 
+INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
+    "stopped": "stopped after {n} cases",
+    "faulted": "stopped early after {n} cases: too many faulted cases",
+    "faulted_safety_card": "incomplete: a fraud, escalation or injection card faulted",
+    "budget": "stopped after {n} cases: the waiting budget was spent",
+}
+
+
+BACKEND_CAVEAT = {
+    "null": "null backend: the rules alone, never for the gate",  # §7.8; R-D6
+    "jev": "jev backend: not for the gate until step 4",  # gate-eligible from v3.0.0 step 4
+}
+
+
 def _run_caveat(m: dict[str, Any]) -> str:
     """Why a run can't pass the go-live gate whatever its score (§9.3)."""
     opts: dict[str, Any] = m.get("options") or {}
     if m.get("complete") is False:
-        return f" (stopped after {m.get('cases')} cases)"
-    if m.get("backend") == "null":  # the rules alone (§7.8; R-D6)
-        return " (null backend: the rules alone, never for the gate)"
+        why = INCOMPLETE.get(str(m.get("incomplete_reason")), INCOMPLETE["stopped"])
+        return f" ({why.format(n=m.get('cases'))})"
+    # an eval-only switch off, or a Jev measurement option away from its default (§6)
+    switched: list[Any] = opts.get("switches_off") or []
+    measuring: list[Any] = opts.get("measuring") or []
+    off = [f"{x} off" for x in switched] + [str(x) for x in measuring]
+    if (backend := BACKEND_CAVEAT.get(str(m.get("backend")))) is not None:
+        return f" ({backend}" + "".join(f"; {x}" for x in off) + ")"
     if opts and not (opts.get("classifier") and opts.get("actor")):
         return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
-    if opts.get("switches_off"):
-        return " (not for the gate: " + ", ".join(opts["switches_off"]) + " off)"
+    if off:
+        return " (not for the gate: " + ", ".join(off) + ")"
     if opts.get("for_gate") is False:
         return " (not for the gate)"
     return ""
@@ -1650,6 +1701,7 @@ def eval_compare(
             )
         )
     for name, run in (("A", ra), ("B", rb)):
+        typer.echo(f"{name}  {_state_line(run)}")
         for line in _run_lines(run):
             typer.echo(f"{name}{line}")
     fields = compare_fields(ra, rb)
@@ -1673,8 +1725,57 @@ def _run_lines(run: ResultFile) -> list[str]:
     out += [f"    {role}: {line}" for role, line in _role_figures(run.summary)]
     out += [f"    {line}" for line in _latency_lines(run)]
     out += [f"  {line}" for line in _claude_figures(run, len(run.cases))]
+    out += [f"  {line}" for line in _jev_figures(run.summary)]
     out += [f"  {line}" for line in _decision_figures(run.summary)]
     out += [f"  {line}" for line in field_lines(run)]
+    return out
+
+
+def _state_line(run: ResultFile) -> str:
+    """A run's completeness and faulted cases, for `ecf eval compare` (P1, P22): a faulted case
+    is scored as a failure, so the counts say how much of a difference is the provider's."""
+    s = cast(dict[str, Any], run.summary or {})
+    if s.get("complete") is False:
+        reason = str(s.get("incomplete_reason") or "stopped")
+        state = f"incomplete ({reason})"
+    else:
+        state = "complete"
+    faulted = s.get("faulted")
+    if isinstance(faulted, list):
+        state += f"; faulted cases {len(cast(list[Any], faulted))} (scored as failures)"
+    return state
+
+
+def _jev_figures(summary: dict[str, object] | None) -> list[str]:
+    """A Jev run's `summary.jev` (§5.5, P25): latency per concurrency with its n, the end-to-end
+    time per case, tokens and cost, retries, pauses, breaker trips, waiting and faulted cases;
+    absent in other runs."""
+    j = (summary or {}).get("jev")
+    if not isinstance(j, dict):
+        return []
+    f = cast(dict[str, Any], j)
+    opts = cast(dict[str, Any], f.get("options") or {})
+    out = [f"Jev {f.get('pin')}: state {opts.get('state')}, preamble {opts.get('preamble')},"
+           f" concurrency {opts.get('concurrency')}"]  # fmt: skip
+    for c, lat in cast(dict[str, Any], f.get("latency_ms_by_concurrency") or {}).items():
+        d = cast(dict[str, Any], lat)
+        out.append(f"  HTTP time at concurrency {c}: {d.get('p50')} ms median, p95"
+                   f" {d.get('p95')}, max {d.get('max')} (n={d.get('n')})")  # fmt: skip
+    e2e = f.get("end_to_end_ms")
+    if isinstance(e2e, dict):
+        out.append(f"  end to end per case: {_three(cast(dict[str, Any], e2e))} ms")
+    cost = cast(dict[str, Any], f.get("cost") or {})
+    out.append(f"  input tokens billed {f.get('input_tokens_billed')}, about"
+               f" ${cost.get('usd', 0):.4f} ({cost.get('basis', 'basis unknown')})")  # fmt: skip
+
+    def counts(key: str) -> str:
+        d = cast(dict[str, Any], f.get(key) or {})
+        return ", ".join(f"{k} {v}" for k, v in sorted(d.items())) or "none"
+
+    out.append(f"  retries: {counts('retries')}; 429s {f.get('rate_limits', 0)}; pauses:"
+               f" {counts('pauses')}; breaker trips {f.get('breaker_trips', 0)}; waiting"
+               f" {f.get('wait_s', 0)} s")  # fmt: skip
+    out.append(f"  faulted cases: {counts('faulted_cases')}")
     return out
 
 

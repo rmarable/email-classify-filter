@@ -285,8 +285,11 @@ days old run, older stay held).
 
 **Eval:** `ecf eval run --claude --preset C [--fraud-only]` registers a run that you start with
 `/ecf-eval` in `ecf claude`; it uses your Claude plan. `ecf eval run --classifier-backend null`
-runs the rules alone (a floor and a wiring check; it never counts for the gate); Jev runs arrive
-in v3.0.0 step 2d. `ecf eval status|stop|compare`. Results are keyed by the pinned models. Old
+runs the rules alone (a floor and a wiring check; it never counts for the gate).
+`ecf eval run --classifier-backend jev` sends the synthetic cards to TypeSafe Jev (it needs the
+TypeSafe key; not for the gate until v3.0.0 step 4), and `ecf eval run --claude --preset D` then
+uses its classifications with Claude as the actor (comparison only). `ecf eval
+status|stop|compare`. Results are keyed by the pinned models. Old
 results from the local model can still be read and rescored (`ecf eval rescore`).
 
 **Pinned models:** a release that changes a pinned model (a Claude model ID) drops
