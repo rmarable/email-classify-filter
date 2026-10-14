@@ -8,9 +8,10 @@ Claude, and needs no cloud infrastructure.
 
 ## Status
 
-`v1.0.0` (2026-10-08) is the first release: macOS only, single-user local mode, with milestones
-V1.0 to V1.6, including personal Gmail accounts (V1.6). Milestone tags (`ms-…`) and release
-candidates (`v1.0.0-rcN`) record internal progress, not releases.
+`v2.2.3` (2026-10-12) is the latest release: it fixes `ecf models install` with Ollama 0.40 on
+Apple silicon. Releases are macOS only, single-user local mode; `v1.0.0` (2026-10-08) was the
+first, and [`CHANGELOG.md`](CHANGELOG.md) lists every release. Milestone tags (`ms-…`) and
+release candidates (`vX.Y.Z-rcN`) record internal progress, not releases.
 
 ## What it does
 
@@ -69,10 +70,12 @@ Personal Gmail accounts (gmail.com) are supported over IMAP with an app password
 Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
 
 From `v1.0.0`, each release is published only as a GitHub Release on this repository (wheel,
-sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. Download the release's files and install the wheel:
+sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. Download the latest
+release's files (put a tag such as `v2.2.3` after `download` for a particular one) and install
+the wheel:
 
 ```sh
-gh release download v1.0.0 --repo rmarable/email-classify-filter
+gh release download --repo rmarable/email-classify-filter --pattern '*'
 shasum -a 256 email_classify_filter-*.whl   # compare with the wheel's line in SHA256SUMS
 uv tool install ./email_classify_filter-*.whl
 ```

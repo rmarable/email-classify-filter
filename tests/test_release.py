@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from importlib import resources
+from pathlib import Path
 
 from ecf import __version__
 from ecf.schema import load_schema
@@ -20,3 +21,12 @@ def test_release_json_matches_the_code() -> None:
     assert r["classifier_schema"] == load_schema().version
     assert r["prompt_digest"] == classifier.prompt_digest(load_schema())  # new wording: update it
     assert isinstance(r["min_client"], str)
+
+
+def test_readme_status_names_this_release() -> None:
+    # The bump commit updates README's Status (SPEC §1.4); an rc leaves it on the last release.
+    if "rc" in __version__:
+        return
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    status = readme.split("## Status\n", 1)[1].split("\n## ", 1)[0]
+    assert status.strip().startswith(f"`v{__version__}` ("), "README Status must name this release"
