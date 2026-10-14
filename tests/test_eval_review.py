@@ -202,7 +202,7 @@ def test_category_is_asked_with_its_order_guide(root: Path) -> None:
 
 def test_fraud_risk_is_asked_with_the_plans_level_texts(root: Path) -> None:
     _, screen = run(root, "fraud_risk", ["", "q"], globs=("starter-bec",))
-    assert "Any request to move money, data, credentials or access" in screen
+    assert "or to call a number or follow a link to secure an account" in screen
 
 
 def test_no_labelling_text_starts_with_an_article() -> None:

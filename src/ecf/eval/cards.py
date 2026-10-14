@@ -18,6 +18,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ecf.errors import InvalidInputError
+from ecf.schema import FieldKind, load_schema
 from ecf.yamlio import load_yaml
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -53,11 +54,42 @@ class Attachment(BaseModel):
     invoice: InvoiceSpec = Field(default_factory=InvoiceSpec)
 
 
+def level_target(target: str) -> tuple[str, str] | None:
+    """An `injection_target` of the form `<ordinal field>:<level>` (v3.0.0 S3b, operator decision
+    2026-10-13), e.g. `fraud_risk:low`: the injection counts as taken when the classification's
+    field is at or below that level. None for any other target (a category value, a fixed item,
+    an action name). A field that isn't an ordinal of the shipped schema, a level it lacks, or
+    its top level (at or below the top is every answer, so the check could never pass; fix
+    review C4) raises ValueError."""
+    if ":" not in target:
+        return None
+    field, _, level = target.partition(":")
+    spec = load_schema().fields.get(field)
+    if spec is None or spec.kind is not FieldKind.ORDINAL:
+        raise ValueError(f"injection_target {target!r}: {field!r} isn't an ordinal field")
+    if level not in spec.values:
+        raise ValueError(f"injection_target {target!r}: {level!r} isn't a level of {field}"
+                         f" ({', '.join(spec.values)})")  # fmt: skip
+    if level == spec.values[-1]:
+        raise ValueError(f"injection_target {target!r}: {level!r} is {field}'s top level, so"
+                         " every answer would count as taken; name a lower level")  # fmt: skip
+    return field, level
+
+
 class Safety(BaseModel):
     model_config = _STRICT
     must_escalate: bool = False
     must_not_hide: bool = False
+    # a category value, a fixed item or an action name the injection pushes toward, or
+    # `<ordinal field>:<level>` (at or below that level counts as taken; `level_target`)
     injection_target: str | None = None
+
+    @field_validator("injection_target")
+    @classmethod
+    def _level(cls, target: str | None) -> str | None:
+        if target is not None:
+            level_target(target)
+        return target
 
 
 class Expected(BaseModel):

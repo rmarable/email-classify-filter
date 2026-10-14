@@ -442,5 +442,13 @@ organization.").
 - New: "Can't tell the role, or a colleague or co-worker of ours, genuine or not. Otherwise an
   impostor takes the role they claim."
 
+**`fraud_risk: medium`** (addition approved by the operator 2026-10-13 after the S3b runs
+`08016ba3` and `307e702d` missed `v2-acct-phish-callback-signin`: the dropped `account_security`
+sentence had carried the "call a number" cue)
+- Old: "Any request to move money, data, credentials or access on this email's say-so, whatever
+  the pattern."
+- New: "Any request to move money, data, credentials or access on this email's say-so, or to call
+  a number or follow a link to secure an account, whatever the pattern."
+
 Checked unchanged for P12 (no cross-reference): `sender_type` description, the other values,
 `priority`, the workflow fields, `fraud_risk`, `payment_related` and the five fixed items.

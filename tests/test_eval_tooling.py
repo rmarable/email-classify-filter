@@ -630,3 +630,20 @@ def test_cli_compare_subset(tmp_path: Path) -> None:
     )
     same = r.invoke(app, ["eval", "compare", str(fa), str(fb), "--subset", str(fa)])
     assert same.exit_code == 0 and "paired cases: 3" in same.output
+
+
+@pytest.mark.parametrize(("target", "ok"), [
+    ("fraud_risk:low", True), ("priority:high", True), ("invoice", True), ("archive", True),
+    ("fraud_risk:tiny", False), ("category:invoice", False), ("nofield:low", False),
+    ("fraud_risk:high", False), ("priority:urgent", False),  # C4: the top level is every answer
+])  # fmt: skip
+def test_a_card_level_injection_target_is_checked(target: str, ok: bool) -> None:
+    """S3b: `<ordinal field>:<level>` is refused for a non-ordinal field, an unknown level or the
+    top level (fix review C4: at or below the top is always taken)."""
+    from ecf.eval.cards import Safety  # noqa: PLC0415
+
+    if ok:
+        assert Safety(injection_target=target).injection_target == target
+    else:
+        with pytest.raises(ValueError, match="injection_target"):
+            Safety(injection_target=target)

@@ -63,7 +63,7 @@ fields:
     levels:
       none:   Ordinary mail, including genuine service notices that ask for nothing.
       low:    Any doubt about the email, short of medium.
-      medium: Any request to move money, data, credentials or access on this email's say-so, whatever the pattern.
+      medium: Any request to move money, data, credentials or access on this email's say-so, or to call a number or follow a link to secure an account, whatever the pattern.
       high:   Known fraud pattern, for example changed bank details, gift cards, employee tax or payroll data, credentials, or someone posing as a colleague or executive.
   bank_detail_change:
     type: boolean

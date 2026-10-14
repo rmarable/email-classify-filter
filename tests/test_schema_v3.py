@@ -76,6 +76,10 @@ S3B_TEXTS = {
     ("sender_type", "unknown"): "Can't tell the role, or a colleague or co-worker of ours,"
     " genuine or not. Otherwise an impostor takes the role they claim.",
 }
+# operator decision 2026-10-13, after the first S3b runs (plan §12), verbatim
+FRAUD_MEDIUM = ("Any request to move money, data, credentials or access on this email's say-so,"
+                " or to call a number or follow a link to secure an account, whatever the"
+                " pattern.")  # fmt: skip
 REMOVED = {"category": ("vendor_change_request", "regulatory", "spam_or_phishing"),
            "sender_type": ("team",)}  # fmt: skip
 V2_ANSWER: dict[str, Any] = {
@@ -98,7 +102,7 @@ def test_v3_is_v2_plus_the_fixed_items_and_priority_texts() -> None:
             continue
         g = v3.fields[name]
         assert (g.kind, g.description, g.values) == (f.kind, f.description, f.values), name
-        if name != "priority":
+        if name not in ("priority", "fraud_risk"):  # fraud_risk: checked below
             assert g.value_descriptions == f.value_descriptions, name
     assert v2.fields["priority"].value_descriptions == ()
     assert v3.fields["priority"].value_descriptions == PRIORITY
@@ -106,9 +110,15 @@ def test_v3_is_v2_plus_the_fixed_items_and_priority_texts() -> None:
         assert v3.fields[name].kind.value == "boolean"
         assert v3.fields[name].description == text
         assert SAFETY_FIELDS[name] == ("boolean", ())
-    for name in ("fraud_risk", "payment_related", "requires_action", "requires_reply",
+    for name in ("payment_related", "requires_action", "requires_reply",
                  "deadline_mentioned"):  # fmt: skip
         assert v3.fields[name] == v2.fields[name]  # v2 wording exactly
+    fr2, fr3 = v2.fields["fraud_risk"], v3.fields["fraud_risk"]  # S3b: medium gains a cue
+    assert (fr3.kind, fr3.description, fr3.values) == (fr2.kind, fr2.description, fr2.values)
+    assert fr3.value_descriptions[2] == FRAUD_MEDIUM
+    assert fr3.value_descriptions[:2] + fr3.value_descriptions[3:] == (
+        fr2.value_descriptions[:2] + fr2.value_descriptions[3:]
+    )
     for name, gone in REMOVED.items():  # S3b: four values removed, four texts reworded
         f, g = v2.fields[name], v3.fields[name]
         assert g.values == tuple(v for v in f.values if v not in gone), name
