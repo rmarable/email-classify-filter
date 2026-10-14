@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded decisions for v3.0.0 step 2: the plan for Jev in the eval (`planning-docs/JEV-STEP2.md`): `ecf models api-key` will need `--provider anthropic|typesafe`, each key with its own service route and a Security Notice when set, replaced or removed; Jev is asked what Claude is asked (sender, subject, date, attachment metadata, excerpt, signals); only synthetic text goes to TypeSafe until a preset D address exists, and corpus runs stay local; a Jev case that fails after its retries is scored as a failure (OD-503, OD-504).
 - Recorded decisions for v3.0.0: preset B keeps its local fallback once Jev exists; OD-136 is superseded by the local decision models plan and OD-494; a user schema is written as the `schema` section of an `ecf config apply` file (`version: 1`); test coverage reports (pytest-cov) are listed for later.
 - Recorded decisions for v3.0.0: the Jev preset will be preset D, "Jev classifier + Claude actor"; preset C relies on the existing `/ecf-review` reminder (`claude_review_reminder_hours`, default 24 h) for waiting mail; and the plan for your own classification fields on preset C (`planning-docs/S4-USER-LAYER.md`), with `priority` kept fixed.
 - `/ecf-review` now shows a progress line after each round, as `/ecf-eval` does: items done of those handed out, in progress, still waiting, the round, and any freed or late claims.
