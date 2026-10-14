@@ -146,7 +146,7 @@ def test_payment_confirmation_and_remittance_label_from_field() -> None:
 
 def test_hiding_rules() -> None:
     assert names(run(phishing=True)) == [
-        ("label", "spam_or_phishing"),
+        ("label", "phishing"),
         ("junk", None),
     ]
     assert names(run(category="marketing")) == [("label", "marketing"), ("archive", None)]

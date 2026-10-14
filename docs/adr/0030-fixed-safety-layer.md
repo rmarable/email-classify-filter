@@ -8,6 +8,9 @@
   (Phase R P17).
 - **Amended by ADR 0031** (2026-10-14, OD-506): presets A and B, which were still asked schema
   v2, are removed; only Claude (and Jev from step 4) is asked v3.
+- **Amended** (2026-10-14, OD-508, v3.0.0 step 5): the junk rule's id and label are renamed
+  `spam_or_phishing` → `phishing`, since it fires on schema v3's fixed item `phishing: true`,
+  not on spam; no relabel of mail labelled before (SPEC §8.6).
 - **Context source:** SPEC §7.1, §7.4b, §8.3, §8.6, §9.2, §9.3, §11.9; plan
   `planning-docs/S3-READERS-SWITCH.md` draft 2 (Phase R P1-P20, operator-accepted 2026-10-13);
   `planning-docs/v3.0.0-OPERATOR-SCHEMA.md` draft 3

@@ -37,8 +37,9 @@ from ecf_server.rules import RuleInput
 
 SCHEMA = load_schema()
 STARTER = rules.load_starter_rules(SCHEMA)
-FIXED = ("fraud_guard", "regulatory", "fraud_weak", "unverified_payment_sender",
-         "spam_or_phishing")  # fmt: skip
+FIXED = ("fraud_guard", "regulatory", "fraud_weak", "unverified_payment_sender", "phishing")
+# the same rules' ids in the v2 starter file: rule 5 was `spam_or_phishing` until v3.0.0 step 5
+V2_FIXED = (*FIXED[:-1], "spam_or_phishing")
 DEFAULTS = ("bug_report", "invoice", "payment_confirmation_remittance", "account_security",
             "shipping", "appointment_school_family", "travel_finance", "marketing",
             "automated_notification", "requires_reply", "otherwise")  # fmt: skip
@@ -73,7 +74,7 @@ def test_the_fixed_rules_run_first_then_the_default_rules() -> None:
 def test_the_junk_rule_comes_before_the_default_rules() -> None:
     """A phishing email answered as another category is junked, not caught by its category's
     default rule (the junk rule moved from 12th to 5th)."""
-    assert _rule({"category": "account_security", "phishing": True}) == "spam_or_phishing"
+    assert _rule({"category": "account_security", "phishing": True}) == "phishing"
     assert _rule({"category": "account_security"}) == "account_security"
 
 
@@ -127,8 +128,8 @@ EXTERNAL_MONEY = {"sender_origin": "external", "payment_keyword": True}
         ({"sender_type": "person"}, EXTERNAL_MONEY, "fraud_weak"),
         ({"sender_type": "friend"}, EXTERNAL_MONEY, "fraud_weak"),  # kept source (P2)
         ({"sender_type": "family"}, EXTERNAL_MONEY, "fraud_weak"),  # kept source (P2)
-        ({"phishing": True}, {}, "spam_or_phishing"),
-        (from_v2({"category": "spam_or_phishing"}), {}, "spam_or_phishing"),
+        ({"phishing": True}, {}, "phishing"),
+        (from_v2({"category": "spam_or_phishing"}), {}, "phishing"),
         ({"claims_internal": True}, {}, "otherwise"),  # from inside: nothing
         ({"private_individual": True}, {"sender_origin": "external"}, "otherwise"),  # no money
     ],
@@ -163,8 +164,7 @@ def test_the_kept_sources_are_the_fixed_rules_kept_clauses() -> None:
     text = resources.files("ecf_server.data").joinpath("fixed_rules.yaml").read_text("utf-8")
     body = "\n".join(line.split("#")[0] for line in text.splitlines())  # comments aside
     for clause in ("field: category", "vendor_change_request", "eq: team", "eq: regulatory"):
-        assert clause not in body, clause  # S3b: no bridge clause (the junk rule's id and
-        # label `spam_or_phishing` are kept, P16)
+        assert clause not in body, clause  # S3b: no bridge clause
 
 
 # ---- refusals and the catch-all --------------------------------------------------------------
@@ -255,7 +255,7 @@ def test_a_v2_applied_set_loses_only_its_unchanged_fixed_rules() -> None:
     doc["rules"].insert(4, {"id": "mine", "when": {"field": "category", "eq": "invoice"},
                             "then": ["flag"]})  # fmt: skip
     c = rules.convert_v2(doc)
-    assert c.stripped == FIXED and not c.customised and c.doc is not None
+    assert c.stripped == V2_FIXED and not c.customised and c.doc is not None
     assert [r["id"] for r in c.doc["rules"]] == ["mine", *DEFAULTS]
     assert rules.convert_v2(c.doc).doc is None  # idempotent
     rules.compile_rules(json.dumps(c.doc), SCHEMA)  # now compiles
@@ -277,13 +277,13 @@ def test_convert_rules_strips_audits_and_is_idempotent(conn: sqlite3.Connection,
     r = config.convert_rules(conn, to_ts(clock.now()))
     # S4 (P24): the v2 starter's default copies are identical to the shipped defaults and, the
     # file being the replace case with every default in order, dropping them changes nothing
-    assert r == {"converted": True, "stripped": list(FIXED), "defaults_stripped": list(DEFAULTS),
-                 "default": True}  # fmt: skip
+    assert r == {"converted": True, "stripped": list(V2_FIXED),
+                 "defaults_stripped": list(DEFAULTS), "default": True}  # fmt: skip
     assert config.current(conn)["rules"] is None
     assert config.rules_problem(conn) is None
     assert tuple(x.id for x in config.current_rules(conn).rules) == FIXED + DEFAULTS
     audit = conn.execute("SELECT data FROM audit WHERE event = 'config.rules_converted'").fetchall()
-    want = {"stripped": list(FIXED), "defaults_stripped": list(DEFAULTS), "default": True}
+    want = {"stripped": list(V2_FIXED), "defaults_stripped": list(DEFAULTS), "default": True}
     assert [json.loads(a[0]) for a in audit] == [want]
     assert config.convert_rules(conn, to_ts(clock.now())) == {"converted": False}
     assert len(conn.execute("SELECT 1 FROM audit WHERE event = 'config.rules_converted'")
@@ -366,15 +366,109 @@ def test_a_set_of_only_unchanged_fixed_rules_becomes_the_default(
 ) -> None:
     """A7: nothing would be left, so the default rules apply (`rules: default`), audited."""
     doc = _v2_doc()
-    doc["rules"] = [r for r in doc["rules"] if r["id"] in FIXED]
+    doc["rules"] = [r for r in doc["rules"] if r["id"] in V2_FIXED]
     c = rules.convert_v2(doc)
-    assert c.to_default and c.doc is None and c.stripped == FIXED
+    assert c.to_default and c.doc is None and c.stripped == V2_FIXED
     _store(conn, clock, doc)
     r = config.convert_rules(conn, to_ts(clock.now()))
-    assert r == {"converted": True, "stripped": list(FIXED), "default": True}
+    assert r == {"converted": True, "stripped": list(V2_FIXED), "default": True}
     assert config.current(conn)["rules"] is None
     assert config.current_rules(conn).rules == STARTER.rules
     [data] = [json.loads(a[0]) for a in conn.execute(
         "SELECT data FROM audit WHERE event = 'config.rules_converted'")]  # fmt: skip
-    assert data == {"stripped": list(FIXED), "default": True}
+    assert data == {"stripped": list(V2_FIXED), "default": True}
     assert config.convert_rules(conn, to_ts(clock.now())) == {"converted": False}
+
+
+# ---- v3.0.0 step 5: rule 5 renamed `spam_or_phishing` -> `phishing` (OD-508; PH2) -------------
+
+OLD_HINT = "ecf renamed its fixed rule spam_or_phishing to phishing in v3.0.0"
+
+
+def test_rule_5_labels_new_mail_phishing() -> None:
+    d = STARTER.evaluate(RuleInput(BASE | {"phishing": True}, {"sender_origin": "internal"}))
+    assert d.rule_id == "phishing" and d.actions[0] == rules.Action("label", "phishing")
+    assert rules.LEGACY_FIXED_IDS == {"spam_or_phishing": "phishing"}
+
+
+@pytest.mark.parametrize(("rid", "hint"), [("spam_or_phishing", OLD_HINT),
+                                           ("phishing", "give it another id")])  # fmt: skip
+def test_the_old_and_new_ids_are_refused_as_a_rule_id_with_the_rename(rid: str, hint: str) -> None:
+    with pytest.raises(InvalidInputError, match=f"rule {rid} is one of ecf's fixed rules.*{hint}"):
+        rules.compile_rules(f"version: 1\nrules:\n  - {{id: {rid}, then: [flag]}}\n", SCHEMA)
+    with pytest.raises(InvalidInputError, match=hint):
+        rules.compose(SCHEMA, f"version: 1\nrules:\n  - {{id: {rid}, then: [flag]}}\n")
+    off = (f"version: 1\ndefault_rules_off: [{rid}]\n"
+           "rules:\n  - {id: a, when: {trigger: fraud}}\n")  # fmt: skip
+    with pytest.raises(InvalidInputError, match=f"default_rules_off: {rid} is one of ecf's fixed"
+                                                f" rules.*{hint}"):  # fmt: skip
+        rules.check_layers(off, SCHEMA)
+
+
+def test_the_old_id_stays_allowed_as_a_label() -> None:
+    text = ("version: 1\nrules:\n  - {id: mine, when: {trigger: fraud},"
+            " then: [{label: spam_or_phishing}]}\n")  # fmt: skip
+    assert [r.id for r in rules.compose(SCHEMA, text).rules][:6] == [*FIXED, "mine"]
+
+
+def test_a_v2_starter_copy_of_spam_or_phishing_converts_cleanly() -> None:
+    v2 = {r["id"]: r for r in _v2_doc()["rules"]}
+    doc = {"version": 1, "rules": [{"id": "mine", "when": {"trigger": "fraud"}, "then": ["flag"]},
+                                   v2["spam_or_phishing"]]}  # fmt: skip
+    c = rules.convert_v2(doc)
+    assert c.stripped == ("spam_or_phishing",) and not c.customised and c.doc is not None
+    assert [r["id"] for r in c.doc["rules"]] == ["mine"]
+    rules.compile_rules(json.dumps(c.doc), SCHEMA)
+
+
+@pytest.mark.parametrize(("rid", "hint"), [("spam_or_phishing", OLD_HINT),
+                                           ("phishing", "give it another id")])  # fmt: skip
+def test_a_customised_old_rule_or_a_rule_of_your_own_named_phishing_stops_the_conversion(
+    conn: sqlite3.Connection, clock: FakeClock, rid: str, hint: str
+) -> None:
+    from ecf_server.notify import FakeNotifier  # noqa: PLC0415
+
+    doc = _v2_doc()
+    if rid == "spam_or_phishing":  # the v2 starter copy, customised
+        [mine] = [r for r in doc["rules"] if r["id"] == rid]
+        mine["then"] = ["flag"]
+    else:  # a rule of your own, allowed before the rename
+        doc["rules"].insert(0, {"id": rid, "when": {"field": "category", "eq": "marketing"},
+                                "then": ["flag"]})  # fmt: skip
+    c = rules.convert_v2(doc)
+    assert c.doc is None and c.customised == (rid,)
+    _store(conn, clock, doc)
+    assert config.convert_rules(conn, to_ts(clock.now())) == {"converted": False,
+                                                              "customised": [rid]}  # fmt: skip
+    assert config.current_rules(conn).rules == STARTER.rules
+    config.schema_tick(conn, clock, FakeNotifier())
+    [alert] = [a for a in health.open_alerts(conn) if a["kind"] == config.SCHEMA_ALERT]
+    said = "has the id of one of ecf's fixed rules" if rid == "phishing" else "is a changed copy"
+    assert f"rule {rid} {said}" in alert["detail"] and hint in alert["detail"]
+
+
+def test_a_customised_old_rule_and_a_rule_named_phishing_are_both_named(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Diff review R2: with two rules, each hint survives the System Error's and `ecf doctor`'s
+    cut; the list of fixed rules goes when a rename is named."""
+    from ecf_server import ops_doctor  # noqa: PLC0415
+    from ecf_server.notify import FakeNotifier  # noqa: PLC0415
+
+    doc = _v2_doc()
+    [old] = [r for r in doc["rules"] if r["id"] == "spam_or_phishing"]
+    old["then"] = ["flag"]
+    doc["rules"].insert(0, {"id": "phishing", "when": {"field": "category", "eq": "marketing"},
+                            "then": ["flag"]})  # fmt: skip
+    assert rules.convert_v2(doc).customised == ("phishing", "spam_or_phishing")
+    _store(conn, clock, doc)
+    config.schema_tick(conn, clock, FakeNotifier())
+    [alert] = [a for a in health.open_alerts(conn) if a["kind"] == config.SCHEMA_ALERT]
+    doctor = ops_doctor.schema(conn)["detail"]
+    for detail in (alert["detail"], doctor):
+        assert ("rule phishing has the id of one of ecf's fixed rules (spam_or_phishing was"
+                " renamed phishing in v3.0.0); give it another id") in detail  # fmt: skip
+        assert ("rule spam_or_phishing is a changed copy of one of ecf's fixed rules"
+                f" ({OLD_HINT}); remove it") in detail  # fmt: skip
+        assert "the other fixed rules" not in detail
+    assert "ecf uses its default rules" in alert["detail"]

@@ -208,7 +208,8 @@ def _recount(paths: Paths, state: dict[str, Any]) -> dict[str, Any]:
         affected = set[str]()
     fams += [f for f in r.pin_changes if f not in fams]
     return state | {"pin_changes": fams, "affected": sorted(affected | set(r.affected)),
-                    "converted": r.converted}  # fmt: skip
+                    "converted": r.converted,
+                    "rules_customised": r.rules_customised}  # fmt: skip
 
 
 def find_snapshot(paths: Paths, version: str, current: str) -> tuple[Path, Path] | None:

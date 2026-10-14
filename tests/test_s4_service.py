@@ -324,7 +324,7 @@ def test_v2_conversion_strips_default_copies_only_when_the_set_is_unchanged(
     _store(conn, "config.rules", doc)
     out = config.convert_rules(conn, "t")
     assert out["converted"] is True and "defaults_stripped" not in out
-    rest = [r["id"] for r in doc["rules"] if r["id"] not in rules.fixed_ids()]
+    rest = [r["id"] for r in doc["rules"] if not rules.is_fixed_id(r["id"])]
     assert [r["id"] for r in config.current(conn)["rules"]["rules"]] == rest
     assert _ids(config.current_rules(conn)) == [*rules.fixed_ids(), *rest]  # marketing stays off
 

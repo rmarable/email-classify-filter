@@ -215,7 +215,7 @@ def schema_tick(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> N
     if broken is not None:
         health.open_alert(conn, clock, notifier, SCHEMA_ALERT, None,
                           f"the applied rules don't compile with this version"
-                          f" ({broken[:200]}); ecf uses the starter rules until they change."
+                          f" ({broken[:400]}); ecf uses its default rules until they change."
                           " Fix: apply rules this version accepts (no field or fact it doesn't"
                           " know, none of ecf's fixed rules), or `rules: default`, with ecf"
                           " config apply")  # fmt: skip
@@ -232,14 +232,45 @@ def rules_problem(conn: sqlite3.Connection) -> str | None:
         return None
     changed = rules.convert_v2(stored).customised  # what stopped the v2 conversion (P7)
     if changed:
-        return (f"applied rules: rule {', '.join(changed)} is a changed copy of one of ecf's"
-                " fixed rules, which run first; remove it and the other fixed rules"
-                f" ({', '.join(rules.fixed_ids())}) from your file")  # fmt: skip
+        return "applied rules: " + _customised_problem(changed)
     try:  # the composed set, as mail runs it (P2)
         rules.compose(current_schema(conn), canonical_json(stored), source="applied rules")
     except InvalidInputError as exc:
         return exc.detail
     return None
+
+
+def rules_customised(conn: sqlite3.Connection) -> list[dict[str, str | None]]:
+    """The applied rules' rules with a fixed id that stopped the v2 conversion (P7; the audit's
+    `customised`), each with the rename it touches (`rules.LEGACY_FIXED_IDS`, OD-508): `GET
+    /v1/upgrade/state`, for the new CLI's after-upgrade notice."""
+    return [{"id": rid, "renamed_to": rules.LEGACY_FIXED_IDS.get(rid),
+             "renamed_from": rules.renamed_from(rid)}
+            for rid in rules.convert_v2(_stored(conn, "rules")).customised]  # fmt: skip
+
+
+def _customised_problem(changed: tuple[str, ...]) -> str:
+    """Each rule a fixed rule's rename touches first, with its fix (OD-508; the same words as the
+    after-upgrade notice), then the changed copies of fixed rules; the list of fixed rules only
+    when no rename is involved."""
+    parts: list[str] = []
+    copies: list[str] = []
+    for rid in changed:
+        old = rules.renamed_from(rid)
+        if old:
+            parts.append(f"rule {rid} has the id of one of ecf's fixed rules ({old} was renamed"
+                         f" {rid} in v3.0.0); give it another id")  # fmt: skip
+        elif rid in rules.LEGACY_FIXED_IDS:
+            parts.append(f"rule {rid} is a changed copy of one of ecf's fixed rules"
+                         f" ({rules.rename_note(rid)}); remove it")  # fmt: skip
+        else:
+            copies.append(rid)
+    if copies:
+        listed = "" if parts else (f" and the other fixed rules ({', '.join(rules.fixed_ids())})"
+                                   " from your file")  # fmt: skip
+        parts.append(f"rule {', '.join(copies)} is a changed copy of one of ecf's fixed rules,"
+                     f" which run first; remove it{listed}")  # fmt: skip
+    return "; ".join(parts)
 
 
 def rules_warnings(conn: sqlite3.Connection) -> list[str]:
@@ -635,8 +666,8 @@ def _rules(v: Any, folders: list[str], schema: CompiledSchema, *,
         # A2 (OD-500): a bundle's v2 rules with a changed fixed rule are kept, as at service
         # start (the starter rules apply, with a System Error); the rest must still be valid
         rest: list[Any] = [r for r in cast("list[Any]", v["rules"])
-                if not (isinstance(r, dict) and cast("dict[str, Any]", r).get("id")
-                        in rules.fixed_ids())]  # fmt: skip
+                if not (isinstance(r, dict)
+                        and rules.is_fixed_id(cast("dict[str, Any]", r).get("id")))]  # fmt: skip
         if not rest:
             return v
         checked = v | {"rules": rest}
@@ -683,8 +714,11 @@ def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
     if v is None:
         raise InvalidInputError("config: schema: a mapping with fields and/or category_values,"
                                 " or `default` to remove the extension")  # fmt: skip
-    # always: built-in labels, the fixed and default rule ids, and the applied file's (P2, C8)
-    ids = _rule_ids(rules_doc) | set(rules.fixed_ids()) | set(rules.default_ids())
+    # always: built-in labels, the fixed and default rule ids, and the applied file's (P2, C8);
+    # and a fixed rule's id before a rename (OD-508): `spam_or_phishing` is refused earlier as a
+    # removed value, but a later rename's old id may not be one
+    ids = (_rule_ids(rules_doc) | set(rules.fixed_ids()) | set(rules.LEGACY_FIXED_IDS)
+           | set(rules.default_ids()))  # fmt: skip
     try:
         extend_schema(load_schema(), v, policy.BUILTIN_LABELS | ids)
     except (InvalidInputError, SchemaLimitError) as exc:

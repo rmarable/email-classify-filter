@@ -453,8 +453,9 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
                           affected=["ap", "b"])  # fmt: skip
     service = NewService({"version": "3.0.0", "classifier_schema": 3, "prompt_digest": "c" * 64,
                           "pins": LOCK, "pin_users": {"actor": ["ap", "b"]},
-                          "converted": [{"address_id": "ap", "from": "A",
-                                         "waiting": 2}]})  # fmt: skip
+                          "converted": [{"address_id": "ap", "from": "A", "waiting": 2}],
+                          "rules_customised": [{"id": "phishing", "renamed_to": None,
+                                                "renamed_from": "spam_or_phishing"}]})  # fmt: skip
     monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
     tools, _m, _ran = _tools(paths)
 
@@ -469,3 +470,4 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
     said = "ap was preset A, whose local model is removed: now C and paused, 2 emails waiting"
     assert said in out
     assert "(OD-427)" in out
+    assert "your rules file has a rule named phishing, which has the id of one of ecf's" in out

@@ -203,6 +203,7 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     shipped = claude_review.prompt_digest(load_schema())
     assert s["prompt_digest"] == shipped and s["effective_prompt_digest"] == shipped
     assert s["extension_stored"] is False and s["converted"] == []
+    assert s["rules_customised"] == []
 
 
 def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> None:
@@ -335,6 +336,68 @@ def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_pat
     later = _wheel(tmp_path, version="3.0.0", classifier_schema=3, prompt="g" * 64, name="l.whl")
     r = upgrade_check.after_upgrade("3.0.0", later, state | {"version": "3.0.1"})
     assert r.pin_changes == ["prompt"] and r.affected == ["ap", "b"]  # after 3.0: as before
+
+
+# ---- v3.0.0 step 5: rules with a fixed id, named after the upgrade (OD-508) -------------------
+
+
+def _v2_starter_rules() -> dict[str, Any]:
+    from importlib import resources  # noqa: PLC0415
+
+    from ecf.yamlio import load_yaml  # noqa: PLC0415
+
+    text = resources.files("ecf_server.data").joinpath("starter_rules_v2.yaml").read_text("utf-8")
+    return dict(load_yaml(text, source="v2"))
+
+
+def _store_rules(conn: sqlite3.Connection, doc: dict[str, Any]) -> None:
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.rules', ?, 't', 't')", (json.dumps(doc),))  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("rule", "said"),
+    [
+        ({"id": "phishing", "when": {"field": "category", "eq": "marketing"}, "then": ["flag"]},
+         "your rules file has a rule named phishing, which has the id of one of ecf's fixed"
+         " rules (spam_or_phishing was renamed phishing in v3.0.0): give it another id (ecf"
+         " config apply); until then ecf uses its default rules"),
+        ({"id": "spam_or_phishing", "when": {"field": "category", "eq": "spam_or_phishing"},
+          "then": ["flag"]},
+         "your rules file has a changed copy of ecf's fixed rule spam_or_phishing (now"
+         " phishing): remove it (ecf config apply); until then ecf uses its default rules"),
+    ],
+)  # fmt: skip
+def test_after_the_upgrade_a_rule_with_a_fixed_id_is_named(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, rule: dict[str, Any], said: str
+) -> None:
+    """OD-508: the new service reports the rules that stopped the v2 conversion; the new CLI
+    names each with what to do (phase 1, the old CLI's, can't)."""
+    doc = _v2_starter_rules()
+    doc["rules"] = [r for r in doc["rules"] if r["id"] != rule["id"]] + [rule]
+    _store_rules(conn, doc)
+    s = upgrade_state.state(conn, clock, api_version=1, sessions=0)
+    assert [x["id"] for x in s["rules_customised"]] == [rule["id"]]
+    old = _wheel(tmp_path, version="2.2.3", classifier_schema=3, prompt="g" * 64, name="o.whl")
+    state = _state(version="3.0.0", classifier_schema=3, prompt_digest="c" * 64, pins=LOCK,
+                   pin_users={}, rules_customised=s["rules_customised"])  # fmt: skip
+    [got] = upgrade_check.after_upgrade("2.2.3", old, state).rules_customised
+    assert got == s["rules_customised"][0]
+    assert ecf.cli_upgrade._customised_line(got) == said  # pyright: ignore[reportPrivateUsage]
+
+
+def test_no_notice_when_the_rules_converted_or_the_service_doesnt_say(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path
+) -> None:
+    _store_rules(conn, _v2_starter_rules())  # the starter copies convert cleanly
+    assert upgrade_state.state(conn, clock, api_version=1, sessions=0)["rules_customised"] == []
+    old = _wheel(tmp_path, version="2.2.3", classifier_schema=3, prompt="g" * 64, name="o.whl")
+    state = _state(version="3.0.0", classifier_schema=3, prompt_digest="c" * 64, pins=LOCK,
+                   pin_users={})  # fmt: skip
+    assert upgrade_check.after_upgrade("2.2.3", old, state).rules_customised == []  # no field
+    empty: dict[str, Any] = state | {"rules_customised": []}
+    assert upgrade_check.after_upgrade("2.2.3", old, empty).rules_customised == []
 
 
 def _v2_2_3_read_wheel(path: Path) -> dict[str, str]:

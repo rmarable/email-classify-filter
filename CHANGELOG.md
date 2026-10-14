@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- ecf's junk rule for phishing is now `phishing` (was `spam_or_phishing`), since it fires on the fixed `phishing` item, not on spam. Mail ecf labelled as phishing before v3.0.0 keeps the keyword `$ecf_<install>_spam_or_phishing`, and so does mail planned before the upgrade and approved after it; new mail gets `$ecf_<install>_phishing`. Undo works on both (OD-508).
+- A rules file can't use `phishing` or `spam_or_phishing` as a rule id or in `default_rules_off` (`spam_or_phishing` is still allowed as a label). A rule of your own named `phishing` stops your applied rules at upgrade (ecf uses its default rules, with a System Error); `ecf upgrade` names it afterwards, so rename it first (OD-508).
 - Recorded decision for v3.0.0: Jev's "unsure" flag (an answer in the middle band on a fixed yes/no item) is built in step 4 with Jev's service path, with its band limits set in step 3; step 4 also takes the Jev-down notices, Jev's name on cards, the cost estimate for classifying old mail on preset D, Jev's `model_calls` row and the model watch's alias dates.
 - `ecf doctor` warns when ecf's Ollama login item from before v3.0.0 is still installed and prints the commands that remove it (ADR 0031).
 - Import and restore refuse a backup with a preset D address until preset D is built ("preset D isn't available until Jev's step 4") (ADR 0031).

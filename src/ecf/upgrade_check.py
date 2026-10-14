@@ -24,6 +24,10 @@ it imports nothing from the service package.
   patched; the release notes say so).
 - **Converted addresses** (v3.0.0, P3): the new service's `converted` (A and B addresses made C
   and paused by migration 0038, with their waiting emails), printed after the upgrade.
+- **Rules with a fixed id** (v3.0.0 step 5, OD-508): after the upgrade, the new CLI names each
+  applied rule that stopped the new service's v2 conversion (a rule of your own named `phishing`,
+  or a changed copy of a fixed rule) and what to do; the old CLI's pre-check can't (phase 1 runs
+  the installed version's code).
 - **Your own fields** (v3.0.0 S4, P11): stored but not yet in use, they reach the classifier at
   the new version's first start (announced then); the C addresses that drop to assist with them
   (`extension_pending` in the state) are listed. A service from before S4 doesn't report it.
@@ -152,6 +156,9 @@ class Report:
     schema_pending: list[str] = field(default_factory=list[str])
     # A and B addresses the new version made C and paused: {address_id, from, waiting} (P3)
     converted: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # the applied rules' rules with a fixed id the new version left: {id, renamed_to,
+    # renamed_from} (OD-508)
+    rules_customised: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
 
 def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
@@ -236,4 +243,6 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
                                         state["pin_users"], prompts=prompts)  # fmt: skip
     listed: list[Any] = state.get("converted") or []
     r.converted = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]
+    listed = state.get("rules_customised") or []  # a service before step 5 has none
+    r.rules_customised = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]
     return r

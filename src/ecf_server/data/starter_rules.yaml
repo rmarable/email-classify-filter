@@ -1,5 +1,5 @@
 # Default rules (SPEC §8.6). ecf's fixed rules (fixed_rules.yaml: fraud_guard, regulatory,
-# fraud_weak, unverified_payment_sender, spam_or_phishing) always run first; these follow them
+# fraud_weak, unverified_payment_sender, phishing) always run first; these follow them
 # unless rules were applied (`ecf config apply`), which replace these, not the fixed ones (v3.0.0
 # S3, OD-500). First match wins. On `high` addresses the policy layer turns the hide actions into
 # label + leave (SPEC §8.3); that is not done here.

@@ -79,7 +79,7 @@ def schema(conn: sqlite3.Connection) -> dict[str, str]:
     broken = config.rules_problem(conn)
     if broken is not None:
         return _c("schema", FAIL, f"v{v}; the applied rules don't compile against the schema in"
-                  f" use ({broken[:200]}), so the starter rules are used", "apply rules that"
+                  f" use ({broken[:400]}), so the starter rules are used", "apply rules that"
                   " don't use the schema extension or ecf's fixed rules, with ecf config"
                   " apply")  # fmt: skip
     if ext is None:

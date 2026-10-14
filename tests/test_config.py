@@ -639,6 +639,11 @@ def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
     with pytest.raises(InvalidInputError, match="rule id legal_notice is a value"):
         config.parse(conn, "version: 1\nrules: {version: 1, rules: [{id: legal_notice,"
                            " then: [leave]}]}")  # fmt: skip
+    # rule 6's id now (a fixed rule id) and before (OD-508; the removed value fires first)
+    for rid, why in (("phishing", "a built-in label or a rule id"),
+                     ("spam_or_phishing", "a value of category removed in v3")):  # fmt: skip
+        with pytest.raises(InvalidInputError, match=f"'{rid}' is already {why}"):
+            config.parse(conn, f"version: 1\nschema: {{category_values: {{{rid}: x}}}}")
 
 
 @pytest.mark.usefixtures("extensions_on")
