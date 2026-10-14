@@ -111,6 +111,9 @@ QUOTA_CODES: frozenset[str] = frozenset()  # a 429 with one of these stops the r
 # the status and error code L4 recorded for a retired pin; until then every first-case
 # refusal says "TypeSafe refused the first request" (draft 4, B)
 RETIRED_PIN: tuple[int, str | None] | None = None
+# the statuses that stop a run on its first case: a retired pin gave 400 with only `detail` in
+# the live check (OD-505), the docs name 404 and 422
+FIRST_CASE_STOP = frozenset({400, 404, 422})
 
 KEY_CHECK_STATE = "ecf key check"
 KEY_CHECK_QUESTIONS: dict[str, Any] = {
@@ -160,7 +163,8 @@ def auth_error(status: int | None) -> JevError:
 
 
 def first_case_error(status: int, code: str | None) -> JevError:
-    """A 404 or 422 on the first case (§5.3): the pin message only for what L4 recorded."""
+    """A 400, 404 or 422 on the first case (§5.3, OD-505): the pin message only for what L4
+    recorded."""
     if RETIRED_PIN is not None and status == RETIRED_PIN[0] and RETIRED_PIN[1] in (None, code):
         return JevError("pin", "the pinned Jev version isn't served", status=status, code=code)
     return JevError("pin", f"TypeSafe refused the first request (HTTP {status}); the run stopped"
@@ -481,7 +485,7 @@ def check_key(key: str, transport: httpx.BaseTransport | None = None, *,
             raise InvalidInputError(f"TypeSafe answered with a different Jev version than the pin"
                                     f" ({pin}); nothing was stored")  # fmt: skip
         return
-    if reply.status in (404, 422):
+    if reply.status in FIRST_CASE_STOP:
         raise InvalidInputError(f"TypeSafe refused the check call (HTTP {reply.status}): the"
                                 f" pinned Jev version ({pin}) may not be served; nothing was"
                                 " stored")  # fmt: skip
@@ -952,7 +956,7 @@ class Client:
                 return self._answer(reply, schema, tries, waited, est, level, usage)
             if reply.cls == "auth":
                 raise auth_error(reply.status)
-            if reply.cls == "request" and first and reply.status in (404, 422):
+            if reply.cls == "request" and first and reply.status in FIRST_CASE_STOP:
                 raise first_case_error(reply.status or 0, reply.code)
             if reply.timed_out:
                 self._spend(reply.http_ms / 1000, "timed-out tries")
