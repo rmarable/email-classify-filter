@@ -78,7 +78,7 @@
   admin-guide "v3.0.0: converted addresses" (pause, consent, resume, remove).
 - **Planning:** v3.0.0-PLANNING draft 5; OPERATOR-SCHEMA; JEV-STEP2 draft 5 (R-D11);
   v3.0.1-PLANNING (its actor_high evidence used preset B source runs; D's source query may accept
-  a C result, decided in 2d, P19). Finished plans stay as history.
+  a C result, decided in v3.0.1, operator decision 2026-10-14, P19). Finished plans stay as history.
 - **Branches (P25):** close `grouped-model-calls` and `custom-local-classifier` (operator OK at R0).
 - **CHANGELOG:** "Removed" line citing ADR 0031; release-note lines (P3, P4, P18, P22, P26).
 
@@ -189,5 +189,5 @@
 - Corpus runs on Claude or Jev (privacy, later).
 - A local model's return (Bedrock is the stated path to revisit).
 - Linux M5 (branch `m5-linux`): its Ollama systemd work is moot; amend when M5 starts.
-- Whether D's source query accepts a C result (2d, P19).
+- Whether D's source query accepts a C result (v3.0.1, operator decision 2026-10-14; P19).
 - Purging the old gate rows (a later release, R-D8).
