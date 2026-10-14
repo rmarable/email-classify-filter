@@ -84,8 +84,6 @@ from ecf_server import (
     internal,
     manual_export,
     model_watch,
-    models,
-    ollama,
     ops_doctor,
     outbound,
     outbound_remind,
@@ -186,10 +184,6 @@ class ServiceState:
     jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
-    # Ollama, for `ecf eval run`'s local backends and `ecf models` until their removal (v3.0.0,
-    # ADR 0031); no mail is classified with it
-    model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
-    model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
     # Claude Code telemetry per `ecf claude` session, and how long a read or submission waits for
     # its call's events (V1.4 step 6; logs are exported every second)
@@ -898,31 +892,7 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _corpus_run(sid: str | None, *, fraud_only: bool,
-                connect: Callable[[], sqlite3.Connection] | None = None
-                ) -> evalrun.CorpusRun | None:  # fmt: skip
-    """The open corpus session an eval run takes over (R154); None for the synthetic set. Its
-    labels are checked against the effective schema."""
-    if not sid:
-        return None
-    if fraud_only:
-        raise InvalidInputError("--fraud-only is for the synthetic set")
-    schema = None
-    if connect is not None:
-        conn = connect()
-        try:
-            schema = config.current_schema(conn)
-        finally:
-            conn.close()
-    session = corpus_session.set_busy(sid, True)
-    try:
-        return evalrun.corpus_run(session, schema)
-    except Exception:
-        corpus_session.set_busy(sid, False)
-        raise
-
-
-def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - route table
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
     also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
     `_review_routes`)."""
@@ -930,50 +900,28 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
     @allow(Caller.CLI)
     def start_eval(request: Request) -> JSONResponse:
         body = _body(request)
-        sid = _opt_str(body, "corpus_session")  # a real-mail corpus instead (§16.7)
-        root = Path(_str(body, "root")).expanduser() if not sid else Path("/")
-        if not sid and (not root.is_absolute() or not (root / "labels.jsonl").is_file()):
+        if body.get("corpus_session") is not None:  # R-D5: no model runs over real mail here
+            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031); `ecf"
+                                    " eval routes --corpus` and `ecf eval rescore --corpus`"
+                                    " still read a corpus")  # fmt: skip
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
-        floor = body.get("battery_floor", evalrun.DEFAULT_FLOOR)
-        if isinstance(floor, bool) or not isinstance(floor, int) or not 0 <= floor <= 100:
-            raise InvalidInputError("battery_floor: a percent from 0 to 100")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
-        copy_to = _copy_to(body)
-        if sid and copy_to is not None:
-            raise InvalidInputError("copy_to: a corpus run's result stays in the install (R2)")
-        corpus_run = _corpus_run(sid, fraud_only=body.get("fraud_only") is True,
-                                 connect=state.connect)  # fmt: skip
         opts = evalrun.Options(root, classifier=body.get("classifier") is not False,
-                               actor=body.get("actor") is not False,
                                fraud_only=body.get("fraud_only") is True,
-                               battery_floor=floor,
-                               backend=_opt_str(body, "backend") or evalrun.GEMMA,
+                               backend=_opt_str(body, "backend") or evalrun.NULL,
                                redact=body.get("redact") is not False,
-                               corpus=corpus_run,
                                for_gate=body.get("for_gate") is not False,
-                               copy_to=copy_to,
-                               new_wording=body.get("new_wording") is not False,
-                               signals=body.get("signals") is not False,
-                               new_signals=body.get("new_signals") is not False,
-                               excerpt_prep=body.get("excerpt_prep") is not False,
-                               message_signals=(body.get("message_signals")
-                                                is not False))  # fmt: skip
-        try:
-            run = evalrun.start(state.connect, state.clock, state.model_client,
-                                state.db_path.parent, opts, power=state.power,
-                                check_kw=state.model_check, notifier=state.notifier)  # fmt: skip
-        except Exception:
-            if sid:
-                corpus_session.set_busy(sid, False)
-            raise
+                               copy_to=_copy_to(body),
+                               signals=body.get("signals") is not False)  # fmt: skip
+        run = evalrun.start(state.connect, state.clock, state.db_path.parent, opts,
+                            power=state.power)  # fmt: skip
         evalrun.note(state.connect, state.clock,
-                     f"Eval {run['run_id'][:8]} started ({run['total']} cases): model checks"
-                     " for new mail wait until it ends; fraud checks go on.")  # fmt: skip
-        power = state.power()
-        on_battery = power.laptop and not power.on_ac
-        pct = schedule.battery_percent() if on_battery else None
-        return JSONResponse(run | {"on_battery": on_battery, "battery": pct})
+                     f"Eval {run['run_id'][:8]} started ({run['total']} cases,"
+                     f" {opts.backend} backend).")  # fmt: skip
+        return JSONResponse(run)
 
     @allow(Caller.CLI)
     def eval_status(_request: Request) -> JSONResponse:
@@ -992,7 +940,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
 
     @allow(Caller.CLI)
     def stop_eval(_request: Request) -> JSONResponse:
-        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] in ("running", "paused") else None
+        local = evalrun.stop() if evalrun.RUN.snapshot()["state"] == "running" else None
         claude = claude_eval.stop(state.connect, state.clock)
         if local is None and claude is None:
             raise NotFoundError("no eval is running")
@@ -1206,18 +1154,18 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §7.5, §13.2 (V1.3 step 1b): the local model's status and `ecf models install`."""
+    """SPEC §7.5, §13.2: `ecf models status` (the Claude pins) and the Claude model override;
+    the local model's routes went in v3.0.0 (ADR 0031)."""
 
     @allow(Caller.CLI)
-    def show_models(_request: Request) -> JSONResponse:
-        conn, client = state.connect(), state.model_client()
+    def claude_models(_request: Request) -> JSONResponse:
+        """`ecf models status` (v3.0.0, ADR 0031): the Claude pins, any override and the weekly
+        watch; `GET /v1/models`, the local model's status, went with it."""
+        conn = state.connect()
         try:
-            return JSONResponse(
-                models.status(conn, client, **state.model_check)
-                | {"watch": model_watch.status(conn)}
-            )  # V1.4 step 10
+            return JSONResponse({"claude": claude_pins.show(conn),
+                                 "watch": model_watch.status(conn)})  # fmt: skip
         finally:
-            client.close()
             conn.close()
 
     @allow(Caller.CLI)
@@ -1233,29 +1181,10 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     @allow(Caller.CLI)
-    def install_models(request: Request) -> JSONResponse:
-        """`ecf models install`. An older client's `decision` is refused: decision-model installs
-        were removed with the Qwen-based models (OD-494)."""
-        if _opt_str(_body(request), "decision") is not None:
-            raise InvalidInputError("decision-model installs were removed (OD-494); run"
-                                    " `ecf models install` for the local model")  # fmt: skip
-        return JSONResponse(models.start_install(state.connect, state.clock,
-                                                 state.model_client))  # fmt: skip
-
-    @allow(Caller.CLI)
-    def prune_models(_request: Request) -> JSONResponse:
-        """`ecf models prune`: remove ecf's model copies for other releases (SPEC §7.5)."""
-        conn, client = state.connect(), state.model_client()
-        try:
-            return JSONResponse({"removed": models.prune(conn, state.clock, client)})
-        finally:
-            client.close()
-            conn.close()
-
-    @allow(Caller.CLI)
     def show_stats(request: Request) -> JSONResponse:
         """SPEC §13.4 (V1.3 step 9): `ecf stats`; Claude's part (V1.4 step 6) isn't split by
-        address, so it comes only without `address` and for presets B and C."""
+        address, so it comes only without `address` and for preset C (A and B went in v3.0.0;
+        their `model_calls` rows stay until pruned with the logs)."""
         q = request.query_params
         try:
             hours = float(q.get("hours", "168"))
@@ -1270,16 +1199,14 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             since = state.clock.now() - timedelta(hours=hours)
             preset = q.get("preset")
             out = stats.report(conn, since, address=aid, preset=preset)
-            if aid is None and preset in (None, "B", "C"):
+            if aid is None and preset in (None, "C"):
                 out["claude"] = claude_usage.report(conn, since)
             return JSONResponse(out)
         finally:
             conn.close()
 
     return [
-        Route("/v1/models", show_models, methods=["GET"]),
-        Route("/v1/models/install", install_models, methods=["POST"]),
-        Route("/v1/models/prune", prune_models, methods=["POST"]),
+        Route("/v1/models/claude", claude_models, methods=["GET"]),
         Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
@@ -1818,13 +1745,16 @@ def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §15.1 (V1.2 step 8a): pause and resume one address, or all of them. Instant, no
     step-up (§9.1); the pre-check and fraud flagging never pause."""
 
-    def change(ref: str, paused: bool) -> JSONResponse:
+    def change(ref: str, paused: bool, *, owner_agreed: bool = False) -> JSONResponse:
         conn = state.connect()
         try:
-            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user")
+            changed = pause.set_paused(conn, state.clock, ref, paused, actor="os_user",
+                                       owner_agreed=owner_agreed)  # fmt: skip
+            waiting = pause.awaiting_consent(conn) if ref == pause.ALL else None
         finally:
             conn.close()
-        return JSONResponse({"changed": changed, "message": pause.describe(changed, paused)})
+        return JSONResponse({"changed": changed,
+                             "message": pause.describe(changed, paused, waiting)})  # fmt: skip
 
     @allow(Caller.CLI)
     def pause_one(request: Request) -> JSONResponse:
@@ -1832,7 +1762,10 @@ def _pause_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def resume_one(request: Request) -> JSONResponse:
-        return change(str(request.path_params["ref"]), False)
+        """A converted address (v3.0.0, P3) needs `owner_agreed: true`, which `ecf resume`
+        sends only after asking in a terminal."""
+        agreed = _body(request).get("owner_agreed") is True
+        return change(str(request.path_params["ref"]), False, owner_agreed=agreed)
 
     @allow(Caller.CLI)
     def pause_all(_request: Request) -> JSONResponse:

@@ -17,7 +17,7 @@ from ecf.paths import Paths
 from ecf_server import addresses, health, notify, schedule, service
 from ecf_server.api import ServiceState, create_app
 from ecf_server.checks import CheckReport
-from ecf_server.clock import FakeClock, from_ts
+from ecf_server.clock import FakeClock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier, NullNotifier
 from ecf_server.service import Service
@@ -271,3 +271,16 @@ def test_a_removed_address_takes_its_alerts_with_it(
     assert health.open_alerts(ap) == []
     assert ap.execute("SELECT count(*) FROM alerts WHERE resolved_at IS NULL").fetchone()[0] == 0
     assert len(n.sent) == 1  # opened once; no "Resolved" for a removed address
+
+
+def test_install_wide_alerts_stay_listed_after_an_address_is_removed(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Moved from test_models.py (deleted with the local model, v3.0.0)."""
+    now = to_ts(clock.now())
+    with write_tx(conn):  # a removed address made `NULL NOT IN (...)` hide install-wide alerts
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
+                     " removed_at) VALUES ('old', 'old@acme.example', 'standard', 'C', ?, ?)",
+                     (now, now))  # fmt: skip
+    health.open_alert(conn, clock, FakeNotifier(), "models_api", None, "the key was refused")
+    assert [a["kind"] for a in health.open_alerts(conn)] == ["models_api"]

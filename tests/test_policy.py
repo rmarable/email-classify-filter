@@ -370,11 +370,10 @@ def test_labels_include_what_the_extension_adds() -> None:
 # ---- v3.0.0 S3: fixed items, fixed rules (OD-500; plan §5 invariants) -------------------------
 
 FIXED = rules.load_fixed_rules(SCHEMA)
-# preset A's path (S3b): the local model answers v2, which still has the removed values; the
-# composed rules compiled on v2 against the v2 starter rules
+# v2 answers (results and stored classifications from before v3), which still have the removed
+# values; the composed rules compiled on v2
 V2 = load_schema_v2()
 V2_COMPOSED = load_starter_rules(V2)
-V2_STARTER = rules.load_v2_starter(V2)
 KEPT_SOURCES = (
     "regulator",
     "friend",
@@ -452,21 +451,6 @@ def test_s3_inv5_a_missing_fixed_item_is_false(ctx: Context, item: str) -> None:
 
 
 V2_CLASSIFICATIONS = st.fixed_dictionaries({n: _field(s) for n, s in V2.fields.items()})
-
-
-@settings(max_examples=3000, deadline=None)
-@given(V2_CLASSIFICATIONS, FACTS)
-def test_s3_inv6_the_composed_rules_decide_as_the_v2_starter_rules(
-    cls: dict[str, Any], facts: dict[str, Any]
-) -> None:
-    """Invariant 6 (S3a; from S3b on preset A's path): when the items are derived from a v2
-    answer (`with_fixed`), the composed rules (no bridge clauses from S3b) decide exactly as the
-    v2 starter rules did, but for the expected causes: the kept-source clauses on sender_type
-    regulator, friend and family."""
-    if cls["sender_type"] in KEPT_SOURCES:
-        return
-    inp = policy.rule_input(_ctx(classification=with_fixed(cls), facts=facts, rules=V2_COMPOSED))
-    assert V2_COMPOSED.evaluate(inp) == V2_STARTER.evaluate(inp)
 
 
 @settings(max_examples=2000, deadline=None)

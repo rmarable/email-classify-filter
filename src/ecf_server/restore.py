@@ -68,7 +68,6 @@ SAFETY_KEEP = timedelta(days=7)
 MACHINE_LOCAL = frozenset({
     INTERPRETER_KEY, export_keys.DIR_KEY, scheduled_export.LAST_OK, scheduled_export.FAILURES,
     scheduled_export.LAST_ERROR, scheduled_export.NEXT_TRY, "audit.flushed_id",
-    "models.installed_at",
 })  # fmt: skip
 EXTRA_COPIED = ("routes", "alerts")  # beside `importer.COPY` (read at call time: importer ->
 # approvals -> pause -> this module is an import cycle, so `importer` may not be loaded yet)

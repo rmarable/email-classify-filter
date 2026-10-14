@@ -323,7 +323,7 @@ def demote_after_gate_change(conn: sqlite3.Connection, clock: Clock) -> list[str
     return out
 
 
-CONVERTED = "stages.converted_v3"  # setting, written by 0038: {address_id: old preset} (P3, P12)
+CONVERTED = pause.CONVERTED  # setting, written by 0038: {address_id: old preset} (P3, P12)
 CONVERTED_ANNOUNCED = "stages.converted_v3_announced"  # setting: the ids announced so far
 CONVERTED_REASON = ("its preset's local model was removed in v3.0.0 (ADR 0031); it is now C and"
                     " paused, back to assist until its gate passes (§9.3)")  # fmt: skip
@@ -332,8 +332,9 @@ WAITING = ("new", "classified", "awaiting_claude", "clarified")  # waiting for a
 
 def converted(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """The addresses 0038 (or an import or restore of an older bundle) converted from A or B to
-    C and paused, not removed since: id, old preset, whether it is still paused (resuming it is
-    the consent act, OD-427) and how many of its emails wait for a model (`GET
+    C and paused, not removed since: id, old preset, whether it is still paused, whether its
+    owner's agreement was confirmed (resuming it is the consent act, OD-427; `pause`) and how
+    many of its emails wait for a model (`GET
     /v1/upgrade/state`, `ecf doctor`; P3). Counts only."""
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (CONVERTED,)).fetchone()
     was: dict[str, Any] = json.loads(row[0]) if row else {}
@@ -349,6 +350,7 @@ def converted(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         n = conn.execute(f"SELECT count(*) FROM items WHERE address_id = ? AND status IN"  # noqa: S608
                          f" ({marks})", (aid, *WAITING)).fetchone()[0]  # fmt: skip
         out.append({"address_id": aid, "from": str(was[aid]), "paused": bool(a["paused"]),
+                    "consented": not pause.needs_consent(conn, aid),
                     "waiting": int(n)})  # fmt: skip
     return out
 

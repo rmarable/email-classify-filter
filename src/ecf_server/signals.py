@@ -31,8 +31,6 @@ WORDING: dict[str, str] = {
     "link_text_mismatch": "A link's visible text names a different site than the link goes to.",
     "risky_attachment": "The email has an attachment that can run code or open a web page.",
 }
-NEW = frozenset({"crypto_payment"})  # `--no-new-signals` leaves them out
-MESSAGE = frozenset({"link_text_mismatch", "risky_attachment"})  # `--no-message-signals`
 
 
 def sent(facts: dict[str, Any]) -> tuple[str, ...]:

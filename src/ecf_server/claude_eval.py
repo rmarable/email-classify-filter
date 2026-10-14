@@ -2,10 +2,11 @@
 decisions 2026-10-02, OD-287 to OD-292).
 
 - **A run is registered from the command line** (`ecf eval run --claude`, OD-288), never through
-  MCP: preset B or C, the sensitivity it runs as, `--fraud-only`, other models for the classifier
-  or actor roles, and how many items a `-high` spawn takes (`--batch`). One run at a time. The
-  cases are prepared in a service thread (ecf's own analysis and the excerpts, as `ecf eval run`
-  does: about 40 s for the 158-case set); each becomes claimable as soon as it is ready.
+  MCP: preset C (D from v3.0.0 step 2d), the sensitivity it runs as, `--fraud-only`, other
+  models for the classifier or actor roles, and how many items a `-high` spawn takes
+  (`--batch`). One run at a time. The cases are prepared in a service thread (ecf's own analysis
+  and the excerpts, as `ecf eval run` does: about 40 s for the 158-case set); each becomes
+  claimable as soon as it is ready.
 - **The same agents and tools** (OD-287): `eval_next` claims cases like `review_queue` claims
   items, under a random reference (never the case ID, whose name gives the answer away), and the
   subagents read and submit through `get_message`, `record_classification` and `propose_action`,
@@ -16,9 +17,8 @@ decisions 2026-10-02, OD-287 to OD-292).
   ...) and is keyed by the preset's pin key, so it counts for the go-live gate (§9.3). A run with
   other models gets the `ecf-eval-*` agents (the same prompts, rendered by `ecf claude` on the
   run's models), is keyed `eval-...`, and is for comparison only.
-- **Preset B** (OD-289) takes Gemma's classification of each case from the latest complete
-  `ecf eval run` on the pinned digest and the current set: Gemma isn't run again, and the actor
-  comparison is exactly paired. Only the actor stage goes to Claude.
+- **Preset B** (OD-289), which took Gemma's classifications from an `ecf eval run`, was removed
+  with Gemma in v3.0.0 (ADR 0031); its result files still load and rescore (R-D12).
 - **Scoring** is `ecf eval run`'s (`evalrun.score`, the starter rules, policy, the safety checks);
   the result file and `eval_runs` row have its format, plus the run's Claude figures. Preset C
   classifies its first 10 cases twice (determinism, §16.5).
@@ -54,12 +54,11 @@ from ecf.eval.results import (
     ClaimRecord,
     ClaimStage,
     ResultFile,
-    load_result,
     spawn_figures,
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import CompiledSchema, from_v2, load_schema_v2, local_schema, read_bytes
+from ecf.schema import CompiledSchema, read_bytes
 from ecf_server import (
     actor,
     alerts,
@@ -92,7 +91,7 @@ NO_RUN = ("no Claude eval is waiting: register one with `ecf eval run --claude`,
 @dataclass(frozen=True)
 class Options:
     root: Path
-    preset: str = "C"  # B | C
+    preset: str = "C"  # C; D from v3.0.0 step 2d
     sensitivity: str = "standard"  # the address sensitivity the cases run as
     fraud_only: bool = False
     classifier_model: str | None = None
@@ -173,7 +172,6 @@ class Run:
     known: frozenset[str]
     data_dir: Path
     schema: CompiledSchema  # the effective schema at registration (with any extension)
-    source_run: str | None = None  # preset B: the `ecf eval run` whose classifications it uses
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -260,11 +258,7 @@ def models_for(conn: sqlite3.Connection, opts: Options) -> tuple[dict[str, str],
     if pinned:
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
-    schema = config.current_schema(conn)  # as in `claude_pins.pins` (OD-478)
-    if opts.preset in claude_pins.LOCAL_PRESETS:
-        keyed["digest"] = claude_pins.local_key(schema)
-    else:
-        keyed["schema"] = schema.digest
+    keyed["schema"] = config.current_schema(conn).digest  # as in `claude_pins.pins` (OD-478)
     return models, False, "eval-" + claude_pins.key(keyed)
 
 
@@ -278,74 +272,22 @@ def agents_for(run: Run) -> dict[str, str]:
 # ---------------------------------------------------------------------------- registering
 
 
-def _a_run(conn: sqlite3.Connection, version: str) -> tuple[str, dict[str, dict[str, Any]]]:
-    """Preset B (OD-289): the latest complete `ecf eval run` with the classifier, on the pinned
-    digest, the effective schema and this version of the set, and not an experiment (a run with
-    `--not-for-gate` or a switch off: its classifications aren't production's): its run ID and
-    each case's classification."""
-    schema = config.current_schema(conn)
-    digest = claude_pins.local_key(schema)  # Gemma's run with this schema (C5)
-    rows = conn.execute("SELECT run_id, metrics, path FROM eval_runs WHERE digest = ? AND"
-                        " set_version = ? ORDER BY created_at DESC",
-                        (digest, version)).fetchall()  # fmt: skip
-    for row in rows:
-        metrics: dict[str, Any] = json.loads(row["metrics"])
-        opts: dict[str, Any] = metrics.get("options") or {}
-        if not (metrics.get("complete") and opts.get("classifier")):
-            continue
-        if opts.get("for_gate") is False or opts.get("switches_off"):
-            continue  # an experiment (v2.1.0 run bbcd06e3, signals off, came after d80ea43d)
-        if not _same_schema(metrics, schema):
-            continue  # asked with another extension (or none): different fields
-        if not row["path"] or not Path(row["path"]).is_file():
-            continue  # an imported run: its result file stayed on the other computer (V1.5)
-        result = load_result(Path(row["path"]))
-        if any(not c.got for c in result.cases):
-            break  # a run from before OD-259 holds no classifications
-        # completed to v3 (a run from before v3 recorded only v2's answers; OD-498); a failed
-        # case (no answer) stays empty, so it is scored as a failure, not planned
-        got = {c.id: _completed(c.got) for c in result.cases}
-        return str(row["run_id"]), got
-    raise InvalidInputError("preset B uses Gemma's classifications from a complete `ecf eval run`"
-                            " on the pinned model and this version of the set, and there is none:"
-                            " run `ecf eval run` first")  # fmt: skip
-
-
-def _completed(got: dict[str, Any]) -> dict[str, Any]:
-    """Gemma's recorded answer without the rule, brought to v3 (`from_v2`: the fixed items
-    derived, removed values read as `other`/`unknown`, S3b) only when it answered: `from_v2({})`
-    would be five false items, which policy would plan."""
-    fields = {k: v for k, v in got.items() if k != "rule"}
-    return from_v2(fields) if fields else {}
-
-
-def _same_schema(metrics: dict[str, Any], schema: CompiledSchema) -> bool:
-    """Whether Gemma's run was asked with `schema`, as the local model is asked it
-    (`local_schema`: v2 for v3, P6); a run from before the digest was recorded used the shipped
-    schema v2."""
-    asked = local_schema(schema).digest
-    got = metrics.get("schema_digest")
-    return got == asked if got is not None else asked == load_schema_v2().digest
-
-
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
           *, spawn: Callable[[Callable[[], None]], None] | None = None,
           ) -> dict[str, Any]:  # fmt: skip
-    if opts.preset not in ("B", "C"):
-        raise InvalidInputError("a Claude eval runs preset B or C")
+    if opts.preset != "C":
+        raise InvalidInputError("a Claude eval runs preset C (preset B was removed in v3.0.0,"
+                                " ADR 0031)")  # fmt: skip
     if opts.sensitivity not in ("standard", "high"):
         raise InvalidInputError("sensitivity must be standard or high")
     if not 1 <= opts.batch <= BATCH_MAX:
         raise InvalidInputError(f"batch must be between 1 and {BATCH_MAX}")
-    if opts.preset == "B" and opts.classifier_model is not None:
-        raise InvalidInputError("preset B classifies with the local model: no classifier model")
     cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
     conn = connect()
     try:
         models, pinned, key = models_for(conn, opts)
-        source, got = _a_run(conn, version) if opts.preset == "B" else (None, {})
         schema = config.current_schema(conn)
     finally:
         conn.close()
@@ -357,16 +299,15 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
             raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
                                 " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
         run = Run(new_random_id(), opts, models, pinned, key, version, clock.now(), works,
-                  starter, policy.labels(schema, starter), data_dir, schema,
-                  source)  # fmt: skip
+                  starter, policy.labels(schema, starter), data_dir, schema)  # fmt: skip
         _SLOT.run = run
-    evalrun._remember_root(connect, clock, opts.root)  # pyright: ignore[reportPrivateUsage]
+    evalrun.remember_root(connect, clock, opts.root)  # only here (P16)
     log.info("claude_eval.registered", run_id=run.run_id[:8], cases=len(works),
              preset=opts.preset, pinned=pinned)  # fmt: skip
 
     def work() -> None:
         try:
-            _prepare(connect, clock, run, got)
+            _prepare(connect, clock, run)
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("claude_eval.prepare_failed", error_type=type(exc).__name__)
             with run.lock:
@@ -381,8 +322,7 @@ def _thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name="ecf-claude-eval", daemon=True).start()
 
 
-def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
-             got: dict[str, dict[str, Any]]) -> None:  # fmt: skip
+def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
     """ecf's analysis and the excerpts for each case, in order; each is claimable once ready."""
     scratch = ruletest.Scratch(clock)
     try:
@@ -390,9 +330,9 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             if run.stop.is_set():
                 return
             raw = w.case.path.read_bytes()
-            # as `ecf eval run`: the card's expected facts applied (Q1), so A and C score alike
-            facts, (cls_text, act_text) = evalrun._inputs(  # pyright: ignore[reportPrivateUsage]
-                w.case, scratch, triggers.redact_injection)  # fmt: skip
+            # as `ecf eval run`: the card's expected facts applied (Q1), so runs score alike
+            facts, (cls_text, act_text) = evalrun.case_inputs(w.case, scratch,
+                                                             triggers.redact_injection)  # fmt: skip
             msg = ruletest.read_case(raw).parsed
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr
@@ -406,11 +346,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 if not run.open:
                     return
                 w.facts, w.email, w.cls_text, w.act_text = facts, email, cls_text, act_text
-                if run.opts.preset == "C":
-                    w.stage = "classify"
-                else:
-                    w.classification = got.get(w.case.id) or None
-                    _classified(run, w)
+                w.stage = "classify"
         with run.lock:
             if run.state == "preparing":
                 run.state = "ready"
@@ -463,10 +399,10 @@ def _score(w: Work) -> None:
 
 
 def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
-    """Every case done: preset C classifies its first cases again (§16.5), then the result."""
+    """Every case done: the first cases are classified again (§16.5), then the result."""
     if run.state != "ready" or any(w.stage != "done" for w in run.works):
         return
-    if run.opts.preset == "C" and not run.repeats_started:
+    if not run.repeats_started:
         run.repeats_started = True
         for w in run.works[: evalrun.DETERMINISM_CASES]:
             w.stage = "repeat"
@@ -489,12 +425,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         return
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 schema=run.schema)  # fmt: skip
-    # what the classifier was asked: B's is Gemma, asked v2 for v3 (P6)
-    asked = local_schema(run.schema) if run.opts.preset == "B" else run.schema
-    summary["schema_digest"] = asked.digest
-    if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
-        summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
-        summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields too (R9)
+    summary["schema_digest"] = run.schema.digest  # what the classifier was asked
+    summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
+    summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields too (R9)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()
@@ -539,7 +472,6 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
         "models": {r: run.models[r] for r in used},
         "pinned": run.pinned,
         "batch": run.opts.batch,
-        "source_run": run.source_run,
         "sessions": len(run.sessions),
         "registered_at": to_ts(run.created),  # claims' times count from here (item 3)
         # round -> its session's next `eval_next`, in seconds as the claims' (review R1): read

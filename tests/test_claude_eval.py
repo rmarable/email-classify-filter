@@ -1,7 +1,7 @@
 """`/ecf-eval` (V1.4 step 7; SPEC §10.4, §16.2-§16.3; OD-287 to OD-292): runs registered from
 the command line, cases claimed under random references through the same tools and checks as
-`/ecf-review`, scoring as `ecf eval run`, the model check, preset B on Gemma's classifications,
-comparison runs, stop and expiry, and the routes' profiles."""
+`/ecf-review`, scoring as `ecf eval run`, the model check, comparison runs, stop and expiry, and
+the routes' profiles. Preset B (on Gemma's classifications) went in v3.0.0 (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from ecf.claude_wrapper import client_doc
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
-from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
+from ecf.eval.results import load_result, spawn_figures
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import load_schema, local_fields, local_schema, with_fixed
+from ecf.schema import load_schema, with_fixed
 from ecf_server import (
     claude_eval,
     claude_pins,
@@ -38,10 +38,9 @@ from ecf_server import (
 )
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
-from ecf_server.db import write_tx
 from ecf_server.notify import NullNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
-from tests.test_claude_review import EXT, extend, tokens_of, with_tokens
+from tests.test_claude_review import extend, tokens_of, with_tokens
 from tests.test_decide import MARKETING
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
@@ -937,7 +936,7 @@ def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(
 def test_a_round_while_cases_are_still_being_prepared_says_so(
     db_path: Path, clock: FakeClock, root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = evalrun._inputs  # pyright: ignore[reportPrivateUsage]
+    real = evalrun.case_inputs
     seen: list[dict[str, Any]] = []
 
     def inputs(case: Any, *args: Any) -> Any:
@@ -947,7 +946,7 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
             seen.append(nxt(db_path, clock, S1))
         return real(case, *args)
 
-    monkeypatch.setattr(evalrun, "_inputs", inputs)
+    monkeypatch.setattr(evalrun, "case_inputs", inputs)
     start(db_path, clock, root)
     (q,) = seen
     assert q["preparing"] is True and len(q["items"]) == 1
@@ -1050,8 +1049,9 @@ def test_a_comparison_run_uses_the_eval_agents_and_never_counts_for_the_gate(
 def test_a_model_id_must_be_claudes(db_path: Path, clock: FakeClock, root: Path) -> None:
     with pytest.raises(InvalidInputError):
         start(db_path, clock, root, classifier_model="gpt-5")
-    with pytest.raises(InvalidInputError):
-        start(db_path, clock, root, preset="B", classifier_model="claude-opus-5-5")
+    for gone in ("A", "B"):  # removed in v3.0.0 (ADR 0031)
+        with pytest.raises(InvalidInputError, match="preset C"):
+            start(db_path, clock, root, preset=gone)
     with pytest.raises(InvalidInputError):
         start(db_path, clock, root, batch=6)
 
@@ -1082,21 +1082,6 @@ def test_batch_never_groups_the_high_risk_actor(
     assert [i["spawn"] for i in items] == ["ecf-eval-classifier-high-1"] * 2 + [
         "ecf-eval-classifier-high-2"
     ]
-
-
-def _a_run(conn: sqlite3.Connection, clock: FakeClock, db_path: Path, root: Path,
-           got: dict[str, Any], *, run_id: str = "a" * 32,
-           options: dict[str, Any] | None = None) -> str:  # fmt: skip
-    """A saved `ecf eval run` result on the pinned digest, with Gemma's classifications."""
-    cases, version = evalrun.load(root, fraud_only=False)
-    results = [CaseResult(id=c.id, correct=False, got=got | {"rule": None}) for c in cases]
-    summary = evalrun.summarize(results, 0)
-    cast(dict[str, Any], summary["options"]).update(options or {})
-    rf = ResultFile(run_id=run_id, pair="gemma4-12b/local", set_version=version,
-                    created_at=to_ts(clock.now()), cases=results,
-                    digest=claude_pins.local_key(), summary=summary)  # fmt: skip
-    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
-    return rf.run_id
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -1161,96 +1146,6 @@ def test_a_case_goes_out_with_the_signals_gemma_gets(
     item = nxt(db_path, clock, S1, limit=1)["items"][0]
     msg = claude_eval.get_message(clock, S1, item["id"], item["claim_token"], item["agent"])
     assert msg["signals"] == {"crypto_payment": signals.WORDING["crypto_payment"]}
-
-
-@pytest.mark.usefixtures("extensions_on")
-def test_preset_b_takes_only_a_run_on_the_schema_gemma_is_asked(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """Gemma is asked plain v2 whatever the install's own fields (S4, D8), so a run with no
-    digest recorded (the shipped schema) still counts with them; a run asked another schema
-    doesn't."""
-    _a_run(conn, clock, db_path, root, REQUEST)  # recorded no digest: the shipped schema
-    extend(conn, clock)
-    r = start(db_path, clock, root, preset="B")
-    run = claude_eval.current()
-    assert r["state"] == "ready" and run is not None
-    assert EXT["category_values"].keys() <= run.known  # policy plans with the effective schema
-    claude_eval.reset()
-    with write_tx(conn):
-        conn.execute("DELETE FROM eval_runs")
-    cases, version = evalrun.load(root, fraud_only=False)
-    results = [CaseResult(id=c.id, correct=False, got=REQUEST | {"rule": None}) for c in cases]
-    summary: dict[str, object] = evalrun.summarize(results, 0)
-    schema = config.current_schema(conn)
-    summary["schema_digest"] = schema.digest  # asked something other than plain v2
-    rf = ResultFile(run_id="b" * 32, pair="gemma4-12b/local", set_version=version,
-                    created_at=to_ts(clock.now()), cases=results,
-                    digest=claude_pins.local_key(schema), summary=summary)  # fmt: skip
-    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(InvalidInputError, match="ecf eval run"):
-        start(db_path, clock, root, preset="B")
-    assert local_schema(schema).digest != schema.digest
-
-
-def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    with pytest.raises(InvalidInputError, match="ecf eval run"):
-        start(db_path, clock, root, preset="B")
-    source = _a_run(conn, clock, db_path, root, REQUEST)
-    r = start(db_path, clock, root, preset="B")
-    assert r["models"].keys() == {"actor", "actor_high"}
-    handed = drain(db_path, clock, lambda _c: REQUEST)
-    assert handed and {i["need"] for i in handed} == {"act"}  # no Claude classification
-    m = json.loads(conn.execute("SELECT metrics FROM eval_runs WHERE pair ="
-                                " 'gemma4-12b/claude'").fetchone()[0])  # fmt: skip
-    assert m["claude"]["source_run"] == source and m["determinism_diffs"] == 0
-
-
-def test_preset_b_scores_a_failed_gemma_case_as_a_failure(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """S2 review F1: a case Gemma failed (`{"rule": None}`) isn't completed to five false
-    fixed items and planned; it stays unclassified and scores as a failure, as before v3."""
-    cases, version = evalrun.load(root, fraud_only=False)
-    results = [CaseResult(id=c.id, correct=False,
-                          got={"rule": None} if c.id == "starter-bec" else REQUEST | {"rule": None})
-               for c in cases]  # fmt: skip
-    rf = ResultFile(run_id="f" * 32, pair="gemma4-12b/local", set_version=version,
-                    created_at=to_ts(clock.now()), cases=results,
-                    digest=claude_pins.local_key(),
-                    summary=evalrun.summarize(results, 0))  # fmt: skip
-    evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
-    start(db_path, clock, root, preset="B")
-    run = claude_eval.current()
-    assert run is not None
-    failed = next(w for w in run.works if w.case.id == "starter-bec")
-    assert failed.classification is None and failed.plan is None
-    drain(db_path, clock, lambda _c: REQUEST)
-    path = conn.execute("SELECT path FROM eval_runs WHERE pair = 'gemma4-12b/claude'"
-                        ).fetchone()["path"]  # fmt: skip
-    got = {c.id: c for c in load_result(Path(path)).cases}["starter-bec"]
-    assert not got.correct and got.fields["safety"] is False and got.fields["rule"] is False
-
-
-def test_preset_b_skips_an_experiment_for_its_source(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """A later `--not-for-gate` or switched-off run isn't production's classifications."""
-    source = _a_run(conn, clock, db_path, root, REQUEST)
-    for n, options in enumerate(
-        (
-            {"for_gate": False, "switches_off": ["signals"]},
-            {"for_gate": False},
-            {"switches_off": ["excerpt_prep"]},
-        )
-    ):
-        clock.advance(60)
-        _a_run(conn, clock, db_path, root, BEC, run_id=f"{n + 1}" * 32, options=options)
-    start(db_path, clock, root, preset="B")
-    run = claude_eval.current()
-    assert run is not None and run.source_run == source
 
 
 # ---- one at a time, stop and expiry ----------------------------------------------------------
@@ -1406,16 +1301,3 @@ def test_eval_next_through_ecf_mcp(db_path: Path, clock: FakeClock, root: Path) 
     assert error_text(none).startswith("not_found: no Claude eval is waiting")
     assert len(data(got)["items"]) == 2 and data(got)["more"] is True
     assert data(res)["state"] == "ready" and data(res)["total"] == 3
-
-
-def test_preset_b_reads_gemmas_recorded_answer_through_from_v2() -> None:
-    """S3b (D3): B's classifier source is Gemma's recorded v2 answer; brought to v3 with the item
-    a removed value implied, then the value read as `other` or `unknown`; a failed case stays
-    empty."""
-    got = claude_eval._completed(  # pyright: ignore[reportPrivateUsage]
-        {**local_fields(REQUEST), "category": "vendor_change_request", "sender_type": "team",
-         "rule": "x"})  # fmt: skip
-    assert got["bank_detail_change"] is True and got["claims_internal"] is True
-    assert (got["category"], got["sender_type"]) == ("other", "unknown") and "rule" not in got
-    load_schema().validate(got)
-    assert claude_eval._completed({"rule": None}) == {}  # pyright: ignore[reportPrivateUsage]

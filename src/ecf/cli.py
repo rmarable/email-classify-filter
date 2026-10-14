@@ -1116,17 +1116,13 @@ def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
 def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     root: RootOpt = EVAL_ROOT,
     classifier: Annotated[bool, typer.Option("--classifier/--no-classifier")] = True,
-    actor: Annotated[bool, typer.Option("--actor/--no-actor")] = True,
     fraud_only: Annotated[
         bool, typer.Option("--fraud-only", help="Only fraud, injection and escalation cases.")
     ] = False,
-    battery_floor: Annotated[
-        int, typer.Option("--battery-floor", help="Pause at this battery percent (OD-237).")
-    ] = 15,
     claude: Annotated[
         bool, typer.Option("--claude", help="Register a run for /ecf-eval in `ecf claude`.")
     ] = False,
-    preset: Annotated[str, typer.Option("--preset", help="With --claude: B or C.")] = "C",
+    preset: Annotated[str, typer.Option("--preset", help="With --claude: C.")] = "C",
     sensitivity: Annotated[
         str, typer.Option("--sensitivity", help="With --claude: standard or high.")
     ] = "standard",
@@ -1143,11 +1139,11 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         str,
         typer.Option(
             "--classifier-backend",
-            help="gemma (default), null, or"
-            " systemone:<name> from decision_models.lock (eval only, SPEC §7.8;"
-            " never counts for the go-live gate; none pinned since OD-494).",
+            help="null (default): every field at its least risky value, the rules alone (SPEC"
+            " §7.8; never counts for the go-live gate). gemma and systemone:<name> were"
+            " removed in v3.0.0 (ADR 0031).",
         ),
-    ] = "gemma",
+    ] = "null",
     redact: Annotated[
         bool,
         typer.Option(
@@ -1159,7 +1155,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     ] = True,
     corpus: Annotated[
         Path | None,
-        typer.Option("--corpus", help="Run a labelled real-mail corpus instead (§16.7)."),
+        typer.Option("--corpus", help="Removed in v3.0.0 (ADR 0031): no model runs a corpus."),
     ] = None,
     not_for_gate: Annotated[
         bool,
@@ -1176,119 +1172,42 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " when run from a checkout; none otherwise).",
         ),
     ] = None,
-    new_wording: Annotated[
-        bool,
-        typer.Option(
-            "--new-wording/--no-new-wording",
-            help="--no-new-wording asks the model with the v2.0.0 schema text (an experiment;"
-            " never counts for the go-live gate).",
-        ),
-    ] = True,
     signals: Annotated[
         bool,
         typer.Option(
             "--signals/--no-signals",
-            help="--no-signals asks the model without the derived signals (OD-484; an"
-            " experiment, never counts for the go-live gate).",
-        ),
-    ] = True,
-    new_signals: Annotated[
-        bool,
-        typer.Option(
-            "--new-signals/--no-new-signals",
-            help="--no-new-signals leaves out the crypto signal (OD-485; an"
-            " experiment, never counts for the go-live gate).",
-        ),
-    ] = True,
-    excerpt_prep: Annotated[
-        bool,
-        typer.Option(
-            "--excerpt-prep/--no-excerpt-prep",
-            help="--no-excerpt-prep cuts the excerpts from the first text part, as before"
-            " v2.1.0 (an experiment, never counts for the go-live gate).",
-        ),
-    ] = True,
-    message_signals: Annotated[
-        bool,
-        typer.Option(
-            "--message-signals/--no-message-signals",
-            help="--no-message-signals leaves out the link and attachment signals (OD-489; an"
-            " experiment, never counts for the go-live gate).",
+            help="--no-signals asks the model without the derived signals (OD-484; a model"
+            " backend only; an experiment, never counts for the go-live gate).",
         ),
     ] = True,
 ) -> None:
-    """Run the synthetic set through the local model (holds the model; fraud checks go on). A
-    full run took about 40 minutes on a MacBook Air on AC power (2026-10-01); run it on AC power
-    (OD-230). With --claude, register a run for Claude instead: open `ecf claude` and type
-    /ecf-eval (it uses your Claude plan). With --corpus, run a real-mail corpus with preset A:
-    reported, never counted for the go-live gate."""
+    """Run the synthetic set through ecf's rules with the null classifier (every field at its
+    least risky value; seconds, no model): the rules-alone floor and a wiring check, never
+    counted for the go-live gate. With --claude, register a run for Claude instead: open `ecf
+    claude` and type /ecf-eval (it uses your Claude plan); that run counts for the gate."""
     if corpus is not None:
-        if claude or fraud_only or not redact or classifier_backend == "null":
-            raise InvalidInputError("--corpus runs the local model only (no --claude, null"
-                                    " backend, --fraud-only or --no-redact; OD-466)")  # fmt: skip
-        if copy_to is not None or not (new_wording and signals and new_signals and excerpt_prep
-                                         and message_signals) \
-                or not_for_gate:  # fmt: skip
-            raise InvalidInputError("--copy-to, --no-new-wording, --no-signals, --no-new-signals,"
-                                    " --no-excerpt-prep, --no-message-signals and --not-for-gate"
-                                    " are for the synthetic"
-                                    " set (a corpus run never counts for the gate and its"
-                                    " result stays in the install)")  # fmt: skip
-        _eval_corpus(corpus, classifier, actor, battery_floor, classifier_backend)
-        return
+        raise InvalidInputError("corpus runs were removed in v3.0.0 (ADR 0031): `ecf eval routes"
+                                " --corpus` and `ecf eval rescore --corpus` still read a"
+                                " corpus")  # fmt: skip
     copy = _copy_folder(copy_to)
     if claude:
-        if not (classifier and actor):
-            raise InvalidInputError("--no-classifier and --no-actor are for the local model")
-        if classifier_backend != "gemma" or not redact or not_for_gate or not new_wording \
-                or not signals or not new_signals or not excerpt_prep \
-                or not message_signals:  # fmt: skip
-            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
-                                    " --no-new-wording, --no-signals, --no-new-signals,"
-                                    " --no-excerpt-prep and --no-message-signals are for the"
-                                    " local model")  # fmt: skip
+        if not classifier:
+            raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
+        if classifier_backend != "null" or not redact or not_for_gate or not signals:
+            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate and"
+                                    " --no-signals are for `ecf eval run` without"
+                                    " --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
-            "root": str(root.resolve()), "classifier": classifier, "actor": actor,
-            "fraud_only": fraud_only, "battery_floor": battery_floor,
-            "backend": classifier_backend, "redact": redact,
-            "for_gate": not not_for_gate, "new_wording": new_wording, "signals": signals,
-            "new_signals": new_signals, "excerpt_prep": excerpt_prep,
-            "message_signals": message_signals,
-            "copy_to": str(copy) if copy else None})  # fmt: skip
+            "root": str(root.resolve()), "classifier": classifier, "fraud_only": fraud_only,
+            "backend": classifier_backend, "redact": redact, "for_gate": not not_for_gate,
+            "signals": signals, "copy_to": str(copy) if copy else None})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:
         typer.echo(f"  The result is also written to {copy}/ when the run ends.")
-    _follow_hints()
-    if r.get("on_battery"):
-        typer.echo(f"On battery ({r.get('battery')}%). The eval pauses at {battery_floor}% and"
-                   " resumes on AC power.")  # fmt: skip
-
-
-def _eval_corpus(corpus: Path, classifier: bool, actor: bool, floor: int, backend: str) -> None:
-    """Open the corpus in the service and hand it to an eval run, which owns it until it ends."""
-    from ecf.prompts import hidden, require_terminal  # noqa: PLC0415
-
-    require_terminal()
-    where = corpus.expanduser().absolute()
-    secret = hidden(f"Passphrase for {where.name} (hidden): ")
-    with LocalClient(_paths()) as c:
-        body = {"path": str(where), "passphrase": secret}
-        opened = c.request("POST", "/v1/corpus/session", body, timeout=600)
-        del secret, body
-        try:
-            r = c.request("POST", "/v1/eval/runs", {
-                "corpus_session": opened["session_id"], "classifier": classifier,
-                "actor": actor, "battery_floor": floor, "backend": backend})  # fmt: skip
-        except Exception:
-            c.request("DELETE", f"/v1/corpus/session/{opened['session_id']}")
-            raise
-    typer.echo(f"Corpus eval {r['run_id'][:8]} started: {r['total']} messages from corpus"
-               f" {str(opened['corpus_id'])[:8]}.")  # fmt: skip
-    typer.echo("Reported only; never counts toward the go-live gate.")
     _follow_hints()
 
 
@@ -1604,7 +1523,8 @@ def eval_status() -> None:
 
 def status_lines(st: dict[str, Any]) -> list[str]:
     """`ecf eval status`: the running evals, then each recent synthetic run on two lines (its
-    score, then its safety checks and gate). Corpus runs are never listed as recent (§16.7)."""
+    score, then its safety checks and gate). Corpus runs (before v3.0.0) were never listed as
+    recent (§16.7)."""
     cur, cl = st["current"], st.get("claude")
     out: list[str] = []
     if cl is not None:
@@ -1615,9 +1535,7 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                 f"  preset {cl['preset']}, {cl['sensitivity']},"
                 f" {'pinned models' if cl['pinned'] else 'comparison'}"]  # fmt: skip
     if cur["state"] != "idle":
-        s = str(cur.get("set", ""))
-        what = f"Corpus {re.split(r'[: ]', s)[1][:8]} eval" if s.startswith("corpus") else "Eval"
-        out.append(f"{what} {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
+        out.append(f"Eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
     if st["recent"]:
         out += [""] if out else []
@@ -1652,6 +1570,8 @@ def _run_caveat(m: dict[str, Any]) -> str:
     opts: dict[str, Any] = m.get("options") or {}
     if m.get("complete") is False:
         return f" (stopped after {m.get('cases')} cases)"
+    if m.get("backend") == "null":  # the rules alone (§7.8; R-D6)
+        return " (null backend: the rules alone, never for the gate)"
     if opts and not (opts.get("classifier") and opts.get("actor")):
         return " (without the " + ("actor" if opts.get("classifier") else "classifier") + ")"
     if opts.get("switches_off"):

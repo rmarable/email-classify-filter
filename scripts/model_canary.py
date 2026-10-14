@@ -1,13 +1,14 @@
 """The weekly model canary (SPEC §7.6, §19; V1.4 step 10; OD-053, OD-300). Run by
 `.github/workflows/canary.yml` every Monday and on demand: `uv run python scripts/model_canary.py`.
 
-It reads Anthropic's model deprecations page and models overview (their Markdown versions) and the
-Ollama library's tags page for the pinned local model, and fails when:
+It reads Anthropic's model deprecations page and models overview (their Markdown versions), and
+fails when:
 - a page can't be read or parsed (a format change would otherwise hide everything below);
 - a pinned Claude ID is missing from the deprecations page's status table, or its state, firm
   retirement date or "not sooner than" date differs from `models.lock`'s `lifecycle` (a release
-  then records the change, and the service announces it; OD-299);
-- the pinned Ollama tag isn't on its tags page.
+  then records the change, and the service announces it; OD-299).
+
+The Ollama tags-page check went with the local model in v3.0.0 (ADR 0031).
 
 A newer model in a family ecf pins (the overview's current lineup) and the deprecation's
 recommended replacement are only reported in the job summary. Nothing here changes a pin.
@@ -22,7 +23,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from ecf_server import claude_pins, model_watch, ollama
+from ecf_server import claude_pins
 
 DEPRECATIONS = "https://platform.claude.com/docs/en/about-claude/model-deprecations.md"
 OVERVIEW = "https://platform.claude.com/docs/en/models/overview.md"
@@ -109,7 +110,7 @@ def parse_lineup(md: str) -> list[str]:
     raise CanaryError("models overview: no 'Claude API ID' row")
 
 
-def check(deprecations: str, overview: str, tags_html: str) -> Report:
+def check(deprecations: str, overview: str) -> Report:
     rep = Report()
     lock, life = claude_pins.load_lock(), claude_pins.lifecycle()
     pinned = sorted(set(lock.values()))
@@ -136,13 +137,6 @@ def check(deprecations: str, overview: str, tags_html: str) -> Report:
     for mid in parse_lineup(overview):
         if mid not in pinned and claude_pins.family(mid) in families:
             rep.notes.append(f"newer in a pinned family: {mid} (the overview's lineup)")
-    repo, tag = ollama.load_pin().tag.split(":", 1)
-    tags = model_watch.parse_tags(tags_html, repo)
-    if tag not in tags:
-        rep.failures.append(f"Ollama library: {repo}:{tag} isn't on its tags page"
-                            f" ({len(tags)} tags read)")  # fmt: skip
-    else:
-        rep.notes.append(f"Ollama library: {len(tags)} {repo} tags; {repo}:{tag} listed")
     return rep
 
 
@@ -153,10 +147,8 @@ def fetch(url: str) -> str:
 
 
 def main() -> int:
-    repo = ollama.load_pin().tag.split(":", 1)[0]
     try:
-        rep = check(fetch(DEPRECATIONS), fetch(OVERVIEW),
-                    fetch(model_watch.TAGS_URL.format(repo=repo)))  # fmt: skip
+        rep = check(fetch(DEPRECATIONS), fetch(OVERVIEW))
     except (CanaryError, OSError) as e:
         rep = Report(failures=[f"can't read a page: {e}"])
     lines = ["## Model canary", ""]

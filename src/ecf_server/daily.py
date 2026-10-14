@@ -6,10 +6,10 @@ the summary channel. V1.2 says: what's waiting on you per address, open items, s
 emails not fully scanned in the last 24 hours, paused addresses, and who else is in ecf's channels.
 From V1.4 step 6: Claude's usage in the last 24 hours;
 from step 9, items waiting for `/ecf-review` per address, and those waiting longer than
-`claude_review_reminder_hours`; from step 10, newer Claude models and Ollama tags the weekly model
-watch found since the last summary (each once). From V1.5 step 8b: the last backup, or why there
-isn't one (OD-347). The local model's lines (its backlog, hours on battery) went in v3.0.0 (ADR
-0031).
+`claude_review_reminder_hours`; from step 10, newer Claude models the weekly model watch found
+since the last summary (each once; its Ollama tags went in v3.0.0). From V1.5 step 8b: the last
+backup, or why there isn't one (OD-347). The local model's lines (its backlog, hours on battery)
+went in v3.0.0 (ADR 0031).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -30,7 +30,6 @@ from ecf_server import (
     cards,
     claude_queue,
     claude_usage,
-    evalrun,
     inbox,
     model_watch,
     pause,
@@ -133,9 +132,6 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
             lines.append(usage)
     lines += model_watch.daily_lines(conn)
     lines.append(scheduled_export.daily_line(conn))  # OD-347 (V1.5 step 8b)
-    held = evalrun.slack_line()
-    if held:
-        lines.append(held)
     paused = pause.paused_addresses(conn)
     if paused:
         lines.append(f"Paused: {', '.join(paused)} (fraud checks continue)")

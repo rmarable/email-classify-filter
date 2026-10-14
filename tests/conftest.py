@@ -110,6 +110,23 @@ def _no_typesafe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jev, "default_transport", refuse)
 
 
+@pytest.fixture(autouse=True)
+def _no_ollama_retire(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """An in-process service that settles an upgrade never touches this computer's Ollama login
+    item (v3.0.0, R-D13): `retire` is recorded instead (tests/test_ollama_retire.py tests it with
+    fakes)."""
+    from ecf_server import service  # noqa: PLC0415
+
+    calls: list[Path] = []
+
+    def record(root: Path) -> list[str]:
+        calls.append(root)
+        return []
+
+    monkeypatch.setattr(service, "retire_ollama", record)
+    return calls
+
+
 @pytest.fixture
 def extensions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """Schema extensions on (OD-481: built, off in v2.0.0), for tests of the machinery."""

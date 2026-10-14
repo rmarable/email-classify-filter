@@ -1,0 +1,310 @@
+{
+ "run_id": "21bf318f9911b599e7f35b3f3961c427",
+ "pair": "gemma4-12b/claude",
+ "set_version": "4f64de5fb1fd2b22",
+ "created_at": "2026-10-12T16:41:50.183052Z",
+ "cases": [
+  {
+   "id": "attachment-name-injection",
+   "correct": false,
+   "fields": {
+    "category": false,
+    "fraud_risk": false,
+    "payment_related": true,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "invoice",
+    "priority": "medium",
+    "requires_action": true,
+    "requires_reply": false,
+    "payment_related": true,
+    "deadline_mentioned": true,
+    "sender_type": "vendor",
+    "fraud_risk": "low",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": []
+  },
+  {
+   "id": "bank-change-reply-to",
+   "correct": true,
+   "fields": {
+    "category": true,
+    "fraud_risk": true,
+    "payment_related": true,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "vendor_change_request",
+    "priority": "high",
+    "requires_action": true,
+    "requires_reply": true,
+    "payment_related": true,
+    "deadline_mentioned": false,
+    "sender_type": "vendor",
+    "fraud_risk": "high",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": []
+  },
+  {
+   "id": "bec-ceo-urgent-wire",
+   "correct": false,
+   "fields": {
+    "category": false,
+    "fraud_risk": true,
+    "payment_related": true,
+    "sender_type": true,
+    "rule": true,
+    "safety": true
+   },
+   "confirmed": true,
+   "safety": true,
+   "got": {
+    "category": "vendor_change_request",
+    "priority": "urgent",
+    "requires_action": true,
+    "requires_reply": true,
+    "payment_related": true,
+    "deadline_mentioned": true,
+    "sender_type": "team",
+    "fraud_risk": "high",
+    "rule": "fraud_guard"
+   },
+   "fraud": true,
+   "fraud_guard": true,
+   "probabilities": null,
+   "classifier_ms": null,
+   "actions": [
+    "escalate",
+    "flag",
+    "label"
+   ],
+   "scored": true,
+   "classifier": null,
+   "actor": null,
+   "model_only_fraud": false,
+   "rule_alone": null,
+   "proposal": null,
+   "proposal_target": null,
+   "hide_blocked": [],
+   "claims": []
+  }
+ ],
+ "digest": "pins-6b83b5f1cb266a3f",
+ "summary": {
+  "cases": 268,
+  "confirmed": 268,
+  "correct": 183,
+  "rule_scored": 268,
+  "accuracy": 68.3,
+  "wilson95": [
+   62.5,
+   73.6
+  ],
+  "per_field": {
+   "category": 73.8,
+   "priority": 80.0,
+   "requires_action": 78.9,
+   "requires_reply": 92.3,
+   "payment_related": 95.9,
+   "deadline_mentioned": 90.8,
+   "sender_type": 68.7,
+   "fraud_risk": 87.3,
+   "rule": 88.8,
+   "safety": 100.0
+  },
+  "unsafe": [],
+  "fraud_cases": 138,
+  "fraud_guard_cases": 95,
+  "fraud_guard_missed": [],
+  "fraud_guard_recall": 100.0,
+  "determinism_diffs": 0,
+  "complete": true,
+  "options": {
+   "classifier": true,
+   "actor": true
+  },
+  "gate_passed": true,
+  "schema_digest": "schema-0d96e766c568d58a",
+  "excerpt_prep": 2,
+  "keywords_digest": "e827fd69c5d6e0e1b60bd3366f88ea3c79938deeba1d32d616e6c24c59f7f4bd",
+  "claude": {
+   "preset": "B",
+   "sensitivity": "standard",
+   "models": {
+    "actor": "claude-sonnet-5-5",
+    "actor_high": "claude-opus-5-5"
+   },
+   "pinned": true,
+   "batch": 1,
+   "source_run": "d80ea43dcf2968fd04fab737322e869b",
+   "sessions": 1,
+   "registered_at": "2026-10-12T16:33:50.954674Z",
+   "groups": [
+    {
+     "model": "claude-haiku-5-5",
+     "source": "main",
+     "calls": 43,
+     "input_tokens": 144,
+     "output_tokens": 12665,
+     "cache_read_tokens": 3065413,
+     "cache_creation_tokens": 110791,
+     "seconds": {
+      "median": 1.41,
+      "p95": 5.91
+     },
+     "api_equivalent_usd": 0.0964
+    },
+    {
+     "model": "claude-opus-5-5",
+     "source": "agent",
+     "calls": 180,
+     "input_tokens": 360,
+     "output_tokens": 28886,
+     "cache_read_tokens": 631906,
+     "cache_creation_tokens": 166341,
+     "seconds": {
+      "median": 2.3,
+      "p95": 5.44
+     },
+     "api_equivalent_usd": 1.5372
+    }
+   ],
+   "all": {
+    "calls": 223,
+    "input_tokens": 504,
+    "output_tokens": 41551,
+    "cache_read_tokens": 3697319,
+    "cache_creation_tokens": 277132,
+    "seconds": {
+     "median": 2.21,
+     "p95": 5.54
+    },
+    "api_equivalent_usd": 1.6336
+   },
+   "plan": null,
+   "spawns": {
+    "run_s": 109.02,
+    "largest_gap": {
+     "s": 6.49,
+     "at_s": 457.11
+    },
+    "agents": {
+     "ecf-actor-high": {
+      "claims": 59,
+      "spawns": 59,
+      "items_per_spawn": {
+       "p50": 1,
+       "max": 1
+      },
+      "read_to_answer_s": {
+       "p50": 4.42,
+       "p95": 6.59,
+       "max": 7.85
+      },
+      "claim_to_read_s": {
+       "p50": 6.51,
+       "p95": 8.92,
+       "max": 9.34
+      },
+      "spawn_s": {
+       "p50": 4.42,
+       "p95": 6.59,
+       "max": 7.85
+      },
+      "settle_lag_s": {
+       "p50": 0.67,
+       "p95": 4.08,
+       "max": 4.08
+      }
+     }
+    },
+    "rounds": {
+     "ready": {
+      "rounds": 6,
+      "duration_s": {
+       "p50": 13.04,
+       "p95": 14.75,
+       "max": 14.75
+      },
+      "gap_s": {
+       "p50": 6.32,
+       "p95": 6.82,
+       "max": 6.82
+      }
+     },
+     "preparing": {
+      "rounds": 0,
+      "duration_s": {
+       "p50": null,
+       "p95": null,
+       "max": null
+      },
+      "gap_s": {
+       "p50": null,
+       "p95": null,
+       "max": null
+      }
+     }
+    },
+    "sessions": {
+     "1": {
+      "rounds": 6,
+      "in_rounds_s": 80.73,
+      "between_rounds_s": 28.29
+     }
+    },
+    "act": {
+     "claims": 59,
+     "high_risk_actor": 59,
+     "reasons": {
+      "first_time_sender": 59,
+      "fraud_signal": 4
+     }
+    }
+   }
+  }
+ }
+}

@@ -4,10 +4,10 @@
   date as the release found them on Anthropic's deprecations page; the weekly CI canary
   (`scripts/model_canary.py`) fails when the page changes, so a release follows. A pin with a firm
   date raises `[ecf-alert] Model Retirement Scheduled` when first seen, again 30 days before and
-  again 7 days before (a one-off alert each time, desktop and Slack), while an address uses B or
-  C. From the date on, `ecf claude` refuses to open (`refuse_retired`). An override that replaces
-  the pin's family ends it. The alert doesn't look at ecf's releases (the release check below
-  doesn't read their pins), so it says no release moving the pin is known.
+  again 7 days before (a one-off alert each time, desktop and Slack), while an address uses
+  Claude. From the date on, `ecf claude` refuses to open (`refuse_retired`). An override that
+  replaces the pin's family ends it. The alert doesn't look at ecf's releases (the release check
+  below doesn't read their pins), so it says no release moving the pin is known.
 - **Models API** (only with the optional key, `ecf models api-key set --provider anthropic`;
   secret `models-api-key`):
   `GET /v1/models` once a week. It has no deprecation fields (verified 2026-10-02, platform.claude
@@ -16,11 +16,7 @@
   pins (`created_at` after the pin's) goes on the next daily summary, once. A failure raises
   System Error (`models_api`), cleared by the next success; offline (the host doesn't resolve)
   waits an hour and raises nothing.
-- **Ollama library** (while an address uses A or B): the pinned model's tags page on ollama.com
-  (an API for it is unverified), once a week. The first read records the tags; a tag that
-  appears later goes on the next daily summary, once. Digest changes are ignored. A page ecf
-  can't read is shown in `ecf models status` and `ecf doctor` only (the canary catches format
-  changes).
+- **Ollama library:** the tags-page watch went with the local model in v3.0.0 (ADR 0031).
 - **ecf releases** (operator decision D7, 2026-10-06): the release list of ecf's GitHub
   repository through `gh` (ecf/release_source.py; metadata only, nothing downloaded), once a
   week. The newest stable release newer than this ecf goes on the next daily summary, once,
@@ -28,14 +24,12 @@
   status` only. The service runs it only when given a lister (`service.py`).
 
 Nothing here ever changes a pin: a newer model is never adopted automatically. The watch sends no
-mail content anywhere: an API key to api.anthropic.com, nothing to ollama.com, and to GitHub
-only `gh`'s own sign-in.
+mail content anywhere: an API key to api.anthropic.com, and to GitHub only `gh`'s own sign-in.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -46,7 +40,7 @@ import httpx
 
 from ecf import __version__, release_source
 from ecf.errors import ConflictError, EcfError, InvalidInputError
-from ecf_server import alerts, claude_pins, health, models, ollama
+from ecf_server import alerts, claude_pins, health
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -56,20 +50,17 @@ from ecf_server.secretstore import SecretStore
 API_HOST = "api.anthropic.com"
 MODELS_URL = f"https://{API_HOST}/v1/models"
 API_VERSION = "2023-06-01"
-OLLAMA_HOST = "ollama.com"
-TAGS_URL = f"https://{OLLAMA_HOST}/library/{{repo}}/tags"
 KEY_SECRET = "models-api-key"  # noqa: S105 - the secret store's entry name, not a secret
 TIMEOUT_S = 10.0  # §15.4
 EVERY = timedelta(days=7)
 OFFLINE_RETRY = timedelta(hours=1)
 MAX_PAGES = 5  # 1,000 models a page
 REMIND_DAYS = (30, 7)
-NEXT, CLAUDE, OLLAMA, RETIRE = ("model_watch.next_at", "model_watch.claude",
-                                "model_watch.ollama", "model_watch.retirement")  # fmt: skip
+NEXT, CLAUDE, RETIRE = ("model_watch.next_at", "model_watch.claude",
+                        "model_watch.retirement")  # fmt: skip
 RELEASE = "model_watch.release"
 GITHUB_HOST = "api.github.com"
 API_ALERT, MISSING_ALERT, RETIRE_KIND = "models_api", "models_missing", "model_retirement"
-_TAG = re.compile(r'href="/library/([a-z0-9._-]+):([A-Za-z0-9._-]+)"')
 HttpFactory = Callable[[], httpx.Client]
 Spawn = Callable[[Callable[[], None]], None]
 Releases = Callable[[], list[release_source.ReleaseInfo]]
@@ -141,7 +132,7 @@ def retirement_text(r: dict[str, Any], today: date) -> str:
     when = "today" if days == 0 else f"in {days} days" if days > 0 else f"{-days} days ago"
     instead = f" (Anthropic recommends {r['replacement']})" if r.get("replacement") else ""
     gate = ("" if set(r["roles"]) <= {"main_session"} else  # not a gate pin (OD-474)
-            "; B and C addresses then go back to assist until their gate passes again")  # fmt: skip
+            "; addresses then go back to assist until their gate passes again")  # fmt: skip
     return (f"{r['id']} ({', '.join(r['roles'])}) retires on {r['retires']} ({when}). No ecf"
             " release that moves this pin is known yet; upgrade ecf when one is out. Until then"
             f" `ecf settings set claude_model_override <id>`{instead} keeps reviews"
@@ -232,16 +223,13 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: Not
 def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: SecretStore | None,
         http: HttpFactory = http_client, *,
         releases: Releases | None = None) -> dict[str, Any]:  # fmt: skip
-    """One watch: the Models API (with a key), the Ollama library (when A or B is used) and,
-    given a lister, ecf's releases. The next run is a week on, or an hour on when a host didn't
-    resolve."""
+    """One watch: the Models API (with a key) and, given a lister, ecf's releases. The next run
+    is a week on, or an hour on when a host didn't resolve."""
     offline = False
     key = _key(store)
     with http() as client:
         if key:
             offline |= _claude(conn, clock, notifier, client, key) == "offline"
-        if models.needed(conn):
-            offline |= _ollama(conn, clock, client) == "offline"
     if releases is not None:
         offline |= _release(conn, clock, releases) == "offline"
     now = clock.now()
@@ -355,44 +343,6 @@ def _utc(ts: str) -> str:
     return to_ts(datetime.fromisoformat(ts.replace("Z", "+00:00")))
 
 
-def _ollama(conn: sqlite3.Connection, clock: Clock, client: httpx.Client) -> str:
-    now = to_ts(clock.now())
-    repo, pinned_tag = ollama.load_pin().tag.split(":", 1)
-    if not health.resolves(OLLAMA_HOST):
-        return "offline"
-    prev: dict[str, Any] = _get(conn, OLLAMA) or {}
-    try:
-        r = client.get(TAGS_URL.format(repo=repo))
-        tags = parse_tags(r.text, repo) if r.status_code == 200 else set[str]()
-        error = (
-            None
-            if pinned_tag in tags
-            else (f"HTTP {r.status_code}" if r.status_code != 200 else "a page ecf can't read")
-        )
-    except httpx.HTTPError as e:
-        tags, error = set[str](), f"network error ({type(e).__name__})"
-    if error:
-        with write_tx(conn):
-            _put(conn, OLLAMA, prev | {"error": error, "failed_at": now}, now)
-            _audit(conn, now, "models.watch", {"part": "ollama", "error": error})
-        return "failed"
-    known = set(prev.get("tags", []))
-    new: dict[str, Any] = dict(prev.get("new", {}))
-    if known and prev.get("repo") == repo:
-        for t in sorted(tags - known):
-            new.setdefault(t, {"seen_at": now, "reported": False})
-    with write_tx(conn):
-        _put(conn, OLLAMA, {"checked_at": now, "error": None, "repo": repo,
-                            "tags": sorted(tags | known), "new": new}, now)  # fmt: skip
-        _audit(
-            conn,
-            now,
-            "models.watch",
-            {"part": "ollama", "tags": len(tags), "new": sorted(t for t in new if t not in known)},
-        )
-    return "ok"
-
-
 def _release(conn: sqlite3.Connection, clock: Clock, releases: Releases) -> str:
     """The newest stable ecf release newer than this one, for the daily summary (§7.6)."""
     now = to_ts(clock.now())
@@ -415,11 +365,6 @@ def _release(conn: sqlite3.Connection, clock: Clock, releases: Releases) -> str:
     return "ok"
 
 
-def parse_tags(html: str, repo: str) -> set[str]:
-    """The tags an ollama.com library tags page links to (format read 2026-10-02)."""
-    return {t for r, t in _TAG.findall(html) if r == repo}
-
-
 # ---------------------------------------------------------------------------- what it says
 
 
@@ -432,12 +377,6 @@ def daily_lines(conn: sqlite3.Connection) -> list[str]:
         out.append("Newer Claude model(s) in a family ecf uses: " + ", ".join(
             f"{m} (ecf pins {v['pinned']})" for m, v in fresh)
             + ". ecf never switches by itself; a release moves the pins.")  # fmt: skip
-    ol: dict[str, Any] = _get(conn, OLLAMA) or {}
-    tags = sorted(t for t, v in ol.get("new", {}).items() if not v["reported"])
-    if tags:
-        shown = ", ".join(tags[:8]) + (f" and {len(tags) - 8} more" if len(tags) > 8 else "")
-        out.append(f"New {ol.get('repo')} tags in the Ollama library: {shown}. ecf keeps"
-                   f" {ollama.load_pin().tag} until a release moves it.")  # fmt: skip
     rel: dict[str, Any] = _get(conn, RELEASE) or {}
     if rel.get("newest") and not rel.get("reported") and rel.get("current") == __version__:
         out.append(f"ecf {release_source.tag_version(rel['newest'])} is out (this is"
@@ -447,11 +386,10 @@ def daily_lines(conn: sqlite3.Connection) -> list[str]:
 
 def mark_reported(conn: sqlite3.Connection, now: str) -> None:
     """Inside the daily summary's write transaction."""
-    for key, field in ((CLAUDE, "newer"), (OLLAMA, "new")):
-        v: dict[str, Any] | None = _get(conn, key)
-        if v and any(not e["reported"] for e in v.get(field, {}).values()):
-            v[field] = {k: e | {"reported": True} for k, e in v[field].items()}
-            _put(conn, key, v, now)
+    v: dict[str, Any] | None = _get(conn, CLAUDE)
+    if v and any(not e["reported"] for e in v.get("newer", {}).values()):
+        v["newer"] = {k: e | {"reported": True} for k, e in v["newer"].items()}
+        _put(conn, CLAUDE, v, now)
     rel: dict[str, Any] | None = _get(conn, RELEASE)
     if rel and rel.get("newest") and not rel.get("reported"):
         _put(conn, RELEASE, rel | {"reported": True}, now)
@@ -479,7 +417,6 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "claude_used": claude_pins.in_use(conn),
         "api_key": bool(_get(conn, "model_watch.api_key_set")),
         "claude": _get(conn, CLAUDE),
-        "ollama": _get(conn, OLLAMA) if models.needed(conn) else None,
         "release": _release_status(conn),
         "retiring": retiring(conn),
         "lifecycle": {

@@ -28,6 +28,7 @@ import uvicorn
 
 from ecf.errors import NotFoundError, ServiceUnavailableError
 from ecf.log import configure_logging
+from ecf.ollama_unit import retire as retire_ollama
 from ecf.paths import Paths
 from ecf_server import (
     alert_items,
@@ -254,7 +255,10 @@ class Service:
         try:
             conn = db.connect(self.state.db_path)
             try:
-                upgrade_state.settle(conn, self.clock)
+                # v3.0.0 (R-D13, P13): ecf's Ollama login item goes once rollback is closed; a
+                # dev service never touches the computer's own
+                upgrade_state.settle(conn, self.clock, on_settled=None if self.dev
+                                     else lambda: retire_ollama(self.paths.root))  # fmt: skip
             finally:
                 conn.close()
         except Exception as exc:  # retried next tick

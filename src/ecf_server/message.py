@@ -159,8 +159,8 @@ class ParsedMessage:
                 (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)))  # fmt: skip
 
     def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
-        """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off
-        only in an eval (`--no-excerpt-prep`)."""
+        """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off:
+        the body as cut before step 10 (tests compare the two)."""
         text = redact(self.prepared() if prep else self._body_text())
         return _cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)
 

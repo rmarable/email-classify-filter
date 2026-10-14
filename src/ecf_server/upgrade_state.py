@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from ecf import __version__
@@ -22,6 +23,7 @@ from ecf.schema import load_schema
 from ecf_server import claude_pins, claude_review, config, export_bundle, initsetup, stages
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
+from ecf_server.log_bridge import log
 
 CURRENT = "upgrade.current"  # the last upgrade: {from, to, label, started_at, finished_at, ...}
 
@@ -82,9 +84,13 @@ def finish(conn: sqlite3.Connection, clock: Clock, body: dict[str, Any]) -> dict
     return rec
 
 
-def settle(conn: sqlite3.Connection, clock: Clock) -> bool:
+def settle(conn: sqlite3.Connection, clock: Clock, *,
+           on_settled: Callable[[], object] | None = None) -> bool:  # fmt: skip
     """The new service's first timer pass whose work all succeeded closes the rollback window
-    (OD-377): afterwards `ecf upgrade --to` follows the after-settling rules (step 11c)."""
+    (OD-377): afterwards `ecf upgrade --to` follows the after-settling rules (step 11c). Then,
+    and only then, `on_settled` runs (the service's `ollama_unit.retire`: a rollback to v2.2.x
+    needs ecf's Ollama login item until here; v3.0.0, R-D13, P13); a failure there is logged,
+    and the window stays closed."""
     rec = current(conn)
     if rec is None or rec.get("settled_at") or rec.get("to") != __version__:
         return False
@@ -94,6 +100,11 @@ def settle(conn: sqlite3.Connection, clock: Clock) -> bool:
         conn.execute("INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?,"
                      " 'upgrade.settled', 'service', 'ok', ?)",
                      (now, json.dumps({"from": rec.get("from"), "to": rec.get("to")})))  # fmt: skip
+    if on_settled is not None:
+        try:
+            on_settled()
+        except Exception as exc:  # the clean-up is best effort; the upgrade has settled
+            log.warning("upgrade.retire_failed", error_type=type(exc).__name__)
     return True
 
 

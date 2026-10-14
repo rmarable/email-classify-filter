@@ -1,6 +1,6 @@
 """The weekly model watch (V1.4 step 10; SPEC §7.6; OD-053, OD-299 to OD-303): retirement alerts
-from `models.lock`, the optional Models API, the Ollama library's tags, the daily lines, the key,
-`ecf models status` and `ecf doctor`."""
+from `models.lock`, the optional Models API, the daily lines, the key, `ecf models status` and
+`ecf doctor` (the Ollama library's tags went in v3.0.0, ADR 0031)."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from ecf_server.secretstore.memory import MemorySecretStore
 from tests.test_claude_review import add
 
 HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
-TAGS = (Path(__file__).parent / "canary" / "gemma4-tags-2026-10-02.html").read_text("utf-8")
 DAY = 86400
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -60,8 +59,6 @@ def _api(body: dict[str, Any], seen: list[httpx.Request] | None = None) -> Handl
     def handle(req: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(req)
-        if req.url.host == model_watch.OLLAMA_HOST:
-            return httpx.Response(200, text=TAGS)
         return httpx.Response(200, json=body)
 
     return handle
@@ -171,7 +168,7 @@ def test_a_newer_model_in_a_pinned_family_goes_on_the_daily_summary_once(
     assert req.url.host == "api.anthropic.com" and req.url.params["limit"] == "1000"
     assert req.headers["x-api-key"] == "sk-ant-test"
     assert req.headers["anthropic-version"] == "2023-06-01"
-    assert len(seen) == 1  # no address uses A or B: the Ollama library isn't read
+    assert len(seen) == 1  # the Models API only (no Ollama library from v3.0.0)
     assert sorted(st["claude"]["newer"]) == ["claude-sonnet-6"]  # not older, not another family
     assert st["next_at"] == to_ts(clock.now() + timedelta(days=7))
     lines = model_watch.daily_lines(conn)
@@ -254,9 +251,6 @@ def test_due_weekly_and_one_watch_at_a_time(conn: sqlite3.Connection, clock: Fak
     assert model_watch.due(conn, clock)
     model_watch.run_now(conn)
     assert model_watch.start(*args, spawn=lambda f: f()) is True
-
-
-# ---- the Ollama library ------------------------------------------------------------------------
 
 
 # ---- the key -----------------------------------------------------------------------------------

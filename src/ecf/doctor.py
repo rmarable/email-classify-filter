@@ -1,5 +1,6 @@
 """`ecf doctor` (SPEC §13.2): the V1.0 checks, plus each milestone's own (Slack and step-up,
-models, Claude, and from V1.5 step 13a sending, alert email and backups).
+Claude, and from V1.5 step 13a sending, alert email and backups). The local-model rows went in
+v3.0.0 (ADR 0031); the addresses it converted to C and paused are named until resumed (P3).
 
 Each check returns ok / warn / fail with the command that fixes it. Doctor reads SQLite directly
 (read-only) so it still works when the service is down.
@@ -20,7 +21,7 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 
-from ecf import __version__, ollama_unit
+from ecf import __version__
 from ecf.client import LocalClient
 from ecf.errors import EcfError, ServiceUnavailableError
 from ecf.paths import Paths
@@ -192,7 +193,6 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
         out.append(Check("secret store", Level.OK, ss["backend"]))
     out += judge_addresses(st)
     out += judge_claude(st)
-    out += judge_fallback(st)
     out += judge_model_watch(st, datetime.now(UTC).date())
     return out
 
@@ -214,7 +214,6 @@ def judge_model_watch(st: dict[str, Any], today: date) -> list[Check]:
                              f" claude_model_override {r.get('replacement') or '<id>'}"),
                        )  # fmt: skip
     cl: dict[str, Any] = w.get("claude") or {}
-    ol: dict[str, Any] = w.get("ollama") or {}
     if w["api_key"] and cl.get("error"):
         out.append(Check("model watch", Level.WARN, f"the Models API failed: {cl['error']}",
                          "ecf models api-key set --provider anthropic, then ecf models"
@@ -222,11 +221,6 @@ def judge_model_watch(st: dict[str, Any], today: date) -> list[Check]:
     elif w["api_key"] and cl.get("missing"):
         out.append(Check("model watch", Level.WARN, "the Models API doesn't list"
                          f" {', '.join(cl['missing'])}", "ecf models status"))  # fmt: skip
-    if ol.get("error"):
-        out.append(Check("model watch", Level.WARN, f"couldn't read the Ollama library's"
-                         f" {ol.get('repo') or 'model'} tags page ({ol['error']})",
-                         "ecf models watch; if it persists, the page changed (newer tags go"
-                         " unreported until a release)"))  # fmt: skip
     if not any(c.name == "model watch" for c in out):
         how = "with the Models API" if w["api_key"] else "without a Models API key (optional)"
         out.append(Check("model watch", Level.OK, f"weekly, {how}"))
@@ -238,7 +232,7 @@ def judge_claude(st: dict[str, Any]) -> list[Check]:
     session (SPEC §7.5; V1.4 step 6)."""
     claude: dict[str, Any] = st.get("claude") or {}
     out: list[Check] = []
-    if pins := claude.get("pins"):  # only while an address uses B or C
+    if pins := claude.get("pins"):  # only while an address exists
         by_id: dict[str, list[str]] = {}
         for role, mid in pins.items():
             by_id.setdefault(mid, []).append(role)
@@ -256,26 +250,6 @@ def judge_claude(st: dict[str, Any]) -> list[Check]:
                             "ecf models status; check claude_model_override and Claude Code's"
                             " model settings")]  # fmt: skip
     return [*out, Check("claude model check", Level.OK, f"no refusals in the review of {when} UTC")]
-
-
-def judge_fallback(st: dict[str, Any]) -> list[Check]:
-    """The local fallback of each B and C address (SPEC §4.3; V1.4 step 8): a reminder when it
-    is off; its own gate while it runs in shadow."""
-    out: list[Check] = []
-    rows: list[dict[str, Any]] = st.get("fallback") or []
-    for f in rows:
-        name = f"fallback {f['address_id']}"
-        if f["hours"] is None:
-            out.append(Check(name, Level.WARN, "off: mail waits for /ecf-review however long it"
-                             " takes", "ecf settings set claude_queue_timeout <hours> --address"
-                             f" {f['address_id']}"))  # fmt: skip
-        elif f["gate_passed"]:
-            out.append(Check(name, Level.OK, f"after {f['hours']} h; its gate is met"
-                             f" ({f['handed_off']} handed to the local model)"))  # fmt: skip
-        else:
-            out.append(Check(name, Level.WARN, f"after {f['hours']} h, once its own gate is met;"
-                             f" running in shadow meanwhile. Gate {f['gate']}"))  # fmt: skip
-    return out
 
 
 def outbound_line(a: dict[str, Any]) -> str:
@@ -354,79 +328,31 @@ def check_org_domains(paths: Paths) -> Check:
                  f"{', '.join(org) or 'none'}; org addresses: {listed}")  # fmt: skip
 
 
-def check_models(paths: Paths) -> list[Check]:
-    """The local model, checked by the service (V1.3 step 1b; SPEC §7.5, §13.2), and ecf's login
-    item for Ollama, whose program an Ollama upgrade can remove."""
-    return check_ollama_unit(paths) + _service_models(paths)
-
-
-def check_ollama_unit(paths: Paths) -> list[Check]:
-    try:
-        unit = ollama_unit.manager_for(paths.root)
-    except ServiceUnavailableError:
-        return []
-    gone = ollama_unit.program_gone(unit.program()) if unit.unit_path.exists() else ""
-    if not gone:
-        return []
-    return [Check("ollama login item", Level.FAIL, f"ecf's login item for Ollama: {gone}",
-                  "ecf models serve install")]  # fmt: skip
-
-
-def _service_models(paths: Paths) -> list[Check]:
+def check_converted(paths: Paths) -> list[Check]:
+    """The addresses v3.0.0 converted from preset A or B to C and paused (migration 0038; ADR
+    0031, P3), from the service's `GET /v1/upgrade/state`: each one still paused is named until
+    resumed, which is the consent act (OD-427), or removed."""
     try:
         with LocalClient(paths) as c:
-            st: dict[str, Any] = c.get("/v1/models")
-    except ServiceUnavailableError:
-        return []
-    except EcfError as exc:
-        return [Check("local model", Level.FAIL, f"can't check: {exc.detail}", "see ecf logs")]
-    return judge_models(st)
+            st: dict[str, Any] = c.get("/v1/upgrade/state")
+    except EcfError:
+        return []  # the service check already says why it can't answer
+    return judge_converted(st.get("converted") or [])
 
 
-# what `ecf models install`'s login item sets (OD-246); anything else is reported
-EXPECTED_ENV = {"OLLAMA_NUM_PARALLEL": "1"}
-UNWANTED_ENV = ("OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG")
-
-
-def judge_models(st: dict[str, Any]) -> list[Check]:
-    """Turn a /v1/models reply into checks (pure)."""
-    pin = st["pin"]
-    stale: list[str] = st.get("stale_tags") or []
-    kept = ([Check("model copies", Level.OK, f"kept for other ecf releases: {', '.join(stale)}"
-                   " (another install or a rollback may use them; ecf models prune removes them)")]
-            if stale else [])  # fmt: skip
-    retired: list[str] = st.get("retired_tags") or []
-    if retired:
-        kept.append(Check("model copies", Level.OK, f"retired, no release runs them:"
-                          f" {', '.join(retired)} (ecf models prune removes them)"))  # fmt: skip
-    if not st.get("ready"):
-        fault = st["fault"]
-        never = st.get("installed_at") is None and fault["cause"] in (
-            "not_running",
-            "model_missing",
-        )
-        level = Level.WARN if never else Level.FAIL
-        return [Check("local model", level, f"{fault['summary']} Model work is stopped.",
-                      fault["fix"]), *kept]  # fmt: skip
-    out = [Check("local model", Level.OK, f"{pin['ecf_tag']} ({pin['digest'][:12]}), Ollama"
-                 f" {st['version']}, listening on {', '.join(st['listener'])} only")]  # fmt: skip
-    env: dict[str, str] = st.get("env", {})
-    for k, want in EXPECTED_ENV.items():
-        if env.get(k) != want:
-            got = env.get(k, "unset")
-            out.append(Check("ollama settings", Level.WARN, f"{k} is {got}, expected {want}",
-                             "restart Ollama with ecf's settings"))  # fmt: skip
-    if env.get("OLLAMA_NO_CLOUD", "").lower() not in ("1", "true"):
-        out.append(Check("ollama settings", Level.WARN, "Ollama's cloud feature is on",
-                         "set OLLAMA_NO_CLOUD=1 for Ollama"))  # fmt: skip
-    for k in UNWANTED_ENV:
-        if env.get(k, "").lower() not in ("", "0", "false"):
-            out.append(Check("ollama settings", Level.WARN, f"{k} is set ({env[k]})",
-                             f"unset {k} for Ollama"))  # fmt: skip
-    if "*" in env.get("OLLAMA_ORIGINS", ""):
-        out.append(Check("ollama settings", Level.WARN, "OLLAMA_ORIGINS allows any web page",
-                         "unset OLLAMA_ORIGINS for Ollama"))  # fmt: skip
-    return out + kept
+def judge_converted(rows: list[dict[str, Any]]) -> list[Check]:
+    """Turn `converted` into checks (pure)."""
+    out: list[Check] = []
+    for r in rows:
+        if not r.get("paused") or r.get("consented"):  # resumed, or paused since for another reason
+            continue
+        aid, n = r["address_id"], int(r.get("waiting") or 0)
+        out.append(Check(f"converted {aid}", Level.WARN,
+                         f"was preset {r['from']}, now C and paused: its mail goes to Anthropic"
+                         f" once resumed; {n} email{'s' if n != 1 else ''} waiting",
+                         f"ecf resume {aid} once the account's owner agrees (OD-427), or ecf"
+                         f" address remove {aid}"))  # fmt: skip
+    return out
 
 
 DNS_PROBE = "_dmarc.gmail.com"  # a long-standing public DMARC record
@@ -546,7 +472,8 @@ def check_core_dumps(limit: Callable[[], int] | None = None) -> Check:
 
 
 def claude_used(paths: Paths) -> bool | None:
-    """Whether any address uses preset B or C; None when the service doesn't answer."""
+    """Whether any address uses Claude (every address since v3.0.0); None when the service
+    doesn't answer."""
     try:
         with LocalClient(paths) as c:
             st: dict[str, Any] = c.get("/v1/status")
@@ -558,7 +485,8 @@ def claude_used(paths: Paths) -> bool | None:
 
 def check_claude(paths: Paths, used: bool | None) -> list[Check]:
     """Claude Code, ecf's own Claude login, and the installed ecf-mcp and plugin (SPEC §13.2;
-    V1.4 step 11). A problem fails doctor once an address uses preset B or C, else warns."""
+    V1.4 step 11). A problem fails doctor once an address exists (all use Claude), else
+    warns."""
     from ecf import claude_setup  # noqa: PLC0415
     from ecf.claude_wrapper import (  # noqa: PLC0415
         MIN_CLAUDE,
@@ -638,7 +566,7 @@ def run_checks(
     checks += check_slack(paths)
     checks += check_ops(paths)
     checks.append(check_org_domains(paths))
-    checks += check_models(paths)
+    checks += check_converted(paths)
     checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))

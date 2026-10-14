@@ -756,15 +756,6 @@ class Conversion:
     to_default: bool = False  # only fixed rules were left: the default rules apply (A7)
 
 
-def load_v2_starter(schema: CompiledSchema) -> CompiledRules:
-    """The v2 starter rules as v2.0.0-v2.2.3 shipped them, fixed rules inline, compiled against a
-    schema with the removed values (v2): what the composed rules are compared with on preset A's
-    path (`tests/test_policy.py`); never used for mail."""
-    return _cached((_schema_key(schema), V2_STARTER_FILE, None),
-                   lambda: _compile(_data(V2_STARTER_FILE), schema, source=V2_STARTER_FILE,
-                                    fixed=True))  # fmt: skip
-
-
 @functools.cache
 def _v2_fixed() -> dict[str, str]:
     raw = cast(dict[str, Any], load_yaml(_data(V2_STARTER_FILE), source=V2_STARTER_FILE))

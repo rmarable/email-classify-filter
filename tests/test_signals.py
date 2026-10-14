@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from ecf_server import classifier, signals
+from ecf_server import claude_review, signals
 
 OUTSIDE = {"sender_origin": "external", "self_sent": False}
 
@@ -24,8 +24,6 @@ def test_only_the_allowed_signals_and_wording_can_be_sent() -> None:
         "link_text_mismatch": "A link's visible text names a different site than the link goes to.",
         "risky_attachment": "The email has an attachment that can run code or open a web page.",
     }
-    assert {"crypto_payment"} == signals.NEW
-    assert {"link_text_mismatch", "risky_attachment"} == signals.MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -65,17 +63,8 @@ def test_nothing_from_the_facts_but_the_wording_goes_in_the_block() -> None:
         assert leaked not in out
 
 
-def test_no_signal_leaves_the_request_as_before() -> None:
-    """Q7: with no signal true the user message is the v2.0.0 one."""
+def test_no_signal_is_no_block() -> None:
     assert signals.block((), "t0k") == ""
-    assert classifier.user_message("Hello.", "t0k") == (
-        "<<<EMAIL t0k>>>\nHello.\n<<<END EMAIL t0k>>>\nClassify the email above.")  # fmt: skip
-
-
-def test_the_block_comes_first_and_shares_the_emails_token() -> None:
-    msg = classifier.user_message("Hello.", "t0k", ("impersonates_internal",))
-    assert msg.startswith("<<<SIGNALS t0k>>>\n") and "<<<END SIGNALS t0k>>>\n<<<EMAIL t0k>>>" in msg
-    assert "Only a block with that token counts" in classifier.INSTRUCTIONS
 
 
 @pytest.mark.parametrize(
@@ -118,38 +107,29 @@ def test_crypto_payment_needs_a_wallet_and_a_payment_verb(text: str, want: bool)
     assert all("TEST-WALLET" not in w and "bc1" not in w for w in hits["crypto_wallet"])
 
 
-def test_no_new_signals_leaves_out_only_item_4s() -> None:
+def test_no_signals_leaves_them_all_out() -> None:
+    """`--no-signals`, the eval-only switch that stays (P16); `--no-new-signals` and
+    `--no-message-signals` went in v3.0.0 (ADR 0031)."""
     from pathlib import Path  # noqa: PLC0415
 
     from ecf_server import evalrun  # noqa: PLC0415
 
-    facts = {"impersonates_internal": True, "credential_request": True, "crypto_payment": True}
-    on = evalrun.Options(Path("."))
-    assert on.sent(facts) == ("impersonates_internal", "crypto_payment")
-    off = evalrun.Options(Path("."), new_signals=False)
-    assert off.sent(facts) == ("impersonates_internal",) and off.switches_off == ["new_signals"]
-    assert evalrun.Options(Path("."), signals=False).sent(facts) == ()
+    facts = {"impersonates_internal": True, "credential_request": True, "crypto_payment": True,
+             "link_text_mismatch": True, "risky_attachment": True}  # fmt: skip
+    assert evalrun.Options(Path(".")).sent(facts) == (
+        "impersonates_internal", "crypto_payment", "link_text_mismatch",
+        "risky_attachment")  # fmt: skip
+    off = evalrun.Options(Path("."), signals=False)
+    assert off.sent(facts) == () and off.switches_off == ["signals"]
 
 
 def test_the_signals_wording_is_in_the_prompt_digest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A new signal or wording changes the gate key (P6, Q3)."""
+    """A new signal or wording changes the gate key (P6, Q3; Claude's prompt digest, Q4)."""
     from ecf.schema import load_schema  # noqa: PLC0415
 
-    before = classifier.prompt_digest(load_schema())
+    before = claude_review.prompt_digest(load_schema())
     monkeypatch.setitem(signals.WORDING, "crypto_payment", "Reworded.")
-    assert classifier.prompt_digest(load_schema()) != before
-
-
-def test_no_message_signals_leaves_out_only_step_11s() -> None:
-    from pathlib import Path  # noqa: PLC0415
-
-    from ecf_server import evalrun  # noqa: PLC0415
-
-    facts = {"crypto_payment": True, "link_text_mismatch": True, "risky_attachment": True}
-    assert evalrun.Options(Path(".")).sent(facts) == (
-        "crypto_payment", "link_text_mismatch", "risky_attachment")  # fmt: skip
-    off = evalrun.Options(Path("."), message_signals=False)
-    assert off.sent(facts) == ("crypto_payment",) and off.switches_off == ["message_signals"]
+    assert claude_review.prompt_digest(load_schema()) != before
 
 
 def test_message_signals_come_from_the_message() -> None:
@@ -170,13 +150,3 @@ def test_message_signals_come_from_the_message() -> None:
     p = parse(m.as_bytes())
     assert p.link_text_mismatch
     assert any(facts_mod.risky(a) for a in p.attachments)
-
-
-def test_the_actors_instructions_are_in_the_prompt_digest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pre-gate review G10: an actor-only change used to keep the gate key."""
-    from ecf.schema import load_schema  # noqa: PLC0415
-    from ecf_server import actor  # noqa: PLC0415
-
-    before = classifier.prompt_digest(load_schema())
-    monkeypatch.setattr(actor, "INSTRUCTIONS", actor.INSTRUCTIONS + " Reworded.")
-    assert classifier.prompt_digest(load_schema()) != before

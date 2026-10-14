@@ -1,6 +1,6 @@
 """The weekly model canary (scripts/model_canary.py; V1.4 step 10; SPEC §7.6; OD-300), on excerpts
-of the pages as they read on 2026-10-08 (the Claude pages; Haiku 5.5, OD-474) and 2026-10-02 (the
-Ollama tags page)."""
+of the Claude pages as they read on 2026-10-08 (Haiku 5.5, OD-474). The Ollama tags-page check
+went in v3.0.0 (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PAGES = Path(__file__).parent / "canary"
 DEPRECATIONS = (PAGES / "deprecations-2026-10-08.md").read_text("utf-8")
 OVERVIEW = (PAGES / "overview-2026-10-08.md").read_text("utf-8")
-TAGS = (PAGES / "gemma4-tags-2026-10-02.html").read_text("utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -33,9 +32,8 @@ def canary() -> ModuleType:
 
 
 def test_models_lock_matches_the_pages_as_verified(canary: ModuleType) -> None:
-    rep = canary.check(DEPRECATIONS, OVERVIEW, TAGS)
-    assert rep.failures == []
-    assert rep.notes == ["Ollama library: 51 gemma4 tags; gemma4:12b-it-q4_K_M listed"]
+    rep = canary.check(DEPRECATIONS, OVERVIEW)
+    assert rep.failures == [] and rep.notes == []
 
 
 def test_the_status_table_parses_every_kind_of_date(canary: ModuleType) -> None:
@@ -70,7 +68,7 @@ def test_a_pin_that_gets_a_retirement_date_fails_until_models_lock_records_it(
         "\n| Retirement date | Deprecated model | Recommended replacement |\n| --- | --- | ---"
         " |\n| December 1, 2026 | `claude-sonnet-5-5` | `claude-sonnet-6` |\n"
     )
-    rep = canary.check(page, OVERVIEW, TAGS)
+    rep = canary.check(page, OVERVIEW)
     assert rep.failures == [
         "claude-sonnet-5-5: state Deprecated on the page, Active in models.lock",
         "claude-sonnet-5-5: retirement 2026-12-01 on the page, not set in models.lock",
@@ -82,7 +80,7 @@ def test_a_pin_that_gets_a_retirement_date_fails_until_models_lock_records_it(
         "Deprecated", date(2026, 12, 1), None, "claude-sonnet-6"
     )
     monkeypatch.setattr(claude_pins, "lifecycle", lambda: life)
-    assert canary.check(page, OVERVIEW, TAGS).failures == []
+    assert canary.check(page, OVERVIEW).failures == []
 
 
 def test_a_model_ecf_doesnt_pin_can_change_without_a_failure(canary: ModuleType) -> None:
@@ -94,12 +92,11 @@ def test_a_model_ecf_doesnt_pin_can_change_without_a_failure(canary: ModuleType)
         "                   |",
     )
     assert page != DEPRECATIONS
-    assert canary.check(page, OVERVIEW, TAGS).failures == []
+    assert canary.check(page, OVERVIEW).failures == []
 
 
 def test_a_newer_model_in_a_pinned_family_is_a_note_not_a_failure(canary: ModuleType) -> None:
-    rep = canary.check(DEPRECATIONS, OVERVIEW.replace("`claude-sonnet-5-5`", "`claude-sonnet-6`"),
-                       TAGS)  # fmt: skip
+    rep = canary.check(DEPRECATIONS, OVERVIEW.replace("`claude-sonnet-5-5`", "`claude-sonnet-6`"))
     assert rep.failures == []
     assert "newer in a pinned family: claude-sonnet-6 (the overview's lineup)" in rep.notes
 
@@ -114,16 +111,13 @@ def test_a_page_that_changed_format_fails(canary: ModuleType, which: str) -> Non
     else:
         ov = ov.replace("| Claude API ID ", "| Model ID ")
     with pytest.raises(canary.CanaryError):
-        canary.check(dep, ov, TAGS)
+        canary.check(dep, ov)
 
 
-def test_a_missing_pin_or_ollama_tag_fails(canary: ModuleType) -> None:
+def test_a_missing_pin_fails(canary: ModuleType) -> None:
     dep = "\n".join(line for line in DEPRECATIONS.splitlines() if "claude-opus-5-5" not in line)
-    rep = canary.check(dep, OVERVIEW, TAGS.replace('gemma4:12b-it-q4_K_M"', 'gemma4:12x"'))
-    assert rep.failures == [
-        "claude-opus-5-5: not on the deprecations page's status table",
-        "Ollama library: gemma4:12b-it-q4_K_M isn't on its tags page (51 tags read)",
-    ]
+    rep = canary.check(dep, OVERVIEW)
+    assert rep.failures == ["claude-opus-5-5: not on the deprecations page's status table"]
 
 
 def test_main_reports_a_page_it_cant_read(canary: ModuleType, monkeypatch: pytest.MonkeyPatch,

@@ -36,7 +36,6 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
     assert st == {"install_role": None, "slack_installed": False, "slack_member": None,
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
                   "org_addresses": 0, "public_only": False,
-                  "models": {"needed": False, "installed": False},
                   "claude_needed": False, "smtp_addresses": [],
                   "alert_email": None, "skipped": {},
                   "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None},
@@ -45,8 +44,7 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
     st = initsetup.status(conn)
-    assert st["addresses"] == ["ap"] and st["models"]["needed"] is False
-    assert "fallback_off" not in st
+    assert st["addresses"] == ["ap"] and "models" not in st and "fallback_off" not in st
     assert st["claude_needed"] is True
 
 
@@ -55,7 +53,6 @@ def test_describe_org_domains_for_a_gmail_only_install() -> None:
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
           "slack_pending_app": None, "org_domains": [], "addresses": ["pat"],
           "public_only": True, "org_addresses": 2,
-          "models": {"needed": False, "installed": False},
           "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
     row = cli_init.describe(st, installed=True, running=True)[3]
     assert row == ("org domains   done   none needed: every address is at a public provider;"
@@ -68,34 +65,19 @@ def test_describe_org_domains_for_a_gmail_only_install() -> None:
 def test_describe() -> None:
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": None,
           "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": [],
-          "models": {"needed": False, "installed": False},
           "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None}}  # fmt: skip
     lines = cli_init.describe(st, installed=True, running=True)
     assert lines[0].split()[:2] == ["service", "done"]
     assert "click Confirm" in lines[2] and "to do" in lines[2]
     assert lines[3].endswith("acme.example") and "ecf address add" in lines[4]
-    assert lines[5] == (
-        "models        done   not needed: no address uses preset A or B (or C"
-        " with the local fallback)"
-    )
-    assert lines[6] == "fallback      done   on, or no address uses preset B or C"
-    st["fallback_off"] = ["ap"]
-    assert cli_init.describe(st, installed=True, running=True)[6].startswith(
-        "fallback      to do  off for ap: ecf settings set claude_queue_timeout"
-    )
-    st["models"] = {"needed": True, "installed": False}
-    assert cli_init.describe(st, installed=True, running=True)[5] == (
-        "models        to do  ecf models install"
-    )
-    st["models"] = {"needed": True, "installed": True}
-    assert "installed (ecf models status)" in cli_init.describe(st, installed=True, running=True)[5]
-    assert lines[7] == "claude        done   not needed: no address uses preset B or C"
+    assert not any(line.startswith(("models", "fallback")) for line in lines)  # v3.0.0
+    assert lines[5] == "claude        done   not needed yet: no address"
     st["claude_needed"] = True
-    assert cli_init.describe(st, installed=True, running=True)[7] == (
+    assert cli_init.describe(st, installed=True, running=True)[5] == (
         "claude        to do  ecf claude --login (needs Claude Code; ecf doctor checks it)"
     )
     login = cli_init.Login(True, "claude.ai", "max")
-    assert cli_init.describe(st, installed=True, running=True, login=login)[7] == (
+    assert cli_init.describe(st, installed=True, running=True, login=login)[5] == (
         "claude        done   ecf's own configuration is logged in (claude.ai, max)"
     )
 
@@ -154,18 +136,6 @@ def quiet(monkeypatch: pytest.MonkeyPatch) -> FakeManager:
     monkeypatch.setattr(cli_init, "manager_for", manager_for)
     monkeypatch.setattr(cli_init, "secret_store", secret_store)
     monkeypatch.setattr(cli_init, "require_terminal", lambda: None)
-    model = {"ready": False}  # the host's own Ollama varies (ready on a dev Mac, absent in CI)
-
-    def run_install(_c: LocalClient, _root: Any) -> bool:
-        m.calls.append("models")
-        model["ready"] = True
-        return True
-
-    def model_ready(_c: LocalClient) -> bool:
-        return model["ready"]
-
-    monkeypatch.setattr(cli_init, "model_ready", model_ready)
-    monkeypatch.setattr(cli_init, "run_install", run_install)
     # never the real `claude auth login`: ecf's Claude configuration reads as logged in (a test
     # of the login step sets its own)
     monkeypatch.setattr(cli_init, "find_claude", lambda: "/bin/claude")
@@ -195,13 +165,13 @@ def test_init_runs_the_steps_then_resumes_without_repeating_them(
     assert "slack: skipped" in r.output
     assert added == [("ap@acme.example", "imap.acme.example", None, None, None)]
     assert "Install the local model now?" not in r.output and quiet.calls == []
-    assert "models: not needed yet" in r.output
+    assert "models:" not in r.output  # no model step from v3.0.0 (ADR 0031)
     assert "service unit: installed and running" in r.output
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\n")  # only Slack is left to ask
     assert "backups: skipped earlier" in r.output
     assert r.exit_code == 0, r.output
     assert "Have ready" not in r.output and "first address: added" in r.output
-    assert "models: not needed yet" in r.output
+    assert "models:" not in r.output
     assert len(added) == 1 and quiet.calls == []  # nothing done twice
     r = CliRunner().invoke(app, ["init", "status"])
     assert r.exit_code == 0, r.output
@@ -230,7 +200,7 @@ def test_a_foreground_service_is_left_alone(running: Paths, quiet: FakeManager) 
                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
     r = CliRunner().invoke(app, ["init", "--resume"], input="n\nn\n")  # no Slack, no backups
     assert r.exit_code == 0, r.output
-    assert "models: not needed yet" in r.output
+    assert "models:" not in r.output
     assert "outside its unit" in r.output and quiet.calls == []
 
 
@@ -301,11 +271,11 @@ def test_describe_alert_email_and_export() -> None:
     export = {"key": None, "dir": None, "schedule": "daily", "last_ok": None}
     st: dict[str, Any] = {"install_role": "prod", "slack_installed": True, "slack_member": "U1",
           "slack_pending_app": None, "org_domains": ["acme.example"], "addresses": ["ap"],
-          "models": {"needed": False, "installed": False}, "export": export}  # fmt: skip
+          "export": export}  # fmt: skip
 
     def rows() -> tuple[str, str]:
         lines = cli_init.describe(st, installed=True, running=True)
-        return lines[8], lines[9]
+        return lines[6], lines[7]
 
     email, exp = rows()
     assert email.startswith("alert email   to do  asked by ecf init (optional)")

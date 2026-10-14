@@ -27,9 +27,10 @@ from ecf.schema import (
     load_schema,
     load_schema_v2,
     load_schema_v2_0_0,
+    with_fixed,
 )
 from ecf.yamlio import load_yaml
-from ecf_server import config, evalrun, health, rules, ruletest
+from ecf_server import config, health, rules, ruletest
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.rules import RuleInput
@@ -93,16 +94,15 @@ def test_the_digest_covers_both_files() -> None:
 @pytest.mark.parametrize("schema", [load_schema_v2(), load_schema_v2_0_0()],
                          ids=["v2", "v2.0.0"])  # fmt: skip
 def test_the_fixed_rules_compile_on_a_schema_without_the_items(schema: Any) -> None:
-    """Results asked with an older schema (`--no-new-wording`) lack the items: false (P13). From
-    S3b the fixed rules read only the items, so such a run plans on its answer with the items
-    derived (`evalrun.planned_view`): a vendor change request still reaches the fraud guard."""
+    """Results asked with an older schema lack the items: false (P13). From S3b the fixed rules
+    read only the items, so such an answer reaches them only once completed (`from_v2`, as a
+    rescore does)."""
     old = rules.load_starter_rules(schema)
     no_items = {k: v for k, v in BASE.items() if k not in FIXED_ITEMS}
     vcr = no_items | {"category": "vendor_change_request"}
-    assert old.evaluate(RuleInput(evalrun.planned_view(vcr, schema), {})).rule_id == "fraud_guard"
+    assert old.evaluate(RuleInput(with_fixed(vcr), {})).rule_id == "fraud_guard"
     assert old.evaluate(RuleInput(vcr, {})).rule_id == "otherwise"  # no bridge clause (S3b)
     assert old.evaluate(RuleInput(no_items, {})).rule_id == "otherwise"
-    assert evalrun.planned_view(BASE, SCHEMA) is BASE  # v3: answered as it is
 
 
 # ---- the fixed items, their kept sources and from_v2 (P1, P2, P3; S3b) ------------------------

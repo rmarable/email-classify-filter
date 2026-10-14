@@ -1,5 +1,6 @@
-"""`ecf stats` (SPEC §13.4; V1.3 step 9): the local model's tokens, speeds and load times; from
-V1.4 step 6 also Claude's tokens, times and plan usage from `ecf claude` sessions."""
+"""`ecf stats` (SPEC §13.4; V1.3 step 9): the model calls ecf records (`model_calls`: the local
+model's before v3.0.0, ADR 0031, until pruned with the logs), and from V1.4 step 6 Claude's
+tokens, times and plan usage from `ecf claude` sessions."""
 
 from __future__ import annotations
 
@@ -29,10 +30,13 @@ def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
     def stats(
         since: Annotated[str, typer.Option("--since", help="How far back: 24h, 7d, ...")] = "7d",
         address: Annotated[str | None, typer.Option("--address", help="One address.")] = None,
-        preset: Annotated[str | None, typer.Option("--preset", help="A, B or C.")] = None,
+        preset: Annotated[
+            str | None, typer.Option("--preset", help="C (older calls may be A or B).")
+        ] = None,
     ) -> None:
-        """Model usage: the local model's tokens, speeds and load times by model and role, and
-        Claude's tokens, times and plan usage from `ecf claude` sessions."""
+        """Model usage: recorded model calls' tokens, speeds and load times by model and role
+        (the local model's, before v3.0.0), and Claude's tokens, times and plan usage from `ecf
+        claude` sessions."""
         params: dict[str, Any] = {"hours": hours_of(since)}
         if address:
             params["address"] = address
@@ -46,7 +50,7 @@ def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
 def show(r: dict[str, Any]) -> None:
     typer.echo(f"since {r['since'][:16].replace('T', ' ')} UTC")
     if not r["all"]["calls"]:
-        typer.echo("the local model wasn't used in this period")
+        typer.echo("no recorded model calls in this period")
     else:
         for g in r["groups"]:
             typer.echo(f"\n{g['role']} (model {str(g['model'])[:19]})")

@@ -826,7 +826,7 @@ def _proposal_problem(conn: sqlite3.Connection, item: sqlite3.Row,
 def check_proposal(proposal: dict[str, Any], labels: frozenset[str], folders: frozenset[str],
                    allowed: tuple[str, ...], *, templates: frozenset[str] = frozenset(),
                    forwards: frozenset[str] = frozenset()) -> str | None:  # fmt: skip
-    """Why a proposal is refused, or None: the local actor's checks (`actor.problem`, OD-250;
+    """Why a proposal is refused, or None: the actor's checks (`actor.problem`, OD-250;
     drafts and sends, OD-317) and a question only, and always, with needs_clarification
     (`/ecf-review` and `/ecf-eval`). Text only, and always, with draft_reply."""
     action, target, reason = proposal["action"], proposal["target"] or "", proposal["reason"]

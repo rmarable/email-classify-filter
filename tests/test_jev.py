@@ -21,7 +21,7 @@ import pytest
 
 from ecf.errors import InvalidInputError
 from ecf.log import no_content
-from ecf.schema import CompiledSchema, load_schema, local_schema
+from ecf.schema import CompiledSchema, load_schema, load_schema_v2
 from ecf_server import jev, rules, signals, systemone, triggers
 from ecf_server.clock import FakeClock
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -758,4 +758,4 @@ def test_the_prompt_digest_changes_with_each_input(monkeypatch: pytest.MonkeyPat
 
 def test_jev_asks_the_v3_schema_not_the_local_one() -> None:
     assert set(_body()["questions"]) == set(SCHEMA.fields)
-    assert set(_body()["questions"]) != set(local_schema(SCHEMA).fields)
+    assert set(_body()["questions"]) != set(load_schema_v2().fields)

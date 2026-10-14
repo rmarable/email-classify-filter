@@ -23,7 +23,6 @@ from ecf_server import (
     claude_pins,
     export_keys,
     internal,
-    models,
     scheduled_export,
     slack_admin,
 )
@@ -124,7 +123,5 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "alert_email": _alert_email(conn),
         "export": _export(conn),
         "skipped": skipped(conn),
-        # an address of a removed preset (A or B, until migration 0038 converts it; ADR 0031)
-        "models": {"needed": models.needed(conn), "installed": models.installed(conn)},
         "claude_needed": claude_pins.in_use(conn),  # init offers ecf's Claude login (V1.4 step 11)
     }

@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `ecf resume` on an address converted from preset A or B at the v3.0.0 upgrade asks whether the account owner agreed to their mail going to Anthropic, and resumes it only on "y" (recorded once in the audit log); `ecf resume --all` and the Slack buttons skip such an address and name it (ADR 0031, OD-427).
+- `ecf eval run` uses the `null` backend by default (no model; it never passes the go-live gate) and refuses `gemma`, `systemone:` and `--corpus`; old Gemma, preset B and decision-model results still load and rescore (ADR 0031).
+- `ecf models install`, `ecf models prune` and `ecf models serve` are gone; `ecf models status` shows the Claude pins and the model watch; ecf's Ollama login item and `<root>/ollama/` are removed once the upgrade's rollback window closes (ADR 0031).
 - Eval scoring for preset C now treats a proposed send on a high-risk email as production does (held back and flagged for your approval) instead of rejecting it as the local actor did; planned actions in new C results can differ from older ones on high-risk cards, so compare across this change only after `ecf eval rescore --through-policy` of the older result (ADR 0031).
 - A second Slack alert, `claude_review_overdue`, mentions you when mail on an unpaused address has waited for `/ecf-review` more than twice `claude_review_reminder_hours` (48 hours by default) (ADR 0031).
 - Removed (planned for v3.0.0, not built yet): presets A and B, Ollama, the Gemma model, the local fallback (`claude_queue_timeout`) and the model-driven corpus run (`ecf eval run --corpus`); addresses on preset A or B become preset C at upgrade and stay paused until you resume them (ADR 0031, OD-506).

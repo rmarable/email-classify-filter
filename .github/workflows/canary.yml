@@ -1,5 +1,5 @@
 # The weekly model canary (SPEC §7.6; OD-053, OD-300): Anthropic's model deprecations page and
-# models overview, and the Ollama library's tags page, against models.lock and ollama.lock.
+# models overview against models.lock (the Ollama tags-page check went in v3.0.0, ADR 0031).
 # Scheduled runs use the default branch only; run it by hand from the Actions tab on any branch.
 name: canary
 

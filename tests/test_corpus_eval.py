@@ -1,11 +1,11 @@
-"""`ecf eval run --corpus`: a labelled real-mail corpus through preset A, never the gate (SPEC
-§16.7; R2, R54, R83, R114, R117, R138, R154, R157, R168)."""
+"""A labelled real-mail corpus in the eval (SPEC §16.7; R2, R53, R113, R114, R117, R120, R157,
+R178, R181): its cases (`corpus_run`, which `ecf eval routes --corpus` and `ecf eval rescore
+--corpus` read), the rescore and the deterministic noise. The model-driven `ecf eval run
+--corpus` went in v3.0.0 (ADR 0031, R-D5, P14); its route refuses a corpus."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
-import stat
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -15,15 +15,14 @@ import pytest
 from ecf.errors import InvalidInputError
 from ecf.eval import corpus_labels as cl
 from ecf.eval import results
-from ecf.schema import extend_schema, load_schema
+from ecf.schema import extend_schema, from_v2, load_schema
+from ecf_server import config, evalrun
 from ecf_server import corpus_session as cs
-from ecf_server import db, evalrun
-from ecf_server.api import _corpus_run  # pyright: ignore[reportPrivateUsage]
 from ecf_server.clock import FakeClock
-from tests.helpers import BEC, ChatOllama, check_kw
+from tests.helpers import BEC
+from tests.test_addresses import TOKEN, call, make_state
 from tests.test_claude_review import EXT, extend
 from tests.test_corpus import SECRET, fetch, req, server_with
-from tests.test_evalrun import AC, _inline  # pyright: ignore[reportPrivateUsage]
 
 # a corpus label: BEC's answer is v2's, and a new label can't use a value schema v3 removed (S3b)
 LABEL = BEC | {"category": "invoice"}
@@ -50,58 +49,30 @@ def session(conn: sqlite3.Connection, clock: FakeClock, db_path: Path,
         cs.release(str(st["session_id"]))
 
 
-def test_a_corpus_run_writes_only_its_file_and_never_passes_the_gate(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, session: cs.Session
+def test_eval_run_refuses_a_corpus(
+    conn: sqlite3.Connection, db_path: Path, session: cs.Session
 ) -> None:
-    run = _corpus_run(session.id, fraud_only=False)
-    assert run is not None and session.busy
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(Path("/"), corpus=run), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    snap = evalrun.RUN.snapshot()
-    assert snap["state"] == "done", snap
-    assert snap["set"] == f"corpus {run.corpus_id[:8]}"
-    summary = snap["result"]
-    assert summary["gate_passed"] is False and summary["set"] == "corpus"
-    assert summary["cases"] == 3 and summary["confirmed"] == 1 and summary["rule_scored"] == 1
-    assert summary["labels_hash"] == run.labels_hash and len(run.labels_hash) == 64
-    assert summary["deterministic_noise"] == {"flagged": 0, "of": 1}
-    assert {"category", "sender_type", "requires_reply", "deadline_mentioned"} <= set(
-        summary["per_field"]
-    )
-    # run separation (R2): no eval_runs row, the synthetic set's root untouched
-    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
-    root = conn.execute("SELECT value FROM settings WHERE key = ?", (evalrun.EVAL_ROOT,))
-    assert root.fetchone() is None
-    folder = evalrun.corpus_folder(db_path.parent, run.corpus_id)
-    (path,) = list(folder.glob("*.json"))
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    result = results.load_result(path)
-    assert result.set_version == f"corpus:{run.corpus_id}:{run.labels_hash[:12]}"
-    by_id = {c.id: c for c in result.cases}
-    assert by_id["00001"].confirmed and by_id["00001"].scored and by_id["00001"].actions
-    assert not by_id["00003"].scored and not by_id["00003"].confirmed
-    assert "Invoice" not in path.read_text()  # no message text
-    audit = conn.execute("SELECT data FROM audit WHERE event = 'eval.completed'").fetchone()
-    assert json.loads(audit["data"])["set_version"] == result.set_version
-    assert cs.status(lambda: 0.0) is None  # the run released the corpus (R154)
-    synthetic = result.model_copy(update={"set_version": "abc"})
-    with pytest.raises(InvalidInputError, match="different sets"):
-        results.compare(result, synthetic)
+    """R-D5 (Jev step 2 plan P5): `POST /v1/eval/runs` with a corpus session is refused, the
+    session left as it was; no run starts."""
+    del conn  # migrated
+    r = call(make_state(db_path, None), "POST", "/v1/eval/runs",
+             {"corpus_session": session.id}, TOKEN)  # fmt: skip
+    assert r.status_code == 400 and "corpus runs aren't available" in r.text
+    assert not session.busy and evalrun.RUN.snapshot()["state"] == "idle"
 
 
-def test_a_corpus_run_refuses_fraud_only_and_unredacted_text(
-    db_path: Path, clock: FakeClock, session: cs.Session
-) -> None:
-    with pytest.raises(InvalidInputError, match="synthetic set"):
-        _corpus_run(session.id, fraud_only=True)
-    assert not session.busy
-    run = _corpus_run(session.id, fraud_only=False)
-    assert run is not None
-    with pytest.raises(InvalidInputError, match="stored, redacted"):
-        evalrun.start(lambda: db.connect(db_path), clock, ChatOllama("{}").client, db_path.parent,
-                      evalrun.Options(Path("/"), redact=False, corpus=run), spawn=_inline,
-                      check_kw=check_kw())  # fmt: skip
+def _corpus_result(run: evalrun.CorpusRun, folder: Path) -> Path:
+    """A corpus result as the removed `eval run --corpus` saved one: the same answer for every
+    message, its rule and actions recorded (R53)."""
+    answer = from_v2(LABEL)
+    cases = [evalrun.score_parts(c, answer, "fraud_guard", {"escalate", "flag"}, None)
+             for c in run.cases]  # fmt: skip
+    summary = dict(evalrun.summarize(cases, 0, gate_eligible=False))
+    summary |= {"set": "corpus", "labels_hash": run.labels_hash}
+    r = results.ResultFile(run_id="c" * 32, pair="gemma4-12b/local", set_version=run.version,
+                           created_at="2026-10-07T00:00:00Z", cases=cases, digest="d",
+                           summary=summary)  # fmt: skip
+    return evalrun.write_result(folder, r)
 
 
 def test_only_confirmed_scored_cases_count_in_the_headline() -> None:
@@ -117,13 +88,12 @@ def test_only_confirmed_scored_cases_count_in_the_headline() -> None:
 def test_rescore_uses_the_current_labels_and_keeps_the_original(
     db_path: Path, clock: FakeClock, session: cs.Session
 ) -> None:
-    """R53, R113, R120, R178: no model runs; a new file beside the original; mixed sets refused."""
-    run = _corpus_run(session.id, fraud_only=False)
-    assert run is not None
-    evalrun.start(lambda: db.connect(db_path), clock, ChatOllama(json.dumps(BEC)).client,
-                  db_path.parent, evalrun.Options(Path("/"), corpus=run), power=lambda: AC,
-                  battery=lambda: 90, spawn=_inline, check_kw=check_kw())  # fmt: skip
-    (first,) = list(evalrun.corpus_folder(db_path.parent, run.corpus_id).glob("*.json"))
+    """R53, R113, R120, R178: no model runs; a new file beside the original; mixed sets refused.
+    Results from before v3.0.0 (Gemma's) rescore too (R-D12)."""
+    run = evalrun.corpus_run(session)
+    assert len(run.cases) == 3 and sum(c.confirmed for c in run.cases) == 1
+    first = _corpus_result(run, evalrun.corpus_folder(db_path.parent, run.corpus_id))
+    cs.release(session.id)
     reopened = cs.open_session(str(session.path), SECRET, lambda: 0.0)
     s = cs.get(reopened["session_id"], lambda: 0.0)
     labels = cl.load(cl.path_for(s.path))
@@ -161,10 +131,9 @@ def test_corpus_labels_are_checked_against_the_effective_schema(
                            schema))  # fmt: skip
     cl.save(cl.path_for(session.path), labels)
     with pytest.raises(InvalidInputError, match="exactly the schema"):
-        _corpus_run(session.id, fraud_only=False)  # the shipped schema alone refuses it
+        evalrun.corpus_run(session)  # the shipped schema alone refuses it
     extend(conn, clock)
-    run = _corpus_run(session.id, fraud_only=False, connect=lambda: db.connect(db_path))
-    assert run is not None
+    run = evalrun.corpus_run(session, config.current_schema(conn))
     [case] = [c for c in run.cases if c.id == "00003"]
     assert case.confirmed and case.expected["labels"]["contract_stage"] == "draft"
 

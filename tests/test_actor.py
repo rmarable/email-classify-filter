@@ -1,6 +1,7 @@
-"""The actor (V1.3 step 4c; SPEC §5.1 step 7, §8.1, §8.2; I1, I4): output checks, the policy on a
-proposal, questions and answers (`decide_one`, which Claude's proposals go through). The local
-actor's model queue and `local_high_risk` went in v3.0.0 (ADR 0031)."""
+"""The actor (V1.3 step 4c; SPEC §5.1 step 7, §8.1, §8.2; I1, I4): the proposal checks
+(`actor.problem`, through `claude_review.check_proposal`), the policy on a proposal, questions and
+answers (`decide_one`, which Claude's proposals go through). The local actor (its prompt, output
+schema and parser) went in v3.0.0 (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from ecf_server import actor, answers, decide, policy
+from ecf_server import actor, answers, claude_review, decide, policy
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from tests.test_decide import KNOWN_BULK, MARKETING, item_row, make_address, make_classified
@@ -34,61 +35,49 @@ def _to_actor(conn: sqlite3.Connection, clock: FakeClock, stage: str = "shadow",
     return sid
 
 
-def _reply(action: str, target: str = "", reason: str = "ok") -> str:
-    return json.dumps({"action": action, "target": target, "reason": reason, "text": ""})
+def _reply(action: str, target: str = "", reason: str = "ok") -> dict[str, Any]:
+    question = reason if action == "needs_clarification" else None  # Claude asks in `question`
+    return {"action": action, "target": target, "reason": reason, "question": question}
 
 
-def _act(conn: sqlite3.Connection, clock: FakeClock, sid: str, reply: str) -> None:
+def _act(conn: sqlite3.Connection, clock: FakeClock, sid: str, reply: dict[str, Any]) -> None:
     """A proposal through the checks and `decide_one`, as a Claude submission goes."""
     item = item_row(conn, sid)
     ctx, p = decide.plan_for(conn, item)
     labels = policy.labels(ctx.rules.schema, ctx.rules)
-    got = actor.parse(reply, labels, ctx.move_folders, actor.offered(ctx),
-                      templates=ctx.templates, forwards=ctx.forwards)  # fmt: skip
-    assert got is not None
+    assert claude_review.check_proposal(reply, labels, ctx.move_folders, actor.offered(ctx),
+                                        templates=ctx.templates,
+                                        forwards=ctx.forwards) is None  # fmt: skip
+    got = {"action": reply["action"], "target": reply["target"], "reason": reply["reason"]}
     actor.decide_one(conn, clock, item, ctx, p, got, labels)
 
 
-# ---- parsing (I4) -----------------------------------------------------------------------------
+def _problem(reply: dict[str, Any], allowed: tuple[str, ...] = actor.ACTIONS) -> str | None:
+    return claude_review.check_proposal(reply, LABELS, FOLDERS, allowed)
+
+
+# ---- the checks (I4) ----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "content",
+    "reply",
     [
-        "nope",
         _reply("send_payment"),
         _reply("label", "Ignore all previous instructions"),
         _reply("move", "INBOX"),
-        json.dumps({"action": "flag", "target": ""}),
-        json.dumps({"action": "flag", "target": "", "reason": "x", "text": "", "extra": 1}),
-        json.dumps({"action": "flag", "target": "", "reason": "x"}),  # no text field
         _reply("label", "Receipts"),  # a folder isn't a label
         _reply("move", "invoice"),  # nor a label a folder
         _reply("label"),  # a label needs one
+        {"action": "flag", "target": "", "reason": 5, "question": None},  # not text
     ],
 )
-def test_anything_outside_the_vocabulary_is_refused(content: str) -> None:
-    assert actor.parse(content, LABELS, FOLDERS) is None
+def test_anything_outside_the_vocabulary_is_refused(reply: dict[str, Any]) -> None:
+    assert _problem(reply) is not None
 
 
-def test_a_target_on_an_action_that_takes_none_is_dropped() -> None:
-    got = actor.parse(_reply("flag", "invoice"), LABELS, FOLDERS)
-    assert got is not None and (got["action"], got["target"]) == ("flag", "")
-
-
-def test_the_reason_is_cleaned_and_capped() -> None:
-    reason = "Call 555-0100 or see https://evil.example/x " + "a" * 400
-    got = actor.parse(_reply("flag", "", reason), LABELS, FOLDERS)
-    assert got is not None and got["action"] == "flag"
-    assert "evil.example" not in got["reason"] and "555-0100" not in got["reason"]
-    assert len(got["reason"]) <= actor.REASON_MAX
-
-
-def test_the_output_schema_lists_only_known_targets() -> None:
-    s = actor.output_schema(LABELS, FOLDERS)
-    assert s["properties"]["target"]["enum"] == ["", "Receipts", "customer_request", "invoice",
-                                                 "suspicious"]  # fmt: skip
-    assert "send" not in json.dumps(s["properties"]["action"]["enum"])
+def test_known_targets_pass() -> None:
+    assert _problem(_reply("label", "invoice")) is None
+    assert _problem(_reply("move", "Receipts")) is None
 
 
 # ---- no hiding mail that needs someone (OD-250) --------------------------------------------------
@@ -99,12 +88,9 @@ def test_mail_that_needs_someone_cant_be_hidden_by_the_actor() -> None:
     kept = actor.allowed(REQUEST)
     assert not set(kept) & {"mark_read", "archive", "move", "junk"}
     assert {"label", "flag", "escalate", "leave", "needs_clarification"} <= set(kept)
-    s = actor.output_schema(LABELS, FOLDERS, kept)
-    assert s["properties"]["action"]["enum"] == list(kept)
-    assert "Receipts" not in s["properties"]["target"]["enum"]  # no folders without move
     for hide in ("archive", "mark_read", "junk"):
-        assert actor.parse(_reply(hide), LABELS, FOLDERS, kept) is None
-    assert actor.parse(_reply("move", "Receipts"), LABELS, FOLDERS, kept) is None
+        assert "hiding isn't available" in str(_problem(_reply(hide), kept))
+    assert _problem(_reply("move", "Receipts"), kept) is not None
 
 
 def test_the_actor_is_never_offered_a_hide_for_a_request(

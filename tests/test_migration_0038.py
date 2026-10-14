@@ -237,8 +237,8 @@ def test_converted_addresses_are_announced_once(db_path: Path, monkeypatch: pyte
     _populate(c)
     db.migrate(c)
     assert stages.converted(c) == [
-        {"address_id": "a1", "from": "A", "paused": True, "waiting": 1},
-        {"address_id": "b1", "from": "B", "paused": True, "waiting": 0},
+        {"address_id": "a1", "from": "A", "paused": True, "consented": False, "waiting": 1},
+        {"address_id": "b1", "from": "B", "paused": True, "consented": False, "waiting": 0},
     ]
     n = FakeNotifier()
     assert stages.announce_converted(c, clock, n) == ["a1", "b1"]

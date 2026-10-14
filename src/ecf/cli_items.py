@@ -5,12 +5,13 @@ escape sequences to it)."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 
 from ecf.client import LocalClient
 from ecf.paths import Paths
+from ecf.prompts import require_terminal
 from ecf.stepup import with_step_up
 from ecf.text import plain
 
@@ -140,8 +141,13 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
         every: Annotated[bool, typer.Option("--all", help="Every address.")] = False,
     ) -> None:
-        """Let ecf act on a paused address again."""
-        typer.echo(_pause(address, every, "resume"))
+        """Let ecf act on a paused address again. An address v3.0.0 converted from preset A or B
+        to C asks first whether its owner agreed to its mail going to Anthropic (a terminal is
+        needed; --all leaves it paused)."""
+        if every or not address:
+            typer.echo(_pause(address, every, "resume"))
+            return
+        typer.echo(_resume_one(paths(), address))
 
     def _pause(address: str | None, every: bool, verb: str) -> str:
         if every == bool(address):
@@ -302,3 +308,45 @@ def describe(d: dict[str, Any]) -> list[str]:
     lines.append("excerpt (stored text, shown only here):")
     lines += [f"  {x}" for x in (d["excerpt"] or "(none kept)").splitlines()]
     return lines
+
+
+CONSENT_QUESTION = ("Has the account owner agreed to their mail and derived signals going to"
+                    " Anthropic? [y/N]")  # fmt: skip
+
+
+def _resume_one(p: Paths, ref: str) -> str:
+    """`ecf resume <address>`: asks for the owner's agreement first when it needs it (P3)."""
+    with LocalClient(p) as c:
+        agreed = _owner_agreed(c, ref)
+        r = c.request("POST", f"/v1/addresses/{ref}/resume",
+                      {"owner_agreed": True} if agreed else {})  # fmt: skip
+    return str(r["message"])
+
+
+def _owner_agreed(c: LocalClient, ref: str) -> bool:
+    """For an address v3.0.0 converted to C and paused (`converted` in `GET /v1/upgrade/state`,
+    P3; operator decision 2026-10-14): ask, in a terminal, whether its owner agreed (OD-427).
+    False when it needs no asking; "y" is True; anything else stops, saying how to remove it.
+    The service checks it again: without `owner_agreed` it refuses (`pause.set_paused`)."""
+    st: dict[str, Any] = c.get("/v1/upgrade/state")
+    ids = {ref.lower()}
+    if "@" in ref:  # an email: its address id
+        got: dict[str, Any] = c.get("/v1/addresses")
+        listed = cast("list[dict[str, Any]]", got.get("addresses") or [])
+        ids |= {str(a["address_id"]).lower() for a in listed
+                if str(a.get("email", "")).lower() == ref.lower()}  # fmt: skip
+    converted = cast("list[dict[str, Any]]", st.get("converted") or [])
+    rows = [r for r in converted if str(r["address_id"]).lower() in ids
+            and r.get("paused") and not r.get("consented")]  # fmt: skip
+    if not rows:
+        return False
+    aid = str(rows[0]["address_id"])
+    require_terminal()
+    typer.echo(f"{aid} used preset {rows[0]['from']}, whose local model v3.0.0 removed: it is now"
+               " preset C, and once resumed Claude (Anthropic) classifies its mail when you run"
+               " /ecf-review.")  # fmt: skip
+    answer = typer.prompt(CONSENT_QUESTION, default="", show_default=False)
+    if answer.strip().lower() == "y":
+        return True
+    typer.echo(f"{aid} stays paused. To stop watching it instead: ecf address remove {aid}")
+    raise typer.Exit(1)

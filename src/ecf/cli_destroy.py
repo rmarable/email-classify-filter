@@ -7,8 +7,8 @@ the service stops. When the service can't run, `ecf-server destroy` does that pa
 foreground (OD-387). Then: remove the service unit, sign `ecf claude` out of its own config
 (`claude auth logout`; a failure is residue only, OD-390), delete the data directory, mark the
 record `<data root>/destroyed/<install>.json` done and print what's left to do by hand. Shared
-things (Ollama's folder, models and login item, the `uv tool` package) are left; removing them is
-suggested only when no other install is left (OD-391). Run again, it carries on from the record.
+things (the `uv tool` package, and Ollama models ecf used before v3.0.0) are left; removing them
+is suggested only when no other install is left (OD-391). Run again, it carries on from the record.
 """
 
 from __future__ import annotations
@@ -37,7 +37,9 @@ from ecf.stepup import with_step_up
 
 RECORD_DIR = "destroyed"  # as ecf_server.destroy (the client never imports the service)
 SERVICE_DONE, DONE = "service_done", "done"
-SHARED = frozenset({"ollama", RECORD_DIR})  # folders in the data root that aren't installs
+# folders in the data root that aren't installs; "ollama" (ecf's Ollama log before v3.0.0, ADR
+# 0031) stays until v4 (R-D13)
+SHARED = frozenset({"ollama", RECORD_DIR})
 EXPORT_AGE = timedelta(hours=24)
 UNSETTLED = ("installing", "migrating")  # upgrade.json phases mid-upgrade
 
@@ -314,12 +316,12 @@ def _residue(p: Paths, t: Tools, rec: dict[str, Any]) -> None:
                      " on macOS): remove it there if you like")  # fmt: skip
     others = cast("list[str]", rec.get("others") or [])
     if others:
-        lines.append(f"Ollama, its models and ecf's Ollama login item are shared with"
-                     f" {', '.join(others)}, so they stay")  # fmt: skip
+        lines.append(f"ecf itself (the `uv tool` package) is shared with {', '.join(others)},"
+                     " so it stays")  # fmt: skip
     else:
-        lines.append("no other ecf install is left: `ecf models serve uninstall` removes ecf's"
-                     " Ollama login item, `ollama rm <model>` a model, and `uv tool uninstall"
-                     " email-classify-filter` ecf itself")  # fmt: skip
+        lines.append("no other ecf install is left: `uv tool uninstall email-classify-filter`"
+                     " removes ecf itself, and `ollama rm <model>` any model ecf used before"
+                     " v3.0.0")  # fmt: skip
     t.echo("Left for you to do:")
     for line in lines:
         t.echo(f"  - {line}")
