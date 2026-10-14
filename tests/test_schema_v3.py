@@ -76,10 +76,10 @@ S3B_TEXTS = {
     ("sender_type", "unknown"): "Can't tell the role, or a colleague or co-worker of ours,"
     " genuine or not. Otherwise an impostor takes the role they claim.",
 }
-# operator decision 2026-10-13, after the first S3b runs (plan §12), verbatim
+# two operator decisions of 2026-10-13 (EDT), after the S3b runs (plan §12), verbatim
 FRAUD_MEDIUM = ("Any request to move money, data, credentials or access on this email's say-so,"
-                " or to call a number or follow a link to secure an account, whatever the"
-                " pattern.")  # fmt: skip
+                " whatever the pattern. A request to call a number or follow a link to secure an"
+                " account counts too.")  # fmt: skip
 REMOVED = {"category": ("vendor_change_request", "regulatory", "spam_or_phishing"),
            "sender_type": ("team",)}  # fmt: skip
 V2_ANSWER: dict[str, Any] = {

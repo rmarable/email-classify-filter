@@ -450,5 +450,21 @@ sentence had carried the "call a number" cue)
 - New: "Any request to move money, data, credentials or access on this email's say-so, or to call
   a number or follow a link to secure an account, whatever the pattern."
 
+**`fraud_risk: medium`, second change** (approved by the operator 2026-10-13, EDT, a second
+decision that day: with the first 2026-10-13 text `mid-pay-today-or-suspend`, a "pay 2,940 today or service is suspended" demand, got
+`fraud_risk` low in 2 of 3 fresh runs, `93b81c72` and `ac11f6ca`, against medium in every
+recorded run with the original text (6 S3b-era runs, plus all earlier Sonnet, Haiku and Gemma
+runs in the eval archive); the likely cause is the account-lure clause inside the medium
+sentence)
+- Old: "Any request to move money, data, credentials or access on this email's say-so, or to call
+  a number or follow a link to secure an account, whatever the pattern."
+- New: "Any request to move money, data, credentials or access on this email's say-so, whatever
+  the pattern. A request to call a number or follow a link to secure an account counts too."
+- With the de1a2ff text, `v2-acct-phish-callback-signin` got `fraud_risk` medium in 3 of 3 runs
+  but `phishing` true in only 1 of 3 (`75115bf7` yes; `93b81c72` and `ac11f6ca` no); before S3b
+  the S2 runs gave medium and phishing true 2 of 2. The next two runs check both fields; if
+  `phishing` stays false, the cue may belong in `phishing`'s description too (an operator
+  decision).
+
 Checked unchanged for P12 (no cross-reference): `sender_type` description, the other values,
-`priority`, the workflow fields, `fraud_risk`, `payment_related` and the five fixed items.
+`priority`, the workflow fields, `payment_related` and the five fixed items.
