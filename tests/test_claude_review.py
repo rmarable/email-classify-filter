@@ -763,6 +763,146 @@ def test_its_own_token_from_the_wrong_agent_type_frees_the_item(
     assert claim_row(conn, x) == ("claimed", None)
 
 
+# ---- a dropped spawn (OD-501) ----------------------------------------------------------------
+
+
+UNREAD_S = int(claude_review.UNREAD_MIN.total_seconds())
+
+
+def _dropped(conn: sqlite3.Connection, clock: FakeClock) -> tuple[str, str, str, str]:
+    """Round 1's spawn (x) is never made; round 2's (y) runs. x is freed `UNREAD_MIN` after the
+    session's next call, and not before. x, its token, y, its token."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tx = token_for(queue(conn, clock, limit=1), x)
+    clock.advance(5)
+    ty = token_for(queue(conn, clock, limit=1), y)  # the session's next call
+    read_msg(conn, clock, S1, y, ty)
+    clock.advance(UNREAD_S - 1)
+    q = queue(conn, clock, limit=1)
+    assert q["items"] == [] and q["results"] == [] and claim_row(conn, x) == ("claimed", None)
+    assert q["next"] == "call again" and q["frees_in_s"] == 1  # the free, not CLAIM_TTL (P7)
+    clock.advance(1)
+    return x, tx, y, ty
+
+
+def test_a_dropped_spawn_is_freed_fenced_audited_and_reported(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    x, _tx, y, _ty = _dropped(conn, clock)
+    before = tuple(row(conn, x))
+    q = queue(conn, clock, limit=1)
+    assert q["results"] == [{"id": x, "outcome": "claim_unread"}]
+    assert claim_row(conn, y) == ("claimed", None)  # it runs
+    assert x in {i["id"] for i in q["items"]}  # back at once
+    audit = conn.execute("SELECT event, outcome, data FROM audit WHERE stable_id = ?"
+                         " AND event = 'claude.refused'", (x,)).fetchall()  # fmt: skip
+    assert [(a[0], a[1], json.loads(a[2])) for a in audit] == [
+        ("claude.refused", "denied",
+         {"need": "classify", "agent": "ecf-classifier", "claim_unread": True})]  # fmt: skip
+    assert tuple(row(conn, x)) == before  # no item moves
+    assert conn.execute("SELECT COUNT(*) FROM grants").fetchone()[0] == 0
+    grace = claude_review._grace(S1, clock.now())  # pyright: ignore[reportPrivateUsage]
+    assert grace == {"ecf-classifier": clock.now() + claude_review.TAIL}  # TAIL, not GRACE
+
+
+def test_the_unread_free_is_fenced(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """A claim that moved on since the spawn was judged is left alone."""
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    tok = token_for(queue(conn, clock), x)
+    stale = conn.execute("SELECT * FROM claims WHERE stable_id = ?", (x,)).fetchone()
+    assert submit_classification(conn, clock, S1, x, tok, REQUEST)["accepted"]
+    claude_review._free_unread(conn, clock, S1, [stale], clock.now())  # pyright: ignore[reportPrivateUsage]
+    assert conn.execute("SELECT outcome FROM claims WHERE stable_id = ?", (x,)).fetchone()[0] != (
+        "claim_unread")  # fmt: skip
+    assert not conn.execute("SELECT 1 FROM audit WHERE data LIKE '%claim_unread%'").fetchall()
+
+
+def test_a_spawn_with_any_claim_read_is_never_freed_unread(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    q = queue(conn, clock)
+    assert len(q["spawns"]) == 1  # one spawn of two
+    read_msg(conn, clock, S1, x, token_for(q, x))
+    clock.advance(5)
+    queue(conn, clock)
+    clock.advance(4 * UNREAD_S)
+    q = queue(conn, clock)
+    assert q["results"] == [] and claim_row(conn, y) == ("claimed", None)  # waits, as today
+    assert q["frees_in_s"] == int(claude_review.CLAIM_TTL.total_seconds()) - 5 - 4 * UNREAD_S
+
+
+def test_a_reclaimed_siblings_new_claim_doesnt_make_a_running_spawn_look_unread(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """P3: the spawn is judged over every claim it handed out, not each item's latest."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    read_msg(conn, clock, S1, y, tok[y])
+    with pytest.raises(ForbiddenProfileError):  # y's claim freed (mix-up), its read stays
+        claude_review.get_message(conn, clock, S1, y, tok[y], "ecf-actor")
+    clock.advance(claude_review.TAIL.total_seconds() + 1)
+    assert y in {i["id"] for i in queue(conn, clock)["items"]}  # claimed again, a new spawn
+    clock.advance(UNREAD_S + 1)
+    assert queue(conn, clock)["results"] == []
+    assert claim_row(conn, x) == ("claimed", None)
+    assert conn.execute("SELECT fence FROM claims WHERE stable_id = ?", (x,)).fetchone()[0] == 1
+
+
+def test_another_sessions_calls_dont_count_for_review(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    for n in range(3):
+        waiting_item(conn, clock, "c", n + 1)
+    queue(conn, clock, limit=1)
+    for _ in range(3):
+        clock.advance(UNREAD_S)
+        queue(conn, clock, S2, limit=1)
+    assert claim_row(conn, x) == ("claimed", None)  # S1 hasn't called since
+    queue(conn, clock, limit=1)
+    clock.advance(UNREAD_S)
+    assert queue(conn, clock, limit=1)["results"] == [{"id": x, "outcome": "claim_unread"}]
+
+
+def test_a_late_agents_refused_call_extends_tail_for_review(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """P2: its request is refused, its type counts as out for `TAIL` from then, no mix-up."""
+    x, tx, y, _ty = _dropped(conn, clock)
+    assert x in {i["id"] for i in queue(conn, clock, limit=1)["items"]}  # a new token
+    clock.advance(claude_review.TAIL.total_seconds() + 5)
+    with pytest.raises(ConflictError, match="isn't current"):
+        read_msg(conn, clock, S1, x, tx)
+    grace = claude_review._grace(S1, clock.now())  # pyright: ignore[reportPrivateUsage]
+    assert grace == {"ecf-classifier": clock.now() + claude_review.TAIL}
+    with pytest.raises(ConflictError):  # nor for another item
+        read_msg(conn, clock, S1, y, tx)
+    assert claim_row(conn, x) == claim_row(conn, y) == ("claimed", None)
+
+
+def test_an_items_own_earlier_token_never_frees_its_new_claim(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """P4: a mix-up freed x; its late agent presents x's old token after x was claimed again."""
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    old = token_for(queue(conn, clock), x)
+    with pytest.raises(ForbiddenProfileError):
+        claude_review.get_message(conn, clock, S1, x, old, "ecf-actor")
+    clock.advance(claude_review.TAIL.total_seconds() + 1)
+    new = token_for(queue(conn, clock), x)
+    with pytest.raises(ConflictError, match="isn't current"):
+        read_msg(conn, clock, S1, x, old)
+    assert claim_row(conn, x) == ("claimed", None)
+    assert submit_classification(conn, clock, S1, x, new, REQUEST)["accepted"]
+
+
 def call(state: ServiceState, path: str, body: Any, token: str) -> httpx.Response:
     async def go() -> httpx.Response:
         transport = httpx.ASGITransport(app=create_app(state))
