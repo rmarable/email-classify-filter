@@ -357,9 +357,9 @@ def test_a_bundles_v2_rules_lose_their_unchanged_fixed_rules(
     assert config.current(target)["rules"] is None
     data = json.loads(_one(target, "SELECT data FROM audit WHERE event ="
                                    " 'config.rules_converted'"))  # fmt: skip
-    assert data["stripped"] == [r["id"] for r in doc["rules"] if r["id"] in rules.fixed_ids()]
+    assert data["stripped"] == [r["id"] for r in doc["rules"] if rules.is_fixed_id(r["id"])]
     assert data["defaults_stripped"] == [r["id"] for r in doc["rules"]
-                                         if r["id"] not in rules.fixed_ids()]  # fmt: skip
+                                         if not rules.is_fixed_id(r["id"])]  # fmt: skip
     assert data["default"] is True
 
 

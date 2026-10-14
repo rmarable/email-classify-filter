@@ -167,7 +167,7 @@ ecf config apply config.yaml     # validated, diff shown, step-up, announced in 
 **Rules** (from v3.0.0, SPEC §8.6, OD-500, OD-502): three layers, in order:
 
 1. ecf's fixed rules (fraud guard, regulatory, weak fraud, unverified payment sender, the junk
-   rule), always first;
+   rule `phishing`), always first;
 2. your rules with new ids, in your file's order;
 3. ecf's default rules (`bug_report`, `invoice`, `payment_confirmation_remittance`,
    `account_security`, `shipping`, `appointment_school_family`, `travel_finance`, `marketing`,
@@ -451,7 +451,13 @@ values read as `other` or `unknown`).
 **Rules files:** applied rules copied from the v2 starter rules lose their unchanged copies of the
 fixed rules once, at service start (audited); a changed copy stops that, shows as a System Error
 and in `ecf doctor`, and the starter rules apply until you remove it. A file that tests a removed
-value is refused with its replacement.
+value is refused with its replacement. The junk rule is now `phishing` (was `spam_or_phishing`,
+OD-508): a rule of yours with either id stops the conversion like a changed copy (System Error,
+default rules until you fix it), so give a rule of your own named `phishing` another id before
+upgrading. The check before the upgrade can't name it; `ecf upgrade` names it once the upgrade
+is done. Mail ecf labelled as phishing before v3.0.0, or planned before the upgrade and approved
+after it, keeps the keyword `$ecf_<install>_spam_or_phishing`; new mail gets
+`$ecf_<install>_phishing`. Undo works on both.
 
 **The go-live gate starts again** for preset C addresses (the schema is part of their key), and
 every address's stored pass is cleared (accuracy is now reviews with no Fix).

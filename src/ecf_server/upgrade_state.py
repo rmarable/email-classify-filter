@@ -7,7 +7,8 @@ file) and which addresses use each one (the gate's roles per preset), the instal
 refuses `--wheel`), and what makes an upgrade wait: executing items, held leases, and open `ecf
 claude` sessions (OD-379). From v3.0.0 (ADR 0031) there is no local model pin; the prompt digest
 is Claude's (`claude_review.prompt_digest`, P4), and `converted` names the addresses migration
-0038 converted from A or B to C and paused, with how many of their emails wait (P3).
+0038 converted from A or B to C and paused, with how many of their emails wait (P3), and
+`rules_customised` the applied rules' rules with a fixed id that stopped the v2 conversion (OD-508).
 """
 
 from __future__ import annotations
@@ -60,6 +61,9 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "upgrade": current(conn),
         # A and B addresses 0038 made C and paused: [{address_id, from, waiting}] (P3)
         "converted": stages.converted(conn),
+        # applied rules with a fixed id that stopped the v2 conversion: [{id, renamed_to,
+        # renamed_from}] (OD-508); the new CLI's after-upgrade notice names each
+        "rules_customised": config.rules_customised(conn),
     }  # fmt: skip
 
 

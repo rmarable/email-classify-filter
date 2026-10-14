@@ -15,13 +15,14 @@ Rules may only emit non-sending actions; sends and drafts come from actor propos
 
 **Three layers (v3.0.0 S3, OD-500; S4, OD-502; SPEC §8.6).** Every rule set in force is composed
 by `compose`: (1) ecf's fixed rules (`fixed_rules.yaml`: fraud_guard, regulatory, fraud_weak,
-unverified_payment_sender, spam_or_phishing), always first; (2) the applied rules file's rules
+unverified_payment_sender, phishing), always first; (2) the applied rules file's rules
 with new ids, in file order; (3) the default rules (`starter_rules.yaml`) in their own order,
 with each default the file replaces (a rule with the same id) taking that default's position
 (spliced, P4) and each id in the file's `default_rules_off` left out; then `otherwise` unless
 something before it matches everything. A file whose last rule has no `when` is a catch-all: the
 defaults can't run, so they aren't added (D2, the replace case). The file's layer compiles
-without an appended `otherwise` (P3). A rules file can't use a fixed rule's id, nor a condition
+without an appended `otherwise` (P3). A rules file can't use a fixed rule's id (nor its id
+before a rename, `LEGACY_FIXED_IDS`, OD-508), nor a condition
 on a v2 value schema v3 removed (`REMOVED_VALUES`, refused with its replacement; S3b), and may
 read the fixed items; `check_layers` refuses an off list ecf can't follow (apply), while at load
 an unknown off id is skipped with a warning (a later release may rename a default). Applied sets
@@ -394,6 +395,39 @@ def fixed_ids() -> tuple[str, ...]:
     return tuple(str(r["id"]) for r in cast(list[dict[str, Any]], raw["rules"]))
 
 
+# A fixed rule's id before a release renamed it -> its id now (v3.0.0 step 5, OD-508). Still
+# ecf's: a rules file can't use it as a rule id or turn it off, and `convert_v2` strips its v2
+# starter copy. It stays a label a rules file may write.
+LEGACY_FIXED_IDS: dict[str, str] = {"spam_or_phishing": "phishing"}
+
+
+def is_fixed_id(rid: object) -> bool:
+    """A fixed rule's id, now or before a rename (`LEGACY_FIXED_IDS`)."""
+    return rid in fixed_ids() or (isinstance(rid, str) and rid in LEGACY_FIXED_IDS)
+
+
+def renamed_from(rid: object) -> str | None:
+    """The old id of the fixed rule a release renamed to `rid`; None for any other id."""
+    return next((o for o, n in LEGACY_FIXED_IDS.items() if n == rid), None)
+
+
+def rename_note(rid: object) -> str:
+    """What a refusal adds, in brackets, for an id a fixed rule's rename touches: its old id, or
+    the new id a rule of your own may already have ('' for any other)."""
+    if isinstance(rid, str) and rid in LEGACY_FIXED_IDS:
+        return f"ecf renamed its fixed rule {rid} to {LEGACY_FIXED_IDS[rid]} in v3.0.0"
+    old = renamed_from(rid)
+    if old:
+        return (f"{old} was renamed {rid} in v3.0.0; if this rule is your own, give it another"
+                " id")  # fmt: skip
+    return ""
+
+
+def _noted(rid: object) -> str:
+    note = rename_note(rid)
+    return f" ({note})" if note else ""
+
+
 def compile_rules(text: str, schema: CompiledSchema, *, source: str = "rules") -> CompiledRules:
     """A rules file (applied, proposed or the default rules) on its own, checked; with
     `otherwise` (no actions, `actor: continue`) appended when its last rule has a `when`. Mail
@@ -437,9 +471,9 @@ def _check_user_rule(r: Rule, *, last: bool, source: str) -> None:
     one with no `when` and a default rule's id (review R3: the defaults after it would never
     run, while the dry run said they do), and can't test a value schema v3 removed (OD-500)."""
     where = f"{source}: rule {r.id}"
-    if r.id in fixed_ids():
+    if is_fixed_id(r.id):
         raise InvalidInputError(f"{where} is one of ecf's fixed rules, run first; remove it from"
-                                " your file")  # fmt: skip
+                                f" your file{_noted(r.id)}")  # fmt: skip
     if r.id == CATCH_ALL and not (last and r.when is None):
         raise InvalidInputError(f"{where}: the id {CATCH_ALL} is only for a last rule with no"
                                 " `when` (ecf adds one when your file has none)")  # fmt: skip
@@ -673,9 +707,10 @@ def check_layers(text: str, schema: CompiledSchema, *, source: str = "rules") ->
     if len(set(user.off)) != len(user.off):
         raise InvalidInputError(f"{where}: an id is listed twice")
     for rid in user.off:
-        if rid in fixed_ids():
+        if is_fixed_id(rid):
             raise InvalidInputError(f"{where}: {rid} is one of ecf's fixed rules, which always"
-                                    " run first and can't be turned off")  # fmt: skip
+                                    " run first and can't be turned off"
+                                    + _noted(rid))  # fmt: skip
         if rid == CATCH_ALL:
             raise InvalidInputError(f"{where}: {CATCH_ALL} is ecf's catch-all and can't be"
                                     " turned off; end your file with a rule with no `when`"
@@ -760,7 +795,7 @@ class Conversion:
 def _v2_fixed() -> dict[str, str]:
     raw = cast(dict[str, Any], load_yaml(_data(V2_STARTER_FILE), source=V2_STARTER_FILE))
     return {str(r["id"]): _canonical(r) for r in cast(list[dict[str, Any]], raw["rules"])
-            if r["id"] in fixed_ids()}  # fmt: skip
+            if is_fixed_id(r["id"])}  # fmt: skip
 
 
 def _canonical(value: Any) -> str:
@@ -772,7 +807,8 @@ def convert_v2(doc: Any) -> Conversion:
     id identical to the v2 starter text is stripped (the fixed rule, run first, does the same
     and more); the rest are kept in order. A rule with a fixed id that differs (customised) stops
     the conversion: the document is left as it is, and it doesn't compile (`compile_rules`
-    refuses fixed ids), so the starter rules apply and a System Error names it. A document of
+    refuses fixed ids), so the starter rules apply and a System Error names it. A fixed rule's id
+    before a rename (`LEGACY_FIXED_IDS`) counts as fixed. A document of
     only unchanged fixed rules leaves nothing: `to_default` (the default rules apply). Idempotent:
     a document with no fixed id needs nothing."""
     if not isinstance(doc, dict):
@@ -788,7 +824,7 @@ def convert_v2(doc: Any) -> Conversion:
     kept: list[Any] = []
     for r in listed:
         rid = cast(dict[str, Any], r).get("id") if isinstance(r, dict) else None
-        if rid not in fixed_ids():
+        if not is_fixed_id(rid):
             kept.append(r)
         elif v2.get(str(rid)) == _canonical(r):
             stripped.append(str(rid))

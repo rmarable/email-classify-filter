@@ -70,7 +70,8 @@ rules:
     actor: none
     hide: never
 
-  - id: spam_or_phishing                 # 5: before the default rules, so a phishing email
+  - id: phishing                         # 5: before the default rules, so a phishing email
     when: {field: phishing, eq: true}    # answered as another category is still junked; id
-                                         # and label kept in S3 (P16)
-    then: [{label: spam_or_phishing}, junk]
+                                         # and label `spam_or_phishing` until v3.0.0 step 5
+                                         # (OD-508; rules.LEGACY_FIXED_IDS)
+    then: [{label: phishing}, junk]

@@ -267,8 +267,25 @@ def _continue(p: Paths) -> None:
                    f" removed: now C and paused, {n} email{'s' if n != 1 else ''} waiting; resume"
                    " it only after the account's owner agrees to its mail going to Anthropic"
                    " (OD-427), or remove it")  # fmt: skip
+    customised: list[dict[str, Any]] = done.get("rules_customised") or []
+    for r in customised:  # OD-508: rules with a fixed id; the default rules apply meanwhile
+        typer.echo(_customised_line(r))
     typer.echo("the database copy is kept in case you go back: ecf upgrade --to"
                f" {done['from']}")  # fmt: skip
+
+
+def _customised_line(r: dict[str, Any]) -> str:
+    """A rule of your own whose id a fixed rule now has, or a changed copy of a fixed rule."""
+    rid, old, new = r.get("id"), r.get("renamed_from"), r.get("renamed_to")
+    if old:
+        what = (f"a rule named {rid}, which has the id of one of ecf's fixed rules ({old} was"
+                f" renamed {rid} in v3.0.0): give it another id")  # fmt: skip
+    elif new:
+        what = f"a changed copy of ecf's fixed rule {rid} (now {new}): remove it"
+    else:
+        what = f"a changed copy of ecf's fixed rule {rid}: remove it"
+    return (f"your rules file has {what} (ecf config apply); until then ecf uses its default"
+            " rules")  # fmt: skip
 
 
 def _drop(names: list[str]) -> str:

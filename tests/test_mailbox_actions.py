@@ -416,6 +416,36 @@ def test_gmail_junk_undo_moves_it_back_by_gmail_id(
     )
 
 
+def test_undo_removes_the_keyword_a_phishing_label_had_before_the_rename(
+    conn: sqlite3.Connection, clock: FakeClock, fake: FakeMailSource
+) -> None:
+    """v3.0.0 step 5 (OD-508): mail ecf labelled before fixed rule 5 was renamed keeps
+    `$ecf_<install>_spam_or_phishing`, which its `done` record names; Undo removes that one."""
+    _address(conn, clock)
+    sid = _mail_item(conn, clock, fake, 0, SPAM_CLS, KNOWN_BULK, fake.deliver)
+    decide.apply(conn, clock, sid)
+    approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")
+    _run(conn, clock, fake)
+    proposal = json.loads(item_row(conn, sid)["proposal"])
+    new = {"name": "label", "target": "phishing"}
+    assert new in proposal["done"]
+    # as written before the rename
+    proposal["done"] = [r | {"target": "spam_or_phishing"} if r == new else r
+                        for r in proposal["done"]]  # fmt: skip
+    with write_tx(conn):
+        conn.execute("UPDATE items SET proposal = ? WHERE stable_id = ?",
+                     (json.dumps(proposal), sid))  # fmt: skip
+    [junked] = fake.find_in("Junk", "<contract-0@synthetic.acme.example>")
+    flags = fake.elsewhere["Junk"][junked].flags
+    flags.discard(keyword(INSTALL, "phishing"))
+    flags.add(keyword(INSTALL, "spam_or_phishing"))
+    done = mailbox_actions.undo_item(conn, clock, fake, item_row(conn, sid), install=INSTALL,
+                                     lost=lambda: False)  # fmt: skip
+    assert "label spam_or_phishing" in done
+    [back] = fake.uids_after(0)
+    assert fake.flags([back])[back] == frozenset()
+
+
 def test_gmail_port_never_moves_out_of_or_deletes_in_all_mail_or_trash() -> None:
     """OD-438: a message there may be in no other folder."""
     src = GmailFakeSource()

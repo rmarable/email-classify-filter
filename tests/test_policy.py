@@ -503,7 +503,7 @@ def test_s3_phishing_can_be_junked_but_only_with_approval() -> None:
     ctx = _ctx(classification={"category": "account_security", "phishing": True},
                facts={"sender_origin": "external"})  # fmt: skip
     p = policy.plan(ctx, LABELS)
-    assert p.rule_id == "spam_or_phishing"  # before the default account_security rule
+    assert p.rule_id == "phishing"  # before the default account_security rule
     assert ("junk", None, "approve") in _names(p)
     assert "phishing" not in policy.hide_blockers(ctx, "junk")
     got = policy.proposal(ctx, p, "archive", None, LABELS)
