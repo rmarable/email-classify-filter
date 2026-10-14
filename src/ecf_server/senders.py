@@ -79,7 +79,8 @@ def show(conn: sqlite3.Connection, sender: str, address: str | None) -> dict[str
         _row(conn, a["address_id"], email))  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- step-up purposes
+# Step-up purposes: how each sender change is described in the approval dialog, with its
+# value checked first.
 
 
 def _bound(conn: sqlite3.Connection, name: str, target: dict[str, Any], what: str) -> stepup.Bound:
@@ -134,7 +135,8 @@ def _describe_verified(conn: sqlite3.Connection, target: dict[str, Any]) -> step
                   "mark as human-verified (no unverified-sender flag)")  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- changes
+# The changes themselves: confirming a sender's category, setting its reply-to address and
+# marking it verified.
 
 
 def _write(

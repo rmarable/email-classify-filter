@@ -652,7 +652,8 @@ def _pi(values: list[int], p: float) -> int:
     return int(cast(float, percentile(values, p)))
 
 
-# ---------------------------------------------------------------------------- field metrics
+# Per-field metrics for a result file: each labelled field's figures and, where a matrix stays
+# readable, its confusion matrix; then the same as the report lines `ecf eval` prints.
 
 REPORT_ONLY_BELOW = 20  # positives: fewer and an item's recall decides nothing (Phase R P8)
 CONFUSION_FIELDS = ("category",)  # matrices only where they stay readable (P15)

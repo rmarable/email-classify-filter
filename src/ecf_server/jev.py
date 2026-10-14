@@ -136,7 +136,7 @@ def load_pin() -> str:
     return model
 
 
-# ---------------------------------------------------------------------------- errors
+# Errors: the Jev outcomes that stop a run, and reading an error code from a reply's body.
 
 
 class JevError(Exception):
@@ -184,7 +184,8 @@ def error_code(body: Any) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------- the request
+# The request: the email fields Jev gets, how they become the `state` and its questions, and
+# the POST exactly as sent, with its size estimate.
 
 
 @dataclass(frozen=True)
@@ -361,7 +362,8 @@ def build_request(client: httpx.Client, body: Mapping[str, Any], key: str) -> ht
     return req
 
 
-# ---------------------------------------------------------------------------- the transport
+# The transport: the HTTPS client, one try with its deadline and the class of its reply, and
+# the minimal call that checks a key.
 
 
 def default_transport() -> httpx.BaseTransport:
@@ -494,7 +496,8 @@ def check_key(key: str, transport: httpx.BaseTransport | None = None, *,
     raise InvalidInputError(f"TypeSafe didn't accept it: {why}; nothing was stored")
 
 
-# ---------------------------------------------------------------------------- waits
+# Waits between tries: how long to pause after a 429 or a provider fault (Retry-After tiers and
+# jittered backoff), the run-wide waiting budget, concurrency (AIMD) and the circuit breaker.
 
 
 def retry_after(headers: httpx.Headers, now: datetime) -> float | None:
@@ -622,7 +625,8 @@ def fault_limit(n: int) -> int:
     return math.floor(FAULT_SHARE * n)
 
 
-# ---------------------------------------------------------------------------- the client
+# The client: one eval run's Jev calls with their retries, waits and breaker, each case's
+# result, and the run's figures for `summary.jev`.
 
 
 @dataclass
@@ -1028,7 +1032,7 @@ class Client:
                       concurrency=level, status=200, replied=True)  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- the key
+# The TypeSafe key: stored after a call shows it works, or removed; audited without the key.
 
 
 def _audit(conn: sqlite3.Connection, now: str, event: str, data: dict[str, Any]) -> None:
@@ -1055,7 +1059,8 @@ def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str
     return {"provider": "typesafe", "stored": True, "replaced": had}
 
 
-# ---------------------------------------------------------------------------- digests (§5.7)
+# Digests (§5.7): hashes of the field mapping, the state format and the questions, and the
+# gate fields; together they make the gate key and prompt digest a result records.
 
 
 def _sha(doc: Any) -> str:

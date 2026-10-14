@@ -247,7 +247,8 @@ def _remember(conn: sqlite3.Connection, clock: Clock, sid: str,
                      (json.dumps(doc, sort_keys=True), to_ts(clock.now()), sid))  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- Undo
+# Undo: which executed actions ecf may take back, and taking one back (deleting ecf's draft,
+# or moving the email back to INBOX once it is shown to be the same email).
 
 
 def undoable(item: sqlite3.Row) -> bool:
@@ -375,7 +376,7 @@ def _is_this_email(raw: bytes | None, item: sqlite3.Row) -> bool:
         "content_hash"]  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- in the check
+# Running an address's waiting action jobs inside its check, which holds the lease and mailbox.
 
 ACTIONS_PER_CHECK = 20
 

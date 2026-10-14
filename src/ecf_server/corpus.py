@@ -160,7 +160,7 @@ def _folder_words(folder: str) -> str:
     return "its default folder" if folder == "default" else f"folder {folder}"
 
 
-# ------------------------------------------------------------------------------------- progress
+# Progress of the one fetch that may run at a time, and stopping it.
 
 
 @dataclass
@@ -209,7 +209,8 @@ def stop() -> dict[str, Any]:
     return RUN.snapshot()
 
 
-# ------------------------------------------------------------------------------------- preflight
+# Preflight: the share of the provider's download budget a fetch may use, and the checks
+# before anything is fetched (log in, find the folder, look at the first window).
 
 
 def budget_share(
@@ -251,9 +252,6 @@ def preflight(
             "estimate_s": int(req.total * (req.sleep_s / req.chunk + 1))}  # fmt: skip
 
 
-# ------------------------------------------------------------------------------------- selection
-
-
 def _windows(reader: CorpusReader, req: Request) -> Iterator[list[LeanMeta]]:
     """Candidates in the order the run takes them, one batch at a time (R12, R62, R149, R160)."""
     f = reader.folder
@@ -281,7 +279,8 @@ def _windows(reader: CorpusReader, req: Request) -> Iterator[list[LeanMeta]]:
         yield sorted(meta.values(), key=lambda m: (m.internaldate, m.uid), reverse=newest)
 
 
-# ------------------------------------------------------------------------------------- the run
+# The run: fetching each selected message, analysing it as live mail, adding it to the
+# in-memory archive, then sealing the archive into the encrypted corpus file.
 
 
 @dataclass
@@ -675,7 +674,7 @@ def new_passphrase(own: str | None) -> str:
     return own
 
 
-# ------------------------------------------------------------------------------------- reading
+# Reading a corpus file: its clear header, and the whole file decrypted and checked.
 
 
 @dataclass(frozen=True)
@@ -745,7 +744,8 @@ def open_corpus(path: Path, secret: str) -> Corpus:
     return Corpus(json.loads(clear), first, rows, profile, tar_gz)
 
 
-# ------------------------------------------------------------------------------------- the routes
+# The service routes for `ecf corpus`: a fetch request from a route body, starting a fetch
+# behind step-up, and `ecf corpus info`.
 
 
 def from_body(
@@ -852,7 +852,7 @@ def info(path: str) -> dict[str, Any]:
     return {"header": read_header(p), "verified": False, "labels": count}
 
 
-# ------------------------------------------------------------------------------------- expected
+# What a run should do with a corpus message, from the operator's labels.
 
 
 FRAUD_LEVELS = ("medium", "high")

@@ -205,7 +205,8 @@ def summary(log: list[dict[str, Any]], since: int = 0) -> list[str]:
     return lines
 
 
-# ------------------------------------------------- a card review page's answers (S3b, OD-500)
+# A card review page's answers (S3b, OD-500): the card fields a page may set, and writing its
+# answers into the cards' labels, keeping the fixed-item labels a replaced value implied.
 
 # Card fields a page's answers can set (`ecf eval label --import-fixed`, beside the fixed items):
 # the two whose values schema v3 removed (P11), and `fraud_risk` (a new card's blind labels)

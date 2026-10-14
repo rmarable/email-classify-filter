@@ -214,7 +214,8 @@ class CorpusRun:
         return f"corpus:{self.corpus_id}:{self.labels_hash[:12]}"
 
 
-# ---------------------------------------------------------------------------- cases
+# Cases: loading the synthetic set (or a corpus) as cases with their expected labels, the
+# set's version, and the label map and injection targets used when scoring them.
 
 
 @dataclass(frozen=True)
@@ -388,7 +389,7 @@ def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
     return cls.get("category") == target or (item is not None and cls.get(item) is True)
 
 
-# ---------------------------------------------------------------------------- scoring
+# Scoring: each case's result against its expected labels, and the run's summary figures.
 
 
 def score(case: Case, classification: dict[str, Any] | None, plan: policy.Plan | None,
@@ -501,7 +502,8 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
         {} if faulted is None else {"faulted": faulted})  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- running
+# Running: starting and stopping a run and its thread, asking the backend, the determinism
+# and fraud figures, writing result files, and rescoring an older result.
 
 
 def _check_options(opts: Options) -> None:

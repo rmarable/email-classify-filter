@@ -89,7 +89,8 @@ def run_login(paths: Paths, echo: Callable[[str], None] = print) -> int:
     return 0 if after is not None and after.logged_in else (rc or 1)
 
 
-# ---------------------------------------------------------------------------- integrity
+# Install integrity: whether `ecf-mcp` and the plugin templates on disk are the files the
+# installed package recorded (by hash), so `ecf claude` doesn't run with altered or stale copies.
 
 
 def _sha256(path: Path) -> str:

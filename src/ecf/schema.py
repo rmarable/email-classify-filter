@@ -424,7 +424,9 @@ def load_schema_v2_0_0() -> CompiledSchema:
     return compile_schema(text, source=name)
 
 
-# ---------------------------------------------------------------------------- extensions (OD-478)
+# Extensions (OD-478): the fields and category values an install may add to the shipped schema.
+# The switch that keeps them off, their caps, the checks an extension must pass, and how one is
+# compiled into the effective schema.
 
 # The one switch (OD-481; kept by OD-502, S4 C1): on only once the user layer's measurement (M2,
 # SPEC §1.5a item 2b) passes; off, a `schema` section other than `default` is refused.

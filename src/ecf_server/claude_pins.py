@@ -149,7 +149,8 @@ def item_key(pinned_models: str | None) -> str | None:
     return str(k) if k is not None else None
 
 
-# ---------------------------------------------------------------------------- the override
+# The override: replacing a role's pinned model ID (or clearing it with `none`), behind
+# step-up, and `show`, which reports the pins in force.
 
 
 def _proposed(conn: sqlite3.Connection, value: str) -> dict[str, str]:

@@ -141,7 +141,8 @@ def ordered_json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
-# ---------------------------------------------------------------------------- current config
+# The current configuration: each section's stored value, the effective schema and rules
+# built from them, and the checks `ecf doctor` and each tick run on what is stored.
 
 
 def current(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -423,7 +424,8 @@ def convert_rules(conn: sqlite3.Connection, now: str, *, actor: str = "service")
     return out | ({"default": True} if c.to_default else {})
 
 
-# ---------------------------------------------------------------------------- parse and validate
+# Parsing and validating an `ecf config apply` document, section by section, with the dry
+# run's schema preview and notes.
 
 
 def parse(conn: sqlite3.Connection, text: str) -> dict[str, Any]:
@@ -812,7 +814,8 @@ def _ext_lines(ext: Any) -> list[str]:
     return [x for x in text.splitlines() if x.strip()]
 
 
-# ---------------------------------------------------------------------------- diff
+# The diff: one plain-words line per section that changes, and the summary the step-up
+# dialog shows, riskiest change first.
 
 
 def diff(before: dict[str, Any], doc: dict[str, Any]) -> list[dict[str, str]]:
@@ -953,7 +956,7 @@ def summary(changes: list[dict[str, str]], limit: int = 300) -> str:
     return "; ".join(shown)
 
 
-# ---------------------------------------------------------------------------- apply
+# Applying a document: the step-up dialog's description, then the write itself.
 
 
 @stepup.purpose("config_apply")
@@ -1085,7 +1088,8 @@ def apply(
     return Result(True, True, changes, sha, preview, said)
 
 
-# ---------------------------------------------------------------------------- activation (D11)
+# Activation (D11): tracking whether the stored schema extension is the one in use, and at
+# service start putting into use one this version hasn't used before.
 
 
 def _ext_sha(ext: Any) -> str:
