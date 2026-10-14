@@ -13,7 +13,9 @@ digest it matches its source run on from here (`source_inputs`).
 - **Stops (§5.4):** `evalrun.FATAL` (auth, pin, quota, long wait) fails the run with no result; a
   spent waiting budget or `ecf eval stop` keeps the cases scored so far.
 - **Determinism (§6):** a repeat agrees when its classification is the same and every probability
-  is within `evalrun.PROB_TOLERANCE`; each pass's concurrency is recorded (P23).
+  is within `evalrun.PROB_TOLERANCE`; each pass's concurrency is recorded (P23). A pair where
+  either pass faulted is left out and counted (`faulted_pairs`, J3); each repeat is a new request
+  with a fresh delimiter token.
 """
 
 from __future__ import annotations
@@ -45,7 +47,8 @@ from ecf_server.evalrun import (
 COST_PER_M_INPUT = 0.042
 COST_BASIS = ("$0.042 per million input tokens (/models, read 2026-10-14) over"
               " input_tokens_billed: every 200's usage, repeats and probes included; replies"
-              " other than 200 aren't counted (their billing is unknown)")  # fmt: skip
+              " other than 200 aren't counted (their billing is unknown), nor 200s without usage"
+              " (usage_missing)")  # fmt: skip
 
 
 def case_email(case: Case, text: str) -> jev.Email:
@@ -61,7 +64,7 @@ def case_email(case: Case, text: str) -> jev.Email:
 
 @dataclass(frozen=True)
 class Setup:
-    """What a Jev run needs from the route (P12): the key's reader, re-read before each case and
+    """What a Jev run needs from the route (P12): the key's reader, re-read before each try and
     at each probe; TypeSafe's transport (None: the real one; a fake in tests); the wait (None: the
     run's stop event, so `ecf eval stop` ends a pause; a fake clock's in tests); the run's
     waiting budget (a placeholder, set in step 3)."""
@@ -96,8 +99,11 @@ class JevAsker:
                                  budget_s=setup.budget_s,
                                  concurrency=opts.jev_concurrency)  # fmt: skip
         self.pin = self.client.pin
-        self.first = True  # until a request gets a reply: a 404/422 then stops the run (§5.3)
-        self.end_to_end_ms: list[float] = []
+        # until a request gets a reply classed ok or request error (not a provider fault): a 404
+        # or 422 then stops the run (§5.3, J11)
+        self.first = True
+        self.end_to_end_ms: list[float] = []  # cases answered
+        self.end_to_end_faulted_ms: list[float] = []  # faulted cases, apart (J13)
 
     @staticmethod
     def _paused(line: str) -> None:
@@ -121,12 +127,14 @@ class JevAsker:
 
     def ask(self, schema: CompiledSchema, case: Case, text: str,
             sent: tuple[str, ...]) -> Asked:  # fmt: skip
+        email = case_email(case, text)  # the `.eml` parse is not Jev's time (J13)
         t0 = time.monotonic()
-        res = self.client.classify(schema, case_email(case, text), sent, first=self.first,
+        res = self.client.classify(schema, email, sent, first=self.first,
                                    redact=self.opts.redact, fmt=self.fmt,
                                    preamble=self.preamble)  # fmt: skip
-        self.end_to_end_ms.append(1000 * (time.monotonic() - t0))
-        self.first = self.first and res.tries == 0
+        took = 1000 * (time.monotonic() - t0)
+        (self.end_to_end_ms if res.fault is None else self.end_to_end_faulted_ms).append(took)
+        self.first = self.first and not res.replied
         recorded: dict[str, Any] = {
             "probabilities": res.probabilities or None, "classifier_ms": res.classifier_ms,
             "fault": res.fault, "status": res.status if res.fault is not None else None,
@@ -141,23 +149,34 @@ class JevAsker:
                 firsts: dict[str, Asked], scratch: ruletest.Scratch,
                 redact: Callable[[str], str], opts: Options,
                 ) -> tuple[int, dict[str, Any]]:  # fmt: skip
-        """The determinism repeats (§16.5): the sampled cases asked again; how many differ, and
-        the flips per field (`probs` when only a probability moved) with each pass's concurrency
-        (P23)."""
+        """The determinism repeats (§16.5): the sampled cases asked again, each a new request with
+        a fresh delimiter token; how many differ, and the flips per field (`probs` when only a
+        probability moved) with each pass's concurrency (P23). A pair where either pass faulted
+        isn't compared (a fault isn't an answer): it is listed in `faulted_pairs`, and a case
+        whose first pass faulted isn't asked again (J3)."""
         diffs = 0
         flipped: dict[str, int] = {}
         conc: dict[str, list[int | None]] = {}
+        faulted: list[str] = []
         for case in (c for c in cases if c.id in repeat and c.id in firsts):
+            first = firsts[case.id]
+            if first.fault is not None:
+                faulted.append(case.id)
+                continue
             facts, (text, _act) = case_inputs(case, scratch, redact)
             again = self.ask(schema, case, text, opts.sent(facts))
-            first = firsts[case.id]
+            conc[case.id] = [first.concurrency, again.concurrency]
+            if again.fault is not None:
+                faulted.append(case.id)
+                continue
             if not same_answer(first, again):
                 diffs += 1
                 for f in field_flips(first.classification, again.classification) or ["probs"]:
                     flipped[f] = flipped.get(f, 0) + 1
-            conc[case.id] = [first.concurrency, again.concurrency]
-        return diffs, {"cases": sorted(conc), "field_flips": flipped,
-                       "prob_tolerance": PROB_TOLERANCE, "concurrency": conc}  # fmt: skip
+        compared = sorted(c for c in conc if c not in faulted)
+        return diffs, {"cases": compared, "faulted_pairs": sorted(faulted),
+                       "field_flips": flipped, "prob_tolerance": PROB_TOLERANCE,
+                       "concurrency": conc, "tokens": "fresh per repeat"}  # fmt: skip
 
     def inputs(self, schema: CompiledSchema, rules_now: rules.CompiledRules) -> dict[str, Any]:
         """What the run asked with (P13): top-level, so `ecf eval compare` prints differences."""
@@ -173,8 +192,9 @@ class JevAsker:
 
     def figures(self, schema: CompiledSchema, faulted: dict[str, str],
                 determinism: dict[str, Any] | None) -> dict[str, Any]:  # fmt: skip
-        """`summary.jev` (§5.5): the client's figures, the end-to-end time per case, the faulted
-        cases by type, the repeats' concurrency and the cost from `input_tokens_billed`."""
+        """`summary.jev` (§5.5): the client's figures, the end-to-end time per case (answered and
+        faulted apart, J13), the faulted cases by type, the repeats' concurrency and the cost from
+        `input_tokens_billed` (200s without `usage` counted in `usage_missing`, J6)."""
         billed = self.client.stats.input_tokens_billed
         by_type: dict[str, int] = {}
         for f in faulted.values():
@@ -185,6 +205,7 @@ class JevAsker:
                         "concurrency": self.opts.jev_concurrency},
             "schema_digest": schema.digest,
             "end_to_end_ms": spread(self.end_to_end_ms),
+            "end_to_end_faulted_ms": spread(self.end_to_end_faulted_ms),
             "faulted_cases": by_type,
             "determinism_concurrency": (determinism or {}).get("concurrency"),
             "cost": {"usd": round(billed * COST_PER_M_INPUT / 1e6, 6), "basis": COST_BASIS},

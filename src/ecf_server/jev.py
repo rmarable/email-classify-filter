@@ -92,6 +92,9 @@ STATE_LIMIT = 30_000  # estimated tokens of state + the longest question (TypeSa
 TOTAL_LIMIT = 62_000  # estimated tokens of the whole request (TypeSafe: 64k)
 NEAR = 0.9  # a 429 on a request past this share of a limit is a request error (perf 2e)
 FAULT_SHARE = 0.02  # early stop past floor(0.02 n) faulted cases (P22)
+# proactive pacing's token estimate when a reply has no `usage` (J5): UTF-8 bytes per token, a
+# placeholder until the live check (L8) measures it
+PACE_BYTES_PER_TOKEN = 4.0
 
 # ---- header lines (P10) ----
 NAME_CHARS = 300  # display name, and each attachment's name
@@ -454,17 +457,32 @@ def send(  # noqa: PLR0911 - one return per outcome
     return Reply(cls, r.status_code, None, r.headers, ms(), code=error_code(parsed))
 
 
+def other_version_error() -> JevError:
+    return JevError("pin", "TypeSafe answered with a different Jev version than the pin; the run"
+                    " stopped")  # fmt: skip
+
+
 def check_key(key: str, transport: httpx.BaseTransport | None = None, *,
               clock: Clock | None = None,
               timeout_s: float = KEY_CHECK_TIMEOUT_S) -> None:  # fmt: skip
     """The key's validation (P7, P12): one minimal POST with no email content, the probe's call,
-    within `timeout_s`. Raises InvalidInputError when TypeSafe doesn't accept it."""
+    within `timeout_s`. Raises InvalidInputError when TypeSafe doesn't accept it, when a 404 or
+    422 says the pinned version may not be served, or when the reply names another version
+    (J12)."""
     ck = clock or SystemClock()
+    pin = load_pin()
     with http_client(transport, read_s=timeout_s) as client:
-        body = {"model": load_pin(), "questions": KEY_CHECK_QUESTIONS, "state": KEY_CHECK_STATE}
+        body = {"model": pin, "questions": KEY_CHECK_QUESTIONS, "state": KEY_CHECK_STATE}
         reply = send(client, build_request(client, body, key), ck, timeout_s)
     if reply.cls == "ok":
+        if reply.body is not None and reply.body.get("model") != pin:
+            raise InvalidInputError(f"TypeSafe answered with a different Jev version than the pin"
+                                    f" ({pin}); nothing was stored")  # fmt: skip
         return
+    if reply.status in (404, 422):
+        raise InvalidInputError(f"TypeSafe refused the check call (HTTP {reply.status}): the"
+                                f" pinned Jev version ({pin}) may not be served; nothing was"
+                                " stored")  # fmt: skip
     if reply.timed_out:
         why = f"no answer in {timeout_s:.0f} s"
     elif reply.status is None:
@@ -583,8 +601,9 @@ class Breaker:
         self.state, self.successes = "half_open", 0
 
     def on_probe_fault(self) -> None:
+        """A probe that faulted re-opens the breaker: a trip, as `on_fault`'s are (J13)."""
         self.level += 1
-        self.state = "open"
+        self.state, self.trips = "open", self.trips + 1
 
     def on_success(self) -> bool:
         """A good try; True when this closes a half-open breaker."""
@@ -620,14 +639,19 @@ class Result:
     wait_ms: int = 0
     queue_ms: int = 0  # waiting for a concurrency slot: 0 at concurrency 1
     tries: int = 0
-    concurrency: int = 1
+    concurrency: int = 1  # the level the case's last try was sent at, before AIMD moved (J7)
     fault: str | None = None
     status: int | None = None
+    # a try got a reply classed ok or request error (not a provider fault or a 429): the eval's
+    # first-case pin check stays armed until one does (J11)
+    replied: bool = False
 
 
 @dataclass
 class Stats:
-    """What `summary.jev` reports for a run (§5.5)."""
+    """What `summary.jev` reports for a run (§5.5). `pauses` counts `Retry-After` tiers (`short`,
+    `medium`) and proactive pacing (`pacing`, J5); `breaker_trips` every opening, a probe's
+    re-open included (J13); `wait_s` each sleep's planned length, an interrupted one too (J13)."""
 
     latency_ms: dict[int, list[int]] = field(default_factory=dict[int, list[int]])
     retries: Counter[str] = field(default_factory=Counter[str])
@@ -636,6 +660,7 @@ class Stats:
     breaker_trips: int = 0
     wait_s: float = 0.0
     input_tokens_billed: int = 0  # every 200's `usage`, repeats and probes included (P21)
+    usage_missing: int = 0  # 200s without `usage.input_tokens`: not in the bill (J6)
     faulted: Counter[str] = field(default_factory=Counter[str])
 
     def summary(self) -> dict[str, Any]:
@@ -645,7 +670,7 @@ class Stats:
                 "rate_limits": self.rate_limits, "pauses": dict(self.pauses),
                 "breaker_trips": self.breaker_trips, "wait_s": round(self.wait_s, 3),
                 "input_tokens_billed": self.input_tokens_billed,
-                "faulted": dict(self.faulted)}  # fmt: skip
+                "usage_missing": self.usage_missing, "faulted": dict(self.faulted)}  # fmt: skip
 
 
 def _pct(v: list[int], p: int) -> int:
@@ -683,7 +708,7 @@ def _no_pause(_line: str) -> None:
 
 class Client:
     """Jev calls for one eval run: one httpx client, the run's breaker, AIMD and waiting
-    budget. The key is re-read before each case and at each probe (P12); every wait is
+    budget. The key is re-read before each try (J10) and at each probe (P12); every wait is
     `wait(seconds)`, by default the run's stop event, so `ecf eval stop` ends it (P18)."""
 
     def __init__(  # noqa: PLR0913 - the run's settings, all keyword-only
@@ -712,6 +737,9 @@ class Client:
         self.breaker = Breaker()
         self.stats = Stats()
         self._pace_until: float | None = None
+        # a `Retry-After` on the 429 that opened the breaker or failed its probe: the next
+        # cool-down lasts at least that long, by its tiers (J2, J13)
+        self._hold_s: float | None = None
 
     def close(self) -> None:
         self.http.close()
@@ -735,16 +763,23 @@ class Client:
         if self._wait(seconds) or self.stop.is_set():
             raise JevError("stopped", "the run was stopped")
 
+    def _budget_spent(self, what: str) -> JevError:
+        return JevError("budget", f"the run's waiting budget ({self.budget.total_s / 60:.0f}"
+                        f" min) is spent ({what})")  # fmt: skip
+
     def _spend(self, seconds: float, what: str) -> None:
         if seconds > self.budget.remaining_s:
-            raise JevError("budget", f"the run's waiting budget ({self.budget.total_s / 60:.0f}"
-                           f" min) is spent ({what})")  # fmt: skip
+            raise self._budget_spent(what)
         self.budget.spend(seconds)
 
     def _retry_after_wait(self, seconds: float) -> float:
         """The `Retry-After` tiers (P7): short paused through with jitter, medium paused and
-        announced, long (past the remaining budget) stops the run."""
+        announced. A wait past the remaining budget stops the run: as `long_wait` (no result)
+        only when it is past SHORT_WAIT_S or the whole budget, otherwise as `budget`, which
+        keeps the cases scored so far (J1)."""
         if seconds > self.budget.remaining_s:
+            if seconds <= SHORT_WAIT_S and seconds <= self.budget.total_s:
+                raise self._budget_spent("Retry-After")
             resume = (self.clock.now() + timedelta(seconds=seconds)).astimezone()
             raise JevError("long_wait", f"TypeSafe asked to wait {math.ceil(seconds / 60)} min;"
                            " probably a quota or billing limit; re-run after"
@@ -773,10 +808,14 @@ class Client:
         if wait <= 0:
             return 0.0
         self._spend(wait, "pacing")
+        self.stats.pauses["pacing"] += 1
         self._sleep(wait)
         return wait
 
     def _note_limits(self, headers: httpx.Headers, need: int) -> None:
+        """Pace the next call when a limit is spent. The headers' names and the reset's format
+        are unverified until the live check, so a reset past SHORT_WAIT_S (perhaps an epoch or
+        milliseconds) is ignored (J5); `need` is a token estimate."""
         for kind, enough in (("requests", 1), ("tokens", need)):
             left, reset = (headers.get(f"x-ratelimit-remaining-{kind}"),
                            headers.get(f"x-ratelimit-reset-{kind}"))  # fmt: skip
@@ -786,7 +825,7 @@ class Client:
                 n, r = float(left), float(reset)
             except ValueError:
                 continue
-            if math.isfinite(r) and r > 0 and n < enough:
+            if math.isfinite(r) and 0 < r <= SHORT_WAIT_S and n < enough:
                 until = self.clock.monotonic() + r
                 self._pace_until = max(self._pace_until or until, until)
 
@@ -798,7 +837,11 @@ class Client:
         waited = 0.0
         while self.breaker.state == "open":
             cool = self.breaker.cool_down_s()
-            self._spend(cool, "the breaker's cool-down")
+            hold, self._hold_s = self._hold_s, None
+            if hold is not None and hold > cool:  # TypeSafe asked for longer: its tiers apply
+                cool = self._retry_after_wait(hold)
+            else:
+                self._spend(cool, "the breaker's cool-down")
             self._sleep(cool)
             waited += cool
             self.probe()
@@ -811,37 +854,57 @@ class Client:
 
     def probe(self) -> bool:
         """The minimal POST (no email content), after a cool-down: success half-opens the
-        breaker; a fault re-opens it with the next cool-down; a refused key stops the run."""
+        breaker; a fault re-opens it with the next cool-down (at least a 429's `Retry-After`,
+        J13); a refused key or another version stops the run (J12)."""
         self._stopped()
         key = self._key()
         if not key:
             raise auth_error(None)
         body = {"model": self.pin, "questions": KEY_CHECK_QUESTIONS, "state": KEY_CHECK_STATE}
+        level = self.aimd.limit
         reply = send(self.http, build_request(self.http, body, key), self.clock, self.timeout_s)
+        self._log(reply, try_n=0, wait_s=0.0, n_questions=1, level=level)
+        if reply.cls == "ok" and reply.body is not None:
+            self._bill(reply.body)  # billed even when a stop discards it (J6)
         self._stopped()
-        self._log(reply, try_n=0, wait_s=0.0, n_questions=1)
         if reply.cls == "auth":
             raise auth_error(reply.status)
         if reply.cls == "ok" and reply.body is not None:
-            self.stats.input_tokens_billed += _usage(reply.body)[0] or 0
+            if reply.body.get("model") != self.pin:
+                raise other_version_error()
             self.breaker.on_probe_ok()
             self.aimd.limit = 1
             self._emit("jev.breaker_half_open")
             return True
         if reply.timed_out:
             self.budget.spend(reply.http_ms / 1000)
+        if reply.cls == "rate_limit":
+            self.stats.rate_limits += 1
+            self._hold_s = retry_after(reply.headers, self.clock.now())
         self.breaker.on_probe_fault()
         self._opened()
         return False
 
     # ---- one case
 
-    def _log(self, reply: Reply, *, try_n: int, wait_s: float, n_questions: int) -> None:
+    def _bill(self, body: Mapping[str, Any]) -> tuple[int | None, int | None]:
+        """A 200's `usage` into the bill; one without input tokens is counted apart (J6)."""
+        n_in, n_out = _usage(body)
+        if n_in is None:
+            self.stats.usage_missing += 1
+        else:
+            self.stats.input_tokens_billed += n_in
+        return n_in, n_out
+
+    def _log(self, reply: Reply, *, try_n: int, wait_s: float, n_questions: int,
+             level: int) -> None:  # fmt: skip
+        """One `jev.call` line. The token counts are `usage_in`/`usage_out`: the log scrubber
+        blanks any key containing "token" (J13)."""
         n_in, n_out = _usage(reply.body) if reply.body is not None else (None, None)
         fields: dict[str, Any] = {
             "class": "timeout" if reply.timed_out else reply.cls,
             "status": reply.status, "http_ms": reply.http_ms, "wait_ms": int(wait_s * 1000),
-            "concurrency": self.aimd.limit, "usage_in": n_in, "usage_out": n_out, "try": try_n,
+            "concurrency": level, "usage_in": n_in, "usage_out": n_out, "try": try_n,
             "n_questions": n_questions,
             "request_id": reply.headers.get("x-typesafe-request-id"),  # service log only (D7)
         }  # fmt: skip
@@ -853,11 +916,8 @@ class Client:
                  first: bool = False, redact: bool = True, fmt: StateFormat = "s1",
                  preamble: Preamble = "state") -> Result:  # fmt: skip
         """One case. Raises JevError for a stop; returns a Result otherwise (a failure carries
-        its `fault`)."""
+        its `fault`). The key is re-read before each try and the request rebuilt with it (J10)."""
         self._stopped()
-        key = self._key()
-        if not key:
-            raise auth_error(None)
         token = secrets.token_hex(8)
         body = request_body(schema, email, sent, pin=self.pin, token=token, redact=redact,
                             fmt=fmt, preamble=preamble)  # fmt: skip
@@ -865,20 +925,27 @@ class Client:
         if est.over:
             self.stats.faulted["request_error"] += 1
             return Result(None, fault="request_error", concurrency=self.aimd.limit)
-        req = build_request(self.http, body, key)
         n_q = len(body["questions"])
-        tries, waited = 0, 0.0
+        tries, waited, replied = 0, 0.0, False
         counts: Counter[str] = Counter()
         while True:
             self._stopped()
             before = self._breaker_gate() + self._pace()
             waited += before
+            key = self._key()
+            if not key:
+                raise auth_error(None)
+            req = build_request(self.http, body, key)
+            level = self.aimd.limit  # before AIMD moves on this reply (J7)
             tries += 1
             reply = send(self.http, req, self.clock, self.timeout_s)
-            self._stopped()  # an in-flight result after stop is discarded (P18)
-            self._log(reply, try_n=tries, wait_s=before, n_questions=n_q)
-            if reply.cls == "ok" and reply.body is not None:
-                return self._answer(reply, schema, tries, waited, est)
+            self._log(reply, try_n=tries, wait_s=before, n_questions=n_q, level=level)
+            ok = reply.cls == "ok" and reply.body is not None
+            usage = self._bill(cast("dict[str, Any]", reply.body)) if ok else (None, None)
+            self._stopped()  # an in-flight result after stop is discarded, billed (P18, J6)
+            replied = replied or ok or reply.cls == "request"
+            if ok:
+                return self._answer(reply, schema, tries, waited, est, level, usage)
             if reply.cls == "auth":
                 raise auth_error(reply.status)
             if reply.cls == "request" and first and reply.status in (404, 422):
@@ -894,9 +961,8 @@ class Client:
             if pause is None:  # the case fails: scored as a failure (P1)
                 fault = "provider" if reply.cls == "provider" else "request_error"
                 self.stats.faulted[fault] += 1
-                return Result(None, wait_ms=int(waited * 1000), tries=tries,
-                              concurrency=self.aimd.limit, fault=fault,
-                              status=reply.status)  # fmt: skip
+                return Result(None, wait_ms=int(waited * 1000), tries=tries, concurrency=level,
+                              fault=fault, status=reply.status, replied=replied)  # fmt: skip
             self._sleep(pause)
             waited += pause
 
@@ -911,9 +977,12 @@ class Client:
             return None
         self.aimd.on_rate_limit()
         self.stats.retries["rate_limit"] += 1
-        if self.breaker.on_fault():
-            self._opened()
         ra = retry_after(reply.headers, self.clock.now())
+        if self.breaker.on_fault():  # the cool-down, at least `ra`, replaces this pause (J2)
+            self._opened()
+            self._hold_s = ra
+            counts["rate_limit"] += 1
+            return 0.0
         if ra is not None:
             pause = self._retry_after_wait(ra)
         else:
@@ -926,32 +995,37 @@ class Client:
         """A provider fault: the backoff before the next try, or None once the case's tries are
         spent."""
         counts["provider"] += 1
-        if self.breaker.on_fault():
+        opened = self.breaker.on_fault()
+        if opened:
             self._opened()
         if counts["provider"] >= TRIES:
             return None
         self.stats.retries["provider"] += 1
+        if opened:  # the breaker's cool-down replaces this try's backoff (J2)
+            return 0.0
         pause = backoff(counts["provider"] - 1, FAULT_CAP_S, self.rng)
         self._spend(pause, "backoff")
         return pause
 
     def _answer(self, reply: Reply, schema: CompiledSchema, tries: int, waited: float,
-                est: Estimate) -> Result:  # fmt: skip
+                est: Estimate, level: int,
+                usage: tuple[int | None, int | None]) -> Result:  # fmt: skip
+        """A 200 (already billed): its answer, with its latency and concurrency at `level`, the
+        level it was sent at (J7)."""
         body = cast("dict[str, Any]", reply.body)
         if body.get("model") != self.pin:
-            raise JevError("pin", "TypeSafe answered with a different Jev version than the pin;"
-                           " the run stopped")  # fmt: skip
+            raise other_version_error()
         if self.breaker.on_success():
             self._emit("jev.breaker_closed")
         self.aimd.on_success()
-        self._note_limits(reply.headers, est.total)
-        n_in, n_out = _usage(body)
-        self.stats.input_tokens_billed += n_in or 0
-        self.stats.latency_ms.setdefault(self.aimd.limit, []).append(reply.http_ms)
+        n_in, n_out = usage
+        need = n_in if n_in is not None else math.ceil(est.total / PACE_BYTES_PER_TOKEN)
+        self._note_limits(reply.headers, need)
+        self.stats.latency_ms.setdefault(level, []).append(reply.http_ms)
         ans = systemone.map_answers(body, schema)
         return Result(ans.classification, ans.probabilities, _confidence(body), n_in, n_out,
                       classifier_ms=reply.http_ms, wait_ms=int(waited * 1000), tries=tries,
-                      concurrency=self.aimd.limit, status=200)  # fmt: skip
+                      concurrency=level, status=200, replied=True)  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- the key

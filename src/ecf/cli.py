@@ -1276,6 +1276,7 @@ def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
             "copy_to": str(copy) if copy else None})  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
+           else PRESET_D_ONLY if r["preset"] == "D"
            else "other models: for comparison only")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
                f" {r['preset']}, {r['sensitivity']}; {use} ({models}).")  # fmt: skip
@@ -1564,8 +1565,7 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                     if cl["state"] == "preparing" else "")  # fmt: skip
         out += [f"Claude eval {cl['run_id'][:8]}: {cl['state']}, {cl['done']}/{cl['total']}"
                 f" cases scored{prepared}" + (f" ({cl['detail']})" if cl["detail"] else ""),
-                f"  preset {cl['preset']}, {cl['sensitivity']},"
-                f" {'pinned models' if cl['pinned'] else 'comparison'}"]  # fmt: skip
+                f"  preset {cl['preset']}, {cl['sensitivity']}, {_pin_kind(cl)}"]  # fmt: skip
     if cur["state"] != "idle":
         out.append(f"Eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
@@ -1605,18 +1605,35 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
 }
 
 
+# a preset D run can't pass the gate until step 4 adds D to the pins (J8)
+PRESET_D_ONLY = "comparison only (preset D, until step 4)"
+
+
+def _pin_kind(f: dict[str, Any]) -> str:
+    """A Claude eval's models: the pins, or comparison only (J8)."""
+    if f.get("pinned"):
+        return "pinned models"
+    return PRESET_D_ONLY if f.get("preset") == "D" else "comparison"
+
+
 BACKEND_CAVEAT = {
     "null": "null backend: the rules alone, never for the gate",  # §7.8; R-D6
     "jev": "jev backend: not for the gate until step 4",  # gate-eligible from v3.0.0 step 4
 }
 
 
-def _run_caveat(m: dict[str, Any]) -> str:
+def _run_caveat(m: dict[str, Any]) -> str:  # noqa: PLR0911 - one return per caveat
     """Why a run can't pass the go-live gate whatever its score (§9.3)."""
     opts: dict[str, Any] = m.get("options") or {}
     if m.get("complete") is False:
         why = INCOMPLETE.get(str(m.get("incomplete_reason")), INCOMPLETE["stopped"])
         return f" ({why.format(n=m.get('cases'))})"
+    claude = m.get("claude")
+    if isinstance(claude, dict) and not m.get("gate_passed"):
+        cl = cast(dict[str, Any], claude)
+        if cl.get("pinned") is False:  # never gate-eligible (J8)
+            return (f", {PRESET_D_ONLY}" if cl.get("preset") == "D"
+                    else ", comparison only (not the pinned models)")  # fmt: skip
     # an eval-only switch off, or a Jev measurement option away from its default (§6)
     switched: list[Any] = opts.get("switches_off") or []
     measuring: list[Any] = opts.get("measuring") or []
@@ -1764,9 +1781,15 @@ def _jev_figures(summary: dict[str, object] | None) -> list[str]:
     e2e = f.get("end_to_end_ms")
     if isinstance(e2e, dict):
         out.append(f"  end to end per case: {_three(cast(dict[str, Any], e2e))} ms")
+    e2e_f = f.get("end_to_end_faulted_ms")
+    if isinstance(e2e_f, dict) and cast(dict[str, Any], e2e_f).get("max") is not None:
+        out.append(f"  end to end per faulted case: {_three(cast(dict[str, Any], e2e_f))} ms")
     cost = cast(dict[str, Any], f.get("cost") or {})
+    missing = f.get("usage_missing")
+    unbilled = f"; {missing} replies without usage, not counted" if missing else ""
     out.append(f"  input tokens billed {f.get('input_tokens_billed')}, about"
-               f" ${cost.get('usd', 0):.4f} ({cost.get('basis', 'basis unknown')})")  # fmt: skip
+               f" ${cost.get('usd', 0):.4f}{unbilled}"
+               f" ({cost.get('basis', 'basis unknown')})")  # fmt: skip
 
     def counts(key: str) -> str:
         d = cast(dict[str, Any], f.get(key) or {})
@@ -1913,7 +1936,8 @@ def _claude_figures(run: ResultFile, cases: int) -> list[str]:
     m = f.get("models")
     models = (", ".join(f"{k} {v}" for k, v in cast(dict[str, Any], m).items())
               if isinstance(m, dict) else "models unknown")  # fmt: skip
-    kind = "pinned" if f.get("pinned") else "comparison"
+    kind = ("pinned" if f.get("pinned") else
+            PRESET_D_ONLY if f.get("preset") == "D" else "comparison")  # fmt: skip
     batch = f.get("batch", "unknown")
     out = [f"Claude: preset {f.get('preset', '?')}, {f.get('sensitivity', '?')}, {kind}"
            f" ({models}), batch {batch}" + (f", classifications from run"

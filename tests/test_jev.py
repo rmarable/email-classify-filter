@@ -631,6 +631,9 @@ def test_an_in_flight_result_after_stop_is_discarded() -> None:
     with pytest.raises(jev.JevError) as err:
         classify(r)
     assert err.value.cls == "stopped"
+    # TypeSafe billed it: in the bill and the log before it is discarded (J6)
+    assert r.client.stats.input_tokens_billed == 2400
+    assert [kw["usage_in"] for e, kw in r.logs if e == "jev.call"] == [2400]
 
 
 # ---- leaks -------------------------------------------------------------------------------------
@@ -658,6 +661,147 @@ def test_new_content_keys_are_scrubbed() -> None:
     raw = {k: "x" for k in ("questions", "answers", "instructions", "criteria", "probabilities",
                             "legend", "choice")}  # fmt: skip
     assert set(no_content(None, "info", dict(raw)).values()) == {"[redacted]"}
+
+
+# ---- diff-review fixes (J1-J13) ----------------------------------------------------------------
+
+
+def test_a_short_retry_after_past_the_remaining_budget_keeps_the_partial_result() -> None:
+    """J1: a wait within SHORT_WAIT_S and the whole budget that doesn't fit what is left stops
+    the run as `budget` (its cases kept), not `long_wait` (no result); past SHORT_WAIT_S it is
+    still `long_wait`."""
+    r = rig(status(429, {"retry-after": "30"}))
+    r.client.budget.spend(jev.WAIT_BUDGET_S - 20)  # 20 s left
+    with pytest.raises(jev.JevError) as err:
+        classify(r)
+    assert err.value.cls == "budget" and "waiting budget" in str(err.value) and r.waits == []
+    r = rig(status(429, {"retry-after": str(int(jev.SHORT_WAIT_S) + 1)}))
+    r.client.budget.spend(jev.WAIT_BUDGET_S - 20)
+    with pytest.raises(jev.JevError) as err:
+        classify(r)
+    assert err.value.cls == "long_wait"
+
+
+def test_a_fault_that_opens_the_breaker_waits_only_the_cool_down() -> None:
+    """J2: no backoff before the cool-down; the retry is still counted."""
+    r = rig(*[status(500)] * 5, ok(), ok())
+    classify(r)  # 4 faulted tries: 3 backoffs
+    assert len(r.waits) == 3
+    res = classify(r)  # its first try opens the breaker
+    assert res.classification is not None and res.tries == 2
+    assert r.waits[3:] == [jev.COOL_DOWN_S]
+    assert r.client.stats.retries == {"provider": 4}
+    assert r.client.budget.spent_s == pytest.approx(sum(r.waits))
+
+
+def test_a_429_that_opens_the_breaker_holds_for_its_retry_after() -> None:
+    """J2, J13: the cool-down is at least the `Retry-After` of the 429 that opened it, waited
+    once, by its tier."""
+    r = rig(*[status(429, {"retry-after": "120"})] * 5, ok(), ok(), budget_s=10_000)
+    res = classify(r)
+    assert res.classification is not None and res.tries == 6
+    assert r.waits == [120.0] * 5 and r.client.stats.breaker_trips == 1
+    assert r.client.stats.pauses == {"medium": 5}
+
+
+def test_the_probe_honours_retry_after_and_trips_count_once() -> None:
+    """J13: a probe's 429 holds the next cool-down for its `Retry-After`; a probe re-open is a
+    trip in both the breaker and the stats."""
+    r = rig(*[status(500)] * 5, status(429, {"retry-after": "90"}), ok(), ok())
+    classify(r)
+    res = classify(r)
+    assert res.classification is not None
+    assert [w for w in r.waits if w >= jev.COOL_DOWN_S] == [30.0, 90.0]
+    assert r.client.stats.breaker_trips == r.client.breaker.trips == 2
+    assert r.client.stats.rate_limits == 1
+
+
+def _limits(headers: dict[str, str], **over: Any) -> Responder:
+    return lambda _r: httpx.Response(200, json=body(**over), headers=headers)
+
+
+def test_pacing_ignores_a_long_reset_counts_its_pauses_and_estimates_tokens() -> None:
+    """J5: a reset past SHORT_WAIT_S (an epoch, perhaps) is ignored until the live check; the
+    token limit is compared with the reply's tokens, not the request's bytes; pauses counted."""
+    epoch = {"x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-requests": "1760000000"}
+    r = rig(_limits(epoch), ok())
+    classify(r)
+    classify(r)
+    assert r.waits == [] and "pacing" not in r.client.stats.pauses
+    assert len(jev.encode(_body())) > 3000  # the bytes would pace; the reply's 2400 tokens don't
+    tokens = {"x-ratelimit-remaining-tokens": "3000", "x-ratelimit-reset-tokens": "5"}
+    r = rig(_limits(tokens), ok())
+    classify(r)
+    classify(r)
+    assert r.waits == []
+    short = {"x-ratelimit-remaining-tokens": "2000", "x-ratelimit-reset-tokens": "5"}
+    r = rig(_limits(short), ok())
+    classify(r)
+    classify(r)
+    assert r.waits == [5.0] and r.client.stats.pauses == {"pacing": 1}
+
+
+def test_a_reply_without_usage_is_counted_apart() -> None:
+    """J6: not billed as 0 silently: `usage_missing` counts it."""
+    r = rig(ok(usage=None))
+    res = classify(r)
+    assert res.classification is not None and res.input_tokens is None
+    assert r.client.stats.input_tokens_billed == 0 and r.client.stats.usage_missing == 1
+    assert r.client.stats.summary()["usage_missing"] == 1
+
+
+def test_latency_and_concurrency_are_the_level_the_try_was_sent_at() -> None:
+    """J7: AIMD moves after the reply; the figures keep the level the try went at."""
+    r = rig(ok())
+    r.client.aimd = jev.Aimd(limit=2, ceiling=4, step_after=1)
+    res = classify(r)
+    assert r.client.aimd.limit == 3 and res.concurrency == 2
+    assert list(r.client.stats.latency_ms) == [2]
+    assert [kw["concurrency"] for e, kw in r.logs if e == "jev.call"] == [2]
+
+
+def test_the_key_is_re_read_before_each_try() -> None:
+    """J10: a replaced key is used from the next try; a removed one stops the run then."""
+    keys = iter(["ts-key-one", "ts-key-two"])  # invented
+    r = rig(status(503), ok(), key=lambda: next(keys))
+    assert classify(r).classification is not None
+    assert [q.headers["authorization"] for q in r.script.seen] == ["Bearer ts-key-one",
+                                                                   "Bearer ts-key-two"]  # fmt: skip
+    gone = iter([KEY, None])
+    r = rig(status(503), ok(), key=lambda: next(gone))
+    with pytest.raises(jev.JevError) as err:
+        classify(r)
+    assert err.value.cls == "auth" and str(err.value) == jev.KEY_GONE
+    assert len(r.script.seen) == 1
+
+
+def test_replied_is_set_by_a_reply_classed_ok_or_request_error() -> None:
+    """J11: what keeps the eval's first-case pin check armed."""
+    assert classify(rig(ok())).replied
+    assert classify(rig(status(400))).replied
+    assert not classify(rig(status(500))).replied
+    assert classify(rig(status(500), status(400))).replied
+
+
+@pytest.mark.parametrize("code", [404, 422])
+def test_check_key_on_404_or_422_names_the_pin_not_the_key(code: int) -> None:
+    """J12."""
+    with pytest.raises(InvalidInputError) as err:
+        jev.check_key(KEY, httpx.MockTransport(status(code)))
+    assert str(err.value) == (f"TypeSafe refused the check call (HTTP {code}): the pinned"
+                              f" Jev version ({PIN}) may not be served; nothing was"
+                              " stored")  # fmt: skip
+
+
+def test_check_key_and_the_probe_compare_the_reply_model_with_the_pin() -> None:
+    """J12."""
+    with pytest.raises(InvalidInputError, match="different Jev version than the pin"):
+        jev.check_key(KEY, httpx.MockTransport(ok(model="jev-9.9.9")))
+    r = rig(*[status(500)] * 5, ok(model="jev-9.9.9"))
+    classify(r)
+    with pytest.raises(jev.JevError) as err:
+        classify(r)  # the probe's reply names another version
+    assert err.value.cls == "pin"
 
 
 # ---- the key's check and set_key ---------------------------------------------------------------

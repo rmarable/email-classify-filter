@@ -292,11 +292,12 @@ def agents_for(run: Run) -> dict[str, str]:
 # ---------------------------------------------------------------------------- registering
 
 
-def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema
+def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids: set[str]
              ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any]]:  # fmt: skip
     """Preset D's source (D5, P15): the latest `ecf eval run --classifier-backend jev` on the
     pinned Jev version, its prompt digest and `schema` (v3, the default: D9), on this version of
-    the set, complete, redacted and not an experiment, its result file present: its run ID, each
+    the set, complete, redacted and not an experiment, its result file present, with every case
+    of this run (`ids`: a `--fraud-only` source can't serve a full run, J4): its run ID, each
     case's classification (a faulted case's is empty, so it is scored as a failure, P1) and its
     inputs (SOURCE_KEYS). Which other sources D may take is open (removal P19)."""
     from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
@@ -318,12 +319,14 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema
         if not row["path"] or not Path(row["path"]).is_file():
             continue  # an imported run: its result file stayed on the other computer
         result = load_result(Path(row["path"]))
+        if not ids <= {c.id for c in result.cases}:
+            continue  # a source without some of this run's cases (a `--fraud-only` run)
         got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
         return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}
     raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
                             " --classifier-backend jev` on the pinned Jev version, the default"
-                            " schema and this version of the set, and there is none: run it"
-                            " first")  # fmt: skip
+                            " schema and this version of the set, covering this run's cases, and"
+                            " there is none: run it first")  # fmt: skip
 
 
 def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
@@ -348,7 +351,7 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
     try:
         schema = config.current_schema(conn)
         if opts.preset == "D":
-            source_run, got, source = _jev_run(conn, version, schema)
+            source_run, got, source = _jev_run(conn, version, schema, {c.id for c in cases})
         models, pinned, key = models_for(conn, opts, _source_key(conn, source_run))
     finally:
         conn.close()
@@ -500,8 +503,11 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                for w in run.works if w.result is not None]  # fmt: skip
     if not results:
         return
+    # only a run on the pinned models can pass the gate: an unpinned run, and every preset D
+    # run until step 4 (never pinned), is comparison only (J8)
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
-                                                schema=run.schema)  # fmt: skip
+                                                gate_eligible=run.pinned, schema=run.schema,
+                                                fraud_only=run.opts.fraud_only)  # fmt: skip
     if run.opts.preset == "D":  # what Jev was asked, with what: the source run's (P13)
         summary.update(run.source)
     else:

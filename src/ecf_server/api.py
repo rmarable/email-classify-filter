@@ -921,7 +921,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                jev_preamble=_opt_str(body, "jev_preamble") or "state",
                                jev_concurrency=_jev_concurrency(body))  # fmt: skip
         asker = None
-        if opts.backend == evalrun.JEV:  # the key is read here, then re-read per case (P12)
+        if opts.backend == evalrun.JEV:  # the key is read here, then re-read per try (P12, J10)
             from ecf_server import evaljev, jev  # noqa: PLC0415 - eval only, not a service import
 
             store = state.store()

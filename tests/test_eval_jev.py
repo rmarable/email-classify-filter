@@ -51,17 +51,22 @@ CASE_OF = {v: k for k, v in SUBJECTS.items()}
 TOKENS = {case: 1000 + 100 * i for i, case in enumerate(SUBJECTS)}  # a distinct count each
 
 
-@pytest.fixture
-def root(tmp_path: Path) -> Path:
-    r = tmp_path / "synthetic"
+def _set(r: Path, *, unconfirmed: tuple[str, ...] = ()) -> Path:
+    """The five cards, built; each confirmed but `unconfirmed`."""
     (r / "cases").mkdir(parents=True)
     for name in SUBJECTS:
         shutil.copy(SYNTHETIC / "cases" / f"{name}.md", r / "cases" / f"{name}.md")
     assert not build_all(r).findings
     for name in SUBJECTS:
-        if name != "starter-control":
+        if name not in unconfirmed:
             labels.confirm(r, name, date(2026, 10, 1))
     return r
+
+
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    """Every card confirmed: a Jev run sends only confirmed cards (J14)."""
+    return _set(tmp_path / "synthetic")
 
 
 def _clear() -> None:
@@ -139,7 +144,7 @@ def test_a_jev_run_end_to_end_on_the_fake(
     snap = run_jev(db_path, clock, root, fake)
     assert snap["state"] == "done", snap
     s = snap["result"]
-    assert s["cases"] == 5 and s["confirmed"] == 4 and s["complete"] is True
+    assert s["cases"] == 5 and s["confirmed"] == 5 and s["complete"] is True
     assert s["options"] == {"classifier": True, "actor": False} and s["gate_passed"] is False
     assert s["faulted"] == [] and "incomplete_reason" not in s
     assert s["backend"] == "jev" and s["classifier_digest"] == PIN and s["actor_digest"] is None
@@ -316,6 +321,77 @@ def test_faulted_cases_are_scored_as_failures_and_listed(
     assert (p.fault, p.tries, p.got.get("rule"), p.correct) == ("provider", jev.TRIES, None, False)
     assert (r.fault, r.status, r.tries) == ("request_error", 400, 1)
     assert p.wait_ms is not None and p.wait_ms > 0 and p.classifier_ms is None
+    # end to end: answered and faulted cases apart (J13)
+    assert s["jev"]["end_to_end_faulted_ms"]["max"] is not None
+    assert s["jev"]["end_to_end_ms"]["max"] is not None
+
+
+def test_only_confirmed_cards_go_to_typesafe(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """J14 (operator decision 2026-10-14): a set with an unconfirmed card is refused in the
+    service before any call; only the reviewed synthetic set goes to TypeSafe."""
+    del conn
+    other = _set(tmp_path / "other", unconfirmed=("starter-control",))
+    fake = Fake()
+    with pytest.raises(InvalidInputError, match="only confirmed cards") as err:
+        run_jev(db_path, clock, other, fake)
+    assert "starter-control" in str(err.value)
+    assert not fake.states and evalrun.RUN.snapshot()["state"] == "idle"
+    # the null backend sends nothing anywhere: unconfirmed cards still run there
+    evalrun.start(lambda: db.connect(db_path), clock, db_path.parent, evalrun.Options(other),
+                  power=lambda: AC, battery=lambda: 90, spawn=_inline,
+                  thermal=lambda: {"CPU_Speed_Limit": 100})  # fmt: skip
+    assert evalrun.RUN.snapshot()["state"] == "done"
+
+
+def test_the_first_case_check_stays_armed_until_a_real_reply(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """J11: the first case faulted (no reply classed ok or request error), so a 404 on the
+    second is still the first request TypeSafe answered: the run stops."""
+    monkeypatch.setattr(jev, "FAULT_SHARE", 0.4)
+    snap = run_jev(db_path, clock, root, Fake({"bec-ceo-urgent-wire": 500,
+                                               "billing-plan-question": 404}))  # fmt: skip
+    assert snap["state"] == "failed" and "refused the first request (HTTP 404)" in snap["detail"]
+    assert conn.execute("SELECT count(*) FROM eval_runs").fetchone()[0] == 0
+
+
+class FailRepeat(Fake):
+    """`case` answers its first pass and faults (HTTP 500) from its second (the repeat)."""
+
+    def __init__(self, case: str, fail: dict[str, int] | None = None) -> None:
+        super().__init__(fail)
+        self.case = case
+        self.asked = False
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        state = json.loads(req.content)["state"]
+        if isinstance(state, str) and f"Subject: {SUBJECTS[self.case]}" in state:
+            if self.asked:
+                self.fail[self.case] = 500
+            self.asked = True
+        return super().__call__(req)
+
+
+def test_determinism_leaves_out_pairs_with_a_faulted_pass(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """J3: a faulted pass isn't an answer, so the pair is neither agreement nor a flip: listed
+    in `faulted_pairs`; a case whose first pass faulted isn't asked again; the summary says each
+    repeat has a fresh token."""
+    del conn
+    monkeypatch.setattr(jev, "FAULT_SHARE", 0.4)
+    fake = FailRepeat("billing-plan-question", {"starter-control": 500})
+    s = run_jev(db_path, clock, root, fake)["result"]
+    d = s["determinism"]
+    assert d["faulted_pairs"] == ["billing-plan-question", "starter-control"]
+    assert d["cases"] == ["bec-ceo-urgent-wire", "starter-bec", "starter-injection"]
+    assert s["determinism_diffs"] == 0 and d["field_flips"] == {}
+    assert d["tokens"] == "fresh per repeat"
+    assert fake.cases.count("starter-control") == jev.TRIES  # not asked again
 
 
 def test_a_faulted_safety_card_marks_the_run_incomplete_and_it_carries_on(
@@ -454,8 +530,9 @@ def test_format_2_and_the_old_client_message(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
     root: Path, tmp_path: Path,
 ) -> None:  # fmt: skip
-    """P16: files without `format` read as 1; this ecf writes 2; a client that knows only 1
-    refuses a format-2 file with a reason, not a validation dump."""
+    """P16: files without `format` read as 1; this ecf writes 2; from this version on, an ecf
+    refuses a file of a later format with a reason, not a validation dump (an ecf from before
+    format 2 can't read a format-2 file at all, J9)."""
     del conn
     path = _jev_result(monkeypatch, db_path, clock, root, incomplete=False)
     assert json.loads(path.read_text())["format"] == 2
@@ -515,6 +592,54 @@ def test_preset_d_takes_jevs_classifications_from_its_source_run(
     for k in claude_eval.SOURCE_KEYS:
         assert m[k] == src[k], k
     assert m["claude"]["source_run"] == source["run_id"] and m["claude"]["preset"] == "D"
+
+
+def test_preset_d_needs_a_source_with_every_case_and_records_fraud_only(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """J4: a `--fraud-only` Jev run can't serve a full D run (its other cases would score as
+    failures); it serves a `--fraud-only` D run, and both record `options.fraud_only`."""
+    s = run_jev(db_path, clock, root, Fake(), fraud_only=True)["result"]
+    assert s["options"]["fraud_only"] is True and s["cases"] < len(SUBJECTS)
+    _clear()
+    with pytest.raises(InvalidInputError, match="covering this run's cases"):
+        _start_d(db_path, clock, root)
+    r = _start_d(db_path, clock, root, fraud_only=True)
+    assert r["preset"] == "D"
+    m = json.loads(_row(conn)["metrics"])
+    assert m["claude"]["preset"] == "D" and m["options"]["fraud_only"] is True
+
+
+def test_a_preset_d_or_unpinned_run_is_never_gate_eligible(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """J8: `gate_passed` can't be true for a comparison-only run, and the reports say why."""
+    from ecf import cli  # noqa: PLC0415
+
+    del conn
+    run_jev(db_path, clock, root, Fake())
+    _clear()
+    seen: list[object] = []
+    real = evalrun.summarize
+
+    def spy(*a: Any, **kw: Any) -> dict[str, Any]:
+        seen.append(kw.get("gate_eligible"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(evalrun, "summarize", spy)
+    _start_d(db_path, clock, root)
+    assert seen == [False]
+    caveat = cli._run_caveat  # pyright: ignore[reportPrivateUsage]
+    d = {"complete": True, "gate_passed": False, "options": {"classifier": True, "actor": True},
+         "claude": {"preset": "D", "pinned": False}}  # fmt: skip
+    assert caveat(d) == ", comparison only (preset D, until step 4)"
+    c = d | {"claude": {"preset": "C", "pinned": False}}
+    assert caveat(c) == ", comparison only (not the pinned models)"
+    assert caveat(d | {"claude": {"preset": "C", "pinned": True}}) == ""
+    pin_kind = cli._pin_kind  # pyright: ignore[reportPrivateUsage]
+    assert pin_kind({"preset": "D", "pinned": False}) == "comparison only (preset D, until step 4)"
+    assert pin_kind({"preset": "C", "pinned": True}) == "pinned models"
 
 
 def test_preset_d_needs_a_complete_source_on_the_pin(
@@ -589,13 +714,19 @@ def test_compare_prints_jev_figures_faults_and_why_a_run_is_incomplete(
                                                               "max": 403}},
                            "end_to_end_ms": {"p50": 410.0, "p95": 500.0, "max": 500.0},
                            "cost": {"usd": 0.0001, "basis": "b"}, "retries": {"provider": 3},
+                           "usage_missing": 2,
+                           "end_to_end_faulted_ms": {"p50": 900.0, "p95": 900.0, "max": 900.0},
                            "pauses": {}, "faulted_cases": {"provider": 1}}  # fmt: skip
     assert cli._state_line(r) == ("incomplete (faulted_safety_card); faulted cases 1 (scored as"  # pyright: ignore[reportPrivateUsage]
                                   " failures)")  # fmt: skip
     lines = cli._jev_figures(r.summary)  # pyright: ignore[reportPrivateUsage]
     assert lines[0] == f"Jev {PIN}: state s1, preamble state, concurrency 1"
     assert "HTTP time at concurrency 1: 400 ms median, p95 403, max 403 (n=4)" in lines[1]
-    assert any("input tokens billed 9" in x for x in lines)
+    assert any(
+        "input tokens billed 9, about $0.0001; 2 replies without usage, not counted (b)" in x
+        for x in lines
+    )  # J6
+    assert any("end to end per faulted case: 900/900/900 ms" in x for x in lines)  # J13
     assert any("faulted cases: provider 1" in x for x in lines)
     run_lines = cli._run_lines(r)  # pyright: ignore[reportPrivateUsage]
     assert any("Jev " in x for x in run_lines)
