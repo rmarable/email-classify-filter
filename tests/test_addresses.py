@@ -235,6 +235,30 @@ def test_remove_then_add_again_revives_the_row(env: Env) -> None:
     assert conn.execute("SELECT count(*) FROM addresses").fetchone()[0] == 1
 
 
+def test_removing_a_converted_address_forgets_its_conversion(env: Env) -> None:
+    """v3.0.0 review R5: an address 0038 converted, removed and added again, is an ordinary new
+    address: its id leaves the converted record (and the announced and consented lists); the
+    other ids stay."""
+    from ecf_server import pause  # noqa: PLC0415
+
+    conn, clock, secrets, _mail = env
+    add(env, req())
+    with write_tx(conn):
+        for key, value in ((ad.CONVERTED, {"ap": "A", "zz": "B"}),
+                           (ad.CONVERTED_ANNOUNCED, ["ap", "zz"]),
+                           (ad.CONSENTED, ["zz"])):  # fmt: skip
+            conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                         " (?, ?, 't', 't')", (key, json.dumps(value)))  # fmt: skip
+    assert pause.needs_consent(conn, "ap")
+    ad.remove_address(conn, clock, secrets, "ap", actor="os_user")
+    left = {k: json.loads(v) for k, v in conn.execute("SELECT key, value FROM settings WHERE key"
+                                                      " LIKE 'stages.converted_v3%'")}  # fmt: skip
+    assert left == {ad.CONVERTED: {"zz": "B"}, ad.CONVERTED_ANNOUNCED: ["zz"],
+                    ad.CONSENTED: ["zz"]}  # fmt: skip
+    again = add(env, req(org_domains=None))
+    assert not again["paused"] and not pause.needs_consent(conn, "ap")
+
+
 def test_adding_again_leaves_nothing_waiting(env: Env) -> None:
     """V1.4 step 1: removal resolves the queue, so nothing is stranded at `awaiting_claude` when
     the address is added again."""

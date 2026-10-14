@@ -19,9 +19,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
-from ecf import __version__
+from ecf import __version__, ollama_unit
 from ecf.client import LocalClient
 from ecf.errors import EcfError, ServiceUnavailableError
 from ecf.paths import Paths
@@ -355,6 +356,19 @@ def judge_converted(rows: list[dict[str, Any]]) -> list[Check]:
     return out
 
 
+def check_ollama_item(home: Path | None = None, platform: str = sys.platform) -> list[Check]:
+    """ecf's Ollama login item left behind (v3.0.0, ADR 0031; review R8): `ecf upgrade` removes it
+    once the rollback window closes, so it stays when the upgrade went another way. Named with
+    the commands that remove it; nothing is run."""
+    left = ollama_unit.leftover(home, platform)
+    if left is None:
+        return []
+    path, fix = left
+    return [Check("ollama login item", Level.WARN,
+                  f"{path} is left from before v3.0.0, which no longer uses a local model",
+                  f"remove it: {fix}")]  # fmt: skip
+
+
 DNS_PROBE = "_dmarc.gmail.com"  # a long-standing public DMARC record
 
 
@@ -567,6 +581,7 @@ def run_checks(
     checks += check_ops(paths)
     checks.append(check_org_domains(paths))
     checks += check_converted(paths)
+    checks += check_ollama_item()
     checks.append(check_dns())
     checks += check_database(paths)
     checks.append(check_disk_encryption(run))

@@ -5,16 +5,31 @@ announcement at start and after a restore (P3, P12), and older bundles (P2, P8).
 
 from __future__ import annotations
 
+import inspect
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from ecf_server import bundle_reader, db, export_bundle, import_plan, scheduled_export, stages
-from ecf_server.clock import FakeClock
+from ecf_server import (
+    addresses,
+    bundle_reader,
+    claude_queue,
+    db,
+    export_bundle,
+    import_plan,
+    importer,
+    pause,
+    scheduled_export,
+    stages,
+)
+from ecf_server.bundle_reader import BadBundleError
+from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
 from ecf_server.secretstore.memory import MemorySecretStore
@@ -163,12 +178,12 @@ def test_0038_converts_a_and_b_and_keeps_every_row(
     gone = {"fallback_enabled", "claude_queue_timeout_h", "fallback_since"}
     assert not gone & _columns(c, "addresses")
     assert {"smtp_host", "outbound_dismissed_at", "overrides"} <= _columns(c, "addresses")
-    assert not {"fallback_at", "model_attempts", "model_failed",
-                "model_failed_at"} & _columns(c, "items")  # fmt: skip
+    # kept until v4: a DROP COLUMN rewrites the whole table (review R1)
+    assert set(db.UNUSED_COLUMNS["items"]) <= _columns(c, "items")
     assert "ollama_digest" not in _columns(c, "gate")
     names = {r[0] for r in c.execute("SELECT name FROM sqlite_master")}
     assert "fallback_shadow" not in names and "items_model_waiting" not in names
-    assert "items_open" in names
+    assert {"items_open", "items_claude_waiting"} <= names
     since = dict(c.execute("SELECT stable_id, claude_since FROM items WHERE address_id = 'c1'"))
     assert since["cc000001"] > OLD  # handed off to the fallback, still waiting: from now (P12)
     assert since["cc000002"] == OLD and since["cc000003"] is None
@@ -201,8 +216,10 @@ def test_a_failing_foreign_key_check_rolls_the_migration_back(
     with write_tx(c):
         _item(c, "ee000001", "ghost", "new")  # a row whose address is missing
     c.execute("PRAGMA foreign_keys=ON")
-    with pytest.raises(db.MigrationError, match="parent is missing"):
+    with pytest.raises(db.MigrationError, match="parent is missing") as ei:
         db.migrate(c)
+    assert "items rowid 1 -> addresses" in str(ei.value)  # named (R4)
+    assert "previous version" in str(ei.value)  # and what happens next
     assert c.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 37
     assert "fallback_enabled" in _columns(c, "addresses")
     assert c.execute("SELECT preset FROM addresses").fetchone()[0] == "A"
@@ -337,8 +354,204 @@ def test_a_format_4_bundle_with_a_and_b_imports_as_c_paused(
     rows = {a["address_id"]: (a["preset"], a["paused"], a["stage"])
             for a in target.execute("SELECT * FROM addresses")}  # fmt: skip
     assert rows == {"a1": ("C", 1, "assist"), "b1": ("C", 1, "assist")}
-    assert "model_failed" not in _columns(target, "items")
+    row = target.execute("SELECT model_attempts, model_failed FROM items").fetchone()
+    assert tuple(row) == (0, 0)  # the bundle's values aren't carried (R1)
     bodies = [b for _t, b in n.sent]
     assert any("Converted to C, paused" in b and "a1, b1" in b for b in bodies)
     assert len([b for b in bodies if "now preset C" in b]) == 2
     assert [c["waiting"] for c in stages.converted(target)] == [1, 0]
+
+
+# ---- diff review (R1-R11) -----------------------------------------------------------------------
+
+
+def test_the_unused_columns_are_never_exported(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """R1: the four items columns stay in the schema until v4; a bundle never carries them."""
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at) VALUES"
+            " ('c1', 'c1@acme.example', 'standard', 'C', ?)", (OLD,))  # fmt: skip
+        _item(conn, "cc000001", "c1", "new")
+    rows = export_bundle._rows(conn, "items")  # pyright: ignore[reportPrivateUsage]
+    assert rows and not set(db.UNUSED_COLUMNS["items"]) & set(rows[0])
+    assert "claude_since" in rows[0]
+
+
+def test_only_the_rebuilt_tables_children_are_checked(
+        db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """R4: an orphan that doesn't point at `addresses` (an excerpt whose item is gone) doesn't fail
+    0038; one that does is named."""
+    c = _before(db_path, monkeypatch)
+    with write_tx(c):
+        _address(c, "a1", "A")
+    c.execute("PRAGMA foreign_keys=OFF")
+    with write_tx(c):
+        c.execute("INSERT INTO excerpts (stable_id, classifier_text) VALUES ('gone0001', 'x')")
+    c.execute("PRAGMA foreign_keys=ON")
+    assert db.migrate(c) == ["0038_local_models_removed.sql"]
+    assert db.orphans(c, "addresses") == []
+    assert ("excerpts", 1, "items") in [tuple(r)[:3] for r in c.execute("PRAGMA foreign_key_check")]
+    c.close()
+
+
+class _FailingRollback(sqlite3.Connection):
+    """A connection whose first ROLLBACK fails, as one can after SQLITE_FULL (R10)."""
+
+    fail = False
+    seen: list[str]
+
+    def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:  # type: ignore[override]
+        self.seen.append(sql)
+        if self.fail and sql == "ROLLBACK":
+            self.fail = False
+            raise sqlite3.OperationalError("disk I/O error")
+        return super().execute(sql, *args)
+
+
+def test_foreign_keys_come_back_after_a_failed_rollback(
+        db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """R10: the migration's own transaction is rolled back and the setting restored, best
+    effort, even when write_tx's ROLLBACK failed."""
+    _before(db_path, monkeypatch).close()
+    c = sqlite3.connect(db_path, autocommit=True, factory=_FailingRollback)
+    c.seen = []
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA foreign_keys=OFF")
+    with write_tx(c):
+        c.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                  " VALUES ('a1', 'a1@acme.example', 'standard', 'A', ?)", (OLD,))  # fmt: skip
+        c.execute("INSERT INTO cursors (address_id, last_uid) VALUES ('ghost', 1)")
+    c.execute("PRAGMA foreign_keys=ON")
+    c.fail = True
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        db.migrate(c)
+    assert c.seen.count("ROLLBACK") == 2  # write_tx's failed; _apply's own went through
+    assert not c.in_transaction and c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert c.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 37
+    c.close()
+
+
+def test_the_claude_queue_index_serves_the_ticks_queries(conn: sqlite3.Connection) -> None:
+    """R2: backlog, overdue, waiting and the review queue read `items_claude_waiting`."""
+    from ecf_server import claude_review  # noqa: PLC0415
+
+    in_queue = claude_queue._IN_QUEUE  # pyright: ignore[reportPrivateUsage]
+    sources = [
+        "SELECT count(*) FROM items i JOIN addresses a USING (address_id) WHERE a.removed_at IS"  # noqa: S608
+        f" NULL AND a.paused = 0 AND {in_queue} AND i.status = 'awaiting_claude'",
+        "SELECT i.address_id, count(*), min(i.claude_since), sum(i.claude_since < 'x')"
+        + claude_queue._WAITING + " AND i.claude_since < 'x' GROUP BY i.address_id",  # pyright: ignore[reportPrivateUsage]
+        "SELECT i.address_id, count(*)" + claude_queue._WAITING + " GROUP BY i.address_id",  # pyright: ignore[reportPrivateUsage]
+        re.sub(r"\?", "'x'", claude_review._WAITING),  # pyright: ignore[reportPrivateUsage]
+    ]  # fmt: skip
+    for sql in sources:
+        plan = " | ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql))
+        assert "items_claude_waiting" in plan, (sql, plan)
+    assert "_IN_QUEUE" in inspect.getsource(claude_queue.backlog)  # backlog's own text, too
+
+
+def test_overdue_twice_is_the_two_overdue_calls(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """R2: one query for the reminder and the escalation."""
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('c1', 'c1@acme.example', 'standard', 'C', ?)", (OLD,))  # fmt: skip
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('c2', 'c2@acme.example', 'standard', 'C', ?)", (OLD,))  # fmt: skip
+    now = clock.now()
+    for n, (aid, hours) in enumerate((("c1", 30), ("c1", 50), ("c2", 30), ("c2", 2))):
+        since = to_ts(now - timedelta(hours=hours))
+        _item(conn, f"ee{n:06d}", aid, "awaiting_claude", claude_since=since)
+    first, second = claude_queue.overdue_twice(conn, now, 2)
+    assert first == claude_queue.overdue(conn, now)
+    assert second == claude_queue.overdue(conn, now, 2)
+    assert [(o.address_id, o.count) for o in first] == [("c1", 2), ("c2", 1)]
+    assert [(o.address_id, o.count) for o in second] == [("c1", 1)]
+
+
+def _prechecked(c: sqlite3.Connection, sid: str, aid: str, stage: str) -> None:
+    facts = json.dumps({"backfill": 1, "precheck": {"stage": stage}})
+    _item(c, sid, aid, "new", prechecked=1, facts=facts)
+
+
+def test_announcing_queues_the_mail_left_at_new(db_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                clock: FakeClock) -> None:  # fmt: skip
+    """R3: an `ecf backfill --act` email (pre-checked, the address's stage recorded) that waited
+    for the local model goes to the Claude queue at the announcement, its wait starting then; a
+    records-only backfill's email (stage `backfill`) and an unchecked one are left; once."""
+    c = _before(db_path, monkeypatch)
+    with write_tx(c):
+        _address(c, "a1", "A", stage="live")
+        _prechecked(c, "aa000010", "a1", "live")
+        _prechecked(c, "aa000011", "a1", "backfill")
+        _item(c, "aa000012", "a1", "new")
+    db.migrate(c)
+    assert stages.announce_converted(c, clock, FakeNotifier()) == ["a1"]
+    rows = {r[0]: (r[1], r[2]) for r in c.execute("SELECT stable_id, status, claude_since"
+                                                  " FROM items")}  # fmt: skip
+    assert rows["aa000010"] == ("awaiting_claude", to_ts(clock.now()))
+    assert rows["aa000011"] == ("new", None) and rows["aa000012"] == ("new", None)
+    assert _audit(c, "address.converted")[0]["queued"] == 1
+    c.close()
+
+
+def test_the_marker_is_written_with_each_address_audit_row(
+        db_path: Path, monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> None:  # fmt: skip
+    """R6: the announced marker is written in each address's audit-row transaction, so a failure
+    after it (here b1's notice) never announces that address twice; a consented address isn't
+    counted."""
+    c = _before(db_path, monkeypatch)
+    _populate(c)
+    db.migrate(c)
+    real = stages.slack_admin.notice
+    calls: list[str] = []
+
+    def flaky(*a: Any, **kw: Any) -> None:
+        calls.append(str(a[3]))
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        real(*a, **kw)
+
+    monkeypatch.setattr(stages.slack_admin, "notice", flaky)
+    with pytest.raises(sqlite3.OperationalError):
+        stages.announce_converted(c, clock, FakeNotifier())
+    assert stages._announced(c) == ["a1", "b1"]  # pyright: ignore[reportPrivateUsage]
+    # b1's audit row and marker committed before its notice failed: it isn't announced twice
+    assert stages.announce_converted(c, clock, FakeNotifier()) == []
+    with write_tx(c):
+        c.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, '[\"a1\"]',"
+                  " ?, 't')", (pause.CONSENTED, OLD))  # fmt: skip
+    rows = {r["address_id"]: r for r in stages.converted(c)}
+    assert rows["a1"]["consented"] and rows["a1"]["waiting"] is None
+    assert rows["b1"]["waiting"] == 0
+    c.close()
+
+
+def test_import_replace_clears_the_old_converted_record(
+        db_path: Path, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, tmp_path: Path,
+        target: sqlite3.Connection) -> None:  # fmt: skip
+    """R7: the old install's converted ids don't outlive its addresses."""
+    path = _old_bundle(db_path, monkeypatch, clock, tmp_path, version=38, data_format=4)
+    _import(target, clock, path)
+    with write_tx(target):
+        for key, value in ((addresses.CONVERTED, '{"zz": "A"}'),
+                           (addresses.CONSENTED, '["zz"]')):  # fmt: skip
+            target.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                           " (?, ?, ?, 't') ON CONFLICT (key) DO UPDATE SET value ="
+                           " excluded.value", (key, value, OLD))  # fmt: skip
+    _import(target, clock, path, replace=True, typed="t")
+    was = json.loads(target.execute("SELECT value FROM settings WHERE key = ?",
+                                    (addresses.CONVERTED,)).fetchone()[0])  # fmt: skip
+    assert was == {"a1": "A", "b1": "B"}  # this bundle's, nothing of the old install
+    consented = target.execute("SELECT value FROM settings WHERE key = ?",
+                               (addresses.CONSENTED,)).fetchone()  # fmt: skip
+    assert consented is None
+    assert stages._announced(target) == ["a1", "b1"]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_bundle_with_a_preset_d_address_is_refused(conn: sqlite3.Connection) -> None:
+    """R11: D arrives with Jev's step 4; until then a D row would break the tick."""
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('d1', 'd1@acme.example', 'standard', 'D', ?)", (OLD,))  # fmt: skip
+    with pytest.raises(BadBundleError, match="preset D isn't available until Jev's step 4"):
+        importer.validate(conn, {})

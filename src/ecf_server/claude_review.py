@@ -1037,12 +1037,24 @@ def _audit_row(conn: sqlite3.Connection, clock: Clock, address_id: str, stable_i
 # ---------------------------------------------------------------------------- the reminder
 
 
-def remind(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int:
+Late = list[claude_queue.Overdue]
+
+
+def overdue(conn: sqlite3.Connection, clock: Clock) -> tuple[Late, Late]:
+    """What `remind` and `escalate` need, computed once per tick (review R2)."""
+    return claude_queue.overdue_twice(conn, clock.now(), ESCALATE_FACTOR)
+
+
+def remind(conn: sqlite3.Connection, clock: Clock, notifier: Notifier,
+           late_now: Late | None = None) -> int:  # fmt: skip
     """Each tick (§13.3, OD-115): one Operator Input Needed per address while items have waited
     longer than `claude_review_reminder_hours`; resolved when none has. A paused address isn't
-    offered to `/ecf-review`, so it gets no reminder. Returns how many are open."""
+    offered to `/ecf-review`, so it gets no reminder. `late_now`: `overdue(...)[0]`, when the
+    tick has it. Returns how many are open."""
     hours = claude_queue.reminder_hours(conn)
-    late = {o.address_id: o for o in claude_queue.overdue(conn, clock.now())}
+    if late_now is None:
+        late_now = claude_queue.overdue(conn, clock.now())
+    late = {o.address_id: o for o in late_now}
     paused = {r[0] for r in conn.execute("SELECT address_id FROM addresses WHERE paused = 1")}
     for aid, o in late.items():
         if aid in paused:
@@ -1060,15 +1072,17 @@ def remind(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int:
     return sum(1 for aid in late if aid not in paused)
 
 
-def escalate(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> int:
+def escalate(conn: sqlite3.Connection, clock: Clock, notifier: Notifier,
+             late_now: Late | None = None) -> int:  # fmt: skip
     """Each tick (v3.0.0, ADR 0031, R-D4, P10): the reminder's loud second step. One alert per
     address while items have waited longer than twice `claude_review_reminder_hours` (48 h by
     default), in `alerts.LOUD_KINDS` (the Slack post mentions you); counts and dates only, never a
-    subject, sender or excerpt. Resolved when none has; a paused address gets none. Returns how
-    many are open."""
+    subject, sender or excerpt. Resolved when none has; a paused address gets none. `late_now`:
+    `overdue(...)[1]`, when the tick has it. Returns how many are open."""
     hours = ESCALATE_FACTOR * claude_queue.reminder_hours(conn)
-    late = {o.address_id: o
-            for o in claude_queue.overdue(conn, clock.now(), ESCALATE_FACTOR)}  # fmt: skip
+    if late_now is None:
+        late_now = claude_queue.overdue(conn, clock.now(), ESCALATE_FACTOR)
+    late = {o.address_id: o for o in late_now}
     paused = {r[0] for r in conn.execute("SELECT address_id FROM addresses WHERE paused = 1")}
     for aid, o in late.items():
         if aid in paused:

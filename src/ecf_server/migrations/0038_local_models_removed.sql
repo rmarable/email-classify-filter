@@ -11,9 +11,13 @@
 --    `claude_queue_timeout_h` and `fallback_since`; every other column, constraint and STRICT
 --    kept (no index on it besides the email's UNIQUE).
 -- 3. Items the fallback had handed off and that still wait for Claude start their wait now, so
---    they aren't overdue at once (P12); then the fallback's and the model queue's columns, their
---    index, `gate.ollama_digest` and `fallback_shadow` go. Gate rows are kept (R-D8, P13);
---    `model_calls`, `eval_runs` and the `jobs.queue` CHECK are left as they are.
+--    they aren't overdue at once (P12); then the model queue's index, `gate.ollama_digest` and
+--    `fallback_shadow` go. The four `items` columns (`fallback_at`, `model_attempts`,
+--    `model_failed`, `model_failed_at`) stay until v4: dropping a column rewrites the whole
+--    table (diff review R1); nothing reads or writes them (`db.UNUSED_COLUMNS`). Gate rows are
+--    kept (R-D8, P13); `model_calls`, `eval_runs` and the `jobs.queue` CHECK are left as they are.
+--    The Claude queue gets its own index, matching the queries that read it each tick
+--    (`claude_queue.backlog`, `overdue`, `waiting`; `claude_review` review_queue; R2).
 -- 4. Alert rows of kinds this version no longer raises, and settings it no longer reads (P11).
 --    `models_missing` stays: the Claude pins' alert.
 
@@ -69,13 +73,8 @@ WHERE fallback_at IS NOT NULL AND status IN ('awaiting_claude', 'clarified');
 
 DROP INDEX items_model_waiting;
 
-ALTER TABLE items DROP COLUMN fallback_at;
-
-ALTER TABLE items DROP COLUMN model_attempts;
-
-ALTER TABLE items DROP COLUMN model_failed;
-
-ALTER TABLE items DROP COLUMN model_failed_at;
+CREATE INDEX items_claude_waiting ON items (address_id, claude_since)
+    WHERE status IN ('awaiting_claude', 'clarified');
 
 ALTER TABLE gate DROP COLUMN ollama_digest;
 

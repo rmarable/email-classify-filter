@@ -107,9 +107,12 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
     return moved
 
 
+# `i.status IN (...)` as its own term, as `items_claude_waiting` (0038) is defined, so SQLite can
+# use that partial index (review R2; test_claude_queue checks the plans)
+_IN_QUEUE = "i.status IN ('awaiting_claude', 'clarified')"
 _WAITING = (
     " FROM items i JOIN addresses a USING (address_id)"
-    " WHERE a.removed_at IS NULL AND (i.status = 'awaiting_claude'"
+    f" WHERE a.removed_at IS NULL AND {_IN_QUEUE} AND (i.status = 'awaiting_claude'"
     " OR (i.status = 'clarified' AND a.preset = 'C'))"
 )
 
@@ -140,8 +143,8 @@ def reminder_hours(conn: sqlite3.Connection) -> int:
 def backlog(conn: sqlite3.Connection) -> int:
     """Items waiting at `awaiting_claude` on addresses that are neither paused nor removed (§5.3;
     v3.0.0, P9: the local model's backlog before)."""
-    row = conn.execute("SELECT count(*) FROM items i JOIN addresses a USING (address_id)"
-                       " WHERE a.removed_at IS NULL AND a.paused = 0"
+    row = conn.execute("SELECT count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608
+                       f" WHERE a.removed_at IS NULL AND a.paused = 0 AND {_IN_QUEUE}"
                        " AND i.status = 'awaiting_claude'").fetchone()  # fmt: skip
     return int(row[0])
 
@@ -155,6 +158,21 @@ def overdue(conn: sqlite3.Connection, now: datetime, factor: int = 1) -> list[Ov
         + " AND i.claude_since < ? GROUP BY i.address_id ORDER BY i.address_id", (before,)
     ).fetchall()  # fmt: skip
     return [Overdue(r[0], r[1], r[2]) for r in rows]
+
+
+def overdue_twice(conn: sqlite3.Connection, now: datetime,
+                  factor: int) -> tuple[list[Overdue], list[Overdue]]:  # fmt: skip
+    """`overdue(conn, now)` and `overdue(conn, now, factor)` from one query, for the tick's
+    reminder and escalation (review R2)."""
+    hours = reminder_hours(conn)
+    first = to_ts(now - timedelta(hours=hours))
+    second = to_ts(now - timedelta(hours=factor * hours))
+    rows = conn.execute(
+        "SELECT i.address_id, count(*), min(i.claude_since), sum(i.claude_since < ?)" + _WAITING
+        + " AND i.claude_since < ? GROUP BY i.address_id ORDER BY i.address_id", (second, first)
+    ).fetchall()  # fmt: skip
+    return ([Overdue(r[0], r[1], r[2]) for r in rows],
+            [Overdue(r[0], r[3], r[2]) for r in rows if r[3]])  # fmt: skip
 
 
 def batch_risky(conn: sqlite3.Connection, sid: str) -> bool:

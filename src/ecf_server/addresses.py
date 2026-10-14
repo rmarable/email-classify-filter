@@ -41,6 +41,13 @@ from ecf_server.state_machine import TransitionContext
 ORG_DOMAINS_KEY = "org_domains"
 SENSITIVITIES = ("standard", "high")
 PRESETS = ("C",)  # A and B went in v3.0.0 (ADR 0031); D arrives with step 4
+# the addresses migration 0038 (or an import or restore of an older bundle) converted from A or B
+# (v3.0.0, P3): {address_id: old preset}; the ids announced so far (`stages.announce_converted`);
+# the ids whose owner agreed (`pause`). Removing an address drops it from all three (review R5)
+CONVERTED = "stages.converted_v3"
+CONVERTED_ANNOUNCED = "stages.converted_v3_announced"
+CONSENTED = "stages.converted_v3_consented"
+CONVERTED_KEYS = (CONVERTED, CONVERTED_ANNOUNCED, CONSENTED)
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9.-]{1,253})$")
 _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 
@@ -420,6 +427,7 @@ def remove_address(
             (now, aid),
         )
         _audit(conn, now, aid, "address.removed", actor, {"resolved": len(items_open)})
+        forget_converted(conn, aid, now)
     secrets.delete(secret_name(aid))
     return {
         **a,
@@ -430,6 +438,22 @@ def remove_address(
             "ecf keywords stay on messages already labelled",
         ],
     }
+
+
+def forget_converted(conn: sqlite3.Connection, aid: str, now: str) -> None:
+    """Inside the caller's write transaction: `aid` leaves the converted record, so an address
+    added again under its id starts as any new address does (review R5)."""
+    for key in CONVERTED_KEYS:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            continue
+        was: dict[str, Any] | list[str] = json.loads(row[0])
+        if aid not in was:
+            continue
+        left = ({k: v for k, v in was.items() if k != aid} if isinstance(was, dict)
+                else [x for x in was if x != aid])  # fmt: skip
+        conn.execute("UPDATE settings SET value = ?, updated_at = ?, updated_by = 'service'"
+                     " WHERE key = ?", (json.dumps(left, sort_keys=True), now, key))  # fmt: skip
 
 
 def _open_items(conn: sqlite3.Connection, address_id: str) -> list[tuple[str, bool]]:

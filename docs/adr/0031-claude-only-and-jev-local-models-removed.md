@@ -38,8 +38,10 @@ revisit)."
   counts and dates only.
 - **Schema** (R-D7, R-D8, P1, P2, P11, P27): one rebuild of `addresses` with
   `CHECK (preset IN ('C','D'))` through a new no-FK migrate path (`foreign_key_check` after);
-  `addresses.PRESETS = ('C',)` until step 4. Dead columns, `items_model_waiting` and
-  `fallback_shadow` are dropped; alert rows of removed kinds and dead settings rows are deleted.
+  `addresses.PRESETS = ('C',)` until step 4. Dead `addresses` and `gate` columns,
+  `items_model_waiting` and `fallback_shadow` are dropped; the four dead `items` columns stay,
+  unused, until v4 (diff review R1, 2026-10-14: each `DROP COLUMN` rewrites `items`); alert rows
+  of removed kinds and dead settings rows are deleted.
   `model_calls` (Jev logging), `claude_since` and `pinned_models` stay. Gate rows are not purged
   (a later release does). `DATA_FORMAT` stays 4 (never released), with the drops folded in;
   format-3 bundles still read.

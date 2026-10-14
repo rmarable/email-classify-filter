@@ -5,6 +5,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `ecf doctor` warns when ecf's Ollama login item from before v3.0.0 is still installed and prints the commands that remove it (ADR 0031).
+- Import and restore refuse a backup with a preset D address until preset D is built ("preset D isn't available until Jev's step 4") (ADR 0031).
+- At the v3.0.0 upgrade, mail on a converted A or B address that was waiting for the local model, `ecf backfill --act` mail included, moves to the Claude queue straight away and waits for `/ecf-review` once you resume the address (ADR 0031).
 - Recorded decision for v3.0.1: the `actor` role's comparison (Haiku 5.5 against the pinned Sonnet, two preset C runs on the 300-card set) runs in v3.0.1 with the `actor_high` pin, not before v3.0.0.
 - `ecf resume` on an address converted from preset A or B at the v3.0.0 upgrade asks whether the account owner agreed to their mail going to Anthropic, and resumes it only on "y" (recorded once in the audit log); `ecf resume --all` and the Slack buttons skip such an address and name it (ADR 0031, OD-427).
 - `ecf eval run` uses the `null` backend by default (no model; it never passes the go-live gate) and refuses `gemma`, `systemone:` and `--corpus`; old Gemma, preset B and decision-model results still load and rescore (ADR 0031).

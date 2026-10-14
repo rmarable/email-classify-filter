@@ -15,17 +15,51 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
-from ecf.service_unit import Runner, run_command
+from ecf.service_unit import Runner
 
 LABEL = "com.email-classify-filter.ollama"
 SYSTEMD_UNIT = "ecf-ollama.service"
 FOLDER = "ollama"  # in the data root: the login item's log
+TIMEOUT_S = 20  # per command: `retire` runs in the service's timer thread (review R9)
 
 
-def retire(root: Path, *, runner: Runner = run_command, home: Path | None = None,
+def run_short(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """`service_unit.run_command` with `TIMEOUT_S`; a command that doesn't finish counts as
+    failed (124), and one that isn't there as 127."""
+    try:
+        return subprocess.run(args, capture_output=True, text=True, check=False,  # noqa: S603
+                              timeout=TIMEOUT_S)  # fmt: skip
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", f"{args[0]}: not found")
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", f"{args[0]}: timed out")
+
+
+def leftover(home: Path | None = None, platform: str = sys.platform,
+             label: str = LABEL) -> tuple[Path, str] | None:  # fmt: skip
+    """ecf's Ollama login item's file, if it is still there, and the commands that remove it
+    (`ecf doctor`, review R8: `retire` runs only at `ecf upgrade`'s settle). Reads the file
+    system only; runs nothing."""
+    home = home or Path.home()
+    if platform == "darwin":
+        plist = home / "Library" / "LaunchAgents" / f"{label}.plist"
+        if plist.exists():
+            return plist, (f"launchctl bootout gui/$(id -u)/{label}; rm"
+                           f" ~/Library/LaunchAgents/{label}.plist")  # fmt: skip
+    elif platform.startswith("linux"):  # unverified until M5
+        unit = home / ".config" / "systemd" / "user" / SYSTEMD_UNIT
+        if unit.exists():
+            return unit, (f"systemctl --user disable --now {SYSTEMD_UNIT}; rm"
+                          f" ~/.config/systemd/user/{SYSTEMD_UNIT}; systemctl --user"
+                          " daemon-reload")  # fmt: skip
+    return None
+
+
+def retire(root: Path, *, runner: Runner = run_short, home: Path | None = None,
            platform: str = sys.platform, label: str = LABEL) -> list[str]:  # fmt: skip
     """Unload and remove ecf's Ollama login item and delete `<root>/ollama/`; what it removed
     (empty when nothing was there). A command that fails is not retried: nothing depends on it.

@@ -38,6 +38,7 @@ from typing import Any, cast
 from ecf.errors import ConflictError, InvalidInputError, SchemaLimitError
 from ecf.ids import SLUG_PATTERN
 from ecf_server import (
+    addresses,
     approvals,
     config,
     db,
@@ -310,9 +311,12 @@ def kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
 
 def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]:
     """Re-check what the schema can't: addresses, kept settings, and the config (OD-359)."""
-    for a in staged.execute("SELECT address_id, email, overrides FROM addresses"):
+    for a in staged.execute("SELECT address_id, email, overrides, preset FROM addresses"):
         if not re.fullmatch(SLUG_PATTERN, str(a["address_id"])):
             raise BadBundleError("an address ID isn't valid")
+        if a["preset"] not in addresses.PRESETS:  # after 0038 only D can be left (review R11)
+            raise BadBundleError(f"address {a['address_id']}: preset {a['preset']} isn't"
+                                 " available until Jev's step 4")  # fmt: skip
         try:
             addr_spec(str(a["email"]))
         except InvalidInputError:
@@ -360,6 +364,9 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
                 conn.execute("DELETE FROM main.jobs WHERE address_id IN (SELECT value FROM"
                              " json_each(?))", (json.dumps(old),))  # fmt: skip
                 conn.execute("DELETE FROM main.slack_messages WHERE key LIKE 'item:%'")
+                # the old install's converted record goes with its addresses (review R7)
+                conn.execute("DELETE FROM main.settings WHERE key IN (SELECT value FROM"
+                             " json_each(?))", (json.dumps(addresses.CONVERTED_KEYS),))  # fmt: skip
             counts: dict[str, int] = {}
             for table in COPY:
                 counts[table] = copy(conn, table)
@@ -386,7 +393,8 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[
 def copy(conn: sqlite3.Connection, table: str, *, keep_ids: bool = False) -> int:
     """Copy the attached `imp` table into `main`; audit, model-call and Claude-call rows get new
     row IDs unless `keep_ids` (restore into an emptied table)."""
-    cols = [r[1] for r in conn.execute(f'PRAGMA imp.table_info("{table}")')]
+    unused = db.UNUSED_COLUMNS.get(table, ())  # an older bundle's values aren't carried (R1)
+    cols = [r[1] for r in conn.execute(f'PRAGMA imp.table_info("{table}")') if r[1] not in unused]
     if table in NEW_IDS and not keep_ids:
         cols = [c for c in cols if c != "id"]
     names = ", ".join(f"[{c}]" for c in cols)

@@ -35,6 +35,7 @@ from ecf.ids import StableId
 from ecf_server import (
     addresses,
     claude_pins,
+    claude_queue,
     decide,
     gate,
     items,
@@ -324,7 +325,7 @@ def demote_after_gate_change(conn: sqlite3.Connection, clock: Clock) -> list[str
 
 
 CONVERTED = pause.CONVERTED  # setting, written by 0038: {address_id: old preset} (P3, P12)
-CONVERTED_ANNOUNCED = "stages.converted_v3_announced"  # setting: the ids announced so far
+CONVERTED_ANNOUNCED = addresses.CONVERTED_ANNOUNCED  # setting: the ids announced so far
 CONVERTED_REASON = ("its preset's local model was removed in v3.0.0 (ADR 0031); it is now C and"
                     " paused, back to assist until its gate passes (§9.3)")  # fmt: skip
 WAITING = ("new", "classified", "awaiting_claude", "clarified")  # waiting for a model's answer
@@ -334,8 +335,9 @@ def converted(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """The addresses 0038 (or an import or restore of an older bundle) converted from A or B to
     C and paused, not removed since: id, old preset, whether it is still paused, whether its
     owner's agreement was confirmed (resuming it is the consent act, OD-427; `pause`) and how
-    many of its emails wait for a model (`GET
-    /v1/upgrade/state`, `ecf doctor`; P3). Counts only."""
+    many of its emails wait for a model (`GET /v1/upgrade/state`, `ecf doctor`; P3): None once
+    consented, when nothing reads it, so those aren't counted on every call (review R6). Counts
+    only."""
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (CONVERTED,)).fetchone()
     was: dict[str, Any] = json.loads(row[0]) if row else {}
     if not was:
@@ -347,11 +349,12 @@ def converted(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                          (aid,)).fetchone()  # fmt: skip
         if a is None or a["removed_at"] is not None:
             continue
-        n = conn.execute(f"SELECT count(*) FROM items WHERE address_id = ? AND status IN"  # noqa: S608
-                         f" ({marks})", (aid, *WAITING)).fetchone()[0]  # fmt: skip
+        consented = not pause.needs_consent(conn, aid)
+        n = None if consented else int(conn.execute(
+            f"SELECT count(*) FROM items WHERE address_id = ? AND status IN ({marks})",  # noqa: S608
+            (aid, *WAITING)).fetchone()[0])  # fmt: skip
         out.append({"address_id": aid, "from": str(was[aid]), "paused": bool(a["paused"]),
-                    "consented": not pause.needs_consent(conn, aid),
-                    "waiting": int(n)})  # fmt: skip
+                    "consented": consented, "waiting": n})  # fmt: skip
     return out
 
 
@@ -370,15 +373,16 @@ def add_converted(conn: sqlite3.Connection, was: dict[str, str], now: str) -> No
 def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> list[str]:
     """At service start after 0038, and after an import or restore (v3.0.0; ADR 0031, P3, P12):
     each converted address not yet announced goes from `live` to `assist` through `set_stage`
-    (audited, posted with `CONVERTED_REASON`), gets an `address.converted` audit row and its own
-    Security Notice: converted to C and paused; resume it only after the account owner agrees to
-    its mail going to Anthropic (OD-427), or remove it; its waiting emails wait for `/ecf-review`
-    once it is resumed. Counts only, no email content. The ids announced are kept in a setting;
-    a restore replaces the settings, so restoring an older bundle announces again. Returns the
-    ids announced."""
-    row = conn.execute("SELECT value FROM settings WHERE key = ?",
-                       (CONVERTED_ANNOUNCED,)).fetchone()  # fmt: skip
-    done: list[str] = json.loads(row[0]) if row else []
+    (audited, posted with `CONVERTED_REASON`); its pre-checked emails still at `new` (they waited
+    for the local model, `ecf backfill --act` mail among them; a records-only backfill's are
+    left) go to the Claude queue as `claude_queue.sweep` would move them, now (review R3); it
+    gets an `address.converted` audit row and its own Security Notice: converted to C and
+    paused; resume it only after the account owner agrees to its mail going to Anthropic
+    (OD-427), or remove it; its waiting emails wait for `/ecf-review` once it is resumed. Counts
+    only, no email content. Each id is marked announced in the audit row's transaction, so a
+    failure later announces only the rest again (review R6); a restore replaces the settings, so
+    restoring an older bundle announces again. Returns the ids announced."""
+    done = _announced(conn)
     todo = [c for c in converted(conn) if c["address_id"] not in done]
     if not todo:
         return []
@@ -389,15 +393,21 @@ def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifie
         if a["stage"] == "live":
             set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
                       reason=CONVERTED_REASON)  # fmt: skip
+        queued = sum(claude_queue.route_new(conn, clock, sid) for sid in _left_at_new(conn, aid))
         now = to_ts(clock.now())
+        n = int(c["waiting"] or 0)
         with write_tx(conn):
             conn.execute(
                 "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
                 " VALUES (?, ?, 'address.converted', 'service', 'ok', ?)",
                 (now, aid, json.dumps({"from": c["from"], "to": "C", "paused": True,
-                                       "waiting": c["waiting"]})),
+                                       "waiting": n, "queued": queued})),
             )  # fmt: skip
-        n = int(c["waiting"])
+            conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?,"
+                         " ?, 'service') ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+                         " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                         (CONVERTED_ANNOUNCED, json.dumps(sorted({*_announced(conn), aid})),
+                          now))  # fmt: skip
         slack_admin.notice(
             conn, clock, notifier,
             f"Address {aid} used preset {c['from']}, whose local model v3.0.0 removed: it is now"
@@ -407,15 +417,23 @@ def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifie
             f" remove {aid}). {n} email{'s' if n != 1 else ''} of it wait for /ecf-review once it"
             " is resumed.",
             dms=[ident.member] if ident and ident.member else [])  # fmt: skip
-    with write_tx(conn):
-        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
-                     " 'service') ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
-                     " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-                     (CONVERTED_ANNOUNCED,
-                      json.dumps(sorted({*done, *(str(c["address_id"]) for c in todo)})),
-                      to_ts(clock.now())))  # fmt: skip
     log.info("stages.converted_announced", addresses=len(todo))
     return [str(c["address_id"]) for c in todo]
+
+
+def _announced(conn: sqlite3.Connection) -> list[str]:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?",
+                       (CONVERTED_ANNOUNCED,)).fetchone()  # fmt: skip
+    return json.loads(row[0]) if row else []
+
+
+def _left_at_new(conn: sqlite3.Connection, aid: str) -> list[str]:
+    """A converted address's pre-checked emails still at `new`, except a records-only backfill's
+    (closed as `observed` by the backfill itself): `claude_queue.sweep`'s rule for new mail."""
+    return [r[0] for r in conn.execute(
+        "SELECT stable_id FROM items WHERE address_id = ? AND status = 'new' AND prechecked = 1"
+        " AND coalesce(json_extract(facts, '$.precheck.stage'), '') <> 'backfill'"
+        " ORDER BY created_at, stable_id", (aid,))]  # fmt: skip
 
 
 def _went_live_by_override(conn: sqlite3.Connection, aid: str) -> bool:

@@ -4,11 +4,15 @@ rollback window closes. No real `launchctl` or `systemctl` runs."""
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 import subprocess
 from pathlib import Path
+from typing import Any
 
-from ecf import __version__
+import pytest
+
+from ecf import __version__, doctor, ollama_unit
 from ecf.ollama_unit import FOLDER, SYSTEMD_UNIT, retire
 from ecf.paths import Paths
 from ecf_server import upgrade_state
@@ -144,3 +148,34 @@ def test_the_service_retires_at_settle_and_a_dev_service_never(
     svc.state.db_path = db_path
     svc._settle_upgrade()  # pyright: ignore[reportPrivateUsage]
     assert _no_ollama_retire == [tmp_path]
+
+
+def test_each_command_has_a_20_s_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review R9: `retire` runs in the service's timer thread; a hung launchctl can't hold it."""
+    seen: list[float] = []
+
+    def fake(args: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(kw["timeout"])
+        raise subprocess.TimeoutExpired(args, kw["timeout"])
+
+    monkeypatch.setattr(ollama_unit.subprocess, "run", fake)
+    out = ollama_unit.run_short(["launchctl", "print", "gui/1/x"])
+    assert seen == [20] and out.returncode == 124
+    assert inspect.signature(retire).parameters["runner"].default is ollama_unit.run_short
+
+
+def test_doctor_names_a_leftover_login_item(tmp_path: Path) -> None:
+    """Review R8: an install upgraded another way keeps the item; doctor names it and the commands
+    that remove it, reading files only (nothing is run)."""
+    home, _root, plist = _set_up(tmp_path)
+    real = home / "Library" / "LaunchAgents" / f"{ollama_unit.LABEL}.plist"
+    assert doctor.check_ollama_item(home, "darwin") == []
+    plist.rename(real)
+    (check,) = doctor.check_ollama_item(home, "darwin")
+    assert check.level is doctor.Level.WARN and str(real) in check.detail
+    assert f"launchctl bootout gui/$(id -u)/{ollama_unit.LABEL}" in check.fix
+    unit = home / ".config" / "systemd" / "user" / SYSTEMD_UNIT
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Unit]")
+    (check,) = doctor.check_ollama_item(home, "linux")
+    assert f"systemctl --user disable --now {SYSTEMD_UNIT}" in check.fix

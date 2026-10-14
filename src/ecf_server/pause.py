@@ -30,8 +30,8 @@ from ecf_server.db import write_tx
 
 PAUSE, RESUME = "pause", "resume"
 ALL = "*"  # a button's ref for every address (the pinned "Needs you")
-CONVERTED = "stages.converted_v3"  # setting, written by 0038: {address_id: old preset} (P3)
-CONSENTED = "stages.converted_v3_consented"  # setting: the converted ids whose owner agreed
+CONVERTED = addresses.CONVERTED  # setting, written by 0038: {address_id: old preset} (P3)
+CONSENTED = addresses.CONSENTED  # setting: the converted ids whose owner agreed
 
 
 def is_paused(conn: sqlite3.Connection, address_id: str) -> bool:
