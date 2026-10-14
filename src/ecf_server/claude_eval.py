@@ -245,7 +245,8 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8", "surrogateescape")).hexdigest()
 
 
-# ---------------------------------------------------------------------------- agents and models
+# Agents and models: the agent name for each role (`ecf-eval-*` for a comparison run, else the
+# pinned `ecf-*`), and the model each role runs, which `ecf claude` renders as agents.
 
 
 def agent_name(role: str, pinned: bool) -> str:
@@ -289,7 +290,8 @@ def agents_for(run: Run) -> dict[str, str]:
     return {agent_name(r, False): run.models[r] for r in ROLES}
 
 
-# ---------------------------------------------------------------------------- registering
+# Registering a run from the command line (`ecf eval run --claude`): its source (a Jev run for
+# preset D) and its cases, prepared in a thread, ready for an `ecf claude` session to work on.
 
 
 def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids: set[str]
@@ -434,7 +436,9 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         scratch.close()
 
 
-# ---------------------------------------------------------------------------- scoring
+# Scoring: each case planned through policy once it has a classification (and scored after the
+# actor's proposal where one is asked), then the run's finish: repeat classifications, claim
+# records and the run's Claude figures.
 
 
 def _context(run: Run, w: Work) -> policy.Context:
@@ -571,7 +575,9 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
     } | claude_usage.run_report(conn, run.sessions, run.created)
 
 
-# ---------------------------------------------------------------------------- the session's side
+# The session's side: what the `/ecf-eval` session calls through MCP. Expiry, handing out claims
+# in rounds and spawns with their timing limits, checking each submission against its claim,
+# and settling what was submitted.
 
 
 def _expired(run: Run, clock: Clock) -> bool:
@@ -1116,7 +1122,8 @@ def release_session(session_id: str) -> None:
         run.awaiting.pop(session_id, None)
 
 
-# ---------------------------------------------------------------------------- status
+# Status: stopping a run, and the progress and results the status line and `eval_results`
+# show (counts and rates only, no case IDs).
 
 
 def stop(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dict[str, Any] | None:

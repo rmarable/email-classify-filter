@@ -79,7 +79,8 @@ EXT_CHARS = 80  # the review line's `ext:` part
 MODEL_NOTE = "What ecf's model said (it can be wrong)."
 
 
-# ---------------------------------------------------------------------------- who needs what
+# Who needs what: which emails need their own review, and the reviewed counts and progress the
+# go-live gate reads.
 
 
 def needs_own_review(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
@@ -160,7 +161,7 @@ def progress(conn: sqlite3.Connection, address_id: str, sensitivity: str,
     return c | {"target": target, "to_go": to_go, "accuracy": accuracy, "text": text}
 
 
-# ---------------------------------------------------------------------------- posting
+# Posting: choosing the sampled emails and building each address's review post.
 
 
 def _sample_rate(conn: sqlite3.Connection) -> int:
@@ -279,7 +280,7 @@ def _shown(v: Any) -> str:
     return str(v).lower() if isinstance(v, bool) else str(v)
 
 
-# ---------------------------------------------------------------------------- recording
+# Recording: storing a review or correction, and the fields the Fix form offers.
 
 
 def _set_review(conn: sqlite3.Connection, now: datetime, sid: str, review: dict[str, Any],
@@ -350,7 +351,7 @@ def correction_from(values: dict[str, str], schema: CompiledSchema) -> dict[str,
     return out
 
 
-# ---------------------------------------------------------------------------- Slack
+# Slack: the handlers for the review post's buttons and its Fix form.
 
 
 @slack_in.handles(CORRECT)

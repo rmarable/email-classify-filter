@@ -64,7 +64,7 @@ def _put(conn: sqlite3.Connection, key: str, value: Any, now: str, actor: str) -
     )
 
 
-# ---------------------------------------------------------------------------- setting
+# Setting the retention period (`ecf retention set`), behind step-up.
 
 
 @stepup.purpose("retention_set")
@@ -111,7 +111,7 @@ def set_days(
     return {"days": value, "was": was, "changed": True}
 
 
-# ---------------------------------------------------------------------------- the daily job
+# The daily job: deleting what is past retention, in batches.
 
 
 def due(conn: sqlite3.Connection, clock: Clock) -> bool:

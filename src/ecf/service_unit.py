@@ -103,7 +103,8 @@ def regrant(
     return code
 
 
-# ---------------------------------------------------------------------------- launchd (macOS)
+# launchd on macOS: the job label, the property list that runs `ecf-server`, and the manager
+# behind `ecf service` there.
 
 
 def launchd_label(install: str) -> str:
@@ -227,7 +228,8 @@ class LaunchdManager:
         )
 
 
-# ---------------------------------------------------------------------------- systemd (Linux)
+# systemd user units on Linux (unsupported until M5): the unit name, the unit file and its
+# manager; then `manager_for`, which picks the manager for this operating system.
 
 
 def systemd_unit_name(install: str) -> str:

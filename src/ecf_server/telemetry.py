@@ -304,7 +304,8 @@ def _when(v: Any) -> float | None:
         return None
 
 
-# ---------------------------------------------------------------------------- OTLP/JSON
+# Parsing what the receiver gets: OTLP/JSON log exports, keeping only API requests and model
+# swaps, and the status-line script's numbers.
 
 
 def _value(v: Any) -> Any:

@@ -100,7 +100,8 @@ def _audit(conn: sqlite3.Connection, now: str, event: str, data: dict[str, Any],
     )
 
 
-# ---------------------------------------------------------------------------- retirement
+# Retirement: pinned models with a retirement date, the notices before it, and refusing to
+# open `ecf claude` with a pin past it.
 
 
 def _pinned(conn: sqlite3.Connection) -> dict[str, list[str]]:
@@ -181,7 +182,8 @@ def refuse_retired(conn: sqlite3.Connection, clock: Clock) -> None:
         )
 
 
-# ---------------------------------------------------------------------------- the weekly run
+# The weekly run: when it is due, listing the models the API key can use, and checking for a
+# newer ecf release.
 
 
 def due(conn: sqlite3.Connection, clock: Clock) -> bool:
@@ -365,7 +367,8 @@ def _release(conn: sqlite3.Connection, clock: Clock, releases: Releases) -> str:
     return "ok"
 
 
-# ---------------------------------------------------------------------------- what it says
+# What it says: the findings for the daily summary, and the status `ecf models status` and
+# `ecf doctor` show.
 
 
 def daily_lines(conn: sqlite3.Connection) -> list[str]:
@@ -430,7 +433,8 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------- the API key
+# The optional Models API key (stored after a call shows it works, or removed), and
+# `ecf models watch`, which makes the watch due at the next tick.
 
 
 def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str | None,

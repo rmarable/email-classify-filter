@@ -99,7 +99,7 @@ class Hide(StrEnum):
     CORROBORATED = "corroborated"
 
 
-# ---------------------------------------------------------------------------- conditions
+# Conditions: the comparison and the and/or/not forms a rule's `when` is built from.
 
 
 class Compare(BaseModel):
@@ -168,7 +168,8 @@ Or.model_rebuild()
 Not.model_rebuild()
 
 
-# ---------------------------------------------------------------------------- rules
+# Rules: a rule's actions, labels and continue condition, and the rule set as the YAML file
+# holds it.
 
 
 class LabelFrom(BaseModel):
@@ -234,7 +235,8 @@ class RuleSet(BaseModel):
         default_factory=list[str])  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- evaluation
+# Evaluation: the input a rule set runs against, the decision it gives, and how a condition is
+# judged true, false or unknown.
 
 
 @dataclass(frozen=True)
@@ -344,7 +346,8 @@ def _in_spec(name: str, classification: dict[str, Any], schema: CompiledSchema) 
     return isinstance(value, str) and value in spec.values
 
 
-# ---------------------------------------------------------------------------- compile
+# Compiling a rules file: the shipped files, the fixed rule ids (and old ids a rename left),
+# and the checks every rule and condition must pass against the schema.
 
 
 # Schema v1 values a rules file may still use; read as their v2 value (OD-475). Stored and
@@ -585,7 +588,8 @@ def _check_values(c: Compare, values: tuple[str, ...] | None, where: str) -> Non
             raise InvalidInputError(f"{where}: {w!r} is not a valid value")
 
 
-# ---------------------------------------------------------------------------- compose
+# Composing the rules in force: the fixed rules, the user's file and the default rules in
+# layers, cached per schema, with what the dry run and apply say about the layering.
 
 
 # a compiled set, or the refusal it raised (A4: a refused applied set is re-raised from here, not
@@ -777,7 +781,8 @@ def starter_digest() -> str:
     return h.hexdigest()
 
 
-# ---------------------------------------------------------------------------- v2 applied rules
+# Applied rules from v2: converting a stored v2 document by stripping ecf's fixed rules and
+# the shipped default rules copied into it, or naming the customised ones that stop it.
 
 
 @dataclass(frozen=True)

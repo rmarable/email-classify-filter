@@ -106,6 +106,7 @@ uv build                                  # wheel + sdist
 - One owner per topic: SPEC (design, threat model, limits), SECURITY.md (vulnerability reporting, supported versions, a summary pointing to SPEC), CONTRIBUTING (how-to only).
 - A "verified" fact cites its site and date; anything else reads "unverified, confirm in V1.x". "(rv)" marks a fact verified by a reviewer's cited source and not re-checked by Claude.
 - **Haiku versions** (operator decision 2026-10-12): a statement about Haiku 4.5's results or behaviour names 4.5 and says how Haiku 5.5 compares ("Haiku 5.5 not measured in this role" until it is). Model IDs in tests and fixtures aren't statements.
+- **Comments** (operator decision 2026-10-14): no banner or divider comments (`# ---- name`); a section comment in a long module is one to three plain lines saying what the section holds and why, enough for a human to follow without reading the code; the operator's file-header boxes stay.
 
 ## Session state
 

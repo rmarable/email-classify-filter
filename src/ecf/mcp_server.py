@@ -113,7 +113,8 @@ class ToolDef:
                           input_schema=schema, annotations=hints)  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- arguments
+# Reading tool arguments: getters that refuse a missing or non-text value, the claim route for an
+# item ID, and the JSON schema pieces the tool definitions below share.
 
 
 def _str(args: dict[str, Any], key: str) -> str:
@@ -142,7 +143,9 @@ CLAIM = {"type": "string",
 ADDRESS = {"type": "string", "description": "Only this address (its ecf address ID)."}
 
 
-# ---------------------------------------------------------------------------- handlers
+# The tool handlers, one per MCP tool, each one or two requests to the service; then the tool
+# table, which tools the main and agent servers offer, and the call wrapper that turns every
+# failure into an error result.
 
 
 async def _status(svc: Service, _args: dict[str, Any], started: float) -> dict[str, Any]:

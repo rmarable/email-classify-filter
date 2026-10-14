@@ -143,7 +143,9 @@ def agent_for(conn: sqlite3.Connection, item: sqlite3.Row, need: str) -> str:
     return "ecf-actor-high" if p.high_risk else "ecf-actor"
 
 
-# ---------------------------------------------------------------------------- claiming
+# Claiming: `review_queue` hands an `ecf claude` session waiting items in rounds, one claim
+# token per spawn; with the timing limits, the in-memory session state, and the checks a
+# token passes at each call.
 
 
 def review_queue(
@@ -689,9 +691,6 @@ def _item(conn: sqlite3.Connection, sid: str) -> sqlite3.Row:
     return row
 
 
-# ---------------------------------------------------------------------------- reading
-
-
 def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, token: str,
                 agent: str) -> dict[str, Any]:  # fmt: skip
     """The claimed item for the agent the service named (only an agent server calls this)."""
@@ -736,7 +735,8 @@ def get_message(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: st
     return out
 
 
-# ---------------------------------------------------------------------------- submitting
+# Submitting: an agent's classification and proposed action, each checked against the schema
+# or the allowed actions under its claim before it is held for settling.
 
 
 def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str,
@@ -863,7 +863,8 @@ def _hold(conn: sqlite3.Connection, clock: Clock, claim: sqlite3.Row, session_id
                 str(claim["need"]), str(claim["agent"]), payload)  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- settling
+# Settling: applying held submissions or refusing them, ending each claim once, and auditing
+# the outcome.
 
 
 def settle(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, tel: Telemetry, hold: Hold,
@@ -1034,7 +1035,8 @@ def _audit_row(conn: sqlite3.Connection, clock: Clock, address_id: str, stable_i
     )  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- the reminder
+# Waiting too long: items left for `/ecf-review` past the reminder hours, the reminder each
+# tick while they wait, and the escalation when they keep waiting.
 
 
 Late = list[claude_queue.Overdue]
