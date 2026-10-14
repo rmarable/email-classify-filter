@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded decision for v3.0.1: the `actor` role's comparison (Haiku 5.5 against the pinned Sonnet, two preset C runs on the 300-card set) runs in v3.0.1 with the `actor_high` pin, not before v3.0.0.
 - `ecf resume` on an address converted from preset A or B at the v3.0.0 upgrade asks whether the account owner agreed to their mail going to Anthropic, and resumes it only on "y" (recorded once in the audit log); `ecf resume --all` and the Slack buttons skip such an address and name it (ADR 0031, OD-427).
 - `ecf eval run` uses the `null` backend by default (no model; it never passes the go-live gate) and refuses `gemma`, `systemone:` and `--corpus`; old Gemma, preset B and decision-model results still load and rescore (ADR 0031).
 - `ecf models install`, `ecf models prune` and `ecf models serve` are gone; `ecf models status` shows the Claude pins and the model watch; ecf's Ollama login item and `<root>/ollama/` are removed once the upgrade's rollback window closes (ADR 0031).

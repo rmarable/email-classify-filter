@@ -68,7 +68,9 @@
 **Is not:**
 - **The service path (step 4):** preset D on an address, the dispatch point (P9), the `addresses`
   rebuild, gate keys in `items.pinned_models` and `gate`, the `model_calls` migration, and the
-  breaker as the Jev-down switch. Also step 4: the probe schedule, Slack notices, the `ecf init`
+  breaker as the Jev-down switch. Also step 4: `summarize`'s `gate_passed` still needs `actor` (removal R1c
+  kept it literal to P5/P16), so a Jev `eval run`, which has no actor, can't pass even once `jev`
+  joins `GATE_BACKENDS`; step 4 decides how D's gate is formed. Also step 4: the probe schedule, Slack notices, the `ecf init`
   step, step-up on adding a D address (D3), and `jev.lock` in `release.json` and `upgrade_check`
   (P32).
 - **Step 3's figures:**
