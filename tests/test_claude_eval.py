@@ -38,6 +38,7 @@ from ecf_server import (
 )
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock, to_ts
+from ecf_server.db import write_tx
 from ecf_server.notify import NullNotifier
 from ecf_server.telemetry import SUBAGENT, ApiCall, Hold, Seen, Telemetry
 from tests.test_claude_review import EXT, extend, tokens_of, with_tokens
@@ -1118,6 +1119,10 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     m = json.loads(conn.execute("SELECT metrics FROM eval_runs").fetchone()[0])
     assert m["schema_digest"] == schema.digest != load_schema().digest
     assert m["prompt_digest"] == claude_review.prompt_digest(schema)  # Claude's side (Q4)
+    # review R9: bytes of schema per classify read, with the user fields
+    from ecf.schema import read_bytes  # noqa: PLC0415
+
+    assert m["read_bytes"] == read_bytes(schema) > read_bytes(load_schema())
     assert m["keywords_digest"] == triggers.keywords_digest()
     assert m["plugin_digest"] == plugin_digest()  # the skills and agent prompts
 
@@ -1159,27 +1164,33 @@ def test_a_case_goes_out_with_the_signals_gemma_gets(
 
 
 @pytest.mark.usefixtures("extensions_on")
-def test_preset_b_takes_only_a_run_on_the_effective_schema(
+def test_preset_b_takes_only_a_run_on_the_schema_gemma_is_asked(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
+    """Gemma is asked plain v2 whatever the install's own fields (S4, D8), so a run with no
+    digest recorded (the shipped schema) still counts with them; a run asked another schema
+    doesn't."""
     _a_run(conn, clock, db_path, root, REQUEST)  # recorded no digest: the shipped schema
     extend(conn, clock)
-    with pytest.raises(InvalidInputError, match="ecf eval run"):
-        start(db_path, clock, root, preset="B")
+    r = start(db_path, clock, root, preset="B")
+    run = claude_eval.current()
+    assert r["state"] == "ready" and run is not None
+    assert EXT["category_values"].keys() <= run.known  # policy plans with the effective schema
+    claude_eval.reset()
+    with write_tx(conn):
+        conn.execute("DELETE FROM eval_runs")
     cases, version = evalrun.load(root, fraud_only=False)
-    got = REQUEST | {"contract_stage": "none", "lawyer_involved": False}
-    results = [CaseResult(id=c.id, correct=False, got=got | {"rule": None}) for c in cases]
+    results = [CaseResult(id=c.id, correct=False, got=REQUEST | {"rule": None}) for c in cases]
     summary: dict[str, object] = evalrun.summarize(results, 0)
     schema = config.current_schema(conn)
-    summary["schema_digest"] = local_schema(schema).digest  # what Gemma is asked (P6, OD-498)
+    summary["schema_digest"] = schema.digest  # asked something other than plain v2
     rf = ResultFile(run_id="b" * 32, pair="gemma4-12b/local", set_version=version,
                     created_at=to_ts(clock.now()), cases=results,
                     digest=claude_pins.local_key(schema), summary=summary)  # fmt: skip
     evalrun._save(conn, clock, db_path.parent, rf)  # pyright: ignore[reportPrivateUsage]
-    r = start(db_path, clock, root, preset="B")
-    run = claude_eval.current()
-    assert r["state"] == "ready" and run is not None and run.source_run == "b" * 32
-    assert EXT["category_values"].keys() <= run.known
+    with pytest.raises(InvalidInputError, match="ecf eval run"):
+        start(db_path, clock, root, preset="B")
+    assert local_schema(schema).digest != schema.digest
 
 
 def test_preset_b_acts_on_gemmas_classifications_from_the_last_complete_run(

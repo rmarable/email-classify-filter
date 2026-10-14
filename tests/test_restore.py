@@ -155,6 +155,24 @@ def test_restore_keeps_a_changed_fixed_rule_as_service_start_does(
                 " AND outcome = 'denied'") == 1  # fmt: skip
 
 
+def test_s4_restore_drops_the_bundles_own_fields(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, fresh: sqlite3.Connection
+) -> None:
+    """P11 (OD-502): restore drops `config.schema` like import, naming it in the preview and the
+    result; the bundle's address is preset A, so the reason is D8's."""
+    from ecf_server import config  # noqa: PLC0415
+
+    _set(conn, "config.schema", {"category_values": {"legal_notice": "Letter from a lawyer."}})
+    path = _backup(conn, clock, tmp_path)
+    preview = restore.check(fresh, bundle_reader.read(fresh, str(path), KEY_TEXT))
+    assert all(c["section"] != "schema" for c in preview["config_changes"])
+    done = _restore(fresh, clock, path)
+    assert done["schema_dropped"] == preview["schema_dropped"]
+    assert done["schema_dropped"]["category_values"] == ["legal_notice"]
+    assert "use preset A or B" in done["schema_dropped"]["text"]
+    assert config.current(fresh)["schema"] is None
+
+
 # ---- the same computer --------------------------------------------------------------------------
 
 
@@ -319,3 +337,27 @@ def test_route_and_cli(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Pat
     assert r.exit_code == 0, r.output
     assert "restored 1 address(es) and 5 emails; generation 1" in r.output
     assert store.get(export_keys.SEED_NAME) is not None
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_s4_r1_restore_drops_the_fields_and_the_rules_on_them(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, fresh: sqlite3.Connection
+) -> None:
+    """Review R1: a C install with the soccer fields and a rule on them restores; the fields
+    and that rule are left out and named, the other rule comes back."""
+    from ecf_server import config  # noqa: PLC0415
+    from tests.test_importer import SOCCER, SOCCER_RULES  # noqa: PLC0415
+
+    _source(conn)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET preset = 'C'")
+    _set(conn, "config.schema", SOCCER)
+    _set(conn, "config.rules", SOCCER_RULES)
+    path = _backup(conn, clock, tmp_path, data=False)
+    preview = restore.check(fresh, bundle_reader.read(fresh, str(path), KEY_TEXT))
+    done = _restore(fresh, clock, path)
+    assert done["schema_dropped"] == preview["schema_dropped"]
+    assert done["schema_dropped"]["rules"] == ["soccer_club", "club"]
+    assert "re-apply your config file" in done["schema_dropped"]["text"]
+    stored = config.current(fresh)
+    assert stored["schema"] is None and [r["id"] for r in stored["rules"]["rules"]] == ["keep"]

@@ -225,29 +225,32 @@ def test_the_override_from_the_cli(home: Path) -> None:
 
 
 @pytest.mark.usefixtures("extensions_on")
-def test_a_schema_extension_changes_every_key_alike(
+def test_user_fields_move_only_the_claude_classifier_keys(
     conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path
 ) -> None:
-    """Preset A's and the fallback's gate, the B and C pins and unpinned eval keys all move to
-    the effective schema's digest together (OD-478)."""
+    """S4 (D3, D8; OD-502): C's pins and an unpinned C eval key hold the whole effective schema
+    digest, so your own fields move them; the local model is never asked them (`local_schema`
+    is plain v2), so preset A's and the fallback's gate, B's pins and an unpinned B eval key
+    don't move."""
     from ecf_server import claude_eval, config, fallback  # noqa: PLC0415
     from tests.test_claude_review import extend  # noqa: PLC0415
 
-    def keys() -> list[str]:
-        unpinned = [claude_eval.Options(tmp_path, preset=p, actor_model=NEW_SONNET)
-                    for p in ("B", "C")]  # fmt: skip
+    def local_keys() -> list[str]:
+        b = claude_eval.Options(tmp_path, preset="B", actor_model=NEW_SONNET)
         return [claude_pins.local_key(config.current_schema(conn)), fallback.digest(conn),
-                *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B", "C")),
-                *(claude_eval.models_for(conn, o)[2] for o in unpinned)]  # fmt: skip
+                *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B")),
+                claude_eval.models_for(conn, b)[2]]  # fmt: skip
 
-    before = keys()
+    def c_keys() -> list[str]:
+        c = claude_eval.Options(tmp_path, preset="C", actor_model=NEW_SONNET)
+        return [claude_pins.key(claude_pins.pins(conn, "C")), claude_eval.models_for(conn, c)[2]]
+
+    before_local, before_c = local_keys(), c_keys()
     extend(conn, clock)
-    after = keys()
-    assert all(a != b for a, b in zip(before, after, strict=True))
-    effective = claude_pins.local_key(config.current_schema(conn))
-    assert effective != LOCAL
-    assert claude_pins.local_key(config.current_schema(conn)) == fallback.digest(conn) == effective
-    assert claude_pins.pins(conn, "B")["digest"] == effective
+    assert local_keys() == before_local
+    assert all(a != b for a, b in zip(before_c, c_keys(), strict=True))
+    assert claude_pins.local_key(config.current_schema(conn)) == fallback.digest(conn) == LOCAL
+    assert claude_pins.pins(conn, "B")["digest"] == LOCAL
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 
 

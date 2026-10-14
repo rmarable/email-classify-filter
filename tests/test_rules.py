@@ -210,7 +210,8 @@ def test_rules_may_read_the_fixed_items(item: str) -> None:
         f"{{id: a, when: {{not: {{field: {item}, eq: false}}}}, then: [flag]}}",
         f"{{id: a, then: [{{flag: true, if: {{field: {item}, eq: true}}}}]}}",
     ):
-        rules = compile_rules(f"version: 1\nrules:\n  - {rule}\n  - {{id: rest}}\n", SCHEMA)
+        rest = "" if "when" not in rule else "  - {id: rest}\n"  # a bare rule only last (R3)
+        rules = compile_rules(f"version: 1\nrules:\n  - {rule}\n{rest}", SCHEMA)
         d = rules.evaluate(RuleInput({**BASE, item: True}, FACTS))
         assert d.rule_id == "a" and names(d) == [("flag", None)]
 
@@ -260,7 +261,8 @@ EXTENDED = extend_schema(SCHEMA, {
     "fields": {
         "contract_stage": {"type": "enum", "description": "Where a contract stands.",
                            "values": {"draft": "A draft.", "signature": "Waiting to sign."}},
-        "legal_risk": {"type": "ordinal", "levels": ["none", "low", "high"],
+        "legal_risk": {"type": "ordinal",
+                       "levels": {"none": "None.", "low": "Some.", "high": "A court."},
                        "description": "Legal exposure."},
     },
     "category_values": {"legal_notice": "Letter from a lawyer."},

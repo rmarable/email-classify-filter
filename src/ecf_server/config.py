@@ -19,23 +19,40 @@ change made in between voids the nonce. `security_config_delay_minutes` is 0 in 
 (OD-074), so the change applies at once; it is audited (`config.applied`) and announced as a
 Security Notice.
 
-`schema` is validated before `rules`: the rules in force (or the starter rules) must compile
-against the new effective schema, so removing a field or value a rule uses is refused, naming
-the rule (the OD-452 pattern). An extension over a cap is refused with every violation listed
-(`schema_limit`); the dry run carries the budget line and the prompt lines the extension adds.
+`schema` (your own fields, the user layer: v3.0.0 S4, OD-502; SPEC §7.1, §9.7) is validated
+before `rules`: the rules in force (or the starter rules) must compile against the new effective
+schema, so removing a field or value a rule uses is refused, naming the rule (the OD-452
+pattern). Your fields are for preset C only (D8): a `schema` section other than `default` is
+refused while any address is preset A or B (and `addresses.add_address` refuses an A or B
+address while one is stored). An added value can't take a built-in label's name or the id of a
+fixed, default or applied rule, always (P2); a rule that labels from your field is refused when
+the field's values repeat another field's value or a label name (P12). Over a cap is refused with
+every violation listed (`schema_limit`); the dry run carries the budget line (with the bytes per
+classify read, P16), the prompt lines the extension adds, the warnings (`extension_warnings`),
+the privacy line (§12.4, D10) and how the rules layer.
 
-Extensions are off in v2.0.0 (OD-481; `ecf.schema.EXTENSIONS_ENABLED`): a `schema` section other
-than `default` is refused, `schema: default` still removes a stored extension, and a stored one
-(applied on an rc, or imported in a bundle) is kept but ignored: the effective schema is the
-shipped one, so the gate key, prompts and rules use it. Applied rules that don't compile
-against this version (they use the ignored extension, or a field or fact a later release added
-and a rollback or older bundle left in place, or a fixed rule's id) give way to the starter rules
-and a System Error until they are changed (`current_rules`, `schema_tick`; classifier plan item
-6).
+The user layer is behind `ecf.schema.EXTENSIONS_ENABLED` (OD-481, kept by OD-502 until M2
+passes): off, a `schema` section other than `default` is refused, `schema: default` still
+removes a stored extension, and a stored one is ignored (the effective schema is the shipped
+one). Import and restore drop a bundle's `schema` (`importer.drop_schema`, P11): it needs a
+re-apply here. A stored extension a new version first uses is activated once at service start
+(`activate_stored`: audited, a Security Notice, live C addresses to assist; D11). Applied rules
+that don't compile against this version (a field or fact a later release removed, or a fixed
+rule's id) give way to the starter rules, or, if those fail too, to ecf's fixed rules and
+`otherwise`, with a System Error until they are changed (`current_rules`, `schema_tick`;
+classifier plan item 6); `current_rules` never raises (P2, C11).
 
-`rules` replaces the default rules, never ecf's fixed rules, which always run first (v3.0.0 S3,
-OD-500; `rules.compose`). Applied rules from v2 hold copies of the fixed rules: `convert_rules`
-strips the unchanged copies once, at service start and on import (P7).
+`rules` is layered (v3.0.0 S4, D2; `rules.compose`): ecf's fixed rules always run first, then
+your rules with new ids, then ecf's default rules with each one your file replaces by id at that
+default's position and each one in `default_rules_off` left out; a file ending in a rule with no
+`when` replaces the default rules instead. Apply, the rules-in-force check, `rules_problem`, `ecf
+rules test` and the dry run check the composed set, never your file alone (P2, P3). Applied rules
+from v2 hold copies of the fixed rules: `convert_rules` strips the unchanged copies once, at
+service start and on import (P7), and with them each copy identical to a shipped default rule
+when that leaves the composed set unchanged (P24). A stored file without a catch-all from before
+S4 changes meaning (its rules now run before the default rules, which before didn't run): the dry
+run of any `ecf config apply` and `ecf doctor` say so until rules are applied again
+(`PRE_LAYERS`).
 
 What reads each section in V1.2: `org_domains` (facts and triggers, §7.2, §8.5). The others are
 validated and stored for their consumers: rules and the action policy (V1.3, with the classifier),
@@ -44,6 +61,7 @@ the move-folder allow-list (V1.3), the forward allow-list and templates (V1.5, w
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import json
@@ -56,9 +74,11 @@ from ecf.errors import InvalidInputError, SchemaLimitError
 from ecf.schema import (
     EXTENSIONS_OFF,
     CompiledSchema,
+    FieldKind,
     extend_schema,
     extension_budget,
     extension_text,
+    extension_warnings,
     extensions_enabled,
     load_schema,
     shipped_fallback,
@@ -100,8 +120,18 @@ MAX_ADDRESS = 254
 MAX_NAME = 100
 DEFAULT = "default"  # `<section>: default` returns the section to its shipped value (OD-225)
 SCHEMA_ALERT = "schema_extension"  # System Error: the stored extension no longer compiles
-# leads the step-up dialog and the Security Notice whenever `schema` changes (OD-478)
+# leads the step-up dialog and the Security Notice whenever `schema` changes (OD-478); `_lead`
+# adds what live needs again (P15)
 SCHEMA_LEAD = "changes the classifier prompt; live addresses go back to assist"
+# D8: why your fields are for preset C only, in each refusal
+LOCAL_REASON = ("the local model (presets A and B) isn't measured with your own fields (SPEC"
+                " §1.5a item 2)")  # fmt: skip
+PRIVACY_LINE = ("privacy: your field and value names and descriptions go to Anthropic with each"
+                " Claude classification request, and the chosen values with each actor request"
+                " (preset C); never put email content or secrets in them")  # fmt: skip
+ACTIVATED = "schema.activated"  # setting: the SHA-256 of the stored extension in use (D11)
+PRE_LAYERS = "rules.pre_layers"  # setting: a pre-S4 stored file without a catch-all (P3)
+LAYERS_CHECKED = "rules.layers_checked"  # setting: the first S4 start looked (P3)
 
 
 def canonical_json(value: Any) -> str:
@@ -208,37 +238,96 @@ def rules_problem(conn: sqlite3.Connection) -> str | None:
         return (f"applied rules: rule {', '.join(changed)} is a changed copy of one of ecf's"
                 " fixed rules, which run first; remove it and the other fixed rules"
                 f" ({', '.join(rules.fixed_ids())}) from your file")  # fmt: skip
-    try:
-        rules.compile_rules(canonical_json(stored), current_schema(conn), source="applied rules")
+    try:  # the composed set, as mail runs it (P2)
+        rules.compose(current_schema(conn), canonical_json(stored), source="applied rules")
     except InvalidInputError as exc:
         return exc.detail
     return None
 
 
-def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
-    """The applied rules, or the starter rules when none were applied, compiled against the
-    effective schema. Applied rules that don't compile against it (they use a stored extension
-    that is ignored, OD-481, or no longer compiles, or a field or fact this version doesn't know)
-    give way to the starter rules, so mail is still decided; `schema_tick` raises a System Error
-    until they change."""
-    schema = current_schema(conn)
+def rules_warnings(conn: sqlite3.Connection) -> list[str]:
+    """What `ecf doctor` and the dry run warn about the stored rules, short of a refusal: an off
+    id ecf skips (`rules.layer_warnings`; a later release may rename a default), and a pre-S4
+    file without a catch-all, whose meaning changed (P3)."""
     stored = _stored(conn, "rules")
     if stored is None:
-        return rules.load_starter_rules(schema)
-    text = canonical_json(stored)
-    try:  # fixed rules first (OD-500); cached on the schema and the stored JSON (P8), a refusal too
-        return rules.compose(schema, text, source="applied rules")
+        return []
+    out: list[str] = []
+    try:
+        user = rules.compose(current_schema(conn), canonical_json(stored), source="applied rules")
+        out += [f"applied rules: {w}" for w in rules.layer_warnings(user)]
     except InvalidInputError:
-        key = (schema.digest, hashlib.sha256(text.encode()).hexdigest())
-        if key not in _BROKEN_LOGGED:  # once per schema and rules, not per item (A4)
-            if len(_BROKEN_LOGGED) >= 32:
-                _BROKEN_LOGGED.clear()
-            _BROKEN_LOGGED.add(key)
-            log.error("config.rules_broken")
+        pass  # rules_problem reports it
+    if slack_admin.setting(conn, PRE_LAYERS) == _rules_sha(stored):
+        out.append("applied rules: your file has no catch-all; since v3.0.0 its rules run after"
+                   " ecf's fixed rules and before ecf's default rules (before, the default rules"
+                   " didn't run). End it with a rule with no `when` to keep the old meaning, or"
+                   " apply it again (unchanged is fine) to confirm the new one")  # fmt: skip
+    return out
+
+
+def _rules_sha(doc: Any) -> str:
+    return hashlib.sha256(canonical_json(doc).encode()).hexdigest()
+
+
+def _acknowledge_layers(conn: sqlite3.Connection, doc: Any) -> None:
+    """P3: applying the stored pre-S4 file again unchanged confirms its layered meaning; the note
+    goes (nothing security-relevant changes, so no step-up)."""
+    if slack_admin.setting(conn, PRE_LAYERS) == _rules_sha(doc):
+        with write_tx(conn):
+            conn.execute("DELETE FROM settings WHERE key = ?", (PRE_LAYERS,))
+
+
+def mark_pre_layers(conn: sqlite3.Connection, now: str) -> None:
+    """Once, at the first service start with S4's layering (P3): a stored file without a
+    catch-all was written when it replaced the default rules; now they run after it. Its SHA-256
+    is kept so the dry run and doctor name it until rules are applied again."""
+    if slack_admin.setting(conn, LAYERS_CHECKED):
+        return
+    stored = _stored(conn, "rules")
+    with write_tx(conn):
+        if isinstance(stored, dict):
+            listed: Any = cast("dict[str, Any]", stored).get("rules")
+            last = cast("list[Any]", listed)[-1] if isinstance(listed, list) and listed else None
+            if isinstance(last, dict) and "when" in cast("dict[str, Any]", last):
+                slack_admin.put_setting(conn, PRE_LAYERS, _rules_sha(stored), now,
+                                        actor="service")  # fmt: skip
+                log.info("config.rules_pre_layers")
+        slack_admin.put_setting(conn, LAYERS_CHECKED, now, now, actor="service")
+
+
+def current_rules(conn: sqlite3.Connection) -> rules.CompiledRules:
+    """The applied rules, or the starter rules when none were applied, composed against the
+    effective schema. Applied rules that don't compile against it (they use a stored extension
+    that is ignored, OD-481, or no longer compiles, or a field or fact this version doesn't know)
+    give way to the starter rules, so mail is still decided; if those don't compile either, to
+    ecf's fixed rules and `otherwise` (P2, C11: fail closed, nothing hides by a default rule).
+    `schema_tick` raises a System Error until they change. Never raises."""
+    schema = current_schema(conn)
+    stored = _stored(conn, "rules")
+    if stored is not None:
+        text = canonical_json(stored)
+        try:  # fixed rules first (OD-500); cached on the schema and the JSON (P8), a refusal too
+            return rules.compose(schema, text, source="applied rules")
+        except InvalidInputError:
+            _log_once("config.rules_broken", schema, text)
+    try:
         return rules.load_starter_rules(schema)
+    except InvalidInputError:
+        _log_once("config.starter_rules_broken", schema, "")
+        return rules.fallback_rules(schema)
 
 
-_BROKEN_LOGGED: set[tuple[str, str]] = set()
+def _log_once(event: str, schema: CompiledSchema, text: str) -> None:
+    key = (event, schema.digest, hashlib.sha256(text.encode()).hexdigest())
+    if key not in _BROKEN_LOGGED:  # once per schema and rules, not per item (A4)
+        if len(_BROKEN_LOGGED) >= 32:
+            _BROKEN_LOGGED.clear()
+        _BROKEN_LOGGED.add(key)
+        log.error(event)
+
+
+_BROKEN_LOGGED: set[tuple[str, str, str]] = set()
 
 
 def convert_rules(conn: sqlite3.Connection, now: str, *, actor: str = "service") -> dict[str, Any]:
@@ -275,6 +364,10 @@ def convert_rules(conn: sqlite3.Connection, now: str, *, actor: str = "service")
         return {"converted": False, "customised": list(c.customised)}
     if c.doc is None and not c.to_default:
         return {"converted": False}
+    defaults: tuple[str, ...] = ()
+    if c.doc is not None:  # and the copies of the default rules, where nothing changes (P24)
+        doc, defaults = rules.strip_defaults(c.doc, current_schema(conn))
+        c = rules.Conversion(doc, c.stripped, to_default=doc is None)
     with write_tx(conn):
         if c.to_default:
             conn.execute("DELETE FROM settings WHERE key = ?", (KEY["rules"],))
@@ -290,11 +383,15 @@ def convert_rules(conn: sqlite3.Connection, now: str, *, actor: str = "service")
                 now,
                 actor,
                 json.dumps(
-                    {"stripped": list(c.stripped)} | ({"default": True} if c.to_default else {})
+                    {"stripped": list(c.stripped)}
+                    | ({"defaults_stripped": list(defaults)} if defaults else {})
+                    | ({"default": True} if c.to_default else {})
                 ),
             ),
         )
     out: dict[str, Any] = {"converted": True, "stripped": list(c.stripped)}
+    if defaults:
+        out["defaults_stripped"] = list(defaults)
     return out | ({"default": True} if c.to_default else {})
 
 
@@ -329,9 +426,9 @@ def _check_sections(doc: dict[str, Any]) -> None:
 
 def validate(conn: sqlite3.Connection, doc: dict[str, Any], *,
              imported: bool = False) -> dict[str, Any]:  # fmt: skip
-    """`imported`: a bundle's config (OD-359). While extensions are off (OD-481) a bundle's
-    extension is checked and kept but ignored, like one stored before; `ecf config apply`
-    refuses one."""
+    """`imported`: a bundle's config (OD-359). A bundle's `schema` never gets here: import and
+    restore drop it from the staged copy first (`importer.drop_schema`, P11), so it needs `ecf
+    config apply` (dialog, step-up, Security Notice) on this install."""
     _check_sections(doc)
     now = current(conn)
     out: dict[str, Any] = {k: DEFAULT for k, v in doc.items() if v == DEFAULT}
@@ -372,6 +469,7 @@ def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[s
     if "schema" in doc and "schema" not in out:
         if not extensions_enabled() and not imported:
             raise InvalidInputError(f"config: schema: {EXTENSIONS_OFF}")
+        _refuse_local_presets(conn)
         out["schema"] = _schema(conn, doc["schema"], now["schema"],
                                 rules_doc or _effective(out, now, "rules"))  # fmt: skip
     if doc.get("schema") == DEFAULT:
@@ -530,9 +628,32 @@ def _policy(v: Any) -> dict[str, dict[str, str]]:
     return {"standard": DEFAULT_POLICY | cast("dict[str, str]", std)}
 
 
+def _refuse_local_presets(conn: sqlite3.Connection) -> None:
+    """D8: your fields are for preset C only, so none while any address is preset A or B; P1:
+    nor while a C address has the local fallback on."""
+    local, held = at_odds(conn)
+    if local:
+        raise InvalidInputError(f"config: schema: your own fields are for preset C addresses only:"
+                                f" {LOCAL_REASON}, and {', '.join(local[:5])}"
+                                f" {'uses it' if len(local) == 1 else 'use them'}; remove the"
+                                " `schema` section, or move those addresses to preset C (ecf"
+                                " address remove, then add with --preset C)")  # fmt: skip
+    # P1 (operator decision 2026-10-14): nor while a C address has the local fallback on, which
+    # asks the local model, never your fields (`fallback.set_timeout` refuses turning it on)
+    if held:
+        raise InvalidInputError(f"config: schema: {', '.join(held[:5])} "
+                                f"{'has' if len(held) == 1 else 'have'} the local fallback on"
+                                " (claude_queue_timeout), and the local model isn't asked your"
+                                " own fields; turn it off first (ecf settings set"
+                                " claude_queue_timeout off --address <address>)")  # fmt: skip
+
+
 def _rules(v: Any, folders: list[str], schema: CompiledSchema, *,
            imported: bool = False) -> Any:  # fmt: skip
-    # compile_rules refuses a rule id that is a value the extension adds (S8)
+    """The rules file, checked as mail runs it: composed with ecf's fixed and default rules
+    (`rules.compose`, P2, P3), its layering (`rules.check_layers`, P17), move targets and labels
+    from your fields (P12) across the whole set. `compose` refuses a rule id that is a value the
+    extension adds (S8)."""
     checked = v
     if imported and rules.convert_v2(v).customised:
         # A2 (OD-500): a bundle's v2 rules with a changed fixed rule are kept, as at service
@@ -543,13 +664,40 @@ def _rules(v: Any, folders: list[str], schema: CompiledSchema, *,
         if not rest:
             return v
         checked = v | {"rules": rest}
-    compiled = rules.compile_rules(canonical_json(checked), schema, source="config: rules")
+    text = canonical_json(checked)
+    rules.check_layers(text, schema, source="config: rules")
+    compiled = rules.compose(schema, text, source="config: rules")
     for r in compiled.rules:
         for a in r.then:
             if a.action == "move" and (not isinstance(a.target, str) or a.target not in folders):
                 raise InvalidInputError(f"config: rules: rule {r.id} moves to {a.target!r}, which"
                                         " isn't in move_folders")  # fmt: skip
+    _check_label_from(compiled, schema)
     return v
+
+
+def _check_label_from(compiled: rules.CompiledRules, schema: CompiledSchema) -> None:
+    """P12: `{label: {field: x}}` on one of your fields makes its values label names
+    (`policy.labels`), so it is refused when they repeat another field's value or a label name
+    (a reused catch-all, `other`, would be written as a keyword another rule means otherwise)."""
+    labels = set(policy.BUILTIN_LABELS) | {
+        a.target for r in compiled.rules for a in r.then
+        if a.action == "label" and isinstance(a.target, str)}  # fmt: skip
+    for r in compiled.rules:
+        for a in r.then:
+            if not isinstance(a.target, rules.LabelFrom) or a.target.field not in (
+                    schema.extension_fields):  # fmt: skip
+                continue
+            name = a.target.field
+            others = {v for f in schema.fields.values() if f.name != name
+                      and f.kind is FieldKind.ENUM for v in f.values}  # fmt: skip
+            clash = sorted(set(schema.fields[name].values) & (others | labels))
+            if clash:
+                raise InvalidInputError(f"config: rules: rule {r.id} labels from {name}, whose"
+                                        f" value{'s' if len(clash) > 1 else ''}"
+                                        f" {', '.join(clash[:5])} also name another field's"
+                                        " value or a label; label with fixed names instead"
+                                        " ({label: name}, with `if`)")  # fmt: skip
 
 
 def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
@@ -559,7 +707,8 @@ def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
     if v is None:
         raise InvalidInputError("config: schema: a mapping with fields and/or category_values,"
                                 " or `default` to remove the extension")  # fmt: skip
-    ids = _rule_ids(rules_doc if rules_doc is not None else _starter()) | set(rules.fixed_ids())
+    # always: built-in labels, the fixed and default rule ids, and the applied file's (P2, C8)
+    ids = _rule_ids(rules_doc) | set(rules.fixed_ids()) | set(rules.default_ids())
     try:
         extend_schema(load_schema(), v, policy.BUILTIN_LABELS | ids)
     except (InvalidInputError, SchemaLimitError) as exc:
@@ -604,9 +753,10 @@ def _rule_ids(rules_doc: Any) -> frozenset[str]:
 
 
 def schema_preview(before: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any] | None:
-    """For a document that sets `schema`: the budget line, whether it is near a cap, and the
-    prompt lines the extension adds or drops (what the dry run prints before step-up). An old
-    extension that no longer compiles is tolerated, so `schema: default` can remove it."""
+    """For a document that sets `schema`: the budget line (with the bytes per classify read,
+    P16), whether it is near a cap, and the prompt lines the extension adds or drops (what the
+    dry run prints before step-up). An old extension that no longer compiles is tolerated, so
+    `schema: default` can remove it."""
     if "schema" not in doc:
         return None
     new = None if doc["schema"] == DEFAULT else doc["schema"]
@@ -616,7 +766,30 @@ def schema_preview(before: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any
     new_lines = _ext_lines(new)
     diff_lines = ([f"- {x}" for x in old_lines if x not in new_lines]
                   + [f"+ {x}" for x in new_lines if x not in old_lines])  # fmt: skip
-    return {"budget": budget["line"], "near": budget["near"], "prompt_diff": diff_lines}
+    return {"budget": budget["line"], "near": budget["near"], "prompt_diff": diff_lines,
+            "read_bytes": budget["read_bytes"]}  # fmt: skip
+
+
+def notes(conn: sqlite3.Connection, doc: dict[str, Any]) -> list[str]:
+    """What the dry run and apply say beside the changes: your fields' warnings and the privacy
+    line (D9b, D15, D10), how a new rules file layers (D14, P17), and the stored rules' warnings
+    (P3: a pre-S4 file without a catch-all; an off id ecf skips)."""
+    out: list[str] = []
+    ext = doc.get("schema")
+    if ext is not None and ext != DEFAULT:
+        out += [f"schema: {w.removeprefix('schema.')}" for w in
+                extension_warnings(load_schema(), ext)]  # fmt: skip
+        out.append(PRIVACY_LINE)
+    new_rules = doc.get("rules")
+    if new_rules is not None and new_rules != DEFAULT:
+        eff = None if ext == DEFAULT else ext if ext is not None else _stored(conn, "schema")
+        # a bundle's v2 rules with a changed fixed rule (A2) don't compile: kept, refused at load
+        with contextlib.suppress(InvalidInputError):
+            out += rules.layer_lines(canonical_json(new_rules), _effective_schema(eff),
+                                     source="config: rules")  # fmt: skip
+    elif "rules" not in doc:
+        out += rules_warnings(conn)
+    return out
 
 
 def _ext_lines(ext: Any) -> list[str]:
@@ -784,16 +957,28 @@ def _describe_apply(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
     return stepup.Bound(
         stepup.digest("config_apply", canonical_json(doc), canonical_json(before),
                       ordered_json(doc.get("schema")), ordered_json(before["schema"])),
-        f"ecf: apply config: {_lead(changes)}{personal_targets(before, doc)}"
+        f"ecf: apply config: {_lead(conn, changes)}{personal_targets(before, doc)}"
         f"{summary(changes, 200)}",
     )  # fmt: skip
 
 
-def _lead(changes: list[dict[str, str]]) -> str:
-    """A schema change always leads, whatever the summary's length cuts (OD-478); not while
-    extensions are off, when the stored one is unused and removing it changes no prompt."""
-    lead = extensions_enabled() and any(c["section"] == "schema" for c in changes)
-    return f"{SCHEMA_LEAD}; " if lead else ""
+def _lead(conn: sqlite3.Connection, changes: list[dict[str, str]]) -> str:
+    """A schema change always leads, whatever the summary's length cuts (OD-478), with what live
+    needs again (P15): a passing /ecf-eval run and the gate's reviews, per address
+    (`review.GATE_COUNT`); not while extensions are off, when the stored one is unused and
+    removing it changes no prompt."""
+    if not (extensions_enabled() and any(c["section"] == "schema" for c in changes)):
+        return ""
+    from ecf_server import review  # noqa: PLC0415 - review imports this module
+
+    rows = conn.execute("SELECT address_id, sensitivity FROM addresses WHERE removed_at IS NULL"
+                        " ORDER BY address_id").fetchall()  # fmt: skip
+    each = ", ".join(f"{r[0]} {review.GATE_COUNT[str(r[1])]}" for r in rows[:4])
+    more = f" +{len(rows) - 4} more" if len(rows) > 4 else ""
+    need = (f"a /ecf-eval run and reviews ({each}{more}) are needed before live again" if rows
+            else "a /ecf-eval run and 100 reviews (200 on a high address) are needed before"
+            " live")  # fmt: skip
+    return f"{SCHEMA_LEAD}; {need}; "
 
 
 def personal_targets(before: dict[str, Any], doc: dict[str, Any]) -> str:
@@ -819,10 +1004,12 @@ class Result:
     changes: list[dict[str, str]]
     sha256: str
     schema: dict[str, Any] | None = None  # schema_preview, when the document sets `schema`
+    notes: tuple[str, ...] = ()  # warnings, the privacy line, rules layering (`notes`)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"changed": self.changed, "applied": self.applied,
-                               "changes": self.changes, "sha256": self.sha256}  # fmt: skip
+                               "changes": self.changes, "sha256": self.sha256,
+                               "notes": list(self.notes)}  # fmt: skip
         if self.schema is not None:
             out["schema"] = self.schema
         return out
@@ -843,8 +1030,11 @@ def apply(
     changes = diff(before, doc)
     sha = hashlib.sha256(canonical_json(doc).encode()).hexdigest()
     preview = schema_preview(before, doc)
+    said = tuple(notes(conn, doc))
+    if not changes and not dry_run and "rules" in doc and doc["rules"] != DEFAULT:
+        _acknowledge_layers(conn, doc["rules"])  # the same file again: its new meaning, confirmed
     if not changes or dry_run:
-        return Result(bool(changes), False, changes, sha, preview)
+        return Result(bool(changes), False, changes, sha, preview, said)
     from ecf_server import stages  # noqa: PLC0415 - stages imports modules that import this one
 
     stepup.consume(conn, clock, "config_apply", {"document": doc}, nonce)
@@ -864,6 +1054,10 @@ def apply(
                 " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
                 (KEY[s], stored, now, actor),
             )
+        if "schema" in doc:  # this extension went through the dialog: in use (D11)
+            _mark_activated(conn, None if doc["schema"] == DEFAULT else doc["schema"], now)
+        if "rules" in doc:  # applied again: no longer the pre-S4 file (P3)
+            conn.execute("DELETE FROM settings WHERE key = ?", (PRE_LAYERS,))
         # a new schema is a new gate key: live addresses drop to assist with it, not a tick later
         demoted = (
             stages.demote_live(conn, now, actor, stages.SCHEMA_REASON) if schema_changed else []
@@ -874,8 +1068,100 @@ def apply(
             (now, actor, json.dumps({"sha256": sha, "changes": changes})),
         )
     ident = slack_admin.identity(conn)
-    text = f"Security-relevant config changed: {_lead(changes)}{summary(changes)}"
+    text = f"Security-relevant config changed: {_lead(conn, changes)}{summary(changes)}"
     slack_admin.notice(conn, clock, notifier, text,
                        dms=[ident.member] if ident and ident.member else [])  # fmt: skip
     stages.announce_demoted(conn, clock, demoted, stages.SCHEMA_REASON)
-    return Result(True, True, changes, sha, preview)
+    return Result(True, True, changes, sha, preview, said)
+
+
+# ---------------------------------------------------------------------------- activation (D11)
+
+
+def _ext_sha(ext: Any) -> str:
+    return hashlib.sha256(ordered_json(ext).encode()).hexdigest()
+
+
+def _mark_activated(conn: sqlite3.Connection, ext: Any, now: str) -> None:
+    """Inside the caller's transaction: the stored extension (None: none) is the one in use."""
+    if ext is None:
+        conn.execute("DELETE FROM settings WHERE key = ?", (ACTIVATED,))
+        return
+    slack_admin.put_setting(conn, ACTIVATED, _ext_sha(ext), now, actor="service")
+
+
+def pending_activation(conn: sqlite3.Connection) -> list[str]:
+    """The live and other C addresses a stored extension not yet in use would move (it reaches
+    the classifier at the next service start, `activate_stored`): for `ecf upgrade`'s pre-check
+    (P11). Empty while extensions are off, with none stored, or with one already in use."""
+    ext = _stored(conn, "schema")
+    if ext is None or not extensions_enabled() or extension_problem(conn) is not None:
+        return []
+    if slack_admin.setting(conn, ACTIVATED) == _ext_sha(ext):
+        return []
+    rows = conn.execute("SELECT address_id FROM addresses WHERE removed_at IS NULL AND preset ="
+                        " 'C' ORDER BY address_id")  # fmt: skip
+    return [str(r[0]) for r in rows]
+
+
+def at_odds(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
+    """The addresses that sit badly with stored user fields (pre-S4 state; review R5): preset A or
+    B (D8), and preset C with the local fallback on (P1). For the activation notice and doctor."""
+    local = [str(r[0]) for r in conn.execute("SELECT address_id FROM addresses WHERE removed_at"
+                                             " IS NULL AND preset IN ('A', 'B') ORDER BY"
+                                             " address_id")]  # fmt: skip
+    held = [str(r[0]) for r in conn.execute("SELECT address_id FROM addresses WHERE removed_at"
+                                            " IS NULL AND preset = 'C' AND fallback_enabled = 1"
+                                            " ORDER BY address_id")]  # fmt: skip
+    return local, held
+
+
+def activate_stored(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> list[str]:
+    """At service start (D11, P11): a stored extension this version uses for the first time (one
+    applied before user fields were on, or by an earlier release) reaches the classifier without
+    a dialog, so it is announced: an audit row (`config.schema_activated`), live addresses to
+    assist (`SCHEMA_REASON`; a new C gate key) and a Security Notice naming the fields and the
+    addresses moved. One that fails this version's checks falls back closed instead
+    (`current_schema`, `schema_tick`). Returns the demoted ids."""
+    from ecf_server import stages  # noqa: PLC0415 - stages imports modules that import this one
+
+    ext = _stored(conn, "schema")
+    if ext is None or not extensions_enabled() or extension_problem(conn) is not None:
+        return []
+    if slack_admin.setting(conn, ACTIVATED) == _ext_sha(ext):
+        return []
+    now = to_ts(clock.now())
+    d = cast("dict[str, Any]", ext)
+    fields = sorted(cast("dict[str, Any]", d.get("fields") or {}))
+    cats = sorted(cast("dict[str, Any]", d.get("category_values") or {}))
+    c_addresses = pending_activation(conn)
+    local, fallback_on = at_odds(conn)  # review R5: the states D8 and P1 refuse, named
+    with write_tx(conn):
+        demoted = stages.demote_live(conn, now, "service", stages.SCHEMA_REASON)
+        _mark_activated(conn, ext, now)
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+            " VALUES (?, NULL, 'config.schema_activated', 'service', 'ok', ?)",
+            (now, json.dumps({"sha256": _ext_sha(ext), "fields": fields, "category_values": cats,
+                              "c_addresses": c_addresses, "demoted": demoted,
+                              "preset_a_b": local, "fallback_on": fallback_on})),
+        )  # fmt: skip
+    named = ", ".join(fields[:8]) or "none"
+    added = f"; added category values: {', '.join(cats)}" if cats else ""
+    moved = f"; back to assist: {', '.join(demoted)}" if demoted else ""
+    if local:
+        moved += (f"; preset A or B addresses, which the local model isn't asked them for:"
+                  f" {', '.join(local[:5])}")  # fmt: skip
+    if fallback_on:
+        moved += (f"; C addresses with the local fallback on, which isn't asked them:"
+                  f" {', '.join(fallback_on[:5])}")  # fmt: skip
+    ident = slack_admin.identity(conn)
+    slack_admin.notice(conn, clock, notifier,
+                       f"Your own schema fields are now in use (stored before this version used"
+                       f" them): fields {named}{added}; C addresses:"
+                       f" {', '.join(c_addresses) or 'none'}{moved}. {SCHEMA_LEAD}. To stop it:"
+                       " `schema: default` with ecf config apply.",
+                       dms=[ident.member] if ident and ident.member else [])  # fmt: skip
+    stages.announce_demoted(conn, clock, demoted, stages.SCHEMA_REASON)
+    log.info("config.schema_activated", fields=len(fields), demoted=len(demoted))
+    return demoted

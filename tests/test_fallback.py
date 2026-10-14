@@ -77,6 +77,16 @@ def _address(conn: sqlite3.Connection, clock: FakeClock, preset: str,
 
 
 def _on(conn: sqlite3.Connection, clock: FakeClock, value: str = "4") -> dict[str, Any]:
+    """On through step-up for B; for C, set directly: since S4 it can't be turned on for C
+    (operator decision 2026-10-14), so a C address with it on is one set before (the machinery
+    runs until step 4 removes it)."""
+    preset = conn.execute("SELECT preset FROM addresses WHERE address_id = 'ap'").fetchone()[0]
+    if preset == "C":
+        with write_tx(conn):
+            conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = ?,"
+                         " fallback_since = coalesce(fallback_since, ?) WHERE address_id = 'ap'",
+                         (int(value), to_ts(clock.now())))  # fmt: skip
+        return {"value": int(value), "notices": []}
     notifier = FakeNotifier()
     with pytest.raises(StepupRequiredError) as ei:
         fallback.set_timeout(conn, clock, notifier, "ap", value, nonce=None)
@@ -137,11 +147,11 @@ def _status(conn: sqlite3.Connection, sid: str) -> str:
 def test_turning_it_on_needs_step_up_and_sends_a_security_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _address(conn, clock, "C")
+    _address(conn, clock, "B")
     r = _on(conn, clock, "4")
     assert r["value"] == 4 and fallback.hours(conn, "ap") == 4
     assert any("Local fallback on" in body for _t, body in r["notices"])
-    assert fallback.reminders(conn) == [] and fallback.needs_ollama(conn)
+    assert fallback.reminders(conn) == [] and not fallback.needs_ollama(conn)  # B uses it anyway
     shown = {s["key"]: s["value"] for s in settings.show(conn, "ap")}
     assert shown["claude_queue_timeout"] == 4
     with pytest.raises(ConflictError):
@@ -154,6 +164,39 @@ def test_turning_it_on_needs_step_up_and_sends_a_security_notice(
     assert off["value"] == "off" and fallback.hours(conn, "ap") is None
     assert item_row(conn, sid)["fallback_at"] is None
     assert fallback.reminders(conn) == ["ap"]
+
+
+def test_s4_it_cant_be_turned_on_for_a_c_address(conn: sqlite3.Connection,
+                                                  clock: FakeClock) -> None:  # fmt: skip
+    """S4 (operator decision 2026-10-14, OD-502): C is Claude-only; refused before any step-up,
+    and so with a user schema stored too (P1); one already on can still be turned off."""
+    _address(conn, clock, "C")
+    with pytest.raises(InvalidInputError, match="Claude-only"):
+        fallback.set_timeout(conn, clock, FakeNotifier(), "ap", "4", nonce=None)
+    with pytest.raises(InvalidInputError, match="Claude-only"):
+        stepup.issue(
+            conn, clock, FakeStepper(), "claude_queue_timeout", {"address": "ap", "value": "4"}
+        )  # the dialog is refused too
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+            " ('config.schema', ?, 'x', 'test')",
+            (json.dumps({"fields": {"x": {"type": "boolean", "description": "d"}}}),),
+        )
+    with pytest.raises(InvalidInputError, match="Claude-only"):
+        fallback.set_timeout(conn, clock, FakeNotifier(), "ap", "4", nonce=None)
+    assert fallback.hours(conn, "ap") is None
+    _on(conn, clock, "4")  # set before S4
+    # review R8: changing its hours is refused, and the message says changed, not turned on
+    with pytest.raises(InvalidInputError, match=r"can't be changed for ap.*keeps its hours"):
+        fallback.set_timeout(conn, clock, FakeNotifier(), "ap", "8", nonce=None)
+    with pytest.raises(InvalidInputError, match="can't be changed"):
+        stepup.issue(
+            conn, clock, FakeStepper(), "claude_queue_timeout", {"address": "ap", "value": "8"}
+        )
+    assert fallback.set_timeout(conn, clock, FakeNotifier(), "ap", "off", nonce=None)[
+        "value"] == "off"  # fmt: skip
+    assert fallback.hours(conn, "ap") is None
 
 
 @pytest.mark.parametrize("value", ["0", "169", "soon", ""])

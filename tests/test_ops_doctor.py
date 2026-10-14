@@ -49,12 +49,13 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
 @pytest.mark.usefixtures("extensions_on")
 def test_schema_row(conn: sqlite3.Connection) -> None:
     row = ops_doctor.schema(conn)
-    assert row == {"name": "schema", "level": "ok", "detail": "v3, built in (no extension)",
-                   "fix": ""}  # fmt: skip
+    assert row == {"name": "schema", "level": "ok", "detail": "v3, built in (no fields of your"
+                   " own); 7,663 bytes of schema per classify read", "fix": ""}  # fmt: skip
     _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
     row = ops_doctor.schema(conn)
     assert row["level"] == "ok"
     assert row["detail"].startswith("v3 with an extension; 1 of 8 fields, 0 of 4 category values")
+    assert "bytes of schema per classify read (shipped 7,663)" in row["detail"]  # P16
     fields = {f"f{i}": {"type": "boolean", "description": "x"} for i in range(7)}
     _set(conn, "config.schema", {"fields": fields})
     row = ops_doctor.schema(conn)
@@ -65,6 +66,59 @@ def test_schema_row(conn: sqlite3.Connection) -> None:
     assert "schema: default" in row["fix"]
 
 
+def test_s4_the_rules_row_warns_never_fails(conn: sqlite3.Connection, clock: FakeClock,
+                                            data_dir: Path) -> None:  # fmt: skip
+    """S4 (P3, P17): an off id ecf skips, and a pre-S4 file without a catch-all, are warnings."""
+    from ecf_server import config  # noqa: PLC0415
+
+    assert ops_doctor.rules_rows(conn) == []
+    doc = {
+        "version": 1,
+        "rules": [{"id": "a", "when": {"field": "requires_reply", "eq": True}, "then": ["flag"]}],
+        "default_rules_off": ["renamed_rule"],
+    }
+    _set(conn, "config.rules", doc)
+    [row] = ops_doctor.rules_rows(conn)
+    assert row["level"] == "warn" and "renamed_rule isn't one of ecf's default rules" in row[
+        "detail"]  # fmt: skip
+    config.mark_pre_layers(conn, "t")
+    rows = ops_doctor.rules_rows(conn)
+    assert [r["level"] for r in rows] == ["warn", "warn"]
+    assert "no catch-all; since v3.0.0" in rows[1]["detail"]
+    names = [r["name"] for r in ops_doctor.checks(conn, clock, data_dir, "off")]
+    assert names.count("rules") == 2
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_schema_row_warns_on_stored_fields_beside_an_a_or_b_address(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, on: bool
+) -> None:
+    """Pre-S4 state that D8 now refuses both ways: a WARN naming both fixes, switch on or off."""
+    import ecf.schema  # noqa: PLC0415
+
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", on)
+    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
+    _address(conn, "ap")  # preset A
+    row = ops_doctor.schema(conn)
+    assert row["level"] == "warn" and "ap is preset A or B" in row["detail"]
+    assert "`schema: default`" in row["fix"] and "ecf address remove" in row["fix"]
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET preset = 'C'")
+    assert "preset A or B" not in ops_doctor.schema(conn)["detail"]
+
+
+def test_r5_schema_row_warns_on_stored_fields_beside_a_c_fallback(conn: sqlite3.Connection) -> None:
+    _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
+    _address(conn, "cfb")
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET preset = 'C', fallback_enabled = 1,"
+                     " claude_queue_timeout_h = 4")  # fmt: skip
+    row = ops_doctor.schema(conn)
+    assert row["level"] == "warn" and "cfb has the local fallback on" in row["detail"]
+    assert "claude_queue_timeout off" in row["fix"] and "`schema: default`" in row["fix"]
+
+
+@pytest.mark.usefixtures("extensions_off")
 def test_schema_row_with_extensions_off(conn: sqlite3.Connection) -> None:
     """OD-481: a stored extension is ignored and warned about; rules that use it fail."""
     _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})

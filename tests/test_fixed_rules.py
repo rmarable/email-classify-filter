@@ -275,11 +275,16 @@ def test_convert_rules_strips_audits_and_is_idempotent(conn: sqlite3.Connection,
     _store(conn, clock, _v2_doc())
     assert config.rules_problem(conn) is not None  # before: refused (fixed ids)
     r = config.convert_rules(conn, to_ts(clock.now()))
-    assert r == {"converted": True, "stripped": list(FIXED)}
+    # S4 (P24): the v2 starter's default copies are identical to the shipped defaults and, the
+    # file being the replace case with every default in order, dropping them changes nothing
+    assert r == {"converted": True, "stripped": list(FIXED), "defaults_stripped": list(DEFAULTS),
+                 "default": True}  # fmt: skip
+    assert config.current(conn)["rules"] is None
     assert config.rules_problem(conn) is None
     assert tuple(x.id for x in config.current_rules(conn).rules) == FIXED + DEFAULTS
     audit = conn.execute("SELECT data FROM audit WHERE event = 'config.rules_converted'").fetchall()
-    assert [json.loads(a[0]) for a in audit] == [{"stripped": list(FIXED)}]
+    want = {"stripped": list(FIXED), "defaults_stripped": list(DEFAULTS), "default": True}
+    assert [json.loads(a[0]) for a in audit] == [want]
     assert config.convert_rules(conn, to_ts(clock.now())) == {"converted": False}
     assert len(conn.execute("SELECT 1 FROM audit WHERE event = 'config.rules_converted'")
                .fetchall()) == 1  # fmt: skip
@@ -335,13 +340,14 @@ def test_a_refused_set_is_cached_as_refused_and_logged_once(
     """A4: a refused applied set isn't compiled again (nor logged) for every item."""
     text = "version: 1\nrules:\n  - {id: fraud_guard, then: [flag]}\n  - {id: refused_a4}\n"
     calls: list[str] = []
-    real = rules.compile_rules
+    real = rules._compile  # pyright: ignore[reportPrivateUsage]
 
-    def counting(t: str, schema: Any, *, source: str = "rules") -> rules.CompiledRules:
-        calls.append(t)
-        return real(t, schema, source=source)
+    def counting(t: str, schema: Any, **kw: Any) -> rules.CompiledRules:
+        if t == text:
+            calls.append(t)
+        return real(t, schema, **kw)
 
-    monkeypatch.setattr(rules, "compile_rules", counting)
+    monkeypatch.setattr(rules, "_compile", counting)
     for _ in range(3):
         with pytest.raises(InvalidInputError, match="fixed rules"):
             rules.compose(SCHEMA, text)

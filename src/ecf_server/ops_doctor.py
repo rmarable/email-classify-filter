@@ -18,8 +18,13 @@ slack_doctor's (`{name, level, detail, fix}`):
 - **Backups**: set up or not, the schedule, `export_dir` writable (a test file) and off the data
   directory's disk, and the last backup's age: fine to one period plus 2 h, a warning to two
   periods, then a failure; a first backup is "due" for one period plus 2 h after setup (OD-398).
-- **Schema** (v2.0.0, OD-478): the install's schema extension against its caps (the budget line
-  `ecf config apply` prints); a warning from 80% of any cap.
+- **Schema** (v2.0.0, OD-478; v3.0.0 S4, OD-502): the install's own fields against their caps
+  (the budget line `ecf config apply` prints, with the bytes of schema per Claude classify read,
+  P16); a warning from 80% of any cap. **Rules** (S4): a warning for an off id ecf skips
+  (`default_rules_off`, a default rule a later release renamed) and for a stored file from before
+  S4 without a catch-all, whose rules now run before the default rules (P3). A stored extension
+  beside any preset A or B address (pre-S4 state, which D8 now refuses both ways) is a warning
+  naming both fixes.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.schema import extension_budget, extensions_enabled, load_schema
+from ecf.schema import extension_budget, extensions_enabled, load_schema, read_bytes
 from ecf_server import addresses, alert_mail, alerts, config, export_keys, probe, scheduled_export
 from ecf_server.clock import Clock, from_ts
 
@@ -54,13 +59,14 @@ def checks(
         *reach(conn, notifier),
         *backups(conn, now, data_dir),
         schema(conn),
+        *rules_rows(conn),
     ]
 
 
 # ---- schema -------------------------------------------------------------------------------------
 
 
-def schema(conn: sqlite3.Connection) -> dict[str, str]:
+def schema(conn: sqlite3.Connection) -> dict[str, str]:  # noqa: PLR0911 - one per state
     ext = config.current(conn)["schema"]
     v = load_schema().version
     problem = config.extension_problem(conn)  # re-checked: a new release may clash with it
@@ -77,7 +83,21 @@ def schema(conn: sqlite3.Connection) -> dict[str, str]:
                   " don't use the schema extension or ecf's fixed rules, with ecf config"
                   " apply")  # fmt: skip
     if ext is None:
-        return _c("schema", OK, f"v{v}, built in (no extension)")
+        return _c("schema", OK, f"v{v}, built in (no fields of your own);"
+                  f" {read_bytes(load_schema()):,} bytes of schema per classify read")  # fmt: skip
+    local, held = config.at_odds(conn)
+    if local:  # pre-S4 state D8 now refuses both ways (operator decision 2026-10-14)
+        return _c("schema", WARN, f"v{v}; your own fields are stored while"
+                  f" {', '.join(local[:5])} {'is' if len(local) == 1 else 'are'} preset A or B,"
+                  " which the local model isn't measured with (SPEC §1.5a item 2)", "remove the"
+                  " fields (`schema: default` with ecf config apply), or the preset A and B"
+                  " addresses (ecf address remove; add them again with --preset C)")  # fmt: skip
+    if held:  # P1, review R5: a C fallback on from before S4 isn't asked the fields
+        return _c("schema", WARN, f"v{v}; your own fields are stored while"
+                  f" {', '.join(held[:5])} {'has' if len(held) == 1 else 'have'} the local"
+                  " fallback on, which the local model answers without them", "turn the"
+                  " fallback off (ecf settings set claude_queue_timeout off --address <address>),"
+                  " or remove the fields (`schema: default` with ecf config apply)")  # fmt: skip
     if not extensions_enabled():  # OD-481: kept but ignored
         return _c("schema", WARN, f"v{v}, built in; an extension is stored but extensions are"
                   " off in this version", "`ecf config apply` with `schema: default` removes"
@@ -88,6 +108,12 @@ def schema(conn: sqlite3.Connection) -> dict[str, str]:
         return _c("schema", WARN, detail, "shorten descriptions or remove a field before adding"
                   " more (ecf config apply)")  # fmt: skip
     return _c("schema", OK, detail)
+
+
+def rules_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """The stored rules' warnings (`config.rules_warnings`): never a FAIL, mail is decided."""
+    return [_c("rules", WARN, w[:300], "ecf config apply with your rules file (ecf rules test"
+               " shows what changes)") for w in config.rules_warnings(conn)]  # fmt: skip
 
 
 # ---- SMTP ---------------------------------------------------------------------------------------

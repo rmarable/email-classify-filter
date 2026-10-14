@@ -239,10 +239,8 @@ INVALID: dict[str, tuple[Callable[[bundle_reader.Parsed], object], str]] = {
     "config": (lambda p: p.tables["settings"].append(_setting("org_domains", '["gmail.com"]')),
                "config fails its checks"),
     # an extension over a cap is a SchemaLimitError, still a bad bundle (OD-478)
-    "schema_cap": (lambda p: p.tables["settings"].append(_setting("config.schema", json.dumps(
-        {"category_values": {f"c{i}": "Added." for i in range(5)}}))),
-                   "config fails its checks.*5 category values"),
 }  # fmt: skip
+# a bundle's schema over a cap isn't refused any more: it is dropped (S4, P11; below)
 
 
 @pytest.mark.parametrize("case", sorted(INVALID))
@@ -263,28 +261,72 @@ def test_validation(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,
     assert _one(target, "SELECT count(*) FROM addresses") == 0
 
 
-def test_a_bundles_extension_is_kept_but_ignored_while_extensions_are_off(
-    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
-) -> None:
-    """OD-481: a backup from an install that applied an extension still restores; the
-    extension is kept, ignored (the shipped schema), and doctor names it."""
-    from ecf.schema import load_schema  # noqa: PLC0415
-    from ecf_server import config, ops_doctor  # noqa: PLC0415
+EXT = {
+    "fields": {
+        "contract_stage": {
+            "type": "enum",
+            "description": "Where a contract stands.",
+            "values": {"none": "None.", "draft": "A draft."},
+        }
+    },
+    "category_values": {"legal_notice": "Letter from a lawyer."},
+}
 
-    ext = {"category_values": {"legal_notice": "Letter from a lawyer."}}
+
+@pytest.mark.parametrize("preset", ["A", "C"])
+@pytest.mark.parametrize("over_cap", [False, True])
+def test_s4_a_bundles_own_fields_are_dropped_and_named(
+    conn: sqlite3.Connection,
+    clock: FakeClock,
+    tmp_path: Path,
+    target: sqlite3.Connection,
+    preset: str,
+    over_cap: bool,
+) -> None:
+    """P11 (OD-502): no stored-but-unused copy. A bundle's `config.schema` is dropped from the
+    staged copy, the preview, the result and the Security Notice name its fields: with an A or B
+    address, why they can't be used; C-only, that they need `ecf config apply` here. One over a
+    cap is dropped too, not refused."""
+    from ecf.schema import load_schema  # noqa: PLC0415
+    from ecf_server import config, import_plan  # noqa: PLC0415
+
+    ext = {"category_values": {f"c{i}": "Added." for i in range(5)}} if over_cap else EXT
     path = _bundle(conn, clock, tmp_path)
     parsed = bundle_reader.read(target, str(path), KEY_TEXT)
     parsed.tables["settings"].append(_setting("config.schema", json.dumps(ext)))
+    for a in parsed.tables["addresses"]:
+        a["preset"] = preset
+    preview = import_plan.preview(target, parsed)["schema_dropped"]
+    n = FakeNotifier()
 
     def go(nonce: str | None) -> dict[str, Any]:
-        return importer.apply(target, clock, FakeNotifier(), conn_dir(target), "t", parsed,
-                              str(path), replace=False, typed_install=None,
-                              nonce=nonce)  # fmt: skip
+        return importer.apply(target, clock, n, conn_dir(target), "t", parsed, str(path),
+                              replace=False, typed_install=None, nonce=nonce)  # fmt: skip
 
-    _with_step_up(target, clock, go)
-    assert config.current(target)["schema"] == ext
+    done = _with_step_up(target, clock, go)
+    note = done["schema_dropped"]
+    assert note == preview
+    assert note["fields"] == sorted(ext.get("fields", {}))
+    assert note["category_values"] == sorted(ext["category_values"])
+    if preset == "A":
+        assert "ap use preset A or B" in note["text"] and "isn't measured" in note["text"]
+    else:
+        assert "re-apply your config file" in note["text"]
+    assert config.current(target)["schema"] is None
     assert config.current_schema(target).digest == load_schema().digest
-    assert ops_doctor.schema(target)["level"] == "warn"
+    assert all(s["section"] != "schema" for s in done["config_changes"])
+    assert any("own schema fields" in t for _h, t in n.sent)
+
+
+def test_s4_a_bundle_without_own_fields_says_nothing(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    from ecf_server import import_plan  # noqa: PLC0415
+
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    assert import_plan.preview(target, parsed)["schema_dropped"] is None
+    assert _import(target, clock, path)["schema_dropped"] is None
 
 
 def _v2_rules() -> dict[str, Any]:
@@ -314,11 +356,14 @@ def test_a_bundles_v2_rules_lose_their_unchanged_fixed_rules(
                               nonce=nonce)  # fmt: skip
 
     _with_step_up(target, clock, go)
-    stored = config.current(target)["rules"]
-    assert [r["id"] for r in stored["rules"]] == [
-        r["id"] for r in doc["rules"] if r["id"] not in rules.fixed_ids()
-    ]
-    assert _one(target, "SELECT count(*) FROM audit WHERE event = 'config.rules_converted'") == 1
+    # the rest copies the default rules unchanged, so they go too (S4, P24): `rules: default`
+    assert config.current(target)["rules"] is None
+    data = json.loads(_one(target, "SELECT data FROM audit WHERE event ="
+                                   " 'config.rules_converted'"))  # fmt: skip
+    assert data["stripped"] == [r["id"] for r in doc["rules"] if r["id"] in rules.fixed_ids()]
+    assert data["defaults_stripped"] == [r["id"] for r in doc["rules"]
+                                         if r["id"] not in rules.fixed_ids()]  # fmt: skip
+    assert data["default"] is True
 
 
 def test_a_bundle_with_a_changed_fixed_rule_is_kept_as_at_service_start(
@@ -402,3 +447,59 @@ def test_route_and_cli(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Pat
     assert r.exit_code == 1 and "add --replace" in r.output
     r = runner.invoke(app, ["--install", "t", "import", str(path), "--replace"], input="y\nt\n")
     assert r.exit_code == 0, r.output
+
+
+SOCCER = {
+    "fields": {"about_soccer": {"type": "boolean", "description": "The email is about soccer."}},
+    "category_values": {"club_news": "News from a sports club we belong to."},
+}
+SOCCER_RULES = {"version": 1, "rules": [
+    {"id": "soccer_club", "when": {"field": "about_soccer", "eq": True},
+     "then": [{"label": "soccer"}]},
+    {"id": "club", "when": {"field": "category", "in": ["club_news", "invoice"]}, "then": ["flag"]},
+    {"id": "keep", "when": {"field": "requires_action", "eq": True}, "then": ["flag"]},
+]}  # fmt: skip
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_s4_r1_a_bundles_rules_on_its_fields_are_dropped_with_them(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection
+) -> None:
+    """Review R1 (operator decision 2026-10-14): the RAW soccer example on a C install. The
+    fields and the two rules that read them (a user field, an added category value) are dropped
+    together and named with their count; the other rule imports as before."""
+    from ecf_server import config, import_plan  # noqa: PLC0415
+
+    path = _bundle(conn, clock, tmp_path)
+    parsed = bundle_reader.read(target, str(path), KEY_TEXT)
+    parsed.tables["settings"] += [_setting("config.schema", json.dumps(SOCCER)),
+                                  _setting("config.rules", json.dumps(SOCCER_RULES))]  # fmt: skip
+    for a in parsed.tables["addresses"]:
+        a["preset"] = "C"
+    preview = import_plan.preview(target, parsed)["schema_dropped"]
+    n = FakeNotifier()
+
+    def go(nonce: str | None) -> dict[str, Any]:
+        return importer.apply(target, clock, n, conn_dir(target), "t", parsed, str(path),
+                              replace=False, typed_install=None, nonce=nonce)  # fmt: skip
+
+    note = _with_step_up(target, clock, go)["schema_dropped"]
+    assert note == preview and note["rules"] == ["soccer_club", "club"]
+    assert "about_soccer" in note["text"] and "the 2 rules that read them" in note["text"]
+    assert "re-apply your config file" in note["text"]
+    stored = config.current(target)
+    assert stored["schema"] is None
+    assert [r["id"] for r in stored["rules"]["rules"]] == ["keep"]
+    assert [r.id for r in config.current_rules(target).rules][5] == "keep"
+
+
+def test_s4_r1_rules_on_fields_reads_every_place_a_rule_names_one() -> None:
+    doc = {"version": 1, "rules": [
+        {"id": "a", "when": {"not": {"field": "about_soccer", "eq": True}}, "then": ["flag"]},
+        {"id": "b", "when": {"trigger": "fraud"}, "then": [{"label": {"field": "about_soccer"}}]},
+        {"id": "c", "when": {"trigger": "fraud"},
+         "then": [{"flag": True, "if": {"field": "category", "eq": "club_news"}}]},
+        {"id": "d", "when": {"field": "category", "eq": "invoice"}, "then": ["flag"]},
+    ]}  # fmt: skip
+    assert importer.rules_on_fields(doc, SOCCER) == ["a", "b", "c"]
+    assert importer.rules_on_fields(None, SOCCER) == []

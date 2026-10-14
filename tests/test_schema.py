@@ -25,6 +25,7 @@ from ecf.schema import (
     load_schema_v1,
     load_schema_v2,
     load_schema_v2_0_0,
+    read_bytes,
     shipped_fallback,
     v1_values,
     with_fixed,
@@ -196,7 +197,9 @@ EXT: dict[str, Any] = {
             "values": {"none": "No contract discussed.", "draft": "A draft is being exchanged.",
                        "signature": "Waiting for signature."},
         },
-        "legal_risk": {"type": "ordinal", "levels": ["none", "low", "high"],
+        "legal_risk": {"type": "ordinal",
+                       "levels": {"none": "No legal content.", "low": "A legal question.",
+                                  "high": "A claim, a lawyer or a court."},
                        "description": "How much legal exposure the email suggests."},
         "mentions_nda": {"type": "boolean", "description": "Mentions a non-disclosure agreement."},
     },
@@ -374,14 +377,19 @@ def test_the_budget_line_and_near_the_limit() -> None:
     base = load_schema()
     b = extension_budget(base, EXT)
     assert b["line"].startswith("schema: 3 of 8 fields, 1 of 4 category values, ")
-    assert b["line"].endswith(" of 4,000 characters") and b["near"] == []
+    per = read_bytes(extend_schema(base, EXT))
+    assert b["line"].endswith(f" of 4,000 characters; {per:,} bytes of schema per classify read"
+                              f" (shipped {read_bytes(base):,})") and b["near"] == []  # fmt: skip
+    assert b["read_bytes"] == per > read_bytes(base)
     assert b["text"]["used"] == len(extension_text(extend_schema(base, EXT)))
     near = extension_budget(base, {"fields": {f"f{i}": _enum(2, f"f{i}v") for i in range(7)}})
     assert near["near"] == ["fields"] and near["line"].endswith(" (near the limit)")
     cats = extension_budget(base, {"category_values": {f"c{i}": "x" for i in range(4)}})
     assert cats["near"] == ["category_values"]
     empty = extension_budget(base, None)
-    assert empty["line"] == "schema: 0 of 8 fields, 0 of 4 category values, 0 of 4,000 characters"
+    assert empty["line"] == ("schema: 0 of 8 fields, 0 of 4 category values, 0 of 4,000"
+                             " characters; 7,663 bytes of schema per classify read (shipped"
+                             " 7,663)")  # fmt: skip
 
 
 def test_v1_value_aliases_map_each_renamed_v1_value_to_a_v2_value() -> None:

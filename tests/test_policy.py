@@ -5,7 +5,10 @@ plus the concrete cases of SPEC §8.2, §8.3 and §8.6."""
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+import json
+import sqlite3
+from importlib import resources
+from typing import Any, cast
 
 import pytest
 from hypothesis import given, settings
@@ -13,6 +16,7 @@ from hypothesis import strategies as st
 
 from ecf.errors import InvalidInputError
 from ecf.schema import (
+    FIXED_FIELDS,
     FIXED_ITEMS,
     FieldKind,
     extend_schema,
@@ -22,7 +26,9 @@ from ecf.schema import (
     load_schema_v2,
     with_fixed,
 )
+from ecf.yamlio import load_yaml
 from ecf_server import policy, precheck, rules
+from ecf_server.db import write_tx
 from ecf_server.policy import Context, Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS, compile_rules, load_starter_rules
 
@@ -530,3 +536,310 @@ def test_s3_labels_without_a_category_field() -> None:
     got = policy.labels(no_cat, STARTER)
     assert "suspicious" in got and "shipping" in got  # a rule's own label stays
     assert "remittance" not in got
+
+
+# ---- v3.0.0 S4: the user layer (OD-502; plan C14, P4, P14, P25) -------------------------------
+# A pool built once, at import (P25): extended schemas with 0, 1, 4 and 8 user fields, each
+# composed with no user file, a replace, an off list, a catch-all file and an identical copy of a
+# default. Examples draw only the classification and facts, never a recompile.
+
+STARTER_DOC = cast("dict[str, Any]", load_yaml(
+    resources.files("ecf_server.data").joinpath(rules.DEFAULT_FILE).read_text("utf-8"),
+    source=rules.DEFAULT_FILE))  # fmt: skip
+DEFAULT_RULES: dict[str, dict[str, Any]] = {str(r["id"]): r for r in STARTER_DOC["rules"]}
+RESERVED = policy.BUILTIN_LABELS | set(rules.fixed_ids()) | set(rules.default_ids())
+ABSENT = object()  # a field the classification leaves out
+BOGUS = "zz_not_a_value"  # a value no field has (out of spec)
+
+
+def _enum(desc: str, values: dict[str, str]) -> dict[str, Any]:
+    return {"type": "enum", "description": desc, "values": values}
+
+
+STAGE = _enum(
+    "Where a contract stands.",
+    {"draft": "A draft to review.", "signed": "Signed by both.", "other": "Neither."},
+)
+REGION = _enum("Where the sender is based.",
+               {"emea": "Europe, Middle East, Africa.", "apac": "Asia Pacific.",
+                "unknown": "Can't tell."})  # fmt: skip
+TIER = {"type": "ordinal", "description": "How much we depend on this vendor.",
+        "levels": {"minor": "Easy to replace.", "major": "Hard to replace.",
+                   "key": "We can't work without them."}}  # fmt: skip
+SIGN = {"type": "boolean", "description": "Asks us to sign a document."}
+EXTENSIONS: dict[str, dict[str, Any] | None] = {
+    "shipped": None,
+    "one_enum": {"fields": {"contract_stage": STAGE}},
+    "one_boolean": {"fields": {"needs_signature": SIGN}},
+    "four": {"fields": {"contract_stage": STAGE, "vendor_tier": TIER, "needs_signature": SIGN,
+                        "region": REGION},
+             "category_values": {"legal_notice": "A letter from a lawyer or court clerk."}},
+    "eight": {"fields": {
+        "contract_stage": STAGE, "vendor_tier": TIER, "needs_signature": SIGN, "region": REGION,
+        "legal_matter": {"type": "boolean", "description": "About a lawsuit or a legal claim."},
+        "renewal_window": {"type": "ordinal", "description": "How soon a subscription renews.",
+                           "levels": {"later": "Months away.", "soon": "Within a month."}},
+        "account_team": _enum("Which of our teams it is for.",
+                              {"sales": "Our sales team.", "support": "Our support team.",
+                               "other": "Another team, or none."}),
+        "money_request": {"type": "boolean",
+                          "description": "The email asks us to pay, transfer or refund money."}},
+        "category_values": {"legal_notice": "A letter from a lawyer or court clerk."}},
+}  # fmt: skip
+
+
+def _changed_copy(rid: str, extra: str) -> dict[str, Any]:
+    r = json.loads(json.dumps(DEFAULT_RULES[rid]))
+    r["then"] = [*r["then"], extra]
+    return r
+
+
+def _files(f: str, v: str) -> dict[str, dict[str, Any] | None]:
+    """The user files tried with a schema; `f`/`v` an enum field (yours, else `category`) and
+    one of its values."""
+    by_field = {"id": "by_field", "when": {"field": f, "eq": v}, "then": [{"label": "marketing"},
+                                                                          "archive"]}  # fmt: skip
+    return {
+        "none": None,
+        "replace": {"version": 1, "rules": [
+            {"id": "archive_phishing", "when": {"field": "phishing", "eq": True},
+             "then": [{"label": "marketing"}, "archive"]},
+            by_field, _changed_copy("requires_reply", "escalate")]},
+        "off": {"version": 1, "default_rules_off": ["marketing", "automated_notification"],
+                "rules": [{"id": "not_rule", "then": ["flag"], "when": {"and": [
+                    {"not": {"field": f, "eq": v}}, {"fact": "bulk_signal", "eq": True}]}}]},
+        "catch_all": {"version": 1, "rules": [
+            {"id": "mine", "when": {"field": f, "eq": v}, "then": ["flag"]},
+            {"id": "everything_else", "then": [{"label": "marketing"}, "archive"]}]},
+        "copy": {"version": 1, "rules": [{**by_field, "then": ["flag"]},
+                                         DEFAULT_RULES["bug_report"]]},
+        "copy_base": {"version": 1, "rules": [{**by_field, "then": ["flag"]}]},
+    }  # fmt: skip
+
+
+@dataclasses.dataclass(frozen=True)
+class Entry:
+    name: str
+    schema: Any
+    doc: dict[str, Any] | None
+    compiled: rules.CompiledRules
+    labels: frozenset[str]
+    field: str
+    value: str
+
+
+def _pool() -> list[Entry]:
+    out: list[Entry] = []
+    for sname, ext in EXTENSIONS.items():
+        schema = SCHEMA if ext is None else extend_schema(SCHEMA, ext, frozenset(RESERVED))
+        mine = [n for n in schema.extension_fields if schema.fields[n].kind is FieldKind.ENUM]
+        f = mine[0] if mine else "category"
+        v = schema.fields[f].values[0] if mine else "marketing"
+        for fname, doc in _files(f, v).items():
+            text = None if doc is None else json.dumps(doc)
+            if text is not None:
+                rules.check_layers(text, schema, source=fname)  # what apply would accept
+            compiled = rules.compose(schema, text, source=fname)
+            out.append(Entry(f"{sname}/{fname}", schema, doc, compiled,
+                             policy.labels(schema, compiled), f, v))  # fmt: skip
+    return out
+
+
+POOL = _pool()
+BY_NAME = {e.name: e for e in POOL}
+
+
+def _user_field(spec: Any) -> st.SearchStrategy[Any]:
+    """A non-fixed field: mostly a valid value, sometimes absent or out of spec (P14)."""
+    valid: list[Any] = [True, False] if spec.kind is FieldKind.BOOLEAN else list(spec.values)
+    return st.sampled_from([*valid, ABSENT, BOGUS])
+
+
+def _classifications(schema: Any) -> st.SearchStrategy[dict[str, Any]]:
+    parts = {n: _field(s) if n in FIXED_FIELDS else _user_field(s)
+             for n, s in schema.fields.items()}  # fmt: skip
+    return st.fixed_dictionaries(parts).map(lambda d: {k: v for k, v in d.items()
+                                                       if v is not ABSENT})  # fmt: skip
+
+
+def _cases(entries: list[Entry]) -> st.SearchStrategy[tuple[Entry, Any, Any]]:
+    """One precomputed strategy per entry (review R11: no flatmap, so the inner strategies are
+    built once, not per draw)."""
+    return st.one_of([st.tuples(st.just(e), _classifications(e.schema), FACTS) for e in entries])
+
+
+POOL_CASES = _cases(POOL)
+OFF_CASES = _cases([e for e in POOL if e.name.endswith("/off")])  # inv3's entries only (R11)
+
+
+def _pool_ctx(e: Entry, cls: dict[str, Any], facts: dict[str, Any], **kw: Any) -> Context:
+    return Context(cls, facts, kw.pop("sensitivity", "standard"), e.compiled,
+                   kw.pop("action_policy", {}), FOLDERS, kw.pop("confirmed_category", None),
+                   **kw)  # fmt: skip
+
+
+def _expected(e: Entry) -> rules.CompiledRules:
+    """The rules in force, built here from the pool's parts (not with `rules.layered`): fixed;
+    the file's new-id rules; the defaults with same-id rules spliced in, off ids left out;
+    a file ending in a bare rule replaces the defaults."""
+    fixed = list(rules.load_fixed_rules(e.schema).rules)
+    defaults = list(compile_rules(json.dumps(STARTER_DOC), e.schema).rules)
+    if e.doc is None:
+        return rules.CompiledRules((*fixed, *defaults), e.schema)
+    user = list(compile_rules(json.dumps(e.doc), e.schema).rules)
+    if "when" in e.doc["rules"][-1]:
+        user = user[:-1]  # compile_rules appended `otherwise`
+    else:
+        return rules.CompiledRules((*fixed, *user), e.schema)
+    mine = {r.id: r for r in user}
+    off = set(e.doc.get("default_rules_off", []))
+    new = [r for r in user if r.id not in DEFAULT_RULES]
+    rest = [mine.get(r.id, r) for r in defaults if r.id not in off]
+    return rules.CompiledRules((*fixed, *new, *rest), e.schema)
+
+
+EXPECTED = {e.name: _expected(e) for e in POOL}
+
+
+@settings(max_examples=1000, deadline=None)
+@given(POOL_CASES)
+def test_s4_inv1_a_matching_fixed_rule_decides_first(case: tuple[Entry, Any, Any]) -> None:
+    """With any user fields and user rules, the first fixed rule that matches decides."""
+    e, cls, facts = case
+    inp = policy.rule_input(_pool_ctx(e, cls, facts))
+    got = e.compiled.evaluate(inp)
+    try:
+        first = rules.load_fixed_rules(e.schema).evaluate(inp).rule_id
+    except InvalidInputError:
+        assert got.rule_id not in rules.fixed_ids()
+    else:
+        assert got.rule_id == first
+
+
+@settings(max_examples=1500, deadline=None)
+@given(POOL_CASES, st.sampled_from(["standard", "high"]),
+       st.one_of(st.none(), st.sampled_from(SCHEMA.fields["category"].values)))  # fmt: skip
+def test_s4_inv2_no_hide_survives_a_blocker(case: tuple[Entry, Any, Any], sens: str,
+                                            confirmed: str | None) -> None:  # fmt: skip
+    """I1 with the user layer: every surviving hide has no blocker; phishing (which the user
+    file's `archive_phishing` tries to archive) is at most junked, with approval."""
+    e, cls, facts = case
+    ctx = _pool_ctx(e, cls, facts, sensitivity=sens, confirmed_category=confirmed)
+    p = policy.plan(ctx, e.labels)
+    for a in p.hides:
+        assert policy.hide_blockers(ctx, a.name) == [] and sens == "standard"
+    if fixed_item(cls, "phishing"):
+        assert p.rule_id != "archive_phishing"
+        assert all(a.name == "junk" and a.mode == "approve" for a in p.hides)
+
+
+@settings(max_examples=1000, deadline=None)
+@given(OFF_CASES)
+def test_s4_inv3_not_over_an_absent_or_out_of_spec_field_never_matches(
+    case: tuple[Entry, Any, Any],
+) -> None:
+    """P14: `not` over a non-fixed field the classification lacks, or holds out of spec, is
+    unknown, so `not_rule` can't decide on it."""
+    e, cls, facts = case
+    spec = e.schema.fields[e.field]
+    if e.field in cls and cls[e.field] in spec.values:
+        return
+    got = e.compiled.evaluate(policy.rule_input(_pool_ctx(e, cls, facts)))
+    assert got.rule_id != "not_rule"
+
+
+@settings(max_examples=1000, deadline=None)
+@given(POOL_CASES, st.sampled_from(FIXED_ITEMS))
+def test_s4_inv3b_an_absent_fixed_item_plans_as_false(case: tuple[Entry, Any, Any],
+                                                      item: str) -> None:  # fmt: skip
+    e, cls, facts = case
+    absent = {k: v for k, v in cls.items() if k != item}
+    a = policy.plan(_pool_ctx(e, absent, facts), e.labels)
+    b = policy.plan(_pool_ctx(e, absent | {item: False}, facts), e.labels)
+    assert (a.rule_id, a.actions, a.dropped) == (b.rule_id, b.actions, b.dropped)
+
+
+@settings(max_examples=1000, deadline=None)
+@given(POOL_CASES)
+def test_s4_inv4_the_decision_is_the_first_match_of_the_layers(
+    case: tuple[Entry, Any, Any],
+) -> None:
+    """The composed set decides as fixed + your new-id rules + the defaults (yours spliced in,
+    off ids left out) + catch-all, built independently here."""
+    e, cls, facts = case
+    inp = policy.rule_input(_pool_ctx(e, cls, facts))
+    assert e.compiled.evaluate(inp) == EXPECTED[e.name].evaluate(inp)
+    # review R3: what the dry run says runs can run: only the composed set's last rule matches
+    # everything, so no default after a bare rule is unreachable
+    assert all(r.when is not None for r in e.compiled.rules[:-1]), e.name
+    assert all(r.when is not None for r in EXPECTED[e.name].rules[:-1]), e.name
+
+
+@settings(max_examples=1000, deadline=None)
+@given(
+    st.one_of(
+        [
+            st.tuples(st.just(n.split("/")[0]), _classifications(BY_NAME[n].schema), FACTS)
+            for n in BY_NAME
+            if n.endswith("/copy")
+        ]
+    )
+)
+def test_s4_inv5_an_identical_copy_of_a_default_changes_nothing(
+    case: tuple[str, dict[str, Any], dict[str, Any]],
+) -> None:
+    """P4: replacing a default with an identical copy (spliced at its position) decides as the
+    same file without it."""
+    s, cls, facts = case
+    with_copy, without = BY_NAME[f"{s}/copy"], BY_NAME[f"{s}/copy_base"]
+    inp = policy.rule_input(_pool_ctx(without, cls, facts))
+    assert with_copy.compiled.evaluate(inp) == without.compiled.evaluate(inp)
+    assert with_copy.compiled.rules == without.compiled.rules
+
+
+def test_s4_a_copy_only_file_is_the_default_rules() -> None:
+    """A file of one identical copy composes to exactly the default rules (P4, M0b)."""
+    for sname, ext in EXTENSIONS.items():
+        schema = BY_NAME[f"{sname}/none"].schema
+        copy = json.dumps({"version": 1, "rules": [DEFAULT_RULES["invoice"]]})
+        assert rules.compose(schema, copy).rules == rules.compose(schema).rules, (sname, ext)
+
+
+# stored (schema, rules) pairs `current_rules` meets, broken ones too (C11): a rules file on a
+# field the schema lacks; an added value named like a default rule id (the default rules then
+# don't compile: fixed rules + `otherwise`); an unknown off id (skipped)
+BROKEN: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = [
+    ("unknown_field", None, {"version": 1, "rules": [
+        {"id": "x", "when": {"field": "no_such_field", "eq": True}, "then": ["flag"]}]}),
+    ("value_is_a_default_id", {"fields": {"route": _enum("Where it goes.", {
+        "travel_finance": "Travel or finance.", "other": "Elsewhere."})}}, None),
+    ("off_id_unknown", EXTENSIONS["one_enum"], {"version": 1,
+                                               "default_rules_off": ["renamed_later"],
+                                               "rules": [{"id": "x", "then": ["flag"],
+                                                          "when": {"trigger": "fraud"}}]}),
+    ("not_a_rules_file", None, {"version": 1, "rules": []}),
+    ("broken_extension", {"fields": {"category": STAGE}}, None),
+]  # fmt: skip
+STORED = [(e.name, EXTENSIONS[e.name.split("/")[0]], e.doc) for e in POOL] + BROKEN
+
+
+@pytest.mark.usefixtures("extensions_on")
+@pytest.mark.parametrize(("name", "ext", "doc"), STORED, ids=[s[0] for s in STORED])
+def test_s4_current_rules_never_raises(conn: sqlite3.Connection, name: str,
+                                       ext: dict[str, Any] | None,
+                                       doc: dict[str, Any] | None) -> None:  # fmt: skip
+    """C11: for every stored pair, `current_rules` gives a set that decides every item."""
+    from ecf_server import config  # noqa: PLC0415
+
+    with write_tx(conn):
+        for key, value in (("config.schema", ext), ("config.rules", doc)):
+            if value is not None:
+                conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                             " VALUES (?, ?, '2026-10-14T00:00:00Z', 'test')",
+                             (key, json.dumps(value)))  # fmt: skip
+    got = config.current_rules(conn)
+    assert got.rules[-1].when is None, name
+    got.evaluate(policy.rule_input(_ctx()))
+    got.evaluate(policy.rule_input(_ctx(classification={"phishing": True})))
+    if name == "value_is_a_default_id":  # the default rules refused: fixed + otherwise
+        assert [r.id for r in got.rules] == [*rules.fixed_ids(), rules.CATCH_ALL]

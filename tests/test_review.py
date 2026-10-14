@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import extend_schema, from_v2, load_schema
+from ecf.schema import FIXED_FIELDS, FIXED_ITEMS, extend_schema, from_v2, load_schema
 from ecf_server import claude_pins, decide, escalations, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
@@ -88,7 +88,8 @@ def test_all_others_correct_never_counts_items_needing_their_own_review(
         review.record(conn, morning, pay, actor="t", bulk=True)
     _click(conn, morning, review.CORRECT, pay)
     counts = review.reviewed(conn, "ap")
-    assert counts == {"reviewed": 3, "no_fix": 2, "category_ok": 2, "fixed_ok": 3,
+    assert counts == {"reviewed": 3, "gated_ok": 2, "no_fix": 2, "user_fixed": 0,
+                      "category_ok": 2, "fixed_ok": 3, "items_ok": 3, "fields_ok": 3,
                       "individual": 2, "bulk": 1}  # fmt: skip
 
 
@@ -163,22 +164,91 @@ def test_s3_the_fixed_items_need_their_own_review_and_show_on_the_line(
 def test_s3_the_fix_form_has_the_fixed_fields() -> None:
     assert len(review.FIXABLE) == 13
     assert review.fixable(load_schema()) == review.FIXABLE
-    assert set(review.FIXED_FIELDS) < set(review.FIXABLE)
-    assert {"category", "priority", "sender_type"} == set(review.FIXABLE) - set(review.FIXED_FIELDS)
+    assert set(FIXED_FIELDS) < set(review.FIXABLE) and len(FIXED_FIELDS) == 11
+    assert {"category", "sender_type"} == set(review.FIXABLE) - set(FIXED_FIELDS)  # D12
+    assert set(review.FIXED_NOT_ITEMS) | set(FIXED_ITEMS) == set(FIXED_FIELDS)
 
 
 def test_s3_accuracy_is_reviews_with_no_fix(conn: sqlite3.Connection, morning: FakeClock) -> None:
-    """P4 (OD-500): the gated figure is reviews with no Fix; a Fix to a fixed field counts
-    against fixed-field accuracy, not category accuracy."""
+    """P4 (OD-500), D4 (OD-502): the gated figure is reviews with no Fix to a fixed or default
+    field; a Fix to a fixed field counts against fixed-field accuracy (items and the other
+    fields apart, P22), not category accuracy."""
     slack_setup(conn, morning)
     a, b, c = _items(conn, morning, MARKETING, MARKETING, MARKETING)
     review.record(conn, morning, a, actor="t")
     _click(conn, morning, review.FIX, b, {"phishing": "true"})
     _click(conn, morning, review.FIX, c, {"priority": "high"})
     counts = review.reviewed(conn, "ap")
-    assert counts == {"reviewed": 3, "no_fix": 1, "category_ok": 3, "fixed_ok": 2,
-                           "individual": 3, "bulk": 0}  # fmt: skip
+    assert counts == {"reviewed": 3, "gated_ok": 1, "no_fix": 1, "user_fixed": 0,
+                      "category_ok": 3, "fixed_ok": 1, "items_ok": 2, "fields_ok": 2,
+                      "individual": 3, "bulk": 0}  # fmt: skip
     assert review.progress(conn, "ap", "standard")["accuracy"] == 33
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_s4_a_fix_to_your_field_is_reported_not_gated(conn: sqlite3.Connection,
+                                                      morning: FakeClock) -> None:  # fmt: skip
+    """D4, P30 (OD-502): `gated_ok` is written at record time; a Fix to your own field keeps it
+    and sets `user_fixed`; a Fix setting an absent fixed item to false isn't a change."""
+    slack_setup(conn, morning)
+    extend(conn, morning)
+    ext = MARKETING | {"contract_stage": "draft", "lawyer_involved": True}
+    a = _one(conn, morning, ext, "10")
+    _click(conn, morning, review.FIX, a, {"contract_stage": "none"})
+    rv = json.loads(item_row(conn, a)["review"])
+    assert rv["verdict"] == "fixed" and rv["gated_ok"] is True and rv["user_fixed"] is True
+    old = {k: v for k, v in ext.items() if k != "phishing"}  # classified before the item
+    b = _one(conn, morning, old, "11")
+    review.record(conn, morning, b, actor="t", correction={"phishing": False})
+    rv = json.loads(item_row(conn, b)["review"])
+    assert rv["verdict"] == "fixed" and rv["gated_ok"] is True and rv["user_fixed"] is False
+    c = _one(conn, morning, ext, "12")
+    review.record(conn, morning, c, actor="t", correction={"phishing": True})
+    assert json.loads(item_row(conn, c)["review"])["gated_ok"] is False
+    counts = review.reviewed(conn, "ap")
+    assert (counts["reviewed"], counts["gated_ok"], counts["user_fixed"]) == (3, 2, 1)
+    assert review.progress(conn, "ap", "standard")["accuracy"] == 67
+
+
+def test_s4_a_review_from_before_s4_counts_by_its_verdict(conn: sqlite3.Connection,
+                                                          morning: FakeClock) -> None:  # fmt: skip
+    """D4: a review with no `gated_ok` (pre-S4) is gated-ok only when its verdict is `correct`
+    (no user field existed, so any Fix was to a shipped field)."""
+    slack_setup(conn, morning)
+    a, b = _items(conn, morning, MARKETING, MARKETING)
+    with write_tx(conn):
+        conn.execute(
+            "UPDATE items SET review = ? WHERE stable_id = ?",
+            (json.dumps({"verdict": "correct", "category_ok": True, "bulk": False}), a),
+        )
+        conn.execute("UPDATE items SET review = ?, human_correction = ? WHERE stable_id = ?",
+                     (json.dumps({"verdict": "fixed", "category_ok": True, "bulk": False}),
+                      json.dumps({"priority": "high"}), b))  # fmt: skip
+    counts = review.reviewed(conn, "ap")
+    assert (counts["reviewed"], counts["gated_ok"], counts["no_fix"]) == (2, 1, 1)
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_s4_the_fix_form_at_the_caps(conn: sqlite3.Connection, morning: FakeClock) -> None:
+    """C15 (R36): at the caps (8 fields of 16 values, 4 category values) the form has 21 input
+    blocks (13 shipped + 8 yours, under Slack's 100) and at most 23 options a select (category's
+    19 + 4); your fields are labelled "(yours)"."""
+    fields = {f"f{i}": {"type": "enum", "description": f"Field {i}.",
+                        "values": {f"f{i}v{j}": "V." for j in range(16)}}
+              for i in range(8)}  # fmt: skip
+    cats = {f"cat{i}": "C." for i in range(4)}
+    ext = {"fields": fields, "category_values": cats}
+    schema = extend_schema(load_schema(), ext)  # within every cap
+    slack_setup(conn, morning)
+    extend(conn, morning, ext)
+    [a] = _items(conn, morning, MARKETING)
+    form = slack_in.FORMS[review.FIX](conn, Click("button", review.FIX, a, "CAP", ME))
+    inputs = [b for b in form["blocks"] if b["type"] == "input"]
+    assert len(inputs) == 21 and len(form["blocks"]) == 22
+    assert max(len(b["element"]["options"]) for b in inputs) == 23
+    assert [b["label"]["text"] for b in inputs[13:]] == [f"f{i}{review.YOURS}" for i in range(8)]
+    assert all(review.YOURS not in b["label"]["text"] for b in inputs[:13])
+    assert review.fixable(schema)[13:] == tuple(fields)
 
 
 def test_the_fix_form_offers_the_schema_choices(

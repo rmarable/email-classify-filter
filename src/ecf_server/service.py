@@ -607,12 +607,18 @@ class Service:
         conn = db.connect(self.paths.db)
         applied = db.migrate(conn)
         config.convert_rules(conn, to_ts(self.clock.now()))  # v2 applied rules (P7, OD-500)
+        config.mark_pre_layers(conn, to_ts(self.clock.now()))  # S4 layering (P3, OD-502)
         stages.demote_after_gate_change(conn, self.clock)  # 0037 cleared gate passes (B1)
         _clear_stale(conn)
         self._prepare_state(conn)
         conn.close()
         self.state.db_path = self.paths.db
         self.state.notifier = self._notifier()
+        conn = db.connect(self.paths.db)
+        try:  # a stored extension this version uses first: announced (D11, P11; OD-502)
+            config.activate_stored(conn, self.clock, self.state.notifier)
+        finally:
+            conn.close()
         # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets

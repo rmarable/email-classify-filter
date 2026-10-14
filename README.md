@@ -19,6 +19,9 @@ candidates (`v1.0.0-rcN`) record internal progress, not releases.
   changed bank details, a Reply-To that differs). Fraud and regulator rules run before any model.
 - Classifies each email (category, priority, fraud risk, payment-related) and proposes an action:
   label, flag, archive, a draft reply, a template reply or an internal forward.
+- From v3.0.0, on the all-Claude preset, lets you add your own classification fields and
+  categories on top of ecf's, and your own rules between ecf's fixed safety rules and its
+  defaults (shipped enabled only if its measurement passes; admin guide).
 - Posts to Slack: escalations for possible fraud and regulator mail, approvals, digests, and a
   pinned "Needs you" list.
 - Does on its own only what you've allowed per address, and only after an address has passed its

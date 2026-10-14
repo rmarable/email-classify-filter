@@ -52,6 +52,9 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "effective_prompt_digest": classifier.prompt_digest(config.current_schema(conn)),
         # a stored extension, in force or not (OD-481): v2.2.0's upgrade check needs it (item 6)
         "extension_stored": config.current(conn)["schema"] is not None,
+        # the C addresses a stored extension not yet in use would move to assist at the next
+        # start (`config.activate_stored`; S4, P11): the pre-check lists them
+        "extension_pending": config.pending_activation(conn),
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
         "upgrade": current(conn),

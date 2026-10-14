@@ -15,6 +15,9 @@ it imports nothing from the service package.
 - **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the shipped classifier prompt's
   digest (shipped schema). It is in the local gate key, so a different one, or one either side
   lacks (before v2.1.0), counts as "prompt" and every address is affected.
+- **Your own fields** (v3.0.0 S4, P11): stored but not yet in use, they reach the classifier at
+  the new version's first start (announced then); the C addresses that drop to assist with them
+  (`extension_pending` in the state) are listed. A service from before S4 doesn't report it.
 """
 
 from __future__ import annotations
@@ -131,6 +134,8 @@ class Report:
     problems: list[str] = field(default_factory=list[str])
     pin_changes: list[str] = field(default_factory=list[str])  # families, and "local"
     affected: list[str] = field(default_factory=list[str])  # addresses that drop to assist
+    # C addresses your stored, not yet used fields move to assist at the first start (S4, P11)
+    schema_pending: list[str] = field(default_factory=list[str])
 
 
 def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
@@ -153,6 +158,9 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
         now["pins"], int(now.get("classifier_schema", 1)), rel.pins,
         int(new.get("classifier_schema", 1)), now["pin_users"],
         prompts=(now.get("prompt_digest"), new.get("prompt_digest")))  # fmt: skip
+    pending: list[str] = now.get("extension_pending") or []
+    r.schema_pending = sorted(str(a) for a in pending)
+    r.affected = sorted(set(r.affected) | set(r.schema_pending))
     return r
 
 

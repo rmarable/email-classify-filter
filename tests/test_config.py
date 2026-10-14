@@ -36,11 +36,12 @@ SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 STARTER = Path(__file__).parents[1] / "src" / "ecf_server" / "data" / "starter_rules.yaml"
 
 
-def _setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
+def _setup(conn: sqlite3.Connection, clock: FakeClock, preset: str = "A") -> None:
+    """One `high` address; preset C where your own fields are applied (D8: C only)."""
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', ?)", (now,))  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', ?, ?)", (preset, now))  # fmt: skip
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
                      " VALUES ('org_domains', ?, ?, 'test')",
                      ('["acme.example"]', now))  # fmt: skip
@@ -430,6 +431,18 @@ def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small
     r = CliRunner().invoke(app, ["--install", "t", "config", "apply", str(cfg)], input="n\n")
     assert r.exit_code == 1, r.output  # declined at the prompt: no step-up, nothing applied
     assert "move_folders: +Receipts" in r.output
+    # S4 (D14): the dry run says how a rules file layers
+    cfg.write_text(
+        "version: 1\nrules: {version: 1, rules: [{id: invoice, when: {field: category,"
+        " eq: invoice}, then: [flag, archive]}], default_rules_off: [marketing]}\n"
+    )
+    r = CliRunner().invoke(app, ["--install", "t", "config", "apply", str(cfg)], input="n\n")
+    assert r.exit_code == 1, r.output
+    assert ("rules: your rules run after ecf's fixed rules and before ecf's default"
+            " rules") in r.output  # fmt: skip
+    assert "your rule invoice replaces ecf's default invoice, at its position" in r.output
+    assert "ecf's default rule marketing is off" in r.output
+    assert "your rules that can hide mail (when ecf's checks allow it): invoice" in r.output
 
 
 # ---- org addresses (V1.6) ---------------------------------------------------------------------
@@ -534,7 +547,7 @@ def test_schema_section_order_and_key() -> None:
 def test_a_schema_extension_dry_run_step_up_apply_and_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     n = FakeNotifier()
     base = config.current_schema(conn)
     plan = config.apply(conn, clock, n, SCHEMA_DOC, dry_run=True, nonce=None)
@@ -574,7 +587,7 @@ def test_a_schema_extension_dry_run_step_up_apply_and_notice(
 def test_a_cap_violation_lists_every_one_before_step_up(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     fields = "".join(f"    f{i}: {{type: boolean, description: Added.}}\n" for i in range(9))
     cats = "".join(f"    c{i}: Added.\n" for i in range(5))
     doc = f"version: 1\nschema:\n  fields:\n{fields}  category_values:\n{cats}"
@@ -587,7 +600,7 @@ def test_a_cap_violation_lists_every_one_before_step_up(
 
 @pytest.mark.usefixtures("extensions_on")
 def test_near_a_cap_the_budget_line_says_so(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     fields = "".join(f"    f{i}: {{type: boolean, description: Added.}}\n" for i in range(7))
     plan = config.apply(conn, clock, FakeNotifier(), f"version: 1\nschema:\n  fields:\n{fields}",
                         dry_run=True, nonce=None)  # fmt: skip
@@ -599,7 +612,7 @@ def test_near_a_cap_the_budget_line_says_so(conn: sqlite3.Connection, clock: Fak
 def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     with pytest.raises(InvalidInputError, match="unknown field 'contract_stage'"):
         config.parse(conn, "version: 1\n" + LABEL_STAGE)  # no extension yet
     _apply(conn, clock, SCHEMA_DOC + LABEL_STAGE)  # schema validated first, then the rules
@@ -617,7 +630,7 @@ def test_rules_use_extension_fields_and_a_removal_is_refused_naming_the_rule(
 def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     with pytest.raises(InvalidInputError, match="built-in label or a rule id"):
         config.parse(conn, "version: 1\nschema: {category_values: {fraud_guard: x}}")  # starter
     with pytest.raises(InvalidInputError, match="built-in label or a rule id"):
@@ -632,7 +645,7 @@ def test_an_added_value_cant_be_a_rule_id_or_a_built_in_label(
 def test_the_effective_schema_moves_the_gate_key(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     before = claude_pins.address_key(conn, "ap")
     _apply(conn, clock, SCHEMA_DOC)
     assert claude_pins.address_key(conn, "ap") != before
@@ -645,7 +658,7 @@ def test_the_effective_schema_moves_the_gate_key(
 
 @pytest.mark.usefixtures("extensions_on")
 def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: Path) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     st = make_state(db_path, None)
     r = call(st, "GET", "/v1/schema")
     assert r.status_code == 200
@@ -665,7 +678,7 @@ def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: P
 def test_an_empty_or_wrong_typed_schema_is_refused(
     conn: sqlite3.Connection, clock: FakeClock, empty: str
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     with pytest.raises(InvalidInputError, match="schema"):
         config.parse(conn, f"version: 1\nschema: {empty}\n")
 
@@ -674,7 +687,7 @@ def test_an_empty_or_wrong_typed_schema_is_refused(
 def test_the_extension_keeps_the_operators_order(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     doc = ("version: 1\nschema:\n  fields:\n    zeta: {type: boolean, description: Zeta.}\n"
            "    alpha: {type: boolean, description: Alpha.}\n")  # fmt: skip
     _apply(conn, clock, doc)
@@ -695,7 +708,7 @@ def test_the_extension_keeps_the_operators_order(
 def test_a_schema_change_leads_the_dialog_and_notice_and_demotes_live_at_once(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     with write_tx(conn):
         conn.execute("UPDATE addresses SET stage = 'live'")
     long_rules = "rules: {version: 1, rules: [" + ", ".join(
@@ -721,23 +734,36 @@ def test_a_schema_change_leads_the_dialog_and_notice_and_demotes_live_at_once(
 def test_rules_default_rechecks_the_starter_ids_against_added_values(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     _apply(conn, clock, "version: 1\nrules: {version: 1, rules: [{id: only, then: [leave]}]}\n")
     # a fixed rule's id is never an added value (OD-500) ...
     with pytest.raises(InvalidInputError, match="'fraud_guard' is already a built-in label or a"):
         config.parse(conn, "version: 1\nschema: {category_values: {fraud_guard: Added.}}\n")
-    # ... with custom rules in force, an added value may be a default rule id ...
-    _apply(conn, clock, "version: 1\nschema: {category_values: {travel_finance: Added.}}\n")
-    # ... but going back to the default rules is refused while it is
+    # ... nor a default rule's, even with custom rules in force (S4, P2, C8: the defaults run
+    # after them) ...
+    with pytest.raises(InvalidInputError, match="'travel_finance' is already a built-in label"):
+        config.parse(conn, "version: 1\nschema: {category_values: {travel_finance: Added.}}\n")
+    # ... nor the applied file's, though no default has it
+    with pytest.raises(InvalidInputError, match="'only' is already a built-in label or a rule"):
+        config.parse(conn, "version: 1\nschema: {category_values: {only: Added.}}\n")
+    # one stored by an earlier version (no reservation then): `rules: default` is refused while
+    # it is, and mail is still decided by the fixed rules and `otherwise` (P2, C11)
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.schema', ?, 'x', 'test')",
+                     (json.dumps({"category_values": {"travel_finance": "Added."}}),))  # fmt: skip
     with pytest.raises(InvalidInputError, match="rule id travel_finance is a value"):
         config.parse(conn, "version: 1\nrules: default\n")
+    with write_tx(conn):
+        conn.execute("DELETE FROM settings WHERE key = 'config.rules'")
+    assert [r.id for r in config.current_rules(conn).rules] == [*rules.fixed_ids(), "otherwise"]
 
 
 @pytest.mark.usefixtures("extensions_on")
 def test_removing_an_added_category_confirmed_senders_use_is_refused(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     _apply(conn, clock, SCHEMA_DOC)
     with write_tx(conn):
         conn.execute("INSERT INTO senders (address_id, sender_hash, domain, confirmed_category)"
@@ -755,7 +781,7 @@ def test_a_stored_extension_that_no_longer_compiles_fails_closed(
     """A later release adds a shipped value the extension also adds (simulated by storing one
     that clashes): the service classifies with the shipped schema under its own key, raises a
     System Error, and `schema: default` still applies."""
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     before = claude_pins.address_key(conn, "ap")
     with write_tx(conn):
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
@@ -784,26 +810,28 @@ def _open_alerts(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in conn.execute("SELECT kind FROM alerts WHERE resolved_at IS NULL")]
 
 
+@pytest.mark.usefixtures("extensions_off")
 def test_with_extensions_off_a_schema_section_is_refused(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    _setup(conn, clock)
-    with pytest.raises(InvalidInputError, match=r"schema extensions arrive in v2\.1\.0"):
+    _setup(conn, clock, "C")
+    with pytest.raises(InvalidInputError, match=r"your fields are off in this release"):
         config.parse(conn, SCHEMA_DOC)
     with pytest.raises(InvalidInputError, match="remove the `schema` section"):
         config.apply(conn, clock, FakeNotifier(), SCHEMA_DOC, dry_run=True, nonce=None)
-    with pytest.raises(InvalidInputError, match=r"arrive in v2\.1\.0"):  # empty is refused too
+    with pytest.raises(InvalidInputError, match="are off in this release"):  # empty too
         config.parse(conn, "version: 1\nschema: {}\n")
     assert config.current(conn)["schema"] is None
     assert config.current_schema(conn).digest == load_schema().digest
 
 
+@pytest.mark.usefixtures("extensions_off")
 def test_with_extensions_off_a_stored_extension_is_ignored_and_default_removes_it(
     conn: sqlite3.Connection, clock: FakeClock, db_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Applied on an rc (switch on), then this version (switch off): the shipped schema and its
     gate key, no System Error, and `schema: default` removes it without demoting anyone."""
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     shipped_key = claude_pins.address_key(conn, "ap")
     monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
     _apply(conn, clock, SCHEMA_DOC)
@@ -831,10 +859,11 @@ def test_with_extensions_off_a_stored_extension_is_ignored_and_default_removes_i
     assert ops_doctor.schema(conn)["level"] == "ok"
 
 
+@pytest.mark.usefixtures("extensions_off")
 def test_with_extensions_off_rules_that_use_a_stored_extension_give_way_to_the_starter_rules(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _setup(conn, clock)
+    _setup(conn, clock, "C")
     monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
     _apply(conn, clock, SCHEMA_DOC + LABEL_STAGE)
     monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", False)
