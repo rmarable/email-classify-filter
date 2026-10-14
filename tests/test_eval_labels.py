@@ -111,7 +111,7 @@ def test_labelling_shows_what_the_model_returned(
                                  "--results", str(path)], input="n\n")  # fmt: skip
     assert r.exit_code == 0, r.output
     assert "model answers from eval abcdef12 (2026-10-01)" in r.output
-    assert "model returned: category invoice (expected vendor_change_request)" in r.output
+    assert "model returned: category invoice (expected notification)" in r.output  # S3b relabel
 
 
 def test_the_committed_set_is_consistent() -> None:

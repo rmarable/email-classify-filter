@@ -13,7 +13,7 @@ reply_to: "harborline-desk@freemail.example"
 subject: "Action needed: your stay 2026-10-29 is on hold"
 date: 2026-10-20T03:12:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
+  labels: {category: travel, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

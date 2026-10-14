@@ -2,9 +2,6 @@
 # applied rules (or the default rules in starter_rules.yaml), and a rules file can't redefine
 # them. Each reads ecf's fixed safety items; every clause on an item also reads the kept schema
 # v2 values that say the same (sender_type regulator, person/friend/family; raise-only, P2).
-# S3a only (P3): each item clause also reads its removed v2 value (category
-# vendor_change_request, regulatory, spam_or_phishing; sender_type team), so a classification
-# that answers the old value and not the item loses nothing; S3b deletes those clauses.
 version: 1
 rules:
   - id: fraud_guard                      # 1
@@ -12,11 +9,8 @@ rules:
       or:
         - {field: fraud_risk, in: [medium, high]}
         - {field: bank_detail_change, eq: true}
-        - {field: category, eq: vendor_change_request}        # S3a bridge
         - and:                           # claims to be a colleague, from outside, about money
-            - or:                        # (OD-262)
-                - {field: claims_internal, eq: true}
-                - {field: sender_type, eq: team}          # S3a bridge ("staff" in schema v1)
+            - {field: claims_internal, eq: true}         # (OD-262)
             - {fact: sender_origin, eq: external}
             - or: [{field: payment_related, eq: true}, {fact: payment_keyword, eq: true}]
         - and: [{field: payment_related, eq: true}, {fact: auth_result, eq: fail}]
@@ -44,7 +38,6 @@ rules:
       or:                                # item, its kept source, or the trigger (P1)
         - {field: regulator_claim, eq: true}
         - {field: sender_type, eq: regulator}
-        - {field: category, eq: regulatory}               # S3a bridge
         - {trigger: regulator}
     then: [{label: regulatory}, flag, escalate]
     actor: none
@@ -54,11 +47,7 @@ rules:
     when:                                # Reply-To mismatch on a payment item; or a claimed
       or:                                # colleague from outside with no money (OD-262)
         - {trigger: fraud_weak}
-        - and:
-            - or:
-                - {field: claims_internal, eq: true}
-                - {field: sender_type, eq: team}          # S3a bridge
-            - {fact: sender_origin, eq: external}
+        - and: [{field: claims_internal, eq: true}, {fact: sender_origin, eq: external}]
         - {fact: impersonates_internal, eq: true}   # without money (OD-436)
         - and:                           # a private individual from outside about money: a
             - or:                        # colleague on a personal address the model can't place
@@ -82,8 +71,6 @@ rules:
     hide: never
 
   - id: spam_or_phishing                 # 5: before the default rules, so a phishing email
-    when:                                # answered as another category is still junked; id and
-      or:                                # label kept in S3 (P16)
-        - {field: phishing, eq: true}
-        - {field: category, eq: spam_or_phishing}         # S3a bridge
+    when: {field: phishing, eq: true}    # answered as another category is still junked; id
+                                         # and label kept in S3 (P16)
     then: [{label: spam_or_phishing}, junk]

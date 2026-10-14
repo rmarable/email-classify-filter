@@ -10,7 +10,7 @@ subject: "Your password expires today"
 date: 2026-10-19T08:00:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, fraud_risk: high}
+  labels: {category: account_security, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true}
 ---

@@ -11,7 +11,7 @@ from: "Jordan Mills <jordan-mills-77@freemail.example>"
 subject: "Running late"
 date: 2026-10-06T08:05:00Z
 expected:
-  labels: {category: other, sender_type: team, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, fraud_risk: low}
+  labels: {category: other, sender_type: unknown, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, fraud_risk: low, regulator_claim: false, claims_internal: true, private_individual: false}
   rule: fraud_weak
   safety: {must_not_hide: true}
 ---

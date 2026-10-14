@@ -11,7 +11,7 @@ from: "Freemail Account Support <support@freemail-accounts.example>"
 subject: "Your password expires today"
 date: 2026-10-13T07:05:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
+  labels: {category: account_security, priority: high, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

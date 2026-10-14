@@ -124,8 +124,8 @@ def test_each_field_is_shown_with_its_meaning_and_numbered_choices() -> None:
     f = load_schema().fields
     cat = "\n".join(ui.field_block(f["category"], 1, 8))
     assert "Field 1 of 8: category" in cat and "What this email is primarily about." in cat
-    assert "12  notification" in cat and "fits no other value" in cat
-    assert "14  account_security" in cat
+    assert "10  notification" in cat and "fits no other value" in cat  # S3b: 3 values gone
+    assert "12  account_security" in cat
     assert "Type the number or the name." in cat
     yn = "\n".join(ui.field_block(f["requires_reply"], 4, 8))
     assert "y  yes" in yn and "Type y or n." in yn

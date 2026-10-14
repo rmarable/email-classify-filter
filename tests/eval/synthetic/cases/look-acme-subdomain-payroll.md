@@ -10,7 +10,7 @@ subject: "Confirm your direct deposit details"
 date: 2026-10-19T09:00:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high}
+  labels: {category: finance, payment_related: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

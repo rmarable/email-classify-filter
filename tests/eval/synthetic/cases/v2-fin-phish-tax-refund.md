@@ -11,7 +11,7 @@ from: "Refund Processing Office <refunds@tax-refund-center.example>"
 subject: "Tax refund pending: confirm your bank details"
 date: 2026-10-07T04:50:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
+  labels: {category: remittance, priority: high, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

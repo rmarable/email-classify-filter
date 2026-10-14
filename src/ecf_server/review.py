@@ -35,14 +35,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import (
-    FIXED_FROM_V2,
-    FIXED_ITEMS,
-    CompiledSchema,
-    FieldKind,
-    derive_fixed,
-    fixed_item,
-)
+from ecf.schema import FIXED_ITEMS, CompiledSchema, FieldKind, fixed_item
 from ecf_server import (
     cards,
     claude_pins,
@@ -299,8 +292,7 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
     now = to_ts(clock.now())
     review = {"verdict": verdict, "category_ok": "category" not in changed, "bulk": bulk,
               "by": actor, "at": now}  # fmt: skip
-    _set_review(conn, clock.now(), sid, review,
-                _with_items(cls, changed, set(correction or {})) or None)  # fmt: skip
+    _set_review(conn, clock.now(), sid, review, changed or None)
     with write_tx(conn):
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
@@ -309,23 +301,6 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
              json.dumps({"verdict": verdict, "bulk": bulk, "fields": sorted(changed)})),
         )  # fmt: skip
     return verdict
-
-
-def _with_items(cls: dict[str, Any], changed: dict[str, Any],
-                answered: set[str] | None = None) -> dict[str, Any]:  # fmt: skip
-    """A Fix with the fixed items derived (`derive_fixed`) from the corrected view
-    (`cls | changed`) for each item one of whose source fields it changes, as migration 0036
-    does for older Fixes, so `classification | human_correction` stays consistent (OD-498).
-    An item the Fix answers itself (`answered`: on the form from S3, OD-500; left as shown
-    counts) is kept as the person gave it, never derived. Removed in S3b."""
-    given = answered or set()
-    touched = [item for item, sources in FIXED_FROM_V2.items()
-               if item not in changed and item not in given
-               and any(f in changed for f, _ in sources)]  # fmt: skip
-    if not touched:
-        return changed
-    derived = derive_fixed(cls | changed)
-    return changed | {item: derived[item] for item in touched}
 
 
 def fixable(schema: CompiledSchema) -> tuple[str, ...]:

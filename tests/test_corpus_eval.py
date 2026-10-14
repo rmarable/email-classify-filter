@@ -26,6 +26,9 @@ from tests.test_corpus import SECRET, fetch, req, server_with
 from tests.test_evalrun import AC, BEC, _inline  # pyright: ignore[reportPrivateUsage]
 from tests.test_models import check_kw
 
+# a corpus label: BEC's answer is v2's, and a new label can't use a value schema v3 removed (S3b)
+LABEL = BEC | {"category": "invoice"}
+
 
 @pytest.fixture
 def session(conn: sqlite3.Connection, clock: FakeClock, db_path: Path,
@@ -39,7 +42,7 @@ def session(conn: sqlite3.Connection, clock: FakeClock, db_path: Path,
     s = cs.get(opened["session_id"], lambda: 0.0)
     labels: dict[cl.Key, cl.Label] = {}
     keys = [(str(r["key"]["content_hash"]), str(r["key"]["identity_digest"])) for r in s.rows]
-    cl.put(labels, cl.make(keys[0], opened["corpus_id"], BEC, None, date(2026, 10, 7)))
+    cl.put(labels, cl.make(keys[0], opened["corpus_id"], LABEL, None, date(2026, 10, 7)))
     cl.put(labels, cl.make(keys[1], opened["corpus_id"], None, "u", date(2026, 10, 7)))
     cl.save(cl.path_for(path), labels)  # the third message stays unlabelled
     yield s
@@ -126,7 +129,7 @@ def test_rescore_uses_the_current_labels_and_keeps_the_original(
     s = cs.get(reopened["session_id"], lambda: 0.0)
     labels = cl.load(cl.path_for(s.path))
     third = s.rows[2]["key"]
-    cl.put(labels, cl.make((third["content_hash"], third["identity_digest"]), run.corpus_id, BEC,
+    cl.put(labels, cl.make((third["content_hash"], third["identity_digest"]), run.corpus_id, LABEL,
                            None, date(2026, 10, 8)))  # fmt: skip
     cl.save(cl.path_for(s.path), labels)
     got = evalrun.rescore(s, first, clock)
@@ -155,7 +158,7 @@ def test_corpus_labels_are_checked_against_the_effective_schema(
     schema = extend_schema(load_schema(), EXT)
     cl.put(labels, cl.make((third["content_hash"], third["identity_digest"]),
                            str(session.corpus.first["corpus_id"]),
-                           BEC | {"contract_stage": "draft"}, None, date(2026, 10, 8),
+                           LABEL | {"contract_stage": "draft"}, None, date(2026, 10, 8),
                            schema))  # fmt: skip
     cl.save(cl.path_for(session.path), labels)
     with pytest.raises(InvalidInputError, match="exactly the schema"):

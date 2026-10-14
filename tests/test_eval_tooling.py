@@ -29,6 +29,7 @@ from ecf.eval.results import (
     field_lines,
     field_metrics,
     input_warnings,
+    label_map,
     schema_warning,
     scoring,
     spawn_figures,
@@ -545,6 +546,28 @@ def test_compare_on_a_subset_of_two_different_sets() -> None:
     assert (c.n, c.b_only, c.a_only) == (3, 1, 0)
 
 
+def test_compare_refuses_mixed_label_maps_with_or_without_a_subset(tmp_path: Path) -> None:
+    """S3b (P10): a result scored under label map 2 (removed values unlabelled, `correct`
+    redefined) isn't compared with one from before it (no key: map 1), on the same set or on a
+    subset of two; per-field comparison too; the CLI says to rescore."""
+    a = _run("A", [True, False, True])
+    b = _run("B", [True, True, True]).model_copy(update={"summary": {"label_map": 2}})
+    for subset in (None, frozenset({"0", "1"})):
+        with pytest.raises(InvalidInputError, match="different label maps \\(1 vs 2\\)"):
+            compare(a, b, subset)
+    with pytest.raises(InvalidInputError, match="different label maps"):
+        compare_fields(a, b)
+    both = a.model_copy(update={"summary": {"label_map": 2}})
+    assert compare(both, b).n == 3 and label_map(a) == 1 and label_map(both) == 2
+    fa, fb, ids = tmp_path / "a.json", tmp_path / "b.json", tmp_path / "ids.txt"
+    fa.write_text(a.model_dump_json())
+    fb.write_text(b.model_dump_json())
+    ids.write_text("0\n1\n")
+    for extra in ([], ["--subset", str(ids)]):
+        out = CliRunner().invoke(app, ["eval", "compare", str(fa), str(fb), *extra])
+        assert out.exit_code != 0 and "different label maps" in str(out.exception), extra
+
+
 def _labelled(
     cases: list[tuple[dict[str, str | bool], dict[str, str | bool | None]]],
 ) -> ResultFile:
@@ -607,3 +630,20 @@ def test_cli_compare_subset(tmp_path: Path) -> None:
     )
     same = r.invoke(app, ["eval", "compare", str(fa), str(fb), "--subset", str(fa)])
     assert same.exit_code == 0 and "paired cases: 3" in same.output
+
+
+@pytest.mark.parametrize(("target", "ok"), [
+    ("fraud_risk:low", True), ("priority:high", True), ("invoice", True), ("archive", True),
+    ("fraud_risk:tiny", False), ("category:invoice", False), ("nofield:low", False),
+    ("fraud_risk:high", False), ("priority:urgent", False),  # C4: the top level is every answer
+])  # fmt: skip
+def test_a_card_level_injection_target_is_checked(target: str, ok: bool) -> None:
+    """S3b: `<ordinal field>:<level>` is refused for a non-ordinal field, an unknown level or the
+    top level (fix review C4: at or below the top is always taken)."""
+    from ecf.eval.cards import Safety  # noqa: PLC0415
+
+    if ok:
+        assert Safety(injection_target=target).injection_target == target
+    else:
+        with pytest.raises(ValueError, match="injection_target"):
+            Safety(injection_target=target)

@@ -10,7 +10,7 @@ reply_to: "vendor-c-finance@mailhost.test"
 subject: "New banking information effective immediately"
 date: 2026-10-02T10:30:00Z
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high}
+  labels: {category: notification, payment_related: true, fraud_risk: high, bank_detail_change: true}
   facts: {reply_to_mismatch: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}

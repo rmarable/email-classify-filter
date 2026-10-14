@@ -116,7 +116,7 @@ def test_a_sitting_resumes_and_redo_asks_again(root: Path) -> None:
 
 
 def test_quitting_mid_card_saves_nothing_for_it(root: Path) -> None:
-    run(root, "category,fraud_risk", ["", "vendor_change_request", "q"])
+    run(root, "category,fraud_risk", ["", "invoice", "q"])
     assert rv.read_log(root) == []
 
 
@@ -180,7 +180,10 @@ def test_the_cli_checks_its_options(root: Path) -> None:
 
 def test_the_committed_review_log_is_consistent() -> None:
     for x in rv.read_log(SYNTHETIC):
-        assert x["kind"] in (rv.REVIEW, rv.RECHECK, fixed_labels.KIND)  # fixed: S2 hand labels
+        # fixed: S2 hand labels; page: S3b's card review page answers (category, sender_type)
+        assert x["kind"] in (rv.REVIEW, rv.RECHECK, fixed_labels.KIND, rv.PAGE)
+        if x["kind"] == rv.PAGE:
+            assert x["field"] in rv.CARD_FIELDS and x["how"] in rv.HOW
         assert x["kind"] == rv.RECHECK or x["outcome"] in rv.OUTCOMES
 
 
@@ -192,13 +195,14 @@ def test_the_review_shows_the_schemas_texts(root: Path) -> None:
 
 def test_category_is_asked_with_its_order_guide(root: Path) -> None:
     _, screen = run(root, "category", ["", "q"], globs=("starter-bec",))
-    assert "Pick the first that fits: vendor_change_request, regulatory" in screen
-    assert "Says the bank account, payee or check address" in screen
+    assert "When several fit, choose in this order" in screen  # S3b wording (plan §12)
+    assert "A fake email gets the value of what it pretends to be" in screen
+    assert "vendor_change_request" not in screen  # removed in v3 (S3b)
 
 
 def test_fraud_risk_is_asked_with_the_plans_level_texts(root: Path) -> None:
     _, screen = run(root, "fraud_risk", ["", "q"], globs=("starter-bec",))
-    assert "Any request to move money, data, credentials or access" in screen
+    assert "A request to call a number or follow a link to secure an account counts" in screen
 
 
 def test_no_labelling_text_starts_with_an_article() -> None:
@@ -206,3 +210,93 @@ def test_no_labelling_text_starts_with_an_article() -> None:
     for field in load_schema().fields.values():
         for text in field.value_descriptions:
             assert not text.startswith(("A ", "An ")), text
+
+
+# ---- a card review page's answers for a card field (S3b, OD-500, P11) --------------------------
+
+
+def _old_card(root: Path) -> None:
+    """starter-bec as it was before the S3b relabel (a removed value), built and confirmed."""
+    path = root / "cases" / "starter-bec.md"
+    text = path.read_text(encoding="utf-8").replace(
+        "{category: notification, payment_related: true, fraud_risk: high,"
+        " bank_detail_change: true}",
+        "{category: vendor_change_request, payment_related: true, fraud_risk: high}",
+    )
+    assert "vendor_change_request" in text
+    path.write_text(text, encoding="utf-8")
+    assert not build_all(root).findings
+    labels.confirm(root, "starter-bec", DAY)
+
+
+def test_a_page_relabel_writes_the_card_keeps_its_items_and_confirms_again(root: Path) -> None:
+    _old_card(root)
+    got = rv.record_page(root, "category", {
+        "starter-bec": {"label": "invoice", "how": "single"},
+        "starter-control": {"label": "marketing", "how": "bulk"},  # not confirmed before
+    }, DAY, ui.rebuild)  # fmt: skip
+    assert got == {"answers": 2, "changed": 1, "reconfirmed": 1, "pending": ["starter-control"],
+                   "kept_items": 1}  # fmt: skip
+    # the item the removed value implied stays: the relabel moves no item label
+    assert card_labels(root, "starter-bec") == {
+        "category": "invoice",
+        "payment_related": True,
+        "fraud_risk": "high",
+        "bank_detail_change": True,
+    }
+    rows = {r["id"]: r for r in labels.read(root)}
+    assert labels.is_confirmed(rows["starter-bec"])
+    assert not labels.is_confirmed(rows["starter-control"])
+    log = {x["id"]: x for x in rv.read_log(root)}
+    assert log["starter-bec"] | {"sha256": ""} == {
+        "id": "starter-bec", "field": "category", "sha256": "", "before": "vendor_change_request",
+        "answer": "invoice", "final": "invoice", "outcome": rv.MOVED, "on": DAY.isoformat(),
+        "kind": rv.PAGE, "how": "single", "kept_items": ["bank_detail_change"]}  # fmt: skip
+    assert (log["starter-control"]["outcome"], log["starter-control"]["how"]) == (
+        rv.CONFIRMED,
+        "bulk",
+    )
+
+
+def test_a_page_keeps_no_phishing_label_and_refuses_bad_answers(root: Path) -> None:
+    """`phishing` is never kept from `spam_or_phishing` (split by hand in fixed_labels.jsonl); a
+    removed value, an unknown case or a field the page doesn't set is refused, nothing written."""
+    old = {"category": "spam_or_phishing", "sender_type": "team"}
+    assert rv.kept_items("category", old, old | {"category": "invoice"}) == {}
+    # `unknown` derives nothing, so what `team` made true or false is kept as it was
+    assert rv.kept_items("sender_type", old, old | {"sender_type": "unknown"}) == {
+        "claims_internal": True,
+        "regulator_claim": False,
+        "private_individual": False,
+    }
+    assert rv.kept_items("category", {"category": "invoice"}, {"category": "other"}) == {}
+    before = (root / "labels.jsonl").read_bytes()
+    for field, answers, why in [
+        ("category", {"starter-bec": {"label": "regulatory", "how": "single"}}, "isn't a"),
+        ("category", {"nope": {"label": "invoice", "how": "single"}}, "not cases"),
+        ("category", {"starter-bec": {"label": "invoice"}}, "how single/bulk"),
+        ("priority", {"starter-bec": {"label": "low", "how": "single"}}, "isn't a card field"),
+    ]:  # fmt: skip
+        with pytest.raises(InvalidInputError, match=why):
+            rv.record_page(root, field, answers, DAY, ui.rebuild)
+    assert (root / "labels.jsonl").read_bytes() == before and rv.read_log(root) == []
+
+
+def test_import_fixed_routes_a_card_field_to_the_cards(root: Path, tmp_path: Path) -> None:
+    _old_card(root)
+    f = tmp_path / "answers.json"
+    f.write_text('{"item": "category", "on": "2026-10-13", "answers": {"starter-bec":'
+                 ' {"label": "invoice", "how": "bulk"}}}')  # fmt: skip
+    r = CliRunner().invoke(app, ["eval", "label", "--import-fixed", str(f), "--root", str(root)])
+    assert r.exit_code == 0, r.output
+    assert "1 cards changed (1 kept a fixed item" in r.output and "1 confirmed again" in r.output
+    assert card_labels(root, "starter-bec")["category"] == "invoice"
+    assert not (root / fixed_labels.FILE).exists()  # a card field never goes there
+
+
+def test_the_review_says_a_removed_label_is_gone_and_keeps_your_answer(root: Path) -> None:
+    _old_card(root)
+    _, screen = run(root, "category", ["", "invoice", "y"], globs=("starter-bec",))
+    assert "the card says vendor_change_request (removed in v3), so yours is kept" in screen
+    assert "Keep [y]ours" not in screen
+    assert card_labels(root, "starter-bec")["category"] == "invoice"

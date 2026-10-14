@@ -24,7 +24,7 @@ from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import CaseResult, ResultFile, load_result, spawn_figures
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import load_schema, local_schema, with_fixed
+from ecf.schema import load_schema, local_fields, local_schema, with_fixed
 from ecf_server import (
     claude_eval,
     claude_pins,
@@ -44,11 +44,13 @@ from tests.test_claude_review import EXT, extend, tokens_of, with_tokens
 from tests.test_decide import MARKETING
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
-# full schema v3 answers (the fixed items derived, OD-498)
-BEC: dict[str, Any] = with_fixed({"category": "vendor_change_request", "priority": "high",
+# full schema v3 answers (the fixed items derived, OD-498; S3b: the bank change is the item,
+# the category what the email is about, as the relabelled starter-bec card says)
+BEC: dict[str, Any] = with_fixed({"category": "notification", "priority": "high",
                                   "requires_action": True, "requires_reply": False,
                                   "payment_related": True, "deadline_mentioned": False,
-                                  "sender_type": "vendor", "fraud_risk": "high"})  # fmt: skip
+                                  "sender_type": "vendor", "fraud_risk": "high"}
+                                 ) | {"bank_detail_change": True}  # fmt: skip
 REQUEST: dict[str, Any] = with_fixed(MARKETING | {"category": "customer_request",
                                                   "requires_reply": True,
                                                   "requires_action": True})  # fmt: skip
@@ -1202,3 +1204,16 @@ def test_eval_next_through_ecf_mcp(db_path: Path, clock: FakeClock, root: Path) 
     assert error_text(none).startswith("not_found: no Claude eval is waiting")
     assert len(data(got)["items"]) == 2 and data(got)["more"] is True
     assert data(res)["state"] == "ready" and data(res)["total"] == 3
+
+
+def test_preset_b_reads_gemmas_recorded_answer_through_from_v2() -> None:
+    """S3b (D3): B's classifier source is Gemma's recorded v2 answer; brought to v3 with the item
+    a removed value implied, then the value read as `other` or `unknown`; a failed case stays
+    empty."""
+    got = claude_eval._completed(  # pyright: ignore[reportPrivateUsage]
+        {**local_fields(REQUEST), "category": "vendor_change_request", "sender_type": "team",
+         "rule": "x"})  # fmt: skip
+    assert got["bank_detail_change"] is True and got["claims_internal"] is True
+    assert (got["category"], got["sender_type"]) == ("other", "unknown") and "rule" not in got
+    load_schema().validate(got)
+    assert claude_eval._completed({"rule": None}) == {}  # pyright: ignore[reportPrivateUsage]

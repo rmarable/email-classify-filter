@@ -9,8 +9,8 @@ key, so a change to any pin starts the count again and drops a `live` address to
   `high`, of emails classified by this digest; **accuracy** (reviews with no Fix, v3.0.0 S3, P4,
   OD-500; category right before) at least 85% or 90%. The Wilson 95% lower bound, fixed-field
   accuracy and category accuracy are shown, not gated. `GATE_VERSION` joins the gate's in-memory
-  inputs, so the tick recomputes a gate not yet passed; an address already live or announced keeps
-  its category-era pass until migration 0037 (S3b) clears it. S3a is never released alone.
+  inputs, so the tick recomputes a gate not yet passed; migration 0037 (S3b) clears every stored
+  `passed_at`, so no category-era pass carries over (P4).
 - **Fraud-guard misses** (never waivable; OD-069): a reviewed email whose Fix gives labels that
   would have matched rules 1, 1a, 1b or 2 (fraud guard, unverified payment sender, weak fraud
   signal, regulatory) when the model's own labels matched none of them.

@@ -11,7 +11,7 @@ from: "Customs Clearance Office <clearance-desk@parcel-customs.example>"
 subject: "Parcel held at customs: payment required"
 date: 2026-10-21T13:25:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: high, requires_action: false, requires_reply: true, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
+  labels: {category: shipping, priority: high, requires_action: false, requires_reply: true, payment_related: true, deadline_mentioned: true, sender_type: vendor, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -11,7 +11,7 @@ date: 2026-11-17T08:10:00Z
 bulk: true
 author: claude
 expected:
-  labels: {category: spam_or_phishing, sender_type: vendor, fraud_risk: high}
+  labels: {category: action_alert, sender_type: vendor, fraud_risk: high}
   facts: {auth_result: pass, sender_seen_before: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}

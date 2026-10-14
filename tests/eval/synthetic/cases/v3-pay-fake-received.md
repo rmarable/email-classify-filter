@@ -10,7 +10,7 @@ from: "Payments Team <payments@pay-notice.test>"
 subject: "Payment received - confirm your account to release funds"
 date: 2026-10-05T09:40:00Z
 expected:
-  labels: {category: spam_or_phishing, sender_type: vendor, priority: high, requires_action: true, requires_reply: true, payment_related: true, deadline_mentioned: true, fraud_risk: high}
+  labels: {category: remittance, sender_type: vendor, priority: high, requires_action: true, requires_reply: true, payment_related: true, deadline_mentioned: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

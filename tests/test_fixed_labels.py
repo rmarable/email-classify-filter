@@ -97,16 +97,22 @@ def test_a_label_the_card_states_wins() -> None:
 
 
 def test_a_hand_set_label_beats_a_derived_one(root: Path) -> None:
-    """S2 review F4: card-stated > hand-set > derived. starter-bec's `vendor_change_request`
-    implies `bank_detail_change: true`; the operator's `false` wins."""
+    """S2 review F4: card-stated > hand-set > derived. starter-control's `marketing`
+    implies `bank_detail_change: false`; the operator's `true` wins. starter-bec states
+    `bank_detail_change: true` on its card (kept there by the S3b relabel), which a hand-set
+    `false` doesn't override."""
     cases, _ = evalrun.load(root, fraud_only=False)
-    assert {c.id: c for c in cases}["starter-bec"].expected["labels"]["bank_detail_change"]
+    assert {c.id: c for c in cases}["starter-control"].expected["labels"][
+        "bank_detail_change"] is False  # fmt: skip
     fixed_labels.record(root, "bank_detail_change",
-                        {"starter-bec": {"label": False, "how": "single"}}, DAY)  # fmt: skip
+                        {"starter-control": {"label": True, "how": "single"},
+                         "starter-bec": {"label": False, "how": "single"}}, DAY)  # fmt: skip
     cases, _ = evalrun.load(root, fraud_only=False)
-    labels = {c.id: c for c in cases}["starter-bec"].expected["labels"]
-    assert labels["bank_detail_change"] is False
-    assert labels["category"] == "vendor_change_request"  # the card's own labels unchanged
+    by_id = {c.id: c for c in cases}
+    labels = by_id["starter-control"].expected["labels"]
+    assert labels["bank_detail_change"] is True
+    assert labels["category"] == "marketing"  # the card's own labels unchanged
+    assert by_id["starter-bec"].expected["labels"]["bank_detail_change"] is True  # card-stated
 
 
 def test_a_non_object_answer_is_refused(root: Path, tmp_path: Path) -> None:

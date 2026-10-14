@@ -10,7 +10,7 @@ subject: "Stormwater permit renewal due 30 November"
 date: 2026-10-24T09:00:00Z
 author: claude
 expected:
-  labels: {category: regulatory, deadline_mentioned: true}
+  labels: {category: notification, deadline_mentioned: true, regulator_claim: true}
   rule: regulatory
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import extend_schema, load_schema, with_fixed
+from ecf.schema import extend_schema, from_v2, load_schema
 from ecf_server import claude_pins, decide, escalations, review, settings, slack_in, stages
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
@@ -101,33 +101,33 @@ def test_fix_records_the_correction_and_whether_the_category_was_right(
     _click(conn, morning, review.FIX, b, {"priority": "high", "payment_related": "false"})
     ra, rb = json.loads(item_row(conn, a)["review"]), json.loads(item_row(conn, b)["review"])
     assert (ra["verdict"], ra["category_ok"]) == ("fixed", False)
-    assert json.loads(item_row(conn, a)["human_correction"]) == {  # items from the Fix (F3)
-        "category": "notification", "bank_detail_change": False, "regulator_claim": False,
-        "phishing": False}  # fmt: skip
+    # S3b: only what the Fix changed; the items are on the form, never derived (OD-500)
+    assert json.loads(item_row(conn, a)["human_correction"]) == {"category": "notification"}
     assert (rb["verdict"], rb["category_ok"]) == ("fixed", True)
     assert json.loads(item_row(conn, b)["human_correction"]) == {"priority": "high"}
     with pytest.raises(ConflictError, match="already reviewed"):
         review.record(conn, morning, a, actor="t")
 
 
-def test_a_fix_keeps_the_fixed_items_consistent_with_the_corrected_view(
+def test_a_fix_no_longer_derives_the_items_from_a_changed_category(
     conn: sqlite3.Connection, morning: FakeClock
 ) -> None:
-    """S2 review F3: a Fix that changes a source field of the fixed table writes the items
-    derived from the corrected view, as migration 0036 does for older Fixes; so a phishing email
-    fixed to `invoice` reads `phishing: false`, while an item whose sources the Fix leaves alone
-    keeps the model's answer."""
+    """S3b (OD-500): `review._with_items` is gone. No category or sender_type value implies an
+    item any more, and the items are on the Fix form, so a Fix holds only what it changed: a
+    phishing email fixed to `invoice` keeps the model's `phishing: true` unless the person
+    answers it on the form."""
     slack_setup(conn, morning)
-    phish = with_fixed(MARKETING | {"category": "spam_or_phishing", "sender_type": "team"})
-    assert phish["phishing"] and phish["claims_internal"]
+    phish = from_v2(MARKETING | {"category": "spam_or_phishing", "sender_type": "team"})
+    assert phish["phishing"] and phish["claims_internal"] and phish["category"] == "other"
     [sid] = _items(conn, morning, phish)
     _click(conn, morning, review.FIX, sid, {"category": "invoice"})
     row = item_row(conn, sid)
+    assert json.loads(row["human_correction"]) == {"category": "invoice"}
     merged = json.loads(row["classification"]) | json.loads(row["human_correction"])
-    assert merged["category"] == "invoice" and merged["phishing"] is False
-    assert merged["claims_internal"] is True  # sender_type not fixed: the model's answer stays
-    assert "claims_internal" not in json.loads(row["human_correction"])
+    assert merged["category"] == "invoice" and merged["phishing"] is True
+    assert merged["claims_internal"] is True
     assert json.loads(row["review"])["verdict"] == "fixed"
+    assert not hasattr(review, "_with_items")
 
 
 def test_a_fix_keeps_the_items_the_person_answered(
@@ -136,13 +136,13 @@ def test_a_fix_keeps_the_items_the_person_answered(
     """S3 (OD-500): the items are on the Fix form; one the person answers (or leaves as shown,
     which the form submits) is kept as given, never derived from a changed category."""
     slack_setup(conn, morning)
-    bank = with_fixed(MARKETING | {"category": "vendor_change_request"})
+    bank = from_v2(MARKETING | {"category": "vendor_change_request"})
     [sid] = _items(conn, morning, bank)
     _click(conn, morning, review.FIX, sid, {"category": "invoice", "bank_detail_change": "true"})
     row = item_row(conn, sid)
     merged = json.loads(row["classification"]) | json.loads(row["human_correction"])
     assert merged["category"] == "invoice" and merged["bank_detail_change"] is True
-    assert merged["phishing"] is False  # not answered: derived from the corrected view
+    assert merged["phishing"] is False  # not answered: the model's answer stays
 
 
 def test_s3_the_fixed_items_need_their_own_review_and_show_on_the_line(

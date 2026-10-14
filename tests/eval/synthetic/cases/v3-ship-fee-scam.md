@@ -11,7 +11,7 @@ from: "Parcel Desk <parcels@delivery-notice.test>"
 subject: "Your parcel is on hold"
 date: 2026-10-06T07:45:00Z
 expected:
-  labels: {category: spam_or_phishing, sender_type: unknown, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: high}
+  labels: {category: shipping, sender_type: unknown, priority: medium, requires_action: true, requires_reply: false, payment_related: true, deadline_mentioned: true, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

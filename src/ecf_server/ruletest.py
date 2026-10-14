@@ -12,11 +12,12 @@ except the internal set's (`sender_origin`, `from_org_address`, `impersonates_in
 derived `bulk_corroborates` is recomputed from the result (`with_expected`, shared with `ecf eval
 run`); its expected labels stand in for the classifier's output, with the operator's hand-set
 fixed-item labels (`fixed_labels.jsonl`) and the fixed items its labels imply (`derive_labels`)
-added (v3.0.0 S3, OD-500). The proposed rules are composed with ecf's fixed rules first
-(`rules.compose`), as the rules in force are. Nothing is written to the live
-database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built (large ones,
-`ecf eval build`) are skipped and listed. A card over a `standard` address's limit (16 MB) is read
-as the service reads such a message (`read_case`), not skipped.
+added, through the label map (a value schema v3 removed is left unlabelled once its items are
+derived, `ecf.schema.unlabel_removed`; v3.0.0 S3, OD-500). The proposed rules are composed
+with ecf's fixed rules first (`rules.compose`), as the rules in force are. Nothing is written to
+the live database, and no mail, Slack or network is touched. Cases whose `.eml` isn't built
+(large ones, `ecf eval build`) are skipped and listed. A card over a `standard` address's limit
+(16 MB) is read as the service reads such a message (`read_case`), not skipped.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from typing import Any
 from ecf.errors import InvalidInputError
 from ecf.eval import fixed_labels
 from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
-from ecf.schema import derive_labels
+from ecf.schema import derive_labels, unlabel_removed
 from ecf_server import db, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
@@ -156,9 +157,9 @@ def _hand_set(root: Path) -> dict[str, dict[str, bool]]:
 
 
 def stand_in(labels: dict[str, Any], hand: dict[str, bool] | None) -> dict[str, Any]:
-    """A card's labels as the classifier's stand-in: card-stated > hand-set > derived (as `ecf
-    eval run` loads them, S2 review F4)."""
-    out = {**(hand or {}), **labels}
+    """A card's labels as the classifier's stand-in: card-stated > hand-set > derived, then the
+    label map (as `ecf eval run` loads them, S2 review F4; S3b)."""
+    out, _ = unlabel_removed({**(hand or {}), **labels})
     return out | derive_labels(out)
 
 

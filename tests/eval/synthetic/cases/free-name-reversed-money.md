@@ -11,7 +11,7 @@ from: "\"Rivera, Sam\" <sam-rivera-abroad@freemail.example>"
 subject: "Stuck abroad, need help today"
 date: 2026-10-03T06:40:00Z
 expected:
-  labels: {category: spam_or_phishing, payment_related: true, fraud_risk: high, sender_type: unknown}
+  labels: {category: private, payment_related: true, fraud_risk: high, sender_type: unknown}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

@@ -10,7 +10,7 @@ subject: "Final notice - tax debt enforcement"
 date: 2026-10-24T07:30:00Z
 author: claude
 expected:
-  labels: {category: regulatory, payment_related: true, fraud_risk: high}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, regulator_claim: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

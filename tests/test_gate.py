@@ -205,7 +205,7 @@ def test_fraud_misses_and_unsafe_proposals_count(conn: sqlite3.Connection,
     _reviewed(conn, clock, 3, wrong=1)
     with write_tx(conn):  # the first was fixed to a bank change: rule 1 would have caught it
         conn.execute("UPDATE items SET human_correction = ? WHERE stable_id = ?",
-                     (json.dumps({"category": "vendor_change_request"}),
+                     (json.dumps({"bank_detail_change": True}),  # S3b: the item
                       "r0000x".ljust(64, "0")))  # fmt: skip
         conn.execute("UPDATE items SET proposal = ? WHERE stable_id = ?",
                      (json.dumps({"plan": {"payment_or_fraud": True,
@@ -389,3 +389,55 @@ def test_the_cli_reports_what_happened_to_held_emails(capsys: pytest.CaptureFixt
         "held emails: 2 ran, 3 marked handled by hand, 0 still held, 0 failed",
         "ap: assist (unchanged)",
     ]
+
+
+# ---- S3b diff review B1: the one-time demotion after 0037 (OD-500, P4) -------------------------
+
+
+def _apply_0037(conn: sqlite3.Connection) -> None:
+    """Migration 0037's statements run again on this database: as on an upgrade, it clears every
+    stored gate pass."""
+    from ecf_server import db  # noqa: PLC0415
+
+    sql = next(m[2] for m in db._migration_files() if m[0] == 37)  # pyright: ignore[reportPrivateUsage]
+    with write_tx(conn):
+        for statement in db._split(sql):  # pyright: ignore[reportPrivateUsage]
+            conn.execute(statement)
+
+
+def test_a_live_address_whose_pass_0037_cleared_goes_back_to_assist_once(
+    conn: sqlite3.Connection, clock: FakeClock, root: Path
+) -> None:
+    make_address(conn, clock, "assist")
+    _reviewed(conn, clock, 100)
+    _eval(conn, clock, root)
+    assert _live(conn, clock)["stage"] == "live"
+    row = gate.stored(conn, "ap")
+    assert row is not None and row["passed_at"] is not None
+    _apply_0037(conn)
+    stages.tick(conn, clock)  # the tick alone keeps it live: its key didn't change
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"
+    assert stages.demote_after_gate_change(conn, clock) == ["ap"]
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
+    data = json.loads(conn.execute("SELECT data, actor FROM audit WHERE event = 'stage.changed'"
+                                   " ORDER BY id DESC").fetchone()[0])  # fmt: skip
+    assert data == {"from": "live", "to": "assist", "reason": stages.GATE_CHANGED_REASON}
+    assert "the gate definition changed (S3b)" in _posts(conn)[-1]["card"]["text"]
+    # a second start does nothing, even with a live address and no pass
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET stage = 'live'")
+    assert stages.demote_after_gate_change(conn, clock) == []
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"
+
+
+def test_an_address_that_went_live_by_override_stays_live(
+    conn: sqlite3.Connection, clock: FakeClock, root: Path
+) -> None:
+    make_address(conn, clock, "assist")
+    _reviewed(conn, clock, 20, wrong=10)
+    _eval(conn, clock, root)
+    _live(conn, clock, override=True, reason="small mailbox, watched closely")
+    _apply_0037(conn)
+    assert stages.demote_after_gate_change(conn, clock) == []
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"
+    assert slack_admin.setting(conn, stages.GATE_CHANGED)  # done: not tried again

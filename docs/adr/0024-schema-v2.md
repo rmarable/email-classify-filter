@@ -1,6 +1,9 @@
 # ADR 0024: classification schema v2 for work and personal mail, bound into the gate
 
 - **Status:** accepted (2026-10-08; OD-475, OD-476); built on branch `schema-v2`, ships in `v2.0.0`
+- **Superseded in part** (2026-10-13, OD-500): its safety core (`SAFETY_VALUES`) is superseded
+  by ADR 0030 (the fixed safety layer, v3.0.0); schema v2 itself stands as history and as what
+  the local model is still asked.
 - **Context source:** SPEC §7.1, §7.4, §8.6, §9.3, §11.9, §11.10, §12.1;
   `planning-docs/SCHEMA-V2-PLAN.md` (draft 1, after Phase R: findings S1-S16, C1-C15, E1-E15)
 

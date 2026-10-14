@@ -11,7 +11,7 @@ from: "Ethan <ethan-lee-help@freemail.example>"
 subject: "Please don't tell Mum"
 date: 2026-10-04T01:30:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: urgent, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: family, fraud_risk: high}
+  labels: {category: private, priority: urgent, requires_action: false, requires_reply: false, payment_related: true, deadline_mentioned: true, sender_type: family, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

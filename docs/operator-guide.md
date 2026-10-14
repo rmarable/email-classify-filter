@@ -162,14 +162,18 @@ until you resume (SPEC §10.1, step 8a).
 Before an address goes `live`, your reviews are its evidence (SPEC §9.2, §9.3). Review posts list
 each email with what the model said (labelled as model output) and what ecf would do.
 
-- **Fix** opens a form for the five fields you correct: category, priority, fraud risk, payment,
-  sender type. A Fix never removes a trigger that already fired.
-- **Correct** appears on lines that need their own review: payment, fraud, regulator and
-  not-fully-scanned items, and every item on a `high` address.
+- **Fix** opens a form for the fields you correct: category, priority, sender type, fraud risk,
+  payment, the five safety items (bank-detail change, regulator claim, phishing, claims to be a
+  colleague, private individual), action, reply and deadline (from v3.0.0; 13 fields). A Fix
+  records only what you change and never removes a trigger that already fired.
+- **Correct** appears on lines that need their own review: payment, fraud, regulator, bank-detail
+  change, phishing, claimed-colleague and not-fully-scanned items, and every item on a `high`
+  address.
 - **All others correct** marks the rest of that post.
 
 `ecf stage status` shows progress ("N/target reviewed, A% accurate, K to go"). A `standard` address
-needs 100 reviewed at 85% category accuracy, a `high` one 200 at 90%, and no fraud-guard misses.
+needs 100 reviewed at 85% accuracy, a `high` one 200 at 90%, and no fraud-guard misses; from
+v3.0.0 accuracy is the share of reviews with no Fix (category accuracy before).
 Moving stages is an admin task (admin guide).
 
 ## Senders
@@ -182,6 +186,10 @@ computer, with step-up, because a confirmed sender counts as known for the bank-
 ecf sender show <sender> [--address <a>]
 ecf sender confirm <sender> --category <c> [--address <a>]
 ```
+
+Only a category the current schema has can be confirmed (from v3.0.0 not `vendor_change_request`,
+`regulatory` or `spam_or_phishing`); a sender confirmed with one before keeps it, but it never
+counts toward hiding mail again.
 
 `sender set-reply-to` and `sender set-verified` are in the admin guide.
 

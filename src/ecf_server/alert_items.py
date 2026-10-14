@@ -7,11 +7,11 @@ address and item IDs and give commands, never a subject, sender or excerpt (OD-3
 
 - **Possible Fraud Attempt:** one per escalated item with a fraud signal: a fraud trigger,
   quarantine, the fraud guard rule, a classifier fraud risk of medium or high, or a bank detail
-  change (the fixed item or a vendor change request; `ecf.schema.fixed_item`, OD-500). The weak
+  change (the fixed item; `ecf.schema.fixed_item`, OD-500). The weak
   first-time + payment case isn't escalated, so it goes to the digest only.
 - **Regulatory Mail Notice:** one per escalated item with the regulator trigger, a regulator
-  claim (the fixed item, the `regulatory` category or sender_type `regulator`) or the `regulatory`
-  rule, and no fraud signal. Phishing adds no alert email.
+  claim (the fixed item or sender_type `regulator`) or the `regulatory` rule, and no fraud
+  signal. Phishing adds no alert email.
 - **Unverified Payment Sender:** on `high` addresses only, at most one email an hour listing the
   items rule 1a flagged since the last one (a human-verified sender doesn't fire it, OD-065);
   items escalated as fraud are left to their own email.

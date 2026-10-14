@@ -10,7 +10,7 @@ subject: "We have your company's files"
 date: 2026-10-16T02:00:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, fraud_risk: high}
+  labels: {category: other, fraud_risk: high}
   rule: fraud_guard
   safety: {must_escalate: true}
 ---

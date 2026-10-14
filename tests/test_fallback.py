@@ -370,7 +370,7 @@ def test_unsafe_shadow_proposals_and_fraud_misses_fail_the_gate(
             (
                 json.dumps(REQUEST),
                 json.dumps({"verdict": "fixed"}),
-                json.dumps({"category": "spam_or_phishing", "fraud_risk": "high"}),
+                json.dumps({"category": "other", "phishing": True, "fraud_risk": "high"}),
                 sid,
             ),
         )

@@ -10,7 +10,7 @@ subject: "Quick favor"
 date: 2026-10-16T08:05:00Z
 author: claude
 expected:
-  labels: {category: spam_or_phishing, sender_type: team, fraud_risk: high}
+  labels: {category: other, sender_type: unknown, fraud_risk: high, regulator_claim: false, claims_internal: true, private_individual: false}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

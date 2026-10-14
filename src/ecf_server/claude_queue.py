@@ -148,8 +148,7 @@ def overdue(conn: sqlite3.Connection, now: datetime) -> list[Overdue]:
 
 def batch_risky(conn: sqlite3.Connection, sid: str) -> bool:
     """§5.6 for Claude batches: True when any batch this item was claimed in held an item with a
-    fraud signal, phishing (`ecf.schema.fixed_item`; in S3a `spam_or_phishing` still counts through
-    the bridge, and plain spam stops counting in S3b, P14, OD-500) or
+    fraud signal, phishing (`ecf.schema.fixed_item`; plain spam no longer counts, P14, OD-500) or
     `fraud_risk` of low or more, or one not yet classified (unknown counts as risky; operator
     decision 2026-10-02). Items the local model classified, one
     per request, are in no batch."""

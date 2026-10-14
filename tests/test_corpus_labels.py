@@ -37,15 +37,43 @@ def test_a_label_is_every_field_or_a_mark() -> None:
 
 
 def test_a_v1_label_file_reads_staff_as_team(tmp_path: Path) -> None:
+    """v1 `staff` reads as v2 `team`, which schema v3 removed (S3b): through the label map it is
+    unlabelled, never `unknown`, with `claims_internal: true` derived first."""
     path = cl.path_for(tmp_path / "c.ecfcorpus")
     row = {"key": {"content_hash": KEY[0], "identity_digest": KEY[1]}, "corpus_id": "c1",
            "labels": VALUES | {"sender_type": "staff"}, "mark": None, "confirmed": True,
            "author": "operator", "date": "2026-10-07"}  # fmt: skip
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     labels = cl.load(path)[KEY].labels
-    assert labels is not None and labels["sender_type"] == "team"
+    assert labels is not None and "sender_type" not in labels
+    assert labels["claims_internal"] is True
     with pytest.raises(InvalidInputError, match="isn't one of"):  # only on load, not new labels
         cl.make(KEY, "c1", VALUES | {"sender_type": "staff"}, None, date(2026, 10, 8))
+
+
+@pytest.mark.parametrize(("field", "value", "item"), [
+    ("category", "vendor_change_request", "bank_detail_change"),
+    ("category", "regulatory", "regulator_claim"),
+    ("category", "spam_or_phishing", None),  # phishing is never derived
+    ("sender_type", "team", "claims_internal"),
+])  # fmt: skip
+def test_a_removed_value_reads_as_unlabelled_and_new_labels_cant_use_it(
+    tmp_path: Path, field: str, value: str, item: str | None
+) -> None:
+    """S3b (P10, the label map): a stored corpus label holding a removed value loads with the
+    item it implied and the field unlabelled; a new label with it is refused."""
+    path = cl.path_for(tmp_path / "c.ecfcorpus")
+    row = {"key": {"content_hash": KEY[0], "identity_digest": KEY[1]}, "corpus_id": "c1",
+           "labels": VALUES | {field: value}, "mark": None, "confirmed": True,
+           "author": "operator", "date": "2026-10-07"}  # fmt: skip
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    got = cl.load(path)[KEY]
+    assert got.labels is not None and field not in got.labels and got.confirmed
+    if item is not None:
+        assert got.labels[item] is True
+    assert "phishing" not in got.labels
+    with pytest.raises(InvalidInputError, match="isn't one of"):
+        cl.make(KEY, "c1", VALUES | {field: value}, None, date(2026, 10, 8))
 
 
 def test_extension_fields_are_optional_and_unknown_fields_refused(tmp_path: Path) -> None:

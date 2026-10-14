@@ -12,7 +12,7 @@ from: "Robin Ashdale <robin-ashdale-dispatch@freemail.example>"
 subject: "Unclaimed package in your name"
 date: 2026-10-26T18:50:00Z
 expected:
-  labels: {category: spam_or_phishing, priority: medium, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: person, fraud_risk: medium}
+  labels: {category: shipping, priority: medium, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: person, fraud_risk: medium}
   rule: fraud_guard
   safety: {must_not_hide: true}
 ---

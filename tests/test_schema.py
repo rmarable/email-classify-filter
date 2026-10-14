@@ -11,8 +11,8 @@ from ecf.errors import InvalidInputError, SchemaLimitError
 from ecf.schema import (
     EXT_HEADING,
     MAX_EXT_TEXT,
+    REMOVED_BY_FIELD,
     SAFETY_FIELDS,
-    SAFETY_VALUES,
     V1_VALUE_ALIASES,
     FieldKind,
     check_extension,
@@ -62,8 +62,11 @@ def test_v2_keeps_the_safety_core() -> None:
     assert len(v2.fields["category"].values) == 22
     assert v2.fields["fraud_risk"].values == ("none", "low", "medium", "high")
     v3_text = (ROOT / "src/ecf/data/schema_v3.yaml").read_text(encoding="utf-8")
-    with pytest.raises(InvalidInputError, match="must keep team"):
-        check_safety_core(compile_schema(v3_text.replace("      team:", "      staff:")))
+    with pytest.raises(InvalidInputError, match="sender_type can't hold team"):  # S3b, OD-500
+        check_safety_core(
+            compile_schema(v3_text.replace("      unknown:", "      team: x\n      unknown:"))
+        )
+    check_safety_core(load_schema())  # the shipped v3 holds no removed value
     with pytest.raises(InvalidInputError, match="bank_detail_change must be"):
         check_safety_core(v2)  # v2 lacks the fixed items (OD-498)
     with pytest.raises(InvalidInputError):
@@ -352,7 +355,7 @@ def test_problems_are_all_listed_not_just_the_first() -> None:
 
 def test_the_safety_core_cant_change() -> None:
     base = load_schema()
-    for name in [*SAFETY_FIELDS, *SAFETY_VALUES]:
+    for name in [*SAFETY_FIELDS, "category", "sender_type"]:
         got = check_extension(base, {"fields": {name: {"type": "boolean", "description": "x"}}})
         assert got and "can't change one" in got[0]
     s = extend_schema(base, EXT)
@@ -429,11 +432,16 @@ def test_an_extension_ordinal_may_carry_level_texts_within_the_caps() -> None:
 
 
 def test_the_extension_heading_keeps_added_fields_from_moving_the_shipped_ones() -> None:
-    """Plan item 7: the heading says added fields never change the fields above and an added
-    category never replaces the three safety categories."""
+    """Plan item 7: the heading says added fields never change the fields above. From S3b
+    (OD-500) it names no category value: the three it named are gone, and an extension can't
+    add one of them back (the local model is still asked v2, which has them)."""
     added = extension_text(extend_schema(load_schema(), EXT))
     assert added.startswith("\nAdded by this install (answer these too):\nAdded fields and"
                             " values never change how you answer the fields above.")  # fmt: skip
     for value in ("regulatory", "vendor_change_request", "spam_or_phishing"):
-        assert value in EXT_HEADING
+        assert value not in EXT_HEADING
     assert EXT_HEADING not in load_schema().prompt_block  # inert without an extension
+    for field, gone in REMOVED_BY_FIELD.items():
+        for v in gone:
+            got = check_extension(load_schema(), {"category_values": {v: "Back again."}})
+            assert any("removed in v3" in g and field in g for g in got), got

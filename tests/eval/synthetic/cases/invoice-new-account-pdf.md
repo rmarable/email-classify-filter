@@ -18,7 +18,7 @@ attachments:
       lines: [["Consulting, October", 3200.0]]
   - {name: payment-note.txt, content_type: text/plain, text: "Please note our bank account has changed. Pay INV-7710 to the new account ending 4471."}
 expected:
-  labels: {category: vendor_change_request, payment_related: true, fraud_risk: high}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

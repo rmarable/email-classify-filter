@@ -11,8 +11,8 @@
   get there. A reply whose prompt count still comes near `num_ctx` counts as truncated, a failure.
 - **Schema v3** (P6, OD-498): the local model is still asked schema v2 (`ecf.schema.local_schema`),
   so its prompt, `num_predict`, prompt digest and gate key are what they were; its answer is then
-  completed with the fixed items derived from it (`ecf.schema.with_fixed`), so every stored
-  classification has v3's fields.
+  brought to v3 (`ecf.schema.from_v2`: the fixed items derived from it, then a value v3 removed
+  read as `other` or `unknown`; S3b, OD-500), so every stored classification is a v3 one.
 - **Output:** Ollama's `format` is the compiled schema it is asked; the service validates the reply
   strictly against the same schema. Anything else is a failed attempt (the queue marks the item
   `model_failed` after two, OD-236). The raw reply is never stored or logged (I5).
@@ -34,7 +34,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf.schema import CompiledSchema, local_schema, with_fixed
+from ecf.schema import CompiledSchema, from_v2, local_schema
 from ecf_server import claude_pins, config, decide, excerpt, items, ollama, signals
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -116,15 +116,15 @@ def _excerpt(conn: sqlite3.Connection, stable_id: str) -> str:
 
 def parse(content: str, schema: CompiledSchema) -> dict[str, Any] | None:
     """The validated classification in the effective `schema`, or None: the reply is checked
-    against the schema the model was asked (`local_schema`), then completed with the fixed
-    items derived from it when that was v2 (P6)."""
+    against the schema the model was asked (`local_schema`), then brought to v3 when that was v2
+    (`from_v2`: the fixed items derived, removed values read as `other`/`unknown`; P6, D3)."""
     asked = local_schema(schema)
     try:
         data = json.loads(content)
         out = asked.validate(data).model_dump(mode="json")
         if asked is schema:
             return out
-        return schema.validate(with_fixed(out)).model_dump(mode="json")
+        return schema.validate(from_v2(out)).model_dump(mode="json")
     except (ValueError, TypeError):
         return None
 

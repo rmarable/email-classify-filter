@@ -3,8 +3,9 @@
 A decision model answers typed questions about a `state` with a probability per option. ecf asks it
 the questions Gemma is asked about one email (`local_schema`: for schema v3, v2's eight plus any
 extension fields, not the fixed items; P6, OD-498), maps the answers to a classification checked as
-strictly as Gemma's, and completes it with the fixed items derived from it (`with_fixed`), as
-preset A does, so rules, policy and the actor see no difference.
+strictly as Gemma's, and brings it to v3 (`from_v2`: the fixed items derived from it, removed
+values read as `other`/`unknown`), as preset A does, so rules, policy and the actor see no
+difference.
 
 - **Questions** come from the schema: an enum field is a `choice` whose criteria are the value
   descriptions, an ordinal field a `score` whose criteria are the level names only (Gemma's prompt
@@ -35,7 +36,7 @@ from importlib import resources
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import CompiledSchema, FieldKind, local_schema, with_fixed
+from ecf.schema import CompiledSchema, FieldKind, from_v2, local_schema
 from ecf_server import classifier
 from ecf_server.ollama import Client, OllamaError, Pin
 
@@ -165,9 +166,9 @@ def map_answers(raw: dict[str, Any], schema: CompiledSchema) -> Answer:
 
 def ask(client: Client, model: str, text: str, schema: CompiledSchema) -> Answer:
     """One decision-model classification of one excerpt in the effective `schema`: asked
-    `local_schema(schema)` (v2 for v3, P6), the answer completed with the fixed items
-    (`with_fixed`). Raises OllamaError for faults; a request over the model's context is a failed
-    attempt."""
+    `local_schema(schema)` (v2 for v3, P6), the answer brought to v3 (`from_v2`: the fixed items
+    derived, removed values read as `other`/`unknown`). Raises OllamaError for faults; a request
+    over the model's context is a failed attempt."""
     asked = local_schema(schema)
     try:
         raw = client.systemone(model, state(text, secrets.token_hex(8)), questions(asked))
@@ -179,7 +180,7 @@ def ask(client: Client, model: str, text: str, schema: CompiledSchema) -> Answer
     if ans.classification is None or asked is schema:
         return ans
     try:
-        cls = schema.validate(with_fixed(ans.classification)).model_dump(mode="json")
+        cls = schema.validate(from_v2(ans.classification)).model_dump(mode="json")
     except ValueError:
         cls = None
     return Answer(cls, ans.probabilities, ans.input_tokens)

@@ -34,9 +34,9 @@ def names(d: Any) -> list[tuple[str, str | None]]:
     [
         {"fraud_risk": "medium"},
         {"fraud_risk": "high"},
-        {"category": "vendor_change_request"},
-        {"sender_type": "team", "payment_related": True},  # "team" from outside, about money
-        {"sender_type": "team", "_facts": {"payment_keyword": True}},
+        {"bank_detail_change": True},  # S3b: the item ("vendor_change_request" before)
+        {"claims_internal": True, "payment_related": True},  # a claimed colleague, about money
+        {"claims_internal": True, "_facts": {"payment_keyword": True}},
         {"payment_related": True, "_facts": {"auth_result": "fail"}},
         {"_triggers": {"fraud"}},
         {"payment_related": True, "_facts": {"impersonates_internal": True}},  # OD-436
@@ -53,13 +53,13 @@ def test_fraud_guard(case: dict[str, Any]) -> None:
 
 
 def test_staff_internal_is_not_fraud() -> None:
-    assert run(facts={"sender_origin": "internal"}, sender_type="team").rule_id == "otherwise"
+    assert run(facts={"sender_origin": "internal"}, claims_internal=True).rule_id == "otherwise"
 
 
 def test_staff_from_outside_without_money_is_only_flagged() -> None:
-    """OD-262 (V1.3 step 12a): a list email the model called "staff" (v1; "team" in v2) escalated
-    as fraud."""
-    d = run(sender_type="team")
+    """OD-262 (V1.3 step 12a): a list email the model called "staff" (v1; "team" in v2;
+    `claims_internal` from S3b) escalated as fraud."""
+    d = run(claims_internal=True)
     assert d.rule_id == "fraud_weak"
     assert names(d) == [("label", "suspicious"), ("flag", None)] and d.hide is Hide.NEVER
 
@@ -80,7 +80,7 @@ def test_impersonation_without_money_is_only_flagged() -> None:
 def test_an_executive_impersonation_opener_from_outside_escalates_without_money() -> None:
     """OD-479: "are you at your desk, quick favour, email only" escalates whatever fraud risk the
     model gives it; not from an internal sender or the account's own note to itself."""
-    d = run(facts={"bec_opener": True}, sender_type="staff", fraud_risk="low")
+    d = run(facts={"bec_opener": True}, sender_type="unknown", fraud_risk="low")
     assert d.rule_id == "fraud_guard" and ("escalate", None) in names(d)
     assert d.hide is Hide.NEVER
     assert run(facts={"bec_opener": True, "sender_origin": "internal"}).rule_id == "otherwise"
@@ -90,7 +90,7 @@ def test_an_executive_impersonation_opener_from_outside_escalates_without_money(
 def test_an_employee_tax_form_request_from_outside_escalates_without_money() -> None:
     """OD-482: "send me every employee's W-2 as one PDF" escalates whatever fraud risk and category
     the model gives it; not from an internal sender or the account's own note to itself."""
-    d = run(facts={"tax_form_request": True}, category="regulatory", fraud_risk="low")
+    d = run(facts={"tax_form_request": True}, regulator_claim=True, fraud_risk="low")
     assert d.rule_id == "fraud_guard" and ("escalate", None) in names(d)
     assert d.hide is Hide.NEVER
     assert run(facts={"tax_form_request": True, "sender_origin": "internal"}).rule_id == "otherwise"
@@ -112,7 +112,8 @@ def test_unverified_payment_sender() -> None:
 
 
 def test_regulatory() -> None:
-    for d in (run(category="regulatory"), run(frozenset({"regulator"}), category="marketing")):
+    for d in (run(regulator_claim=True), run(sender_type="regulator"),
+              run(frozenset({"regulator"}), category="marketing")):  # fmt: skip
         assert d.rule_id == "regulatory" and d.hide is Hide.NEVER
         assert ("escalate", None) in names(d)
 
@@ -144,7 +145,7 @@ def test_payment_confirmation_and_remittance_label_from_field() -> None:
 
 
 def test_hiding_rules() -> None:
-    assert names(run(category="spam_or_phishing")) == [
+    assert names(run(phishing=True)) == [
         ("label", "spam_or_phishing"),
         ("junk", None),
     ]
@@ -153,7 +154,7 @@ def test_hiding_rules() -> None:
     d = run(category="notification", sender_type="automated")
     assert names(d) == [("label", "notification"), ("mark_read", None), ("archive", None)]
     assert run(category="notification", sender_type="vendor").rule_id == "otherwise"
-    for d in (run(category="spam_or_phishing"), run(category="marketing")):
+    for d in (run(phishing=True), run(category="marketing")):
         assert d.hide is Hide.CORROBORATED
 
 
