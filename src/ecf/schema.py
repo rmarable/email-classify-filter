@@ -463,7 +463,7 @@ def load_schema_v2_0_0() -> CompiledSchema:
 
 # The one switch (OD-481; kept by OD-502, S4 C1): on only once the user layer's measurement (M2,
 # SPEC §1.5a item 2b) passes; off, a `schema` section other than `default` is refused.
-EXTENSIONS_ENABLED = True
+EXTENSIONS_ENABLED = False
 EXTENSIONS_OFF = ("your fields are off in this release (SPEC §7.1, §1.5a); remove the `schema`"
                   " section")  # fmt: skip
 
