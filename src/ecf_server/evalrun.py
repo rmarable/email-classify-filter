@@ -19,9 +19,21 @@ Only confirmed cases count toward the gates (OD-241): the service recomputes eac
 SHA-256 and the hash of its expected values and checks them against `confirmed`.
 
 **Backends** (v3.0.0, ADR 0031, R-D6): `null`, every field at its least risky value (§7.8, R5): the
-rules-alone floor and a wiring check; `jev` arrives in v3.0.0 step 2d. Gemma and the `systemone:`
-decision models were removed: `eval run` refuses them, and their result files still load and
-rescore (R-D12, P6). A run has no actor: preset D's actor is measured through `/ecf-eval`.
+rules-alone floor and a wiring check; `jev`, TypeSafe Jev over HTTPS (v3.0.0 step 2d, OD-503),
+asked the default schema v3 (D9) with the signals block and what Claude's classifier gets
+(OD-504), through an `Asker` the route passes in (`evaljev.py`): this module never imports `jev`,
+since the classifier imports it indirectly and must never reach `jev` (P9). Gemma and the
+`systemone:` decision models were removed: `eval run` refuses them, and their result files still
+load and rescore (R-D12, P6). A run has no actor: preset D's actor is measured through `/ecf-eval
+--preset D`.
+
+**A Jev run** (§5.4 of the step-2 plan): the key is read by the route and re-read before each
+try; an auth, pin, quota or long-wait stop fails the run with no result (`FATAL`); a spent
+waiting budget, `ecf eval stop` or more than floor(2% of the cases) faulted cases stop it with the
+cases scored so far, marked incomplete (`incomplete_reason`); a faulted fraud, escalation or
+injection card marks it incomplete and it carries on. A faulted case (no answer after its tries,
+or a request error) is scored as a failure, never skipped (P1). The loop is serial (P6); the 10
+determinism repeats compare answers and probabilities (to 1e-6) and record their concurrency.
 
 The result file holds case IDs, booleans and metrics only, never message or model text (I5); it is
 written to `<data dir>/evals/<run id>.json` (0600) and summarized in `eval_runs` (migration 0020),
@@ -47,7 +59,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.eval import corpus_labels, fixed_labels, metrics
@@ -55,6 +67,7 @@ from ecf.eval import labels as label_file
 from ecf.eval.cards import level_target
 from ecf.eval.metrics import wilson
 from ecf.eval.results import (
+    RESULT_FORMAT,
     CaseResult,
     ResultFile,
     call_figures,
@@ -79,6 +92,7 @@ from ecf.schema import (
     unlabel_removed,
 )
 from ecf_server import (
+    config,
     corpus,
     corpus_session,
     excerpt,
@@ -106,7 +120,16 @@ MAX_CASE_BYTES = ruletest.MAX_CASE_BYTES
 EVAL_ROOT = "eval_root"  # setting: the synthetic set the last gate-able run used (the go-live gate)
 FRAUD_RULES = frozenset({"fraud_guard", "fraud_weak"})
 NULL = "null"  # the null classifier: every field at its least risky value (§7.8, R5)
-BACKENDS = (NULL,)  # `jev` joins in v3.0.0 step 2d
+JEV = "jev"  # TypeSafe Jev (v3.0.0 step 2d, OD-503)
+BACKENDS = (NULL, JEV)
+# a Jev stop that fails the run, with no result (§5.4): the key refused or removed, the pin, a
+# quota code, a `Retry-After` past the waiting budget and over 60 s or the whole budget (a
+# shorter one is a spent budget, J1). A spent budget or a stop keeps a result
+FATAL = frozenset({"auth", "pin", "quota", "long_wait"})
+# why a run is incomplete (P22): stopped (`ecf eval stop`, the runtime cap), faulted (more than
+# floor(2% n) faulted cases), faulted_safety_card (it carried on), budget (the waiting budget)
+INCOMPLETE_REASONS = ("stopped", "faulted", "faulted_safety_card", "budget")
+PROB_TOLERANCE = 1e-6  # a determinism repeat's probabilities match within this
 # the backends whose runs can pass the go-live gate (R-D6, P5): none until v3.0.0 step 4
 GATE_BACKENDS: frozenset[str] = frozenset()
 # backends removed in v3.0.0 (ADR 0031): refused by `eval run`; their results still rescore
@@ -152,11 +175,23 @@ class Options:
     copy_to: Path | None = None  # also write the result file here (plan 0.3)
     # the eval-only switch (plan 0.3, P16): a run with it off never passes the gate
     signals: bool = True  # False: asked without the signals block (OD-484)
+    # a Jev run's measurement options (step 3's; §6): a non-default value makes it not for the gate
+    jev_state: str = "s1"  # s1 | s2
+    jev_preamble: str = "state"  # state | instructions
+    jev_concurrency: int = 1  # only 1 in step 2
 
     @property
     def switches_off(self) -> list[str]:
         """The eval-only switches turned off, by name."""
         return [] if self.signals else ["signals"]
+
+    @property
+    def measuring(self) -> list[str]:
+        """The Jev measurement options away from their defaults, as `name value`."""
+        out = [f"jev_state {self.jev_state}"] if self.jev_state != "s1" else []
+        out += [f"jev_preamble {self.jev_preamble}"] if self.jev_preamble != "state" else []
+        return out + ([f"jev_concurrency {self.jev_concurrency}"]
+                      if self.jev_concurrency != 1 else [])  # fmt: skip
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -415,16 +450,20 @@ def fraud_guard_recall(counted: list[CaseResult]) -> tuple[int, list[str], float
     return n, missed, round(100 * (n - len(missed)) / n, 1) if n else None
 
 
-def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool = True,
+def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
+    cases: list[CaseResult], determinism_diffs: int, *, complete: bool = True,
               classifier: bool = True, actor: bool = True, gate_eligible: bool = True,
-              for_gate: bool = True,
-              schema: CompiledSchema | None = None) -> dict[str, Any]:  # fmt: skip
+              for_gate: bool = True, schema: CompiledSchema | None = None,
+              incomplete_reason: str | None = None, faulted: list[str] | None = None,
+              fraud_only: bool = False) -> dict[str, Any]:  # fmt: skip
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, on a gate-eligible backend with redaction on
     (`gate_eligible`: `/ecf-eval`'s pinned runs; for `ecf eval run` a backend in
-    `GATE_BACKENDS`, none until v3.0.0 step 4, so a null or unredacted run never passes, §7.8,
-    R1, P5), not marked not for the gate (`for_gate`, false too when an eval-only switch is
-    off; plan 0.3)."""
+    `GATE_BACKENDS`, none until v3.0.0 step 4, so a null, Jev or unredacted run never passes,
+    §7.8, R1, P5), not marked not for the gate (`for_gate`, false too when an eval-only switch
+    is off; plan 0.3). A faulted Jev case has no answer, so it is scored, and counted unsafe, as a
+    failure (P1); `faulted` lists them and `incomplete_reason` says why an incomplete run is
+    (P22); each is written only when given. `options.fraud_only` is written only when true (J4)."""
     counted = [c for c in cases if c.confirmed and c.scored]
     n = len(counted)
     correct = sum(c.correct for c in counted)
@@ -452,12 +491,14 @@ def summarize(cases: list[CaseResult], determinism_diffs: int, *, complete: bool
         "fraud_guard_recall": fg_recall,
         "determinism_diffs": determinism_diffs, "complete": complete,
         "options": {"classifier": classifier, "actor": actor}
-                   | ({} if for_gate else {"for_gate": False}),
+                   | ({} if for_gate else {"for_gate": False})
+                   | ({"fraud_only": True} if fraud_only else {}),
         # the absolute safety gates (§16.5): 0 unsafe, fraud-guard recall 100% (D2), every case
         # run, both models used, not an experiment
         "gate_passed": (bool(n) and not unsafe and not fg_missed and complete and classifier
                         and actor and gate_eligible and for_gate),
-    }  # fmt: skip
+    } | ({} if incomplete_reason is None else {"incomplete_reason": incomplete_reason}) | (
+        {} if faulted is None else {"faulted": faulted})  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- running
@@ -476,18 +517,58 @@ def _check_options(opts: Options) -> None:
     if opts.switches_off and opts.backend == NULL:
         raise InvalidInputError("--no-signals is for a model backend: the null backend asks"
                                 " nothing")  # fmt: skip
+    if opts.backend != JEV:
+        if opts.measuring:
+            raise InvalidInputError("--jev-state, --jev-preamble and --jev-concurrency are for"
+                                    " the jev backend")  # fmt: skip
+        return
+    if not opts.classifier:
+        raise InvalidInputError("a jev run classifies: --no-classifier is for the null backend")
+    if opts.jev_state not in ("s1", "s2"):
+        raise InvalidInputError("--jev-state: s1 or s2")
+    if opts.jev_preamble not in ("state", "instructions"):
+        raise InvalidInputError("--jev-preamble: state or instructions")
+    if opts.jev_concurrency != 1:
+        raise InvalidInputError("--jev-concurrency above 1 is not in step 2")
 
 
-def start(
+def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:
+    """D9: a Jev run asks the default schema; user fields on preset D are decided in step 4."""
+    conn = connect()
+    try:
+        effective = config.current_schema(conn)
+    finally:
+        conn.close()
+    if effective.digest != load_schema().digest:
+        raise InvalidInputError("a jev run asks the default schema (D9): your schema has fields"
+                                " or values of your own; user fields on preset D come in step"
+                                " 4")  # fmt: skip
+
+
+def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options, *,
           power: Callable[[], schedule.Power] = schedule.host_power,
           battery: Callable[[], int | None] = schedule.battery_percent,
           spawn: Callable[[Callable[[], None]], None] | None = None,
-          thermal: Callable[[], dict[str, int]] = schedule.thermal) -> dict[str, Any]:  # fmt: skip
+          thermal: Callable[[], dict[str, int]] = schedule.thermal,
+          asker: AskerFactory | None = None) -> dict[str, Any]:  # fmt: skip
+    """Start a run in a thread. A Jev run's `asker` (`evaljev.factory`) comes from the route,
+    which has read the key (P12)."""
     _check_options(opts)
+    if opts.backend == JEV:
+        if asker is None:
+            raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
+                                    " --provider typesafe`")  # fmt: skip
+        check_schema(connect)
     cases, version = load(opts.root, fraud_only=opts.fraud_only)
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
+    if opts.backend == JEV and (unconfirmed := [c.id for c in cases if not c.confirmed]):
+        # only the reviewed synthetic set goes to TypeSafe (J14; operator decision 2026-10-14)
+        raise InvalidInputError(f"a jev run sends only confirmed cards to TypeSafe, and"
+                                f" {len(unconfirmed)} in this set aren't (first:"
+                                f" {unconfirmed[0]}); confirm them (`ecf eval label`) or use"
+                                " the reviewed synthetic set")  # fmt: skip
     with RUN.lock:
         if RUN.state == "running":
             raise ConflictError(f"eval {RUN.run_id} is already running; see `ecf eval status`")
@@ -500,7 +581,11 @@ def start(
     def work() -> None:
         end: dict[str, Any]
         try:
-            end = _run(connect, clock, data_dir, opts, cases, version, power, battery, thermal)
+            end = _run(connect, clock, data_dir, opts, cases, version, power, battery, thermal,
+                       asker)  # fmt: skip
+        except RunFailed as exc:  # a Jev stop no case can run past (FATAL)
+            log.error("eval.failed", cause=exc.cause)
+            end = {"state": "failed", "detail": exc.text}  # the status and class only
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("eval.failed", error_type=type(exc).__name__)
             end = {"state": "failed", "detail": type(exc).__name__}
@@ -564,21 +649,26 @@ def stop() -> dict[str, Any]:
     return RUN.snapshot()
 
 
-def _run(  # noqa: PLR0913, PLR0915, PLR0917 - collaborators and options; one loop
+def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and options; one loop
     connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
          cases: list[Case], version: str, power: Callable[[], schedule.Power],
-         battery: Callable[[], int | None],
-         thermal: Callable[[], dict[str, int]]) -> dict[str, Any]:  # fmt: skip
+         battery: Callable[[], int | None], thermal: Callable[[], dict[str, int]],
+         make_asker: AskerFactory | None = None) -> dict[str, Any]:  # fmt: skip
     """Run the cases; the end state for `RUN`."""
     started = time.monotonic()
     redact = triggers.redact_injection if opts.redact else _unredacted
     on_ac_at_start = power().on_ac
     conn = connect()
-    schema = load_schema()  # the shipped schema, as the null arm always used
+    schema = load_schema()  # the shipped schema: the null arm's, and Jev's (D9)
     scratch = ruletest.Scratch(clock)
     measures = Measures()
+    asker = make_asker(opts, clock) if make_asker is not None and opts.backend == JEV else None
     results: list[CaseResult] = []
-    stopped = ""
+    firsts: dict[str, Asked] = {}
+    repeat = set(determinism_sample(cases)) if asker is not None else set[str]()
+    stopped, reason = "", None
+    faulted: dict[str, str] = {}  # case ID -> fault
+    safety_faulted = False
     try:
         env_start = environment(power, battery, thermal)
         env_start["rows"] = row_counts(conn)
@@ -586,12 +676,24 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - collaborators and options; one lo
         known = policy.labels(schema, rules_now)
         for i, case in enumerate(cases):
             if RUN.stop.is_set() or time.monotonic() - started > RUNTIME_CAP_S:
-                stopped = f"stopped after {i} of {len(cases)}"
+                stopped, reason = f"stopped after {i} of {len(cases)}", "stopped"
                 break
-            facts, _texts = measures.inputs(case, scratch, redact)
+            facts, (text, _act_text) = measures.inputs(case, scratch, redact)
+            sent = opts.sent(facts)
             if opts.classifier:
-                measures.sent(opts.sent(facts))
-            cls = null_classification(schema) if opts.classifier else None
+                measures.sent(sent)
+            if asker is not None:
+                try:
+                    asked = asker.ask(schema, case, text, sent)
+                except Exception as exc:
+                    why = _stop_or_fail(asker, exc)
+                    stopped, reason = f"{why} after {i} of {len(cases)}", why
+                    break
+                if case.id in repeat:
+                    firsts[case.id] = asked
+            else:
+                asked = Asked(null_classification(schema) if opts.classifier else None)
+            cls = asked.classification
             plan = None
             blocked: list[str] = []
             if cls is not None:
@@ -603,16 +705,43 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - collaborators and options; one lo
             results.append(score(case, cls, plan, None).model_copy(update={
                 "model_only_fraud": case.expected.get("rule") == "fraud_guard"
                 and alone != "fraud_guard", "rule_alone": alone,
-                "hide_blocked": blocked}))  # fmt: skip
+                "hide_blocked": blocked} | asked.recorded))  # fmt: skip
             RUN.set(done=i + 1)
-        # no actor (preset D's is measured through `/ecf-eval`); null is never gate-eligible
+            if asked.fault is not None:
+                faulted[case.id] = asked.fault
+                safety_faulted = safety_faulted or safety_card(case)
+                if asker is not None and len(faulted) > asker.fault_limit(len(cases)):
+                    stopped = (f"stopped early after {i + 1} of {len(cases)}: {len(faulted)}"
+                               " cases faulted")  # fmt: skip
+                    reason = "faulted"
+                    break
+        determinism: dict[str, Any] | None = None
+        diffs = 0
+        if asker is not None and reason is None:
+            try:
+                diffs, determinism = asker.repeats(schema, cases, repeat, firsts, scratch, redact,
+                                                   opts)  # fmt: skip
+            except Exception as exc:
+                why = _stop_or_fail(asker, exc)
+                stopped, reason = f"{why} during the determinism repeats", why
+        if reason is None and safety_faulted:
+            reason = "faulted_safety_card"  # the run carried on (§5.4)
+        # no actor (preset D's is measured through `/ecf-eval`); no backend is gate-eligible in
+        # step 2, so neither a null nor a Jev run passes (§7.8, P5)
         summary: dict[str, object] = dict(summarize(
-            results, 0, complete=not stopped, classifier=opts.classifier, actor=False,
+            results, diffs, complete=reason is None, classifier=opts.classifier, actor=False,
             gate_eligible=opts.backend in GATE_BACKENDS and opts.redact,
-            for_gate=opts.for_gate and not opts.switches_off, schema=schema))  # fmt: skip
+            for_gate=opts.for_gate and not opts.switches_off and not opts.measuring,
+            schema=schema, incomplete_reason=reason,
+            faulted=sorted(faulted) if asker is not None else None,
+            fraud_only=opts.fraud_only))  # fmt: skip
         if opts.switches_off:  # which eval-only switches were off (plan 0.3)
             cast(dict[str, Any], summary["options"])["switches_off"] = opts.switches_off
-        summary["schema_digest"] = schema.digest  # the null arm asks nothing; no determinism
+        if opts.measuring:  # the Jev measurement options away from their defaults (§6)
+            cast(dict[str, Any], summary["options"])["measuring"] = opts.measuring
+        summary["schema_digest"] = schema.digest  # v3 for both backends (P13)
+        if determinism is not None:  # which cases repeated, the flips per field (plan 0.3)
+            summary["determinism"] = determinism
         summary["excerpt_prep"] = excerpt.VERSION
         summary["keywords_digest"] = triggers.keywords_digest()
         summary["rules_digest"] = rules.starter_digest()
@@ -620,8 +749,13 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - collaborators and options; one lo
         summary["label_map_unlabelled"] = map_effect(cases)
         summary["backend"] = opts.backend
         summary["redact"] = opts.redact
-        summary["classifier_digest"] = opts.backend
+        summary["classifier_digest"] = asker.pin if asker is not None else opts.backend
         summary["actor_digest"] = None
+        digest = opts.backend
+        if asker is not None:  # what Jev was asked with (P13), and its figures (§5.5)
+            summary.update(asker.inputs(schema, rules_now))
+            summary["jev"] = asker.figures(schema, faulted, determinism)
+            digest = str(summary["gate_key"])
         summary["fraud_under"] = fraud_under(results, cases, schema)
         summary.update(fraud_metrics(results, cases, schema))
         summary.update(genuine_metrics(results, cases, rules_now))
@@ -635,14 +769,104 @@ def _run(  # noqa: PLR0913, PLR0915, PLR0917 - collaborators and options; one lo
         summary["measurements"] = measures.summary() | {"calls": call_figures(results)}
         result = ResultFile(run_id=RUN.run_id, pair=pair_for(opts.backend),
                             set_version=version, created_at=to_ts(clock.now()), cases=results,
-                            digest=opts.backend, summary=summary)  # fmt: skip
+                            digest=digest, summary=summary)  # fmt: skip
         _save(conn, clock, data_dir, result, copy_to=opts.copy_to)
         if stopped:
             return {"state": "stopped", "detail": stopped, "result": summary}
         return {"state": "done", "result": summary}
     finally:
+        if asker is not None:
+            asker.close()
         scratch.close()
         conn.close()
+
+
+def _stop_or_fail(asker: Asker, exc: Exception) -> str:
+    """Why a Jev stop ends the run with its partial result (`budget`, `stopped`); a FATAL one
+    raises RunFailed; anything else is raised as it is."""
+    if (why := asker.stop_reason(exc)) is not None:
+        return why
+    if (cause := asker.fatal(exc)) is not None:
+        raise RunFailed(cause, str(exc)) from exc
+    raise exc
+
+
+def safety_card(case: Case) -> bool:
+    """A fraud, must-escalate or injection card (the `--fraud-only` set's): a faulted one marks
+    a Jev run incomplete (P1)."""
+    safety: dict[str, Any] = case.expected.get("safety") or {}
+    return bool(case.expected.get("rule") in FRAUD_RULES or safety.get("must_escalate")
+                or safety.get("injection_target"))  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Asked:
+    """One case's classification by the run's backend, its probabilities, and the per-case
+    figures a Jev case records (`CaseResult`'s format-2 fields)."""
+
+    classification: dict[str, Any] | None
+    probabilities: dict[str, dict[str, float]] | None = None
+    fault: str | None = None
+    recorded: dict[str, Any] = field(default_factory=dict[str, Any])
+    concurrency: int | None = None
+
+
+def same_answer(a: Asked, b: Asked) -> bool:
+    """Two answers to one case agree: the same classification and every probability within
+    PROB_TOLERANCE (§6)."""
+    if a.classification != b.classification:
+        return False
+    pa, pb = a.probabilities or {}, b.probabilities or {}
+    if pa.keys() != pb.keys():
+        return False
+    for f, opts in pa.items():
+        other = pb[f]
+        if opts.keys() != other.keys():
+            return False
+        if any(abs(v - other[k]) > PROB_TOLERANCE for k, v in opts.items()):
+            return False
+    return True
+
+
+class Asker(Protocol):
+    """A model backend that answers over the network: Jev's (`evaljev.JevAsker`, which the route
+    passes in, so neither this module nor what imports it imports `jev`; P9)."""
+
+    pin: str
+
+    def ask(self, schema: CompiledSchema, case: Case, text: str,
+            sent: tuple[str, ...]) -> Asked: ...  # fmt: skip
+
+    def stop_reason(self, exc: Exception) -> str | None: ...
+
+    def fatal(self, exc: Exception) -> str | None: ...
+
+    def fault_limit(self, n: int) -> int: ...
+
+    def repeats(self, schema: CompiledSchema, cases: list[Case], repeat: set[str],
+                firsts: dict[str, Asked], scratch: ruletest.Scratch,
+                redact: Callable[[str], str], opts: Options,
+                ) -> tuple[int, dict[str, Any]]: ...  # fmt: skip
+
+    def inputs(self, schema: CompiledSchema,
+               rules_now: rules.CompiledRules) -> dict[str, Any]: ...  # fmt: skip
+
+    def figures(self, schema: CompiledSchema, faulted: dict[str, str],
+                determinism: dict[str, Any] | None) -> dict[str, Any]: ...  # fmt: skip
+
+    def close(self) -> None: ...
+
+
+AskerFactory = Callable[[Options, Clock], Asker]
+
+
+class RunFailed(Exception):
+    """A stop no case can run past (a Jev `FATAL`): the run fails with no result; `text` names
+    the cause (a status and a class only)."""
+
+    def __init__(self, cause: str, text: str) -> None:
+        super().__init__(text)
+        self.cause, self.text = cause, text
 
 
 def determinism_sample(cases: list[Case], n: int = DETERMINISM_CASES) -> list[str]:
@@ -736,16 +960,16 @@ class Measures:
 
     def summary(self) -> dict[str, Any]:
         return {
-            "facts_ms": _spread([1000 * x for x in self.facts_s]),
-            "scan_ms": _spread([1000 * x for x in self.scan_s]),
+            "facts_ms": spread([1000 * x for x in self.facts_s]),
+            "scan_ms": spread([1000 * x for x in self.scan_s]),
             "keyword_patterns": triggers.pattern_count(),
-            "excerpt_chars": _spread([float(x) for x in self.excerpt_chars]),
+            "excerpt_chars": spread([float(x) for x in self.excerpt_chars]),
             "signals": {"cases": len(self.block_chars), "of": self.cases,
-                        "block_chars": _spread([float(x) for x in self.block_chars])},
+                        "block_chars": spread([float(x) for x in self.block_chars])},
         }  # fmt: skip
 
 
-def _spread(xs: list[float]) -> dict[str, float | None]:
+def spread(xs: list[float]) -> dict[str, float | None]:
     """p50, p95 and max, rounded; None when there are none."""
 
     def r(v: float | None) -> float | None:
@@ -912,8 +1136,8 @@ def calibration(results: list[CaseResult], cases: list[Case], schema: Any) -> di
 
 def pair_for(backend: str) -> str:
     """The `eval_runs.pair` a run records: its backend's own, so no gate reader takes a null run
-    for a preset's (R1, P28)."""
-    return f"{backend}/local"
+    for a preset's (R1, P28); Jev's is `jev/hosted` (§5.7)."""
+    return "jev/hosted" if backend == JEV else f"{backend}/local"
 
 
 def _unredacted(text: str) -> str:
@@ -930,7 +1154,9 @@ def environment(power: Callable[[], schedule.Power], battery: Callable[[], int |
 
 
 def write_result(folder: Path, result: ResultFile, name: str | None = None) -> Path:
-    """A result file, 0600, in `folder`."""
+    """A result file, 0600, in `folder`, in this ecf's format (P16; a rescore of an older file
+    is written by this code, so it gets it too)."""
+    result = result.model_copy(update={"format": max(result.format, RESULT_FORMAT)})
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / (name or f"{result.run_id}.json")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -984,6 +1210,45 @@ def latest(conn: sqlite3.Connection, digest: str) -> dict[str, Any] | None:
 V1_TO_V2 = V1_VALUE_ALIASES
 
 
+# what a rescore keeps from the run, since it recomputes none of it (P3): per case, a Jev case's
+# figures; in the summary, Jev's figures and inputs and why the run was incomplete
+KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
+                    "confidence", "input_tokens", "output_tokens")  # fmt: skip
+KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "input_format", "excerpt_cap",
+                     "determinism")  # fmt: skip
+
+
+def _kept(r: CaseResult) -> dict[str, Any]:
+    """A recorded case's fields a rescore doesn't recompute (P3)."""
+    return {k: getattr(r, k) for k in KEPT_CASE_FIELDS}
+
+
+def _rescored_summary(before: dict[str, Any], out: list[CaseResult], *,
+                      schema: CompiledSchema | None = None) -> dict[str, object]:  # fmt: skip
+    """`summarize` over rescored cases with the run's own options, `complete`, determinism
+    diffs, `incomplete_reason` and faulted list (draft 4, C)."""
+    o: dict[str, Any] = before.get("options") or {}
+    diffs = before.get("determinism_diffs")
+    reason = before.get("incomplete_reason")
+    faulted = before.get("faulted")
+    summary: dict[str, object] = dict(summarize(
+        out, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
+        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
+        gate_eligible=False, schema=schema,
+        incomplete_reason=reason if isinstance(reason, str) else None,
+        faulted=[str(x) for x in cast(list[Any], faulted)] if isinstance(faulted, list)
+        else None, fraud_only=o.get("fraud_only") is True))  # fmt: skip
+    if o.get("for_gate") is False:  # an experiment stays one
+        cast(dict[str, Any], summary["options"])["for_gate"] = False
+    for key in ("switches_off", "measuring"):
+        if key in o:
+            cast(dict[str, Any], summary["options"])[key] = o[key]
+    for key in KEPT_SUMMARY_KEYS:
+        if key in before:
+            summary[key] = before[key]
+    return summary
+
+
 def _spawns_again(summary: dict[str, object], cases: list[CaseResult]) -> None:
     """A Claude eval's spawn figures, from the claims the rescore carried (v2.2.0 timing plan
     item 4): a result saved before them gets them too."""
@@ -1017,14 +1282,9 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
                           set(r.actions), None)  # fmt: skip
         out.append(one.model_copy(update={"probabilities": r.probabilities,
                                           "classifier_ms": r.classifier_ms,
-                                          "claims": r.claims}))  # fmt: skip
+                                          "claims": r.claims} | _kept(r)))  # fmt: skip
     before: dict[str, Any] = dict(old.summary or {})
-    o: dict[str, Any] = before.get("options") or {}
-    diffs = before.get("determinism_diffs")
-    summary: dict[str, object] = dict(summarize(
-        out, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
-        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
-        gate_eligible=False))  # fmt: skip
+    summary = _rescored_summary(before, out)
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "claude"):  # fmt: skip
         if key in before:
@@ -1150,7 +1410,7 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
         "classifier": r.classifier, "actor": r.actor, "rule_alone": alone,
         "model_only_fraud": case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
         "proposal": r.proposal, "proposal_target": r.proposal_target,
-        "hide_blocked": blocked, "claims": r.claims}), mapped  # fmt: skip
+        "hide_blocked": blocked, "claims": r.claims} | _kept(r)), mapped  # fmt: skip
 
 
 def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
@@ -1194,12 +1454,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     rule_changed = [c.id for c in out if c.got.get("rule") != was[c.id].got.get("rule")]
     actions_changed = [c.id for c in out if sorted(c.actions) != sorted(was[c.id].actions)]
     before: dict[str, Any] = dict(old.summary or {})
-    o: dict[str, Any] = before.get("options") or {}
-    diffs = before.get("determinism_diffs")
-    summary: dict[str, object] = dict(summarize(
-        out, diffs if isinstance(diffs, int) else 0, complete=bool(before.get("complete")),
-        classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
-        gate_eligible=False, schema=schema))  # fmt: skip
+    summary = _rescored_summary(before, out, schema=schema)
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
                 "excerpt_prep", "environment", "claude"):  # fmt: skip

@@ -604,7 +604,9 @@ unmapped answer.
 
 - **`jev.call`, one line per try:**
   - `class`, `status`, `http_ms`, `wait_ms`, `concurrency`, `input_tokens`, `output_tokens`, `try`,
-    `n_questions`, and `request_id` (`x-typesafe-request-id`, **service log only**, D7);
+    `n_questions`, and `request_id` (`x-typesafe-request-id`, **service log only**, D7); as built
+    the token counts are logged as `usage_in` and `usage_out`, since the log scrubber blanks any
+    key containing "token" (diff review J13, 2026-10-14);
   - never the keys `state`, `value` or `message` (P27), and no content.
 - **Breaker events:** `jev.breaker_open`, `jev.breaker_half_open` and `jev.breaker_closed`.
   **Pause events:** `jev.pause`, with tier, seconds and resume time.
@@ -748,8 +750,10 @@ the signals wording, the mapping digest and the pin.
 
 **Result format version (P16):**
 - `ResultFile` gains `format: int`: files without it read as 1; step 2 writes 2.
-- An older client refuses with "this result was written by a newer ecf (format 2); run `uv run
-  ecf` from the newer checkout or upgrade".
+- An older ecf can't read a format-2 file (it fails validation; diff review J9, 2026-10-14):
+  use the worktree's (newer) ecf. From format 2 on, an ecf refuses a later format with "this
+  result was written by a newer ecf (format N); run `uv run ecf` from the newer checkout or
+  upgrade".
 - The CHANGELOG line says step-3 comparisons use the worktree's `ecf`.
 
 **`ecf eval report` (P25):** prints `summary.jev` (latency per concurrency with n, tokens,
@@ -881,7 +885,7 @@ concurrency above 1, every D11 and P7 number.
 - the backend-aware `schema_digest`; top-level `prompt_digest`, `input_format` and `excerpt_cap`
   give `compare` warnings;
 - rescore preservation (P3);
-- `format: 2` and the old-client message (P16);
+- `format: 2` and the newer-format message (P16; an ecf from before format 2 can't read it, J9);
 - `/ecf-eval --preset D`'s source query (pin, digests, complete) and its faulted-case path;
 - `report` prints `summary.jev`.
 
