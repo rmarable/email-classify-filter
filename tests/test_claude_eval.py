@@ -351,7 +351,7 @@ def test_progress_is_the_services_count_for_the_status_line_and_the_skill(
     assert p is not None and p["scored"] == 0 and p["in_progress"] == 3 and p["round"] == 1
     assert p["total"] == len(claude_eval.current().works) and p["repeats_left"] == 0  # type: ignore[union-attr]
     assert set(p) == {"run_id", "scored", "total", "in_progress", "repeats_left", "round",
-                      "mismatches", "unread"}  # fmt: skip
+                      "mismatches", "unread", "late"}  # fmt: skip
     assert q["progress"] == f"0/{p['total']} scored, 3 in progress, round 1"
     assert claude_eval.progress_line(p | {"repeats_left": 10}).endswith(", 10 repeats left")
     assert claude_eval.progress_line(p | {"mismatches": 1}).endswith(", 1 mixed-up claims freed")
@@ -822,7 +822,7 @@ def test_another_sessions_calls_dont_count(db_path: Path, clock: FakeClock, root
 
 
 def test_a_late_agents_refused_call_extends_tail_and_isnt_a_mix_up(
-    db_path: Path, clock: FakeClock, root: Path
+    db_path: Path, clock: FakeClock, root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """P2: the spawn started after all; its agent's request is refused, its type counts as out
     for `TAIL` from then, and nothing is freed as a mix-up."""
@@ -835,6 +835,13 @@ def test_a_late_agents_refused_call_extends_tail_and_isnt_a_mix_up(
     with pytest.raises(ConflictError, match="isn't current"):
         claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
     assert run.grace[S1][x["agent"]] == clock.now() + claude_eval.TAIL
+    assert "claude_eval.claim_unread_late" in capsys.readouterr().out  # review R1
+    with pytest.raises(ConflictError):  # counted once per token
+        claude_eval.get_message(clock, S1, x["id"], x["claim_token"], x["agent"])
+    assert "claim_unread_late" not in capsys.readouterr().out
+    p = claude_eval.progress() or {}
+    assert p["late"] == 1
+    assert claude_eval.progress_line(p).endswith(", 1 late after an unread free")
     with pytest.raises(ConflictError):  # nor for another case
         claude_eval.get_message(clock, S1, y["id"], x["claim_token"], y["agent"])
     assert _work(x).claim == "claimed" and _work(y).claim == "claimed"
@@ -871,6 +878,43 @@ def test_a_run_with_an_unread_claim_saves_its_result(
     result = load_result(_saved(conn))
     outcomes = [c.outcome for case in result.cases for c in case.claims]
     assert outcomes.count("claim_unread") == 1
+    # each round's next call, for read minus next call per spawn (review R1): round 1's at 5 s
+    claude = cast(dict[str, Any], (result.summary or {})["claude"])
+    assert claude["next_call_s"]["1"] == 5.0
+    assert set(claude["next_call_s"]) <= {str(c.round) for case in result.cases
+                                          for c in case.claims}  # fmt: skip
+
+
+def test_a_mix_up_alone_counts_as_an_agent_running(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The only call under the spawn is y's own token from the wrong agent type (P6): x, skipped,
+    waits as today rather than being freed unread."""
+    start(db_path, clock, root)
+    x, y = nxt(db_path, clock, S1, limit=2)["items"]
+    with pytest.raises(ForbiddenProfileError):
+        claude_eval.get_message(clock, S1, y["id"], y["claim_token"], "ecf-actor")
+    clock.advance(claude_eval.TAIL.total_seconds() + 1)
+    nxt(db_path, clock, S1, limit=2)
+    clock.advance(UNREAD_S + 1)
+    assert nxt(db_path, clock, S1, limit=2)["results"] == []
+    assert [c.outcome for c in _work(x).claims] == [None]
+
+
+def test_a_wrong_need_first_call_counts_as_an_agent_running(
+    db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """Review R2: the stamp is set before the need check."""
+    start(db_path, clock, root)
+    x = nxt(db_path, clock, S1, limit=1)["items"][0]
+    with pytest.raises(ConflictError, match="is to classify"):
+        claude_eval.propose_action(clock, S1, x["id"], x["claim_token"],
+                                   {"action": "flag", "reason": "r"}, x["agent"])  # fmt: skip
+    clock.advance(5)
+    nxt(db_path, clock, S1, limit=1)
+    clock.advance(UNREAD_S + 1)
+    assert nxt(db_path, clock, S1, limit=1)["results"] == []
+    assert [c.outcome for c in _work(x).claims] == [None]
 
 
 def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(

@@ -185,8 +185,9 @@ class Run:
     grace: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     # session -> token hash -> its claim's expiry: tokens a mix-up freed, still mix-up tokens
     freed: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
-    # session -> token hash -> its claim's expiry: tokens an unread free ended (OD-501 P2)
-    unread: dict[str, dict[str, datetime]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    # session -> token hash -> the unread free that ended it (OD-501 P2)
+    unread: dict[str, dict[str, claude_review.Unread]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    late: int = 0  # freed tokens a late agent presented (review R1): each a false free
     # session -> rounds handed out since its last `eval_next`; round -> that next call (OD-501)
     awaiting: dict[str, list[int]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     next_call: dict[int, datetime] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
@@ -539,6 +540,12 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
         "source_run": run.source_run,
         "sessions": len(run.sessions),
         "registered_at": to_ts(run.created),  # claims' times count from here (item 3)
+        # round -> its session's next `eval_next`, in seconds as the claims' (review R1): read
+        # minus next call per spawn is the margin under `UNREAD_MIN`
+        "next_call_s": {
+            str(r): round((t - run.created).total_seconds(), 3)
+            for r, t in sorted(run.next_call.items())
+        },
     } | claude_usage.run_report(conn, run.sessions, run.created)
 
 
@@ -691,7 +698,8 @@ def _free_unread(run: Run, now: datetime) -> None:
         for w in ws:
             session = w.session or ""
             if w.expires is not None:
-                run.unread.setdefault(session, {})[w.token_hash] = w.expires
+                freed = claude_review.Unread(w.expires, str(rnd), now)
+                run.unread.setdefault(session, {})[w.token_hash] = freed
             _outcome(run, w, "claim_unread")
             mine = run.grace.setdefault(session, {})
             mine[w.agent] = max(mine.get(w.agent, now), now + TAIL)
@@ -819,10 +827,10 @@ def _claimed(run: Run, clock: Clock, session_id: str, ref: str, token: str, agen
                             " session")  # fmt: skip
     if w.claim != "claimed" or w.expires is None or w.expires <= clock.now():
         raise ConflictError("that claim has ended; run eval_next again")
+    if w.claims:  # before the need check: a wrong-need call is a running agent too (review R2)
+        w.claims[-1].called = True
     if need is not None and w.need != need:
         raise ConflictError(f"that claim is to {w.need}, not to {need}")
-    if w.claims:
-        w.claims[-1].called = True
     return w
 
 
@@ -832,11 +840,18 @@ def _late(run: Run, clock: Clock, session_id: str, token: str, agent: str) -> No
     now, h = clock.now(), _hash(token)
     if session_id not in run.unread:
         return
-    mine = {t: until for t, until in run.unread[session_id].items() if until > now}
+    mine = {t: u for t, u in run.unread[session_id].items() if u.until > now}
     run.unread[session_id] = mine
-    if any([hmac.compare_digest(h, t) for t in mine]):
-        grace = run.grace.setdefault(session_id, {})
-        grace[agent] = max(grace.get(agent, now), now + TAIL)
+    hit = [u for t, u in mine.items() if hmac.compare_digest(h, t)]
+    if not hit:
+        return
+    grace = run.grace.setdefault(session_id, {})
+    grace[agent] = max(grace.get(agent, now), now + TAIL)
+    if not hit[0].late:  # counted and logged once per token (review R1)
+        hit[0].late = True
+        run.late += 1
+        log.warning("claude_eval.claim_unread_late", run_id=run.run_id[:8], round=hit[0].round,
+                    agent=agent, after_s=round((now - hit[0].at).total_seconds()))  # fmt: skip
 
 
 def _anothers(run: Run, clock: Clock, w: Work, session_id: str, token: str) -> bool:
@@ -1133,7 +1148,8 @@ def _progress(run: Run) -> dict[str, Any]:
             "mismatches": sum(c.outcome == "claim_mismatch" for w in run.works
                               for c in w.claims),
             "unread": sum(c.outcome == "claim_unread" for w in run.works
-                          for c in w.claims)}  # fmt: skip
+                          for c in w.claims),
+            "late": run.late}  # fmt: skip
 
 
 def progress_line(p: dict[str, Any]) -> str:
@@ -1141,7 +1157,8 @@ def progress_line(p: dict[str, Any]) -> str:
     line = f"{p['scored']}/{p['total']} scored, {p['in_progress']} in progress, round {p['round']}"
     line += f", {p['repeats_left']} repeats left" if p["repeats_left"] else ""
     line += f", {p['mismatches']} mixed-up claims freed" if p.get("mismatches") else ""
-    return line + (f", {p['unread']} unread claims freed" if p.get("unread") else "")
+    line += f", {p['unread']} unread claims freed" if p.get("unread") else ""
+    return line + (f", {p['late']} late after an unread free" if p.get("late") else "")
 
 
 def results() -> dict[str, Any]:

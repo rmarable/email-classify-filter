@@ -63,6 +63,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -257,7 +258,21 @@ _MISMATCHES: dict[str, int] = {}  # item -> mix-up frees (R2; in memory, no migr
 _AWAITING: dict[str, set[str]] = {}
 _NEXT_CALL: dict[str, datetime] = {}
 _CALLED: dict[tuple[str, int], str] = {}
-_UNREAD: dict[str, dict[str, datetime]] = {}
+
+
+@dataclass
+class Unread:
+    """A token an unread free ended (OD-501; eval's too): its claim's expiry (a late agent's
+    `TAIL` holds until then, as a mix-up's token, R1), the spawn's round, when it was freed, and
+    whether a late agent has presented it yet (review R1)."""
+
+    until: datetime
+    round: str
+    at: datetime
+    late: bool = False
+
+
+_UNREAD: dict[str, dict[str, Unread]] = {}
 _MEM = threading.Lock()
 
 
@@ -402,36 +417,40 @@ def _free_unread(conn: sqlite3.Connection, clock: Clock, session_id: str, rows: 
     """A dropped spawn's claims end now and their items wait for the next round
     (`claim_unread`), fenced as `_mismatch`, with no `GRACE` (nothing ran). Its agent type counts
     as out for `TAIL`; its tokens are kept for a late agent (`_late`). No grant or approval
-    moves."""
+    moves. The fenced updates and their audit rows are one transaction (review R3): if it fails
+    (busy), nothing is freed and the session's next call tries again."""
     freed: list[sqlite3.Row] = []
-    with write_tx(conn):
-        for r in rows:
-            cur = conn.execute(
-                "UPDATE claims SET state = 'released', outcome = 'claim_unread', reported = 0"
-                " WHERE stable_id = ? AND fence = ? AND state = 'claimed' AND expires_at > ?",
-                (r["stable_id"], r["fence"], to_ts(now)),
-            )
-            if cur.rowcount == 1:
+    try:
+        with write_tx(conn):
+            for r in rows:
+                cur = conn.execute(
+                    "UPDATE claims SET state = 'released', outcome = 'claim_unread', reported = 0"
+                    " WHERE stable_id = ? AND fence = ? AND state = 'claimed' AND expires_at > ?",
+                    (r["stable_id"], r["fence"], to_ts(now)),
+                )
+                if cur.rowcount != 1:
+                    continue
                 freed.append(r)
+                _audit_row(conn, clock, str(r["address_id"]), str(r["stable_id"]),
+                           "claude.refused", session_id,
+                           {"need": r["need"], "agent": r["agent"], "claim_unread": True},
+                           "denied")  # fmt: skip
+    except sqlite3.Error as e:
+        log.warning("claude.claim_unread_failed", error=type(e).__name__)
+        return
     if not freed:
         return
     with _MEM:
         mine = _UNREAD.setdefault(session_id, {})
         grace = _GRACE.setdefault(session_id, {})
         for r in freed:
-            mine[str(r["token_hash"])] = from_ts(r["expires_at"])
+            rnd = _round_of(str(r["batch_id"]))
+            mine[str(r["token_hash"])] = Unread(from_ts(r["expires_at"]), rnd, now)
             grace[str(r["agent"])] = max(grace.get(str(r["agent"]), now), now + TAIL)
     after = (now - from_ts(freed[0]["claimed_at"])).total_seconds()
     log.warning("claude.claim_unread", session_id=session_id[:8],
                 round=_round_of(str(freed[0]["batch_id"])), items=len(freed),
                 after_s=round(after))  # fmt: skip
-    for r in freed:
-        try:  # the free stands even if the audit can't be written (as `_mismatch`)
-            _audit(conn, clock, _item(conn, str(r["stable_id"])), "claude.refused", session_id,
-                   {"need": r["need"], "agent": r["agent"], "claim_unread": True},
-                   outcome="denied")  # fmt: skip
-        except (sqlite3.Error, TypeError) as e:  # busy, or the item purged (no row)
-            log.warning("claude.claim_unread_audit_failed", error=type(e).__name__)
 
 
 def _results(conn: sqlite3.Connection, clock: Clock, session_id: str) -> list[dict[str, Any]]:
@@ -503,10 +522,10 @@ def _claimed(conn: sqlite3.Connection, clock: Clock, session_id: str, sid: str, 
                             " session")  # fmt: skip
     if row["state"] != "claimed" or from_ts(row["expires_at"]) <= clock.now():
         raise ConflictError("that claim has ended; run review_queue again")
+    with _MEM:  # an agent of its spawn is running (OD-501), a wrong-need call too (review R2)
+        _CALLED[(sid, int(row["fence"]))] = str(row["batch_id"])
     if need is not None and row["need"] != need:
         raise ConflictError(f"that claim is to {row['need']}, not to {need}")
-    with _MEM:  # an agent of its spawn is running (OD-501)
-        _CALLED[(sid, int(row["fence"]))] = str(row["batch_id"])
     return row
 
 
@@ -518,11 +537,18 @@ def _late(clock: Clock, session_id: str, token: str, agent: str) -> None:
     with _MEM:
         if session_id not in _UNREAD:
             return
-        mine = {t: until for t, until in _UNREAD[session_id].items() if until > now}
+        mine = {t: u for t, u in _UNREAD[session_id].items() if u.until > now}
         _UNREAD[session_id] = mine
-        if any([hmac.compare_digest(h, t) for t in mine]):
-            grace = _GRACE.setdefault(session_id, {})
-            grace[agent] = max(grace.get(agent, now), now + TAIL)
+        hit = [u for t, u in mine.items() if hmac.compare_digest(h, t)]
+        if not hit:
+            return
+        grace = _GRACE.setdefault(session_id, {})
+        grace[agent] = max(grace.get(agent, now), now + TAIL)
+        first = not hit[0].late
+        hit[0].late = True
+    if first:  # logged once per token (review R1): each a false free
+        log.warning("claude.claim_unread_late", session_id=session_id[:8], round=hit[0].round,
+                    agent=agent, after_s=round((now - hit[0].at).total_seconds()))  # fmt: skip
 
 
 def _anothers(conn: sqlite3.Connection, clock: Clock, sid: str, session_id: str,
@@ -934,12 +960,20 @@ def _invalid(conn: sqlite3.Connection, clock: Clock, claim: sqlite3.Row,
 def _audit(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, event: str,
            session_id: str, data: dict[str, Any], outcome: str = "ok") -> None:  # fmt: skip
     with write_tx(conn):
-        conn.execute(
-            "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (to_ts(clock.now()), item["address_id"], item["stable_id"], event,
-             f"mcp:{session_id[:8]}", outcome, json.dumps(data)),
-        )  # fmt: skip
+        _audit_row(conn, clock, item["address_id"], item["stable_id"], event, session_id, data,
+                   outcome)  # fmt: skip
+
+
+def _audit_row(conn: sqlite3.Connection, clock: Clock, address_id: str, stable_id: str,
+               event: str, session_id: str, data: dict[str, Any],
+               outcome: str) -> None:  # fmt: skip
+    """One audit row, inside the caller's transaction."""
+    conn.execute(
+        "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (to_ts(clock.now()), address_id, stable_id, event, f"mcp:{session_id[:8]}", outcome,
+         json.dumps(data)),
+    )  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- the reminder

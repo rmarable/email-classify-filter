@@ -819,6 +819,23 @@ def test_the_unread_free_is_fenced(conn: sqlite3.Connection, clock: FakeClock) -
     assert not conn.execute("SELECT 1 FROM audit WHERE data LIKE '%claim_unread%'").fetchall()
 
 
+def test_a_failed_unread_audit_frees_nothing(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R3: the frees and their audit rows are one transaction; a failure leaves the claim
+    for the next call."""
+    x, _tx, _y, _ty = _dropped(conn, clock)
+
+    def busy(*_a: Any, **_k: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(claude_review, "_audit_row", busy)
+    assert queue(conn, clock, limit=1)["results"] == []
+    assert claim_row(conn, x) == ("claimed", None)
+    monkeypatch.undo()
+    assert queue(conn, clock, limit=1)["results"] == [{"id": x, "outcome": "claim_unread"}]
+
+
 def test_a_spawn_with_any_claim_read_is_never_freed_unread(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -867,11 +884,13 @@ def test_another_sessions_calls_dont_count_for_review(
     assert claim_row(conn, x) == ("claimed", None)  # S1 hasn't called since
     queue(conn, clock, limit=1)
     clock.advance(UNREAD_S)
+    queue(conn, clock, S2, limit=1)  # S1's signal holds, but only S1's own call frees it
+    assert claim_row(conn, x) == ("claimed", None)
     assert queue(conn, clock, limit=1)["results"] == [{"id": x, "outcome": "claim_unread"}]
 
 
 def test_a_late_agents_refused_call_extends_tail_for_review(
-    conn: sqlite3.Connection, clock: FakeClock
+    conn: sqlite3.Connection, clock: FakeClock, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """P2: its request is refused, its type counts as out for `TAIL` from then, no mix-up."""
     x, tx, y, _ty = _dropped(conn, clock)
@@ -881,9 +900,64 @@ def test_a_late_agents_refused_call_extends_tail_for_review(
         read_msg(conn, clock, S1, x, tx)
     grace = claude_review._grace(S1, clock.now())  # pyright: ignore[reportPrivateUsage]
     assert grace == {"ecf-classifier": clock.now() + claude_review.TAIL}
+    assert "claude.claim_unread_late" in capsys.readouterr().out  # review R1, once per token
+    with pytest.raises(ConflictError):
+        read_msg(conn, clock, S1, x, tx)
+    assert "claim_unread_late" not in capsys.readouterr().out
     with pytest.raises(ConflictError):  # nor for another item
         read_msg(conn, clock, S1, y, tx)
     assert claim_row(conn, x) == claim_row(conn, y) == ("claimed", None)
+
+
+def test_a_mix_up_alone_counts_as_an_agent_running_for_review(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """The only call under the spawn is y's own token from the wrong agent type (P6)."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    with pytest.raises(ForbiddenProfileError):
+        claude_review.get_message(conn, clock, S1, y, tok[y], "ecf-actor")
+    clock.advance(claude_review.TAIL.total_seconds() + 1)
+    queue(conn, clock)
+    clock.advance(UNREAD_S + 1)
+    assert queue(conn, clock)["results"] == [] and claim_row(conn, x) == ("claimed", None)
+
+
+def test_a_wrong_need_first_call_counts_as_an_agent_running_for_review(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """Review R2: the stamp is set before the need check."""
+    add(conn, clock, "c", "C")
+    x = waiting_item(conn, clock, "c")
+    tok = token_for(queue(conn, clock, limit=1), x)
+    with pytest.raises(ConflictError, match="is to classify"):
+        claude_review.propose_action(conn, clock, S1, x, tok, {"action": "flag", "reason": "r"},
+                                     "ecf-classifier")  # fmt: skip
+    clock.advance(5)
+    queue(conn, clock, limit=1)
+    clock.advance(UNREAD_S + 1)
+    assert queue(conn, clock, limit=1)["results"] == [] and claim_row(conn, x) == ("claimed", None)
+
+
+def test_the_spawn_memory_is_pruned_once_no_claim_of_it_is_out(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """`_CALLED` and `_NEXT_CALL` keep a spawn's entries only while one of its claims is out."""
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    read_msg(conn, clock, S1, x, tok[x])
+    clock.advance(1)
+    queue(conn, clock)  # round 1's next call
+    called, rounds = claude_review._CALLED, claude_review._NEXT_CALL  # pyright: ignore[reportPrivateUsage]
+    assert len(called) == 1 and len(rounds) == 1
+    assert submit_classification(conn, clock, S1, x, tok[x], REQUEST)["accepted"]
+    queue(conn, clock)
+    assert len(called) == 1 and len(rounds) == 1  # y still out: kept
+    assert submit_classification(conn, clock, S1, y, tok[y], REQUEST)["accepted"]
+    queue(conn, clock)
+    assert called == {} and rounds == {}
 
 
 def test_an_items_own_earlier_token_never_frees_its_new_claim(
