@@ -469,8 +469,8 @@ def test_a_reply_from_another_version_stops_the_run() -> None:
     assert err.value.cls == "pin"
 
 
-@pytest.mark.parametrize("code", [404, 422])
-def test_404_or_422_on_the_first_case_stops_later_ones_fail_the_case(code: int) -> None:
+@pytest.mark.parametrize("code", [400, 404, 422])
+def test_400_404_or_422_on_the_first_case_stops_later_ones_fail_the_case(code: int) -> None:
     with pytest.raises(jev.JevError) as err:
         classify(rig(status(code)), first=True)
     assert err.value.cls == "pin"
@@ -497,7 +497,7 @@ def test_the_pin_message_only_for_what_l4_recorded(monkeypatch: pytest.MonkeyPat
     assert "refused the first request (HTTP 422)" in str(err.value)
 
 
-@pytest.mark.parametrize("code", [400, 413])
+@pytest.mark.parametrize("code", [413])
 def test_other_request_errors_fail_the_case_without_a_retry(code: int) -> None:
     r = rig(status(code))
     res = classify(r, first=True)
@@ -783,8 +783,8 @@ def test_replied_is_set_by_a_reply_classed_ok_or_request_error() -> None:
     assert classify(rig(status(500), status(400))).replied
 
 
-@pytest.mark.parametrize("code", [404, 422])
-def test_check_key_on_404_or_422_names_the_pin_not_the_key(code: int) -> None:
+@pytest.mark.parametrize("code", [400, 404, 422])
+def test_check_key_on_400_404_or_422_names_the_pin_not_the_key(code: int) -> None:
     """J12."""
     with pytest.raises(InvalidInputError) as err:
         jev.check_key(KEY, httpx.MockTransport(status(code)))
