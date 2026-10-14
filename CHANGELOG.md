@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded the Jev live check (v3.0.0 step 2b): the pinned `jev-1.13.0` answers as documented, the email text is billed once per request (about US$0.03 for a 300-case eval run), requests take about 0.1-0.2 s, and answers vary slightly between identical requests; a retired pin is refused with HTTP 400 (OD-505).
 - `ecf eval run --classifier-backend jev` refuses a set with an unconfirmed card, so only the reviewed synthetic set goes to TypeSafe (operator decision 2026-10-14, diff review J14).
 - Jev eval runs, after the step-2d diff review (J1-J13): a short `Retry-After` that doesn't fit what is left of the waiting budget now ends the run with the cases scored so far instead of failing it; the try that opens the breaker no longer waits twice; determinism repeats leave out (and list) pairs where a pass failed; `ecf eval compare` prints how many TypeSafe replies came without token counts beside the cost, and end-to-end times for answered and failed cases apart; the key is re-read before every try; `/ecf-eval --preset D` skips a Jev source run that lacks some of its cases; a preset D or unpinned Claude eval never records the gate as passed, and `ecf eval status` and `compare` say "comparison only (preset D, until step 4)".
 - `ecf models api-key set --provider typesafe` says the pinned Jev version may not be served (naming it) on a 404 or 422, instead of blaming the key, and refuses a reply from another Jev version (J12).
