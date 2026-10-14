@@ -25,7 +25,8 @@ from ecf_server.db import write_tx
 from ecf_server.secretstore import SecretStore, SecretStoreNeedsYouError
 from ecf_server.secretstore.select import interpreter_sha256, record_interpreter
 
-FIXED_NAMES = ("slack/bot", "slack/app", "models-api-key", "export-signing-seed")
+FIXED_NAMES = ("slack/bot", "slack/app", "models-api-key", "jev-api-key",
+               "export-signing-seed")  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,8 @@ class Outcome:
 
 def names(conn: sqlite3.Connection) -> list[str]:
     """Every secret ecf may keep: one app password per address (removed ones are deleted with the
-    address), the Slack tokens, the models API key and the export signing seed."""
+    address), the Slack tokens, the Models API key, the TypeSafe key (v3.0.0 step 2a) and the
+    export signing seed."""
     rows = conn.execute("SELECT address_id FROM addresses WHERE removed_at IS NULL"
                         " ORDER BY address_id").fetchall()  # fmt: skip
     return [*(f"mailbox/{r[0]}" for r in rows), *FIXED_NAMES]

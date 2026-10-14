@@ -30,12 +30,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import anyio.from_thread
+import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from ecf import __version__
+from ecf import __version__, api_keys
 from ecf.errors import (
     PROBLEM_CONTENT_TYPE,
     ConflictError,
@@ -183,6 +184,9 @@ class ServiceState:
     # the runtime's `held`: keeps the Slack thread idle while `ecf slack remove` runs
     slack_hold: Callable[[], AbstractContextManager[None]] = field(default=nullcontext, repr=False)
     watch_http: model_watch.HttpFactory = field(default=model_watch.http_client, repr=False)
+    # TypeSafe's transport for the key check: None is the real one (`jev.default_transport`; a
+    # fake in tests, v3.0.0 step 2a)
+    jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
@@ -1254,17 +1258,39 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §7.6 (V1.4 step 10): the weekly model watch's key and a run now."""
 
     @allow(Caller.CLI)
-    def api_key(request: Request) -> JSONResponse:
-        """SPEC §7.6 (V1.4 step 10): `ecf models api-key set|clear`; the service alone writes the
-        secret store."""
-        body = _body(request)
-        key = None if body.get("clear") is True else _token(body, "key")
+    def anthropic_key(request: Request) -> JSONResponse:
+        """SPEC §7.6: `ecf models api-key set|clear --provider anthropic` (v3.0.0 step 2a,
+        OD-503); the service alone writes the secret store. Checked by one Models API call
+        within 5 s, then a Security Notice."""
+        key = _api_key(request, "anthropic")
+        store = state.store()
+        had = store.get(model_watch.KEY_SECRET) is not None
         conn = state.connect()
         try:
-            r = model_watch.set_key(conn, state.clock, state.store(), key, state.watch_http)
+            r = model_watch.set_key(conn, state.clock, store, key, state.watch_http,
+                                    timeout_s=KEY_CHECK_S)  # fmt: skip
+            _key_notice(state, conn, "anthropic", key is not None, had)
         finally:
             conn.close()
         log.info("models.api_key_cleared" if key is None else "models.api_key_set")
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def typesafe_key(request: Request) -> JSONResponse:
+        """SPEC §7.6, §7.9: `ecf models api-key set|clear --provider typesafe` (v3.0.0 step 2a,
+        OD-503). Checked by one minimal call with no email content within 5 s, then a Security
+        Notice."""
+        from ecf_server import jev  # noqa: PLC0415 - eval only, not a service import
+
+        key = _api_key(request, "typesafe")
+        conn = state.connect()
+        try:
+            r = jev.set_key(conn, state.clock, state.store(), key, state.jev_transport)
+            had = bool(r.get("had") if key is None else r.get("replaced"))
+            _key_notice(state, conn, "typesafe", key is not None, had)
+        finally:
+            conn.close()
+        log.info("models.jev_key_cleared" if key is None else "models.jev_key_set")
         return JSONResponse(r)
 
     @allow(Caller.CLI)
@@ -1277,7 +1303,8 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
 
     return [
-        Route("/v1/models/api-key", api_key, methods=["POST"]),
+        Route("/v1/models/keys/anthropic", anthropic_key, methods=["POST"]),
+        Route("/v1/models/keys/typesafe", typesafe_key, methods=["POST"]),
         Route("/v1/models/watch", watch_now, methods=["POST"]),
     ]
 
@@ -2348,6 +2375,38 @@ def _port(v: Any) -> int | None:
     if not isinstance(v, int) or isinstance(v, bool):
         raise InvalidInputError("smtp_port must be a number")
     return v
+
+
+KEY_CHECK_S = 5.0  # an API key's check, under the CLI's 10 s socket timeout (P12)
+_KEY_NAMES = {"anthropic": "Anthropic Models API key", "typesafe": "TypeSafe API key"}
+
+
+def _api_key(request: Request, provider: str) -> str | None:
+    """The pasted key, checked as the CLI checks it (prefix, characters), or None to clear."""
+    body = _body(request)
+    if body.get("clear") is True:
+        return None
+    return api_keys.check_key(provider, _token(body, "key"))
+
+
+def _key_notice(state: ServiceState, conn: sqlite3.Connection, provider: str, stored: bool,
+                had: bool) -> None:  # fmt: skip
+    """A Security Notice on every set, replace and clear of either key (D3, P12); a clear of a
+    key that wasn't there changes nothing and posts none."""
+    if not stored and not had:
+        return
+    verb = ("replaced" if had else "set") if stored else "removed"
+    if provider == "typesafe":
+        what = "a running Jev eval stops" if not stored else "Jev evals use it"
+    else:
+        what = (
+            "the weekly model watch uses it"
+            if stored
+            else "the weekly model watch stops reading Anthropic's model list"
+        )
+    _notice(state, conn, f"The {_KEY_NAMES[provider]} was {verb} (install `{state.install}`);"
+            f" {what}. If you didn't do this, clear it with `ecf models api-key clear --provider"
+            f" {provider}`.")  # fmt: skip
 
 
 def _notice(state: ServiceState, conn: sqlite3.Connection, text: str) -> None:

@@ -39,7 +39,8 @@ def _events(conn: sqlite3.Connection) -> list[tuple[str, dict[str, object]]]:
 def test_names_cover_every_secret_ecf_keeps(conn: sqlite3.Connection) -> None:
     _addresses(conn)
     assert server_regrant.names(conn) == ["mailbox/ap", "slack/bot", "slack/app",
-                                          "models-api-key", "export-signing-seed"]  # fmt: skip
+                                          "models-api-key", "jev-api-key",
+                                          "export-signing-seed"]  # fmt: skip
 
 
 def test_reads_all_then_records_the_interpreter(conn: sqlite3.Connection,
@@ -52,13 +53,13 @@ def test_reads_all_then_records_the_interpreter(conn: sqlite3.Connection,
     got = server_regrant.run(conn, clock, store, echo=said.append, interpreter=lambda: "new")
     assert got.failed is None
     assert got.read == ["mailbox/ap", "slack/bot"]
-    assert got.absent == ["slack/app", "models-api-key", "export-signing-seed"]
+    assert got.absent == ["slack/app", "models-api-key", "jev-api-key", "export-signing-seed"]
     assert said[0] == "reading mailbox/ap ..."
     assert not interpreter_changed(conn, "new")
     row = conn.execute("SELECT updated_by FROM settings WHERE key ="
                        " 'secret_store.interpreter_sha256'").fetchone()  # fmt: skip
     assert row[0] == "regrant"
-    assert _events(conn) == [("ok", {"read": 2, "absent": 3})]
+    assert _events(conn) == [("ok", {"read": 2, "absent": 4})]
 
 
 def test_a_refused_read_records_nothing(conn: sqlite3.Connection, clock: FakeClock) -> None:

@@ -8,7 +8,8 @@
   C. From the date on, `ecf claude` refuses to open (`refuse_retired`). An override that replaces
   the pin's family ends it. The alert doesn't look at ecf's releases (the release check below
   doesn't read their pins), so it says no release moving the pin is known.
-- **Models API** (only with the optional key, `ecf models api-key set`; secret `models-api-key`):
+- **Models API** (only with the optional key, `ecf models api-key set --provider anthropic`;
+  secret `models-api-key`):
   `GET /v1/models` once a week. It has no deprecation fields (verified 2026-10-02, platform.claude
   .com List Models reference), so it adds two things: a pinned ID it doesn't list (retired early,
   or the key's workspace can't use it) keeps a System Error open; a newer model in a family ecf
@@ -317,24 +318,25 @@ class ModelsApiError(Exception):
         self.code, self.fix = code, fix
 
 
-def list_models(client: httpx.Client, key: str) -> dict[str, str]:
+def list_models(client: httpx.Client, key: str, timeout_s: float = TIMEOUT_S) -> dict[str, str]:
     """Every model the key can use -> its `created_at` (RFC 3339, compared as text after
-    normalizing to UTC seconds)."""
+    normalizing to UTC seconds). `timeout_s` per request (the key route's check: 5 s)."""
     out: dict[str, str] = {}
     after: str | None = None
     for _ in range(MAX_PAGES):
         params: dict[str, str | int] = {"limit": 1000} | ({"after_id": after} if after else {})
         try:
             headers = {"x-api-key": key, "anthropic-version": API_VERSION}
-            r = client.get(MODELS_URL, params=params, headers=headers)
+            r = client.get(MODELS_URL, params=params, headers=headers, timeout=timeout_s)
         except httpx.TimeoutException as e:
-            raise ModelsApiError("timeout", f"no answer in {TIMEOUT_S:.0f} s") from e
+            raise ModelsApiError("timeout", f"no answer in {timeout_s:.0f} s") from e
         except httpx.TransportError as e:
             raise ModelsApiError("network", f"network error ({type(e).__name__})") from e
         if r.status_code in (401, 403):
             raise ModelsApiError(f"http_{r.status_code}", f"the API key was refused (HTTP"
-                                 f" {r.status_code})", " Replace it with `ecf models api-key set`"
-                                 " or remove it with `ecf models api-key clear`.")  # fmt: skip
+                                 f" {r.status_code})", " Replace it with `ecf models api-key set"
+                                 " --provider anthropic` or remove it with `ecf models api-key"
+                                 " clear --provider anthropic`.")  # fmt: skip
         if r.status_code != 200:
             raise ModelsApiError(f"http_{r.status_code}", f"HTTP {r.status_code}")
         try:
@@ -495,10 +497,12 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str | None,
-            http: HttpFactory = http_client) -> dict[str, Any]:  # fmt: skip
+            http: HttpFactory = http_client,
+            timeout_s: float = TIMEOUT_S) -> dict[str, Any]:  # fmt: skip
     """Store the optional Models API key after one call shows it works, or remove it (`None`).
-    No step-up: the key only lets ecf read Anthropic's model list (OD-302). Audited; the next
-    watch runs at the next tick."""
+    No step-up: the key only lets ecf read Anthropic's model list (OD-302). Audited, with
+    whether it replaced one and never the key; the next watch runs at the next tick. The key
+    route checks it within 5 s (`timeout_s`, v3.0.0 step 2a, P12)."""
     now = to_ts(clock.now())
     if key is None:
         store.delete(KEY_SECRET)
@@ -511,14 +515,16 @@ def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str
         raise InvalidInputError("an Anthropic API key (sk-ant-...), without spaces")
     try:
         with http() as client:
-            listed = list_models(client, key)
+            listed = list_models(client, key, timeout_s)
     except ModelsApiError as e:
         raise InvalidInputError(f"the Models API didn't accept it: {e}") from e
+    replaced = store.get(KEY_SECRET) is not None
     store.set(KEY_SECRET, key)
     with write_tx(conn):
         _put(conn, "model_watch.api_key_set", True, now)
         conn.execute("DELETE FROM settings WHERE key = ?", (NEXT,))  # watch at the next tick
-        _audit(conn, now, "models.api_key_set", {"listed": len(listed)}, actor="os_user")
+        _audit(conn, now, "models.api_key_set", {"listed": len(listed), "replaced": replaced},
+               actor="os_user")  # fmt: skip
     return status(conn) | {"listed": len(listed)}
 
 

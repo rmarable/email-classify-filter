@@ -73,6 +73,15 @@ CONTENT_KEYS = frozenset(
         # the backup key text, shown once by `ecf export keys rotate` (V1.5 step 8a)
         "key_text",
         "backup_key",
+        # Jev's request and reply shapes (v3.0.0 step 2c, §5.5): questions and answers carry the
+        # schema text and the model's reading of the email
+        "questions",
+        "answers",
+        "instructions",
+        "criteria",
+        "probabilities",
+        "legend",
+        "choice",
     }
 )
 # Any key containing one of these is redacted too ("bot_token", "client_secret", ...).

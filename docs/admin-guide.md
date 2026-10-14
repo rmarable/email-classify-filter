@@ -304,8 +304,11 @@ the addresses using it from `live` to `assist` until their gate passes again (SP
 - macOS: install Ollama with Homebrew and pin it: `brew install ollama && brew pin ollama mlx-c`.
   To upgrade it on purpose, unpin, upgrade, re-pin, run `ecf models serve install`, and rerun
   the eval (CONTRIBUTING has the exact commands).
-- `ecf models api-key` stores the optional Anthropic Models API key for the weekly model watch
-  (SPEC §7.6); `ecf models watch` runs the watch at the next tick.
+- `ecf models api-key set|clear --provider anthropic|typesafe` stores or removes an API key:
+  `anthropic`, the optional Anthropic Models API key for the weekly model watch; `typesafe`, the
+  TypeSafe key for Jev (eval only for now). `--provider` is required. Each key is checked by one
+  call before it is stored, and every set, replace or removal posts a Security Notice (SPEC §7.6,
+  §7.9). `ecf models watch` runs the watch at the next tick.
 
 ## Slack
 

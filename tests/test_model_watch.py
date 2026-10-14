@@ -313,7 +313,8 @@ def test_the_key_is_stored_only_once_the_api_accepts_it(
     assert store.get(model_watch.KEY_SECRET) is None
     assert model_watch.status(conn)["api_key"] is False
     audit = [(r[0], r[1]) for r in conn.execute("SELECT event, data FROM audit")]
-    assert audit == [("models.api_key_set", '{"listed": 3}'), ("models.api_key_cleared", "{}")]
+    assert audit == [("models.api_key_set", '{"listed": 3, "replaced": false}'),
+                     ("models.api_key_cleared", "{}")]  # fmt: skip
     assert "sk-ant" not in json.dumps(audit)
 
 
@@ -326,7 +327,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
     lines = watch_lines(st)
     assert f"  {SONNET}: Active, retirement not before 2027-09-28 (models.lock)" in lines
     assert lines[-1] == (
-        "model watch: no Models API key (optional: ecf models api-key set);"
+        "model watch: no Models API key (optional: ecf models api-key set --provider anthropic);"
         " next run within a minute"
     )
     today = clock.now().date()

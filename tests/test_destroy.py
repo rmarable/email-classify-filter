@@ -66,6 +66,11 @@ class Env:
         return rec
 
 
+# every secret ecf keeps, both API keys included (v3.0.0 step 2a)
+SECRETS = ("mailbox/ap", "mailbox/ar", "slack/bot", "slack/app", "models-api-key", "jev-api-key",
+           "export-signing-seed")  # fmt: skip
+
+
 @pytest.fixture
 def env(conn: sqlite3.Connection, tmp_path: Path) -> Env:
     return make_env(conn, tmp_path / "root")
@@ -104,7 +109,7 @@ def make_env(conn: sqlite3.Connection, root: Path) -> Env:
             (alert_mail.TO_KEY, "owner@home.example"),
         ):
             slack_admin.put_setting(conn, k, v, now, actor="test")
-    for name in ("mailbox/ap", "mailbox/ar", "slack/bot", "slack/app", "export-signing-seed"):
+    for name in SECRETS:
         e.store.set(name, BOT if name == "slack/bot" else "x")
     return e
 
@@ -122,7 +127,7 @@ def test_service_part_in_order(env: Env) -> None:
     assert env.webs[CONFIG].calls == []
     assert env.notifier.sent and "destroying the install t" in env.notifier.sent[0][1]
     assert len(env.sender.sent) == 1  # the alert email, sent there and then
-    for name in ("mailbox/ap", "mailbox/ar", "slack/bot", "slack/app", "export-signing-seed"):
+    for name in SECRETS:
         assert env.store.get(name) is None
     assert env.conn.execute("SELECT count(*) FROM addresses WHERE paused = 0").fetchone()[0] == 0
     events = [r[0] for r in env.conn.execute("SELECT event FROM audit WHERE event LIKE"

@@ -1,6 +1,7 @@
 """`ecf models status|install|prune` and `ecf models serve install|uninstall|status` (SPEC §7.5;
-V1.3 steps 1b, 1c; OD-246); `ecf models api-key set|clear` and `ecf models watch`, the weekly
-model watch (SPEC §7.6; V1.4 step 10). `prune`: 2026-10-08, operator-approved fix (§7.5)."""
+V1.3 steps 1b, 1c; OD-246); `ecf models api-key set|clear --provider anthropic|typesafe` (v3.0.0
+step 2a, OD-503) and `ecf models watch`, the weekly model watch (SPEC §7.6; V1.4 step 10).
+`prune`: 2026-10-08, operator-approved fix (§7.5)."""
 
 from __future__ import annotations
 
@@ -11,11 +12,12 @@ from typing import Annotated, Any
 
 import typer
 
-from ecf import ollama_unit
+from ecf import __version__, api_keys, ollama_unit
 from ecf.client import LocalClient
-from ecf.errors import ServiceUnavailableError
+from ecf.errors import ConflictError, ServiceUnavailableError
 from ecf.paths import Paths
 from ecf.prompts import hidden, require_terminal
+from ecf.upgrade_check import version_key
 
 POLL_S = 2.0
 START_WAIT_S = 30.0
@@ -187,8 +189,8 @@ def watch_lines(w: dict[str, Any] | None) -> list[str]:
         out.append(f"  {mid}: {e['state']}, {when} (models.lock)")
     nxt = str(w["next_at"])[:16].replace("T", " ") + " UTC" if w["next_at"] else "within a minute"
     if not w["api_key"]:
-        out.append(f"model watch: no Models API key (optional: ecf models api-key set);"
-                   f" next run {nxt}")  # fmt: skip
+        out.append("model watch: no Models API key (optional: ecf models api-key set --provider"
+                   f" anthropic); next run {nxt}")  # fmt: skip
     else:
         cl: dict[str, Any] = w.get("claude") or {}
         if cl.get("error"):
@@ -222,27 +224,55 @@ def _release_lines(rel: dict[str, Any]) -> list[str]:
     return []
 
 
+OLDER_SERVICE = "the service is older than this ecf; restart it from this version first"
+PROVIDER_HELP = "anthropic (the model watch's Models API key) or typesafe (Jev); required."
+PROVIDER = typer.Option("--provider", help=PROVIDER_HELP, show_default=False)
+
+
+def check_service_version(c: LocalClient) -> None:
+    """Refuse when the service runs an older ecf than this CLI (v3.0.0 step 2a, P4): its key
+    routes may differ. Equal versions pass: two checkouts between bumps can't be told apart, and
+    then the per-provider route is the guard (an older service answers it with not found)."""
+    st: dict[str, Any] = c.get("/v1/status")
+    if version_key(str(st["version"])) < version_key(__version__):
+        raise ConflictError(OLDER_SERVICE)
+
+
 def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None:
-    """`ecf models api-key set|clear` and `ecf models watch` (SPEC §7.6; V1.4 step 10)."""
-    key_app = typer.Typer(no_args_is_help=True, help="The optional Anthropic Models API key.")
+    """`ecf models api-key set|clear --provider ...` (v3.0.0 step 2a, OD-503) and `ecf models
+    watch` (SPEC §7.6; V1.4 step 10)."""
+    key_app = typer.Typer(
+        no_args_is_help=True, help="API keys: Anthropic's Models API (optional), TypeSafe (Jev)."
+    )
     models_app.add_typer(key_app, name="api-key")
 
     @key_app.command("set")
-    def key_set() -> None:
-        """Store an API key so the weekly watch can read Anthropic's model list (optional)."""
+    def key_set(provider: Annotated[str | None, PROVIDER] = None) -> None:
+        """Store an API key: anthropic lets the weekly watch read Anthropic's model list
+        (optional); typesafe lets ecf call Jev. Checked by one call; a Security Notice follows."""
+        name = api_keys.check_provider(provider)
         require_terminal()
-        key = hidden("Anthropic API key, sk-ant-... (hidden): ")
         with LocalClient(paths()) as c:
-            r = c.request("POST", "/v1/models/api-key", {"key": key})
-        typer.echo(f"Stored; the Models API lists {r['listed']} models for it. The watch runs"
-                   " within a minute, then weekly (ecf models status).")  # fmt: skip
+            check_service_version(c)
+            key = api_keys.check_key(name, hidden(f"{api_keys.LABEL[name]} (hidden): "))
+            r = c.request("POST", f"/v1/models/keys/{name}", {"key": key})
+        if name == "anthropic":
+            typer.echo(f"Stored; the Models API lists {r['listed']} models for it. The watch runs"
+                       " within a minute, then weekly (ecf models status).")  # fmt: skip
+        else:
+            typer.echo(f"{'Replaced' if r.get('replaced') else 'Stored'} the TypeSafe API key;"
+                       " TypeSafe accepted it.")  # fmt: skip
 
     @key_app.command("clear")
-    def key_clear() -> None:
-        """Remove the Models API key; retirement notices then come with ecf releases."""
+    def key_clear(provider: Annotated[str | None, PROVIDER] = None) -> None:
+        """Remove a stored API key (a Security Notice follows). Without the Anthropic key,
+        retirement notices come with ecf releases."""
+        name = api_keys.check_provider(provider)
         with LocalClient(paths()) as c:
-            c.request("POST", "/v1/models/api-key", {"clear": True})
-        typer.echo("Removed the Models API key.")
+            check_service_version(c)
+            c.request("POST", f"/v1/models/keys/{name}", {"clear": True})
+        typer.echo("Removed the Models API key." if name == "anthropic"
+                   else "Removed the TypeSafe API key.")  # fmt: skip
 
     @models_app.command("watch")
     def watch() -> None:

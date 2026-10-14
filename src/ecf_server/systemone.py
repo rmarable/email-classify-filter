@@ -8,9 +8,9 @@ values read as `other`/`unknown`), as preset A does, so rules, policy and the ac
 difference.
 
 - **Questions** come from the schema: an enum field is a `choice` whose criteria are the value
-  descriptions, an ordinal field a `score` whose criteria are the level names only (Gemma's prompt
-  has no per-level text either), a boolean a `noul`. Each question's instructions are the field's
-  description, the text `schema.prompt_block` gives Gemma.
+  descriptions, an ordinal field a `score` whose criteria are the level descriptions, low to high
+  (a level without one by its name; v3.0.0 step 2, P8), a boolean a `noul`. Each question's
+  instructions are the field's description, the text `schema.prompt_block` gives Gemma.
 - **Answers:** a `choice` is the chosen key; a `score` is the most probable level, ties going to the
   higher one (fails toward more risk; the endpoint's own `score` is an expected value); a `noul` is
   true at p >= 0.5.
@@ -97,9 +97,10 @@ def questions(schema: CompiledSchema) -> dict[str, Any]:
         if f.kind is FieldKind.ENUM:
             crit = dict(zip(f.values, f.value_descriptions, strict=True))
             out[f.name] = {"type": "choice", "instructions": f.description, "criteria": crit}
-        elif f.kind is FieldKind.ORDINAL:
-            out[f.name] = {"type": "score", "instructions": f.description,
-                           "criteria": list(f.values)}  # fmt: skip
+        elif f.kind is FieldKind.ORDINAL:  # each level's description, low -> high (P8)
+            texts = list(f.value_descriptions) + [""] * (len(f.values) - len(f.value_descriptions))
+            levels = [d or v for v, d in zip(f.values, texts, strict=True)]  # no text: its name
+            out[f.name] = {"type": "score", "instructions": f.description, "criteria": levels}
         else:
             out[f.name] = {"type": "noul", "instructions": f.description}
     return out

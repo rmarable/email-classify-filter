@@ -82,7 +82,9 @@ uv build                                        # wheel + sdist
   Keychain or launchd use `ecf-test-*` names and remove what they create. Service-process tests
   use a short `/tmp` folder because socket paths are limited to 104 bytes on macOS, and start
   services only through `spawn`/`start_service` and stop them with `stop` (`tests/conftest.py`);
-  the run fails if any service outlives its test.
+  the run fails if any service outlives its test. The suite never calls TypeSafe: every Jev
+  client in a test uses an `httpx.MockTransport`, and an autouse fixture in `tests/conftest.py`
+  makes Jev's real transport raise (v3.0.0 step 2).
 
 ## Workflow
 

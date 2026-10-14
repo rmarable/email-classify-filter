@@ -217,7 +217,8 @@ def judge_model_watch(st: dict[str, Any], today: date) -> list[Check]:
     ol: dict[str, Any] = w.get("ollama") or {}
     if w["api_key"] and cl.get("error"):
         out.append(Check("model watch", Level.WARN, f"the Models API failed: {cl['error']}",
-                         "ecf models api-key set, then ecf models watch"))  # fmt: skip
+                         "ecf models api-key set --provider anthropic, then ecf models"
+                         " watch"))  # fmt: skip
     elif w["api_key"] and cl.get("missing"):
         out.append(Check("model watch", Level.WARN, "the Models API doesn't list"
                          f" {', '.join(cl['missing'])}", "ecf models status"))  # fmt: skip
