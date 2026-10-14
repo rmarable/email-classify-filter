@@ -42,7 +42,7 @@
         "readOnlyHint": false,
         "title": "Claim items to review"
       },
-      "description": "Claims up to `limit` waiting items for this session (claims last 5 minutes) and returns, for each, its id, address, need (classify or act), the agent to hand it to and `spawn`; and `spawns`, one per Agent spawn: give each spawn's `prompt` to one Agent spawn exactly as given, with its `agent` as the subagent type. Only that agent can read the message. `results` reports how earlier claims ended. `more` is true when more items are waiting. `in_progress` counts this session's claims still out. With no items, `next` says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
+      "description": "Claims up to `limit` waiting items for this session (claims last 5 minutes) and returns, for each, its id, address, need (classify or act), the agent to hand it to and `spawn`; and `spawns`, one per Agent spawn: give each spawn's `prompt` to one Agent spawn exactly as given, with its `agent` as the subagent type. Only that agent can read the message. `results` reports how earlier claims ended. `more` is true when more items are waiting. `in_progress` counts this session's claims still out; `progress` is a line to quote as given. With no items, `next` says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

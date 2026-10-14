@@ -214,9 +214,10 @@ def review_queue(
             " AND (state = 'held' OR (state = 'claimed' AND expires_at > ?))",
             (session_id, to_ts(now))).fetchone()[0])  # fmt: skip
         nxt = {} if out else _next(conn, session_id, now, grace, soon)
+        left = int(conn.execute(sql.replace("SELECT i.*", "SELECT COUNT(*)", 1),
+                                args).fetchone()[0])  # fmt: skip
+    p = _handed(session_id, round_id, len(out), busy, left)
     if out:
-        with _MEM:
-            _AWAITING.setdefault(session_id, set()).add(round_id)
         log.info("claude.claimed", session_id=session_id[:8], items=len(out))
     return {
         "items": out,
@@ -224,7 +225,37 @@ def review_queue(
         "more": len(same) > len(out) or (waiting and not out),
         "results": results,
         "in_progress": busy,
+        "progress": progress_line(p),
     } | nxt
+
+
+def _handed(session_id: str, round_id: str, n: int, busy: int, left: int) -> dict[str, Any]:
+    """Count a round that handed out `n` claims (none: nothing counted) and the session's
+    progress after it."""
+    with _MEM:
+        tally = _TALLY.setdefault(session_id, Tally())
+        if n:
+            _AWAITING.setdefault(session_id, set()).add(round_id)
+            tally.rounds += 1
+            tally.handed += n
+        return progress(tally, busy, left)
+
+
+def progress(t: Tally, in_progress: int, waiting: int) -> dict[str, Any]:
+    """A session's progress: counts only, no item IDs (as claude_eval)."""
+    return {"done": t.done, "handed": t.handed, "in_progress": in_progress, "waiting": waiting,
+            "round": t.rounds, "unread": t.unread, "mismatches": t.mismatches,
+            "late": t.late}  # fmt: skip
+
+
+def progress_line(p: dict[str, Any]) -> str:
+    """The line `/ecf-review` quotes after each round, so the session never counts for itself
+    (as `/ecf-eval`'s)."""
+    line = (f"{p['done']} done of {p['handed']} handed out, {p['in_progress']} in progress,"
+            f" {p['waiting']} waiting, round {p['round']}")  # fmt: skip
+    line += f", {p['mismatches']} mixed-up claims freed" if p["mismatches"] else ""
+    line += f", {p['unread']} unread claims freed" if p["unread"] else ""
+    return line + (f", {p['late']} late after an unread free" if p["late"] else "")
 
 
 def spawn_prompts(items: list[dict[str, Any]], tokens: list[str]) -> list[dict[str, str]]:
@@ -273,6 +304,23 @@ class Unread:
 
 
 _UNREAD: dict[str, dict[str, Unread]] = {}
+
+
+@dataclass
+class Tally:
+    """A session's counts for its `progress` line (in memory, as eval's `Run`): rounds that
+    handed out claims, claims handed out, submissions settled, and the frees and late agents
+    eval's line counts too."""
+
+    rounds: int = 0
+    handed: int = 0
+    done: int = 0
+    unread: int = 0
+    mismatches: int = 0
+    late: int = 0
+
+
+_TALLY: dict[str, Tally] = {}
 _MEM = threading.Lock()
 
 
@@ -287,6 +335,7 @@ def reset() -> None:
         _NEXT_CALL.clear()
         _CALLED.clear()
         _UNREAD.clear()
+        _TALLY.clear()
 
 
 def _grace(session_id: str, now: datetime) -> dict[str, datetime]:
@@ -441,6 +490,7 @@ def _free_unread(conn: sqlite3.Connection, clock: Clock, session_id: str, rows: 
     if not freed:
         return
     with _MEM:
+        _TALLY.setdefault(session_id, Tally()).unread += len(freed)
         mine = _UNREAD.setdefault(session_id, {})
         grace = _GRACE.setdefault(session_id, {})
         for r in freed:
@@ -546,6 +596,8 @@ def _late(clock: Clock, session_id: str, token: str, agent: str) -> None:
         grace[agent] = max(grace.get(agent, now), now + TAIL)
         first = not hit[0].late
         hit[0].late = True
+        if first:
+            _TALLY.setdefault(session_id, Tally()).late += 1
     if first:  # logged once per token (review R1): each a false free
         log.warning("claude.claim_unread_late", session_id=session_id[:8], round=hit[0].round,
                     agent=agent, after_s=round((now - hit[0].at).total_seconds()))  # fmt: skip
@@ -592,6 +644,7 @@ def _mismatch(conn: sqlite3.Connection, clock: Clock, row: sqlite3.Row, session_
         return
     with _MEM:
         _MISMATCHES[sid] = _MISMATCHES.get(sid, 0) + 1
+        _TALLY.setdefault(session_id, Tally()).mismatches += 1
         _FREED.setdefault(session_id, {})[str(row["token_hash"])] = (from_ts(row["expires_at"]),
                                                                       sid)  # fmt: skip
         mine = _GRACE.setdefault(session_id, {})
@@ -934,6 +987,8 @@ def _outcome(conn: sqlite3.Connection, clock: Clock, claim: sqlite3.Row, session
     with write_tx(conn):
         conn.execute("UPDATE claims SET outcome = ?, reported = 0 WHERE stable_id = ?"
                      " AND fence = ?", (status, sid, claim["fence"]))  # fmt: skip
+    with _MEM:
+        _TALLY.setdefault(session_id, Tally()).done += 1
     _audit(conn, clock, _item(conn, sid), "claude.submitted", session_id,
            {"need": claim["need"], "agent": claim["agent"], "outcome": status})  # fmt: skip
 
