@@ -1,13 +1,28 @@
 # v3.0.0 step 2: Jev live check, then adapter, key, pin, failures and logging (build plan)
 
-- **Status:** Draft 4, 2026-10-14, **approved by the operator 2026-10-14**. Draft 3 (Phase R P1-P32 applied) plus the operator's review
+- **Status:** Draft 5, 2026-10-14, **approved by the operator 2026-10-14**. Draft 4 (approved 2026-10-14, committed
+  `4d13ab1`) amended for the removal of Gemma and Ollama (operator decision 2026-10-14, R-D11 of
+  the removal plan; ADR 0031 to come): a Jev eval run has no actor (preset D's actor is measured
+  through `/ecf-eval --preset D`); comparisons are Jev vs C; the Ollama, `EXCLUSIVE`, battery and
+  `--no-actor` clauses go; corpus runs no longer exist (removal R-D5), so P5 holds by
+  construction plus a guard; step 4 dispatches in a new module (`pipeline.py` is removed). 2a and
+  2c, built and committed (`3617fc4`), are unchanged apart from `systemone.ask` going in the
+  removal. §2.2 still records `main` at `bc4468b`, before the removal.
+- Draft 4 history: Draft 3 (Phase R P1-P32 applied) plus the operator's review
   of draft 3: A (L10 isolation vs L9 determinism), B (first-case refusal message), C (rescore
   keeps `incomplete_reason` and `format`), and the small points (early-stop count, `accept`'s
   current tree, a spent waiting budget keeps a partial result, `systemone` line). The 15 choices
   in §12 are accepted as written (operator, 2026-10-14), including the two partial deviations
   noted there (P4 prefix note, P18 cancel).
-  - **Next:** the operator approves, then the build: 2a-2c on branch `jev-step2`; 2d written on its
-    own branch and merged after S4.
+  - **Next:** 2a-2c are built on `jev-step2` (based on
+    `4d13ab1`); S4 has merged (`f88971b`), so `jev-step2` is **rebased on `main`** and merged
+    with its own macOS gate before the removal starts (removal P7). 2d is written after the
+    removal merges (order: S4, `jev-step2`, the removal, then 2d; removal R-D2).
+  - **What the removal changes in 2a/2c's code (removal P7, done on the removal branch):**
+    `test_systemone.py` stops using `local_schema`; the AST import test's module list drops
+    `pipeline` and `modelq` (deleted; `find_spec` would return None); the import-linter
+    contract text names the step-4 dispatch module instead of `pipeline`; `systemone.PREAMBLE`
+    is inlined byte-identical, so Jev's prompt digest doesn't move.
   - Operator decisions: D1-D12 and the Phase R decisions P1-P32, both 2026-10-14
     (`state-archive/jev-step2/operator-decisions.md`).
   - Findings: `state-archive/jev-step2/review-findings.md`, with reviewer detail in `safety.md`,
@@ -24,7 +39,8 @@
   - Preset D, "Jev classifier + Claude actor": its eval path is here; its service path is step 4.
 - **Behind the eval only:** nothing in the service's classifier path calls Jev in step 2.
   - TypeSafe receives only the live check's invented text and the frozen synthetic set.
-  - Corpus (real-mail) runs with Jev are refused in the service itself (P5).
+  - Corpus (real-mail) runs no longer exist after the removal (R-D5); the service still refuses
+    an eval request that names a corpus session (P5).
   - Real mail first goes to TypeSafe through a preset D address, in step 4.
 - **Numbers:**
   - OD-503: step 2 design (D2-D12, P1-P32).
@@ -386,17 +402,18 @@ sequential except L11.
   beside `map_answers`.
 
 **Import direction (P9):**
-- `jev` → `systemone` → `classifier`.
+- `jev` → `systemone`. The removal drops `systemone.ask` and its `classifier` and `ollama`
+  imports, so `systemone` keeps only `questions`, `map_answers` and `PREAMBLE`, and the P9 cycle
+  can't form. Until then: `jev` → `systemone` → `classifier`.
 - A new import-linter contract forbids `ecf_server.classifier` from importing `ecf_server.jev`,
   indirect imports included.
-- Step 4's dispatch goes in `pipeline` (`pipeline.py:18`) or a new dispatch module, never inside
-  `classifier`, so no cycle can form.
-- The AST test (`test_systemone.py:227`) keeps `classifier`, `pipeline`, `modelq` and `actor`
-  free of `systemone` and `jev` until step 4, when `pipeline` (or the dispatch module) comes off
-  its list.
+- Step 4's dispatch goes in a new dispatch module, never inside `classifier`
+  (`pipeline.py` is removed with the local model, ADR 0031).
+- The AST test (`test_systemone.py:227`) keeps `classifier` and `actor` free of `systemone` and
+  `jev` until step 4 (`pipeline` and `modelq` leave the list when the removal deletes them).
 
-**Jev asks the effective v3 schema directly**, with no `local_schema`/`from_v2`. The Ollama path
-still asks v2 (P6).
+**Jev asks the effective v3 schema directly**, with no `local_schema`/`from_v2` (both leave the
+asking path with the removal; `from_v2` stays for old results and labels).
 
 **Plain HTTPS, not TypeSafe's SDK.** The SDK reads the env key, defaults to `jev-latest`, and its
 debug level logs bodies.
@@ -433,7 +450,8 @@ Keys aren't sent to the model.
 
 **`state`, format `s1`, in order:**
 1. `systemone.PREAMBLE`.
-2. The signals block (`signals.block`, the same wording and tokens as Gemma's).
+2. The signals block (`signals.block`: the fixed OD-483 wording and tokens, as Gemma got it
+   before the removal).
 3. Between `<<<EMAIL t>>>` and `<<<END EMAIL t>>>` (a fresh random token each request), what Claude
    gets (D1):
    - `From:` display name and address;
@@ -454,7 +472,6 @@ Keys aren't sent to the model.
 **Excerpt (P10):**
 - the stored excerpt as Claude gets it: `CLASSIFIER_CHARS` (1,500) characters, with no byte cut
   below that;
-- the 2,400-byte Ollama cap doesn't apply;
 - bytes matter only for the size refusal.
 
 **Format `s2`** (an object with `instructions`, `signals` and `email` {from, subject, date,
@@ -565,8 +582,8 @@ All numbers are placeholders, set in step 3 and recorded in SPEC §15.4.
 - Every wait is `stop.wait(delay)` on the injected `RUN.stop`, checked again before each try.
 - An in-flight try is bounded by its deadline and its result is discarded on stop. A true
   cancel of a sync httpx request from another thread isn't relied on (unverified as safe).
-- Battery pause: a Jev run with no local actor doesn't pause on battery (choice; it uses no
-  local model). With the Gemma actor on, the battery pause is as today.
+- Battery pause: none. A Jev run uses no local model, and the removal deletes the battery rules
+  (draft 5).
 
 **Ties:** a score tie goes to the higher level (`:157`). A choice outside the options is an
 unmapped answer.
@@ -659,43 +676,39 @@ the signals wording, the mapping digest and the pin.
 - `prompt_digest`;
 - `input_format` (the state format id);
 - `excerpt_cap` (character and header caps);
-- `schema_digest`, which is backend-aware: `schema.digest` (v3) for `jev`, v2 only for Gemma and
-  `systemone:`. It is also copied in `summary.jev`.
+- `schema_digest`: `schema.digest` (v3) for `jev`; old Gemma and `systemone:` results keep the
+  v2 digest they recorded (readable, not rescorable, removal R-D12). It is also copied in
+  `summary.jev`.
 - C runs write `input_format` too (`claude-v1`), so Jev-vs-C prints "different inputs".
 
-## 6. Stage 2d: eval wiring (written on its own branch now, merged after S4, P8, D10)
+## 6. Stage 2d: eval wiring (written after the removal merges, P8, D10, removal R-D2)
 
 **`ecf eval run --classifier-backend jev`.** Real code changes by function (P15):
 - **`Options.backend`:** `jev`; `decision_pin` returns the Jev pin.
-- **`start`:** the key is passed in from the route (P12). For `jev` with `--no-actor`: no
-  `ollama.readiness`, no `client_factory()` Ollama client.
-- **`_run`:** for `jev` with `--no-actor`:
-  - `ready = None`;
-  - `environment()` records `ollama: null` with no Ollama calls;
-  - `actor_digest` is None;
-  - `_hold` skips `modelq.EXCLUSIVE` but keeps the stop and runtime-cap checks;
-  - no battery pause (choice, §5.4).
-
-  With the Gemma actor on, everything is as today.
+- **`start`:** the key is passed in from the route (P12). After the removal the runner has no
+  Ollama readiness check, client or model queue to skip (removal R-D6).
+- **`_run`:** a Jev run classifies only; there is no actor in `ecf eval run` (D's actor is
+  measured through `/ecf-eval --preset D`). `actor_digest` is None; the stop and runtime-cap
+  checks stay; `environment()` records no model server.
 - **`_classify_with`:** a second except-arm for `jev.JevError`. `FATAL` gains the Jev vocabulary
   (`auth`, `pin`, `quota`, `long_wait`). A spent waiting budget isn't fatal: it stops the run
   with a partial result (§5.4).
 - **`summarize`:** faulted cases are scored (P1); `incomplete_reason` (P22).
 - **`schema_digest`:** backend-aware (P13).
 - **Refusals:**
-  - **P5:** corpus runs accept only local backends (`gemma`, `systemone:`), refused in the service
-    in `evalrun.start` and in `corpus_run` with "a corpus run is local only; real mail goes to Jev
-    only through a preset D address (step 4)". The CLI check (`cli.py:1277-1289`) mirrors it. A
-    service test posts `backend: jev` with a `corpus_session` to the socket.
+  - **P5:** the removal deletes corpus runs (R-D5). `evalrun.start` still refuses any request
+    naming a `corpus_session` with "corpus runs aren't available; real mail goes to Jev only
+    through a preset D address (step 4)". A service test posts `backend: jev` with a
+    `corpus_session` to the socket.
   - **P2, revising D6:** `--no-redact` with `jev` is allowed only with `--fraud-only` on the
-    synthetic set, as for Gemma (`_check_options`, `:525-526`), and refused on a corpus (P5). The
-    Claude eval gets no `--no-redact`.
+    synthetic set (`_check_options`, `:525-526`, which held the same rule for Gemma). The Claude
+    eval gets no `--no-redact`.
 - **Every field answered and the same signals block (OD-486):**
   - Jev is asked the effective v3 schema;
   - the mapper fails a case on a missing field;
-  - `sent` goes into the state (this also fixes the `systemone:` arm at `evalrun.py:1221`);
+  - `sent` goes into the state;
   - `--no-signals` is allowed for `jev` (R3);
-  - the other switches stay Gemma-only.
+  - the Gemma-only switches are gone with the removal.
 - **Measurement options:** `--jev-state s1|s2`, `--jev-preamble state|instructions` and
   `--jev-concurrency 1`. A non-default value makes the run `for_gate` false.
 - **Schema (D9):** a Jev run is refused unless the effective schema is the default.
@@ -711,14 +724,15 @@ the signals wording, the mapping digest and the pin.
   `backend == "jev"`, the pin, `prompt_digest`, `set_version`, `schema_digest` (v3),
   `complete == true` and `for_gate` not false, newest first, with the result file present.
   - Faulted source cases keep their failure (an empty answer is scored as a failure, as preset B
-    does). This matches P1.
+    did before the removal). This matches P1.
 - Comparison-only (an `eval-...` key) until step 4 adds D to `claude_pins.PAIR`. The
   `schema_digest`, `prompt_digest`, `input_format` and `excerpt_cap` are the source run's.
 
 **`ecf eval compare`:**
 - Prints the input differences through the top-level keys (P13).
 - Also prints the faulted count and `incomplete_reason` per side.
-- Jev vs C or Gemma is allowed.
+- Jev vs C is the comparison. An old Gemma result can still be compared as history (removal
+  R-D12).
 
 **Rescore (P3):**
 - Both rescore paths (`evalrun.py:1392-1410`, `:1532-1589`) keep every per-case field and summary
@@ -753,7 +767,7 @@ concurrency above 1, every D11 and P7 number.
 
 - **What reaches TypeSafe in steps 2-3:** only synthetic text.
 - **Real mail can't reach TypeSafe:**
-  - corpus runs with Jev are refused in the service (P5);
+  - corpus runs don't exist after the removal, and the service refuses a corpus session (P5);
   - step 2 has no D address.
 - **SPEC §12.4:**
   - the Jev line becomes "Built for the eval only (v3.0.0 step 2): what the eval sends", with
@@ -852,11 +866,10 @@ concurrency above 1, every D11 and P7 number.
 - the hints use the new form.
 
 **Eval (2d):**
-- a 5-case Jev run on the fake runs end to end with `--no-actor`, no Ollama and no `EXCLUSIVE`
-  hold;
+- a 5-case Jev run on the fake runs end to end (classifier only, no model server);
 - per-case metrics belong to their case;
 - signals and `--no-signals`;
-- a corpus run with `jev` is refused **through the socket** (P5);
+- a request naming a corpus session is refused **through the socket** (P5);
 - `--no-redact` is allowed with `--fraud-only` only;
 - a non-default schema is refused;
 - faulted cases are scored as failures and listed;
@@ -895,7 +908,6 @@ concurrency above 1, every D11 and P7 number.
 - the Jev eval backend;
 - preset D in `/ecf-eval`;
 - signals sent to decision models in the eval;
-- corpus runs are local only;
 - result format 2 (use the worktree's `ecf` for step-3 files);
 - the live-check result.
 
@@ -938,8 +950,8 @@ concurrency above 1, every D11 and P7 number.
 - **`jev-step2`** in `../ecf-jev`: 2a, 2b (the live check, from this branch's `accept`) and 2c.
   - Choice for the operator: merge `jev-step2` before S4 (its hunks are disjoint and it has its
     own macOS gate), or hold it for one merge after S4.
-- **2d** on `jev-step2d`, branched from `jev-step2`, written now, rebased onto `main` and merged
-  after S4 (P8).
+- **2d** on `jev-step2d`, branched from `main` after the removal merges (draft 5; was: written
+  now, merged after S4).
 - The §13 doc edits go in after S4 merges.
 - The two-agent diff review runs on the whole step-2 diff before step 3.
 
@@ -969,8 +981,8 @@ concurrency above 1, every D11 and P7 number.
 - **D4 (P8, P9):**
   - `jev.py` imports `systemone`'s builder and mapper, and nothing moves out of `systemone.py`.
   - The only `systemone` edit is `questions()`.
-  - "Classifier never imports jev" is an import-linter contract; step 4's dispatch goes in
-    `pipeline` or a new module.
+  - "Classifier never imports jev" is an import-linter contract; step 4's dispatch goes in a
+    new module (draft 5: `pipeline` is removed).
   - §5.1.
 - **D5 (P15):** preset D in `/ecf-eval` in 2d, comparison-only, with its own source-run query.
   §6.
@@ -1007,13 +1019,13 @@ concurrency above 1, every D11 and P7 number.
 | P6 | serial; `--jev-concurrency` 1; AIMD in `jev.py` | §5.4 |
 | P7 | `Retry-After` tiers, pacing, quota stop, minimal-POST probe, stops at once, early stop | §5.3, §5.4 |
 | P8 | real S4 overlap; `questions()` only; K edits after S4; 2d branch | §5.1, §10, §13 |
-| P9 | dispatch in `pipeline` or a new module; import-linter contract; nothing moves | §5.1 |
+| P9 | dispatch in a new module (draft 5; was `pipeline` or a new module); import-linter contract; nothing moves | §5.1 |
 | P10 | header lines; injection check on headers; excerpt in characters; date normalised | §5.2 |
 | P11 | live check in Terminal, 39 calls, one client, L8 billing, L9 fresh + fixed, L10 isolation, one sitting | §4 |
 | P12 | key read in the route, re-read, missing → stop, 5 s validation, Notice for both keys | §3, §5.1 |
 | P13 | backend-aware `schema_digest`; top-level keys; mapping digest | §5.7 |
 | P14 | `classifier_ms` = the successful try; `wait_ms`, `queue_ms`; n per concurrency | §5.5 |
-| P15 | real `evalrun` touches; D query; no Ollama or `EXCLUSIVE` without a local actor | §6 |
+| P15 | real `evalrun` touches; D query; (draft 5) no Ollama or `EXCLUSIVE` left to skip | §6 |
 | P16 | result `format` | §6 |
 | P17 | `httpx.Timeout`, deadline, keepalive 60 s | §5.1 |
 | P18 | interruptible waits; in-flight discarded | §5.4 |
@@ -1048,7 +1060,7 @@ cancelled; its result is discarded and its deadline bounds it).
 5. **The breaker ladder resets only after K successes,** and a refused try isn't spent.
 6. **A faulted safety card marks the run incomplete but doesn't stop it;** determinism repeats
    still run.
-7. **No battery pause for a Jev run with no local actor.**
+7. **No battery pause for a Jev run** (moot after the removal: no battery rules remain).
 8. **Date format:** RFC 3339 UTC; unparseable dates become `unknown`.
 9. **`s2` keeps the token delimiters inside `text`.**
 10. **The size estimator is tokens ≤ bytes;** the refusal limits are 30k and 62k.
@@ -1062,17 +1074,19 @@ cancelled; its result is discarded and its deadline bounds it).
 ## 13. Doc corrections step 2 makes (P8: after S4 merges; P28, P29)
 
 Find texts are quoted from `main`'s working tree. Line numbers are approximate, and S4 moves some.
+**Draft 5:** the removal's R0 rewrites PLANNING (draft 5) and SCH first, so each K edit is
+re-checked against those texts when 2d is written; K1 and K4b already read as below.
 
 | # | File, place | Find (verbatim) | Replace with | Source |
 |---|---|---|---|---|
-| K1 | PLANNING §4.3 Adapter (~243) | "`systemone.py` gains a hosted transport (plain HTTPS to api.typesafe.ai, the existing httpx pattern in `ollama.py:353-359`), beside the Ollama one." | "A new module `ecf_server/jev.py` holds the hosted transport (plain HTTPS to api.typesafe.ai, the remote httpx pattern in `model_watch.py:82-85`), the pin, the error classes and the circuit breaker that becomes the Jev-down signal; it imports `systemone`'s question builder and answer mapper, nothing moves out of `systemone.py`, and the Ollama path is untouched. `classifier` never imports `jev` (an import-linter contract); step 4 dispatches in `pipeline` or a new module (D4, P9, OD-503)." | D4, P9 |
+| K1 | PLANNING §4.3 Adapter (~243) | "`systemone.py` gains a hosted transport (plain HTTPS to api.typesafe.ai, the existing httpx pattern in `ollama.py:353-359`), beside the Ollama one." | "A new module `ecf_server/jev.py` holds the hosted transport (plain HTTPS to api.typesafe.ai, the remote httpx pattern in `model_watch.py:82-85`), the pin, the error classes and the circuit breaker that becomes the Jev-down signal; it imports `systemone`'s question builder and answer mapper, and nothing moves out of `systemone.py`. `classifier` never imports `jev` (an import-linter contract); step 4 dispatches in a new module (D4, P9, OD-503; ADR 0031)." | D4, P9 |
 | K1b | PLANNING §4.9 (~558) | "**Jev** gets the same questions through `systemone.py` (step 2)" | "**Jev** gets the same questions through `jev.py`, which uses `systemone`'s question builder (step 2)" | D4 |
 | K2 | PLANNING §4.3 Pin (~258) | "Jev joins the weekly model watch." | "`GET /v1/models` lists aliases only and versioned IDs are accepted unlisted (/models, read 2026-10-14), so the weekly watch can't see a pinned version retire; step 4/5 records the aliases' release dates, and a retired pin shows up as call errors (the eval stops on the first case)." | /models; P7 |
 | K2b | PLANNING §4.3 Switch back (~281) | "while down, the service probes Jev every 5 minutes with `GET /v1/models` (no" ... "The first success clears **down**" | "Jev-down is the adapter's circuit breaker open for `jev_down_after_minutes`; its probe, a minimal POST with no email content (the key-check call), runs at each cool-down end (30 s doubling to 5 min) and is the switch-back check; a long `Retry-After` is down at once (OD-503, D11, P7). *Service behaviour lands in step 4.*" | D11, P7, P29 |
 | K3 | PLANNING §4.3 Logging (~294) | "`model_calls` gains a backend column, the Jev model ID and TypeSafe's `request_id`;" | "`model_calls` gains a backend column and the Jev model ID (step 4); TypeSafe's request ID (the `x-typesafe-request-id` response header, /sdk/python/api/types/responses, read 2026-10-14) goes in the service log only (D7);" | SDK; D7 |
 | K3b | SCH §4 Transport (~185) | "`request_id` and `usage` only." | "the `x-typesafe-request-id` header (service log only) and `usage` only." | D7 |
 | K4 | SCH §4 Errors (~167-170) | "**Errors:** 401, 422 (validation), 429, 529 (overloaded); no 400 listed, and over-limit behaviour isn't documented (/api). The adapter maps 422 to a failed attempt and 429/529 to a provider fault (item waits); ecf's current over-context handling looks for HTTP 400 (`systemone.py:163`). Over-size behaviour is found by a live test." | "**Errors:** /api lists 401, 422, 429 and 529; TypeSafe's SDK also maps 400, 403, 404 and other 5xx (/sdk/python/api/exceptions, read 2026-10-14). Over-limit behaviour isn't documented and is found by the step-2 live check. Handling by class (OD-503): 429 rate limit (`Retry-After` tiers); 529, 5xx, timeouts and connection errors provider faults; 401 and 403 stop; 400, 404, 413 and 422 request errors (not retried, scored as failures; on the first case, a pin error that stops the run)." | SDK; D11, P1, P7, P29 |
-| K4b | PLANNING §4.3 Failures (~264-267) | "422 (validation) and an" / "answer that doesn't map are failed attempts, never a default. ecf's current over-context" / "handling looks for HTTP 400 (`systemone.py:163`); the hosted mapping follows the live check." | "400, 404, 413 and 422 are request errors (not retried) and an answer that doesn't map is a failed attempt; both are scored as failures, never a default (OD-503, P1). The Ollama decision-model path's HTTP 400 handling (`systemone.py:176-177`) is unchanged." | P1, P29 |
+| K4b | PLANNING §4.3 Failures (~264-267) | "422 (validation) and an" / "answer that doesn't map are failed attempts, never a default. ecf's current over-context" / "handling looks for HTTP 400 (`systemone.py:163`); the hosted mapping follows the live check." | "400, 404, 413 and 422 are request errors (not retried) and an answer that doesn't map is a failed attempt; both are scored as failures, never a default (OD-503, P1). The Ollama decision-model path and its HTTP 400 handling are removed (ADR 0031)." | P1, P29, ADR 0031 |
 | K5 | PLANNING §4.3 Failures (~268) | "Score ties and choices outside the options resolve toward more risk (as `systemone.py` does" / "today)." | "Score ties resolve toward more risk; a choice outside the options is a failed attempt (`systemone.py`, `map_answers`)." | code |
 | K6 | PLANNING §4.5 Gate keys (~349) | "where the questions digest covers the 7 fixed safety items, the 3 fixed workflow fields and" | "where the questions digest covers the 11 fixed fields (7 safety items, 3 workflow fields and `priority`, fixed for good by S4 D12), a mapping digest (thresholds, tie rule), and" | S4 D12; P13 |
 | K6b | SCH §7 Jev gate key (~293) | "field read by a rule that can hide mail (`HIDE_ACTIONS`, `rules.py:62`), the Jev pin and" | "field read by a rule that can hide mail (`HIDE_ACTIONS` in `rules.py`), `priority` (fixed, S4 D12), the mapping digest, the Jev pin and" | S4 D12; P29 (no line number) |
