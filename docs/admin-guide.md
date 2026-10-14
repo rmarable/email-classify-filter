@@ -162,12 +162,95 @@ ecf rules test rules.yaml        # run proposed rules on the synthetic set; show
 ecf config apply config.yaml     # validated, diff shown, step-up, announced in Slack
 ```
 
-**Rules** (from v3.0.0, SPEC §8.6, OD-500): ecf's fixed rules (fraud guard, regulatory, weak
-fraud, unverified payment sender, the junk rule) always run first; your file replaces only the
-default rules. It can't reuse a fixed rule's id, can't test a removed value (`category`
+**Rules** (from v3.0.0, SPEC §8.6, OD-500, OD-502): three layers, in order:
+
+1. ecf's fixed rules (fraud guard, regulatory, weak fraud, unverified payment sender, the junk
+   rule), always first;
+2. your rules with new ids, in your file's order;
+3. ecf's default rules (`bug_report`, `invoice`, `payment_confirmation_remittance`,
+   `account_security`, `shipping`, `appointment_school_family`, `travel_finance`, `marketing`,
+   `automated_notification`, `requires_reply`, `otherwise`), in their own order. A rule in your
+   file with a default's id **replaces** that default where the default runs (rename it to keep
+   both); `default_rules_off: [marketing, ...]` beside `rules:` turns defaults off.
+
+A file whose **last rule has no `when`** matches everything, so the default rules never run: your
+file replaces them (as before v3.0.0). A rule with no `when` anywhere else, or one with a
+default rule's id, is refused. Only a bare last rule counts: a last rule like
+`{field: requires_reply, in: [true, false]}` also matches everything but isn't recognised, and the
+default rules would be added after it, unreachable. `ecf config apply` refuses an off list naming
+an id that isn't a default rule, `otherwise` or a fixed rule, an id both in your file and in the
+off list, and an off list in a file that replaces the defaults; the dry run says which layout
+applies, each default you replace (and where it runs), each one turned off, and your rules that
+can hide mail. A file can't reuse a fixed rule's id, can't test a removed value (`category`
 `vendor_change_request`, `regulatory`, `spam_or_phishing`; `sender_type` `team`: use
 `bank_detail_change`, `regulator_claim`, `phishing` or `claims_internal: true`), and needn't end
-with a catch-all (ecf adds one).
+with a catch-all (ecf adds `otherwise`). A condition on `category`, `sender_type` or one of your
+fields is **unknown** when the classification lacks the field or holds a value it doesn't have,
+and `not` over unknown is unknown, so it never matches. Default rule ids are part of the
+rules-file format: a release that renames one is a major version, and until you change your file
+an off id ecf no longer knows is skipped with an `ecf doctor` warning.
+
+**A rules file applied before v3.0.0's layering** without a rule with no `when` at the end now
+runs before the default rules instead of replacing them. The dry run of any `ecf config apply`
+and `ecf doctor` say so until you apply rules again; end the file with `- {id: otherwise, actor:
+continue}` to keep the old meaning.
+
+**Your own fields** (preset C only; SPEC §7.1, §9.7, OD-502; built behind a switch, on in v3.0.0
+only if its measurement passes, SPEC §1.5a item 2b). The `schema` section adds fields (enum,
+ordinal or boolean) and `category` values on top of ecf's fields:
+
+```yaml
+schema:
+  fields:
+    contract_stage:
+      type: enum
+      description: Where a contract discussed in the email stands.
+      values:
+        draft: A draft is being exchanged.
+        signed: Both sides have signed.
+        other: No contract, or one at another stage.
+    vendor_tier:
+      type: ordinal
+      description: How much we rely on the sender as a supplier.
+      levels: {minor: An occasional supplier., key: A supplier we rely on.}
+    needs_signature: {type: boolean, description: The email asks us to sign something.}
+  category_values:
+    legal_notice: Letter from a lawyer or court about us.
+```
+
+- **Descriptions everywhere:** every field, value and level needs one (an ordinal's `levels` are
+  a mapping of level to text, not a list), one line of plain ASCII text, at most 180 characters.
+- **Catch-alls:** give each enum field `other`, `unknown` or `none` (a warning otherwise); those
+  three may repeat another field's value. Other added values need new names (not another field's
+  value, a field's name, a built-in label, or a fixed, default or applied rule's id). A rule that labels from
+  your field (`{label: {field: contract_stage}}`) is refused when its values repeat another
+  field's value or a label name.
+- **Names you can't use or mention:** you can't add or change ecf's fields. A description can't
+  refer to one of ecf's 11 fixed fields (`fraud_risk`, `payment_related`, `priority`,
+  `requires_action`, `requires_reply`, `deadline_mentioned`, `bank_detail_change`,
+  `regulator_claim`, `phishing`, `claims_internal`, `private_individual`) by its field name:
+  the classifier reads descriptions as instructions. A name with an underscore counts wherever
+  it appears; `priority` and `phishing` count only written as a field (in backticks; quoted or
+  marked up, as `"phishing"` or `**priority**`, before `:`, `=`, `->` or `=>`; after `set`; or
+  before one of its values: `phishing true`, `priority (high)`); any case.
+  The same words in plain English ("a high priority customer", "phishing attempts") only warn,
+  as does naming `category`, `sender_type` or another of your fields.
+- **Caps:** 8 fields, 16 values or levels each, 4 category values, 180 characters per
+  description, 4,000 characters of prompt text. The dry run and `ecf doctor` print the bytes of
+  schema each Claude classification carries (7,663 shipped; about 13 KB at the caps).
+- **Preset C only:** refused while any address is preset A or B (the local model isn't measured
+  with them), and an A or B address can't be added while they are applied. Preset C has no local
+  fallback: `claude_queue_timeout` can't be turned on for a C address (C is Claude-only).
+- **Gate cost of an edit:** any change, a description typo included, drops live C addresses to
+  `assist`, and live needs a passing `/ecf-eval` run (full or `--fraud-only`) and 100 reviews
+  (200 on `high`) again; the step-up dialog says so per address. Step 4 of v3.0.0 narrows this.
+- **Privacy:** your field and value names and descriptions go to Anthropic with each Claude
+  classification request, and the chosen values with each actor request; never put email content
+  or secrets in them. The names also go to Slack (the Fix form, review lines).
+- **Import and restore** leave out a bundle's fields and the rules that use them (both named in
+  the output, with the count of rules): apply your config file again here.
+- **Not yet** (S4b, after v3.0.0): turning off or replacing the values of `category` or
+  `sender_type`.
 
 A change to a template or the forward allow-list makes sends approved before it fail at execution
 (OD-317).
@@ -192,8 +275,9 @@ a Security Notice). The audit log and items with fraud or regulator signals are 
 | `live` | full policy | `ecf stage set <a> live` (step-up, the go-live gate) |
 
 The gate (SPEC §9.3): `standard` needs 100 reviewed items at ≥ 85% accuracy, `high`
-200 at ≥ 90% (from v3.0.0 accuracy is the share of reviews with no Fix; before, category
-accuracy; the upgrade clears earlier passes), and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
+200 at ≥ 90% (from v3.0.0 accuracy is the share of reviews whose Fix changed none of ecf's
+fixed fields, `category` or `sender_type`, so a Fix to one of your own fields doesn't count against
+it; before, category accuracy; the upgrade clears earlier passes), and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
 injection set at 0 on the synthetic eval for the address's model pair. `stage set live` names a missing eval
 result. `--override --reason <text>` waives the review count or accuracy, never the safety gates.
 `--held run|resolve-older|resolve-all` decides what happens to held emails (default `run`: up to 7

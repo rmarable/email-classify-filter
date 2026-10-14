@@ -12,7 +12,11 @@ V1.5 step 9c).
    `failed_unknown`; Slack routes and open alerts dropped (alerts describe the other computer);
    `eval_runs.path` cleared (the file stayed behind); `origin` set on items and audit rows
    (OD-358, OD-360). Addresses, settings kept by the allow-list and the security-relevant config
-   (through the `config apply` checks) are validated (OD-359).
+   (through the `config apply` checks) are validated (OD-359). A bundle's own schema fields
+   (`config.schema`) are dropped from the staged copy and named in the output (v3.0.0 S4, P11,
+   OD-502: no stored-but-unused copy): on an install with a preset A or B address they can't be
+   used (D8); on a C-only one they need `ecf config apply` (dialog, step-up, Security Notice)
+   before they reach the classifier. Restore does the same.
 3. **One transaction** on the live database: with `--replace`, the target's address and item data
    is cleared (children first); the temporary database's tables are copied in; kept settings
    overwrite the target's; any failure rolls everything back (OD-361). Then each re-posted item
@@ -99,7 +103,7 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         staged = db.connect(Path(tmp.name))
         try:
             try:
-                _stage(staged, parsed, source, to_ts(clock.now()))
+                dropped = _stage(staged, parsed, source, to_ts(clock.now()))
                 kept = kept_settings(staged)
                 config_doc = validate(staged, kept)
             except sqlite3.Error as exc:  # malformed JSON in a row, a value of the wrong type
@@ -128,19 +132,22 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
             " re-enter app passwords and reconnect Slack.")  # fmt: skip
     if changes:
         text += f" Security-relevant config changed: {config.summary(changes, 200)}."
+    if dropped:
+        text += f" {dropped['text'][0].upper()}{dropped['text'][1:]}."
     export_keys.notice(conn, clock, notifier, text + " If this wasn't you, check the computer"
                                                      " ecf runs on.")  # fmt: skip
     return {"source_install": source, "counts": counts, "config_changes": changes,
-            "replace": replace}  # fmt: skip
+            "replace": replace, "schema_dropped": dropped}  # fmt: skip
 
 
 # ---- staging ------------------------------------------------------------------------------------
 
 
-def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> None:
+def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> dict[str, Any] | None:
     """Load the bundle's rows into a temporary database built at its schema version, then bring
-    it up to date with the normal migrations (OD-355), and convert applied rules from v2 as the
-    service does at start (`config.convert_rules`, P7; OD-500). Restore uses this too."""
+    it up to date with the normal migrations (OD-355), drop the bundle's own schema fields
+    (`drop_schema`, P11), and convert applied rules from v2 as the service does at start
+    (`config.convert_rules`, P7; OD-500). Restore uses this too. Returns what was dropped."""
     db.migrate(staged, up_to=int(parsed.manifest["schema_version"]))
     with write_tx(staged), db.items_writer("create"):
         for table in (*COPY, "routes", "alerts"):
@@ -151,19 +158,109 @@ def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> None:
         if rows:
             insert(staged, "settings", rows, replace=True)
     db.migrate(staged)
+    dropped = drop_schema(staged)
     config.convert_rules(staged, now, actor="import")
     items.map_imported(staged, import_plan.REPOST, import_plan.UNKNOWN)
     with write_tx(staged):
         staged.execute("UPDATE eval_runs SET path = ''")  # the result file stayed behind
+    return dropped
 
 
-def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str, now: str) -> None:
-    load(staged, parsed, now)
+def drop_schema(staged: sqlite3.Connection) -> dict[str, Any] | None:
+    """P11 (S4, OD-502), with review R1: the bundle's own schema fields and the applied rules
+    that read them, dropped together from the staged copy (the rules would no longer compile
+    without the fields, and refusing the bundle would make a C install's backup unrestorable);
+    the rest of the rules are kept and checked as before. What went, and why, for the output
+    (`schema_note`)."""
+    row = staged.execute("SELECT value FROM settings WHERE key = ?",
+                         (config.KEY["schema"],)).fetchone()  # fmt: skip
+    if row is None:
+        return None
+    ext: Any = json.loads(row[0])
+    local = [str(r[0]) for r in staged.execute("SELECT address_id FROM addresses WHERE removed_at"
+                                               " IS NULL AND preset IN ('A', 'B')")]  # fmt: skip
+    found = staged.execute("SELECT value FROM settings WHERE key = ?",
+                           (config.KEY["rules"],)).fetchone()  # fmt: skip
+    doc: Any = json.loads(found[0]) if found else None
+    gone = rules_on_fields(doc, ext)
+    with write_tx(staged):
+        staged.execute("DELETE FROM settings WHERE key = ?", (config.KEY["schema"],))
+        if gone:
+            listed = cast("list[Any]", cast("dict[str, Any]", doc)["rules"])
+            kept: list[Any] = [r for r in listed if not (
+                isinstance(r, dict) and cast("dict[str, Any]", r).get("id") in gone)]  # fmt: skip
+            if kept:
+                staged.execute("UPDATE settings SET value = ? WHERE key = ?",
+                               (config.canonical_json(cast("dict[str, Any]", doc)
+                                                      | {"rules": kept}),
+                                config.KEY["rules"]))  # fmt: skip
+            else:  # nothing left: the default rules apply
+                staged.execute("DELETE FROM settings WHERE key = ?", (config.KEY["rules"],))
+    return schema_note(ext, local, gone)
+
+
+def rules_on_fields(doc: Any, ext: Any) -> list[str]:
+    """The ids of the rules in a rules document that read the extension `ext`: a condition (or
+    a `{label: {field: x}}`) on one of its fields, or a `category` condition on a value it adds."""
+    d = cast("dict[str, Any]", ext) if isinstance(ext, dict) else {}
+    fields = set(cast("dict[str, Any]", d.get("fields") or {}))
+    cats = set(cast("dict[str, Any]", d.get("category_values") or {}))
+    listed: Any = cast("dict[str, Any]", doc).get("rules") if isinstance(doc, dict) else None
+    if not isinstance(listed, list):
+        return []
+
+    def reads(node: Any) -> bool:
+        if isinstance(node, list):
+            return any(reads(x) for x in cast("list[Any]", node))
+        if not isinstance(node, dict):
+            return False
+        n = cast("dict[str, Any]", node)
+        f = n.get("field")
+        if isinstance(f, str) and f in fields:
+            return True
+        if f == "category":
+            vals: list[Any] = []
+            for op in ("eq", "in"):
+                v = n.get(op)
+                vals += cast("list[Any]", v) if isinstance(v, list) else [v]
+            if any(isinstance(v, str) and v in cats for v in vals):
+                return True
+        return any(reads(v) for k, v in n.items() if k != "id")
+
+    return [str(cast("dict[str, Any]", r).get("id")) for r in cast("list[Any]", listed)
+            if isinstance(r, dict) and reads(r)]  # fmt: skip
+
+
+def schema_note(ext: Any, local: list[str], rules_gone: list[str] | None = None) -> dict[str, Any]:
+    """What the import and restore output say about a bundle's schema fields, and the rules
+    reading them, that they leave out."""
+    d = cast("dict[str, Any]", ext) if isinstance(ext, dict) else {}
+    fields = sorted(str(k) for k in cast("dict[str, Any]", d.get("fields") or {}))
+    cats = sorted(str(k) for k in cast("dict[str, Any]", d.get("category_values") or {}))
+    gone = list(rules_gone or [])
+    named = ", ".join(fields) or "none"
+    also = f"; category values {', '.join(cats)}" if cats else ""
+    what = f"the bundle's own schema fields ({named}{also})"
+    if gone:
+        what += (f" and the {len(gone)} rule{'s' if len(gone) != 1 else ''} that read them"
+                 f" ({', '.join(gone[:5])}{' +more' if len(gone) > 5 else ''})")  # fmt: skip
+    if local:
+        why = f"not imported: {', '.join(local[:5])} use preset A or B, and {config.LOCAL_REASON}"
+    else:
+        why = ("not imported: re-apply your config file (fields and rules) with ecf config apply"
+               " (a dialog, step-up and a Security Notice) before ecf uses them")  # fmt: skip
+    return {"fields": fields, "category_values": cats, "rules": gone, "text": f"{what}: {why}"}
+
+
+def _stage(staged: sqlite3.Connection, parsed: Parsed, source: str,
+           now: str) -> dict[str, Any] | None:  # fmt: skip
+    dropped = load(staged, parsed, now)
     with write_tx(staged):
         staged.execute("UPDATE addresses SET paused = 1, outbound = 0, stage ="
                        " CASE WHEN stage = 'live' THEN 'assist' ELSE stage END")  # fmt: skip
         staged.execute("UPDATE items SET origin = ?", (source,))
         staged.execute("UPDATE audit SET origin = ?", (source,))
+    return dropped
 
 
 def insert(c: sqlite3.Connection, table: str, rows: list[dict[str, Any]], *,
@@ -211,7 +308,7 @@ def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]
     doc = {section_of[k]: json.loads(v) for k, v in kept.items() if k in section_of}
     if doc:
         try:
-            return config.validate(staged, doc, imported=True)  # an extension: kept, ignored
+            return config.validate(staged, doc, imported=True)  # no schema: `drop_schema`
         except (InvalidInputError, SchemaLimitError) as exc:  # an extension over a cap too
             raise BadBundleError(f"the bundle's config fails its checks: {exc.detail}") from None
     return {}

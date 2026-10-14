@@ -67,6 +67,7 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         if done["config_changes"]:
             typer.echo("config changed: " + "; ".join(
                 f"{ch['section']}: {ch['change']}" for ch in done["config_changes"]))  # fmt: skip
+        _schema_dropped(done)
         typer.echo("next: ecf address set <address> --app-password, reconnect Slack (ecf slack"
                    " set-tokens), then ecf resume <address> for each")  # fmt: skip
 
@@ -111,6 +112,7 @@ def restore(paths: Paths, path: str) -> dict[str, Any]:
     typer.echo(f"restored {n.get('addresses', 0)} address(es) and {n.get('items', 0)} emails;"
                f" generation {done['generation']}; {n.get('reposted', 0)} approval(s) to decide"
                " again")  # fmt: skip
+    _schema_dropped(done)
     if done["safety_copy"]:
         typer.echo(f"the data from before is kept for 7 days: {done['safety_copy']}")
     typer.echo("next, for each address: ecf address set <address> --app-password, ecf check"
@@ -131,6 +133,7 @@ def _print_restore(r: dict[str, Any]) -> None:
                    f" {a['stage']}, outbound {'on' if a['outbound'] else 'off'}")  # fmt: skip
     for ch in r["config_changes"]:
         typer.echo(f"  config {ch['section']}: {ch['change']}")
+    _schema_dropped(r)
     sd = r["senders"]
     if any(sd.values()):
         typer.echo(f"  sender records: {sd['added']} added, {sd['removed']} removed,"
@@ -143,6 +146,13 @@ def _print_head(h: dict[str, Any]) -> None:
                f" (seq {h.get('seq')}, schema {h.get('schema_version')})")  # fmt: skip
     if h["claims_this_install"] and not h["own"]:
         typer.echo("warning: it names this install but isn't signed by this install's key")
+
+
+def _schema_dropped(r: dict[str, Any]) -> None:
+    """A bundle's own schema fields aren't carried over (v3.0.0 S4, P11): what and why."""
+    note: dict[str, Any] | None = r.get("schema_dropped")
+    if note:
+        typer.echo(f"  {note['text']}")
 
 
 def _print_preview(r: dict[str, Any]) -> None:
@@ -163,5 +173,6 @@ def _print_preview(r: dict[str, Any]) -> None:
     typer.echo("not carried over:")
     for line in r["not_carried"]:
         typer.echo(f"  - {line}")
+    _schema_dropped(r)
     if not r["target_empty"]:
         typer.echo("this install isn't empty: importing needs --replace")

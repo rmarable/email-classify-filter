@@ -118,9 +118,10 @@ def in_use(conn: sqlite3.Connection) -> bool:
 def local_key(schema: CompiledSchema | None = None) -> str:
     """The local model's gate and eval key: its pinned Ollama digest, the schema it is asked
     with (the schema digest joins the gate key, OD-475) and the classifier's prompt digest
-    (plan 0.3): a new schema, a change to the install's extension (OD-478) or new wording is a
-    new gate; a keyword patch isn't (Q3). The schema is the one the model is asked
-    (`local_schema`): schema v3 asks it v2, so v3 alone isn't a new local gate (P6, OD-498).
+    (plan 0.3): a new schema or new wording is a new gate; a keyword patch isn't (Q3). The
+    schema is the one the model is asked (`local_schema`): schema v3 asks it v2, so v3 alone
+    isn't a new local gate (P6, OD-498), and never the install's own fields (v3.0.0 S4, D8), so
+    they don't move A's or B's key (C's pins hold the whole effective schema, below; D3).
     Callers with a connection pass `config.current_schema(conn)`; without one it is the shipped
     schema."""
     from ecf_server import classifier  # noqa: PLC0415 - classifier imports this module

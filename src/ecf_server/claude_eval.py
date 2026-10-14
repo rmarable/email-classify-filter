@@ -59,7 +59,7 @@ from ecf.eval.results import (
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import CompiledSchema, from_v2, load_schema_v2, local_schema
+from ecf.schema import CompiledSchema, from_v2, load_schema_v2, local_schema, read_bytes
 from ecf_server import (
     actor,
     alerts,
@@ -124,6 +124,7 @@ class Claim:
     high_risk: tuple[policy.HighRiskReason, ...] = ()  # an act claim's reasons (§8.2)
     # an agent called under it, or named it with a mixed-up token: its spawn runs (OD-501)
     called: bool = False
+    invalid: int = 0  # submissions refused before its outcome (S4, P19: M2's criterion 1)
 
 
 @dataclass
@@ -493,6 +494,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["schema_digest"] = asked.digest
     if run.opts.preset == "C":  # what Claude was asked with (Q4); B's is its source run's
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)
+        summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields too (R9)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()
@@ -522,7 +524,7 @@ def _claim_records(run: Run, w: Work) -> list[ClaimRecord]:
     return [ClaimRecord(stage=c.stage, spawn=c.spawn, round=c.round, session=c.session,
                         preparing=c.preparing, claimed_s=s(c.claimed) or 0.0, read_s=s(c.read),
                         answered_s=s(c.answered), settled_s=s(c.settled), outcome=c.outcome,
-                        high_risk=list(c.high_risk))
+                        high_risk=list(c.high_risk), invalid=c.invalid)
             for c in w.claims]  # fmt: skip
 
 
@@ -989,6 +991,8 @@ def _invalid(run: Run, w: Work, errors: list[str], digest: str) -> dict[str, Any
     """As `/ecf-review`: 3 tries per claim; after the last, the case is scored as the local
     model's failures are (no classification, or no proposal)."""
     w.invalid += 1
+    if w.claims:  # counted per claim for the result (P19)
+        w.claims[-1].invalid += 1
     ended = w.invalid >= claude_review.INVALID_MAX
     reply = {"accepted": False, "errors": errors,
              "tries_left": 0 if ended else claude_review.INVALID_MAX - w.invalid}  # fmt: skip

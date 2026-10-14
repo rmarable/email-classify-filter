@@ -321,8 +321,10 @@ def test_s3_accuracy_is_reviews_with_no_fix(conn: sqlite3.Connection, clock: Fak
     g = gate.compute(conn, "ap")
     acc = next(c for c in g.checks if c.name == "accuracy")
     assert not acc.ok and g.correct == 80
-    assert acc.detail.startswith("80% accurate, reviews with no Fix (need 85%")
-    assert "fixed fields 80%, category 100% (not gated)" in acc.detail
+    assert acc.detail.startswith("80% accurate, reviews with no Fix to a fixed or default field"
+                                 " (need 85%")  # fmt: skip
+    # items and the other fixed fields apart (P22)
+    assert "items 80%, fields 100%, category 100% (not gated)" in acc.detail
 
 
 def test_s3_the_gate_version_is_an_input(conn: sqlite3.Connection, clock: FakeClock,
@@ -330,9 +332,42 @@ def test_s3_the_gate_version_is_an_input(conn: sqlite3.Connection, clock: FakeCl
     """A gate computed under the old accuracy definition isn't reused (P4, OD-500)."""
     make_address(conn, clock, "assist")
     before = gate.inputs(conn, "ap", DIGEST)
-    assert before[0] == gate.GATE_VERSION == 2
-    monkeypatch.setattr(gate, "GATE_VERSION", 3)
+    assert before[0] == gate.GATE_VERSION == 3  # S4, D4 (OD-502)
+    monkeypatch.setattr(gate, "GATE_VERSION", 4)
     assert gate.inputs(conn, "ap", DIGEST) != before
+
+
+def test_s4_the_first_tick_under_a_new_version_writes_one_audit_row(
+        conn: sqlite3.Connection, clock: FakeClock) -> None:  # fmt: skip
+    """P30: `gate` rows carry no version, so the tick records the change once."""
+    make_address(conn, clock, "assist")
+    stages.tick(conn, clock)
+    stages.tick(conn, clock)
+    rows = conn.execute("SELECT data FROM audit WHERE event = 'gate.version'").fetchall()
+    assert [json.loads(r[0]) for r in rows] == [{"from": None, "to": 3}]
+    with write_tx(conn):
+        conn.execute("UPDATE settings SET value = '\"2\"' WHERE key = ?", (gate.VERSION_KEY,))
+    assert gate.note_version(conn, to_ts(clock.now())) is True
+    last = conn.execute("SELECT data FROM audit WHERE event = 'gate.version' ORDER BY id DESC"
+                        " LIMIT 1").fetchone()[0]  # fmt: skip
+    assert json.loads(last) == {"from": 2, "to": 3}
+
+
+def test_s4_a_fix_to_your_field_doesnt_count_against_the_gate(
+        conn: sqlite3.Connection, clock: FakeClock) -> None:  # fmt: skip
+    """D4: reviews whose only Fix was to one of your fields are accurate; they are counted."""
+    make_address(conn, clock, "assist")
+    _reviewed(conn, clock, 100)
+    with write_tx(conn):
+        conn.execute("UPDATE items SET review = ?, human_correction = ? WHERE stable_id IN"
+                     " (SELECT stable_id FROM items ORDER BY stable_id LIMIT 20)",
+                     (json.dumps({"verdict": "fixed", "category_ok": True, "bulk": False,
+                                  "gated_ok": True, "user_fixed": True}),
+                      json.dumps({"contract_stage": "none"})))  # fmt: skip
+    g = gate.compute(conn, "ap")
+    acc = next(c for c in g.checks if c.name == "accuracy")
+    assert acc.ok and g.correct == 100
+    assert "20 Fix(es) to your fields (not gated)" in acc.detail
 
 
 def test_recording_a_review_marks_the_email_changed(

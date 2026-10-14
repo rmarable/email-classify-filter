@@ -148,6 +148,41 @@ def test_a_new_prompt_affects_every_address(tmp_path: Path) -> None:
     assert none.pin_changes == ["prompt"]
 
 
+def test_s4_stored_fields_not_yet_used_list_their_c_addresses(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
+    """P11 (OD-502): the pre-check names the C addresses a stored, not yet used extension moves
+    to assist at the first start; a service from before S4 has no key and lists none."""
+    rel = upgrade_check.read_wheel(_wheel(tmp_path))
+    r = upgrade_check.compare(_state(extension_pending=["c2", "c1"]), rel, "0.1.0")
+    assert r.schema_pending == ["c1", "c2"] and r.affected == ["c1", "c2"]
+    assert upgrade_check.compare(_state(), rel, "0.1.0").schema_pending == []
+    ecf.cli_upgrade._print(rel, r, [])  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert "your own schema fields, stored but not yet used" in out and "c1, c2" in out
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_s4_the_service_state_lists_pending_c_addresses(conn: sqlite3.Connection,
+                                                        clock: FakeClock) -> None:  # fmt: skip
+    from ecf_server import config  # noqa: PLC0415
+
+    with write_tx(conn):
+        for aid, preset in (("a", "A"), ("c", "C")):
+            conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
+                         " created_at) VALUES (?, ?, 'standard', ?, 't')",
+                         (aid, f"{aid}@acme.example", preset))  # fmt: skip
+    assert upgrade_state.state(conn, clock, api_version=1, sessions=0)["extension_pending"] == []
+    ext = {"fields": {"x": {"type": "boolean", "description": "An x."}}}
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
+                     " ('config.schema', ?, 't', 't')", (config.ordered_json(ext),))  # fmt: skip
+    s = upgrade_state.state(conn, clock, api_version=1, sessions=0)
+    assert s["extension_stored"] is True and s["extension_pending"] == ["c"]
+    with write_tx(conn):  # in use already: nothing pending
+        config._mark_activated(conn, ext, "t")  # pyright: ignore[reportPrivateUsage]
+    assert upgrade_state.state(conn, clock, api_version=1, sessions=0)["extension_pending"] == []
+
+
 def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     with write_tx(conn), db.items_writer("create"):
         for aid, preset in (("a", "A"), ("b", "B"), ("c", "C")):

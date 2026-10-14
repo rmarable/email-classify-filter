@@ -194,6 +194,9 @@ def _config_commands(
             for ch in plan["changes"]:
                 typer.echo(f"{ch['section']}: {ch['change']}")
             _echo_schema(plan.get("schema"))
+            said: list[str] = plan.get("notes") or []  # warnings, privacy, rules layering (S4)
+            for note in said:
+                typer.echo(note)
             if not yes and not typer.confirm("Apply these changes?", default=False):
                 raise typer.Exit(1)
             with_step_up(c, lambda n: c.request("POST", "/v1/config/apply",

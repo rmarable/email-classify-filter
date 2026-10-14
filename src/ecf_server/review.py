@@ -10,7 +10,7 @@ each email right, which the go-live gate counts (V1.3 step 6b).
   priority, fraud risk, payment, the fixed items that hold; then `ext:` and the extension fields'
   values, kept short) and what ecf would do. The model's words are labelled as such.
 - **Buttons:** ✏️ Fix on every line opens a form to correct the classification (the shipped
-  fields in `FIXABLE`, then each extension field); ✅ Correct appears on
+  fields in `FIXABLE`, then each of your own fields, labelled "(yours)"); ✅ Correct appears on
   the lines "All others correct" may not confirm; **All others correct** confirms the rest of the
   post that you haven't fixed. A post holds at most 20 emails and at most 25 buttons (Slack's
   limit), so it lists fewer when many need their own button.
@@ -21,9 +21,13 @@ each email right, which the go-live gate counts (V1.3 step 6b).
   `ecf stage status` and the go-live dialog can show both.
 - A review is a person's statement about the model's output; it changes nothing in the mailbox.
   Audited `review.recorded`. First review wins.
-- **Accuracy** (the go-live gate's, §9.3; v3.0.0 S3, P4, OD-500): reviews with no Fix (verdict
-  `correct`) over reviews. Fixed-field accuracy (no Fix to a `FIXED_FIELDS` value) and category
-  accuracy are counted too, and reported, not gated.
+- **Accuracy** (the go-live gate's, §9.3; v3.0.0 S4, D4, P30, OD-502): reviews whose Fix changed
+  none of the 13 `FIXABLE` fields (the 11 fixed ones, `category`, `sender_type`) over reviews:
+  `gated_ok`, written at record time; a review from before S4 has no key and counts as its
+  verdict (`correct`, no Fix at all; then no user field existed). A Fix to one of your own fields
+  is counted (`user_fixed`) and reported, not gated. Fixed-item and fixed-field accuracy (no Fix
+  to a `FIXED_ITEMS` value, or to another `ecf.schema.FIXED_FIELDS` value; apart, so `priority`,
+  the noisiest field, doesn't hide the items, P22) and category accuracy are reported too.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.schema import FIXED_ITEMS, CompiledSchema, FieldKind, fixed_item
+from ecf.schema import FIXED_FIELDS, FIXED_ITEMS, CompiledSchema, FieldKind, fixed_item
 from ecf_server import (
     cards,
     claude_pins,
@@ -64,9 +68,9 @@ DEFAULT_SAMPLE = 10  # percent, after the gate count (§14)
 # the Fix form: the default fields, then the fixed ones (v3.0.0 S3, OD-500)
 FIXABLE = ("category", "priority", "sender_type", "fraud_risk", "payment_related", *FIXED_ITEMS,
            "requires_action", "requires_reply", "deadline_mentioned")  # fmt: skip
-# ecf's fixed fields (schema doc §1): the safety set and the workflow fields; fixed-field accuracy
-FIXED_FIELDS = ("fraud_risk", "payment_related", *FIXED_ITEMS, "requires_action",
-                "requires_reply", "deadline_mentioned")  # fmt: skip
+# the fixed fields that aren't items (`ecf.schema.FIXED_FIELDS`), for fixed-field accuracy (P22)
+FIXED_NOT_ITEMS = tuple(f for f in FIXED_FIELDS if f not in FIXED_ITEMS)
+YOURS = " (yours)"  # the Fix form labels your own fields so (S4, R36)
 ITEM_WORDS = {"bank_detail_change": "bank change", "regulator_claim": "regulator claim",
               "phishing": "phishing", "claims_internal": "claims internal",
               "private_individual": "private individual"}  # fmt: skip
@@ -99,35 +103,48 @@ def needs_own_review(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
 def reviewed(
     conn: sqlite3.Connection, address_id: str, digest: str | None = None
 ) -> dict[str, int]:
-    """Counts for `ecf stage status` and the gate: reviewed, with no Fix (`no_fix`, the gated
-    accuracy, P4), category correct, fixed fields correct (no Fix changed one, from the
-    classification and the correction), individual, bulk (only reviews of emails classified under
-    `digest` when it's given)."""
+    """Counts for `ecf stage status` and the gate: reviewed; `gated_ok`, the gated accuracy (no
+    Fix to a `FIXABLE` field, D4; `no_fix` its old name, kept); `user_fixed` (a Fix to one of
+    your fields); category correct; fixed items and the other fixed fields correct (no Fix
+    changed one, from the classification and the correction; P22); individual, bulk (only
+    reviews of emails classified under `digest` when it's given)."""
     rows = conn.execute("SELECT review, pinned_models, classification, human_correction FROM items"
                         " WHERE address_id = ?"
                         " AND json_extract(review, '$.verdict') IN ('correct', 'fixed')",
                         (address_id,)).fetchall()  # fmt: skip
-    out = {"reviewed": 0, "no_fix": 0, "category_ok": 0, "fixed_ok": 0, "individual": 0,
-           "bulk": 0}  # fmt: skip
+    out = {"reviewed": 0, "gated_ok": 0, "no_fix": 0, "user_fixed": 0, "category_ok": 0,
+           "fixed_ok": 0, "items_ok": 0, "fields_ok": 0, "individual": 0, "bulk": 0}  # fmt: skip
     for r in rows:
         if digest is not None and claude_pins.item_key(r["pinned_models"]) != digest:
             continue
         rv: dict[str, Any] = json.loads(r["review"])
         out["reviewed"] += 1
+        ok = rv.get("gated_ok")  # pre-S4: no key, and no user field to fix then (D4)
+        out["gated_ok"] += bool(ok) if isinstance(ok, bool) else rv.get("verdict") == "correct"
         out["no_fix"] += rv.get("verdict") == "correct"
+        out["user_fixed"] += bool(rv.get("user_fixed"))
         out["category_ok"] += bool(rv.get("category_ok"))
-        out["fixed_ok"] += fixed_fields_ok(r["classification"], r["human_correction"])
+        cls: dict[str, Any] = json.loads(r["classification"] or "{}")  # once per row (R10)
+        fix: dict[str, Any] = json.loads(r["human_correction"] or "{}")
+        out["fixed_ok"] += _unfixed(cls, fix, FIXED_FIELDS)
+        out["items_ok"] += _unfixed(cls, fix, FIXED_ITEMS)
+        out["fields_ok"] += _unfixed(cls, fix, FIXED_NOT_ITEMS)
         out["bulk" if rv.get("bulk") else "individual"] += 1
+    out["no_fix"] = out["gated_ok"]  # the gate's figure, under its old name too
     return out
 
 
-def fixed_fields_ok(classification: str | None, correction: str | None) -> bool:
-    """No Fix changed a fixed field (`FIXED_FIELDS`); a fixed item a classification lacks is
-    false (step 1c P13)."""
-    cls: dict[str, Any] = json.loads(classification or "{}")
-    fix: dict[str, Any] = json.loads(correction or "{}")
+def fixed_fields_ok(classification: str | None, correction: str | None,
+                    fields: tuple[str, ...] = FIXED_FIELDS) -> bool:  # fmt: skip
+    """No Fix changed one of `fields` (default every fixed field, `ecf.schema.FIXED_FIELDS`);
+    a fixed item a classification lacks is false (step 1c P13)."""
+    return _unfixed(json.loads(classification or "{}"), json.loads(correction or "{}"), fields)
+
+
+def _unfixed(cls: dict[str, Any], fix: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    """`fixed_fields_ok` on parsed dicts."""
     return all((cls.get(k) is True) == (v is True) if k in FIXED_ITEMS else cls.get(k) == v
-               for k, v in fix.items() if k in FIXED_FIELDS)  # fmt: skip
+               for k, v in fix.items() if k in fields)  # fmt: skip
 
 
 def progress(conn: sqlite3.Connection, address_id: str, sensitivity: str,
@@ -290,7 +307,12 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
     changed = {k: v for k, v in (correction or {}).items() if cls.get(k) != v}
     verdict = "fixed" if changed else "correct"
     now = to_ts(clock.now())
+    # D4, P30: accurate for the gate unless a Fix changed one of the 13 fixed and default fields
+    # (an absent fixed item is false, so a Fix to false isn't a change); your own fields reported
+    gated = {k for k, v in changed.items() if k in FIXABLE
+             and not (k in FIXED_ITEMS and cls.get(k) is None and v is False)}  # fmt: skip
     review = {"verdict": verdict, "category_ok": "category" not in changed, "bulk": bulk,
+              "gated_ok": not gated, "user_fixed": any(k not in FIXABLE for k in changed),
               "by": actor, "at": now}  # fmt: skip
     _set_review(conn, clock.now(), sid, review, changed or None)
     with write_tx(conn):
@@ -368,8 +390,9 @@ def _fix_form(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
         if current in choices:
             element["initial_option"] = {"text": {"type": "plain_text", "text": current},
                                          "value": current}  # fmt: skip
+        label = f.replace("_", " ") + (YOURS if f in schema.extension_fields else "")
         blocks.append({"type": "input", "block_id": f, "optional": True, "element": element,
-                       "label": {"type": "plain_text", "text": f.replace("_", " ")}})  # fmt: skip
+                       "label": {"type": "plain_text", "text": label}})  # fmt: skip
     return {"type": "modal", "callback_id": FIX, "private_metadata": click.ref,
             "title": {"type": "plain_text", "text": "Fix the classification"},
             "submit": {"type": "plain_text", "text": "Save"},

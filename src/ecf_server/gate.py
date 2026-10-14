@@ -6,11 +6,16 @@ digest and the Claude actors; C the Claude classifiers and actors; V1.4 step 2),
 key, so a change to any pin starts the count again and drops a `live` address to `assist`:
 
 - **Reviewed** (waivable by a go-live override, OD-234): at least 100 reviews on `standard`, 200 on
-  `high`, of emails classified by this digest; **accuracy** (reviews with no Fix, v3.0.0 S3, P4,
-  OD-500; category right before) at least 85% or 90%. The Wilson 95% lower bound, fixed-field
-  accuracy and category accuracy are shown, not gated. `GATE_VERSION` joins the gate's in-memory
-  inputs, so the tick recomputes a gate not yet passed; migration 0037 (S3b) clears every stored
-  `passed_at`, so no category-era pass carries over (P4).
+  `high`, of emails classified by this digest; **accuracy** at least 85% or 90%: reviews whose
+  Fix changed none of the 11 fixed fields, `category` or `sender_type` (`review.reviewed`'s
+  `gated_ok`; v3.0.0 S4, D4, OD-502; a Fix to one of your own fields is reported, not gated;
+  before S4 any Fix counted, S3, P4, OD-500; category right before that). The Wilson 95% lower
+  bound, the fixed items' and the other fixed fields' accuracy apart (P22), category accuracy
+  and the Fixes to your fields are shown, not gated. `GATE_VERSION` joins the gate's in-memory
+  inputs, so the tick recomputes a gate not yet passed; the first tick under a new version
+  writes an audit row (`gate.version`, P30; `gate` rows carry no version). Version 3 needs no
+  demotion: a version 2 pass counted every Fix, and no user field existed then. Migration 0037
+  (S3b) cleared every stored `passed_at`, so no category-era pass carries over (P4).
 - **Fraud-guard misses** (never waivable; OD-069): a reviewed email whose Fix gives labels that
   would have matched rules 1, 1a, 1b or 2 (fraud guard, unverified payment sender, weak fraud
   signal, regulatory) when the model's own labels matched none of them.
@@ -49,11 +54,14 @@ from ecf_server import (
     stepup,
 )
 from ecf_server.clock import to_ts
+from ecf_server.db import write_tx
 from ecf_server.rules import HIDE_ACTIONS
 
 PAIR = claude_pins.PAIR["A"]  # preset A's pair, as `ecf eval run` records it
-THRESHOLD = {"standard": 85, "high": 90}  # percent of reviews with no Fix (§9.3; P4)
-GATE_VERSION = 2  # 2: accuracy = reviews with no Fix (v3.0.0 S3, OD-500); 1: category right
+THRESHOLD = {"standard": 85, "high": 90}  # percent of reviews with no gated Fix (§9.3; D4)
+# 3: no Fix to a fixed or default field (S4, D4, OD-502); 2: no Fix (S3, OD-500); 1: category
+GATE_VERSION = 3
+VERSION_KEY = "gate.version"  # setting: the version the tick last computed under (P30)
 FRAUD_RULES = frozenset({"fraud_guard", "unverified_payment_sender", "fraud_weak", "regulatory"})
 # an item's pin key in SQL (`claude_pins.item_key`): `pin_key` from V1.4, the digest before
 ITEM_KEY = ("coalesce(json_extract(pinned_models, '$.pin_key'),"
@@ -117,11 +125,13 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
     digest = claude_pins.key(pins)
     c = review.reviewed(conn, address_id, digest)
     target, threshold = review.GATE_COUNT[sens], THRESHOLD[sens]
-    n, ok = c["reviewed"], c["no_fix"]
+    n, ok = c["reviewed"], c["gated_ok"]
     acc = 100 * ok / n if n else 0.0
     lo = 100 * wilson(ok, n)[0] if n else 0.0
-    shown = (f"; fixed fields {100 * c['fixed_ok'] / n:.0f}%, category"
-             f" {100 * c['category_ok'] / n:.0f}% (not gated)") if n else ""  # fmt: skip
+    yours = f", {c['user_fixed']} Fix(es) to your fields" if c["user_fixed"] else ""
+    shown = (f"; items {100 * c['items_ok'] / n:.0f}%, fields {100 * c['fields_ok'] / n:.0f}%,"
+             f" category {100 * c['category_ok'] / n:.0f}%{yours} (not gated)"
+             if n else "")  # fmt: skip
     misses = fraud_misses(conn, address_id, digest)
     unsafe = unsafe_proposals(conn, address_id, digest)
     checks = (
@@ -129,7 +139,8 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
         Check(
             "accuracy",
             n > 0 and acc >= threshold,
-            f"{acc:.0f}% accurate, reviews with no Fix (need {threshold}%; 95% lower bound"
+            f"{acc:.0f}% accurate, reviews with no Fix to a fixed or default field (need"
+            f" {threshold}%; 95% lower bound"
             f" {lo:.0f}%){shown}"
             if n
             else f"no reviews yet (need {threshold}% accurate)",
@@ -146,6 +157,22 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
     return Gate(
         address_id, sens, digest, checks, n, ok, misses, unsafe, preset, tuple(sorted(pins.items()))
     )
+
+
+def note_version(conn: sqlite3.Connection, now: str) -> bool:
+    """P30: once per new `GATE_VERSION`, an audit row (`gate.version`, from and to) when the
+    tick first recomputes under it, so a changed accuracy figure has a cause on record. True
+    when it wrote one."""
+    was = slack_admin.setting(conn, VERSION_KEY)
+    if was == str(GATE_VERSION):
+        return False
+    with write_tx(conn):
+        conn.execute("INSERT INTO audit (ts, event, actor, outcome, data) VALUES (?,"
+                     " 'gate.version', 'service', 'ok', ?)",
+                     (now, json.dumps({"from": int(was) if was.isdigit() else None,
+                                       "to": GATE_VERSION})))  # fmt: skip
+        slack_admin.put_setting(conn, VERSION_KEY, str(GATE_VERSION), now, actor="service")
+    return True
 
 
 def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any, ...]:

@@ -106,6 +106,15 @@ def extensions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", True)
 
 
+@pytest.fixture
+def extensions_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The user layer's switch off (OD-481, kept by OD-502 until M2), whatever the shipped value,
+    so tests of the switched-off behaviour pass both ways when it is flipped."""
+    import ecf.schema  # noqa: PLC0415
+
+    monkeypatch.setattr(ecf.schema, "EXTENSIONS_ENABLED", False)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def no_leaked_services() -> Iterator[None]:
     yield

@@ -18,14 +18,24 @@ are read through the same table. v1 stays loadable for results and labels made b
 (`load_schema_v1`). The safety core (`SAFETY_FIELDS`) is what policy, the fraud checks and the
 fixed rules rely on; the compiler refuses a shipped schema without it, or with a removed value.
 
-An install may extend the shipped schema through `ecf config apply` (`schema` section; SPEC
-§7.1, §9.7, OD-478): `extend_schema` appends the extension's fields after the shipped ones and
-its values to `category`; the extension's prompt text follows the shipped text, so the prompt
-prefix doesn't change. `check_extension` lists every violation of the caps and content rules.
+An install on preset C may add its own fields (the user layer, v3.0.0 S4, OD-502; SPEC §7.1,
+§9.7) through `ecf config apply` (`schema` section): `extend_schema` appends them after the
+shipped ones and their values to `category`; their prompt text follows the shipped text, so the
+prompt prefix doesn't change. `check_extension` lists every violation of the caps and content
+rules: a description on every field, value and level (an ordinal's levels are a mapping of level
+to text), no fixed field's name in a description (`FIXED_FIELDS`), new names for added values
+except the catch-alls (`CATCH_ALLS`, which a user field may reuse); `extension_warnings` lists
+what is allowed but likely wrong (an enum with no catch-all, a description naming a default or
+another user field). The fixed fields (`FIXED_FIELDS`: the safety set, `priority` and the workflow
+fields) and the default fields (`category`, `sender_type`) can't be changed; S4 only adds. The
+local model (presets A and B) is never asked user fields (`local_schema` is plain v2; the
+service refuses user fields while any A or B address exists, D8), and its answer is checked
+against `without_extension`.
 
-Extensions are built but off in v2.0.0 (OD-481; planned for v2.1.0): while `EXTENSIONS_ENABLED`
-is False the service refuses a `schema` section other than `default` and ignores a stored
-extension (the effective schema is the shipped one). The machinery here doesn't read the switch.
+The layer is behind one switch, `EXTENSIONS_ENABLED` (OD-481, kept by OD-502 until the S4
+measurement M2 passes): while it is False the service refuses a `schema` section other than
+`default` and ignores a stored extension (the effective schema is the shipped one). The
+machinery here doesn't read the switch.
 """
 
 from __future__ import annotations
@@ -35,7 +45,7 @@ import functools
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import resources
@@ -63,6 +73,15 @@ SAFETY_FIELDS = {
     "requires_reply": ("boolean", ()),
     "deadline_mentioned": ("boolean", ()),
 } | {name: ("boolean", ()) for name in FIXED_ITEMS}
+# ecf's fixed fields (schema doc §1; S4, OD-502): the safety set above, `priority` among them
+# (fixed for good, D12). A rule reads an absent one as false (`ecf_server.rules`); any other field
+# absent, or holding a value it doesn't have, is unknown (P14). A user description can't name one.
+FIXED_FIELDS = tuple(SAFETY_FIELDS)
+# The default fields: shipped and replaceable later (S4b), only added to in S4
+DEFAULT_FIELDS = ("category", "sender_type")
+# The catch-all values a user enum field should have one of, and may reuse although another field
+# has them (D15, P12)
+CATCH_ALLS = frozenset({"other", "unknown", "none"})
 
 
 # What a schema v1 value means in v2 (OD-475): only `sender_type: staff` was renamed; every
@@ -401,29 +420,27 @@ def load_schema_v2() -> CompiledSchema:
 
 
 def local_schema(schema: CompiledSchema) -> CompiledSchema:
-    """The schema the local model is asked for `schema` (P6): for the shipped v3, schema v2 with
-    the same extension (and the same fallback key), so preset A's prompt, `num_predict`, prompt
-    digest and gate key don't change with v3; its answer is completed with `with_fixed`. Any
+    """The schema the local model is asked for `schema` (P6): for the shipped v3, plain schema v2
+    (with the same fallback key), so preset A's prompt, `num_predict`, prompt digest and gate key
+    don't change with v3; its answer is completed with `with_fixed`. Never the install's user
+    fields (S4, D8: the local model isn't measured with them, SPEC §1.5a item 2; the service
+    refuses them while any A or B address exists), so A's and B's keys don't move with them. Any
     other version is asked as it is (v1, v2, the frozen v2.0.0 text)."""
     if schema.version != CURRENT_VERSION:
         return schema
-    base = _local_extended(_ext_json(schema.extension))
+    base = load_schema_v2()
     if schema.fallback_for is not None:
         base = dataclasses.replace(base, fallback_for=schema.fallback_for)
     return base
 
 
-def _ext_json(ext: dict[str, Any] | None) -> str | None:
-    return None if ext is None else json.dumps(ext, ensure_ascii=False)
-
-
-@functools.lru_cache(maxsize=8)
-def _local_extended(ext_json: str | None) -> CompiledSchema:
-    """Schema v2 with an extension, cached on its JSON in order: it was checked against v3,
-    whose field names include v2's and whose removed values it can't use (`_clashes`), so it
-    compiles on v2 too."""
-    base = load_schema_v2()
-    return base if ext_json is None else extend_schema(base, json.loads(ext_json))
+def without_extension(schema: CompiledSchema) -> CompiledSchema:
+    """What a local answer (asked `local_schema`, so without user fields) is checked against once
+    brought to v3: `schema` without the install's user fields and values (the shipped schema; P1).
+    A rule reads the absent user fields as unknown (P14). `schema` itself when it has none."""
+    if schema.extension is None:
+        return schema
+    return load_schema()
 
 
 @functools.cache
@@ -444,9 +461,11 @@ def load_schema_v2_0_0() -> CompiledSchema:
 
 # ---------------------------------------------------------------------------- extensions (OD-478)
 
-# The one switch (OD-481): off in v2.0.0, on from v2.1.0 once the extension check passes.
+# The one switch (OD-481; kept by OD-502, S4 C1): on only once the user layer's measurement (M2,
+# SPEC §1.5a item 2b) passes; off, a `schema` section other than `default` is refused.
 EXTENSIONS_ENABLED = False
-EXTENSIONS_OFF = "schema extensions arrive in v2.1.0 (SPEC §7.1); remove the `schema` section"
+EXTENSIONS_OFF = ("your fields are off in this release (SPEC §7.1, §1.5a); remove the `schema`"
+                  " section")  # fmt: skip
 
 
 def extensions_enabled() -> bool:
@@ -485,7 +504,7 @@ def _ext_text(fields: list[FieldSpec], category: list[tuple[str, str]]) -> str:
 
 
 def _check_text(text: Any, where: str, out: _Parsed) -> bool:
-    """A description: one printable line, not starting with - or :, within the cap."""
+    """A description: one printable ASCII line, not starting with - or :, within the cap."""
     if not isinstance(text, str) or not text.strip():
         out.problems.append(f"{where}: a description is required")
         return False
@@ -493,6 +512,10 @@ def _check_text(text: Any, where: str, out: _Parsed) -> bool:
     if not t.isprintable():
         out.problems.append(f"{where}: one line of printable text (no line breaks, control or"
                             " format characters)")  # fmt: skip
+        return False
+    if not t.isascii():  # review R2: look-alike letters (a Cyrillic i) and full-width marks
+        out.problems.append(f"{where}: plain ASCII text only (letters a-z, digits, ordinary"
+                            " punctuation)")  # fmt: skip
         return False
     if t[0] in "-:":
         out.problems.append(f"{where}: can't start with - or :")
@@ -509,6 +532,69 @@ class _Parsed:
     category: list[tuple[str, str]]
     problems: list[str]  # content rules
     limits: list[str]  # caps
+    warnings: list[str] = dataclasses.field(default_factory=list[str])  # allowed, likely wrong
+    texts: list[tuple[str, str]] = dataclasses.field(default_factory=list[tuple[str, str]])
+
+
+def _names_in(text: str, names: Any) -> list[str]:
+    """The names `text` mentions as whole words (case ignored): `fraud_risk`, not `fraud`."""
+    low = text.lower()
+    return [n for n in names if re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", low)]
+
+
+_WORD = r"(?<![A-Za-z0-9_]){}(?![A-Za-z0-9_])"
+_WRAP = r"[\"'*_`()\[\]]"  # quotes, markdown and brackets around a name (review R2)
+_SEP = r"(?::|=|->|=>|\u2192|\uff1a)"  # `:`, `=`, arrows, a full-width colon
+
+
+def fixed_as_field(text: str, name: str) -> bool:
+    """Whether `text` writes fixed field `name` as a field name (P10, operator decision
+    2026-10-14), not as plain English (case ignored, so `Priority: low` counts). A name with an
+    underscore (`fraud_risk`, `bank_detail_change`) is a field name wherever it stands as
+    a word. A one-word name (`priority`, `phishing`) is one only as an identifier: in backticks;
+    maybe quoted, marked up or bracketed (`"phishing"`, `'priority'`, `**priority**`) and
+    followed by `:`, `=`, `->`, `=>`, an arrow or a full-width colon; after `set`; or followed
+    (after any of those, maybe bracketed) by one of the field's values (`true`, `false`, `yes`,
+    `no` for a yes/no field; a level for an ordinal: `priority high`, `priority (high)`).
+    Anything else ("a high priority customer", "phishing attempts") is plain
+    English, which warns. Descriptions are printable ASCII (`_check_text`; review R2), so a
+    full-width colon or a look-alike letter can't slip past."""
+    word = _WORD.format(re.escape(name))
+    if "_" in name:
+        return re.search(word, text, re.IGNORECASE) is not None
+    kind, levels = SAFETY_FIELDS[name]
+    values = levels if kind == "ordinal" else ("true", "false", "yes", "no")
+    alts = "|".join(re.escape(v) for v in values)
+    # the name, maybe quoted or marked up (`"phishing"`, `'priority'`, `**priority**`, `(x)`);
+    # not inside a longer name (`x_priority`)
+    wrapped = (rf"(?<![A-Za-z0-9])(?<![A-Za-z0-9]_){_WRAP}*{re.escape(name)}{_WRAP}*"
+               r"(?![A-Za-z0-9])")  # fmt: skip
+    forms = (rf"`{re.escape(name)}`", rf"{wrapped}\s*{_SEP}", rf"(?<![A-Za-z0-9_])set\s+{word}",
+             rf"{wrapped}\s*(?:{_SEP}\s*)?{_WRAP}*(?:{alts})(?![A-Za-z0-9_])")  # fmt: skip
+    return any(re.search(f, text, re.IGNORECASE) is not None for f in forms)
+
+
+def _check_names(out: _Parsed, user_fields: list[str]) -> None:
+    """P10, D9b (as narrowed by the operator 2026-10-14): a description writing one of ecf's
+    fixed fields as a field name (`fixed_as_field`) is refused, since the classifier would read it
+    as an instruction about a field ecf relies on; one using a fixed field's name as plain
+    English (any case), or naming a default field or another user field, warns. Only literal
+    names are caught; values aren't checked (common words)."""
+    for where, text in out.texts:
+        fixed = [n for n in FIXED_FIELDS if fixed_as_field(text, n)]
+        if fixed:
+            out.problems.append(f"{where}: names ecf's fixed field{'s' if len(fixed) > 1 else ''}"
+                                f" {', '.join(fixed)}; a description of your own field or value"
+                                " can't refer to ecf's fixed fields (SPEC §12.4)")  # fmt: skip
+        own = ("category" if where.startswith("schema.category_values.")
+               else where.removeprefix("schema.fields.").split(".", 1)[0])  # fmt: skip
+        plain = [n for n in _names_in(text, FIXED_FIELDS) if n not in fixed]
+        other = plain + _names_in(text, [f for f in (*DEFAULT_FIELDS, *user_fields) if f != own])
+        if other:
+            out.warnings.append(f"{where}: mentions the field{'s' if len(other) > 1 else ''}"
+                                f" {', '.join(other)}; the classifier reads descriptions as"
+                                " instructions, so check it doesn't change how that field is"
+                                " answered")  # fmt: skip
 
 
 def _parse_ext(base: CompiledSchema, ext: Any, reserved: frozenset[str]) -> _Parsed:
@@ -541,7 +627,10 @@ def _parse_ext(base: CompiledSchema, ext: Any, reserved: frozenset[str]) -> _Par
         elif _check_text(d, where, out):
             added.append((where, v))
             out.category.append((v, str(d).strip()))
-    _clashes(base, added, reserved, out)
+            out.texts.append((where, str(d).strip()))
+    user_fields = [str(n) for n in rf if isinstance(n, str)]
+    _clashes(base, added, reserved, out, user_fields)
+    _check_names(out, user_fields)
     text = _ext_text(out.fields, out.category)
     if len(text) > MAX_EXT_TEXT:
         out.limits.append(f"schema: extension text {len(text):,} characters, limit"
@@ -574,19 +663,12 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
         return
     spec = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
     ok = _check_text(spec.get("description"), f"{where}.description", out)
+    if ok:
+        out.texts.append((f"{where}.description", str(spec["description"]).strip()))
     kind = spec.get("type")
     options = spec.get("values") if kind == "enum" else spec.get("levels")
-    count = 0
-    if kind in ("enum", "ordinal") and isinstance(options, dict):  # level texts: plan item 7
-        vals = cast(dict[Any, Any], options)
-        count = len(vals)
-        key = "values" if kind == "enum" else "levels"
-        for v, d in vals.items():
-            ok = _check_text(d, f"{where}.{key}.{str(v)[:40]}", out) and ok
-            if kind == "enum" and isinstance(v, str):  # levels never become labels
-                added.append((f"{where}.values.{v}", v))
-    elif kind == "ordinal" and isinstance(options, list):
-        count = len(cast(list[Any], options))
+    count, told = _options(kind, options, where, out, added)
+    ok = told and ok
     if count > MAX_EXT_VALUES:
         unit = "values" if kind == "enum" else "levels"
         out.limits.append(f"{where}: {count} {unit}, limit {MAX_EXT_VALUES}")
@@ -599,6 +681,33 @@ def _ext_field(base: CompiledSchema, name: Any, raw: Any, out: _Parsed,
         return
     if ok and count <= MAX_EXT_VALUES:
         out.fields.append(f)
+
+
+def _options(kind: Any, options: Any, where: str, out: _Parsed,
+             added: list[tuple[str, str]]) -> tuple[int, bool]:  # fmt: skip
+    """A user field's values or levels: how many, and whether every text passes. Each needs its
+    text (R10: an ordinal's levels a mapping, not a list); an enum with no catch-all warns."""
+    count, ok = 0, True
+    if kind in ("enum", "ordinal") and isinstance(options, dict):  # level texts: plan item 7
+        vals = cast(dict[Any, Any], options)
+        count = len(vals)
+        key = "values" if kind == "enum" else "levels"
+        for v, d in vals.items():
+            told = _check_text(d, f"{where}.{key}.{str(v)[:40]}", out)
+            if told:
+                out.texts.append((f"{where}.{key}.{str(v)[:40]}", str(d).strip()))
+            ok = told and ok
+            if kind == "enum" and isinstance(v, str):  # levels never become labels
+                added.append((f"{where}.values.{v}", v))
+        if kind == "enum" and not CATCH_ALLS & {str(v) for v in vals}:
+            out.warnings.append(f"{where}: no catch-all value ({', '.join(sorted(CATCH_ALLS))});"
+                                " without one the classifier must pick a value that may not"
+                                " fit")  # fmt: skip
+    elif kind == "ordinal" and isinstance(options, list):
+        count = len(cast(list[Any], options))
+        out.problems.append(f"{where}.levels: give each level its text (a mapping of level to"
+                            " description, low to high), not a list")  # fmt: skip
+    return count, ok
 
 
 def _bad_names(kind: Any, options: Any, where: str, out: _Parsed) -> bool:
@@ -624,11 +733,14 @@ def _bad_names(kind: Any, options: Any, where: str, out: _Parsed) -> bool:
 
 
 def _clashes(base: CompiledSchema, added: list[tuple[str, str]], reserved: frozenset[str],
-             out: _Parsed) -> None:  # fmt: skip
+             out: _Parsed, user_fields: Sequence[str] = ()) -> None:  # fmt: skip
     """An added value can't be any enum value of any field, a value schema v3 removed (S3b: the
     local model is still asked v2, which has them; an extension can't bring one back), a
     built-in label or a rule id: it may become a label (S8). Ordinal levels never become labels,
-    so `none` or `high` may repeat one."""
+    so `none` or `high` may repeat one. A user field's catch-all (`CATCH_ALLS`) may repeat
+    another field's (D15, P12): a rule that labels from such a field is refused instead
+    (`ecf_server.config`); an added `category` value still needs a new name. Nor can an added
+    value take a field's name, ecf's 13 or the user's own (review R7)."""
     taken: dict[str, str] = {}
     for f in base.fields.values():
         if f.kind is FieldKind.ENUM:
@@ -639,7 +751,14 @@ def _clashes(base: CompiledSchema, added: list[tuple[str, str]], reserved: froze
             taken.setdefault(v, f"a value of {name} removed in v3")
     for v in reserved:
         taken.setdefault(v, "a built-in label or a rule id")
+    # review R7: nor a field's name, so `fraud_risk: ...` never reads as one in the prompt
+    for name in (*FIXED_FIELDS, *DEFAULT_FIELDS):
+        taken.setdefault(name, f"the name of ecf's field {name}")
+    for name in user_fields:
+        taken.setdefault(name, f"the name of your field {name}")
     for where, v in added:
+        if v in CATCH_ALLS and where.startswith("schema.fields."):
+            continue  # a user field may reuse a catch-all (D15, P12); never as a label (config)
         if v in taken:
             out.problems.append(f"{where}: {v!r} is already {taken[v]}; added values need new"
                                 " names")  # fmt: skip
@@ -650,9 +769,23 @@ def check_extension(base: CompiledSchema, ext: Any,
                     reserved: frozenset[str] = frozenset()) -> list[str]:  # fmt: skip
     """Every violation of the caps and content rules, as short messages ([] when it is fine).
     `reserved` holds names an added value can't take: the server passes its built-in labels and
-    the applied rule ids (`ecf` can't import them)."""
+    the fixed, default and applied rule ids (`ecf` can't import them)."""
     p = _parse_ext(base, ext, reserved)
     return p.limits + p.problems
+
+
+def extension_warnings(base: CompiledSchema, ext: Any) -> list[str]:
+    """What an extension may do but likely shouldn't (shown by the dry run and apply, never
+    refused): an enum field with no catch-all (D15), a description naming a default field or
+    another user field (D9b)."""
+    return _parse_ext(base, ext, frozenset()).warnings if ext else []
+
+
+def read_bytes(schema: CompiledSchema) -> int:
+    """What one Claude classify read carries besides the email (P16): the schema text and the
+    JSON schema, in bytes (`claude_review.schema_fields`)."""
+    return (len(schema.prompt_block.encode("utf-8"))
+            + len(json.dumps(schema.json_schema()).encode("utf-8")))  # fmt: skip
 
 
 def extend_schema(base: CompiledSchema, ext: dict[str, Any] | None,
@@ -709,10 +842,15 @@ def extension_budget(base: CompiledSchema, ext: Any) -> dict[str, Any]:
            "category_values": (n_cats, MAX_EXT_CATEGORY_VALUES),
            "values_per_field": (most, MAX_EXT_VALUES), "text": (chars, MAX_EXT_TEXT)}  # fmt: skip
     near = sorted(k for k, (n, cap) in use.items() if n >= NEAR * cap)
+    try:  # per Claude classify read, with the extension (P16); the shipped schema's if refused
+        per_read = read_bytes(extend_schema(base, cast(dict[str, Any], ext)) if ext else base)
+    except (InvalidInputError, SchemaLimitError):
+        per_read = read_bytes(base)
     line = (f"schema: {n_fields} of {MAX_EXT_FIELDS} fields, {n_cats} of"
             f" {MAX_EXT_CATEGORY_VALUES} category values, {chars:,} of {MAX_EXT_TEXT:,}"
-            " characters")  # fmt: skip
+            f" characters; {per_read:,} bytes of schema per classify read (shipped"
+            f" {read_bytes(base):,})")  # fmt: skip
     if near:
         line += " (near the limit)"
     return {k: {"used": n, "limit": cap} for k, (n, cap) in use.items()} | {
-        "near": near, "line": line}  # fmt: skip
+        "near": near, "line": line, "read_bytes": per_read}  # fmt: skip

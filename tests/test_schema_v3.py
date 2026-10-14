@@ -27,6 +27,7 @@ from ecf.schema import (
     local_schema,
     shipped_fallback,
     with_fixed,
+    without_extension,
 )
 from ecf_server import actor, classifier, claude_pins, db, evalrun
 from ecf_server.clock import FakeClock
@@ -299,13 +300,20 @@ def test_the_local_model_is_asked_v2_and_its_prompt_digest_and_key_dont_move() -
     assert claude_pins.local_key(v3) == claude_pins.local_key(v2)
 
 
-def test_a_fallback_or_extended_schema_is_asked_as_v2_with_the_same_extension() -> None:
+def test_a_fallback_or_extended_schema_is_asked_as_plain_v2() -> None:
+    """S4 (D8, OD-502): the local model is never asked the install's own fields, so A's and B's
+    prompt and key don't move with them; a fallback key still carries over (fail closed)."""
     ext: dict[str, Any] = {
         "fields": {"mentions_nda": {"type": "boolean", "description": "Mentions an NDA."}}
     }
-    asked = local_schema(extend_schema(load_schema(), ext))
-    assert asked.digest == extend_schema(load_schema_v2(), ext).digest
-    assert asked.version == 2 and "mentions_nda" in asked.fields
+    extended = extend_schema(load_schema(), ext)
+    asked = local_schema(extended)
+    assert asked is load_schema_v2() and "mentions_nda" not in asked.fields
+    assert without_extension(extended) is load_schema()
+    assert without_extension(load_schema()) is load_schema()
+    # a local answer (plain v2) is completed and checked without the user field (P1)
+    got = classifier.parse(json.dumps(V2_ANSWER), extended)
+    assert got is not None and "mentions_nda" not in got
     fb = local_schema(shipped_fallback("x"))
     assert fb.fallback_for == shipped_fallback("x").fallback_for and fb.version == 2
 

@@ -70,7 +70,8 @@ MACHINE_LOCAL = frozenset({
     scheduled_export.LAST_ERROR, scheduled_export.NEXT_TRY, "audit.flushed_id",
     "models.installed_at",
 })  # fmt: skip
-COPIED = (*importer.COPY, "routes", "alerts")
+EXTRA_COPIED = ("routes", "alerts")  # beside `importer.COPY` (read at call time: importer ->
+# approvals -> pause -> this module is an import cycle, so `importer` may not be loaded yet)
 
 
 def check(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
@@ -88,6 +89,8 @@ def check(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
     t = parsed.tables
     bundle_cfg = {s: json.loads(r["value"]) for r in t.get("settings", [])
                   for s, k in config.KEY.items() if r["key"] == k}  # fmt: skip
+    ext = bundle_cfg.pop("schema", None)  # dropped on the way in (`importer.drop_schema`, P11)
+    dropped = None if ext is None else import_plan.schema_dropped(t, json.dumps(ext))
     current = config.current(conn)
     changes = config.diff(current, {s: v for s, v in bundle_cfg.items() if v is not None})
     return {
@@ -111,6 +114,7 @@ def check(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
             if a.get("removed_at") is None
         ],
         "config_changes": changes,
+        "schema_dropped": dropped,
         "senders": _sender_diff(conn, t.get("senders", [])),
     }
 
@@ -153,7 +157,7 @@ def restore(  # noqa: PLR0913 - the service state it needs, then the request
         staged = db.connect(Path(tmp.name))
         try:
             try:
-                importer.load(staged, parsed, to_ts(clock.now()))
+                dropped = importer.load(staged, parsed, to_ts(clock.now()))
                 with write_tx(staged):
                     staged.execute("UPDATE addresses SET paused = 1")
                 importer.validate(staged, importer.kept_settings(staged))
@@ -183,7 +187,7 @@ def restore(  # noqa: PLR0913 - the service state it needs, then the request
                        " you, check the computer ecf runs on.")  # fmt: skip
     return {"counts": counts, "generation": install_identity.generation(conn),
             "safety_copy": safety, "addresses": [a["address_id"] for a in preview["addresses"]],
-            "config_changes": preview["config_changes"]}  # fmt: skip
+            "config_changes": preview["config_changes"], "schema_dropped": dropped}  # fmt: skip
 
 
 def resume_blocked(conn: sqlite3.Connection, address_id: str) -> str | None:
@@ -230,7 +234,7 @@ def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str,
             if empty:  # a new computer: its few rows give way to the install's own history
                 conn.execute("DELETE FROM main.audit")
             counts: dict[str, int] = {}
-            for table in COPIED:
+            for table in (*importer.COPY, *EXTRA_COPIED):
                 if table == "audit" and not empty:
                     counts[table] = _merge_audit(conn)
                 else:

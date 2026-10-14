@@ -263,6 +263,7 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
     """Announce a newly met gate once; drop `live` to `assist` when a pinned model or the schema
     changed (§9.3): the Ollama digest, a `models.lock` ID, a Claude model override or the
     effective schema's digest."""
+    gate.note_version(conn, to_ts(clock.now()))  # a new gate definition, on record (P30)
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
         digest = claude_pins.address_key(conn, aid)

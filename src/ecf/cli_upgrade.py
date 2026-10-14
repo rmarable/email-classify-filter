@@ -283,6 +283,11 @@ def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: l
             typer.echo(f"  {these} to assist until {_their(report.affected)} gate passes again:"
                        f" {', '.join(report.affected)}; re-run ecf eval run for"
                        f" {'it' if one else 'them'}")  # fmt: skip
+    if report.schema_pending:  # S4, P11: stored fields reach the classifier at the first start
+        typer.echo(f"your own schema fields, stored but not yet used, go into use when"
+                   f" {rel.version} starts (a Security Notice says so); these C addresses drop"
+                   f" to assist until their gate passes again:"
+                   f" {', '.join(report.schema_pending)}")  # fmt: skip
     for p in problems:
         typer.echo(f"  can't upgrade: {p}", err=True)
     if not problems:

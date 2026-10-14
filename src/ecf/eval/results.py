@@ -34,7 +34,9 @@ MARGIN_POINTS = 5.0
 INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different inputs",
               "excerpt_cap": "different inputs", "excerpt_prep": "different inputs",
               "keywords_digest": "different keywords",
-              "rules_digest": "different rules"}  # fmt: skip
+              "rules_digest": "different rules",
+              # bytes of schema per Claude classify read (v3.0.0 S4, review R9; C runs)
+              "read_bytes": "different inputs"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 
 
@@ -75,6 +77,9 @@ class ClaimRecord(BaseModel):
     settled_s: float | None = None  # the held submission applied or refused
     outcome: ClaimOutcome | None = None
     high_risk: list[HighRiskReason] = Field(default_factory=list[HighRiskReason])  # act claims
+    # submissions refused (an invalid classification or proposal) before the outcome (v3.0.0
+    # S4, P19); 0 in results from before it. Strict, so an older ecf can't read a result with it
+    invalid: int = 0
 
 
 class CaseResult(BaseModel):

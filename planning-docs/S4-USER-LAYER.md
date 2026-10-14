@@ -372,7 +372,12 @@ intended one); with them the schema digest and C's prompt digest; (2) actor read
 fields' values and the labels include the added category values (`claude_eval.py` act reads,
 `policy.labels`); (3) service code since the S3b pair: the dropped-spawn fix (`7cd48b1`) and the
 review progress line (`20acf33`), plus S4 itself; `plugin_digest`, `keywords_digest`,
-`excerpt_prep` and M2's base commit named.
+`excerpt_prep` and M2's base commit named; (4) (diff review R9, 2026-10-14) the hard-case
+sample's bytes of schema per classify read, from the dry run's budget line when it is applied
+(shipped 7,663; about 12-13 KB expected at 3,600-4,000 characters), and with them the expected
+Sonnet classifier input per case: +30-45% over the S3b pair (scaled from S2's +2.2 KB giving
++16-21%); criterion 8's ±10% is the S3b pair's own noise, not a target. Each C result records
+`read_bytes` in its summary (`ecf eval compare` warns when two runs differ).
 
 **Criteria, named before the runs** (D5 as amended by P5, P6, P21):
 1. Both runs: 0 unsafe, fraud-guard recall 104/104, gate passed. Refused `record_classification`
@@ -381,6 +386,10 @@ review progress line (`20acf33`), plus S4 itself; `plugin_digest`, `keywords_dig
    the four cross pairings (S4 run i vs S3b run j). This is **not** §1.5a item 2's built-in-fields
    figure (P6); criterion 3 is closer.
 3. Every labelled shipped field right per case (old-style `correct`): > -5 per pairing (P6).
+   Defined (diff review R6, 2026-10-14) as schema v2's labelled fields (`category`, `priority`,
+   `sender_type`, `fraud_risk`, `payment_related`, `requires_action`, `requires_reply`,
+   `deadline_mentioned`) plus the rule, the definition that reproduces the noise table's -0.66
+   (`scripts/s4_criteria.py`); the five fixed items and `safety` fall under criterion 2.
 4. `fraud_risk` right: > -5 per pairing (P6; n 249).
 5. Rule right: > -3.5 per pairing (P5; the S3b pair against itself gives [-2.27, 2.96]).
 6. `category`: > -5 per pairing; every case answered an added category value listed.

@@ -36,7 +36,7 @@ from importlib import resources
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.schema import CompiledSchema, FieldKind, from_v2, local_schema
+from ecf.schema import CompiledSchema, FieldKind, from_v2, local_schema, without_extension
 from ecf_server import classifier
 from ecf_server.ollama import Client, OllamaError, Pin
 
@@ -180,7 +180,8 @@ def ask(client: Client, model: str, text: str, schema: CompiledSchema) -> Answer
     if ans.classification is None or asked is schema:
         return ans
     try:
-        cls = schema.validate(from_v2(ans.classification)).model_dump(mode="json")
+        cls = without_extension(schema).validate(from_v2(ans.classification)).model_dump(
+            mode="json")  # fmt: skip
     except ValueError:
         cls = None
     return Answer(cls, ans.probabilities, ans.input_tokens)

@@ -56,6 +56,8 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
     repost = [r for r in items if r.get("status") in REPOST and _has_actions(r)]
     kept = [r for r in t.get("settings", []) if setting_kept(str(r.get("key")))]
     m = parsed.manifest
+    ext = next((r.get("value") for r in t.get("settings", [])
+                if r.get("key") == config.KEY["schema"]), None)  # fmt: skip
     return {
         "source": {
             k: m.get(k)
@@ -90,6 +92,8 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
         "settings_dropped": len(t.get("settings", [])) - len(kept),
         "routes_dropped": len(t.get("routes", [])),
         "target_empty": target_empty(conn),
+        # the bundle's own schema fields, left out (P11): named, with why
+        "schema_dropped": None if ext is None else schema_dropped(t, str(ext)),
         "not_carried": [
             "app passwords, Slack tokens and the models API key: enter them again",
             "the Slack connection: reconnect Slack",
@@ -98,6 +102,19 @@ def preview(conn: sqlite3.Connection, parsed: Parsed) -> dict[str, Any]:
             "approvals in progress: re-posted for a fresh decision",
         ],
     }
+
+
+def schema_dropped(tables: dict[str, list[dict[str, Any]]], ext: str) -> dict[str, Any]:
+    """The preview's note on a bundle's own schema fields (`importer.schema_note`'s)."""
+    from ecf_server import importer  # noqa: PLC0415 - importer imports this module
+
+    local = [str(a.get("address_id")) for a in tables.get("addresses", [])
+             if a.get("removed_at") is None and a.get("preset") in ("A", "B")]  # fmt: skip
+    found = next((r.get("value") for r in tables.get("settings", [])
+                  if r.get("key") == config.KEY["rules"]), None)  # fmt: skip
+    doc: Any = json.loads(str(found)) if found is not None else None
+    parsed: Any = json.loads(ext)
+    return importer.schema_note(parsed, local, importer.rules_on_fields(doc, parsed))
 
 
 def _has_actions(item: dict[str, Any]) -> bool:

@@ -3,7 +3,9 @@
 - **Setting** (`ecf settings set claude_queue_timeout <1-168|off> --address X`; B and C only):
   turning it on, or changing the hours, needs step-up and sends a Security Notice, since it lets
   the local model act on mail meant for Claude; turning it off needs neither (operator decision
-  2026-10-02).
+  2026-10-02). From v3.0.0 S4 it can't be turned on for a C address (operator decision
+  2026-10-14, OD-502): C is Claude-only (PLANNING §2), and the local model is never asked your
+  own fields (D8); step 4 removes C's fallback. One already on keeps running until turned off.
 - **Shadow runs** (OD-020): while it is on and its own gate hasn't passed, the local model also
   runs on each email of the address from when it was turned on: for C the classifier, then the
   actor when the rule continues to it; for B the actor on the emails Claude acts on. They run in
@@ -102,10 +104,28 @@ def _address(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
     return a
 
 
+def _refuse_c(a: dict[str, Any], on: bool = False) -> None:
+    """S4 (operator decision 2026-10-14): no local fallback can be turned on for preset C, nor
+    its hours changed when one is already on (`on`; review R8: said so, not "turned on")."""
+    if a["preset"] == "C" and on:
+        raise InvalidInputError(f"claude_queue_timeout can't be changed for {a['address_id']}:"
+                                " its local fallback was turned on before v3.0.0, and preset C"
+                                " is now Claude-only; it keeps its hours until you turn it"
+                                " off (claude_queue_timeout off), and can't be turned on"
+                                " again")  # fmt: skip
+    if a["preset"] == "C":
+        raise InvalidInputError(f"claude_queue_timeout can't be turned on for {a['address_id']}:"
+                                " preset C is Claude-only (the local model isn't asked your own"
+                                " fields, and C's fallback goes in v3.0.0); use preset B for a"
+                                " local fallback")  # fmt: skip
+
+
 @stepup.purpose("claude_queue_timeout")
 def _describe(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
     a = _address(conn, str(target.get("address", "")))
     n = parse(str(target.get("value", "")))
+    if n is not None:
+        _refuse_c(a, on=hours(conn, str(a["address_id"])) is not None)
     return stepup.Bound(stepup.digest("claude_queue_timeout", a["address_id"], n),
                         f"ecf: let the local model act on {a['email']}'s mail after it has"
                         f" waited {n} h for Claude")  # fmt: skip
@@ -119,6 +139,7 @@ def set_timeout(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, ref:
     if new == old:
         raise ConflictError(f"claude_queue_timeout is {old if old else 'off'} for {aid} already")
     if new is not None:  # on, or a different wait: the local model acts on more mail
+        _refuse_c(a, on=old is not None)
         stepup.consume(conn, clock, "claude_queue_timeout",
                        {"address": aid, "value": value.strip().lower()}, nonce)  # fmt: skip
     now = to_ts(clock.now())

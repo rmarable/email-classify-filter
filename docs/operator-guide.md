@@ -164,8 +164,9 @@ each email with what the model said (labelled as model output) and what ecf woul
 
 - **Fix** opens a form for the fields you correct: category, priority, sender type, fraud risk,
   payment, the five safety items (bank-detail change, regulator claim, phishing, claims to be a
-  colleague, private individual), action, reply and deadline (from v3.0.0; 13 fields). A Fix
-  records only what you change and never removes a trigger that already fired.
+  colleague, private individual), action, reply and deadline (from v3.0.0; 13 fields), then any
+  fields your admin added, labelled "(yours)". A Fix records only what you change and never
+  removes a trigger that already fired.
 - **Correct** appears on lines that need their own review: payment, fraud, regulator, bank-detail
   change, phishing, claimed-colleague and not-fully-scanned items, and every item on a `high`
   address.
@@ -173,7 +174,8 @@ each email with what the model said (labelled as model output) and what ecf woul
 
 `ecf stage status` shows progress ("N/target reviewed, A% accurate, K to go"). A `standard` address
 needs 100 reviewed at 85% accuracy, a `high` one 200 at 90%, and no fraud-guard misses; from
-v3.0.0 accuracy is the share of reviews with no Fix (category accuracy before).
+v3.0.0 accuracy is the share of reviews whose Fix changed none of ecf's 13 fields (category
+accuracy before): a Fix to a "(yours)" field is counted and shown, not held against the gate.
 Moving stages is an admin task (admin guide).
 
 ## Senders

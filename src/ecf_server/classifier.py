@@ -34,7 +34,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
-from ecf.schema import CompiledSchema, from_v2, local_schema
+from ecf.schema import CompiledSchema, from_v2, local_schema, without_extension
 from ecf_server import claude_pins, config, decide, excerpt, items, ollama, signals
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -117,14 +117,16 @@ def _excerpt(conn: sqlite3.Connection, stable_id: str) -> str:
 def parse(content: str, schema: CompiledSchema) -> dict[str, Any] | None:
     """The validated classification in the effective `schema`, or None: the reply is checked
     against the schema the model was asked (`local_schema`), then brought to v3 when that was v2
-    (`from_v2`: the fixed items derived, removed values read as `other`/`unknown`; P6, D3)."""
+    (`from_v2`: the fixed items derived, removed values read as `other`/`unknown`; P6, D3) and
+    checked against `schema` without the install's own fields, which the local model is never
+    asked (`without_extension`; S4, P1: rules read them as unknown)."""
     asked = local_schema(schema)
     try:
         data = json.loads(content)
         out = asked.validate(data).model_dump(mode="json")
         if asked is schema:
             return out
-        return schema.validate(from_v2(out)).model_dump(mode="json")
+        return without_extension(schema).validate(from_v2(out)).model_dump(mode="json")
     except (ValueError, TypeError):
         return None
 
