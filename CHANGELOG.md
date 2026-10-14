@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded decisions for v3.0.0: preset B keeps its local fallback once Jev exists; OD-136 is superseded by the local decision models plan and OD-494; a user schema is written as the `schema` section of an `ecf config apply` file (`version: 1`); test coverage reports (pytest-cov) are listed for later.
 - Recorded decisions for v3.0.0: the Jev preset will be preset D, "Jev classifier + Claude actor"; preset C relies on the existing `/ecf-review` reminder (`claude_review_reminder_hours`, default 24 h) for waiting mail; and the plan for your own classification fields on preset C (`planning-docs/S4-USER-LAYER.md`), with `priority` kept fixed.
 - `/ecf-review` now shows a progress line after each round, as `/ecf-eval` does: items done of those handed out, in progress, still waiting, the round, and any freed or late claims.
 - `/ecf-eval` and `/ecf-review` no longer leave work idle for about 10 minutes when the session never starts one of the agents it was handed: once the session has called again and a minute has passed with none of that agent's cases read, its cases go back to be claimed again (outcome `claim_unread`) (OD-501).
