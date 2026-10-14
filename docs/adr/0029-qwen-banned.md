@@ -2,6 +2,8 @@
 
 - **Status:** accepted (operator decision 2026-10-12, OD-494); revokes the Qwen exceptions of
   ADR 0023 (OD-470) and ADR 0027 (OD-491)
+- **Amended by ADR 0031** (2026-10-14, OD-506): local models are removed, so non-Qwen local
+  decision models leave the to-look-at list; the Qwen ban stands.
 - **Context source:** CLAUDE.md (model filter); ADR 0005, ADR 0023, ADR 0027; SPEC §7.5, §7.8
 
 ## Context

@@ -2,6 +2,8 @@
 
 - **Status:** accepted (presets: operator decision 2026-09-26, OD-003; local runtime and pin:
   OD-232, OD-235, OD-240, OD-242, OD-245, OD-246, 2026-09-30); implemented in V1.3
+- **Superseded** (2026-10-14, OD-506) by ADR 0031: presets C and D only; Gemma, Ollama and
+  presets A and B are removed in v3.0.0.
 - **Context source:** SPEC §4.2, §7.5, §12.2, §12.4, §21.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) appendix "Runtimes and models"
 

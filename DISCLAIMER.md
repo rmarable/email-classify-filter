@@ -12,20 +12,20 @@ You are responsible for:
 1. every action you approve in Slack or the CLI, and every rule, policy and setting you apply;
 2. having the right to read every mailbox you connect, including the informed consent of anyone
    else whose mail it holds;
-3. what ecf sends to the services you enable (your mail provider, Slack and, in presets B and C,
-   Anthropic), and your agreements with them (`SPEC.md` §12.4);
+3. what ecf sends to the services you enable (your mail provider, Slack, Anthropic and, once
+   preset D exists, TypeSafe), and your agreements with them (`SPEC.md` §12.4);
 4. your own data protection and recovery, independent of ecf: backups of your mailboxes kept by
    your mail provider or your own tools, backups of ecf's data folder and exports, and a restore
    you have tested before you need it. ecf's export (`SPEC.md` §11.9) holds ecf's own state,
    never the messages themselves, and is not a substitute for a backup plan. ecf can move, label
    or delete mail; if that mail matters, keep a copy ecf cannot touch;
-5. keeping ecf, its dependencies and its local model current;
+5. keeping ecf and its dependencies current;
 6. any modified version of ecf you build, run or distribute.
 
 ## 2. Relying on ecf
 
-1. **Classification is probabilistic.** The local model and Claude can be wrong, inconsistent,
-   or influenced by text in the mail they read (prompt injection).
+1. **Classification is probabilistic.** Claude (and Jev, once preset D exists) can be wrong,
+   inconsistent, or influenced by text in the mail they read (prompt injection).
 2. **The deterministic rules catch only what they encode.** New fraud patterns get through.
 3. **Both produce errors.** False negatives (fraud or regulator mail not flagged) and false
    positives (legitimate mail flagged). Eval results in `SPEC.md` §16 describe synthetic test
@@ -69,8 +69,8 @@ unlawful use.
 
 ## 4. Third parties
 
-ecf depends on services and software it does not control: mail providers, Slack, Ollama, local
-and hosted models, and the packages in `THIRD_PARTY_NOTICES`. Their outages, changes, limits,
+ecf depends on services and software it does not control: mail providers, Slack, hosted models
+(Anthropic's Claude; TypeSafe's Jev once preset D exists), and the packages in `THIRD_PARTY_NOTICES`. Their outages, changes, limits,
 retention and errors are not the author's responsibility.
 
 ## 5–8. Warranty, liability and indemnity

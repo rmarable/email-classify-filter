@@ -2,6 +2,8 @@
 
 - **Status:** accepted (2026-10-07; OD-470, OD-471); experiment built and run; decided 2026-10-08:
   `tev1:4b` not adopted for now (OD-473); Qwen exception revoked 2026-10-12 (OD-494, ADR 0029)
+- **Superseded in part** (2026-10-14, OD-506) by ADR 0031: its Ollama half (`/v1/systemone`
+  on Ollama, local decision models) is removed in v3.0.0; the question mapping stays for Jev.
 - **Context source:** SPEC §7.8, §16.3-16.5, §21.1, §21.2, §1.5 item 8;
   `planning-docs/SYSTEMONE-MODEL-TESTING-PLAN.md` (draft 3, after review round R, findings R1-R30)
 

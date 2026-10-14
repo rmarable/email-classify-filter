@@ -1,6 +1,9 @@
 # ADR 0022: real-mail test corpus
 
 - **Status:** accepted (2026-10-07; OD-466 to OD-468); not built yet
+- **Amended by ADR 0031** (2026-10-14, OD-506): the model-driven corpus run (`ecf eval run
+  --corpus`) is removed; the corpus, its labels, `eval routes --corpus` and `eval rescore
+  --corpus` stay.
 - **Context source:** SPEC §12.4, §16.7, §9.6, §14.3, §17.3; `planning-docs/GENERATE-EMAIL-CORPUS-PLAN.md`
   (draft 7, after review rounds R to R6, findings R1-R209)
 
