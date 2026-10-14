@@ -3,9 +3,8 @@
 - **Draft 2, 2026-10-13: draft 1 + Phase R P1-P20, operator accepted all**
   (`state-archive/v3.0.0/s3-review-findings.md`). Operator 2026-10-13: wording (§12) approved;
   §11 decided as recommended. Approved for build.
-- **Status:** S3a built and merged (2026-10-13, `fb49b30`; OD-500). S3b built, uncommitted
-  (2026-10-13, branch `s3b-values-removed`): not measured (§7 S3b criteria need the operator's
-  go-ahead per run); the four new regulatory cards await the operator's `ecf eval label`.
+- **Status:** S3a built and merged (2026-10-13, `fb49b30`; OD-500). S3b built and merged
+  (2026-10-14, `21f62c6`): §7 S3b criteria met (runs `024ec270`, `1a8708cf`; SPEC §21.2).
 - **Base:** `main` at `5a46634` (S2 merged, `845af58`). File:line refers to `src/` there unless
   stated. "Unverified" = not checked in code or docs.
 - **Scope:** schema doc draft 3 §15, S3 bullet; step 1c Phase R P1, P4, P5, P13, P14 honoured.
