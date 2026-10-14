@@ -208,7 +208,7 @@ def test_bundles_restore_refuses(conn: sqlite3.Connection, clock: FakeClock, tmp
     _set(fresh, "install.id", "f" * 32)
     with write_tx(fresh):
         fresh.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                      " created_at) VALUES ('x', 'x@acme.example', 'standard', 'A',"
+                      " created_at) VALUES ('x', 'x@acme.example', 'standard', 'C',"
                       " 't')")  # fmt: skip
     parsed = bundle_reader.read(fresh, str(path), KEY_TEXT)
     with pytest.raises(ConflictError, match="another install"):

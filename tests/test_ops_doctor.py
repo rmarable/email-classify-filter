@@ -31,7 +31,7 @@ def _address(conn: sqlite3.Connection, aid: str = "ap", *, smtp: str | None = "s
              probed_at: str = "2026-10-01T00:00:00.000000Z") -> None:  # fmt: skip
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " smtp_host, smtp_port, outbound) VALUES (?, ?, 'standard', 'A', 't', ?, ?,"
+                     " smtp_host, smtp_port, outbound) VALUES (?, ?, 'standard', 'C', 't', ?, ?,"
                      " ?)", (aid, f"{aid}@acme.example", smtp, 465 if smtp else None,
                              int(outbound)))  # fmt: skip
         conn.execute("INSERT INTO probe (address_id, host, probed_at, smtp)"

@@ -63,17 +63,6 @@ def test_from_1_to_5(conn: sqlite3.Connection, clock: FakeClock, value: str) -> 
         claude_batch.set_size(conn, clock, FakeNotifier(), "h", value, nonce=None)
 
 
-def test_only_c_addresses_have_it_and_settings_set_points_to_step_up(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    add(conn, clock, "b", "B")
-    with pytest.raises(InvalidInputError, match="preset C"):
-        claude_batch.set_size(conn, clock, FakeNotifier(), "b", "2", nonce=None)
-    assert claude_batch.KEY not in {s["key"] for s in settings.show(conn, "b")}
-    with pytest.raises(InvalidInputError, match="step-up"):
-        settings.set_value(conn, clock, claude_batch.KEY, "2", address="b", actor="os_user")
-
-
 def test_classifier_high_items_share_spawns_up_to_the_setting_per_address(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

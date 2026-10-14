@@ -36,7 +36,7 @@ SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 STARTER = Path(__file__).parents[1] / "src" / "ecf_server" / "data" / "starter_rules.yaml"
 
 
-def _setup(conn: sqlite3.Connection, clock: FakeClock, preset: str = "A") -> None:
+def _setup(conn: sqlite3.Connection, clock: FakeClock, preset: str = "C") -> None:
     """One `high` address; preset C where your own fields are applied (D8: C only)."""
     now = to_ts(clock.now())
     with write_tx(conn):

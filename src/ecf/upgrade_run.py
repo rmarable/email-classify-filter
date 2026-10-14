@@ -200,9 +200,15 @@ def _recount(paths: Paths, state: dict[str, Any]) -> dict[str, Any]:
         return state  # phase 1's lists; the service's first tick still moves the addresses
     r = upgrade_check.after_upgrade(str(state["from"]), Path(state["old_wheel"]), now)
     fams = list(state.get("pin_changes") or [])
+    affected = set(state.get("affected") or [])
+    if upgrade_check.crosses_to_claude_prompt(str(state["from"]), now):
+        # a pre-3.0 CLI counted the prompt digest (now Claude's) and the retired local pin as
+        # changes for every address (P4): this version's rules replace its lists
+        fams = [f for f in fams if f not in ("prompt", "local")]
+        affected = set[str]()
     fams += [f for f in r.pin_changes if f not in fams]
-    affected = sorted(set(state.get("affected") or []) | set(r.affected))
-    return state | {"pin_changes": fams, "affected": affected}
+    return state | {"pin_changes": fams, "affected": sorted(affected | set(r.affected)),
+                    "converted": r.converted}  # fmt: skip
 
 
 def find_snapshot(paths: Paths, version: str, current: str) -> tuple[Path, Path] | None:

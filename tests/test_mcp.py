@@ -143,7 +143,7 @@ def test_a_review_round(mode: str, conn: sqlite3.Connection, state: ServiceState
     clock = state.clock
     assert isinstance(clock, FakeClock)
     add(conn, clock, "c", "C")
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     sid = waiting_item(conn, clock, "c")
     work, agent = session_tokens(state)
     session = next(iter(state.sessions))

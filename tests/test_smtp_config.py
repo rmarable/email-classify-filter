@@ -123,7 +123,7 @@ def test_migration_fills_the_default_for_existing_addresses(
     for aid, host in (("ap", "imap.purelymail.com"), ("ops", "mail.acme.example")):
         conn.execute(
             "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-            " VALUES (?, ?, 'high', 'A', ?)",
+            " VALUES (?, ?, 'high', 'C', ?)",
             (aid, f"{aid}@acme.example", now),
         )
         conn.execute(

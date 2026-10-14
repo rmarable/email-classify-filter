@@ -45,7 +45,7 @@ def _msg(sender: str = "ap@acme.example", header: str | None = None,
 def ap(conn: sqlite3.Connection, clock: FakeClock) -> str:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 't')")  # fmt: skip
     return f"{install_identity.install_id(conn)}.0"
 
 

@@ -260,6 +260,13 @@ def _continue(p: Paths) -> None:
         names = done["affected"]
         typer.echo(f"{why}: {_drop(names)} to assist until {_their(names)} gate passes"
                    " again; re-run ecf eval run")  # fmt: skip
+    converted: list[dict[str, Any]] = done.get("converted") or []
+    for c in converted:  # v3.0.0 (P3): A and B addresses, now C and paused
+        n = int(c.get("waiting") or 0)
+        typer.echo(f"{c.get('address_id')} was preset {c.get('from')}, whose local model is"
+                   f" removed: now C and paused, {n} email{'s' if n != 1 else ''} waiting; resume"
+                   " it only after the account's owner agrees to its mail going to Anthropic"
+                   " (OD-427), or remove it")  # fmt: skip
     typer.echo("the database copy is kept in case you go back: ecf upgrade --to"
                f" {done['from']}")  # fmt: skip
 

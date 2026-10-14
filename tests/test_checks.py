@@ -47,7 +47,7 @@ class Box:
 def env(conn: sqlite3.Connection, db_path: Path) -> tuple[sqlite3.Connection, Path]:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')"
     )
     conn.execute(
         "INSERT INTO probe (address_id, host, probed_at) VALUES ('ap', 'imap.acme.example', 'now')"

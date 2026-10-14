@@ -52,7 +52,7 @@ def _source(conn: sqlite3.Connection) -> None:
     with write_tx(conn), db.items_writer("create"):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, outbound,"
                      " preset, created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 1,"
-                     " 'A', 't')")  # fmt: skip
+                     " 'C', 't')")  # fmt: skip
         rows = [("00aa00bb", "awaiting_approval", LABEL), ("11aa00bb", "delayed", LABEL),
                 ("22aa00bb", "executing", LABEL), ("33aa00bb", "executed", LABEL),
                 ("44aa00bb", "awaiting_approval", None)]  # fmt: skip
@@ -183,7 +183,7 @@ def test_a_non_empty_target_needs_replace_and_the_name(
                        replace=True, typed_install="other", nonce=None)  # fmt: skip
     with write_tx(target):
         target.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                       " created_at) VALUES ('old', 'old@acme.example', 'standard', 'A',"
+                       " created_at) VALUES ('old', 'old@acme.example', 'standard', 'C',"
                        " 't')")  # fmt: skip
     r = _import(target, clock, path, replace=True, typed="t")
     assert r["replace"] is True
@@ -273,7 +273,7 @@ EXT = {
 }
 
 
-@pytest.mark.parametrize("preset", ["A", "C"])
+@pytest.mark.parametrize("preset", ["C"])
 @pytest.mark.parametrize("over_cap", [False, True])
 def test_s4_a_bundles_own_fields_are_dropped_and_named(
     conn: sqlite3.Connection,

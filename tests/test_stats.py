@@ -93,7 +93,7 @@ def test_the_daily_summary_gets_one_line(conn: sqlite3.Connection, clock: FakeCl
     )
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', ?)",
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
                      (to_ts(clock.now()),))  # fmt: skip
     assert line in daily.card(conn, clock.now(), "2026-10-01").text.splitlines()
 
@@ -104,7 +104,7 @@ def test_the_route_and_the_cli_screen(conn: sqlite3.Connection, db_path: Path, c
 
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', ?)",
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
                      (to_ts(clock.now()),))  # fmt: skip
     _record(conn, clock, "classifier")
     state = ServiceState(install="t", token="tok", started_at="2026-10-01T12:00:00.000000Z",

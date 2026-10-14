@@ -21,7 +21,7 @@ from ecf.cli import app
 from ecf.errors import InvalidInputError
 from ecf.paths import Paths
 from ecf.schema import load_schema
-from ecf_server import classifier, db, export_bundle, upgrade_snapshot, upgrade_state
+from ecf_server import claude_review, db, export_bundle, upgrade_snapshot, upgrade_state
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from tests.test_addresses import make_state
@@ -167,7 +167,7 @@ def test_s4_the_service_state_lists_pending_c_addresses(conn: sqlite3.Connection
     from ecf_server import config  # noqa: PLC0415
 
     with write_tx(conn):
-        for aid, preset in (("a", "A"), ("c", "C")):
+        for aid, preset in (("c", "C"),):
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
                          " created_at) VALUES (?, ?, 'standard', ?, 't')",
                          (aid, f"{aid}@acme.example", preset))  # fmt: skip
@@ -185,7 +185,7 @@ def test_s4_the_service_state_lists_pending_c_addresses(conn: sqlite3.Connection
 
 def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     with write_tx(conn), db.items_writer("create"):
-        for aid, preset in (("a", "A"), ("b", "B"), ("c", "C")):
+        for aid, preset in (("a", "C"), ("b", "C"), ("c", "C")):
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset,"
                          " created_at) VALUES (?, ?, 'standard', ?, 't')",
                          (aid, f"{aid}@acme.example", preset))  # fmt: skip
@@ -196,12 +196,13 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
                      " ('a', 'w', 1, ?)", (to_ts(clock.now().replace(year=2100)),))  # fmt: skip
     s = upgrade_state.state(conn, clock, api_version=1, sessions=1)
     assert s["version"] == __version__ and s["schema_version"] == SCHEMA
-    assert s["pin_users"]["local"] == ["a", "b"]
-    assert s["pin_users"]["actor"] == ["b", "c"] and s["pin_users"]["classifier"] == ["c"]
+    assert "local" not in s["pins"] and "local" not in s["pin_users"]  # v3.0.0 (ADR 0031)
+    assert s["pin_users"]["actor"] == s["pin_users"]["classifier"] == ["a", "b", "c"]
     assert s["busy"] == {"executing": 1, "leases": 1, "claude_sessions": 1}
-    shipped = classifier.prompt_digest(load_schema())  # what release.json carries (Q6)
+    # what release.json carries (Q6): Claude's from v3.0.0 (R-D10, P4)
+    shipped = claude_review.prompt_digest(load_schema())
     assert s["prompt_digest"] == shipped and s["effective_prompt_digest"] == shipped
-    assert s["extension_stored"] is False
+    assert s["extension_stored"] is False and s["converted"] == []
 
 
 def test_snapshot_and_retention(conn: sqlite3.Connection, tmp_path: Path) -> None:
@@ -317,3 +318,58 @@ def test_check_by_this_client_against_a_v1_service(
     assert r.exit_code == 0, r.output
     assert "model pins that change: schema" in r.output
     assert "drop to assist until their gate passes again: ap, b" in r.output
+
+
+# ---- v3.0.0: local models removed (ADR 0031; R-D9, R-D10, P3, P4) ------------------------------
+
+
+def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_path: Path) -> None:
+    """P4: release.json's prompt_digest becomes Claude's at v3.0.0; from a v2.x install the change
+    is expected, and the converted addresses are listed instead (P3)."""
+    old = _wheel(tmp_path, version="2.2.3", classifier_schema=3, prompt="g" * 64, name="o.whl")
+    converted = [{"address_id": "ap", "from": "A", "waiting": 3}]
+    state = _state(version="3.0.0", classifier_schema=3, prompt_digest="c" * 64, pins=LOCK,
+                   pin_users={"actor": ["ap", "b"]}, converted=converted)  # fmt: skip
+    r = upgrade_check.after_upgrade("2.2.3", old, state)
+    assert (r.pin_changes, r.affected, r.converted) == ([], [], converted)
+    later = _wheel(tmp_path, version="3.0.0", classifier_schema=3, prompt="g" * 64, name="l.whl")
+    r = upgrade_check.after_upgrade("3.0.0", later, state | {"version": "3.0.1"})
+    assert r.pin_changes == ["prompt"] and r.affected == ["ap", "b"]  # after 3.0: as before
+
+
+def _v2_2_3_read_wheel(path: Path) -> dict[str, str]:
+    """v2.2.3's `read_wheel` pins, line for line (it requires ollama.lock)."""
+    with zipfile.ZipFile(path) as z:
+        claude = json.loads(z.read("ecf_server/data/models.lock"))
+        local = json.loads(z.read("ecf_server/data/ollama.lock"))
+    pins = {f: str(claude.get(f)) for f in upgrade_check.CLAUDE_FAMILIES}
+    pins["local"] = str(local.get("digest"))
+    return pins
+
+
+def test_the_stub_ollama_lock_reads_with_the_old_and_the_new_read_wheel(tmp_path: Path) -> None:
+    """R-D9: the shipped stub keeps a v2.2.x client's read_wheel working; the new one doesn't
+    need the file at all."""
+    from importlib import resources  # noqa: PLC0415
+
+    stub = resources.files("ecf_server.data").joinpath("ollama.lock").read_text("utf-8")
+    assert json.loads(stub) == {"retired": True}
+    info = {
+        "product": "email-classify-filter",
+        "version": "3.0.0",
+        "api_version": 1,
+        "data_format": FORMAT,
+        "schema_version": SCHEMA,
+        "min_client": "0.1.0.dev0",
+    }
+    with_stub, without = tmp_path / "s.whl", tmp_path / "n.whl"
+    for path, lock in ((with_stub, stub), (without, None)):
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("ecf_server/data/release.json", json.dumps(info))
+            z.writestr("ecf_server/data/models.lock", json.dumps(LOCK))
+            if lock is not None:
+                z.writestr("ecf_server/data/ollama.lock", lock)
+    assert _v2_2_3_read_wheel(with_stub)["local"] == "None"  # a "local" change: A and B named
+    for path in (with_stub, without):
+        rel = upgrade_check.read_wheel(path)
+        assert "local" not in rel.pins and rel.pins["actor"] == LOCK["actor"]

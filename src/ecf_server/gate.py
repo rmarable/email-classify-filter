@@ -298,9 +298,9 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
 
 def record(conn: sqlite3.Connection, g: Gate, now: datetime, *, passed: bool) -> None:
     """The `gate` row for this address and pair (inside the caller's transaction): the latest
-    figures, and when the gate was first met for these pins (`pinned_ids`, preset A's digest too).
-    `ollama_digest`, preset A's key before V1.4, is no longer written (v3.0.0, ADR 0031): a row
-    that has only it starts its pass again at the next write."""
+    figures, and when the gate was first met for these pins (`pinned_ids`). Migration 0038 dropped
+    `ollama_digest`, preset A's key before V1.4 (v3.0.0, ADR 0031): a row that had only it has no
+    key and starts its pass again at the next write."""
     ids = json.dumps(dict(g.pins), sort_keys=True)
     conn.execute(
         "INSERT INTO gate (address_id, pair_key, reviewed, correct, fraud_misses, unsafe,"
@@ -323,10 +323,11 @@ def stored(conn: sqlite3.Connection, address_id: str) -> sqlite3.Row | None:
 
 
 def stored_key(row: sqlite3.Row) -> str | None:
-    """The pin key a stored gate row was recorded for."""
+    """The pin key a stored gate row was recorded for (None: a row from before V1.4 that had only
+    preset A's Ollama digest, dropped by 0038)."""
     if row["pinned_ids"]:
         return claude_pins.key(json.loads(row["pinned_ids"]))
-    return row["ollama_digest"]
+    return None
 
 
 def _items(conn: sqlite3.Connection, address_id: str, digest: str) -> list[sqlite3.Row]:

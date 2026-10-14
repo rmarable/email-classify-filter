@@ -84,7 +84,7 @@ def make_env(conn: sqlite3.Connection, root: Path) -> Env:
         for aid in ("ap", "ar"):
             conn.execute(
                 "INSERT INTO addresses (address_id, email, sensitivity, preset,"
-                " created_at, smtp_host, smtp_port) VALUES (?, ?, 'standard', 'A', ?,"
+                " created_at, smtp_host, smtp_port) VALUES (?, ?, 'standard', 'C', ?,"
                 " 'smtp.acme.example', 465)",
                 (aid, f"{aid}@acme.example", now),
             )

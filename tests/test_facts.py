@@ -292,7 +292,7 @@ def test_fetch_with_the_analyzer_builds_sender_history(
 ) -> None:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 'now')"
     )
     conn.execute(
         "INSERT INTO settings (key, value, updated_at, updated_by)"
@@ -333,7 +333,7 @@ def test_a_gmail_note_to_yourself_isnt_trigger_6_but_a_forged_one_is(
     Sent; the same unsigned mail without the label is a forgery of your own listed address."""
     me = "pat.lee@gmail.com"
     conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                 " VALUES ('pat', ?, 'standard', 'A', 'now')", (me,))  # fmt: skip
+                 " VALUES ('pat', ?, 'standard', 'C', 'now')", (me,))  # fmt: skip
     conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES"
                  " ('config.org_addresses', ?, 'now', 'test')",
                  (json.dumps([{"address": me, "name": "Pat Lee"}]),))  # fmt: skip

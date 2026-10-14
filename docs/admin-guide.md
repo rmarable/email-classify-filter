@@ -466,7 +466,7 @@ v3.0.0 removes presets A and B, Gemma and Ollama (ADR 0031, SPEC §4.3). Not rel
 - **Consent first.** A C address's mail goes to Anthropic at each `/ecf-review`. If the mailbox
   belongs to someone else (for example a Gmail account you watch with its owner's agreement,
   OD-427), ask the owner before you resume it.
-- **Resume:** `ecf address resume <address>` confirms the owner agreed; its waiting mail is
+- **Resume:** `ecf resume <address>` confirms the owner agreed; its waiting mail is
   classified at the next `/ecf-review`. It restarts at `assist`: live again needs a passing
   `/ecf-eval` run and reviews (SPEC §9.3).
 - **Or remove:** `ecf address remove <address>`.

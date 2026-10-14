@@ -76,7 +76,7 @@ def _set_up(conn: sqlite3.Connection, store: MemorySecretStore, out: Path,
 def _data(conn: sqlite3.Connection) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'A', 't')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 't')")  # fmt: skip
         conn.execute("INSERT INTO nonces (nonce_id, purpose, bound_hash, person, created_at,"
                      " expires_at, target, code) VALUES ('n1', 'test', 'h', 'me', 't', 't', '{}',"
                      " 'ABCD')")  # fmt: skip

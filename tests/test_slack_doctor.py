@@ -123,7 +123,7 @@ def test_a_channel_problem_a_missing_channel_and_notifications_off_are_shown(
     _installed(conn, clock)
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
                      " VALUES ('notifications', '\"off\"', 'now', 't')")  # fmt: skip
     rows = slack_doctor.checks(conn, _store(), lambda _t: Web([ME]),

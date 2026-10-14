@@ -47,7 +47,9 @@ FORMAT = 1
 # (v2.0.0): classifications follow schema v2 (`team`, the new values), which a version on 2
 # would misread as unknown values; a format-2 bundle is migrated on import (0034; OD-475). 4
 # (v3.0.0): classifications follow schema v3 (the fixed items, which a version on 3 would ignore);
-# a format-3 bundle is migrated on import (0036; OD-498)
+# a format-3 bundle is migrated on import (0036; OD-498). Still 4 with the local models removed
+# (never released with 4; R-D8, P2): `addresses` loses its fallback columns and `items` its model
+# queue's, and an older bundle's A and B addresses arrive as C, paused (0038)
 DATA_FORMAT = 4
 SIG_BYTES = 64
 MAX_HEADER = 16 * 1024
@@ -60,7 +62,7 @@ INCLUDED = (
 )  # fmt: skip
 EXCLUDED = (
     "alert_outbox", "check_state", "claim_batches", "claims", "corpus_downloads", "delays",
-    "dns_cache", "downloads", "fallback_shadow", "grants", "heartbeats", "jobs", "leases",
+    "dns_cache", "downloads", "grants", "heartbeats", "jobs", "leases",
     "nonces", "processing", "rate", "slack_dedupe", "slack_messages",
 )  # fmt: skip
 SETTINGS_LEFT_OUT = (INTERPRETER_KEY,)  # this computer's interpreter; restore resets it

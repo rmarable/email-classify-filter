@@ -515,7 +515,10 @@ class Service:
         self.state.db_path = self.paths.db
         self.state.notifier = self._notifier()
         conn = db.connect(self.paths.db)
-        try:  # a stored extension this version uses first: announced (D11, P11; OD-502)
+        try:
+            # addresses 0038 converted from A or B: assist, audited, a Security Notice each (P3)
+            stages.announce_converted(conn, self.clock, self.state.notifier)
+            # a stored extension this version uses first: announced (D11, P11; OD-502)
             config.activate_stored(conn, self.clock, self.state.notifier)
         finally:
             conn.close()

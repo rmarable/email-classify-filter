@@ -132,7 +132,7 @@ def test_first_seen_inside_30_days_sends_one_alert(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     n = FakeNotifier()
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     _retiring(monkeypatch, SONNET, clock.now().date() + timedelta(days=20))
     assert model_watch.retirement_tick(conn, clock, n) == 1
     assert f"{SONNET} (classifier, classifier_high, actor) retires" in n.sent[-1][1]
@@ -257,40 +257,6 @@ def test_due_weekly_and_one_watch_at_a_time(conn: sqlite3.Connection, clock: Fak
 
 
 # ---- the Ollama library ------------------------------------------------------------------------
-
-
-def test_new_ollama_tags_after_the_first_read_go_on_the_daily_summary(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    add(conn, clock, "a", "A")
-    page = [TAGS]
-
-    def handle(req: httpx.Request) -> httpx.Response:
-        assert str(req.url) == "https://ollama.com/library/gemma4/tags"
-        return httpx.Response(200, text=page[0])
-
-    st = model_watch.run(conn, clock, FakeNotifier(), _store(None), _http(handle))
-    assert len(st["ollama"]["tags"]) == 51 and st["ollama"]["new"] == {}  # the baseline
-    assert model_watch.daily_lines(conn) == []
-    page[0] = TAGS + '<a href="/library/gemma4:12b-it-qat2" class="x">gemma4:12b-it-qat2</a>'
-    page[0] += '<a href="/library/gemma5:12b">another model</a>'
-    model_watch.run(conn, clock, FakeNotifier(), _store(None), _http(handle))
-    assert model_watch.daily_lines(conn) == [
-        "New gemma4 tags in the Ollama library: 12b-it-qat2."
-        " ecf keeps gemma4:12b-it-q4_K_M until a release moves it."
-    ]
-
-
-@pytest.mark.parametrize(("response", "error"), [
-    (httpx.Response(200, text="<html>redesigned</html>"), "a page ecf can't read"),
-    (httpx.Response(301, headers={"location": "https://elsewhere.example/"}), "HTTP 301"),
-])  # fmt: skip
-def test_an_unreadable_tags_page_is_recorded_without_an_alert(
-    conn: sqlite3.Connection, clock: FakeClock, response: httpx.Response, error: str
-) -> None:
-    add(conn, clock, "a", "A")
-    st = model_watch.run(conn, clock, FakeNotifier(), _store(None), _http(lambda _r: response))
-    assert st["ollama"]["error"] == error and _alerts(conn) == {}
 
 
 # ---- the key -----------------------------------------------------------------------------------

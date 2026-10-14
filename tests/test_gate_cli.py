@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import PolicyDeniedError
 from ecf.paths import Paths
-from ecf_server import claude_pins, db, decide, evalrun, gate, slack_admin
+from ecf_server import claude_pins, db, decide, evalrun, slack_admin
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
@@ -40,7 +40,7 @@ def _seed(conn: sqlite3.Connection, clock: FakeClock) -> str:
         sid = make_classified(conn, clock, CUSTOMER, KNOWN_BULK, sid=f"r{i:04d}x")
         with write_tx(conn):
             conn.execute("UPDATE items SET pinned_models = ?, review = ? WHERE stable_id = ?",
-                         (json.dumps({"digest": claude_pins.local_key()}),
+                         (json.dumps({"pin_key": claude_pins.address_key(conn, "ap")}),
                           json.dumps({"verdict": "correct", "category_ok": True, "bulk": False}),
                           sid))  # fmt: skip
     held = make_classified(conn, clock, MARKETING, KNOWN_BULK, sid="held")
@@ -53,7 +53,8 @@ def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at,"
                      " metrics, gate_passed, path) VALUES ('run1', ?, ?, ?, ?, ?, 1, 'p')",
-                     (gate.PAIR, claude_pins.local_key(), evalrun.set_version(root), now,
+                     (claude_pins.PAIR["C"], claude_pins.address_key(conn, "ap"),
+                      evalrun.set_version(root), now,
                       json.dumps({"confirmed": 150, "unsafe": [], "fraud_cases": 60,
                                   "fraud_guard_cases": 66, "fraud_guard_missed": [],
                                   "fraud_guard_recall": 100.0, "complete": True,
@@ -86,8 +87,8 @@ def test_stage_set_live_from_the_cli(home: Path, tmp_path: Path) -> None:
         assert refused.exit_code != 0
         assert "go-live gate: NOT met" in refused.output
         assert "  ok   100/100 reviewed" in refused.output
-        assert "  FAIL no synthetic-set result for this model" in refused.output
-        assert "ecf eval run --fraud-only" in refused.output
+        assert "  FAIL no synthetic-set result for these models" in refused.output
+        assert "ecf eval run --claude --preset C --fraud-only" in refused.output
         assert isinstance(refused.exception, PolicyDeniedError)  # ecf's main prints it as "ecf: …"
         assert "no override can waive" in str(refused.exception)
 

@@ -24,7 +24,7 @@ def _setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', ?)", (now,))  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', ?)", (now,))  # fmt: skip
         for k, v in (("slack_app_id", "A1"), ("slack_team_id", "T1"), ("slack_member_id", "U1"),
                      ("slack_summary_channel", "CSUM")):  # fmt: skip
             slack_admin.put_setting(conn, k, v, now, actor="test")

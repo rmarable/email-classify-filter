@@ -74,7 +74,7 @@ def test_quarantined_items_are_escalated() -> None:
 def _setup(conn: sqlite3.Connection, stage: str) -> None:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, stage, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', ?, 'now')",
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', ?, 'now')",
         (stage,),
     )
     conn.execute(
@@ -113,7 +113,7 @@ def test_shadow_decides_but_leaves_the_mailbox_alone(
     (o,) = _check(conn, clock, src)
     assert o.decision.escalate and o.executed == [] and o.skipped == "shadow: decided, not done"
     row = conn.execute("SELECT status, prechecked, facts FROM items").fetchone()
-    assert row["status"] == "new" and row["prechecked"] == 1
+    assert row["status"] == "awaiting_claude" and row["prechecked"] == 1  # C: Claude's queue
     assert json.loads(row["facts"])["precheck"]["escalation"] == "queued"
     esc = conn.execute("SELECT stable_id, state FROM escalations").fetchone()
     assert (esc["stable_id"], esc["state"]) == (o.stable_id, "pending")  # for the Slack thread
@@ -143,8 +143,9 @@ def test_live_labels_and_flags_under_a_grant_and_can_undo(
     assert {KW, FLAGGED} <= src.flags([1])[1]
     assert conn.execute("SELECT status FROM grants").fetchone()["status"] == "consumed"
     events = [r["event"] for r in conn.execute("SELECT event FROM audit ORDER BY id")]
-    assert events[-3:] == ["action.granted", "action.executed", "precheck.decided"]
-    assert conn.execute("SELECT status FROM items").fetchone()["status"] == "new"
+    assert events[-4:-1] == ["action.granted", "action.executed", "precheck.decided"]
+    assert events[-1] == "item.transitioned"  # C: to Claude's queue
+    assert conn.execute("SELECT status FROM items").fetchone()["status"] == "awaiting_claude"
     item = conn.execute("SELECT * FROM items").fetchone()
     actions.undo(
         conn, clock, src, item, o.decision.actions, install=INSTALL, max_scan_bytes=1 << 20

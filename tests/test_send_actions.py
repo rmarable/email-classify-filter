@@ -50,7 +50,7 @@ def smtp() -> Iterator[FakeSender]:
 def src(conn: sqlite3.Connection, clock: FakeClock) -> FakeMailSource:
     _address(conn, clock)
     with write_tx(conn):
-        conn.execute("UPDATE addresses SET outbound = 1, preset = 'B',"
+        conn.execute("UPDATE addresses SET outbound = 1, preset = 'C',"
                      " smtp_host = 'smtp.acme.example', smtp_port = 465")  # fmt: skip
     _config(conn, "templates", TEMPLATES)
     _config(conn, "forward_allow_list", [{"id": "ap_lead", "address": "lead@acme.example"}])
@@ -180,7 +180,7 @@ def test_a_reply_to_a_monitored_address_is_refused(
 ) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ops', 'news@vendor-a.example', 'standard', 'A', 't')")  # fmt: skip
+                     " VALUES ('ops', 'news@vendor-a.example', 'standard', 'C', 't')")  # fmt: skip
     sid = _approved(conn, clock, src, 0, "reply_template", "ack")
     _run(conn, clock, src)
     assert item_row(conn, sid)["status"] == "failed" and smtp.sent == []

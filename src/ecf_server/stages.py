@@ -323,6 +323,99 @@ def demote_after_gate_change(conn: sqlite3.Connection, clock: Clock) -> list[str
     return out
 
 
+CONVERTED = "stages.converted_v3"  # setting, written by 0038: {address_id: old preset} (P3, P12)
+CONVERTED_ANNOUNCED = "stages.converted_v3_announced"  # setting: the ids announced so far
+CONVERTED_REASON = ("its preset's local model was removed in v3.0.0 (ADR 0031); it is now C and"
+                    " paused, back to assist until its gate passes (§9.3)")  # fmt: skip
+WAITING = ("new", "classified", "awaiting_claude", "clarified")  # waiting for a model's answer
+
+
+def converted(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """The addresses 0038 (or an import or restore of an older bundle) converted from A or B to
+    C and paused, not removed since: id, old preset, whether it is still paused (resuming it is
+    the consent act, OD-427) and how many of its emails wait for a model (`GET
+    /v1/upgrade/state`, `ecf doctor`; P3). Counts only."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CONVERTED,)).fetchone()
+    was: dict[str, Any] = json.loads(row[0]) if row else {}
+    if not was:
+        return []
+    marks = ", ".join("?" * len(WAITING))
+    out: list[dict[str, Any]] = []
+    for aid in sorted(was):
+        a = conn.execute("SELECT removed_at, paused FROM addresses WHERE address_id = ?",
+                         (aid,)).fetchone()  # fmt: skip
+        if a is None or a["removed_at"] is not None:
+            continue
+        n = conn.execute(f"SELECT count(*) FROM items WHERE address_id = ? AND status IN"  # noqa: S608
+                         f" ({marks})", (aid, *WAITING)).fetchone()[0]  # fmt: skip
+        out.append({"address_id": aid, "from": str(was[aid]), "paused": bool(a["paused"]),
+                    "waiting": int(n)})  # fmt: skip
+    return out
+
+
+def add_converted(conn: sqlite3.Connection, was: dict[str, str], now: str) -> None:
+    """Inside the caller's write transaction: more converted addresses (an import's, whose
+    settings don't carry over), for `announce_converted`."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (CONVERTED,)).fetchone()
+    before: dict[str, Any] = json.loads(row[0]) if row else {}
+    merged = before | was
+    conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
+                 " 'service') ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+                 " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                 (CONVERTED, json.dumps(merged, sort_keys=True), now))  # fmt: skip
+
+
+def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> list[str]:
+    """At service start after 0038, and after an import or restore (v3.0.0; ADR 0031, P3, P12):
+    each converted address not yet announced goes from `live` to `assist` through `set_stage`
+    (audited, posted with `CONVERTED_REASON`), gets an `address.converted` audit row and its own
+    Security Notice: converted to C and paused; resume it only after the account owner agrees to
+    its mail going to Anthropic (OD-427), or remove it; its waiting emails wait for `/ecf-review`
+    once it is resumed. Counts only, no email content. The ids announced are kept in a setting;
+    a restore replaces the settings, so restoring an older bundle announces again. Returns the
+    ids announced."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?",
+                       (CONVERTED_ANNOUNCED,)).fetchone()  # fmt: skip
+    done: list[str] = json.loads(row[0]) if row else []
+    todo = [c for c in converted(conn) if c["address_id"] not in done]
+    if not todo:
+        return []
+    ident = slack_admin.identity(conn)
+    for c in todo:
+        aid = str(c["address_id"])
+        a = addresses.get_address(conn, aid)
+        if a["stage"] == "live":
+            set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
+                      reason=CONVERTED_REASON)  # fmt: skip
+        now = to_ts(clock.now())
+        with write_tx(conn):
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                " VALUES (?, ?, 'address.converted', 'service', 'ok', ?)",
+                (now, aid, json.dumps({"from": c["from"], "to": "C", "paused": True,
+                                       "waiting": c["waiting"]})),
+            )  # fmt: skip
+        n = int(c["waiting"])
+        slack_admin.notice(
+            conn, clock, notifier,
+            f"Address {aid} used preset {c['from']}, whose local model v3.0.0 removed: it is now"
+            f" preset C (Claude classifies its mail when you run /ecf-review) and paused. Resume"
+            f" it (ecf resume {aid}) only after the account's owner agrees to its mail, and what"
+            f" ecf derives from it, going to Anthropic (OD-427); otherwise remove it (ecf address"
+            f" remove {aid}). {n} email{'s' if n != 1 else ''} of it wait for /ecf-review once it"
+            " is resumed.",
+            dms=[ident.member] if ident and ident.member else [])  # fmt: skip
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
+                     " 'service') ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+                     " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                     (CONVERTED_ANNOUNCED,
+                      json.dumps(sorted({*done, *(str(c["address_id"]) for c in todo)})),
+                      to_ts(clock.now())))  # fmt: skip
+    log.info("stages.converted_announced", addresses=len(todo))
+    return [str(c["address_id"]) for c in todo]
+
+
 def _went_live_by_override(conn: sqlite3.Connection, aid: str) -> bool:
     """Whether the address's latest move to `live` was an override (`stage.changed` audit data,
     `override` true; OD-234)."""

@@ -1,6 +1,1 @@
-{
-  "_comment": "The pinned local model (SPEC §7.5, OD-235). Measured 2026-09-30, V1.3 step 0. Only an ecf release changes this file. The tag is the explicit quantization since v2.2.3: Ollama 0.40 on Apple silicon pulls an MLX build for the bare gemma4:12b; the digest is unchanged.",
-  "tag": "gemma4:12b-it-q4_K_M",
-  "digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
-  "ecf_name": "ecf/gemma4-12b"
-}
+{"retired": true}

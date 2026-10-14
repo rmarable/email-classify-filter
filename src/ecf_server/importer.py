@@ -61,9 +61,9 @@ NOT_COPIED = ("settings", "schema_migrations", "routes", "alerts")
 NEW_IDS = ("audit", "model_calls", "claude_calls")  # INTEGER PRIMARY KEY: appended here
 # what --replace clears, children first; jobs and Slack messages of the old items go too
 CLEAR = ("grants", "delays", "claim_batches", "claims", "escalations", "excerpts",
-         "fallback_shadow", "processing", "leases", "check_state", "routes", "probe", "cursors",
-         "items", "alerts", "addresses", "senders", "sent", "threads", "gate", "eval_runs",
-         "eval_results", "model_calls", "claude_calls", "claude_sessions")  # fmt: skip
+         "processing", "leases", "check_state", "routes", "probe", "cursors", "items", "alerts",
+         "addresses", "senders", "sent", "threads", "gate", "eval_runs", "eval_results",
+         "model_calls", "claude_calls", "claude_sessions")  # fmt: skip
 
 
 @stepup.purpose("import")
@@ -89,6 +89,8 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
     typed_install: str | None,
     nonce: str | None,
 ) -> dict[str, Any]:
+    from ecf_server import stages  # noqa: PLC0415 - stages -> pause -> restore -> this module
+
     if not import_plan.target_empty(conn):
         if not replace:
             raise ConflictError("this install already has addresses or items; to replace them,"
@@ -104,6 +106,7 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         try:
             try:
                 dropped = _stage(staged, parsed, source, to_ts(clock.now()))
+                was = converted_in(staged)
                 kept = kept_settings(staged)
                 config_doc = validate(staged, kept)
             except sqlite3.Error as exc:  # malformed JSON in a row, a value of the wrong type
@@ -115,6 +118,8 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
     changes = config.diff(before, config_doc) if config_doc else []
     now = to_ts(clock.now())
     with write_tx(conn):
+        if was:  # settings don't carry over: the converted addresses are named here (P3, P8)
+            stages.add_converted(conn, was, now)
         conn.execute(
             "INSERT INTO audit (ts, event, actor, outcome, data, origin) VALUES (?,"
             " 'import.completed', 'os_user', 'ok', ?, ?)",
@@ -134,10 +139,28 @@ def apply(  # noqa: PLR0913 - the service state it needs, then the request
         text += f" Security-relevant config changed: {config.summary(changes, 200)}."
     if dropped:
         text += f" {dropped['text'][0].upper()}{dropped['text'][1:]}."
+    if was:
+        text += (f" Converted to C, paused (their local model was removed in v3.0.0):"
+                 f" {', '.join(sorted(was))}.")  # fmt: skip
     export_keys.notice(conn, clock, notifier, text + " If this wasn't you, check the computer"
                                                      " ecf runs on.")  # fmt: skip
+    stages.announce_converted(conn, clock, notifier)
     return {"source_install": source, "counts": counts, "config_changes": changes,
-            "replace": replace, "schema_dropped": dropped}  # fmt: skip
+            "replace": replace, "schema_dropped": dropped,
+            "converted": sorted(was)}  # fmt: skip
+
+
+def converted_in(staged: sqlite3.Connection) -> dict[str, str]:
+    """The staged copy's converted addresses (0038, or the bundle's own record): id -> old
+    preset, for those the bundle didn't mark removed."""
+    from ecf_server import stages  # noqa: PLC0415 - stages -> pause -> restore -> this module
+
+    row = staged.execute("SELECT value FROM settings WHERE key = ?",
+                         (stages.CONVERTED,)).fetchone()  # fmt: skip
+    was: dict[str, Any] = json.loads(row[0]) if row else {}
+    live = {str(r[0]) for r in staged.execute("SELECT address_id FROM addresses WHERE"
+                                              " removed_at IS NULL")}  # fmt: skip
+    return {str(k): str(v) for k, v in was.items() if k in live}
 
 
 # ---- staging ------------------------------------------------------------------------------------

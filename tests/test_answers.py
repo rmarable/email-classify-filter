@@ -30,7 +30,7 @@ def _setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset,"
-                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'A', ?)",
+                     " created_at) VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'C', ?)",
                      (now,))  # fmt: skip
         conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
                      " VALUES ('ap', 'slack', 'CAP', 'ecf-default-ap')")  # fmt: skip

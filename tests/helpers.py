@@ -108,5 +108,5 @@ def add_address(
 ) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " paused) VALUES (?, ?, 'standard', 'A', ?, ?)",
+                     " paused) VALUES (?, ?, 'standard', 'C', ?, ?)",
                      (aid, f"{aid}@acme.example", to_ts(clock.now()), int(paused)))  # fmt: skip

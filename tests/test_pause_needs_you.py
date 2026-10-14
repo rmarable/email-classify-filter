@@ -34,7 +34,7 @@ def _setup(conn: sqlite3.Connection, clock: FakeClock, *, summary: bool = True) 
     with write_tx(conn):
         for aid, sens in (("ap", "high"), ("billing", "standard")):
             conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset,"
-                         " created_at) VALUES (?, ?, ?, 'live', 'A', ?)",
+                         " created_at) VALUES (?, ?, ?, 'live', 'C', ?)",
                          (aid, f"{aid}@acme.example", sens, now))  # fmt: skip
             conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
                          " VALUES (?, 'slack', ?, ?)",
@@ -177,10 +177,6 @@ def test_needs_you_lists_what_waits_stale_first(conn: sqlite3.Connection, clock:
     )
     assert [b.label for b in c.buttons] == ["Pause all", "Resume all"]
     assert c.note == "Buttons work only while mac is awake. Last connected 2026-10-01 12:00 UTC."
-    with write_tx(conn):  # `model_failed` is no longer read (v3.0.0, ADR 0031)
-        conn.execute("UPDATE items SET model_failed = 1 WHERE stable_id = ?", ("b" * 64,))
-    lines = needs_you.card(conn, computer="mac", last_connected=clock.now()).text.splitlines()
-    assert not any(line.startswith("bbbbbbbb") for line in lines)
 
 
 def test_needs_you_is_pinned_once_and_edited_only_on_change(

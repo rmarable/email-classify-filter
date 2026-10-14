@@ -88,7 +88,6 @@ def test_the_override_replaces_its_family_with_step_up_and_a_notice(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     make_address(conn, clock, "assist")
-    _preset(conn, "B")
     before = claude_pins.address_key(conn, "ap")
     out = _override(conn, clock, NEW_SONNET)
     eff = claude_pins.effective(conn)
@@ -152,8 +151,7 @@ def test_a_step_up_is_bound_to_the_override_it_was_issued_for(
 
 def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -> None:
     make_address(conn, clock, "assist")
-    _preset(conn, "B")
-    b_key = claude_pins.address_key(conn, "ap")
+    b_key = claude_pins.address_key(conn, "ap")  # C's (every address from v3.0.0, ADR 0031)
     for i, key in enumerate((b_key, LOCAL, None)):
         sid = make_classified(conn, clock, MARKETING, KNOWN_BULK, sid=f"k{i}")
         pinned = {"digest": DIGEST} | ({"pin_key": key} if key else {})
@@ -166,7 +164,7 @@ def test_reviews_count_per_pin_key(conn: sqlite3.Connection, clock: FakeClock) -
     assert review.reviewed(conn, "ap", DIGEST)["reviewed"] == 1  # no pin_key: before V1.4, and
     # before v2's schema, so it no longer counts for the gate (OD-475)
     g = gate.compute(conn, "ap")
-    assert (g.digest, g.reviewed, g.preset) == (b_key, 1, "B")
+    assert (g.digest, g.reviewed, g.preset) == (b_key, 1, "C")
     assert dict(g.pins)["actor"] == "claude-sonnet-5-5"
     synthetic = next(c for c in g.checks if c.name == "synthetic")
     assert not synthetic.ok and "/ecf-eval" in synthetic.detail
@@ -181,27 +179,13 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     with write_tx(conn):
         gate.record(conn, g, clock.now(), passed=True)
     row = gate.stored(conn, "ap")
-    assert row is not None and row["pair_key"] == "claude/claude" and row["ollama_digest"] is None
+    assert row is not None and row["pair_key"] == "claude/claude"
     assert gate.stored_key(row) == g.digest
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"  # unchanged pins
     _override(conn, clock, "claude-opus-5-6")  # actor_high: a C pin
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
-
-
-def test_a_preset_a_gate_row_no_longer_writes_the_ollama_digest(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    """v3.0.0 (ADR 0031): an A address (until migration 0038 converts it) keeps its digest in
-    `pinned_ids`, and its key reads the same."""
-    make_address(conn, clock, "assist")
-    with write_tx(conn):
-        gate.record(conn, gate.compute(conn, "ap"), clock.now(), passed=True)
-    row = gate.stored(conn, "ap")
-    assert row is not None and row["ollama_digest"] is None
-    assert json.loads(row["pinned_ids"]) == {"digest": LOCAL} and gate.stored_key(row) == LOCAL
-    assert row["pair_key"] == gate.PAIR
 
 
 def test_the_override_from_the_cli(home: Path) -> None:

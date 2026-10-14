@@ -253,21 +253,7 @@ def test_install_wide_alerts_stay_listed_after_an_address_is_removed(
     now = to_ts(clock.now())
     with write_tx(conn):  # a removed address made `NULL NOT IN (...)` hide install-wide alerts
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at,"
-                     " removed_at) VALUES ('old', 'old@acme.example', 'standard', 'A', ?, ?)",
+                     " removed_at) VALUES ('old', 'old@acme.example', 'standard', 'C', ?, ?)",
                      (now, now))  # fmt: skip
     health.open_alert(conn, clock, FakeNotifier(), "models_api", None, "the key was refused")
     assert [a["kind"] for a in health.open_alerts(conn)] == ["models_api"]
-
-
-def test_the_check_is_needed_only_while_an_address_uses_the_local_model(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    assert not models.needed(conn)
-    with write_tx(conn):
-        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', ?)",
-                     (to_ts(clock.now()),))  # fmt: skip
-    assert not models.needed(conn)
-    with write_tx(conn):
-        conn.execute("UPDATE addresses SET preset = 'A'")
-    assert models.needed(conn)

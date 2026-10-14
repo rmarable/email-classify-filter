@@ -30,7 +30,7 @@ def _to_actor(conn: sqlite3.Connection, clock: FakeClock, stage: str = "shadow",
     with write_tx(conn):
         conn.execute("INSERT INTO excerpts (stable_id, classifier_text, actor_text)"
                      " VALUES (?, 'x', 'Please send the W-9 again.')", (sid,))  # fmt: skip
-    assert decide.apply(conn, clock, sid).value == "classified"
+    assert decide.apply(conn, clock, sid).value == "awaiting_claude"  # C: Claude's actor
     return sid
 
 

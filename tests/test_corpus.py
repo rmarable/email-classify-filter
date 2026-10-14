@@ -223,7 +223,7 @@ def test_an_address_corpus_records_its_bytes_by_address(
     conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out_dir: Path
 ) -> None:
     conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                 " VALUES (?, 'ap@acme.example', 'standard', 'A', '2026-10-01T12:00:00.000000Z')",
+                 " VALUES (?, 'ap@acme.example', 'standard', 'C', '2026-10-01T12:00:00.000000Z')",
                  (ADDR,))  # fmt: skip
     path, *_ = fetch(conn, clock, data_dir, req(out_dir / "c.ecfcorpus", address_id=ADDR),
                      server_with(3))  # fmt: skip
@@ -231,7 +231,7 @@ def test_an_address_corpus_records_its_bytes_by_address(
     assert conn.execute("SELECT count(*) FROM corpus_downloads").fetchone()[0] == 0
     assert download_budget.used(conn, clock, ADDR) > 0
     c = corpus.open_corpus(path, SECRET)
-    assert c.profile["source"] == "address" and c.header["source_preset"] == "A"
+    assert c.profile["source"] == "address" and c.header["source_preset"] == "C"
 
 
 def test_nothing_fetched_writes_nothing(

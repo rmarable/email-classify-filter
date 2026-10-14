@@ -12,7 +12,7 @@ import pytest
 
 from ecf import cli_admin
 from ecf.errors import InvalidInputError, PolicyDeniedError, StepupRequiredError
-from ecf_server import claude_pins, decide, evalrun, gate, review, slack_admin, stages, stepup
+from ecf_server import claude_pins, db, decide, evalrun, gate, review, slack_admin, stages, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
@@ -20,7 +20,19 @@ from ecf_server.stepper import FakeStepper
 from tests.test_decide import KNOWN_BULK, MARKETING, make_classified
 from tests.test_decide import make_address as _address
 
-DIGEST = claude_pins.local_key()
+
+def _c_key() -> str:
+    """Preset C's pin key with the shipped pins and schema (no override, no extension)."""
+    c = sqlite3.connect(":memory:", autocommit=True)
+    c.row_factory = sqlite3.Row
+    db.migrate(c)
+    try:
+        return claude_pins.key(claude_pins.pins(c, "C"))
+    finally:
+        c.close()
+
+
+DIGEST = _c_key()  # every address is C from v3.0.0 (ADR 0031)
 CUSTOMER: dict[str, Any] = MARKETING | {"category": "customer_request", "requires_reply": True}
 
 
@@ -54,8 +66,9 @@ def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,  # noqa: PL
     with write_tx(conn):
         conn.execute("INSERT INTO eval_runs (run_id, pair, digest, set_version, created_at,"
                      " metrics, gate_passed, path) VALUES (?, ?, ?, ?, ?, ?, ?, 'p')",
-                     (f"run{now}", gate.PAIR, DIGEST, version or evalrun.set_version(root), now,
-                      json.dumps(metrics), int(not unsafe and not missed)))  # fmt: skip
+                     (f"run{now}", claude_pins.PAIR["C"], DIGEST,
+                      version or evalrun.set_version(root), now, json.dumps(metrics),
+                      int(not unsafe and not missed)))  # fmt: skip
         slack_admin.put_setting(conn, evalrun.EVAL_ROOT, str(root), now, actor="test")
 
 
@@ -67,7 +80,7 @@ def _reviewed(conn: sqlite3.Connection, clock: FakeClock, n: int, *, wrong: int 
                   "bulk": False}  # fmt: skip
         with write_tx(conn):
             conn.execute("UPDATE items SET pinned_models = ?, review = ? WHERE stable_id = ?",
-                         (json.dumps({"digest": DIGEST}), json.dumps(review), sid))  # fmt: skip
+                         (json.dumps({"pin_key": DIGEST}), json.dumps(review), sid))  # fmt: skip
 
 
 def _live(conn: sqlite3.Connection, clock: FakeClock, **kw: Any) -> dict[str, Any]:
@@ -90,7 +103,8 @@ def test_a_new_address_misses_every_part_of_the_gate(conn: sqlite3.Connection,
     assert not g.met and not g.safety_met
     by = {c.name: c for c in g.checks}
     assert by["reviewed"].detail == "0/100 reviewed" and by["reviewed"].waivable
-    assert "ecf eval run --fraud-only" in by["synthetic"].detail and not by["synthetic"].waivable
+    assert "ecf eval run --claude --preset C --fraud-only" in by["synthetic"].detail
+    assert not by["synthetic"].waivable
     with pytest.raises(PolicyDeniedError, match="no override can waive"):
         stages.set_stage(conn, clock, "ap", "live", nonce=None, override=True, reason="x")
 
@@ -431,13 +445,12 @@ def test_the_cli_reports_what_happened_to_held_emails(capsys: pytest.CaptureFixt
 
 def _apply_0037(conn: sqlite3.Connection) -> None:
     """Migration 0037's statements run again on this database: as on an upgrade, it clears every
-    stored gate pass."""
-    from ecf_server import db  # noqa: PLC0415
-
+    stored gate pass (not its `fallback_shadow` rows: 0038 dropped the table)."""
     sql = next(m[2] for m in db._migration_files() if m[0] == 37)  # pyright: ignore[reportPrivateUsage]
     with write_tx(conn):
         for statement in db._split(sql):  # pyright: ignore[reportPrivateUsage]
-            conn.execute(statement)
+            if "fallback_shadow" not in statement:
+                conn.execute(statement)
 
 
 def test_a_live_address_whose_pass_0037_cleared_goes_back_to_assist_once(

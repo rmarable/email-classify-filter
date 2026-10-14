@@ -40,7 +40,7 @@ def _setup(conn: sqlite3.Connection, clock: FakeClock, *, sensitivity: str = "st
     with write_tx(conn):
         conn.execute(
             "INSERT INTO addresses (address_id, email, sensitivity, stage, preset, created_at)"
-            " VALUES ('ap', 'ap@acme.example', ?, 'live', 'A', ?)",
+            " VALUES ('ap', 'ap@acme.example', ?, 'live', 'C', ?)",
             (sensitivity, now),
         )
         conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"

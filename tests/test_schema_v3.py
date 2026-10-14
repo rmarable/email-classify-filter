@@ -288,12 +288,15 @@ def test_a_v2_result_is_completed_to_v3_when_rescored() -> None:
 # ---- preset A: still asked v2 (P6) ---------------------------------------------------------
 
 
+V2_2_3_PROMPT = "34d0c4cc6099fbb15346204d3763d02a84a88fb7802f3a777d842b67f3566fa7"
+
+
 def test_the_local_model_is_asked_v2_and_its_prompt_digest_and_key_dont_move() -> None:
     v2, v3 = load_schema_v2(), load_schema()
     assert local_schema(v3) is v2 and local_schema(v2) is v2
-    release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
-    # the v2.2.3 classifier prompt digest, unchanged by schema v3
-    assert release["prompt_digest"] == classifier.prompt_digest(v3) == classifier.prompt_digest(v2)
+    # the v2.2.3 classifier prompt digest, unchanged by schema v3 (release.json carries Claude's
+    # from v3.0.0, ADR 0031, R-D10)
+    assert classifier.prompt_digest(v3) == classifier.prompt_digest(v2) == V2_2_3_PROMPT
     assert classifier.system_prompt(v3) == classifier.INSTRUCTIONS + v2.prompt_block
     for name in FIXED_ITEMS:
         assert f"- {name} " not in classifier.system_prompt(v3)
@@ -507,4 +510,4 @@ def test_0037_checkpoints_and_the_release_names_it() -> None:
     assert 37 in db.CHECKPOINT_AFTER
     release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
     newest = max(m[0] for m in db._migration_files())  # pyright: ignore[reportPrivateUsage]
-    assert release["schema_version"] == newest == 37
+    assert release["schema_version"] == newest >= 37  # 38 from v3.0.0 (ADR 0031)

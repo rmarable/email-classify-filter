@@ -27,7 +27,7 @@ def env(conn: sqlite3.Connection, db_path: Path) -> Env:
     """One `high` address with a probed host (as tests/test_checks.py)."""
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-                     " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
+                     " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
         conn.execute("INSERT INTO probe (address_id, host, probed_at)"
                      " VALUES ('ap', 'imap.acme.example', 'now')")  # fmt: skip
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
@@ -62,7 +62,7 @@ def test_records_only_decides_and_closes_without_acting(env: Env, clock: FakeClo
     assert (report.created, report.backfill_created, report.backfill_remaining) == (1, 2, 0)
     got = _items(conn)
     assert set(got) == {new, old_fraud, old_plain}
-    assert got[new]["status"] == Status.NEW  # new mail: the ordinary path
+    assert got[new]["status"] == Status.AWAITING_CLAUDE  # new mail: the ordinary path (C)
     for uid in (old_fraud, old_plain):
         assert got[uid]["status"] == Status.OBSERVED
         facts = json.loads(got[uid]["facts"])
@@ -88,7 +88,7 @@ def test_act_runs_the_pre_check_as_for_new_mail(env: Env, clock: FakeClock) -> N
     report = run(env, clock, box)
     assert report.backfill_created == 1 and report.escalations == 1
     item = _items(conn)[old_fraud]
-    assert item["status"] == Status.NEW and item["prechecked"] == 1
+    assert item["status"] == Status.AWAITING_CLAUDE and item["prechecked"] == 1
     assert box.fake.flags([old_fraud])[old_fraud]  # labelled and flagged (assist)
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
 

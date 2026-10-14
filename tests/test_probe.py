@@ -107,7 +107,7 @@ def test_appendlimit_parsing() -> None:
 def test_store_and_load_round_trip(conn: sqlite3.Connection, clock: FakeClock) -> None:
     conn.execute(
         "INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
-        " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')"
+        " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')"
     )
     r = probe.probe(FakeMailSource(caps=FULL), "imap.other.example")
     with write_tx(conn):

@@ -2,10 +2,12 @@
 OD-379, OD-381; V1.5 step 11a).
 
 The running versions (product, schema actually applied, data format, API), the model pins in
-force (the lock files' pins, before any `claude_model_override`, since a release changes the
-files) and which addresses use each one (the gate's roles per preset, and the local model for A
-and B), the install role (`prod` refuses `--wheel`), and what makes an upgrade wait: executing
-items, held leases, and open `ecf claude` sessions (OD-379).
+force (the lock file's pins, before any `claude_model_override`, since a release changes the
+file) and which addresses use each one (the gate's roles per preset), the install role (`prod`
+refuses `--wheel`), and what makes an upgrade wait: executing items, held leases, and open `ecf
+claude` sessions (OD-379). From v3.0.0 (ADR 0031) there is no local model pin; the prompt digest
+is Claude's (`claude_review.prompt_digest`, P4), and `converted` names the addresses migration
+0038 converted from A or B to C and paused, with how many of their emails wait (P3).
 """
 
 from __future__ import annotations
@@ -17,25 +19,21 @@ from typing import Any
 from ecf import __version__
 from ecf.errors import InvalidInputError
 from ecf.schema import load_schema
-from ecf_server import classifier, claude_pins, config, export_bundle, initsetup, ollama
+from ecf_server import claude_pins, claude_review, config, export_bundle, initsetup, stages
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 
-LOCAL = "local"  # the Ollama digest's key among the pins
 CURRENT = "upgrade.current"  # the last upgrade: {from, to, label, started_at, finished_at, ...}
 
 
 def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
           sessions: int) -> dict[str, Any]:  # fmt: skip
     lock = claude_pins.load_lock()
-    pins = {f: lock[f] for f in claude_pins.ROLES} | {LOCAL: ollama.load_pin().digest}
+    pins = {f: lock[f] for f in claude_pins.ROLES}
     users: dict[str, list[str]] = {}
     for aid, preset in conn.execute("SELECT address_id, preset FROM addresses WHERE removed_at"
                                     " IS NULL ORDER BY address_id"):  # fmt: skip
-        fams = list(claude_pins.GATE_ROLES[preset])
-        if preset in claude_pins.LOCAL_PRESETS:
-            fams.append(LOCAL)
-        for f in fams:
+        for f in claude_pins.GATE_ROLES[preset]:
             users.setdefault(f, []).append(aid)
     executing = conn.execute("SELECT count(*) FROM items WHERE status IN ('executing',"
                              " 'undoing')").fetchone()[0]  # fmt: skip
@@ -46,10 +44,10 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "version": __version__, "schema_version": schema,
         "data_format": export_bundle.DATA_FORMAT, "api_version": api_version,
         "classifier_schema": load_schema().version,
-        # the shipped prompt's digest, as release.json has it (Q6); the install's, with its
-        # schema extension, apart: an extension carries over an upgrade unchanged
-        "prompt_digest": classifier.prompt_digest(load_schema()),
-        "effective_prompt_digest": classifier.prompt_digest(config.current_schema(conn)),
+        # the shipped prompt's digest, as release.json has it (Q6; Claude's from v3.0.0, P4); the
+        # install's, with its schema extension, apart: an extension carries over an upgrade
+        "prompt_digest": claude_review.prompt_digest(load_schema()),
+        "effective_prompt_digest": claude_review.prompt_digest(config.current_schema(conn)),
         # a stored extension, in force or not (OD-481): v2.2.0's upgrade check needs it (item 6)
         "extension_stored": config.current(conn)["schema"] is not None,
         # the C addresses a stored extension not yet in use would move to assist at the next
@@ -58,6 +56,8 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         "pins": pins, "pin_users": users, "install_role": initsetup.role(conn),
         "busy": {"executing": executing, "leases": leases, "claude_sessions": sessions},
         "upgrade": current(conn),
+        # A and B addresses 0038 made C and paused: [{address_id, from, waiting}] (P3)
+        "converted": stages.converted(conn),
     }  # fmt: skip
 
 

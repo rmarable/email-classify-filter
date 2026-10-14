@@ -185,7 +185,6 @@ def test_the_queue_claims_waiting_items_and_names_their_agent(
     add(conn, clock, "c", "C")
     add(conn, clock, "h", "C", sensitivity="high")
     add(conn, clock, "b", "C")
-    add(conn, clock, "a", "A")
     c1 = waiting_item(conn, clock, "c")
     h1 = waiting_item(conn, clock, "h")
     b1 = waiting_item(conn, clock, "b", classification=REQUEST)

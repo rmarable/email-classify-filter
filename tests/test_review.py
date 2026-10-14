@@ -371,7 +371,8 @@ def test_stage_status_shows_review_progress(conn: sqlite3.Connection, morning: F
     [a, b] = _items(conn, morning, MARKETING, MARKETING)
     with write_tx(conn):  # only reviews of emails classified by the model ecf runs now count
         conn.execute("UPDATE items SET pinned_models = ? WHERE stable_id = ?",
-                     (json.dumps({"digest": claude_pins.local_key()}), a))  # fmt: skip
+                     (json.dumps({"pin_key": claude_pins.address_key(conn, "ap")}),
+                      a))  # fmt: skip
     review.record(conn, morning, a, actor="t")
     review.record(conn, morning, b, actor="t")
     [row] = stages.status(conn, morning.now())

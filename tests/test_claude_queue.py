@@ -89,12 +89,11 @@ def test_preset_c_after_a_claude_classification_the_actor_waits_for_claude(
 
 
 def test_answered_questions_wait_for_claude(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    for aid, preset in (("a", "A"), ("c", "C")):  # A: a removed preset, until migration 0038
-        add(conn, clock, aid, preset)
-        sid = new_item(conn, clock, aid)
-        for to in (Status.CLASSIFIED, Status.PROPOSED, Status.NEEDS_CLARIFICATION,
-                   Status.CLARIFIED):  # the actor asked and you answered  # fmt: skip
-            items.transition(conn, clock, StableId(sid), to, TransitionContext(), actor="t")
+    add(conn, clock, "c", "C")
+    sid = new_item(conn, clock, "c")
+    for to in (Status.CLASSIFIED, Status.PROPOSED, Status.NEEDS_CLARIFICATION,
+               Status.CLARIFIED):  # the actor asked and you answered  # fmt: skip
+        items.transition(conn, clock, StableId(sid), to, TransitionContext(), actor="t")
     assert claude_queue.waiting(conn) == {"c": 1}
 
 
@@ -138,20 +137,6 @@ def test_the_sweep_queues_prechecked_c_mail_but_not_records_only_backfill(
     assert claude_queue.sweep(conn, clock) == 1
     assert [status(conn, s) for s in (stranded, backfilled, unchecked)] == [
         "awaiting_claude", "new", "new"]  # fmt: skip
-
-
-def test_a_removed_preset_stays_out_of_the_queue(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    """An A or B address before migration 0038 converts it (ADR 0031): nothing queues its mail."""
-    for preset in ("A", "B"):
-        add(conn, clock, preset.lower(), preset)
-        sid = new_item(conn, clock, preset.lower())
-        classify(conn, clock, sid, REQUEST)
-        assert decide.apply(conn, clock, sid) is Status.CLASSIFIED
-    clock.advance(3600)
-    assert claude_queue.sweep(conn, clock) == 0
-    assert claude_queue.waiting(conn) == {}
 
 
 def test_the_backlog_counts_what_waits_at_awaiting_claude(

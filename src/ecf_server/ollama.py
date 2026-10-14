@@ -26,7 +26,6 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from importlib import resources
 from typing import Any, Literal, cast
 
 import httpx
@@ -110,9 +109,18 @@ def _release() -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", __version__)
 
 
+# The last pinned local model (SPEC §7.5, OD-235; measured 2026-09-30, tag explicit since v2.2.3).
+# v3.0.0 retired `ollama.lock` to a stub (R-D9: a v2.2.x client's `read_wheel` still reads it), so
+# the pin lives here until this module goes (ADR 0031, R2).
+LAST_PIN = {
+    "tag": "gemma4:12b-it-q4_K_M",
+    "digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
+    "ecf_name": "ecf/gemma4-12b",
+}
+
+
 def load_pin() -> Pin:
-    raw = json.loads(resources.files("ecf_server.data").joinpath("ollama.lock").read_text("utf-8"))
-    return Pin(tag=raw["tag"], digest=raw["digest"], ecf_name=raw["ecf_name"])
+    return Pin(tag=LAST_PIN["tag"], digest=LAST_PIN["digest"], ecf_name=LAST_PIN["ecf_name"])
 
 
 # ---------------------------------------------------------------------------- the host side
