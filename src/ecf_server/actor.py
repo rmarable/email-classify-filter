@@ -1,7 +1,7 @@
-"""The local actor (SPEC §5.1 step 7, §8.1, §8.2; V1.3 step 4c): Gemma 4 12B through Ollama.
-
-It runs when a rule continues to the actor (the item waits at `classified`) and again after you
-answer one of its questions (`clarified`). One request per item:
+"""The actor's checks and decision (SPEC §5.1 step 7, §8.1, §8.2; V1.3 step 4c), which Claude's
+proposals go through (`problem`, `offered`, `decide_one`; claude_review.py), and the local actor
+(Gemma 4 12B through Ollama), which from v3.0.0 only `ecf eval run` still asks until its removal
+(ADR 0031; the model queue that ran it on mail is gone). One request per item:
 
 - **Input:** the stored actor excerpt (about 4,000 characters, cut again to `MAX_INPUT_BYTES` of
   UTF-8), between delimiters with a per-request random token, and your earlier answers. The
@@ -15,8 +15,8 @@ answer one of its questions (`clarified`). One request per item:
   may be 4,000).
 - **Drafts and sends** (V1.5, OD-317): `draft_reply` is offered when the email needs a reply;
   `reply_template` too when a template is enabled, and `forward_internal` when the forward
-  allow-list has entries (targets: the template ids and entry ids). Sends aren't offered where
-  `local_high_risk` would reject them (`sends=False`). Policy checks them again (§8.4).
+  allow-list has entries (targets: the template ids and entry ids). Policy checks them again
+  (§8.4).
 - **No hiding mail that needs someone** (operator decision 2026-10-01, OD-250): when the
   classification says the email needs action or a reply, the hide actions (mark_read, archive,
   move, junk) are left out of `format` and refused by `parse`, so text in the email can't talk
@@ -24,8 +24,7 @@ answer one of its questions (`clarified`). One request per item:
   prompt alone). Mail the classifier calls routine still gets them, and policy's I1 check.
 - **Then the policy** (policy.proposal): the proposed action gets the same checks as a rule's (I1:
   a hide still needs corroboration; I4: targets), and joins the rule's actions.
-- **A question** on a high-risk item escalates instead (`local_high_risk`, §8.2); otherwise it goes
-  to you with an Answer button (V1.2's machinery, at most two rounds).
+- **A question** goes to you with an Answer button (V1.2's machinery, at most two rounds).
 """
 
 from __future__ import annotations
@@ -40,15 +39,12 @@ from ecf.schema import local_fields
 from ecf_server import answers, decide, items, ollama, outbound_plan, policy
 from ecf_server.classifier import fit
 from ecf_server.clock import Clock
-from ecf_server.log_bridge import log
-from ecf_server.modelq import ItemResult
-from ecf_server.ollama import Client, OllamaError
+from ecf_server.ollama import Client
 from ecf_server.policy import Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS
 from ecf_server.state_machine import Stage, Status, TransitionContext
 
 MAX_INPUT_BYTES = 6000  # the actor excerpt, with room for the prefix, answers and output
-NEAR_CTX = ollama.NUM_CTX - ollama.NUM_PREDICT["actor"] - 64
 ACTIONS = ("label", "flag", "escalate", "leave", "mark_read", "archive", "move", "junk",
            "needs_clarification")  # fmt: skip
 OUTBOUND = ("draft_reply", "reply_template", "forward_internal")  # offered by `allowed` (V1.5)
@@ -88,7 +84,6 @@ def allowed(
     *,
     templates: frozenset[str] = frozenset(),
     forwards: frozenset[str] = frozenset(),
-    sends: bool = True,
 ) -> tuple[str, ...]:
     """The actions the actor may propose for this email (OD-250; drafts and sends, OD-317)."""
     reply = bool(classification.get("requires_reply"))
@@ -96,8 +91,8 @@ def allowed(
     if reply or classification.get("requires_action"):
         base = [a for a in base if a not in HIDE_ACTIONS]
     extra = [a for a, on in (("draft_reply", reply),
-                             ("reply_template", reply and sends and bool(templates)),
-                             ("forward_internal", sends and bool(forwards))) if on]  # fmt: skip
+                             ("reply_template", reply and bool(templates)),
+                             ("forward_internal", bool(forwards))) if on]  # fmt: skip
     return (*base[:-1], *extra, base[-1])  # needs_clarification stays last
 
 
@@ -226,70 +221,20 @@ def ask(  # noqa: PLR0913 - one call's inputs; the targets keyword-only
                                          forwards=forwards))  # fmt: skip
 
 
-def offered(ctx: policy.Context, p: policy.Plan) -> tuple[str, ...]:
-    """The actions this item's actor is offered: sends only where policy could accept them."""
-    return allowed(ctx.classification, templates=ctx.templates, forwards=ctx.forwards,
-                   sends=not (ctx.local_pair and p.high_risk))  # fmt: skip
-
-
-def act_item(conn: sqlite3.Connection, clock: Clock, client: Client, ready: ollama.Ready,
-             item: sqlite3.Row) -> ItemResult:  # fmt: skip
-    """The model queue's `Work` for items waiting for the actor."""
-    ctx, p = decide.plan_for(conn, item)
-    labels = policy.labels(ctx.rules.schema, ctx.rules)
-    folders = ctx.move_folders
-    state: dict[str, Any] = json.loads(item["proposal"] or "{}")
-    answered: list[dict[str, Any]] = [r for r in state.get("answers", []) if r.get("answer")]
-    addr = conn.execute("SELECT preset, stage FROM addresses WHERE address_id = ?",
-                        (item["address_id"],)).fetchone()  # fmt: skip
-    tags = {"address_id": item["address_id"], "preset": addr["preset"], "stage": addr["stage"]}
-    excerpt = conn.execute("SELECT actor_text FROM excerpts WHERE stable_id = ?",
-                           (item["stable_id"],)).fetchone()  # fmt: skip
-    text = str(excerpt[0] or "") if excerpt else ""
-    acts = offered(ctx, p)
-    try:
-        reply = ask(client, text, ctx.classification, answered, labels, folders, acts,
-                    templates=ctx.templates, forwards=ctx.forwards)  # fmt: skip
-    except OllamaError as e:
-        if e.cause == "timeout":
-            ollama.record_call(conn, clock, role="actor", outcome="timeout", digest=ready.digest,
-                               metrics=None, **tags)  # fmt: skip
-        raise
-    m = reply.metrics
-    if m.prompt_tokens is not None and m.prompt_tokens >= NEAR_CTX:
-        ollama.record_call(conn, clock, role="actor", outcome="truncated", digest=ready.digest,
-                           metrics=m, **tags)  # fmt: skip
-        return ItemResult("failed", m)
-    got = parse(reply.content, labels, folders, acts, templates=ctx.templates,
-                forwards=ctx.forwards)  # fmt: skip
-    if got is None:
-        ollama.record_call(conn, clock, role="actor", outcome="schema_failure",
-                           digest=ready.digest, metrics=m, **tags)  # fmt: skip
-        log.warning("actor.schema_failure", address_id=item["address_id"])
-        return ItemResult("failed", m)
-    ollama.record_call(conn, clock, role="actor", outcome="ok", digest=ready.digest, metrics=m,
-                       **tags)  # fmt: skip
-    decide_one(conn, clock, item, ctx, p, got, labels)
-    return ItemResult("ok", m)
+def offered(ctx: policy.Context) -> tuple[str, ...]:
+    """The actions this item's actor is offered."""
+    return allowed(ctx.classification, templates=ctx.templates, forwards=ctx.forwards)
 
 
 def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: policy.Context,
-            p: policy.Plan, got: dict[str, str], labels: frozenset[str], *,
-            local: bool = True) -> None:  # fmt: skip
-    """Apply one proposal: the local actor's, or Claude's (`local=False`, V1.4 step 3: `got` may
-    also carry `question`, `model` and `agent`; a question goes to you on any item, since
-    `local_high_risk` is the local pair's policy, §8.2)."""
+            p: policy.Plan, got: dict[str, str], labels: frozenset[str]) -> None:  # fmt: skip
+    """Apply one proposal: Claude's (V1.4 step 3: `got` may also carry `question`, `model` and
+    `agent`; a question goes to you on any item, §8.2)."""
     sid = item["stable_id"]
     p.to_actor = False
     p.actor = {"action": got["action"], "target": got["target"] or None, "reason": got["reason"],
                **{k: got[k] for k in ("model", "agent") if k in got}}  # fmt: skip
-    if local and item["fallback_at"]:  # the local fallback's, not the pinned actor's (V1.4)
-        p.actor["fallback"] = True
     if got["action"] == "needs_clarification":
-        if local and p.high_risk:  # local_high_risk: a question on a risky item goes to a person
-            _add(p, Planned("escalate", None, "auto"))
-            decide.apply(conn, clock, sid, p, source="actor")
-            return
         decide.record(conn, clock, sid, p, "actor")  # what the actor decided stays with the item
         _to_proposed(conn, clock, item)
         answers.ask(conn, clock, sid, got.get("question") or got["reason"])

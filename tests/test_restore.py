@@ -159,7 +159,8 @@ def test_s4_restore_drops_the_bundles_own_fields(
     conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, fresh: sqlite3.Connection
 ) -> None:
     """P11 (OD-502): restore drops `config.schema` like import, naming it in the preview and the
-    result; the bundle's address is preset A, so the reason is D8's."""
+    result, with how to apply them here (from v3.0.0 the same for the bundle's preset A address,
+    ADR 0031)."""
     from ecf_server import config  # noqa: PLC0415
 
     _set(conn, "config.schema", {"category_values": {"legal_notice": "Letter from a lawyer."}})
@@ -169,7 +170,7 @@ def test_s4_restore_drops_the_bundles_own_fields(
     done = _restore(fresh, clock, path)
     assert done["schema_dropped"] == preview["schema_dropped"]
     assert done["schema_dropped"]["category_values"] == ["legal_notice"]
-    assert "use preset A or B" in done["schema_dropped"]["text"]
+    assert "re-apply your config file" in done["schema_dropped"]["text"]
     assert config.current(fresh)["schema"] is None
 
 

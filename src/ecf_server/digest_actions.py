@@ -4,7 +4,7 @@
   action. (Undo for hide actions arrives with the executor, V1.3 step 5.)
 - **Approve all N reversible** (§9.5): the approvals waiting for this address whose actions are all
   reversible and which aren't excluded: outbound, the fraud guard, an unverified sender, any
-  high-risk item (`local_high_risk`), regulator, `content_unscanned`, or a `high` address. The
+  high-risk item (§8.2), regulator, `content_unscanned`, or a `high` address. The
   button binds the fixed set of grant IDs shown when the digest was posted; a click approves each
   one that is still waiting and still eligible, re-checked at the click (a grant that changed,
   expired or became ineligible is skipped and counted), one click each, never with step-up

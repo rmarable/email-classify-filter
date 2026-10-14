@@ -23,13 +23,9 @@ from ecf.eval.results import CaseResult, ResultFile, compare, load_result
 from ecf.schema import FIXED_ITEMS, load_schema, load_schema_v2, load_schema_v2_0_0
 from ecf_server import evalrun, modelq, policy, ruletest, schedule
 from ecf_server.clock import FakeClock, to_ts
-from tests.test_classifier import ChatOllama
-from tests.test_models import check_kw
+from tests.helpers import BEC, ChatOllama, check_kw
 
 SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
-BEC = {"category": "vendor_change_request", "priority": "high", "requires_action": True,
-       "requires_reply": False, "payment_related": True, "deadline_mentioned": False,
-       "sender_type": "vendor", "fraud_risk": "high"}  # fmt: skip
 AC = schedule.Power(laptop=True, on_ac=True)
 
 

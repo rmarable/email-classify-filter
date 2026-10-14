@@ -154,7 +154,7 @@ def for_address(conn: sqlite3.Connection, address_id: str) -> tuple[str, dict[st
     """(preset, pins) for this address now."""
     row = conn.execute("SELECT preset FROM addresses WHERE address_id = ?",
                        (address_id,)).fetchone()  # fmt: skip
-    preset = str(row["preset"]) if row else "A"
+    preset = str(row["preset"]) if row else "C"
     return preset, pins(conn, preset)
 
 

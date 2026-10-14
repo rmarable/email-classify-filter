@@ -1,20 +1,12 @@
-"""The local model as the service sees it: status, install, and the alert when it can't be used
-(SPEC §4.3, §7.5, §13.2; V1.3 step 1b).
+"""The local model as the service sees it: status and install (SPEC §4.3, §7.5, §13.2; V1.3 step
+1b). From v3.0.0 (ADR 0031) no mail is classified with it: its check, alerts and model queue are
+gone, and what is left serves `ecf models status|install|prune` and `ecf eval run`'s local
+backends until their removal.
 
 - **`ecf models install`** pulls the pinned tag, checks that its manifest digest is the pinned one
   (if the tag moved upstream, no ecf release moves the pin yet, so it stops and says so), copies it
   to ecf's own name and checks the copy. It runs in a background thread; `ecf models status` shows
   its progress.
-- **The model check** runs `ollama.readiness` and keeps one alert open while it fails. Ollama not
-  running, the model missing or changed: System Error naming the cause and the fix. The listener
-  not loopback-only, a check that can't run, or request logging on: the same, loud (the Slack post
-  mentions you; OD-240, OD-242, OD-245). Resolved when it passes again. Model work never runs
-  while it fails (I6).
-- The check runs each tick once models have been installed on this install (before that there is
-  nothing to watch), and before each model round from V1.3 step 2.
-- **After an ecf upgrade** ecf's copy has a new name (`ecf/gemma4-12b:<release>`). When it's
-  missing but Ollama still holds the pinned tag with the pinned digest, the check copies it again
-  by itself (audited) instead of stopping model work until `ecf models install`.
 - **ecf's copies for other releases are kept** (2026-10-08, operator-approved fix): another install
   on this computer, or a rollback (`ecf upgrade --to`, §11.10), may still run one, and installs
   don't know each other. A copy shares the pinned tag's blobs, so it costs no disk. `ecf models
@@ -31,22 +23,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ecf.errors import ConflictError
-from ecf_server import claude_pins, health, ollama, slack_admin
+from ecf_server import claude_pins, ollama, slack_admin
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
-from ecf_server.notify import Notifier
 from ecf_server.ollama import Client, OllamaError
 
 INSTALLED_KEY = "models.installed_at"
-ALERT = "local_model"  # System Error; not running, missing or changed
-LOUD = "local_model_unsafe"  # System Error with a mention; can't be confirmed safe
-LOUD_CAUSES = frozenset({"not_loopback", "unconfirmed", "logs_requests", "digest_mismatch"})
 SHOWN_ENV = ("OLLAMA_NUM_PARALLEL", "OLLAMA_ORIGINS", "OLLAMA_NO_CLOUD", "OLLAMA_FLASH_ATTENTION",
              "OLLAMA_KV_CACHE_TYPE", "OLLAMA_DEBUG", "OLLAMA_DEBUG_LOG_REQUESTS",
              "LLAMA_ARG_CACHE_RAM")  # fmt: skip
 
 
-# ---------------------------------------------------------------------------- the check
+# ---------------------------------------------------------------------------- faults
 
 
 def fault_text(e: OllamaError) -> str:
@@ -69,28 +57,6 @@ def fault_summary(e: OllamaError) -> str:
     return f"{what}{detail}."
 
 
-def check(
-    conn: sqlite3.Connection, clock: Clock, notifier: Notifier, client: Client, **kw: Any
-) -> ollama.Ready | None:
-    """Readiness, keeping the alert in step: None (and an open alert) when model work must not
-    run."""
-    try:
-        try:
-            ready = ollama.readiness(client, **kw)
-        except OllamaError as e:
-            if e.cause != "model_missing" or not installed(conn) or not recopy(conn, clock, client):
-                raise
-            ready = ollama.readiness(client, **kw)
-    except OllamaError as e:
-        kind, other = (LOUD, ALERT) if e.cause in LOUD_CAUSES else (ALERT, LOUD)
-        health.resolve_alert(conn, clock, notifier, other, None)
-        health.open_alert(conn, clock, notifier, kind, None, fault_text(e))
-        return None
-    for kind in (ALERT, LOUD):
-        health.resolve_alert(conn, clock, notifier, kind, None)
-    return ready
-
-
 def local_source(digests: dict[str, str], pin: ollama.Pin) -> str | None:
     """A tag Ollama already holds with the pinned digest: the pinned tag, else an ecf copy (any
     release), else any other. Ollama 0.40 on Apple silicon pulls an MLX build for `gemma4:12b`,
@@ -100,30 +66,6 @@ def local_source(digests: dict[str, str], pin: ollama.Pin) -> str | None:
         if digests.get(t) == pin.digest:
             return t
     return None
-
-
-def recopy(conn: sqlite3.Connection, clock: Clock, client: Client) -> bool:
-    """Copy the pinned model to this release's ecf name from a tag Ollama already holds with the
-    pinned digest (after an ecf upgrade); True if it did. Never pulls."""
-    pin = ollama.load_pin()
-    try:
-        source = local_source(client.digests(), pin)
-        if source is None:
-            return False
-        client.copy(source, pin.ecf_tag)
-        if client.digests().get(pin.ecf_tag) != pin.digest:
-            return False
-    except OllamaError:
-        return False
-    now = to_ts(clock.now())
-    with write_tx(conn):
-        conn.execute(
-            "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
-            " VALUES (?, NULL, 'models.installed', 'service', 'ok',"
-            " json_object('tag', ?, 'digest', ?, 'copied_after_upgrade', 1))",
-            (now, pin.ecf_tag, pin.digest),
-        )
-    return True
 
 
 # ecf names of models no release runs any more; every copy under them is stale. `tev1-4b` was the
@@ -189,25 +131,9 @@ def needed(conn: sqlite3.Connection) -> bool:
                         " ('A', 'B') LIMIT 1").fetchone() is not None  # fmt: skip
 
 
-def quiet(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> None:
-    """No address uses the local model any more: its alerts no longer apply."""
-    for kind in (ALERT, LOUD):
-        health.resolve_alert(conn, clock, notifier, kind, None)
-
-
 def installed(conn: sqlite3.Connection) -> bool:
     row = conn.execute("SELECT 1 FROM settings WHERE key = ?", (INSTALLED_KEY,)).fetchone()
     return row is not None
-
-
-def waiting_since(conn: sqlite3.Connection) -> str | None:
-    """When the open model alert opened (the daily summary's "waiting for the local model
-    since")."""
-    row = conn.execute(
-        "SELECT min(opened_at) FROM alerts WHERE kind IN (?, ?) AND resolved_at IS NULL",
-        (ALERT, LOUD),
-    ).fetchone()
-    return row[0] if row else None
 
 
 # ---------------------------------------------------------------------------- status
@@ -338,7 +264,4 @@ def install(conn: sqlite3.Connection, clock: Clock, client: Client, progress: Pr
             " json_object('tag', ?, 'digest', ?))",
             (now, pin.ecf_tag, pin.digest),
         )
-    from ecf_server import modelq  # noqa: PLC0415 - modelq imports this module
-
-    modelq.retry_all(conn, clock, actor="os_user")  # what it gave up on gets another try
     progress.set(state="done", status="installed", ended_at=now)

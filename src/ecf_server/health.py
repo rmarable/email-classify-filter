@@ -35,11 +35,9 @@ TITLES = {
     "login_rejected": "Mailbox Login Rejected",
     "slack_delivery_failed": "Slack Delivery Failed",
     "slack_connection": "Slack Delivery Failed",  # clicks can't arrive (V1.2 review)
-    "local_model": "System Error",  # the local model can't be used (V1.3)
-    "local_model_unsafe": "System Error",  # ... and ecf can't confirm it's safe (OD-242, OD-245)
-    "model_failures": "System Error",  # many items the model gave up on (OD-236)
-    "local_model_server": "System Error",  # Ollama can't run the model now (out of memory)
     "claude_review": "Operator Input Needed: Claude review waiting",  # V1.4 step 9 (OD-115)
+    # twice the reminder's hours, loud (v3.0.0, ADR 0031, P10: no local fallback)
+    "claude_review_overdue": "Operator Input Needed: Claude review overdue",
     "models_api": "System Error",  # the weekly model watch (V1.4 step 10)
     "models_missing": "System Error",
     "second_install": "Operator Input Needed: possible second install",  # §13.6 (V1.5)
@@ -52,11 +50,18 @@ TITLES = {
     "schema_extension": "System Error",  # the stored schema extension no longer compiles (OD-478)
 }
 # not a mail check's to resolve on success
-NOT_CHECKS = frozenset({"claude_review", "models_api", "models_missing", "second_install",
+NOT_CHECKS = frozenset({"claude_review", "claude_review_overdue", "models_api", "models_missing",
+                        "second_install",
                         "send_limit", "alert_email", "export_failed",
                         "restored_keywords", "download_budget",
                         "schema_extension"})  # fmt: skip
 Resolver = Callable[[str], bool]
+
+
+def title(kind: str) -> str:
+    """An alert kind's title; a kind this version no longer raises (rows from before v3.0.0,
+    until migration 0038 deletes them; P11) reads as a System Error."""
+    return TITLES.get(kind, "System Error")
 
 
 def resolves(host: str) -> bool:
@@ -153,7 +158,7 @@ def open_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         " (SELECT address_id FROM addresses WHERE removed_at IS NOT NULL))"
         " ORDER BY opened_at"
     ).fetchall()
-    return [dict(r) | {"title": TITLES.get(r["kind"], r["kind"])} for r in rows]
+    return [dict(r) | {"title": title(r["kind"])} for r in rows]
 
 
 def _running(conn: sqlite3.Connection, aid: str) -> bool:
@@ -211,7 +216,7 @@ def open_alert(
             (key, kind, aid, detail, to_ts(clock.now())),
         )
         _audit(conn, clock, aid, "alert.opened", kind)
-    notifier.notify(f"[ecf-alert] {TITLES[kind]}", detail)
+    notifier.notify(f"[ecf-alert] {title(kind)}", detail)
 
 
 def resolve_alert(
@@ -226,7 +231,7 @@ def resolve_alert(
         if done:
             _audit(conn, clock, aid, "alert.resolved", kind)
     if done:
-        notifier.notify(f"[ecf-alert] Resolved: {TITLES[kind]}", f"{aid or 'ecf'}: working again")
+        notifier.notify(f"[ecf-alert] Resolved: {title(kind)}", f"{aid or 'ecf'}: working again")
 
 
 def _audit(conn: sqlite3.Connection, clock: Clock, aid: str | None, event: str, kind: str) -> None:

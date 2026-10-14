@@ -123,9 +123,6 @@ SCHEMA_ALERT = "schema_extension"  # System Error: the stored extension no longe
 # leads the step-up dialog and the Security Notice whenever `schema` changes (OD-478); `_lead`
 # adds what live needs again (P15)
 SCHEMA_LEAD = "changes the classifier prompt; live addresses go back to assist"
-# D8: why your fields are for preset C only, in each refusal
-LOCAL_REASON = ("the local model (presets A and B) isn't measured with your own fields (SPEC"
-                " §1.5a item 2)")  # fmt: skip
 PRIVACY_LINE = ("privacy: your field and value names and descriptions go to Anthropic with each"
                 " Claude classification request, and the chosen values with each actor request"
                 " (preset C); never put email content or secrets in them")  # fmt: skip
@@ -469,7 +466,6 @@ def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[s
     if "schema" in doc and "schema" not in out:
         if not extensions_enabled() and not imported:
             raise InvalidInputError(f"config: schema: {EXTENSIONS_OFF}")
-        _refuse_local_presets(conn)
         out["schema"] = _schema(conn, doc["schema"], now["schema"],
                                 rules_doc or _effective(out, now, "rules"))  # fmt: skip
     if doc.get("schema") == DEFAULT:
@@ -626,26 +622,6 @@ def _policy(v: Any) -> dict[str, dict[str, str]]:
         if choice not in POLICY_CHOICES:
             raise InvalidInputError(f"config: action_policy: {action}: auto or approve")
     return {"standard": DEFAULT_POLICY | cast("dict[str, str]", std)}
-
-
-def _refuse_local_presets(conn: sqlite3.Connection) -> None:
-    """D8: your fields are for preset C only, so none while any address is preset A or B; P1:
-    nor while a C address has the local fallback on."""
-    local, held = at_odds(conn)
-    if local:
-        raise InvalidInputError(f"config: schema: your own fields are for preset C addresses only:"
-                                f" {LOCAL_REASON}, and {', '.join(local[:5])}"
-                                f" {'uses it' if len(local) == 1 else 'use them'}; remove the"
-                                " `schema` section, or move those addresses to preset C (ecf"
-                                " address remove, then add with --preset C)")  # fmt: skip
-    # P1 (operator decision 2026-10-14): nor while a C address has the local fallback on, which
-    # asks the local model, never your fields (`fallback.set_timeout` refuses turning it on)
-    if held:
-        raise InvalidInputError(f"config: schema: {', '.join(held[:5])} "
-                                f"{'has' if len(held) == 1 else 'have'} the local fallback on"
-                                " (claude_queue_timeout), and the local model isn't asked your"
-                                " own fields; turn it off first (ecf settings set"
-                                " claude_queue_timeout off --address <address>)")  # fmt: skip
 
 
 def _rules(v: Any, folders: list[str], schema: CompiledSchema, *,
@@ -1104,18 +1080,6 @@ def pending_activation(conn: sqlite3.Connection) -> list[str]:
     return [str(r[0]) for r in rows]
 
 
-def at_odds(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
-    """The addresses that sit badly with stored user fields (pre-S4 state; review R5): preset A or
-    B (D8), and preset C with the local fallback on (P1). For the activation notice and doctor."""
-    local = [str(r[0]) for r in conn.execute("SELECT address_id FROM addresses WHERE removed_at"
-                                             " IS NULL AND preset IN ('A', 'B') ORDER BY"
-                                             " address_id")]  # fmt: skip
-    held = [str(r[0]) for r in conn.execute("SELECT address_id FROM addresses WHERE removed_at"
-                                            " IS NULL AND preset = 'C' AND fallback_enabled = 1"
-                                            " ORDER BY address_id")]  # fmt: skip
-    return local, held
-
-
 def activate_stored(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) -> list[str]:
     """At service start (D11, P11): a stored extension this version uses for the first time (one
     applied before user fields were on, or by an earlier release) reaches the classifier without
@@ -1135,7 +1099,6 @@ def activate_stored(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) 
     fields = sorted(cast("dict[str, Any]", d.get("fields") or {}))
     cats = sorted(cast("dict[str, Any]", d.get("category_values") or {}))
     c_addresses = pending_activation(conn)
-    local, fallback_on = at_odds(conn)  # review R5: the states D8 and P1 refuse, named
     with write_tx(conn):
         demoted = stages.demote_live(conn, now, "service", stages.SCHEMA_REASON)
         _mark_activated(conn, ext, now)
@@ -1143,18 +1106,11 @@ def activate_stored(conn: sqlite3.Connection, clock: Clock, notifier: Notifier) 
             "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
             " VALUES (?, NULL, 'config.schema_activated', 'service', 'ok', ?)",
             (now, json.dumps({"sha256": _ext_sha(ext), "fields": fields, "category_values": cats,
-                              "c_addresses": c_addresses, "demoted": demoted,
-                              "preset_a_b": local, "fallback_on": fallback_on})),
+                              "c_addresses": c_addresses, "demoted": demoted})),
         )  # fmt: skip
     named = ", ".join(fields[:8]) or "none"
     added = f"; added category values: {', '.join(cats)}" if cats else ""
     moved = f"; back to assist: {', '.join(demoted)}" if demoted else ""
-    if local:
-        moved += (f"; preset A or B addresses, which the local model isn't asked them for:"
-                  f" {', '.join(local[:5])}")  # fmt: skip
-    if fallback_on:
-        moved += (f"; C addresses with the local fallback on, which isn't asked them:"
-                  f" {', '.join(fallback_on[:5])}")  # fmt: skip
     ident = slack_admin.identity(conn)
     slack_admin.notice(conn, clock, notifier,
                        f"Your own schema fields are now in use (stored before this version used"

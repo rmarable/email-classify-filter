@@ -177,8 +177,6 @@ def drop_schema(staged: sqlite3.Connection) -> dict[str, Any] | None:
     if row is None:
         return None
     ext: Any = json.loads(row[0])
-    local = [str(r[0]) for r in staged.execute("SELECT address_id FROM addresses WHERE removed_at"
-                                               " IS NULL AND preset IN ('A', 'B')")]  # fmt: skip
     found = staged.execute("SELECT value FROM settings WHERE key = ?",
                            (config.KEY["rules"],)).fetchone()  # fmt: skip
     doc: Any = json.loads(found[0]) if found else None
@@ -196,7 +194,7 @@ def drop_schema(staged: sqlite3.Connection) -> dict[str, Any] | None:
                                 config.KEY["rules"]))  # fmt: skip
             else:  # nothing left: the default rules apply
                 staged.execute("DELETE FROM settings WHERE key = ?", (config.KEY["rules"],))
-    return schema_note(ext, local, gone)
+    return schema_note(ext, gone)
 
 
 def rules_on_fields(doc: Any, ext: Any) -> list[str]:
@@ -231,7 +229,7 @@ def rules_on_fields(doc: Any, ext: Any) -> list[str]:
             if isinstance(r, dict) and reads(r)]  # fmt: skip
 
 
-def schema_note(ext: Any, local: list[str], rules_gone: list[str] | None = None) -> dict[str, Any]:
+def schema_note(ext: Any, rules_gone: list[str] | None = None) -> dict[str, Any]:
     """What the import and restore output say about a bundle's schema fields, and the rules
     reading them, that they leave out."""
     d = cast("dict[str, Any]", ext) if isinstance(ext, dict) else {}
@@ -244,11 +242,8 @@ def schema_note(ext: Any, local: list[str], rules_gone: list[str] | None = None)
     if gone:
         what += (f" and the {len(gone)} rule{'s' if len(gone) != 1 else ''} that read them"
                  f" ({', '.join(gone[:5])}{' +more' if len(gone) > 5 else ''})")  # fmt: skip
-    if local:
-        why = f"not imported: {', '.join(local[:5])} use preset A or B, and {config.LOCAL_REASON}"
-    else:
-        why = ("not imported: re-apply your config file (fields and rules) with ecf config apply"
-               " (a dialog, step-up and a Security Notice) before ecf uses them")  # fmt: skip
+    why = ("not imported: re-apply your config file (fields and rules) with ecf config apply"
+           " (a dialog, step-up and a Security Notice) before ecf uses them")  # fmt: skip
     return {"fields": fields, "category_values": cats, "rules": gone, "text": f"{what}: {why}"}
 
 

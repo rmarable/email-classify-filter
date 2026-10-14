@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Eval scoring for preset C now treats a proposed send on a high-risk email as production does (held back and flagged for your approval) instead of rejecting it as the local actor did; planned actions in new C results can differ from older ones on high-risk cards, so compare across this change only after `ecf eval rescore --through-policy` of the older result (ADR 0031).
+- A second Slack alert, `claude_review_overdue`, mentions you when mail on an unpaused address has waited for `/ecf-review` more than twice `claude_review_reminder_hours` (48 hours by default) (ADR 0031).
 - Removed (planned for v3.0.0, not built yet): presets A and B, Ollama, the Gemma model, the local fallback (`claude_queue_timeout`) and the model-driven corpus run (`ecf eval run --corpus`); addresses on preset A or B become preset C at upgrade and stay paused until you resume them (ADR 0031, OD-506).
 - Release note: resuming a converted address (`ecf address resume`) confirms that the mailbox's owner agreed to its mail going to Anthropic; if they haven't, remove the address instead. `ecf doctor` and the upgrade output name each converted address and how many emails wait (ADR 0031).
 - Release note: upgrading from v2.2.x, the old `ecf upgrade` check says every address drops to `assist`; that overstates it (only addresses converted from A or B, and any `live` address whose gate changes, drop), and the old client can't be fixed (ADR 0031).

@@ -17,13 +17,11 @@ from ecf import __version__
 from ecf.errors import InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
 from ecf.schema import load_schema, load_schema_v2
-from ecf_server import addresses, config, db, downgrade, policy, rules, stepup, upgrade_snapshot
+from ecf_server import config, db, downgrade, policy, rules, stepup, upgrade_snapshot
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
-from ecf_server.secretstore.memory import MemorySecretStore
 from ecf_server.stepper import FakeStepper
-from tests.test_addresses import Mail, req
 from tests.test_config import SCHEMA_DOC, _apply, _setup  # pyright: ignore[reportPrivateUsage]
 from tests.test_importer import _v2_rules  # pyright: ignore[reportPrivateUsage]
 
@@ -49,67 +47,6 @@ def _add(conn: sqlite3.Connection, aid: str, preset: str, stage: str = "shadow")
 
 def _ids(compiled: rules.CompiledRules) -> list[str]:
     return [r.id for r in compiled.rules]
-
-
-# ---- D8: your fields are for preset C only ----------------------------------------------------
-
-
-@pytest.mark.usefixtures("extensions_on")
-@pytest.mark.parametrize("preset", ["A", "B"])
-def test_a_user_schema_is_refused_while_an_a_or_b_address_exists(
-    conn: sqlite3.Connection, clock: FakeClock, preset: str
-) -> None:
-    _setup(conn, clock, "C")
-    _add(conn, "local", preset)
-    with pytest.raises(InvalidInputError, match=r"for preset C addresses only.*local uses it"):
-        config.parse(conn, SCHEMA_DOC)
-    config.parse(conn, V + "schema: default\n")  # removing is always allowed
-
-
-@pytest.mark.usefixtures("extensions_on")
-def test_a_user_schema_is_refused_while_a_c_address_has_the_local_fallback_on(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    """P1 (operator decision 2026-10-14): the apply-side half of the C fallback refusal."""
-    _setup(conn, clock, "C")
-    _add(conn, "cfb", "C")
-    with write_tx(conn):  # set before the refusal in `fallback.set_timeout`
-        conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4"
-                     " WHERE address_id = 'cfb'")  # fmt: skip
-    with pytest.raises(InvalidInputError, match=r"cfb has the local fallback on.*turn it off"):
-        config.parse(conn, SCHEMA_DOC)
-    config.parse(conn, V + "schema: default\n")  # removing is always allowed
-    with write_tx(conn):
-        conn.execute("UPDATE addresses SET fallback_enabled = 0, claude_queue_timeout_h = NULL")
-    config.parse(conn, SCHEMA_DOC)
-
-
-@pytest.mark.usefixtures("extensions_on")
-@pytest.mark.parametrize("preset", ["A", "B"])
-def test_an_a_or_b_address_is_refused_while_a_user_schema_is_stored(
-    conn: sqlite3.Connection, clock: FakeClock, preset: str
-) -> None:
-    """Read from `settings` directly (config imports addresses, P26); refused before any login."""
-    mail = Mail()
-    _store(conn, "config.schema", EXT)
-    with pytest.raises(InvalidInputError, match=f"preset {preset} can't be added.*--preset C"):
-        addresses.add_address(conn, clock, MemorySecretStore(), mail,
-                              req(preset=preset), actor="os_user")  # fmt: skip
-    assert mail.logins == []
-    a = addresses.add_address(conn, clock, MemorySecretStore(), mail, req(preset="C"),
-                              actor="os_user")  # fmt: skip
-    assert a["address_id"] == "ap"
-
-
-@pytest.mark.usefixtures("extensions_off")
-def test_r4_with_the_switch_off_a_stored_extension_doesnt_block_an_a_address(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    """Review R4: off, the stored extension is ignored, so the A address is added."""
-    _store(conn, "config.schema", EXT)
-    a = addresses.add_address(conn, clock, MemorySecretStore(), Mail(), req(preset="A"),
-                              actor="os_user")  # fmt: skip
-    assert a["address_id"] == "ap"
 
 
 # ---- C8, P12: reserved ids, labels from your fields --------------------------------------------
@@ -296,27 +233,6 @@ def test_a_stored_extension_is_activated_once_at_start(conn: sqlite3.Connection,
 
 
 @pytest.mark.usefixtures("extensions_on")
-def test_r5_activation_names_a_b_addresses_and_c_fallbacks(conn: sqlite3.Connection,
-                                                            clock: FakeClock) -> None:  # fmt: skip
-    """Review R5: pre-S4 state the refusals can't reach is named in the audit row and notice."""
-    _setup(conn, clock, "C")
-    _add(conn, "loc", "A")
-    _add(conn, "cfb", "C")
-    with write_tx(conn):
-        conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4"
-                     " WHERE address_id = 'cfb'")  # fmt: skip
-    _store(conn, "config.schema", EXT)
-    n = FakeNotifier()
-    config.activate_stored(conn, clock, n)
-    row = conn.execute("SELECT data FROM audit WHERE event = 'config.schema_activated'").fetchone()
-    data = json.loads(row[0])
-    assert data["preset_a_b"] == ["loc"] and data["fallback_on"] == ["cfb"]
-    [notice] = [t for t in _members(n) if "now in use" in t]
-    assert "preset A or B addresses" in notice and "loc" in notice
-    assert "local fallback on" in notice and "cfb" in notice
-
-
-@pytest.mark.usefixtures("extensions_on")
 def test_an_applied_extension_isnt_activated_again(conn: sqlite3.Connection,
                                                    clock: FakeClock) -> None:  # fmt: skip
     _setup(conn, clock, "C")
@@ -455,8 +371,3 @@ def test_rollback_restores_settings_merges_senders_and_never_corroborates(
                              rules.load_starter_rules(load_schema()), {}, frozenset(),
                              confirmed_category="legal_notice")  # fmt: skip
         assert policy.corroborated(ctx) is False
-
-
-def test_the_refusal_reads_the_key_config_writes() -> None:
-    """The A/B refusal reads the key config writes (they can't import each other, P26)."""
-    assert config.KEY["schema"] == addresses.SCHEMA_KEY

@@ -1,4 +1,6 @@
-"""The local classifier (SPEC §5.1 step 5, §7; V1.3 step 3): Gemma 4 12B through Ollama.
+"""The local classifier (SPEC §5.1 step 5, §7; V1.3 step 3): Gemma 4 12B through Ollama, which
+from v3.0.0 only `ecf eval run` still asks until its removal (ADR 0031; the model queue that ran
+it on mail is gone). `store` records any classification, Claude's included.
 
 - **Prompt:** a fixed system prompt (instructions and the schema's `prompt_block`), identical for
   every email so Ollama's prompt cache reuses it (measured 2026-09-30: about 1.9 s down to 0.46 s).
@@ -14,8 +16,8 @@
   brought to v3 (`ecf.schema.from_v2`: the fixed items derived from it, then a value v3 removed
   read as `other` or `unknown`; S3b, OD-500), so every stored classification is a v3 one.
 - **Output:** Ollama's `format` is the compiled schema it is asked; the service validates the reply
-  strictly against the same schema. Anything else is a failed attempt (the queue marks the item
-  `model_failed` after two, OD-236). The raw reply is never stored or logged (I5).
+  strictly against the same schema. Anything else is a failure. The raw reply is never stored or
+  logged (I5).
 - **Recorded:** the classification, the pinned model and digest (`pinned_models`, which the go-live
   gate binds to) and a `batch_id` (always one message per request here, so the cross-item hide
   guard of §5.6 is met); one `model_calls` row per call. Then the item moves `new → classified`.
@@ -39,8 +41,7 @@ from ecf_server import claude_pins, config, decide, excerpt, items, ollama, sign
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
-from ecf_server.modelq import ItemResult
-from ecf_server.ollama import Client, OllamaError
+from ecf_server.ollama import Client
 from ecf_server.state_machine import Status, TransitionContext
 
 MAX_INPUT_BYTES = 3000  # of UTF-8: worst case ~4,000 tokens with v2's prompt (rare CJK; §21.2)
@@ -107,13 +108,6 @@ def user_message(text: str, token: str, sent: tuple[str, ...] = ()) -> str:
             f"<<<END EMAIL {token}>>>\nClassify the email above.")  # fmt: skip
 
 
-def _excerpt(conn: sqlite3.Connection, stable_id: str) -> str:
-    row = conn.execute(
-        "SELECT classifier_text FROM excerpts WHERE stable_id = ?", (stable_id,)
-    ).fetchone()
-    return str(row[0] or "") if row else ""
-
-
 def parse(content: str, schema: CompiledSchema) -> dict[str, Any] | None:
     """The validated classification in the effective `schema`, or None: the reply is checked
     against the schema the model was asked (`local_schema`), then brought to v3 when that was v2
@@ -145,60 +139,6 @@ def truncated(reply: ollama.Reply) -> bool:
     return n is not None and n >= NEAR_CTX
 
 
-def classify_item(
-    conn: sqlite3.Connection,
-    clock: Clock,
-    client: Client,
-    ready: ollama.Ready,
-    item: sqlite3.Row,
-    *,
-    schema: CompiledSchema | None = None,
-    expected: Status = Status.NEW,
-    pins: dict[str, Any] | None = None,
-) -> ItemResult:
-    """The model queue's `Work` for preset A (V1.3 step 3); also a C item the local fallback
-    took at `awaiting_claude` (`expected`, with `pins` naming its key; V1.4 step 8)."""
-    schema = schema or config.current_schema(conn)
-    pin = ollama.load_pin()
-    addr = conn.execute("SELECT preset, stage FROM addresses WHERE address_id = ?",
-                        (item["address_id"],)).fetchone()  # fmt: skip
-    tags = {"address_id": item["address_id"], "preset": addr["preset"] if addr else None,
-            "stage": addr["stage"] if addr else None}  # fmt: skip
-    try:
-        reply = ask(
-            client,
-            _excerpt(conn, item["stable_id"]),
-            schema,
-            signals.sent(json.loads(item["facts"] or "{}")),
-        )
-    except OllamaError as e:
-        if e.cause == "timeout":
-            ollama.record_call(conn, clock, role="classifier", outcome="timeout",
-                               digest=ready.digest, metrics=None, **tags)  # fmt: skip
-        raise
-    m = reply.metrics
-    if truncated(reply):
-        ollama.record_call(conn, clock, role="classifier", outcome="truncated",
-                           digest=ready.digest, metrics=m, **tags)  # fmt: skip
-        log.warning("classifier.near_context", address_id=item["address_id"],
-                    prompt_tokens=m.prompt_tokens)  # fmt: skip
-        return ItemResult("failed", m)
-    result = parse(reply.content, schema)
-    if result is None:
-        ollama.record_call(conn, clock, role="classifier", outcome="schema_failure",
-                           digest=ready.digest, metrics=m, **tags)  # fmt: skip
-        log.warning("classifier.schema_failure", address_id=item["address_id"],
-                    done_reason=reply.done_reason)  # fmt: skip
-        return ItemResult("failed", m)
-    ollama.record_call(conn, clock, role="classifier", outcome="ok", digest=ready.digest,
-                       metrics=m, **tags)  # fmt: skip
-    if not store(conn, clock, item["stable_id"], result,
-                 {"classifier": pin.ecf_tag, "digest": ready.digest} | (pins or {}),
-                 expected=expected, schema_digest=schema.digest):  # fmt: skip
-        return ItemResult("skipped", m)  # the schema changed during the call: asked again
-    return ItemResult("ok", m)
-
-
 def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schema
     conn: sqlite3.Connection,
     clock: Clock,
@@ -211,8 +151,8 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     actor: str = "classifier",
     schema_digest: str | None = None,
 ) -> bool:
-    """Record a classification and move the item to `classified`, then apply the policy (the
-    local classifier from `new`; Claude's from `awaiting_claude`, V1.4 step 3).
+    """Record a classification and move the item to `classified`, then apply the policy
+    (Claude's from `awaiting_claude`, V1.4 step 3).
     `schema_digest` is the schema the model was asked with: when the effective schema changed
     since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
     item is asked again with the new one (OD-478)."""
@@ -226,7 +166,7 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
         pinned = {
             "schema": schema.digest,  # was the integer 1 before v2 (S16)
             "pin_key": claude_pins.address_key(conn, aid),
-        } | models  # the gate's key (V1.4 step 2), unless the caller names one (the fallback)
+        } | models  # the gate's key (V1.4 step 2)
         conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"
             " schema_version = ? WHERE stable_id = ? AND status = ?",

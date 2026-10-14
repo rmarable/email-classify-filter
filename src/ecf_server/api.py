@@ -20,7 +20,6 @@ import secrets
 import sqlite3
 import sys
 import threading
-import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
@@ -76,7 +75,6 @@ from ecf_server import (
     digests,
     evalrun,
     export_keys,
-    fallback,
     gate,
     health,
     import_plan,
@@ -86,7 +84,6 @@ from ecf_server import (
     internal,
     manual_export,
     model_watch,
-    modelq,
     models,
     ollama,
     ops_doctor,
@@ -189,12 +186,10 @@ class ServiceState:
     jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
+    # Ollama, for `ecf eval run`'s local backends and `ecf models` until their removal (v3.0.0,
+    # ADR 0031); no mail is classified with it
     model_client: Callable[[], ollama.Client] = field(default=ollama.Client, repr=False)  # a fake
     model_check: dict[str, Any] = field(default_factory=dict[str, Any], repr=False)  # tests: run=
-    model_work: modelq.Work | None = field(default=None, repr=False)  # the classifier (V1.3 step 3)
-    shadow_work: modelq.Work | None = field(default=None, repr=False)  # the fallback's (V1.4)
-    # generation speeds for the heat judgement, shared by the worker's rounds and `ecf check`'s
-    throttle: modelq.Throttle = field(default_factory=modelq.Throttle, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
     # Claude Code telemetry per `ecf claude` session, and how long a read or submission waits for
     # its call's events (V1.4 step 6; logs are exported every second)
@@ -281,9 +276,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "addresses": _address_states(state),
                 "alerts": _alerts(state),
                 "slack": dict(state.slack),
-                "model": _model_status(state),
                 "claude": _claude_status(state),
-                "fallback": _with_db(state, fallback.status, []),
                 "model_watch": _with_db(state, model_watch.status, None),
             }
         )
@@ -386,15 +379,6 @@ def create_app(state: ServiceState) -> Starlette:
 
 
 Allow = Callable[..., Callable[[Handler], Handler]]
-MAX_ROUNDS = 100  # `--until-empty` stops after this many checks per address
-UNTIL_EMPTY_MAX_S = 3 * 3600  # `--until-empty` stops waiting after this long
-BUSY_POLL_S = 5.0  # while the scheduled check holds an address
-WORKER_POLL_S = 10.0  # while the service's own model rounds hold the waiting emails
-
-
-def _wait(seconds: float) -> None:
-    """Sleep inside a streaming response (Starlette runs the generator on a worker thread)."""
-    time.sleep(seconds)
 
 
 def _bearer(request: Request) -> str:
@@ -543,11 +527,11 @@ def _alerts(state: ServiceState) -> list[dict[str, Any]]:
 def _check_lines(
     state: ServiceState,
     ids: list[str],
-    until_empty: bool,
     secrets: SecretStore,
     factory: addresses.MailFactory,
 ) -> Iterator[str]:
-    """The `POST /v1/checks` stream. A connection per check: Starlette may run each step of this
+    """The `POST /v1/checks` stream: one check per address (`--until-empty` and the local-model
+    round went in v3.0.0, ADR 0031). A connection per check: Starlette may run each step of this
     generator on a different thread, and a SQLite connection belongs to one (V1.1 review)."""
 
     def one(address_id: str) -> checks.CheckReport:
@@ -567,99 +551,17 @@ def _check_lines(
         finally:
             conn.close()
 
-    deadline = state.clock.monotonic() + UNTIL_EMPTY_MAX_S
     for address_id in ids:
-        rounds, told = 0, False
-        while rounds < (MAX_ROUNDS if until_empty else 1):
-            try:
-                r = one(address_id)
-            except Exception as exc:  # the response has started: report it, don't cut off
-                log.error("api.check_failed", error_type=type(exc).__name__)
-                failed = {"address_id": address_id, "status": "internal_error"}
-                yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
-                yield "\n"
-                break
-            if r.status == "busy" and until_empty and state.clock.monotonic() < deadline:
-                if not told:  # the scheduled check holds it: wait for it, then check (12a)
-                    yield json.dumps({"address_id": address_id, "status": "waiting"}) + "\n"
-                    told = True
-                _wait(BUSY_POLL_S)
-                continue
-            rounds += 1
-            yield json.dumps(r.to_json()) + "\n"
-            if not r.more:
-                break
-    for line in _model_lines(state, until_empty, deadline):
-        yield json.dumps({"model": line}) + "\n"
+        try:
+            r = one(address_id)
+        except Exception as exc:  # the response has started: report it, don't cut off
+            log.error("api.check_failed", error_type=type(exc).__name__)
+            failed = {"address_id": address_id, "status": "internal_error"}
+            yield json.dumps(failed | {"error": f"internal error ({type(exc).__name__})"})
+            yield "\n"
+            continue
+        yield json.dumps(r.to_json()) + "\n"
     yield json.dumps({"done": True, "addresses": len(ids)}) + "\n"
-
-
-def _model_lines(state: ServiceState, until_empty: bool,
-                 deadline: float | None = None) -> Iterator[dict[str, Any]]:  # fmt: skip
-    """`ecf check` runs the local model on what waits (V1.3 step 7): one round, or with
-    `--until-empty` rounds until nothing waits. The model worker may run rounds too; each item is
-    taken under its address's lock and lease, so the two never work on the same one. With
-    `--until-empty` (step 12a fix) a heat pause is waited out, and when the worker holds the
-    waiting emails this waits for it, reporting the count as it falls, until nothing waits, the
-    model isn't ready, an eval holds it or `UNTIL_EMPTY_MAX_S` has passed."""
-    work = state.model_work
-    if work is None:
-        yield {"status": "off", "detail": "this service doesn't run the local model"}
-        return
-    end = deadline if deadline is not None else state.clock.monotonic() + UNTIL_EMPTY_MAX_S
-    shown: int | None = None
-    for _ in range(MAX_ROUNDS * 100 if until_empty else 1):
-        line = _model_round(state, work)
-        settled = line["status"] in ("not_ready", "eval", "stopped") or line["waiting"] == 0
-        if not until_empty or settled:
-            yield line
-            return
-        if state.clock.monotonic() >= end:
-            yield line | {"status": "gave_up", "minutes": round(UNTIL_EMPTY_MAX_S / 60)}
-            return
-        if line["status"] == "hot":
-            yield line
-            _wait(modelq.HEAT_PAUSE.total_seconds())
-        elif line["done"] == 0 and line["failed"] == 0:  # the worker holds them: wait for it
-            if line["waiting"] != shown:
-                yield {"status": "worker", "done": 0, "failed": 0, "waiting": line["waiting"]}
-                shown = line["waiting"]
-            _wait(WORKER_POLL_S)
-        else:
-            yield line
-
-
-def _model_round(state: ServiceState, work: modelq.Work) -> dict[str, Any]:
-    conn, client = state.connect(), state.model_client()
-    power = state.power()
-    state.throttle.power(not (power.laptop and not power.on_ac))
-    try:
-        r = modelq.run_round(conn, state.clock, state.notifier, client, work,
-                             resident=modelq.resident(conn), check_kw=state.model_check,
-                             throttle=state.throttle, shadow=state.shadow_work)  # fmt: skip
-        line: dict[str, Any] = {"status": r.status, "done": r.done, "failed": r.failed,
-                                "waiting": r.waiting}  # fmt: skip
-        if r.status == "not_ready":
-            row = conn.execute(
-                "SELECT detail FROM alerts WHERE kind IN ('local_model',"
-                " 'local_model_unsafe') AND resolved_at IS NULL"
-            ).fetchone()
-            line["detail"] = row[0] if row else "the local model isn't ready"
-        return line
-    finally:
-        client.close()
-        conn.close()
-
-
-def _model_status(state: ServiceState) -> dict[str, Any] | None:
-    if state.db_path is None:
-        return None
-    power = state.power()
-    conn = state.connect()
-    try:
-        return modelq.status(conn, laptop=power.laptop, on_ac=power.on_ac)
-    finally:
-        conn.close()
 
 
 def _stepup_routes(state: ServiceState, allow: Allow) -> list[Route]:
@@ -849,12 +751,6 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def set_setting(request: Request) -> JSONResponse:
         body = _body(request)
         key, value, aid = _str(body, "key"), _str(body, "value"), _opt_str(body, "address_id")
-        if key == settings.FALLBACK_KEY:  # the local fallback: step-up to turn it on (V1.4)
-            if not aid:
-                raise InvalidInputError(f"{key} is per address: add --address")
-            nonce = _opt_str(body, "nonce_id")
-            return _with_conn(lambda c: fallback.set_timeout(c, state.clock, state.notifier, aid,
-                                                             value, nonce=nonce))  # fmt: skip
         if key == settings.HIGH_BATCH_KEY:  # step-up to raise it (V1.4 step 9)
             if not aid:
                 raise InvalidInputError(f"{key} is per address: add --address")
@@ -2118,7 +2014,6 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
         """SPEC §15.1 `POST /v1/checks`: one JSON line per check, then a summary line."""
         body = _body(request)
         wanted = body.get("address_id")
-        until_empty = bool(body.get("until_empty", False))
         secrets, factory = state.store(), state.mail_factory
         if factory is None:
             raise ServiceUnavailableError("mail access isn't configured in this service")
@@ -2132,7 +2027,7 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 raise NotFoundError(f"no address {wanted!r}")
             ids = [wanted]
 
-        lines = _check_lines(state, ids, until_empty, secrets, factory)
+        lines = _check_lines(state, ids, secrets, factory)
         return StreamingResponse(lines, media_type="application/x-ndjson")
 
     @allow(Caller.CLI)

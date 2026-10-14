@@ -1,5 +1,6 @@
-"""V1.3 step 7: `ecf watch`, `ecf check` running the model, the backlog in `ecf status`, and
-approvals batched during a large backlog (SPEC §4.1, §5.3, §10.2)."""
+"""V1.3 step 7: `ecf watch`, `ecf check`, and approvals batched during a large backlog (SPEC §4.1,
+§5.3, §10.2). The backlog is what waits at `awaiting_claude` from v3.0.0 (P9); the model round of
+`ecf check`, `--until-empty` and the backlog estimate went with the local model (ADR 0031)."""
 
 from __future__ import annotations
 
@@ -17,13 +18,11 @@ from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
 from ecf.paths import Paths
 from ecf.service_unit import UnitStatus
-from ecf_server import decide, items, modelq, ollama
+from ecf_server import decide, items
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
-from ecf_server.state_machine import Status
-from tests.test_classifier import GOOD, ChatOllama
+from ecf_server.state_machine import Status, TransitionContext
 from tests.test_decide import KNOWN_BULK, MARKETING, make_address, make_classified
-from tests.test_models import check_kw
 
 
 class FakeManager:
@@ -126,48 +125,14 @@ def test_a_marker_left_behind_is_reported(paths: Paths) -> None:
 
 
 def _waiting_items(conn: sqlite3.Connection, clock: FakeClock, n: int) -> None:
+    """`n` emails waiting for /ecf-review."""
     for i in range(n):
         sid = f"{i:04x}".ljust(64, "c")
-
-        def excerpt(c: sqlite3.Connection, sid: str = sid) -> None:
-            c.execute("INSERT INTO excerpts (stable_id, classifier_text) VALUES (?, 'x')", (sid,))
-
         items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
-                          content_hash="h", facts="{}", subject="s", sender="a@b.example",
-                          also=excerpt)  # fmt: skip
-
-
-def test_check_runs_a_model_round_and_reports_it(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
-) -> None:
-    from ecf_server.api import (  # noqa: PLC0415
-        ServiceState,
-        _model_lines,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    make_address(conn, clock, "shadow")
-    _waiting_items(conn, clock, 2)
-    fake = ChatOllama(json.dumps(GOOD))
-    state = ServiceState(install="t", token="x", started_at="2026-10-01T12:00:00.000000Z",
-                         clock=clock, db_path=db_path, model_client=fake.client,
-                         model_check=check_kw())  # fmt: skip
-    off = {"status": "off", "detail": "this service doesn't run the local model"}
-    assert list(_model_lines(state, False)) == [off]
-    from ecf_server import pipeline  # noqa: PLC0415
-
-    state.model_work = pipeline.work
-    [line] = list(_model_lines(state, True))
-    assert line == {"status": "done", "done": 2, "failed": 0, "waiting": 0}
-
-
-def test_status_estimates_the_backlog(conn: sqlite3.Connection, clock: FakeClock) -> None:
-    make_address(conn, clock, "shadow")
-    _waiting_items(conn, clock, 30)
-    for _ in range(5):
-        ollama.record_call(conn, clock, role="classifier", outcome="ok", digest="d",
-                           metrics=ollama.Metrics(1, 1, 1, 1, 1, 1, 3_000_000_000))  # fmt: skip
-    got = modelq.status(conn, laptop=True, on_ac=False)
-    assert got == {"waiting": 30, "eta_s": 90, "on_battery": True, "eval": False}
+                          content_hash="h", facts="{}", subject="s",
+                          sender="a@b.example")  # fmt: skip
+        items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE, TransitionContext(),
+                         actor="service")  # fmt: skip
 
 
 @pytest.mark.parametrize(("backlog", "carded"), [(0, True), (decide.BACKLOG_BATCH + 1, False)])
@@ -212,94 +177,28 @@ def test_cards_held_back_during_a_backlog_are_posted_once_it_drops(
             "SELECT payload FROM jobs WHERE queue = 'slack_out'"))  # fmt: skip
 
     assert approvals.post_held_cards(conn, clock) == 0 and cards() == 0  # still a backlog
-    with write_tx(conn):
-        conn.execute("UPDATE items SET model_failed = 1 WHERE status = 'new'")  # none waits
+    for (waiting,) in conn.execute("SELECT stable_id FROM items WHERE status = 'awaiting_claude'"
+                                   ).fetchall():  # fmt: skip
+        items.transition(
+            conn, clock, StableId(waiting), Status.CLASSIFIED, TransitionContext(), actor="service"
+        )  # Claude classified them: none waits
     assert approvals.post_held_cards(conn, clock) == 1 and cards() == 1
     assert approvals.post_held_cards(conn, clock) == 0  # once
 
 
-# ---- step 12a fixes: --until-empty waits; the estimate uses the measured pace -----------------
-
-
-def _round_seq(monkeypatch: pytest.MonkeyPatch, clock: FakeClock,
-               reports: list[modelq.RoundReport]) -> list[float]:  # fmt: skip
-    """Stand-in model rounds and waits: each wait advances the fake clock."""
-    from ecf_server import api  # noqa: PLC0415
-
-    waits: list[float] = []
-    seq = iter(reports)
-
-    def run_round(*_a: object, **_k: object) -> modelq.RoundReport:
-        return next(seq)
-
-    monkeypatch.setattr(api.modelq, "run_round", run_round)
-
-    def wait(seconds: float) -> None:
-        waits.append(seconds)
-        clock.advance(seconds)
-
-    monkeypatch.setattr(api, "_wait", wait)
-    return waits
-
-
-def _state(db_path: Path, clock: FakeClock) -> object:
-    from ecf_server import pipeline  # noqa: PLC0415
+def test_a_busy_check_is_reported_not_waited_for(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--until-empty` and its wait for the scheduled check went in v3.0.0 (ADR 0031, P17)."""
+    from ecf_server import api, checks  # noqa: PLC0415
     from ecf_server.api import ServiceState  # noqa: PLC0415
 
-    st = ServiceState(install="t", token="x", started_at="2026-10-01T12:00:00.000000Z",
-                      clock=clock, db_path=db_path, model_client=ChatOllama("{}").client,
-                      model_check=check_kw())  # fmt: skip
-    st.model_work = pipeline.work
-    return st
-
-
-def test_until_empty_waits_out_heat_and_the_services_own_rounds(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from ecf_server.api import _model_lines  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
-
-    R = modelq.RoundReport
-    waits = _round_seq(monkeypatch, clock, [
-        R("hot", done=16, waiting=30),       # a heat pause: waited out, then on
-        R("done", done=0, waiting=30),       # the worker holds them: wait for it
-        R("done", done=0, waiting=30),       # unchanged: not reported again
-        R("done", done=0, waiting=12),
-        R("budget", done=10, waiting=2),
-        R("done", done=2, waiting=0),
-    ])  # fmt: skip
-    lines = list(_model_lines(_state(db_path, clock), True))  # type: ignore[arg-type]
-    assert [(ln["status"], ln["waiting"]) for ln in lines] == [
-        ("hot", 30), ("worker", 30), ("worker", 12), ("budget", 2), ("done", 0)]  # fmt: skip
-    assert waits == [modelq.HEAT_PAUSE.total_seconds(), 10.0, 10.0, 10.0]
-
-
-def test_until_empty_gives_up_after_its_cap(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from ecf_server import api  # noqa: PLC0415
-
-    monkeypatch.setattr(api, "UNTIL_EMPTY_MAX_S", 25)
-    R = modelq.RoundReport
-    _round_seq(monkeypatch, clock, [R("done", done=0, waiting=5)] * 10)
-    lines = list(api._model_lines(_state(db_path, clock), True))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
-    assert lines[-1]["status"] == "gave_up" and lines[-1]["waiting"] == 5
-    without = list(api._model_lines(_state(db_path, clock), False))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
-    assert without == [{"status": "done", "done": 0, "failed": 0, "waiting": 5}]
-
-
-def test_until_empty_waits_for_the_scheduled_check(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from ecf_server import api, checks  # noqa: PLC0415
-
     make_address(conn, clock, "shadow")
-    results = iter(["busy", "busy", "ok"])
     ran: list[str] = []
 
     def run_check(*_a: object, **_k: object) -> checks.CheckReport:
-        status = next(results)
-        ran.append(status)
-        return checks.CheckReport(address_id="ap", status=status, started_at="t")
+        ran.append("busy")
+        return checks.CheckReport(address_id="ap", status="busy", started_at="t")
 
     monkeypatch.setattr(api.checks, "run_check", run_check)
 
@@ -307,36 +206,8 @@ def test_until_empty_waits_for_the_scheduled_check(
         return None
 
     monkeypatch.setattr(api.health, "after_check", nothing)
-    monkeypatch.setattr(api, "_wait", clock.advance)
-    st = _state(db_path, clock)
-    st.model_work = None  # type: ignore[attr-defined]
-    out = [json.loads(x) for x in api._check_lines(st, ["ap"], True, None, None)]  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
-    assert ran == ["busy", "busy", "ok"]
-    assert [o.get("status") for o in out[:2]] == ["waiting", "ok"]
-
-
-def test_the_estimate_uses_the_measured_pace_of_a_backlog_run(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    m = ollama.Metrics(800, 500, 70, 1, 1, 1, 4_000_000_000)  # 4 s of model time per call
-    for _ in range(6):  # a backlog: one email every 16 s, a heat pause inside the run
-        ollama.record_call(conn, clock, role="classifier", outcome="ok", digest="d", metrics=m)
-        clock.advance(16 if _ != 2 else 180)
-    # the heat pause counts, up to 10 x the 4 s of model time per email
-    assert modelq.seconds_per_item(conn) == pytest.approx((16 * 4 + 40) / 5)
-    clock.advance(3600)  # then mail one at a time: the run is long over
-    for role in ("classifier", "actor", "classifier"):
-        ollama.record_call(conn, clock, role=role, outcome="ok", digest="d", metrics=m)
-        clock.advance(3600)
-    # the latest run is too short, so model time per email: 9 calls x 4 s over 8 emails
-    assert modelq.seconds_per_item(conn) == pytest.approx(9 * 4 / 8)
-
-
-def test_mail_trickling_in_isnt_taken_for_a_slow_backlog(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    m = ollama.Metrics(800, 500, 70, 1, 1, 1, 4_000_000_000)
-    for _ in range(8):  # one email every 5 minutes: each is classified as it arrives
-        ollama.record_call(conn, clock, role="classifier", outcome="ok", digest="d", metrics=m)
-        clock.advance(300)
-    assert modelq.seconds_per_item(conn) == pytest.approx(40)  # not 300
+    st = ServiceState(install="t", token="x", started_at="2026-10-01T12:00:00.000000Z",
+                      clock=clock, db_path=db_path)  # fmt: skip
+    out = [json.loads(x) for x in api._check_lines(st, ["ap"], None, None)]  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    assert ran == ["busy"]
+    assert [o.get("status") for o in out] == ["busy", None] and out[-1]["done"] is True

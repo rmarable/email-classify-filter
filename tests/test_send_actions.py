@@ -79,8 +79,8 @@ def _approved(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, n
     item = item_row(conn, sid)
     ctx, p = decide.plan_for(conn, item)
     actor.decide_one(conn, clock, item, ctx, p,
-                     {"action": action, "target": target, "reason": "r"}, frozenset(),
-                     local=False)  # fmt: skip
+                     {"action": action, "target": target, "reason": "r"},
+                     frozenset())  # fmt: skip
     assert item_row(conn, sid)["status"] == "awaiting_approval", item_row(conn, sid)["proposal"]
     with pytest.raises(StepupRequiredError) as ei:
         approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")

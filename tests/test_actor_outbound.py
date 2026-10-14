@@ -22,12 +22,10 @@ def test_drafts_are_offered_only_for_mail_that_needs_a_reply() -> None:
     assert actor.allowed(REPLY)[-1] == "needs_clarification"
 
 
-def test_sends_need_their_targets_and_aren_t_offered_where_policy_would_reject_them() -> None:
+def test_sends_need_their_targets() -> None:
     assert "reply_template" not in actor.allowed(REPLY)  # no templates enabled
     full = actor.allowed(REPLY, templates=T, forwards=F)
     assert {"reply_template", "forward_internal"} <= set(full)
-    no_sends = actor.allowed(REPLY, templates=T, forwards=F, sends=False)
-    assert "reply_template" not in no_sends and "draft_reply" in no_sends
     assert "reply_template" not in actor.allowed(ROUTINE, templates=T)  # not a reply
     assert "forward_internal" in actor.allowed(ROUTINE, forwards=F)
 

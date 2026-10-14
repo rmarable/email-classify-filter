@@ -115,7 +115,7 @@ def test_a_met_gate_goes_live_with_step_up_bound_to_its_snapshot(
     r = _live(conn, clock)
     assert (r["stage"], r["changed"]) == ("live", True)
     row = gate.stored(conn, "ap")
-    assert row is not None and row["ollama_digest"] == DIGEST and row["passed_at"]
+    assert row is not None and gate.stored_key(row) == DIGEST and row["passed_at"]
     assert _posts(conn)[-1]["card"]["text"].endswith("Go-live gate: met.")
 
 
@@ -136,7 +136,7 @@ def test_an_override_waives_only_the_count_and_accuracy(
     assert data["override"] is True and data["reason"] == "small mailbox, watched closely"
     assert "went live by override" in _posts(conn)[-1]["card"]["text"]
     row = gate.stored(conn, "ap")  # the model is recorded, but the gate wasn't passed
-    assert row is not None and row["ollama_digest"] == DIGEST and row["passed_at"] is None
+    assert row is not None and gate.stored_key(row) == DIGEST and row["passed_at"] is None
 
 
 def test_the_synthetic_run_must_be_safe_and_on_the_current_set(

@@ -29,7 +29,6 @@ from ecf_server import (
     claude_pins,
     db,
     evalrun,
-    fallback,
     gate,
     modelq,
     models,
@@ -38,9 +37,8 @@ from ecf_server import (
 )
 from ecf_server.clock import FakeClock
 from ecf_server.ollama import Client, OllamaError
-from tests.test_classifier import ChatOllama
-from tests.test_evalrun import AC, BEC, SYNTHETIC
-from tests.test_models import PS_ENV, check_kw
+from tests.helpers import BEC, PS_ENV, ChatOllama, check_kw
+from tests.test_evalrun import AC, SYNTHETIC
 
 SCHEMA = load_schema()
 CANARY = "CANARY-7f3a"
@@ -230,10 +228,10 @@ def test_a_missing_model_is_model_missing() -> None:
 
 
 def test_the_service_classifier_path_never_imports_systemone() -> None:
-    """Nor Jev (v3.0.0 step 2, P9), until step 4 takes `pipeline` (or the dispatch module) off
-    this list; the import-linter contract keeps `classifier` from importing `jev` indirectly."""
-    for mod in ("ecf_server.classifier", "ecf_server.pipeline", "ecf_server.modelq",
-                "ecf_server.actor"):  # fmt: skip
+    """Nor Jev (v3.0.0 step 2, P9); `pipeline` went with the local model's queue (ADR 0031), and
+    step 4's dispatch module is its own; the import-linter contract keeps `classifier` from
+    importing `jev` indirectly."""
+    for mod in ("ecf_server.classifier", "ecf_server.modelq", "ecf_server.actor"):
         spec = importlib.util.find_spec(mod)
         assert spec is not None and spec.origin is not None
         with open(spec.origin, encoding="utf-8") as f:
@@ -399,7 +397,7 @@ def test_a_decision_model_run_never_reads_as_gemmas(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     gemma = ollama.load_pin().digest
-    before = (gate.inputs(conn, "a1", gemma), fallback.inputs(conn, "a1", gemma))
+    before = gate.inputs(conn, "a1", gemma)
     fake = DecisionOllama()
     _start(db_path, clock, root, fake, backend="systemone:test-decision")
     snap = evalrun.RUN.snapshot()
@@ -424,7 +422,7 @@ def test_a_decision_model_run_never_reads_as_gemmas(
     # no gate reader takes it for Gemma's (R1)
     assert evalrun.latest(conn, gemma) is None
     assert "no synthetic-set result" in gate.synthetic(conn, gemma).detail
-    assert (gate.inputs(conn, "a1", gemma), fallback.inputs(conn, "a1", gemma)) == before
+    assert gate.inputs(conn, "a1", gemma) == before
     with pytest.raises(InvalidInputError, match="there is none"):
         claude_eval._a_run(conn, evalrun.set_version(root))  # pyright: ignore[reportPrivateUsage]
 

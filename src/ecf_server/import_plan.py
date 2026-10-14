@@ -108,13 +108,11 @@ def schema_dropped(tables: dict[str, list[dict[str, Any]]], ext: str) -> dict[st
     """The preview's note on a bundle's own schema fields (`importer.schema_note`'s)."""
     from ecf_server import importer  # noqa: PLC0415 - importer imports this module
 
-    local = [str(a.get("address_id")) for a in tables.get("addresses", [])
-             if a.get("removed_at") is None and a.get("preset") in ("A", "B")]  # fmt: skip
     found = next((r.get("value") for r in tables.get("settings", [])
                   if r.get("key") == config.KEY["rules"]), None)  # fmt: skip
     doc: Any = json.loads(str(found)) if found is not None else None
     parsed: Any = json.loads(ext)
-    return importer.schema_note(parsed, local, importer.rules_on_fields(doc, parsed))
+    return importer.schema_note(parsed, importer.rules_on_fields(doc, parsed))
 
 
 def _has_actions(item: dict[str, Any]) -> bool:

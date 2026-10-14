@@ -20,11 +20,10 @@ from ecf_server import corpus_session as cs
 from ecf_server import db, evalrun
 from ecf_server.api import _corpus_run  # pyright: ignore[reportPrivateUsage]
 from ecf_server.clock import FakeClock
-from tests.test_classifier import ChatOllama
+from tests.helpers import BEC, ChatOllama, check_kw
 from tests.test_claude_review import EXT, extend
 from tests.test_corpus import SECRET, fetch, req, server_with
-from tests.test_evalrun import AC, BEC, _inline  # pyright: ignore[reportPrivateUsage]
-from tests.test_models import check_kw
+from tests.test_evalrun import AC, _inline  # pyright: ignore[reportPrivateUsage]
 
 # a corpus label: BEC's answer is v2's, and a new label can't use a value schema v3 removed (S3b)
 LABEL = BEC | {"category": "invoice"}

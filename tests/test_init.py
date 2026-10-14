@@ -37,7 +37,7 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
                   "slack_pending_app": None, "org_domains": [], "addresses": [],
                   "org_addresses": 0, "public_only": False,
                   "models": {"needed": False, "installed": False},
-                  "fallback_off": [], "claude_needed": False, "smtp_addresses": [],
+                  "claude_needed": False, "smtp_addresses": [],
                   "alert_email": None, "skipped": {},
                   "export": {"key": None, "dir": None, "schedule": "daily", "last_ok": None},
                   }  # fmt: skip
@@ -46,15 +46,11 @@ def test_status_reads_the_service_state(conn: sqlite3.Connection, clock: FakeClo
                      " VALUES ('ap', 'ap@acme.example', 'high', 'A', 'now')")  # fmt: skip
     st = initsetup.status(conn)
     assert st["addresses"] == ["ap"] and st["models"] == {"needed": True, "installed": False}
-    with write_tx(conn):  # preset C runs no local model while its fallback is off
+    with write_tx(conn):  # preset C runs no local model (no fallback from v3.0.0, ADR 0031)
         conn.execute("UPDATE addresses SET preset = 'C'")
     st = initsetup.status(conn)
-    assert st["models"]["needed"] is False and st["fallback_off"] == ["ap"]
+    assert st["models"]["needed"] is False and "fallback_off" not in st
     assert st["claude_needed"] is True
-    with write_tx(conn):  # ... and needs it with the fallback on (V1.4 step 8)
-        conn.execute("UPDATE addresses SET fallback_enabled = 1, claude_queue_timeout_h = 4")
-    st = initsetup.status(conn)
-    assert st["models"]["needed"] is True and st["fallback_off"] == []
 
 
 def test_describe_org_domains_for_a_gmail_only_install() -> None:

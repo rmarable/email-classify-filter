@@ -284,9 +284,9 @@ def test_s4_a_bundles_own_fields_are_dropped_and_named(
     over_cap: bool,
 ) -> None:
     """P11 (OD-502): no stored-but-unused copy. A bundle's `config.schema` is dropped from the
-    staged copy, the preview, the result and the Security Notice name its fields: with an A or B
-    address, why they can't be used; C-only, that they need `ecf config apply` here. One over a
-    cap is dropped too, not refused."""
+    staged copy, the preview, the result and the Security Notice name its fields and that they
+    need `ecf config apply` here (an A or B address gets the same text from v3.0.0, ADR 0031).
+    One over a cap is dropped too, not refused."""
     from ecf.schema import load_schema  # noqa: PLC0415
     from ecf_server import config, import_plan  # noqa: PLC0415
 
@@ -308,10 +308,7 @@ def test_s4_a_bundles_own_fields_are_dropped_and_named(
     assert note == preview
     assert note["fields"] == sorted(ext.get("fields", {}))
     assert note["category_values"] == sorted(ext["category_values"])
-    if preset == "A":
-        assert "ap use preset A or B" in note["text"] and "isn't measured" in note["text"]
-    else:
-        assert "re-apply your config file" in note["text"]
+    assert "re-apply your config file" in note["text"] and "preset A" not in note["text"]
     assert config.current(target)["schema"] is None
     assert config.current_schema(target).digest == load_schema().digest
     assert all(s["section"] != "schema" for s in done["config_changes"])

@@ -177,13 +177,10 @@ def test_needs_you_lists_what_waits_stale_first(conn: sqlite3.Connection, clock:
     )
     assert [b.label for b in c.buttons] == ["Pause all", "Resume all"]
     assert c.note == "Buttons work only while mac is awake. Last connected 2026-10-01 12:00 UTC."
-    with write_tx(conn):  # the local model gave up on it (OD-236)
+    with write_tx(conn):  # `model_failed` is no longer read (v3.0.0, ADR 0031)
         conn.execute("UPDATE items SET model_failed = 1 WHERE stable_id = ?", ("b" * 64,))
     lines = needs_you.card(conn, computer="mac", last_connected=clock.now()).text.splitlines()
-    assert (
-        "bbbbbbbb ap: the local model gave up (ecf item requeue): billing@vendor-a.example:"
-        " Invoice bbbb" in lines
-    )
+    assert not any(line.startswith("bbbbbbbb") for line in lines)
 
 
 def test_needs_you_is_pinned_once_and_edited_only_on_change(

@@ -79,7 +79,7 @@ def test_classifier_high_items_share_spawns_up_to_the_setting_per_address(
 ) -> None:
     add(conn, clock, "h", "C", sensitivity="high")
     add(conn, clock, "g", "C", sensitivity="high")
-    add(conn, clock, "b", "B")
+    add(conn, clock, "b", "C")
     _raise(conn, clock, "h", "3")
     hs = [waiting_item(conn, clock, "h", n) for n in range(4)]
     g1 = waiting_item(conn, clock, "g")

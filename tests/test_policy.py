@@ -288,12 +288,14 @@ def test_actor_proposals_get_the_same_checks(name: str, target: str | None, expe
         assert got.mode == "approve"
 
 
-def test_sends_are_rejected_for_high_risk_items() -> None:
-    ctx = _ctx(classification={"payment_related": True}, templates=frozenset({"ack"}),
-               outbound=True)  # fmt: skip
+def test_a_send_on_a_high_risk_item_needs_approval() -> None:
+    """`local_high_risk` (sends rejected on the local pair) went in v3.0.0 (ADR 0031, P22): a
+    high-risk item's send is proposed for approval, with step-up, as any send."""
+    ctx = _send_ctx(facts={"sender_seen_before": False})
     p = policy.plan(ctx, LABELS)
+    assert p.high_risk
     got = policy.proposal(ctx, p, "reply_template", "ack", LABELS)
-    assert isinstance(got, Dropped) and "rejected" in got.why
+    assert isinstance(got, Planned) and got.mode == "approve"
 
 
 def _send_ctx(**kw: Any) -> Context:
@@ -311,13 +313,10 @@ def test_a_valid_send_needs_approval(name: str, target: str) -> None:
     assert isinstance(got, Planned) and (got.target, got.mode) == (target, "approve")
 
 
-def test_sends_on_high_addresses_are_allowed_for_claude_not_the_local_pair() -> None:
-    claude = _send_ctx(sensitivity="high", local_pair=False)
+def test_sends_on_high_addresses_are_allowed() -> None:
+    claude = _send_ctx(sensitivity="high")
     got = policy.proposal(claude, policy.plan(claude, LABELS), "reply_template", "ack", LABELS)
     assert isinstance(got, Planned)
-    local = _send_ctx(sensitivity="high")
-    got = policy.proposal(local, policy.plan(local, LABELS), "reply_template", "ack", LABELS)
-    assert isinstance(got, Dropped) and "local_high_risk" in got.why
 
 
 @pytest.mark.parametrize(
@@ -334,7 +333,7 @@ def test_sends_on_high_addresses_are_allowed_for_claude_not_the_local_pair() -> 
     ],
 )  # fmt: skip
 def test_send_guardrails(name: str, target: str | None, facts: dict[str, Any], why: str) -> None:
-    ctx = _send_ctx(facts=facts, local_pair=False)
+    ctx = _send_ctx(facts=facts)
     got = policy.proposal(ctx, policy.plan(ctx, LABELS), name, target, LABELS)
     assert isinstance(got, Dropped) and why in got.why, got
 

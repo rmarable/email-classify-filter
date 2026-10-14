@@ -14,8 +14,8 @@ nothing), and escalations post like any others (bursts merge, §10.1).
 The backfill runs inside the address's checks, after the page of new mail, while the lease is
 held; progress is kept in the settings table (`backfill.<address_id>`), so it survives restarts.
 While mail remains, the scheduler treats it like a backlog (catch-up rules: 30 s pauses on AC
-power, the time cap and cooldown; `ecf check --until-empty` drives it too). A mailbox reset
-(UIDVALIDITY change) ends it; start it again afterwards.
+power, the time cap and cooldown). A mailbox reset (UIDVALIDITY change) ends it; start it again
+afterwards.
 """
 
 from __future__ import annotations

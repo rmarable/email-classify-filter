@@ -22,7 +22,6 @@ from ecf_server import (
     alert_mail,
     claude_pins,
     export_keys,
-    fallback,
     internal,
     models,
     scheduled_export,
@@ -36,7 +35,6 @@ ROLE_KEY = "install_role"
 ROLES = ("prod", "test")
 SKIPPABLE = ("email", "export")  # the questions `init` asks that you may decline (OD-402)
 SKIP_PREFIX = "init.skipped."
-LOCAL_PRESETS = ("A", "B")  # the presets that run Ollama (§4); C too with the local fallback on
 
 
 def role(conn: sqlite3.Connection) -> str | None:
@@ -126,11 +124,7 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "alert_email": _alert_email(conn),
         "export": _export(conn),
         "skipped": skipped(conn),
-        "models": {
-            "needed": any(a["preset"] in LOCAL_PRESETS for a in listed)
-            or fallback.needs_ollama(conn),
-            "installed": models.installed(conn),
-        },
-        "fallback_off": fallback.reminders(conn),  # B and C addresses with it off (§4.3)
+        # an address of a removed preset (A or B, until migration 0038 converts it; ADR 0031)
+        "models": {"needed": models.needed(conn), "installed": models.installed(conn)},
         "claude_needed": claude_pins.in_use(conn),  # init offers ecf's Claude login (V1.4 step 11)
     }

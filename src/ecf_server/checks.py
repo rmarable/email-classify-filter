@@ -76,7 +76,7 @@ class CheckReport:
 
     @property
     def more(self) -> bool:
-        """Another check now would make progress (for `--until-empty`)."""
+        """Another check now would make progress."""
         progressing = self.status in ("ok", "reset_recovered")
         return progressing and (
             self.remaining > 0 or self.large_done > 0 or self.backfill_remaining > 0

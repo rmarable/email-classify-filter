@@ -190,14 +190,17 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
 
 
-def test_a_preset_a_gate_row_keeps_its_pre_v14_shape(
+def test_a_preset_a_gate_row_no_longer_writes_the_ollama_digest(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
+    """v3.0.0 (ADR 0031): an A address (until migration 0038 converts it) keeps its digest in
+    `pinned_ids`, and its key reads the same."""
     make_address(conn, clock, "assist")
     with write_tx(conn):
         gate.record(conn, gate.compute(conn, "ap"), clock.now(), passed=True)
     row = gate.stored(conn, "ap")
-    assert row is not None and row["pinned_ids"] is None and row["ollama_digest"] == LOCAL
+    assert row is not None and row["ollama_digest"] is None
+    assert json.loads(row["pinned_ids"]) == {"digest": LOCAL} and gate.stored_key(row) == LOCAL
     assert row["pair_key"] == gate.PAIR
 
 
@@ -230,14 +233,13 @@ def test_user_fields_move_only_the_claude_classifier_keys(
 ) -> None:
     """S4 (D3, D8; OD-502): C's pins and an unpinned C eval key hold the whole effective schema
     digest, so your own fields move them; the local model is never asked them (`local_schema`
-    is plain v2), so preset A's and the fallback's gate, B's pins and an unpinned B eval key
-    don't move."""
-    from ecf_server import claude_eval, config, fallback  # noqa: PLC0415
+    is plain v2), so preset A's gate, B's pins and an unpinned B eval key don't move."""
+    from ecf_server import claude_eval, config  # noqa: PLC0415
     from tests.test_claude_review import extend  # noqa: PLC0415
 
     def local_keys() -> list[str]:
         b = claude_eval.Options(tmp_path, preset="B", actor_model=NEW_SONNET)
-        return [claude_pins.local_key(config.current_schema(conn)), fallback.digest(conn),
+        return [claude_pins.local_key(config.current_schema(conn)),
                 *(claude_pins.key(claude_pins.pins(conn, p)) for p in ("A", "B")),
                 claude_eval.models_for(conn, b)[2]]  # fmt: skip
 
@@ -249,7 +251,7 @@ def test_user_fields_move_only_the_claude_classifier_keys(
     extend(conn, clock)
     assert local_keys() == before_local
     assert all(a != b for a, b in zip(before_c, c_keys(), strict=True))
-    assert claude_pins.local_key(config.current_schema(conn)) == fallback.digest(conn) == LOCAL
+    assert claude_pins.local_key(config.current_schema(conn)) == LOCAL
     assert claude_pins.pins(conn, "B")["digest"] == LOCAL
     assert claude_pins.pins(conn, "C")["schema"] == config.current_schema(conn).digest
 

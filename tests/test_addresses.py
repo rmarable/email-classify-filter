@@ -28,7 +28,7 @@ from ecf.ids import AddressId, StableId
 from ecf.prompts import NO_TERMINAL, hidden
 from ecf.status import Status
 from ecf_server import addresses as ad
-from ecf_server import claude_queue, items, modelq, send_limits, slack_admin, slack_routes, stepup
+from ecf_server import claude_queue, items, send_limits, slack_admin, slack_routes, stepup
 from ecf_server.api import ServiceState, create_app
 from ecf_server.chat import FakeChat
 from ecf_server.clock import FakeClock
@@ -63,7 +63,7 @@ def req(email: str = "ap@acme.example", **kw: Any) -> ad.AddRequest:
         "email": email,
         "imap_host": "imap.acme.example",
         "sensitivity": "high",
-        "preset": "A",
+        "preset": "C",
         "app_password": GOOD,
         "org_domains": ["acme.example"],
     }
@@ -193,6 +193,7 @@ def test_duplicates_are_refused_before_logging_in(env: Env) -> None:
         ("email", "not-an-address"),
         ("sensitivity", "medium"),
         ("preset", "D"),
+        ("preset", "A"),  # removed in v3.0.0 (ADR 0031)
         ("imap_host", "bad host"),
         ("address_id", "Has Caps"),
         ("app_password", "two\nlines"),
@@ -234,22 +235,20 @@ def test_remove_then_add_again_revives_the_row(env: Env) -> None:
     assert conn.execute("SELECT count(*) FROM addresses").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize(("old", "new"), [("C", "A"), ("B", "A"), ("A", "C")])
-def test_a_preset_changes_only_with_nothing_left_waiting(env: Env, old: str, new: str) -> None:
-    """V1.4 step 1: removal resolves the queue under the old preset, so nothing is stranded at
-    `awaiting_claude` (no edge back to the local model) or at `new` for the wrong model."""
+def test_adding_again_leaves_nothing_waiting(env: Env) -> None:
+    """V1.4 step 1: removal resolves the queue, so nothing is stranded at `awaiting_claude` when
+    the address is added again."""
     conn, clock, secrets, _mail = env
-    add(env, req(preset=old))
+    add(env, req(preset="C"))
     sid = StableId("a" * 64)
     create_item(conn, clock, stable_id=sid, address_id=AddressId("ap"), content_hash="h")
-    if old == "C":
-        items.transition(conn, clock, sid, Status.AWAITING_CLAUDE, TransitionContext(),
-                         actor="service")  # fmt: skip
+    items.transition(conn, clock, sid, Status.AWAITING_CLAUDE, TransitionContext(),
+                     actor="service")  # fmt: skip
     ad.remove_address(conn, clock, secrets, "ap", actor="os_user")
-    again = add(env, req(preset=new, org_domains=None))
-    assert again["preset"] == new
+    again = add(env, req(preset="C", org_domains=None))
+    assert again["preset"] == "C"
     assert conn.execute("SELECT status FROM items").fetchone()[0] == Status.RESOLVED_MANUAL.value
-    assert modelq.waiting(conn) == {} and claude_queue.waiting(conn) == {}
+    assert claude_queue.waiting(conn) == {}
 
 
 def test_adding_again_is_refused_while_items_are_open(env: Env) -> None:
@@ -261,7 +260,7 @@ def test_adding_again_is_refused_while_items_are_open(env: Env) -> None:
         conn.execute("UPDATE addresses SET removed_at = 'now'")
     logins = len(mail.logins)
     with pytest.raises(ConflictError, match="open items"):
-        add(env, req(preset="A", org_domains=None))
+        add(env, req(preset="C", org_domains=None))
     assert len(mail.logins) == logins  # refused before logging in
     assert conn.execute("SELECT preset FROM addresses").fetchone()[0] == "C"
 
@@ -337,7 +336,7 @@ def test_api_add_list_rotate_remove(conn: sqlite3.Connection, db_path: Path) -> 
         "email": "ap@acme.example",
         "imap_host": "imap.acme.example",
         "sensitivity": "high",
-        "preset": "A",
+        "preset": "C",
         "app_password": GOOD,
         "org_domains": ["acme.example"],
     }
@@ -372,7 +371,7 @@ def test_api_names_the_slack_channel_and_archives_it_on_removal(
                      ("slack_member_id", "U0ME1")):  # fmt: skip
             slack_admin.put_setting(conn, k, v, now, actor="test")
     body = {"email": "ap@acme.example", "imap_host": "imap.acme.example",
-            "sensitivity": "standard", "preset": "A", "app_password": GOOD,
+            "sensitivity": "standard", "preset": "C", "app_password": GOOD,
             "org_domains": ["acme.example"]}  # fmt: skip
     r = call(st, "POST", "/v1/addresses", body)
     assert r.status_code == 201 and r.json()["slack_channel"] == "ecf-t-ap"
@@ -403,7 +402,7 @@ def test_api_names_no_slack_channel_when_slack_cant_create_it(
         for k, v in rows:
             slack_admin.put_setting(conn, k, v, now, actor="test")
     body = {"email": "ap@acme.example", "imap_host": "imap.acme.example",
-            "sensitivity": "standard", "preset": "A", "app_password": GOOD,
+            "sensitivity": "standard", "preset": "C", "app_password": GOOD,
             "org_domains": ["acme.example"]}  # fmt: skip
     r = call(st, "POST", "/v1/addresses", body)
     assert r.status_code == 201 and r.json()["slack_channel"] is None
@@ -431,7 +430,7 @@ def test_api_without_a_secret_store_says_why(conn: sqlite3.Connection, db_path: 
             "email": "ap@acme.example",
             "imap_host": "h.example",
             "sensitivity": "high",
-            "preset": "A",
+            "preset": "C",
             "app_password": GOOD,
             "org_domains": ["acme.example"],
         },

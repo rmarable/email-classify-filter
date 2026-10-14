@@ -130,10 +130,7 @@ _install = [
     Key("deadman_offhours", "install", _bool, False),  # OD-219
     Key("stale_item_days", "install", _int(7, 365), 30),
     Key("max_per_check", "install", _int(1, 30), 6),  # minutes of IMAP and rules work (OD-228)
-    Key("resident", "install", _bool, False),  # keep the local model loaded (§5.2)
     Key("review_sample_rate", "install", _int(0, 100), 10),  # percent, after the gate count
-    Key("ollama_log_max_mb", "install", _int(1, 1024), 10),  # rotate ollama.log above (OD-266)
-    Key("ollama_log_rotate_days", "install", _int(1, 90), 7),  # ... or this often (OD-266)
     Key("claude_review_reminder_hours", "install", _int(1, 168), 24),  # OD-115 (V1.4 step 9)
     Key("export_keep", "install", _int(1, 365), 14),  # scheduled bundles kept (§11.9; V1.5)
 ]
@@ -145,6 +142,7 @@ _address = [
     Key("label_folder", "address", _folder_name, None),  # §8.3 (Purelymail)
 ]
 KEYS: dict[str, Key] = {k.name: k for k in (*_both, *_install, *_address)}
+REMOVED = "removed in v3.0.0 with the local model (ADR 0031)"
 ELSEWHERE = {
     "slack_member_id": "change it with `ecf slack set-member` (step-up)",
     "alerts.routes": "change it with `ecf alerts set`",
@@ -168,17 +166,18 @@ ELSEWHERE = {
     "security_config_delay_minutes": "fixed at 0 in local mode (OD-074)",
     "sensitivity_downgrade_delay_minutes": "fixed at 0 in local mode",
     "trust_provider_authentication_results": "fixed: provider headers are never trusted in v1",
+    # the local model's settings, removed with it in v3.0.0 (ADR 0031)
+    "claude_queue_timeout": REMOVED,
+    "resident": REMOVED,
+    "ollama_log_max_mb": REMOVED,
+    "ollama_log_rotate_days": REMOVED,
 }
 
 
-FALLBACK_KEY = "claude_queue_timeout"  # per B or C address; set by fallback.set_timeout (step-up)
 HIGH_BATCH_KEY = "classifier_high_batch"  # per C address; claude_batch.set_size (step-up to raise)
 
 
 def key(name: str, address: str | None) -> Key:
-    if name == FALLBACK_KEY:
-        raise InvalidInputError(f"{name} is set with `ecf settings set {name} <hours>|off"
-                                " --address <address>` (step-up to turn it on)")  # fmt: skip
     if name == HIGH_BATCH_KEY:
         raise InvalidInputError(f"{name} is set with `ecf settings set {name} <1-5>"
                                 " --address <address>` (step-up to raise it)")  # fmt: skip
@@ -215,11 +214,8 @@ def show(conn: sqlite3.Connection, address_id: str | None = None) -> list[dict[s
             continue
         out.append({"key": k.name, "value": get(conn, k.name, address_id),
                     "default": k.default, "restart": k.restart})  # fmt: skip
-    a = conn.execute("SELECT preset, fallback_enabled, claude_queue_timeout_h FROM addresses"
-                     " WHERE address_id = ?", (address_id or "",)).fetchone()  # fmt: skip
-    if a is not None and a["preset"] in ("B", "C"):  # the local fallback (fallback.py, V1.4)
-        on = a["claude_queue_timeout_h"] if a["fallback_enabled"] else "off"
-        out.append({"key": FALLBACK_KEY, "value": on, "default": "off", "restart": False})
+    a = conn.execute("SELECT preset FROM addresses WHERE address_id = ?",
+                     (address_id or "",)).fetchone()  # fmt: skip
     if a is not None and a["preset"] == "C":  # Claude classifies (claude_batch.py, V1.4)
         out.append({"key": HIGH_BATCH_KEY, "value": claude_batch.size(conn, str(address_id)),
                     "default": claude_batch.DEFAULT, "restart": False})  # fmt: skip

@@ -4,12 +4,12 @@
 the summary channel. V1.2 says: what's waiting on you per address, open items, stale items (up to
 10), approvals that expired twice (listed only here, §6.2), escalations in the last 24 hours,
 emails not fully scanned in the last 24 hours, paused addresses, and who else is in ecf's channels.
-From V1.3: items waiting for the local model and how that changed since the last summary, and hours
-on battery since then (§10.1; V1.3 step 2b). From V1.4 step 6: Claude's usage in the last 24 hours;
+From V1.4 step 6: Claude's usage in the last 24 hours;
 from step 9, items waiting for `/ecf-review` per address, and those waiting longer than
 `claude_review_reminder_hours`; from step 10, newer Claude models and Ollama tags the weekly model
 watch found since the last summary (each once). From V1.5 step 8b: the last backup, or why there
-isn't one (OD-347).
+isn't one (OD-347). The local model's lines (its backlog, hours on battery) went in v3.0.0 (ADR
+0031).
 
 **Channel members** (OD-215): anyone in a private channel can invite others, so ecf checks every
 recorded channel hourly for members other than you and its own bot. The daily summary lists them;
@@ -33,8 +33,6 @@ from ecf_server import (
     evalrun,
     inbox,
     model_watch,
-    modelq,
-    models,
     pause,
     schedule,
     scheduled_export,
@@ -48,8 +46,6 @@ from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 
 LAST = "slack_daily_on"  # the local date of the last summary
-BATTERY = "daily.battery_seconds"  # seconds on battery since the last summary (V1.3 step 2b)
-BACKLOG = "daily.model_backlog"  # items waiting for the local model at the last summary
 MEMBERS, MEMBERS_AT = "slack_channel_others", "slack_channel_others_at"
 MEMBERS_EVERY = timedelta(hours=1)
 STALE_LIST = 10
@@ -83,8 +79,6 @@ def run(conn: sqlite3.Connection, clock: Clock) -> bool:
     now = to_ts(clock.now())
     with write_tx(conn):
         slack_admin.put_setting(conn, LAST, today, now, actor="service")
-        slack_admin.put_setting(conn, BATTERY, "0", now, actor="service")
-        slack_admin.put_setting(conn, BACKLOG, str(_model_backlog(conn)), now, actor="service")
         model_watch.mark_reported(conn, now)
     return True
 
@@ -127,7 +121,6 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     if twice:
         lines.append("Approvals that expired twice (decide with ecf approve or ecf item resolve): "
                      + ", ".join(f"{r[0][:8]} ({r[1]})" for r in twice))  # fmt: skip
-    lines += _model_lines(conn)
     late = claude_queue.overdue(conn, now)
     if late:
         oldest = min(o.oldest for o in late)[:16].replace("T", " ")
@@ -154,38 +147,6 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append("Nobody else is in ecf's channels.")
     lines.append("All of it: ecf inbox")
     return Card(f"Daily summary {today}", fields=fields, text="\n".join(lines))
-
-
-def record_battery(conn: sqlite3.Connection, clock: Clock, seconds: float) -> None:
-    """Add time spent on battery (the service's tick calls this; §10.1)."""
-    with write_tx(conn):
-        was = float(slack_admin.setting(conn, BATTERY) or 0)
-        slack_admin.put_setting(conn, BATTERY, str(round(was + seconds)), to_ts(clock.now()),
-                                actor="service")  # fmt: skip
-
-
-def _model_backlog(conn: sqlite3.Connection) -> int:
-    row = conn.execute(
-        "SELECT count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608 - WAITING is a constant
-        f" WHERE {modelq.WAITING} AND a.removed_at IS NULL"
-    ).fetchone()
-    return int(row[0])
-
-
-def _model_lines(conn: sqlite3.Connection) -> list[str]:
-    out: list[str] = []
-    now, was = _model_backlog(conn), slack_admin.setting(conn, BACKLOG)
-    since = models.waiting_since(conn)  # the model can't be used: say since when, on one line
-    if now or was not in ("", "0") or since:
-        change = f" ({now - int(was):+d} since the last summary)" if was else ""
-        stuck = (f"; it can't be used since {since[:16].replace('T', ' ')} UTC (see ecf models"
-                 " status)" if since else "")  # fmt: skip
-        out.append(f"Waiting for the local model: {now}{change}{stuck}")
-    hours = float(slack_admin.setting(conn, BATTERY) or 0) / 3600
-    if hours >= 0.1:
-        out.append(f"On battery {hours:.1f} h since the last summary (model work slows on battery;"
-                   " keep the Mac plugged in)")  # fmt: skip
-    return out
 
 
 def _counts(waiting: int, model: int, claude: int, other: int, escalated: int,

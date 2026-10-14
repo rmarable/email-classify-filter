@@ -104,7 +104,7 @@ def test_a_long_backfill_goes_page_by_page_and_counts_as_backlog(
     backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
     first = run(env, clock, box)
     assert (first.backfill_created, first.backfill_remaining) == (fetch.PAGE_MESSAGES, 5)
-    assert first.more  # `ecf check --until-empty` and catch-up keep going
+    assert first.more  # catch-up keeps going
     assert backfill.load(conn, "ap") is not None
     second = run(env, clock, box)
     assert (second.backfill_created, second.backfill_remaining) == (5, 0)

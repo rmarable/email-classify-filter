@@ -54,10 +54,6 @@ CLASS_OF = {
     "mail_unreachable": "mail",
     "login_rejected": "mail",
     "system_error": "system",
-    "local_model": "system",
-    "local_model_unsafe": "system",
-    "model_failures": "system",
-    "local_model_server": "system",
     "models_api": "system",
     "models_missing": "system",
     "model_retirement": "system",
@@ -66,6 +62,7 @@ CLASS_OF = {
     "schema_extension": "system",
     "operator_input": "operator",
     "claude_review": "operator",
+    "claude_review_overdue": "operator",
     "second_install": "operator",
     "restored_keywords": "operator",
     "send_limit": "operator",
@@ -77,12 +74,13 @@ CLASS_OF = {
 CLASSES = ("mail", "system", "operator", "slack")
 ROUTES = frozenset({"slack", "email"})
 DEFAULT = ["slack"]
-LOUD_KINDS = frozenset({"local_model_unsafe"})  # posts mention you (OD-242, OD-245)
+# posts mention you (OD-242, OD-245); the Claude review escalation (v3.0.0, ADR 0031, P10)
+LOUD_KINDS = frozenset({"claude_review_overdue"})
 DEAD_MARK = "alerts_dead_job_mark"  # the last dead-lettered job already reported
 
 
 def title(kind: str, condition: str = "") -> str:
-    return f"{PREFIX} {TITLES[kind]}" + (f": {condition}" if condition else "")
+    return f"{PREFIX} {TITLES.get(kind, 'System Error')}" + (f": {condition}" if condition else "")
 
 
 # ---- routes -------------------------------------------------------------------------------------
@@ -297,7 +295,8 @@ def email_sweep(conn: sqlite3.Connection, clock: Clock) -> int:
     now = to_ts(clock.now())
     for r in rows:
         got = routes(conn, CLASS_OF.get(r["kind"], "system"))
-        routed, slack = "email" in got, "slack" in got
+        # a kind this version no longer raises is marked, never sent (v3.0.0, P11)
+        routed, slack = "email" in got and r["kind"] in TITLES, "slack" in got
         who = f" ({r['address_id']})" if r["address_id"] else ""
         if r["email_opened_at"] is None and routed:
             alert_mail.queue(conn, clock, f"{title(r['kind'])}{who}", str(r["detail"] or ""),
@@ -361,7 +360,8 @@ def sweep(conn: sqlite3.Connection, clock: Clock) -> int:
     ).fetchall()
     now = to_ts(clock.now())
     for r in rows:
-        routed = "slack" in routes(conn, CLASS_OF.get(r["kind"], "system"))
+        # a kind this version no longer raises is marked, never posted (v3.0.0, P11)
+        routed = "slack" in routes(conn, CLASS_OF.get(r["kind"], "system")) and r["kind"] in TITLES
         who = f" ({r['address_id']})" if r["address_id"] else ""
         if r["slack_opened_at"] is None and routed:
             _post(conn, clock, f"alert:{r['key']}:{r['opened_at']}",
@@ -369,7 +369,8 @@ def sweep(conn: sqlite3.Connection, clock: Clock) -> int:
                   mention=r["kind"] in LOUD_KINDS)  # fmt: skip
         if r["resolved_at"] is not None and routed:
             _post(conn, clock, f"alert:{r['key']}:{r['opened_at']}:resolved",
-                  f"{PREFIX} Resolved: {TITLES[r['kind']]}{who}", "Working again.")  # fmt: skip
+                  f"{PREFIX} Resolved: {TITLES[r['kind']]}{who}",
+                  "Working again.")  # fmt: skip
         with write_tx(conn):
             conn.execute(
                 "UPDATE alerts SET slack_opened_at = coalesce(slack_opened_at, ?),"

@@ -206,9 +206,6 @@ def status() -> None:
     else:
         state = "connected" if sl.get("connected") else "NOT connected"
         typer.echo(f"slack:     {state}; last connected {sl.get('last_connected_at') or 'never'}")
-    m = st.get("model")
-    if m:
-        typer.echo(f"model:     {_model_backlog(m)}")
     for a in st.get("addresses", []):
         last = a["last_finished_at"] or "never checked"
         line = f"{a['address_id']:<16} {a['stage']:<7} last check {last}"
@@ -242,14 +239,10 @@ def doctor() -> None:
 @app.command()
 def check(
     address: Annotated[str | None, typer.Argument(help="One address (default: all).")] = None,
-    until_empty: Annotated[
-        bool, typer.Option("--until-empty", help="Keep checking while mail is waiting.")
-    ] = False,
 ) -> None:
-    """Check mail now: fetch, verify senders, run the fraud and regulator checks, then the local
-    model on what waits for it. Exit 3 when a check failed, the local model isn't ready, or
-    --until-empty gave up."""
-    body: dict[str, object] = {"until_empty": until_empty}
+    """Check mail now: fetch, verify senders and run the fraud and regulator checks. Exit 3 when a
+    check failed."""
+    body: dict[str, object] = {}
     if address:
         body["address_id"] = address
     failed = False
@@ -257,50 +250,10 @@ def check(
         for r in c.stream("POST", "/v1/checks", body):
             if r.get("done"):
                 break
-            if "model" in r:
-                m = r["model"]
-                failed |= m["status"] in ("not_ready", "gave_up")
-                typer.echo(_model_line(m))
-                continue
             failed |= r["status"] in CHECK_FAILED
             typer.echo(_check_line(r))
     if failed:
         raise typer.Exit(3)
-
-
-def _model_backlog(m: dict[str, Any]) -> str:
-    if not m["waiting"]:
-        return "nothing waiting"
-    text = f"{m['waiting']} waiting"
-    if m.get("eta_s") is not None:
-        text += f", about {max(1, round(m['eta_s'] / 60))} min at the measured speed"
-    if m.get("eval"):
-        text += "; an eval holds the model"
-    elif m.get("on_battery"):
-        text += "; on battery it runs at the off-hours interval (plug in to catch up)"
-    return text
-
-
-def _model_line(m: dict[str, Any]) -> str:
-    who = f"{'local model':<16}"
-    waiting = {
-        "eval": "an eval holds the model; {w} waiting",
-        "busy": "the service's own run is using the model; {w} waiting",
-        "worker": "the service's own run is working on them; {w} still waiting",
-    }.get(m["status"])
-    if waiting:
-        return f"{who} " + waiting.format(w=m["waiting"])
-    if m["status"] == "off":
-        return f"{who} {m['detail']}"
-    if m["status"] == "not_ready":
-        return f"{who} not ready: {m['detail']}"
-    if m["status"] == "gave_up":
-        return (f"{who} stopped waiting after {m['minutes']} min; {m['waiting']} still waiting"
-                " (ecf status)")  # fmt: skip
-    extra = {"budget": " (6-minute budget used)", "hot": " (paused: running hot)",
-             "stopped": " (service stopping)"}.get(m["status"], "")  # fmt: skip
-    return (f"{who} {m['done']} done, {m['failed']} failed, {m['waiting']} still waiting"
-            f"{extra}")  # fmt: skip
 
 
 def _check_line(r: dict[str, Any]) -> str:
@@ -309,8 +262,6 @@ def _check_line(r: dict[str, Any]) -> str:
         return f"{who} first check: started from now (older mail: `ecf backfill`)"
     if r["status"] == "busy":
         return f"{who} skipped: another check holds this address"
-    if r["status"] == "waiting":
-        return f"{who} waiting for the scheduled check that holds this address"
 
     if r["error"]:
         return f"{who} {r['status'].replace('_', ' ')}: {r['error']}"
@@ -611,7 +562,7 @@ def address_add(
         str | None, typer.Option(help="standard, or high for finance mailboxes (extra checks).")
     ] = None,
     preset: Annotated[
-        str | None, typer.Option(help="A all-local, B local + Claude actor, C all-Claude.")
+        str | None, typer.Option(help="C all-Claude (A and B were removed in v3.0.0).")
     ] = None,
     address_id: Annotated[
         str | None, typer.Option("--id", help="Short name (default: from the local part).")
@@ -637,11 +588,8 @@ def address_add(
 
 
 PRESET_NOTES = {
-    "B": "Preset B: Claude acts only when you run /ecf-review. The local fallback for items"
-    " waiting on Claude is off: ecf settings set claude_queue_timeout <hours> --address <id>.",
-    "C": "Preset C: every message waits for /ecf-review and uses your Claude plan. The local"
-    " fallback is off: ecf settings set claude_queue_timeout <hours> --address <id> (it needs"
-    " Ollama).",
+    "C": "Preset C: every message waits for /ecf-review (`ecf claude`) and uses your Claude plan;"
+    " nothing else classifies it, however long it waits.",
 }
 
 
@@ -668,7 +616,7 @@ def add_address(
             "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
         )
     if preset is None:
-        preset = typer.prompt("Preset (A all-local, B local + Claude, C all-Claude)", default="A")
+        preset = typer.prompt("Preset (C all-Claude)", default="C")
     body: dict[str, object] = {
         "email": email,
         "imap_host": imap_host or known[domain],
