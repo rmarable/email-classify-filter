@@ -977,6 +977,48 @@ def test_an_items_own_earlier_token_never_frees_its_new_claim(
     assert submit_classification(conn, clock, S1, x, new, REQUEST)["accepted"]
 
 
+# ---- progress line ---------------------------------------------------------------------------
+
+
+def test_the_progress_line_counts_this_sessions_rounds(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    add(conn, clock, "c", "C")
+    x, y, _z = (waiting_item(conn, clock, "c", n) for n in range(3))
+    tok = tokens_of(q := queue(conn, clock, limit=2))
+    assert q["progress"] == "0 done of 2 handed out, 2 in progress, 1 waiting, round 1"
+    assert submit_classification(conn, clock, S1, x, tok[x], REQUEST)["accepted"]
+    q = queue(conn, clock, limit=1)
+    # x, classified, now waits for its actor
+    assert q["progress"] == "1 done of 3 handed out, 2 in progress, 1 waiting, round 2"
+    q = queue(conn, clock, S2)  # each session's own counts: it takes x's act
+    assert q["progress"] == "0 done of 1 handed out, 1 in progress, 0 waiting, round 1"
+    assert claim_row(conn, y) == ("claimed", None)
+
+
+def test_the_progress_line_counts_frees_and_late_agents(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    x, tx, _y, _ty = _dropped(conn, clock)
+    q = queue(conn, clock, limit=1)
+    assert q["progress"].endswith("round 3, 1 unread claims freed")
+    with pytest.raises(ConflictError):
+        read_msg(conn, clock, S1, x, tx)  # the late agent: counted once per token
+    with pytest.raises(ConflictError):
+        read_msg(conn, clock, S1, x, tx)
+    q = queue(conn, clock, limit=1)
+    assert q["progress"].endswith(", 1 unread claims freed, 1 late after an unread free")
+
+
+def test_the_progress_line_counts_mix_ups(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    add(conn, clock, "c", "C")
+    x, y = waiting_item(conn, clock, "c"), waiting_item(conn, clock, "c", 1)
+    tok = tokens_of(queue(conn, clock))
+    with pytest.raises(ConflictError, match="isn't current"):
+        read_msg(conn, clock, S1, x, tok[y])
+    assert queue(conn, clock)["progress"].endswith(", 1 mixed-up claims freed")
+
+
 def call(state: ServiceState, path: str, body: Any, token: str) -> httpx.Response:
     async def go() -> httpx.Response:
         transport = httpx.ASGITransport(app=create_app(state))

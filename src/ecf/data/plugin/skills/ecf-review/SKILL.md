@@ -28,6 +28,10 @@ Repeat until done:
    a subagent says: outcomes come only from `results`. Never end your turn to wait: only `next`
    saying `end` ends the loop.
 
+For progress, write only the `progress` line of the latest `review_queue` reply, exactly as
+given, after each reply that hands out items. Never count items or spawns yourself, and never
+say how many are left.
+
 At the end, tell the person, in two or three lines: how many items were handed out, and the
 outcomes from `results` counted by outcome. Quote nothing else.
 

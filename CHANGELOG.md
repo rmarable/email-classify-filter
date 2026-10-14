@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `/ecf-review` now shows a progress line after each round, as `/ecf-eval` does: items done of those handed out, in progress, still waiting, the round, and any freed or late claims.
 - `/ecf-eval` and `/ecf-review` no longer leave work idle for about 10 minutes when the session never starts one of the agents it was handed: once the session has called again and a minute has passed with none of that agent's cases read, its cases go back to be claimed again (outcome `claim_unread`) (OD-501).
 - Recorded the operator's judgement of the cases where Haiku 5.5 or Sonnet 5.5 as `actor_high` acted differently from Opus: `actor_high` stays Opus in v3.0.0, and its model is chosen in v3.0.1, straight after, with more data (SPEC §21.2).
 - `fraud_risk: medium`'s account-lure cue is now its own sentence ("A request to call a number or follow a link to secure an account counts too."), after a pay-today-or-be-suspended demand was rated low in 2 of 3 runs with it inside the main sentence (operator decision 2026-10-13, OD-500). Release note: `ecf upgrade` lists an address as affected only when `classifier_schema` or the local model's prompt digest changes, so it doesn't list preset C addresses for a change to Claude's schema or prompt digest alone; migration 0037 clears every go-live pass anyway, so every address's gate starts again.

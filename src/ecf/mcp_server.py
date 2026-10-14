@@ -238,7 +238,8 @@ TOOLS: tuple[ToolDef, ...] = (
         "Agent spawn exactly as given, with its `agent` as the subagent type. Only that agent "
         "can read the message. "
         "`results` reports how earlier claims ended. `more` is true when more items are "
-        "waiting. `in_progress` counts this session's claims still out. With no items, `next` "
+        "waiting. `in_progress` counts this session's claims still out; `progress` is a line "
+        "to quote as given. With no items, `next` "
         "says what to do: `call again` (`frees_in_s`: seconds until work may free up) or `end`.",
         {"address_id": ADDRESS,
          "limit": {"type": "integer", "minimum": 1, "maximum": LIMIT_MAX, "default": 10,
