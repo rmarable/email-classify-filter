@@ -98,6 +98,18 @@ def _no_eval_run() -> None:
     claude_review.reset()
 
 
+@pytest.fixture(autouse=True)
+def _no_typesafe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite never calls TypeSafe (v3.0.0 step 2, §8): Jev's real transport raises, so every
+    Jev client in a test uses an `httpx.MockTransport`."""
+    from ecf_server import jev  # noqa: PLC0415
+
+    def refuse() -> httpx.BaseTransport:
+        raise AssertionError("a test tried to reach TypeSafe; pass an httpx.MockTransport")
+
+    monkeypatch.setattr(jev, "default_transport", refuse)
+
+
 @pytest.fixture
 def extensions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """Schema extensions on (OD-481: built, off in v2.0.0), for tests of the machinery."""

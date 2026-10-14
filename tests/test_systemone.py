@@ -91,8 +91,13 @@ def test_questions_follow_the_schema() -> None:
     assert q["category"]["criteria"] == dict(zip(cat.values, cat.value_descriptions, strict=True))
     assert q["category"]["instructions"] == cat.description
     fr = SCHEMA.fields["fraud_risk"]
+    # each level's description, low to high (v3.0.0 step 2, P8)
     assert q["fraud_risk"] == {"type": "score", "instructions": fr.description,
-                               "criteria": ["none", "low", "medium", "high"]}  # fmt: skip
+                               "criteria": list(fr.value_descriptions)}  # fmt: skip
+    assert len(fr.value_descriptions) == 4 and all(fr.value_descriptions)
+    # a level without a description is sent by its name (schema v2's `priority`)
+    v2 = systemone.questions(local_schema(SCHEMA))
+    assert v2["priority"]["criteria"] == ["low", "medium", "high", "urgent"]
     assert q["payment_related"]["type"] == "noul"
     assert "criteria" not in q["payment_related"]
 
@@ -225,6 +230,8 @@ def test_a_missing_model_is_model_missing() -> None:
 
 
 def test_the_service_classifier_path_never_imports_systemone() -> None:
+    """Nor Jev (v3.0.0 step 2, P9), until step 4 takes `pipeline` (or the dispatch module) off
+    this list; the import-linter contract keeps `classifier` from importing `jev` indirectly."""
     for mod in ("ecf_server.classifier", "ecf_server.pipeline", "ecf_server.modelq",
                 "ecf_server.actor"):  # fmt: skip
         spec = importlib.util.find_spec(mod)
@@ -235,6 +242,7 @@ def test_the_service_classifier_path_never_imports_systemone() -> None:
                  for a in n.names}  # fmt: skip
         mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
         assert "systemone" not in names and "ecf_server.systemone" not in mods, mod
+        assert "jev" not in names and "ecf_server.jev" not in mods, mod
 
 
 # ---- the eval-only lock (Phase 2b; empty since OD-494) -----------------------------------------

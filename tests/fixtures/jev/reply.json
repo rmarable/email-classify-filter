@@ -1,0 +1,112 @@
+{
+  "_comment": "An invented Jev reply for tests (v3.0.0 step 2, §8): no real answer, request ID, key or mail. `model` is replaced with the pin by the tests.",
+  "request_id": "req-fake-0001",
+  "body": {
+    "model": "jev-0.0.0",
+    "answers": {
+      "category": {
+        "choice": "invoice",
+        "probabilities": {
+          "invoice": 0.9,
+          "payment_confirmation": 0.005556,
+          "remittance": 0.005556,
+          "billing_inquiry": 0.005556,
+          "customer_request": 0.005556,
+          "sales_inquiry": 0.005556,
+          "partnership": 0.005556,
+          "bug_report": 0.005556,
+          "marketing": 0.005556,
+          "notification": 0.005556,
+          "action_alert": 0.005556,
+          "account_security": 0.005556,
+          "shipping": 0.005556,
+          "appointment": 0.005556,
+          "travel": 0.005556,
+          "finance": 0.005556,
+          "school_or_family": 0.005556,
+          "private": 0.005556,
+          "other": 0.005556
+        },
+        "confidence": 0.82
+      },
+      "priority": {
+        "score": 1.3,
+        "legend": [
+          "low",
+          "medium",
+          "high",
+          "urgent"
+        ],
+        "probabilities": {
+          "0": 0.1,
+          "1": 0.6,
+          "2": 0.2,
+          "3": 0.1
+        },
+        "confidence": 0.64
+      },
+      "requires_action": {
+        "noul": 0.8
+      },
+      "requires_reply": {
+        "noul": 0.1
+      },
+      "payment_related": {
+        "noul": 0.8
+      },
+      "deadline_mentioned": {
+        "noul": 0.1
+      },
+      "sender_type": {
+        "choice": "vendor",
+        "probabilities": {
+          "vendor": 0.9,
+          "customer": 0.0125,
+          "regulator": 0.0125,
+          "company": 0.0125,
+          "friend": 0.0125,
+          "family": 0.0125,
+          "person": 0.0125,
+          "automated": 0.0125,
+          "unknown": 0.0125
+        },
+        "confidence": 0.82
+      },
+      "fraud_risk": {
+        "score": 0.45,
+        "legend": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "probabilities": {
+          "0": 0.7,
+          "1": 0.2,
+          "2": 0.05,
+          "3": 0.05
+        },
+        "confidence": 0.64
+      },
+      "bank_detail_change": {
+        "noul": 0.1
+      },
+      "regulator_claim": {
+        "noul": 0.1
+      },
+      "phishing": {
+        "noul": 0.1
+      },
+      "claims_internal": {
+        "noul": 0.1
+      },
+      "private_individual": {
+        "noul": 0.1
+      }
+    },
+    "usage": {
+      "input_tokens": 2400,
+      "output_tokens": 13
+    }
+  }
+}

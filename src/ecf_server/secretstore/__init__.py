@@ -14,7 +14,7 @@ from ecf.errors import InvalidInputError, ServiceUnavailableError
 SERVICE_PREFIX = "email-classify-filter"
 _NAME = re.compile(
     r"^(mailbox/[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?|slack/bot|slack/app|models-api-key"
-    r"|export-signing-seed)$"
+    r"|jev-api-key|export-signing-seed)$"
 )
 
 
