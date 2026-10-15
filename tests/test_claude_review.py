@@ -534,7 +534,7 @@ def test_a_claude_proposal_is_checked_like_the_local_actors(
     assert r["status"] == "observed" and r["decision_source"] == "actor"  # shadow
     a = json.loads(r["proposal"])["plan"]["actor"]
     assert a["action"] == "flag" and a["target"] is None  # flag takes no target
-    assert a["agent"] == "ecf-actor" and a["model"].startswith("claude-sonnet-")
+    assert a["agent"] == "ecf-actor" and a["model"] == claude_pins.load_lock()["actor"]
     assert "evil.example" not in a["reason"] and "555" not in a["reason"]
     assert len(a["reason"]) <= 300  # OD-270
     assert queue(conn, clock)["results"] == [{"id": sid, "outcome": "observed"}]

@@ -26,7 +26,7 @@ sender, Reply-To mismatch, not addressed to this mailbox, not fully scanned, bul
 and `ecf item show <id>`. Payment and fraud items say "This acts on the email only. ecf never pays
 anything." No email body is posted; **Show excerpt** shows the first 200 characters of the stored
 excerpt to you only (SPEC §9.2). A classified email's card also says how it was classified ("Classified: invoice, high
-priority, by Claude Sonnet 5.5", or "corrected by you"). Old mail from `ecf backfill` or `ecf
+priority, by Claude Opus 5.5", or "corrected by you"). Old mail from `ecf backfill` or `ecf
 reprocess` gets no card: each run has one summary in the summary channel instead.
 
 **Escalations** (possible fraud, regulator mail) get their own card and mention you, so you're

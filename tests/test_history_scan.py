@@ -217,7 +217,7 @@ def test_the_estimate_uses_this_installs_sessions_else_specs_figures(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     e = backfill.estimate(conn, clock.now(), 100)
-    assert (e["usd_low"], e["usd_high"]) == (2.4, 3.8) and "SPEC §21.2" in e["source"]
+    assert (e["usd_low"], e["usd_high"]) == (4.3, 5.0) and "SPEC §21.2" in e["source"]
     assert e["minutes"] is None  # not measured yet
     _session(conn, clock, "s1", 40, 1.2, 20)
     _session(conn, clock, "s2", 20, 0.6, 20)

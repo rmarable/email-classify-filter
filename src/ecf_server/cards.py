@@ -7,10 +7,11 @@ through Show excerpt, visible to you alone (OD-214). Every string here may come 
 `slack_render` shows it as plain text.
 
 A classified item's card also says how it was classified (OD-507 §6, D14, P26): "Classified:
-<category>, <priority> priority, by <model>", the model by its display name ("Claude Sonnet
-5.5"), "a model no longer installed" for one this release doesn't pin (the local model's, before
-v3.0.0), and "corrected by you" after your correction. Nothing for an item not classified. A
-preset D item's adds the fields TypeSafe Jev was unsure of or under the confidence bar on (`;
+<category>, <priority> priority, by <model>", the model by its display name ("Claude Opus
+5.5"), "a model no longer installed" for one this release doesn't know (the local model's, before
+v3.0.0; Sonnet 5.5, pinned before v3.0.0, keeps its name through its `lifecycle` entry, OD-520),
+and "corrected by you" after your correction. Nothing for an item not classified. A preset D
+item's adds the fields TypeSafe Jev was unsure of or under the confidence bar on (`;
 unsure: phishing; below bar: category`, OD-511): no rule labels them.
 """
 
