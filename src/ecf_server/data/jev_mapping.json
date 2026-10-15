@@ -1,12 +1,11 @@
 {
-  "_comment": "How Jev's probabilities may add caution (v3.0.0 step 3, planning-docs/v3.0.0-STEP3.md §3, §6; ecf_server/jev_mapping.py). bands: a yes/no field's lower bound (above 0, below 0.5): an answer from it up to 0.5 is unsure. bars: a choice field's lowest probability for its hides to stand. none_bars: fraud_risk's p(none) bar. Chosen by the operator 2026-10-14 (OD-512) from scripts/jev_sweep.py's tables over four runs of the frozen configuration (state-archive/jev-step3/sweep.txt): the four thin safety items 0.30, requires_action 0.40, no band for phishing or payment_related; category 0.6, sender_type 0.5; no fraud_risk bar. Only an ecf release changes this file; its digest is in Jev's gate key.",
+  "_comment": "How Jev's probabilities may add caution (v3.0.0 step 3, planning-docs/v3.0.0-STEP3.md §3, §6; ecf_server/jev_mapping.py). bands: a yes/no field's lower bound (above 0, below 0.5): an answer from it up to 0.5 is unsure. bars: a choice field's lowest probability for its hides to stand. none_bars: fraud_risk's p(none) bar. Chosen by the operator 2026-10-14 (OD-512) from scripts/jev_sweep.py's tables over four runs of the frozen configuration (state-archive/jev-step3/sweep.txt): the four thin safety items 0.30, no band for phishing or payment_related; requires_action's 0.40 band removed 2026-10-15 (OD-515) once it was asked as three questions (it caught no true case and flagged 5 false ones, state-archive/jev-step3/sweep-k1.txt); category 0.6, sender_type 0.5; no fraud_risk bar. Only an ecf release changes this file; its digest is in Jev's gate key.",
   "version": 1,
   "bands": {
     "bank_detail_change": 0.3,
     "claims_internal": 0.3,
     "private_individual": 0.3,
-    "regulator_claim": 0.3,
-    "requires_action": 0.4
+    "regulator_claim": 0.3
   },
   "bars": {
     "category": 0.6,

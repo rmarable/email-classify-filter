@@ -18,7 +18,7 @@ from ecf_server.jev_mapping import Derived, JevMapping
 from ecf_server.rules import HIDE_ACTIONS
 from tests.test_policy import CONTEXTS, SCHEMA, STARTER
 
-SHIPPED_DIGEST = "756d5a46eeb1a3848103d414122191af8b6a0d2c6ea13d1cc185b7705d01aefa"
+SHIPPED_DIGEST = "0fd82c418986dfe754a355c607875d69906af15155759bdee7a73b88c9878f1b"
 EMPTY = JevMapping()
 
 
@@ -33,13 +33,13 @@ def _doc(**over: Any) -> dict[str, Any]:
 
 def test_the_shipped_mapping_is_the_operators_choice() -> None:
     """Chosen 2026-10-14 (OD-512) from the sweep's tables: the four thin safety items 0.30,
-    `requires_action` 0.40, no band for `phishing` or `payment_related`; bars `category` 0.6 and
+    no band for `phishing`, `payment_related` or (since it is asked as three questions, OD-515)
+    `requires_action`; bars `category` 0.6 and
     `sender_type` 0.5; no `fraud_risk` bar. The digest is pinned so a change to the file is a
     deliberate one (it moves Jev's gate key)."""
     m = jev_mapping.load()
     assert dict(m.bands) == {"bank_detail_change": 0.3, "claims_internal": 0.3,
-                             "private_individual": 0.3, "regulator_claim": 0.3,
-                             "requires_action": 0.4}  # fmt: skip
+                             "private_individual": 0.3, "regulator_claim": 0.3}  # fmt: skip
     assert dict(m.bars) == {"category": 0.6, "sender_type": 0.5} and not m.none_bars
     assert jev_mapping.digest() == SHIPPED_DIGEST
     assert jev_mapping.digest(EMPTY) != SHIPPED_DIGEST

@@ -95,7 +95,7 @@ def test_the_drain_stores_jevs_caution_beside_the_answer(
     ({}, [], []),  # the recorded reply: every banded no at 0.1, both choices at 0.9
     ({"bank_detail_change": {"noul": 0.35}}, ["bank_detail_change"], []),  # band 0.30
     ({"ra_do": {"noul": 0.45}, "ra_reply": {"noul": 0.2}, "ra_deadline": {"noul": 0.1}},
-     ["requires_action"], []),  # band 0.40, on the largest of the three (OD-514)
+     [], []),  # no band since step 3 asked it as three questions (OD-514, OD-515)
     ({"phishing": {"noul": 0.45}}, [], []),  # no band for phishing (OD-512)
     ({"category": {"choice": "invoice", "probabilities": {"invoice": 0.55, "other": 0.45}}},
      [], ["category"]),  # bar 0.6
