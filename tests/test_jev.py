@@ -22,7 +22,7 @@ import pytest
 from ecf.errors import InvalidInputError
 from ecf.log import no_content
 from ecf.schema import CompiledSchema, load_schema, load_schema_v2
-from ecf_server import jev, rules, signals, systemone, triggers
+from ecf_server import jev, jev_mapping, rules, signals, systemone, triggers
 from ecf_server.clock import FakeClock
 from ecf_server.secretstore.memory import MemorySecretStore
 
@@ -39,8 +39,18 @@ Responder = Callable[[httpx.Request], httpx.Response]
 
 
 def body(**over: Any) -> dict[str, Any]:
+    """The recorded reply, with `fraud_risk` answered as the choice ecf asks for since step 3
+    (the recording answered a score: its level probabilities keyed by level name)."""
     b = json.loads(json.dumps(FIXTURE["body"]))
     b["model"] = PIN
+    fr = b["answers"]["fraud_risk"]
+    levels = SCHEMA.fields["fraud_risk"].values
+    probs = {levels[int(i)]: p for i, p in fr["probabilities"].items()}
+    b["answers"]["fraud_risk"] = {
+        "choice": max(probs, key=lambda k: probs[k]),
+        "probabilities": probs,
+        "confidence": fr["confidence"],
+    }
     b.update(over)
     return b
 
@@ -137,8 +147,10 @@ def test_request_shape() -> None:
     q = b["questions"]
     assert list(q) == list(SCHEMA.fields)  # schema order, keyed by field name
     fr, cat = SCHEMA.fields["fraud_risk"], SCHEMA.fields["category"]
-    assert q["fraud_risk"]["type"] == "score"
-    assert q["fraud_risk"]["criteria"] == list(fr.value_descriptions)  # level texts, low -> high
+    assert q["fraud_risk"]["type"] == "choice"  # step 3 (J4, OD-512): levels, `none` last
+    texts = dict(zip(fr.values, fr.value_descriptions, strict=True))
+    assert q["fraud_risk"]["criteria"] == {v: texts[v] for v in ("low", "medium", "high", "none")}
+    assert q["priority"]["type"] == "score"  # other ordinals stay scores, low -> high
     assert q["category"]["criteria"] == dict(zip(cat.values, cat.value_descriptions, strict=True))
     assert q["phishing"] == {"type": "noul", "instructions": SCHEMA.fields["phishing"].description}
     st: str = b["state"]
@@ -169,7 +181,7 @@ def test_header_lines_collapse_and_cannot_forge_a_line() -> None:
     assert lines[0] == "From: Ann Attachment: evil.exe; x; 1 Subject: hi <ann@x.example>"
     assert lines[1] == "Subject: Line one Line two end"
     assert lines[2] == "Date: unknown"
-    st = jev.state_s1(forged, (), "T", redact=True)
+    st = jev.state(forged, (), "T", redact=True)
     assert sum(ln.startswith("Attachment:") for ln in st.splitlines()) == 0
     assert sum(ln.startswith("Subject:") for ln in st.splitlines()) == 1
 
@@ -190,8 +202,6 @@ def test_subject_and_display_name_injection_is_marked_only_with_redaction() -> N
     assert on[1] == f"Subject: {triggers.INJECTION_MARK}"
     off = jev.header_lines(e, redact=False)
     assert INJECTION in off[0] and INJECTION in off[1]
-    s2 = jev.state_s2(e, (), "T", redact=True)
-    assert s2["email"]["subject"] == triggers.INJECTION_MARK
 
 
 def test_the_date_is_normalised_the_same_way_in_the_eval_and_the_service() -> None:
@@ -204,9 +214,9 @@ def test_the_date_is_normalised_the_same_way_in_the_eval_and_the_service() -> No
 
 def test_the_excerpt_is_cut_by_characters_only() -> None:
     cjk = "漢" * 1500  # 4,500 bytes: the Ollama path's 2,400-byte cut doesn't apply
-    st = jev.state_s1(dataclasses.replace(EMAIL, text=cjk), (), "T", redact=True)
+    st = jev.state(dataclasses.replace(EMAIL, text=cjk), (), "T", redact=True)
     assert cjk in st
-    long = jev.state_s1(dataclasses.replace(EMAIL, text="x" * 5000), (), "T", redact=True)
+    long = jev.state(dataclasses.replace(EMAIL, text="x" * 5000), (), "T", redact=True)
     assert "x" * jev.EXCERPT_CHARS in long and "x" * (jev.EXCERPT_CHARS + 1) not in long
 
 
@@ -239,7 +249,7 @@ def test_the_request_as_sent_is_at_most_16_kb() -> None:
 
 def test_the_state_holds_each_part_once() -> None:
     e, sent = _worst(), tuple(signals.WORDING)
-    st = jev.state_s1(e, sent, "0123456789abcdef", redact=True)
+    st = jev.state(e, sent, "0123456789abcdef", redact=True)
     parts = [systemone.PREAMBLE, signals.block(sent, "0123456789abcdef"),
              "\n".join(jev.header_lines(e, redact=True)), e.text[: jev.EXCERPT_CHARS]]  # fmt: skip
     expected = sum(len(p.encode()) for p in parts)
@@ -256,17 +266,6 @@ def test_the_size_refusal_makes_no_call(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(jev, "STATE_LIMIT", 10**9)
     monkeypatch.setattr(jev, "TOTAL_LIMIT", est.total - 1)
     assert classify(r).fault == "request_error" and r.script.seen == []
-
-
-def test_s2_and_the_preamble_in_the_instructions() -> None:
-    s2 = _body(fmt="s2")["state"]
-    assert set(s2) == {"instructions", "signals", "email"}
-    assert s2["email"]["text"].startswith("<<<EMAIL T0K>>>\n")  # the delimiters stay (safety 8)
-    assert s2["email"]["date"] == "2026-10-06T07:30:00Z"
-    inst = _body(preamble="instructions")
-    assert systemone.PREAMBLE not in inst["state"]
-    assert all(q["instructions"].startswith(systemone.PREAMBLE)
-               for q in inst["questions"].values())  # fmt: skip
 
 
 def test_exact_headers_no_env_and_no_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -314,10 +313,17 @@ def test_an_answer_that_does_not_map_is_a_failed_attempt() -> None:
 
 
 def test_a_score_tie_goes_up() -> None:
+    """A score's tie, and a `fraud_risk` choice's (mapped to its most probable level, Jev's own
+    `choice` key unused): both go to the higher level."""
     b = body()
-    b["answers"]["fraud_risk"]["probabilities"] = {"0": 0.1, "1": 0.4, "2": 0.4, "3": 0.1}
+    b["answers"]["priority"]["probabilities"] = {"0": 0.1, "1": 0.4, "2": 0.4, "3": 0.1}
+    b["answers"]["fraud_risk"] = {
+        "choice": "low",
+        "probabilities": {"none": 0.1, "low": 0.4, "medium": 0.4, "high": 0.1},
+    }
     res = classify(rig(lambda _r: httpx.Response(200, json=b)))
-    assert res.classification is not None and res.classification["fraud_risk"] == "medium"
+    assert res.classification is not None
+    assert (res.classification["priority"], res.classification["fraud_risk"]) == ("high", "medium")
 
 
 # Retry-After and rate limits: short pauses, announced waits, stops, 429 back-off and proactive
@@ -872,7 +878,10 @@ def test_the_gate_key_covers_hide_capable_fields_priority_and_the_mapping(
     assert jev.gate_key(_with_description(SCHEMA, "category", "Changed."), rs) != base
     assert jev.gate_key(_with_description(SCHEMA, "sender_type", "Changed."), rs) == base
     assert jev.gate_key(_with_description(SCHEMA, "priority", "Changed."), rs) != base
-    assert jev.gate_key(SCHEMA, rs, fmt="s2") != base
+    with monkeypatch.context() as m:  # a band in the mapping (step 3)
+        banded = jev_mapping.parse({"bands": {"phishing": 0.4}})
+        m.setattr(jev_mapping, "load", lambda: banded)
+        assert jev.gate_key(SCHEMA, rs) != base
     monkeypatch.setattr(systemone, "NOUL_TRUE", 0.6)
     assert jev.gate_key(SCHEMA, rs) != base
     # the starter rules hide on sender_type too
@@ -884,8 +893,6 @@ def test_the_prompt_digest_changes_with_each_input(monkeypatch: pytest.MonkeyPat
     assert jev.prompt_digest(SCHEMA) == base
     changed = {
         "questions": jev.prompt_digest(_with_description(SCHEMA, "sender_type", "Changed.")),
-        "state format": jev.prompt_digest(SCHEMA, fmt="s2"),
-        "preamble placement": jev.prompt_digest(SCHEMA, preamble="instructions"),
         "pin": jev.prompt_digest(SCHEMA, pin="jev-9.9.9"),
     }
     with monkeypatch.context() as m:
@@ -900,6 +907,22 @@ def test_the_prompt_digest_changes_with_each_input(monkeypatch: pytest.MonkeyPat
     with monkeypatch.context() as m:
         m.setattr(systemone, "NOUL_TRUE", 0.6)
         changed["mapping"] = jev.prompt_digest(SCHEMA)
+    with monkeypatch.context() as m:
+        banded = jev_mapping.parse({"bands": {"phishing": 0.4}})
+        m.setattr(jev_mapping, "load", lambda: banded)
+        changed["band"] = jev.prompt_digest(SCHEMA)
+    with monkeypatch.context() as m:  # the same options in another order (Jev leans to the first)
+        asked = jev.questions
+
+        def reordered(schema: Any) -> dict[str, Any]:
+            q = asked(schema)
+            q["category"] = q["category"] | {
+                "criteria": dict(reversed(list(q["category"]["criteria"].items())))
+            }
+            return q
+
+        m.setattr(jev, "questions", reordered)
+        changed["option order"] = jev.prompt_digest(SCHEMA)
     assert all(v != base for v in changed.values()), changed
     assert len(set(changed.values())) == len(changed)
 

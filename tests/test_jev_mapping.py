@@ -18,7 +18,7 @@ from ecf_server.jev_mapping import Derived, JevMapping
 from ecf_server.rules import HIDE_ACTIONS
 from tests.test_policy import CONTEXTS, SCHEMA, STARTER
 
-SHIPPED_DIGEST = "4bda346d85b2e354d195cde102a21c644ff6abe93ff1026c32113658226c8a35"
+SHIPPED_DIGEST = "756d5a46eeb1a3848103d414122191af8b6a0d2c6ea13d1cc185b7705d01aefa"
 EMPTY = JevMapping()
 
 
@@ -31,13 +31,18 @@ def _doc(**over: Any) -> dict[str, Any]:
 # The mapping file: what it may hold, and a digest that only its values move.
 
 
-def test_the_shipped_mapping_adds_nothing() -> None:
-    """Shipped adding no caution (no band, no bar), so Jev's answers are handled as in step 2
-    (the digest's form is new in 3a, so the digest itself differs from step 2's); it is pinned so
-    a change to the file is a deliberate one (it moves Jev's gate key)."""
+def test_the_shipped_mapping_is_the_operators_choice() -> None:
+    """Chosen 2026-10-14 (OD-512) from the sweep's tables: the four thin safety items 0.30,
+    `requires_action` 0.40, no band for `phishing` or `payment_related`; bars `category` 0.6 and
+    `sender_type` 0.5; no `fraud_risk` bar. The digest is pinned so a change to the file is a
+    deliberate one (it moves Jev's gate key)."""
     m = jev_mapping.load()
-    assert (dict(m.bands), dict(m.bars), dict(m.none_bars)) == ({}, {}, {})
-    assert jev_mapping.digest() == jev_mapping.digest(EMPTY) == SHIPPED_DIGEST
+    assert dict(m.bands) == {"bank_detail_change": 0.3, "claims_internal": 0.3,
+                             "private_individual": 0.3, "regulator_claim": 0.3,
+                             "requires_action": 0.4}  # fmt: skip
+    assert dict(m.bars) == {"category": 0.6, "sender_type": 0.5} and not m.none_bars
+    assert jev_mapping.digest() == SHIPPED_DIGEST
+    assert jev_mapping.digest(EMPTY) != SHIPPED_DIGEST
 
 
 @pytest.mark.parametrize(("over", "why"), [

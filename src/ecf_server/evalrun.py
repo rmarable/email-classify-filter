@@ -106,7 +106,6 @@ from ecf_server import (
     slack_out,
     slack_routes,
     stats,
-    systemone,
     triggers,
 )
 from ecf_server.cards import Card
@@ -177,13 +176,10 @@ class Options:
     copy_to: Path | None = None  # also write the result file here (plan 0.3)
     # the eval-only switch (plan 0.3, P16): a run with it off never passes the gate
     signals: bool = True  # False: asked without the signals block (OD-484)
-    # a Jev run's measurement options (step 3's; §6): a non-default value makes it not for the gate
-    jev_state: str = "s1"  # s1 | s2
-    jev_preamble: str = "state"  # state | instructions
-    jev_concurrency: int = 1  # only 1 in step 2
-    jev_fraud_risk: str = "score"  # score | choice (step 3, J4)
-    jev_option_order: str = "schema"  # schema | reversed (J5)
-    jev_extra: str | None = None  # an extra question: injection_attempt (J6)
+    # Jev's concurrency: 1 only in v3.0.0 (S3-D4). Step 3's other measurement switches (state
+    # format, preamble placement, `fraud_risk` type, option order, an extra question) went once
+    # it chose the configuration (OD-512); their runs' files keep the record
+    jev_concurrency: int = 1
 
     @property
     def switches_off(self) -> list[str]:
@@ -193,13 +189,7 @@ class Options:
     @property
     def measuring(self) -> list[str]:
         """The Jev measurement options away from their defaults, as `name value`."""
-        out = [f"jev_state {self.jev_state}"] if self.jev_state != "s1" else []
-        out += [f"jev_preamble {self.jev_preamble}"] if self.jev_preamble != "state" else []
-        out += [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
-        out += [f"jev_fraud_risk {self.jev_fraud_risk}"] if self.jev_fraud_risk != "score" else []
-        out += ([f"jev_option_order {self.jev_option_order}"]
-                if self.jev_option_order != "schema" else [])  # fmt: skip
-        return out + ([f"jev_extra {self.jev_extra}"] if self.jev_extra else [])
+        return [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -540,18 +530,6 @@ def _check_options(opts: Options) -> None:
         raise InvalidInputError("a jev run classifies: --no-classifier is for the null backend")
     if opts.jev_concurrency != 1:
         raise InvalidInputError("--jev-concurrency above 1 is not in v3.0.0 (S3-D4)")
-    for name, value, allowed in _jev_choices(opts):
-        if value not in allowed:
-            raise InvalidInputError(f"--{name}: {' or '.join(str(a) for a in allowed if a)}")
-
-
-def _jev_choices(opts: Options) -> list[tuple[str, str | None, tuple[str | None, ...]]]:
-    """Each Jev measurement option's flag, value and allowed values (the first is the default)."""
-    return [("jev-state", opts.jev_state, ("s1", "s2")),
-            ("jev-preamble", opts.jev_preamble, ("state", "instructions")),
-            ("jev-fraud-risk", opts.jev_fraud_risk, ("score", "choice")),
-            ("jev-option-order", opts.jev_option_order, ("schema", "reversed")),
-            ("jev-extra-question", opts.jev_extra, (None, "injection_attempt"))]  # fmt: skip
 
 
 def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:
@@ -781,9 +759,6 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary.update(asker.inputs(schema, rules_now))
             summary["jev"] = asker.figures(schema, faulted, determinism)
             summary["band"] = band_figures(results, cases, rules_now)
-            if opts.jev_extra:  # an extra question's own figures (J6)
-                summary["extra"] = {opts.jev_extra: extra_figures(results, cases,
-                                                                  opts.jev_extra)}  # fmt: skip
             digest = str(summary["gate_key"])
         summary["fraud_under"] = fraud_under(results, cases, schema)
         summary.update(fraud_metrics(results, cases, schema))
@@ -1150,26 +1125,6 @@ def band_figures(results: list[CaseResult], cases: list[Case],
                                          for r in held_cases)},
             "unsure": dict(sorted(unsure.items())), "below_bar": dict(sorted(below.items())),
             "automation_lost": lost}  # fmt: skip
-
-
-def extra_figures(results: list[CaseResult], cases: list[Case], name: str) -> dict[str, Any]:
-    """An extra question's figures (J6): `injection_attempt` is labelled yes on the cards with an
-    injection target and no elsewhere, derived here (no card labels it), and answered yes at
-    p >= 0.5; the injection cards it missed are listed."""
-    target = {c.id: bool(cast(dict[str, Any], c.expected.get("safety") or {})
-                         .get("injection_target")) for c in cases if c.confirmed}  # fmt: skip
-    counts = {"tp": 0, "fn": 0, "fp": 0, "tn": 0}
-    missed: list[str] = []
-    for r in results:
-        p = ((r.probabilities or {}).get(name) or {}).get("true")
-        if r.id not in target or p is None:
-            continue
-        yes = p >= systemone.NOUL_TRUE
-        key = ("tp" if yes else "fn") if target[r.id] else ("fp" if yes else "tn")
-        counts[key] += 1
-        if key == "fn":
-            missed.append(r.id)
-    return counts | {"positives": counts["tp"] + counts["fn"], "missed": sorted(missed)}
 
 
 def hide_rules(rules_now: rules.CompiledRules) -> frozenset[str]:
