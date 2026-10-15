@@ -4,13 +4,17 @@
 step 6, OD-438) is Gmail: one store of messages, each with its labels and flags, and every folder a
 view of that store. Its behaviour follows the step 0 real-service test (SPEC §18, 2026-10-05);
 what that test didn't check is marked unverified where it is coded.
+
+Both search by date in the server's zone (`server_zone`, default UTC): IMAP SINCE and BEFORE compare
+the INTERNALDATE's date as the server keeps it, ignoring time and zone (RFC 3501 §6.4.4; OD-507 P7).
+Both time their calls by phase like the IMAP source (`timings()`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from email import message_from_bytes, policy
 from email.message import Message
 from typing import cast
@@ -24,7 +28,9 @@ from ecf_server.mail import (
     InboxState,
     MessageMeta,
     PartInfo,
+    PhaseTimer,
     check_keyword,
+    timed,
 )
 from ecf_server.mail.smtp import SmtpInfo
 
@@ -52,8 +58,11 @@ class FakeMailSource:
         uidvalidity: int = 1,
         caps: Capabilities | None = None,
         folders: tuple[Folder, ...] = DEFAULT_FOLDERS,
+        server_zone: tzinfo = UTC,
     ) -> None:
         self._uidvalidity = uidvalidity
+        self._zone = server_zone
+        self.phase_timer = PhaseTimer()
         self._caps = caps or Capabilities(
             custom_keywords=True, move=True, uidplus=True, condstore=True
         )
@@ -97,19 +106,24 @@ class FakeMailSource:
             perm.add("\\*")
         return InboxState(self._uidvalidity, self._next, frozenset(perm))
 
+    @timed("search")
     def uids_after(self, last_uid: int) -> list[int]:
         return sorted(u for u in self._msgs if u > last_uid)
 
-    def uids_since(self, when: datetime) -> list[int]:
-        day = when.date()
-        return sorted(u for u, s in self._msgs.items() if s.internaldate.date() >= day)
+    @timed("search")
+    def uids_since(self, when: datetime, before: datetime | None = None) -> list[int]:
+        return sorted(u for u, s in self._msgs.items()
+                      if _on_days(s.internaldate, self._zone, when, before))  # fmt: skip
 
+    @timed("search")
     def find_message_id(self, message_id: str) -> list[int]:
         return sorted(u for u, s in self._msgs.items() if _message_id(_parse(s.raw)) == message_id)
 
+    @timed("search")
     def existing(self, uids: Iterable[int]) -> set[int]:
         return {u for u in uids if u in self._msgs}
 
+    @timed("fetch")
     def meta(self, uids: Iterable[int]) -> dict[int, MessageMeta]:
         out: dict[int, MessageMeta] = {}
         for u in uids:
@@ -117,31 +131,38 @@ class FakeMailSource:
                 out[u] = MessageMeta(u, len(s.raw), s.internaldate, _message_id(_parse(s.raw)))
         return out
 
+    @timed("fetch")
     def fetch(self, uid: int) -> bytes | None:
         s = self._msgs.get(uid)
         return None if s is None else s.raw
 
+    @timed("fetch")
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         s = self._msgs.get(uid)
         return None if s is None else fetch_part_of(s.raw, section, limit)
 
+    @timed("fetch")
     def structure(self, uid: int) -> list[PartInfo] | None:
         s = self._msgs.get(uid)
         return None if s is None else structure_of(s.raw)
 
+    @timed("fetch")
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(self._msgs[u].flags) for u in uids if u in self._msgs}
 
+    @timed("store")
     def add_keyword(self, uid: int, keyword: str) -> None:
         check_keyword(keyword)
         if (s := self._msgs.get(uid)) is not None:
             s.flags.add(keyword)
 
+    @timed("store")
     def remove_keyword(self, uid: int, keyword: str) -> None:
         check_keyword(keyword)
         if (s := self._msgs.get(uid)) is not None:
             s.flags.discard(keyword)
 
+    @timed("store")
     def set_flagged(self, uid: int, flagged: bool) -> None:
         if (s := self._msgs.get(uid)) is not None:
             if flagged:
@@ -149,6 +170,7 @@ class FakeMailSource:
             else:
                 s.flags.discard(FLAGGED)
 
+    @timed("store")
     def set_seen(self, uid: int, seen: bool) -> None:
         if (s := self._msgs.get(uid)) is not None:
             if seen:
@@ -161,57 +183,71 @@ class FakeMailSource:
             raise MailUnavailableError(f"no folder {folder!r}")
         return self.elsewhere.setdefault(folder, {})
 
+    @timed("store")
     def move(self, uid: int, folder: str) -> None:
         target = self._folder(folder)
         if (s := self._msgs.pop(uid, None)) is not None:
             target[self._next] = s  # a new UID in the target folder, as a server gives
             self._next += 1
 
+    @timed("store")
     def copy(self, uid: int, folder: str) -> None:
         target = self._folder(folder)
         if (s := self._msgs.get(uid)) is not None:
             target[self._next] = _Stored(s.raw, s.internaldate, set(s.flags))
             self._next += 1
 
+    @timed("search")
     def find_in(self, folder: str, message_id: str) -> list[int]:
         return sorted(u for u, s in self._folder(folder).items()
                       if _message_id(_parse(s.raw)) == message_id)  # fmt: skip
 
+    @timed("fetch")
     def fetch_in(self, folder: str, uid: int) -> bytes | None:
         s = self._folder(folder).get(uid)
         return None if s is None else s.raw
 
+    @timed("store")
     def move_back(self, folder: str, uid: int) -> None:
         if (s := self._folder(folder).pop(uid, None)) is not None:
             self._msgs[self._next] = s
             self._next += 1
 
+    @timed("store")
     def copy_back(self, folder: str, uid: int) -> None:
         if (s := self._folder(folder).get(uid)) is not None:
             self._msgs[self._next] = _Stored(s.raw, s.internaldate, set(s.flags))
             self._next += 1
 
+    @timed("fetch")
     def gmail_msgid(self, uid: int) -> int | None:
         return None
 
+    @timed("search")
     def gmail_find(self, folder: str, msgid: int) -> list[int]:
         return []
 
+    @timed("fetch")
     def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {}
 
     def gmail_inbox_counts(self) -> tuple[int, int] | None:
         return None
 
+    @timed("store")
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         target = self._folder(folder)
         target[self._next] = _Stored(raw, datetime.now(UTC), set(flags))
         self._next += 1
 
+    @timed("store")
     def delete_in(self, folder: str, uid: int) -> None:
         if not self._caps.uidplus:
             raise MailUnavailableError("no UIDPLUS: can't delete just one message")
         self._folder(folder).pop(uid, None)
+
+    def timings(self) -> dict[str, float]:
+        return dict(self.phase_timer.seconds)
 
     def close(self) -> None:
         self.closed = True
@@ -256,7 +292,9 @@ class GmailFakeSource:
     folder size limit: INBOX then shows only the newest that many (OD-440)."""
 
     def __init__(self, *, folders: tuple[Folder, ...] = GMAIL_FOLDERS,
-                 user_labels: Iterable[str] = ()) -> None:  # fmt: skip
+                 user_labels: Iterable[str] = (), server_zone: tzinfo = UTC) -> None:  # fmt: skip
+        self._zone = server_zone
+        self.phase_timer = PhaseTimer()
         self._folders = [*folders, *(Folder(n, frozenset()) for n in user_labels)]
         self._store: dict[int, _GmailMessage] = {}
         self._views: dict[str, dict[int, int]] = {f.name: {} for f in self._folders}  # uid->msgid
@@ -313,19 +351,24 @@ class GmailFakeSource:
         # Gmail lists no PERMANENTFLAGS on a read-only EXAMINE (step 0)
         return InboxState(self._uidvalidity["INBOX"], self._uidnext["INBOX"], frozenset())
 
+    @timed("search")
     def uids_after(self, last_uid: int) -> list[int]:
         return sorted(u for u in self._views["INBOX"] if u > last_uid)
 
-    def uids_since(self, when: datetime) -> list[int]:
-        day = when.date()
-        return sorted(u for u, m in self._in("INBOX") if m.internaldate.date() >= day)
+    @timed("search")
+    def uids_since(self, when: datetime, before: datetime | None = None) -> list[int]:
+        return sorted(u for u, m in self._in("INBOX")
+                      if _on_days(m.internaldate, self._zone, when, before))  # fmt: skip
 
+    @timed("search")
     def find_message_id(self, message_id: str) -> list[int]:
         return self.find_in("INBOX", message_id)
 
+    @timed("search")
     def existing(self, uids: Iterable[int]) -> set[int]:
         return {u for u in uids if u in self._views["INBOX"]}
 
+    @timed("fetch")
     def meta(self, uids: Iterable[int]) -> dict[int, MessageMeta]:
         out: dict[int, MessageMeta] = {}
         for u in uids:
@@ -333,32 +376,41 @@ class GmailFakeSource:
                 out[u] = MessageMeta(u, len(m.raw), m.internaldate, _message_id(_parse(m.raw)))
         return out
 
+    @timed("fetch")
     def fetch(self, uid: int) -> bytes | None:
         return self.fetch_in("INBOX", uid)
 
+    @timed("fetch")
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         m = self._get("INBOX", uid)
         return None if m is None else fetch_part_of(m.raw, section, limit)
 
+    @timed("fetch")
     def structure(self, uid: int) -> list[PartInfo] | None:
         m = self._get("INBOX", uid)
         return None if m is None else structure_of(m.raw)
 
+    @timed("fetch")
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(m.flags) for u in uids if (m := self._get("INBOX", u)) is not None}
 
+    @timed("store")
     def add_keyword(self, uid: int, keyword: str) -> None:
         self._set_flag(uid, check_keyword(keyword), on=True)
 
+    @timed("store")
     def remove_keyword(self, uid: int, keyword: str) -> None:
         self._set_flag(uid, check_keyword(keyword), on=False)
 
+    @timed("store")
     def set_flagged(self, uid: int, flagged: bool) -> None:
         self._set_flag(uid, FLAGGED, on=flagged)
 
+    @timed("store")
     def set_seen(self, uid: int, seen: bool) -> None:
         self._set_flag(uid, SEEN, on=seen)
 
+    @timed("store")
     def move(self, uid: int, folder: str) -> None:
         """INBOX to All Mail archives (removes `\\Inbox`); to a label folder swaps `\\Inbox` for
         that label (step 0)."""
@@ -368,21 +420,25 @@ class GmailFakeSource:
             m.labels.discard("\\Inbox")
             self._sync()
 
+    @timed("store")
     def copy(self, uid: int, folder: str) -> None:
         target = self._folder(folder)
         if (m := self._get("INBOX", uid)) is not None:
             self._label(m, target, on=True)
             self._sync()
 
+    @timed("search")
     def find_in(self, folder: str, message_id: str) -> list[int]:
         self._folder(folder)
         return sorted(u for u, m in self._in(folder) if _message_id(_parse(m.raw)) == message_id)
 
+    @timed("fetch")
     def fetch_in(self, folder: str, uid: int) -> bytes | None:
         self._folder(folder)
         m = self._get(folder, uid)
         return None if m is None else m.raw
 
+    @timed("store")
     def move_back(self, folder: str, uid: int) -> None:
         """A label folder to INBOX swaps the label for `\\Inbox`, with a new INBOX UID (step 0)."""
         source = self._refuse(folder, "move a message back out of")
@@ -391,6 +447,7 @@ class GmailFakeSource:
             m.labels.add("\\Inbox")
             self._sync()
 
+    @timed("store")
     def copy_back(self, folder: str, uid: int) -> None:
         """Adds `\\Inbox`: All Mail to INBOX gives a new INBOX UID and no duplicate (step 0). Out
         of Spam or Trash it also takes that label off (unverified)."""
@@ -400,14 +457,17 @@ class GmailFakeSource:
             m.labels.add("\\Inbox")
             self._sync()
 
+    @timed("fetch")
     def gmail_msgid(self, uid: int) -> int | None:
         m = self._get("INBOX", uid)
         return None if m is None else m.msgid
 
+    @timed("search")
     def gmail_find(self, folder: str, msgid: int) -> list[int]:
         self._folder(folder)
         return sorted(u for u, m in self._in(folder) if m.msgid == msgid)
 
+    @timed("fetch")
     def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         return {u: frozenset(m.labels) for u in uids if (m := self._get("INBOX", u)) is not None}
 
@@ -416,6 +476,7 @@ class GmailFakeSource:
             return None
         return len(self._views["INBOX"]), sum(map(self._inbox_label, self._store.values()))
 
+    @timed("store")
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         """Gmail merges an APPEND into the stored message with the same Message-ID: one message
         (one X-GM-MSGID), now also in `folder` under a new UID (step 0, an identical copy to
@@ -432,10 +493,14 @@ class GmailFakeSource:
         m.flags.update(flags)
         self._sync()
 
+    @timed("store")
     def delete_in(self, folder: str, uid: int) -> None:
         source = self._refuse(folder, "delete a message in")
         if (m := self._get(folder, uid)) is not None:
             self._expunge(source, m)
+
+    def timings(self) -> dict[str, float]:
+        return dict(self.phase_timer.seconds)
 
     def close(self) -> None:
         self.closed = True
@@ -641,3 +706,9 @@ class FakeSender:
             self.sent.append((mail_from, tuple(rcpt), raw))  # it may well have gone
             raise SendOutcomeUnknownError("fake: no final reply")
         self.sent.append((mail_from, tuple(rcpt), raw))
+
+
+def _on_days(arrived: datetime, zone: tzinfo, since: datetime, before: datetime | None) -> bool:
+    """IMAP SINCE / BEFORE: the INTERNALDATE's date in the server's zone against the dates asked."""
+    day = arrived.astimezone(zone).date()
+    return day >= since.date() and (before is None or day < before.date())

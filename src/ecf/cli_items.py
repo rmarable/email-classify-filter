@@ -25,7 +25,9 @@ def item_line(i: dict[str, Any]) -> str:
                  f"{i['sender'][:40]}: {i['subject'][:60]}")  # fmt: skip
 
 
-def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
+def make_commands(  # noqa: PLR0915 - one group of commands
+    app: typer.Typer, paths: Callable[[], Paths]
+) -> typer.Typer:
     """Adds `inbox` to `app` and returns the `item` group."""
     item_app = typer.Typer(no_args_is_help=True, help="One email ecf is tracking.")
 
@@ -38,9 +40,12 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
         q = "&".join(p for p in (f"address_id={address}" if address else "",
                                  "stale=1" if stale else "") if p)  # fmt: skip
         with LocalClient(paths()) as c:
-            found = c.get("/v1/inbox" + (f"?{q}" if q else ""))["items"]
+            got = c.get("/v1/inbox" + (f"?{q}" if q else ""))
+        found = got["items"]
         for i in found:
             typer.echo(item_line(i))
+        for line in got.get("runs", []):  # old mail: one line per scan or reprocess (OD-507)
+            typer.echo(plain(line))
         typer.echo(f"{len(found)} waiting" + ("; details: ecf item show <id>" if found else ""))
 
     @item_app.command("show")
@@ -50,6 +55,14 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
             d = c.get(f"/v1/items/{item}")
         for line in describe(d):
             typer.echo(plain(line))
+
+    @item_app.command("undo")
+    def undo(item: Annotated[str, typer.Argument(help="Item ID (8 or more characters).")]) -> None:
+        """Take back what ecf did to one email (the digest's Undo), at its next check."""
+        with LocalClient(paths()) as c:
+            r = c.request("POST", f"/v1/items/{item}/undo", {})
+        typer.echo(f"Undo queued for {r['id'][:8]}: done at the next check, within a minute"
+                   " while your computer is awake (ecf item show to see it)")  # fmt: skip
 
     @item_app.command("resolve")
     def resolve(
@@ -106,13 +119,19 @@ def make_commands(app: typer.Typer, paths: Callable[[], Paths]) -> typer.Typer:
     return item_app
 
 
-def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
+def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:  # noqa: PLR0915
     @app.command("approve")
     def approve(
         item: Annotated[str | None, typer.Argument(help="Item ID (8 or more characters).")] = None,
         pending: Annotated[
             bool, typer.Option("--pending", help="Approvals queued from Slack for step-up.")
         ] = False,
+        scan: Annotated[
+            str | None,
+            typer.Option(
+                "--scan", help="Every waiting approval of a scan or reprocess run (one step-up)."
+            ),
+        ] = None,
         yes: Annotated[bool, typer.Option("--yes", help="Don't ask after showing it.")] = False,
     ) -> None:
         """Approve an action ecf proposed, after showing it. (step-up for sends, irreversible
@@ -120,6 +139,9 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         with LocalClient(paths()) as c:
             if pending:
                 _approve_pending(c)
+                return
+            if scan:
+                _approve_scan(c, scan)
                 return
             if not item:
                 raise typer.BadParameter("give an item ID, or --pending")
@@ -236,6 +258,29 @@ def _approve_pending(c: LocalClient) -> None:
     ids = [b["id"] for b in batch]
     r = with_step_up(c, lambda n: c.request("POST", "/v1/approvals/pending",
                                             {"confirm_ids": ids, "nonce_id": n}),
+                     echo=typer.echo)  # fmt: skip
+    for x in r["results"]:
+        typer.echo(f"  {x['id'][:8]}: {_after(x['status'])}")
+
+
+def _approve_scan(c: LocalClient, run_id: str) -> None:
+    """OD-507 §3.5 (P9): the run's whole set shown, then one step-up bound to exactly it."""
+    path = f"/v1/approvals/scan/{run_id}"
+    p = c.request("POST", path, {})
+    for s in p["sends"]:
+        typer.echo(plain(f"send (approve on its own): ecf approve {s['short_id']}: {s['action']}"))
+    batch: list[dict[str, Any]] = p["batch"]
+    if not batch:
+        typer.echo(f"no approvals of run {p['run_id']} waiting")
+        return
+    typer.echo(f"{len(batch)} approval(s) of old mail of {p['address']} (run {p['run_id']}):")
+    for b in batch:
+        typer.echo(plain(f"  {b['short_id']}  {b['action']}: {b['sender'][:40]}: "
+                         f"{b['subject'][:50]}"))  # fmt: skip
+    if not typer.confirm("Approve all of these with one step-up?", default=False):
+        raise typer.Exit(1)
+    ids = [b["id"] for b in batch]
+    r = with_step_up(c, lambda n: c.request("POST", path, {"confirm_ids": ids, "nonce_id": n}),
                      echo=typer.echo)  # fmt: skip
     for x in r["results"]:
         typer.echo(f"  {x['id'][:8]}: {_after(x['status'])}")

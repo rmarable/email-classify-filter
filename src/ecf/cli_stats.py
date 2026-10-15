@@ -1,43 +1,57 @@
 """`ecf stats` (SPEC §13.4; V1.3 step 9): the model calls ecf records (`model_calls`: the local
 model's before v3.0.0, ADR 0031, until pruned with the logs), and from V1.4 step 6 Claude's
-tokens, times and plan usage from `ecf claude` sessions."""
+tokens, times and plan usage from `ecf claude` sessions. From v3.0.0 step 5 (OD-507): Slack post
+times, and with `--stages` how long items spend in each stage; `--since` takes the range parser's
+forms (`ecf.timerange`)."""
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import typer
 
 from ecf.client import LocalClient
+from ecf.errors import InvalidInputError
 from ecf.paths import Paths
+from ecf.timerange import parse, stamp
 
-_SINCE = re.compile(r"^(\d+(?:\.\d+)?)([hd])$")
 
-
-def hours_of(since: str) -> float:
-    """`24h`, `7d`, `1.5d` → hours."""
-    m = _SINCE.match(since.strip().lower())
-    if not m:
-        raise typer.BadParameter("a number of hours or days, like 24h or 7d", param_hint="--since")
-    return float(m.group(1)) * (24 if m.group(2) == "d" else 1)
+def since_param(since: str) -> str:
+    """`--since` as the UTC time the service reads; refused here with the parser's hint."""
+    try:
+        return stamp(parse(since, now=datetime.now(UTC)))
+    except InvalidInputError as exc:
+        raise typer.BadParameter(exc.detail, param_hint="--since") from None
 
 
 def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
     @app.command("stats")
     def stats(
-        since: Annotated[str, typer.Option("--since", help="How far back: 24h, 7d, ...")] = "7d",
+        since: Annotated[
+            str, typer.Option("--since", help="How far back: 24h, 7d, 2026-09-01, ...")
+        ] = "7d",
         address: Annotated[str | None, typer.Option("--address", help="One address.")] = None,
         preset: Annotated[
             str | None, typer.Option("--preset", help="C (older calls may be A or B).")
         ] = None,
+        stages: Annotated[
+            bool,
+            typer.Option(
+                "--stages", help="Time items spend in each stage, and waiting for /ecf-review."
+            ),
+        ] = False,
     ) -> None:
         """Model usage: recorded model calls' tokens, speeds and load times by model and role
-        (the local model's, before v3.0.0), and Claude's tokens, times and plan usage from `ecf
-        claude` sessions."""
-        params: dict[str, Any] = {"hours": hours_of(since)}
+        (the local model's, before v3.0.0), Claude's tokens, times and plan usage from `ecf
+        claude` sessions, and Slack post times. With --stages: time in each item stage."""
+        params: dict[str, Any] = {"since": since_param(since)}
+        if stages:
+            with LocalClient(paths()) as c:
+                show_stages(c.get("/v1/stats?" + urlencode(params | {"stages": 1})))
+            return
         if address:
             params["address"] = address
         if preset:
@@ -45,6 +59,40 @@ def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         with LocalClient(paths()) as c:
             r: dict[str, Any] = c.get("/v1/stats?" + urlencode(params))
         show(r)
+
+
+def show_stages(r: dict[str, Any]) -> None:
+    typer.echo(f"since {r['since'][:16].replace('T', ' ')} UTC")
+    groups = (("new_mail", "New mail"), ("scan_or_reprocess", "Scanned or reprocessed mail"))
+    for key, title in groups:
+        g = r[key]
+        typer.echo(f"\n{title}: {g['items']} item(s)")
+        if not g["stages"]:
+            typer.echo("  no stage changes in this period")
+        for st in g["stages"]:
+            typer.echo(f"  {st['stage']}: {_n(st['median_s'], 1)} s median,"
+                       f" {_n(st['p95_s'], 1)} s p95 (n {st['n']})")  # fmt: skip
+        w = g["claude_wait"]
+        if w["n"]:
+            typer.echo(f"  waiting for /ecf-review: {_n(w['median_s'], 0)} s median,"
+                       f" {_n(w['p95_s'], 0)} s p95 (n {w['n']})")  # fmt: skip
+    if r["imported_left_out"]:
+        typer.echo(f"\n{r['imported_left_out']} imported item(s) left out (their times are"
+                   " another computer's)")  # fmt: skip
+
+
+def show_slack(s: dict[str, Any]) -> None:
+    typer.echo("\nSlack posts")
+    if not s["posts"]:
+        typer.echo("  none in this period")
+        return
+    lost = s["outcomes"].get("dead", 0) + s["outcomes"].get("channel_gone", 0)
+    typer.echo(f"  {s['posts']} post(s){f', {lost} not delivered' if lost else ''};"
+               f" {s['retries']} retries; {s['rate_limited']} rate-limited"
+               f" ({s['rate_hold_s']} s held); {s['pace_s']} s pacing")  # fmt: skip
+    w, c = s["wait"], s["call"]
+    typer.echo(f"  queued to done: {_n(w['median_s'], 1)} s median, {_n(w['p95_s'], 1)} s p95")
+    typer.echo(f"  Slack call: {_n(c['median_s'], 2)} s median, {_n(c['p95_s'], 2)} s p95")
 
 
 def show(r: dict[str, Any]) -> None:
@@ -59,6 +107,8 @@ def show(r: dict[str, Any]) -> None:
         _figures(r["all"])
     if "claude" in r:
         show_claude(r["claude"])
+    if "slack" in r:
+        show_slack(r["slack"])
 
 
 def show_claude(c: dict[str, Any]) -> None:

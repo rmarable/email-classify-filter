@@ -16,15 +16,22 @@ assigns and keeps through every move (no sender can set it), finds a message by 
 folder, and copies a message back to INBOX. In Gmail mode it refuses to move a message back or
 delete one out of All Mail or Trash: a message there may be in no other folder, so either could
 lose it (OD-438).
+
+Timings (OD-507, plan §5 c): each source times its own IMAP work by phase (`PHASES`: connect and
+login, select, search with its NOOP, fetch, store), nested calls counted once, in the phase of the
+innermost call; `timings()` gives the seconds so far. The check records them on `check.completed`.
 """
 
 from __future__ import annotations
 
+import functools
 import re
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Generator, Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 from ecf.errors import InvalidInputError
 
@@ -42,6 +49,48 @@ def check_keyword(keyword: str) -> str:
     if not _KEYWORD.fullmatch(keyword):
         raise InvalidInputError(f"not a keyword ecf writes: {keyword!r}")
     return keyword
+
+
+PHASES: tuple[str, ...] = ("connect", "select", "search", "fetch", "store")
+
+
+class PhaseTimer:
+    """Seconds per phase; a phase timed inside another counts only in the inner one."""
+
+    def __init__(self) -> None:
+        self.seconds: dict[str, float] = dict.fromkeys(PHASES, 0.0)
+        self._inner: list[float] = []
+
+    @contextmanager
+    def phase(self, name: str) -> Generator[None]:
+        began = time.perf_counter()
+        self._inner.append(0.0)
+        try:
+            yield
+        finally:
+            inner = self._inner.pop()
+            took = time.perf_counter() - began
+            self.seconds[name] += took - inner
+            if self._inner:
+                self._inner[-1] += took
+
+
+class _Timed(Protocol):
+    phase_timer: PhaseTimer
+
+
+def timed[**P, T](name: str) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Time a MailSource method (its first argument has a `phase_timer`) under the phase `name`."""
+
+    def wrap(fn: Callable[P, T]) -> Callable[P, T]:
+        @functools.wraps(fn)
+        def run(*args: P.args, **kwargs: P.kwargs) -> T:
+            with cast("_Timed", args[0]).phase_timer.phase(name):
+                return fn(*args, **kwargs)
+
+        return run
+
+    return wrap
 
 
 @dataclass(frozen=True)
@@ -97,8 +146,10 @@ class MailSource(Protocol):
         """INBOX UIDs strictly greater than `last_uid`, ascending."""
         ...
 
-    def uids_since(self, when: datetime) -> list[int]:
-        """INBOX UIDs whose INTERNALDATE is on or after `when`'s date (IMAP SINCE is by day)."""
+    def uids_since(self, when: datetime, before: datetime | None = None) -> list[int]:
+        """INBOX UIDs whose INTERNALDATE is on or after `when`'s date and, with `before`, before
+        `before`'s date (IMAP SINCE and BEFORE go by the server's date, ignoring time and zone,
+        RFC 3501 §6.4.4: callers widen the range and cut it by INTERNALDATE)."""
         ...
 
     def find_message_id(self, message_id: str) -> list[int]: ...
@@ -173,6 +224,10 @@ class MailSource(Protocol):
     def delete_in(self, folder: str, uid: int) -> None:
         """Delete one message from `folder`: `\\Deleted` then UID EXPUNGE of just that UID
         (UIDPLUS); refused without UIDPLUS, since a plain EXPUNGE could remove other mail."""
+        ...
+
+    def timings(self) -> dict[str, float]:
+        """Seconds spent so far in each of `PHASES` (module notes)."""
         ...
 
     def close(self) -> None: ...

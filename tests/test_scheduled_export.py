@@ -199,7 +199,8 @@ def test_failures_retry_hourly_then_alert_and_a_success_resolves(
     assert _run(conn, clock, store, data_dir, n)["ok"]
     assert not health.open_alerts(conn)
     assert scheduled_export.status(conn)["failures"] == 0
-    events = [r[0] for r in conn.execute("SELECT event FROM audit WHERE event LIKE 'export.%'")]
+    events = [r[0] for r in conn.execute("SELECT event FROM audit WHERE event LIKE 'export.%'"
+                                         " ORDER BY id")]  # fmt: skip
     assert events == ["export.failed", "export.failed", "export.completed"]
 
 

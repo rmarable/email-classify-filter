@@ -106,8 +106,9 @@ def _migration_files() -> list[tuple[int, str, str]]:
 
 
 # Migrations that rewrite many rows, after which a WAL checkpoint runs (0036 schema v3, 0037 its
-# removed values, 0038 the local models' columns and the `addresses` rebuild; P27)
-CHECKPOINT_AFTER = frozenset({36, 37, 38})
+# removed values, 0038 the local models' columns and the `addresses` rebuild; P27; 0039 builds two
+# indexes over the whole audit table, OD-507)
+CHECKPOINT_AFTER = frozenset({36, 37, 38, 39})
 # Migrations that rebuild a table other tables reference (0038 `addresses`; P1), with that table:
 # SQLite ignores `PRAGMA foreign_keys` inside a transaction, and with enforcement on, dropping the
 # old table would delete or refuse its children. So enforcement goes off before the transaction,

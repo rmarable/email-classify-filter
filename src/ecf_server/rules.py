@@ -264,6 +264,7 @@ class CompiledRules:
     schema: CompiledSchema
     aliased: tuple[str, ...] = ()  # rule ids that used a schema v1 value (V1_ALIASES)
     off: tuple[str, ...] = ()  # the file's `default_rules_off`, as written (one file only)
+    digest: str = ""  # `composed_digest` of a composed set (`compose`, `fallback_rules`); P27
 
     def evaluate(self, inp: RuleInput) -> Decision:
         for rule in self.rules:
@@ -643,13 +644,16 @@ def compose(schema: CompiledSchema, text: str | None = None, *,
     def build() -> CompiledRules:
         fixed = load_fixed_rules(schema)
         defaults = load_default_rules(schema)
+        digest = composed_digest(schema, text)
         if text is None:
-            return CompiledRules((*fixed.rules, *defaults.rules), schema, defaults.aliased)
+            return CompiledRules((*fixed.rules, *defaults.rules), schema, defaults.aliased,
+                                 digest=digest)  # fmt: skip
         user = _compile(body, schema, source=where, fixed=False, append=False)
         unknown = layer_warnings(user)
         if unknown:
             log.warning("rules.default_off_unknown", ids=len(unknown))
-        return CompiledRules(layered(user, defaults, fixed), schema, user.aliased, user.off)
+        return CompiledRules(layered(user, defaults, fixed), schema, user.aliased, user.off,
+                             digest)  # fmt: skip
 
     return _cached((_schema_key(schema), body, where), build)
 
@@ -729,17 +733,27 @@ def fallback_rules(schema: CompiledSchema) -> CompiledRules:
     fixed rules and `otherwise`, so mail is still decided (fail closed: no default rule hides).
     The fixed rules compile against every schema ecf accepts (`check_safety_core`)."""
     fixed = load_fixed_rules(schema)
-    return CompiledRules((*fixed.rules, Rule(id=CATCH_ALL, actor="continue")), schema)
+    return CompiledRules((*fixed.rules, Rule(id=CATCH_ALL, actor="continue")), schema,
+                         digest=composed_digest(schema, None, fallback=True))  # fmt: skip
 
 
-def starter_digest() -> str:
-    """SHA-256 of the shipped fixed and default rules files (`fixed_rules.yaml`, then
-    `starter_rules.yaml`), recorded beside an eval result's keywords digest (pre-classifier plan
-    step 7)."""
-    h = hashlib.sha256()
-    for name in (FIXED_FILE, DEFAULT_FILE):
-        h.update(resources.files("ecf_server.data").joinpath(name).read_bytes())
-    return h.hexdigest()
+def composed_digest(schema: CompiledSchema, applied_text: str | None, *,
+                    fallback: bool = False) -> str:  # fmt: skip
+    """SHA-256 (64 hex) of what decides an item's rules (OD-507 §4.1, P14): the schema they compile
+    against, the shipped fixed and default rules files, and the applied rules text (None: the
+    default rules alone, as eval runs use them; `fallback`: the fixed rules and `otherwise`).
+    `classifier.store` records it in `pinned_models.rules`; eval results record the same value,
+    so items and results share one rules digest. Policy inputs outside the rules (action policy,
+    move folders, sensitivity, templates, forwards) aren't in it (`ecf reprocess --force`)."""
+    doc = {"schema": _schema_key(schema), "files": _file_digests(), "applied": applied_text,
+           "fallback": fallback}  # fmt: skip
+    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
+
+
+@functools.cache
+def _file_digests() -> dict[str, str]:
+    return {name: hashlib.sha256(_data(name).encode()).hexdigest()
+            for name in (FIXED_FILE, DEFAULT_FILE)}  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- v2 applied rules

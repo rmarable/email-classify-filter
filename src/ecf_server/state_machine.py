@@ -48,6 +48,7 @@ class TransitionContext:
     expiry_count: int = 0
     backfill: bool = False  # a records-only backfilled item (OD-216, OD-221)
     reconciled: bool = False  # a send's outcome settled from the Sent folder (OD-322, V1.5)
+    reprocess: bool = False  # `ecf reprocess` decides an old item again (OD-507 §4.3)
 
 
 Guard = Callable[[TransitionContext], bool]
@@ -89,7 +90,10 @@ _TABLE: dict[Status, frozenset[Status]] = {
     S.EXECUTED: frozenset({S.UNDOING}),
     S.UNDOING: frozenset({S.UNDONE, S.UNDO_FAILED}),
     S.UNDONE: frozenset({S.PROPOSED}),
+    # `ecf reprocess` (OD-507 §4.3, P3): classified again, or planned again on the stored one
+    S.OBSERVED: frozenset({S.AWAITING_CLAUDE, S.CLASSIFIED, S.PROPOSED}),
 }
+_TABLE[S.EXECUTED] = _TABLE[S.EXECUTED] | {S.AWAITING_CLAUDE, S.CLASSIFIED, S.PROPOSED}
 # Any open status may be resolved by a person, or closed because the mail was handled in the client.
 for _s in OPEN:
     _TABLE[_s] = _TABLE.get(_s, frozenset()) | {S.RESOLVED_MANUAL, S.RESOLVED_BY_MAILBOX}
@@ -135,6 +139,11 @@ GUARDS: Mapping[tuple[Status, Status], Guard] = {
     (S.FAILED_UNKNOWN, S.FAILED): lambda c: c.reconciled,
     (S.EXECUTED, S.UNDOING): lambda c: c.reversible,
     (S.UNDONE, S.PROPOSED): lambda c: c.fix,
+    **{
+        (s, t): (lambda c: c.reprocess)
+        for s in (S.OBSERVED, S.EXECUTED)
+        for t in (S.AWAITING_CLAUDE, S.CLASSIFIED, S.PROPOSED)
+    },
     **{
         (s, S.RESOLVED_MANUAL): (lambda c: not c.payment_or_fraud or c.stepup_verified)
         for s in OPEN

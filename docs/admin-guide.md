@@ -87,6 +87,30 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   item), archives its Slack channel and deletes its app password; ecf's labels stay on messages.
   It's refused while the address sends alert email.
 
+## Old mail: backfill and reprocess
+
+ecf watches an address from its first check; mail that arrived before it, even after `ecf address
+add`, is read only by `ecf backfill` (SPEC §10.2; OD-507).
+
+```sh
+ecf backfill ap --since 2026-09-01 [--until 2026-09-30T18:00]   # records only: nothing done
+ecf backfill ap --since 30d --act        # counts, estimates, asks; step-up over 500
+ecf backfill ap --stop                   # what was read stays
+ecf reprocess ap --since 90d [--rules-only] [--force] [--dry-run]   # after a model or rules change
+ecf reprocess --status | ecf reprocess ap --stop
+```
+
+- Times: a date, a date and time (`2026-09-29T08:00`, local unless you add `Z` or `-04:00`), a
+  time today (`08:00`), or an age (`90s 30m 2h 3d 2w 6mo 1y`, `1h30m`). The range is shown in UTC
+  first.
+- Old mail never gets a card or post of its own: each run posts one summary in the summary
+  channel, with fraud and regulator finds as replies; its hides all need approval, with
+  `ecf approve --scan <id>`; new mail is reviewed first and alerted at once as usual.
+- `--act` and `ecf reprocess` that classify with Claude show an estimate first (cost from your own
+  sessions, else ecf's measured runs; session time). Reprocess skips mail you reviewed or that
+  raised a fraud or regulator alert, and never moves mail ecf already moved: `ecf item undo <id>`
+  puts one back.
+
 ## Gmail
 
 Personal Google accounts (`@gmail.com`, `@googlemail.com`) work over IMAP with an app password
@@ -497,7 +521,9 @@ again finishes an interrupted destroy (SPEC §11.11).
 `ecf doctor` checks the service, secret store, disk encryption, Slack, each address's IMAP and
 SMTP, Claude, addresses converted and paused at the v3.0.0 upgrade, alert email and backups,
 and prints a fix for each failure (SPEC §13.2). `ecf status` shows addresses, backlog and the
-service; `ecf logs [--address] [--event] [--since] [-f]` shows the audit log (no message content).
+service; `ecf logs [--address] [--event] [--since] [--until] [-f]` shows the audit log (no message
+content); `ecf stats --stages` shows how long mail spends in each stage, and `ecf stats` the
+Slack post times.
 
 ## Recovery
 

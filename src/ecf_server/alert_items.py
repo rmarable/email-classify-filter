@@ -17,6 +17,8 @@ address and item IDs and give commands, never a subject, sender or excerpt (OD-3
   items escalated as fraud are left to their own email.
 
 Mail that answers or repeats an alert email (`alert_echo`, own_mail.py) never raises one (OD-330).
+Old mail a scan or reprocess marked (`marked.py`) raises none either: its run's Slack summary lists
+it and mentions you (OD-507 §3.4; operator decision 2026-10-14, review M5).
 Each escalation, and each unverified item, is handled once, whether or not email is a route.
 """
 
@@ -28,7 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 from ecf.schema import fixed_item
-from ecf_server import alert_mail, alerts, slack_admin
+from ecf_server import alert_mail, alerts, marked, slack_admin
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 
@@ -57,6 +59,8 @@ def sweep(conn: sqlite3.Connection, clock: Clock) -> int:
     now = to_ts(clock.now())
     for r in rows:
         kind, why = _kind(r)
+        if marked.is_marked(json.loads(r["facts"] or "{}")):
+            kind = None  # old mail: the run's summary instead
         if on and kind is not None:
             short = str(r["stable_id"])[:SHORT]
             if kind == FRAUD:
@@ -84,10 +88,11 @@ def unverified_batch(conn: sqlite3.Connection, clock: Clock) -> int:
         return 0
     mark = slack_admin.setting(conn, UNVERIFIED_MARK) or "0"
     rows = conn.execute(
-        "SELECT i.stable_id, i.address_id, i.created_at, i.facts FROM items i"
+        "SELECT i.stable_id, i.address_id, i.created_at, i.facts FROM items i"  # noqa: S608
         " JOIN addresses a USING (address_id) WHERE a.sensitivity = 'high'"
         " AND a.removed_at IS NULL AND i.created_at > ?"
         " AND json_extract(i.facts, '$.triggers.unverified_payment')"
+        f" AND NOT {marked.sql('i.')}"
         " AND i.stable_id NOT IN (SELECT stable_id FROM escalations) ORDER BY i.created_at",
         (mark,),
     ).fetchall()

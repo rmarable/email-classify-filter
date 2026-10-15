@@ -106,7 +106,11 @@ class MessageAnalyzer:
         counts, or a new vendor's invoices would never make it known (operator decision
         2026-10-10); so does a route whose only signal is that the sender has no history, or a
         genuine sender sending such requests would never become known (operator decision
-        2026-10-10, pre-gate review G1). `record_sender` counts only DMARC-pass mail."""
+        2026-10-10, pre-gate review G1). `record_sender` counts only DMARC-pass mail. Mail an
+        `ecf backfill` read (`backfill` set) never counts (OD-507 §2, P12): a scan must not make
+        senders known."""
+        if found.get("backfill"):
+            return
         t: dict[str, Any] = found.get("triggers") or {}
         routed: dict[str, Any] = found.get("routes") or {}
         reasons: list[str] = t.get("fraud") or []

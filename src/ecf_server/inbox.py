@@ -22,7 +22,7 @@ from typing import Any
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import StableId
 from ecf.status import OPEN, Status
-from ecf_server import cards, escalations, items, stepup
+from ecf_server import cards, escalations, items, marked, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.precheck import item_payment_or_fraud
@@ -78,14 +78,22 @@ def counts(conn: sqlite3.Connection, address_id: str | None = None) -> dict[str,
 
 
 def inbox(
-    conn: sqlite3.Connection, *, address_id: str | None = None, stale_only: bool = False
+    conn: sqlite3.Connection,
+    *,
+    address_id: str | None = None,
+    stale_only: bool = False,
+    old: bool = False,
 ) -> list[dict[str, Any]]:
+    """What waits on you. Old mail a scan or reprocess marked is left out, or with `old` is all
+    there is, each with its `run`: "Needs you" and `ecf inbox` show it as one count line per run
+    (`scans.inbox_lines`; OD-507 §2, P9)."""
     marks = json.dumps(sorted(OPEN))
     person = json.dumps(sorted(PERSON))
     sql = (
-        "SELECT i.*, e.state AS escalation FROM items i LEFT JOIN escalations e USING (stable_id)"
+        "SELECT i.*, e.state AS escalation FROM items i LEFT JOIN escalations e USING (stable_id)"  # noqa: S608
         " WHERE i.status IN (SELECT value FROM json_each(?))"
         " AND (e.stable_id IS NOT NULL OR i.status IN (SELECT value FROM json_each(?)))"
+        f" AND {'' if old else 'NOT '}{marked.sql('i.')}"
     )
     args: list[Any] = [marks, person]
     if address_id:
@@ -94,6 +102,8 @@ def inbox(
     if stale_only:
         sql += " AND i.stale = 1"
     rows = conn.execute(sql + " ORDER BY i.stale DESC, i.created_at, i.stable_id", args)
+    if old:
+        return [summary(r) | {"run": marked.run_of(json.loads(r["facts"] or "{}"))} for r in rows]
     return [summary(r) for r in rows]
 
 

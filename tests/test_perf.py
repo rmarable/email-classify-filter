@@ -12,9 +12,12 @@ collection.
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 import tracemalloc
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -288,3 +291,153 @@ def test_quote_containers_on_hostile_html(shape: str) -> None:
     assert took < 60 * unit
     assert out.unquoted is not None
     assert len(out.unquoted) <= excerpt.HEAD_CHARS and len(out.quoted) <= excerpt.HEAD_CHARS
+
+
+# ---- v3.0.0 step 5 (OD-507 §5, P19): the history work's own costs ----------------------------
+# Bounds about three times what this Mac took on the branch (2026-10-14), each against the same
+# unit; main at 1daf644 took about the same per unit (the plan's before/after report). Smaller
+# than the measured sizes (1,000 stores, 400k audit rows) to keep the suite fast.
+
+
+def _db(tmp_path: Path, clock: Any) -> sqlite3.Connection:
+    from ecf_server import db  # noqa: PLC0415
+
+    conn = db.connect(tmp_path / "ecf.db")
+    db.migrate(conn)
+    conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset, created_at)"
+                 " VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'C', 'now')")  # fmt: skip
+    conn.execute("INSERT INTO probe (address_id, host, probed_at) VALUES ('ap', 'h', 'now')")
+    del clock
+    return conn
+
+
+def _note(i: int) -> bytes:
+    return (f"From: Pat {i} <pat{i}@friends.example>\r\nTo: ap@acme.example\r\nSubject: Note {i}"
+            f"\r\nMessage-ID: <n{i}@friends.example>\r\n\r\n" + f"Lunch on Friday? {i}\r\n" * 20
+            ).encode()  # fmt: skip
+
+
+def test_classifier_store_with_its_audit_row_per_item(tmp_path: Path) -> None:
+    """`classifier.store` (the reprocessing key and `item.classified`) and the policy after it:
+    about 0.013 units per item on main and on this branch."""
+    from ecf.ids import AddressId, StableId  # noqa: PLC0415
+    from ecf.status import Status  # noqa: PLC0415
+    from ecf_server import classifier, items  # noqa: PLC0415
+    from ecf_server.clock import FakeClock  # noqa: PLC0415
+    from ecf_server.state_machine import TransitionContext  # noqa: PLC0415
+    from tests.helpers import GOOD  # noqa: PLC0415
+
+    clock = FakeClock()
+    conn = _db(tmp_path, clock)
+    sids: list[str] = []
+    for i in range(200):
+        sid = f"{i:05d}".ljust(64, "b")
+        items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
+                          content_hash="h", facts="{}")  # fmt: skip
+        items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE, TransitionContext(),
+                         actor="t")  # fmt: skip
+        sids.append(sid)
+    unit = _unit()
+
+    def store() -> None:
+        for s in sids:
+            classifier.store(conn, clock, s, GOOD, {"classifier": "x"},
+                             expected=Status.AWAITING_CLAUDE)  # fmt: skip
+
+    took, _ = _cpu(store)
+    assert took / len(sids) < 0.04 * unit
+
+
+def test_a_30_message_page_and_backfill_pages_on_the_fake(tmp_path: Path) -> None:
+    """`fetch_page` (with the source's phase timings) about 0.27 units for 30 messages; a
+    backfill page over 1,000 old messages (its range bounded once) about 0.27."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from ecf_server import fetch, leases  # noqa: PLC0415
+    from ecf_server.clock import FakeClock  # noqa: PLC0415
+    from ecf_server.mail.fake import FakeMailSource  # noqa: PLC0415
+
+    clock = FakeClock()
+    conn = _db(tmp_path, clock)
+    src = FakeMailSource()
+    old = datetime.now(UTC) - timedelta(days=10)
+    for i in range(1000):
+        src.deliver(_note(i), old + timedelta(minutes=i))
+    lease = leases.acquire(conn, clock, "ap", "perf")
+    assert lease is not None
+    cfg = fetch.address_config(conn, "ap")
+    fetch.fetch_page(conn, clock, src, cfg, lease)  # the first run: position only
+    cur = fetch.load_cursor(conn, "ap")
+    assert cur is not None and cur.uidvalidity is not None
+    bf = fetch.Backfill((old - timedelta(days=1)).date().isoformat(), False, cur.uidvalidity,
+                        cur.last_uid, run_id="perf")  # fmt: skip
+    for i in range(30):
+        src.deliver(_note(5000 + i))
+    unit = _unit()
+    took, page = _cpu(lambda: fetch.fetch_page(conn, clock, src, cfg, lease))
+    assert len(page.created) == 30 and took < 0.7 * unit
+    took, _ = _cpu(lambda: [fetch.backfill_page(conn, clock, src, cfg, lease, bf)
+                            for _ in range(3)])  # fmt: skip
+    assert took / 3 < 0.7 * unit
+
+
+def test_a_check_through_the_isolate(tmp_path: Path) -> None:
+    """A check of 5 new messages, each in a child process (this process's CPU only), with its
+    timings on `check.completed`: about 0.15 units."""
+    from ecf_server import checks, db  # noqa: PLC0415
+    from ecf_server.clock import FakeClock  # noqa: PLC0415
+    from ecf_server.mail import MailSource  # noqa: PLC0415
+    from ecf_server.mail.fake import FakeMailSource  # noqa: PLC0415
+    from ecf_server.secretstore.memory import MemorySecretStore  # noqa: PLC0415
+
+    clock = FakeClock()
+    conn = _db(tmp_path, clock)
+    src = FakeMailSource()
+    store = MemorySecretStore()
+    store.set("mailbox/ap", "pw")
+
+    def factory(_h: str, _u: str, pw: Callable[[], str]) -> MailSource:
+        pw()
+        return src
+
+    def check() -> checks.CheckReport:
+        return checks.run_check(conn, clock, address_id="ap", install="t", secrets=store,
+                                factory=factory,
+                                connect=lambda: db.connect(tmp_path / "ecf.db"))  # fmt: skip
+
+    check()
+    for i in range(5):
+        src.deliver(_note(i))
+    unit = _unit()
+    took, report = _cpu(check)
+    assert report.created == 5 and report.timings["auth"]["messages"] == 5
+    assert took < 0.5 * unit
+
+
+def test_stats_stages_on_many_transitions(tmp_path: Path) -> None:
+    """`ecf stats --stages` reads `item.transitioned` rows by (event, ts) (migration 0039): 400k
+    transitions took about 1.8 s of CPU (21 units) on this branch; 100k here (about 5), bound 15."""
+    import json  # noqa: PLC0415
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from ecf_server import db, timings  # noqa: PLC0415
+    from ecf_server.clock import FakeClock, to_ts  # noqa: PLC0415
+
+    conn = _db(tmp_path, FakeClock())
+    t0 = datetime(2026, 9, 1, tzinfo=UTC)
+    path = ["new", "awaiting_claude", "classified", "proposed", "executing"]
+    rows: list[tuple[str, str, str, str]] = []
+    for i in range(25_000):
+        sid = f"{i:07d}".ljust(64, "c")
+        at = t0 + timedelta(seconds=i)
+        rows.append((to_ts(at), sid, "item.created", "{}"))
+        for k in range(4):
+            at += timedelta(seconds=30 * (k + 1))
+            rows.append((to_ts(at), sid, "item.transitioned",
+                         json.dumps({"from": path[k], "to": path[k + 1]})))  # fmt: skip
+    with db.write_tx(conn):
+        conn.executemany("INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome,"
+                         " data) VALUES (?, 'ap', ?, ?, 'service', 'ok', ?)", rows)  # fmt: skip
+    unit = _unit()
+    took, r = _cpu(lambda: timings.stages(conn, t0))
+    assert r["new_mail"]["items"] == 25_000 and took < 15 * unit

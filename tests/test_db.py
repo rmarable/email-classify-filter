@@ -34,11 +34,12 @@ def test_migrate_is_idempotent(conn: sqlite3.Connection) -> None:
     assert db.migrate(conn) == []
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert (
-        len(tables - {"schema_migrations"}) == 36
+        len(tables - {"schema_migrations"}) == 37
     )  # 21 initial + processing (0003), check_state (0005), alerts (0008), slack_messages (0011),
     # escalations (0015), delays (0016), model_calls (0018), eval_runs (0020), claims and
     # claim_batches (0021), claude_calls and claude_sessions (0022), fallback_shadow (0023,
-    # dropped by 0038), alert_outbox (0029), downloads (0032), corpus_downloads (0033)
+    # dropped by 0038), alert_outbox (0029), downloads (0032), corpus_downloads (0033),
+    # slack_calls (0039)
 
 
 def test_strict_rejects_wrong_types(conn: sqlite3.Connection) -> None:
@@ -189,3 +190,13 @@ def test_0035_counts_request_passes_apart(db_path: Path, monkeypatch: pytest.Mon
     assert db.migrate(c, up_to=35) == ["0035_sender_request_passes.sql"]
     row = c.execute("SELECT dmarc_pass_count, request_pass_count FROM senders").fetchone()
     assert tuple(row) == (4, 0)
+
+
+def test_0039_is_additive_and_checkpoints() -> None:
+    """OD-507 (L8): a new table and two indexes, nothing rewritten or dropped; the index builds
+    over the audit table are followed by a WAL checkpoint."""
+    sql = next(s for v, _n, s in db._migration_files() if v == 39)  # pyright: ignore[reportPrivateUsage]
+    body = "\n".join(line for line in sql.splitlines() if not line.startswith("--"))
+    statements = [x.split()[0:2] for x in body.split(";") if x.strip()]
+    assert {tuple(x) for x in statements} <= {("CREATE", "TABLE"), ("CREATE", "INDEX")}
+    assert 39 in db.CHECKPOINT_AFTER and 39 not in db.NO_FK

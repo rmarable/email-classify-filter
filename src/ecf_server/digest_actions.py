@@ -28,6 +28,7 @@ from ecf_server import (
     cards,
     config,
     mailbox_actions,
+    marked,
     slack_admin,
     slack_in,
     slack_out,
@@ -60,6 +61,7 @@ def eligible(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
                         (item["address_id"],)).fetchone()  # fmt: skip
     return bool(
         actions
+        and not marked.is_marked(facts)  # old mail: ecf approve --scan (OD-507 §2)
         and all(a in approvals.REVERSIBLE for a in actions)
         and not any(a in approvals.SENDS for a in actions)
         and plan.get("rule") != "fraud_guard"

@@ -28,7 +28,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from ecf.errors import ConflictError, EcfError, GrantInvalidError, InvalidInputError
+from ecf.errors import (
+    ConflictError,
+    EcfError,
+    GrantInvalidError,
+    InvalidInputError,
+    NotFoundError,
+)
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.status import Status
 from ecf_server import (
@@ -38,7 +44,9 @@ from ecf_server import (
     inbox,
     items,
     jobs,
+    marked,
     pause,
+    scans,
     slack_in,
     slack_out,
     slack_routes,
@@ -263,7 +271,8 @@ def _reoffer(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actor: s
                      expected=Status.EXPIRED)  # fmt: skip
     grant = _issue(conn, clock, _item(conn, sid), _actions(item))
     _audit(conn, clock, item, "approval.reoffered", actor, {"grant_id": grant}, tx=True)
-    _card(conn, clock, _item(conn, sid), grant, title="Offered again")
+    if not _marked(item):  # old mail: `ecf approve` re-offers it, without a card (OD-507 §2)
+        _card(conn, clock, _item(conn, sid), grant, title="Offered again")
     return _item(conn, sid)
 
 
@@ -370,8 +379,9 @@ def cancel(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> d
 def pending(conn: sqlite3.Connection) -> dict[str, Any]:
     """Waiting step-up approvals: up to PENDING_MAX non-sends for one batch step-up, and the sends,
     which are never batched (each needs `ecf approve <id>`)."""
-    rows = conn.execute(
-        "SELECT * FROM items WHERE status = 'awaiting_stepup' ORDER BY updated_at, stable_id"
+    rows = conn.execute(  # old mail has its own: `ecf approve --scan` (OD-507 §2, §3.5)
+        f"SELECT * FROM items WHERE status = 'awaiting_stepup' AND NOT {marked.sql()}"  # noqa: S608
+        " ORDER BY updated_at, stable_id"
     ).fetchall()
     batch: list[dict[str, Any]] = []
     sends: list[dict[str, Any]] = []
@@ -405,6 +415,60 @@ def approve_pending(
         grants.append(_open_grant(conn, clock, r, None))
     stepup.consume(conn, clock, "approve_batch",
                    {"grant_ids": sorted(g.grant_id for g in grants)}, nonce)  # fmt: skip
+    return [approve(conn, clock, notifier, r["stable_id"], actor="os_user", grant_id=g.grant_id,
+                    nonce=nonce, batch_verified=True) | {"id": r["stable_id"]}
+            for r, g in zip(rows, grants, strict=True)]  # fmt: skip
+
+
+# ---- approve --scan (OD-507 §3.5, P9) ----------------------------------------------------------
+
+
+def scan_pending(conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
+    """A scan's or reprocess's waiting approvals (old mail gets no card; `ecf approve --scan`):
+    each with its sender, subject and actions; an expired one too, re-offered when approved (as
+    `ecf approve <id>` does; review M4). Sends are listed apart: each needs `ecf approve <id>`.
+    Not part of "Approve all"."""
+    doc = scans.find(conn, run_id)
+    if doc is None:
+        raise NotFoundError(f"no scan or reprocess run {run_id}")
+    rows = conn.execute(
+        "SELECT * FROM items WHERE status IN ('awaiting_approval', 'awaiting_stepup', 'expired')"  # noqa: S608
+        f" AND {scans.OF_RUN} ORDER BY created_at, stable_id",
+        {"run": doc["run_id"]}).fetchall()  # fmt: skip
+    batch: list[dict[str, Any]] = []
+    sends: list[dict[str, Any]] = []
+    for r in rows:
+        if queued_answer(r) or not _actions(r):
+            continue
+        entry = inbox.summary(r) | {"action": describe(_actions(r))}
+        (sends if is_send(_actions(r)) else batch).append(entry)
+    return {"run_id": doc["run_id"], "address": doc["email"], "batch": batch, "sends": sends}
+
+
+@stepup.purpose("approve_scan")
+def _describe_scan(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
+    """Bound to the exact grant set, as `approve_batch` (P9)."""
+    ids = sorted(str(g) for g in target.get("grant_ids", []))
+    grants = [_grant(conn, g) for g in ids]
+    state = [(g.grant_id, g.action_hash, _item(conn, g.stable_id)["status"]) for g in grants]
+    run_id = str(target.get("run_id", ""))
+    prompt = f"ecf: approve {len(ids)} action(s) on old mail (run {run_id[:12]}), none a send"
+    return stepup.Bound(stepup.digest("approve_scan", run_id, state), prompt)
+
+
+def approve_scan(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, run_id: str,
+                 ids: list[str], *, nonce: str | None) -> list[dict[str, Any]]:  # fmt: skip
+    """Approve the confirmed list of one run with one step-up; each must still be the run's,
+    waiting, and not a send."""
+    listed = {e["id"] for e in scan_pending(conn, run_id)["batch"]}
+    if not ids or any(i not in listed for i in ids):
+        raise ConflictError("the run's waiting approvals changed: run ecf approve --scan again")
+    rows = [inbox.find(conn, i) for i in ids]
+    rows = [_reoffer(conn, clock, r, "os_user") if r["status"] == Status.EXPIRED else r
+            for r in rows]  # a fresh grant, before the step-up binds them all (M4)  # fmt: skip
+    grants = [_open_grant(conn, clock, r, None) for r in rows]
+    stepup.consume(conn, clock, "approve_scan", {"run_id": run_id,
+                   "grant_ids": sorted(g.grant_id for g in grants)}, nonce)  # fmt: skip
     return [approve(conn, clock, notifier, r["stable_id"], actor="os_user", grant_id=g.grant_id,
                     nonce=nonce, batch_verified=True) | {"id": r["stable_id"]}
             for r, g in zip(rows, grants, strict=True)]  # fmt: skip
@@ -496,7 +560,8 @@ def _expire_one(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row) -> None:
                      TransitionContext(origin=Origin.APPROVAL), actor="service",
                      expected=Status.EXPIRED)  # fmt: skip
     grant = _issue(conn, clock, _item(conn, sid), _actions(item))
-    _card(conn, clock, _item(conn, sid), grant, title="Expired, decide again")
+    if not _marked(item):  # old mail: never a card (OD-507 §2)
+        _card(conn, clock, _item(conn, sid), grant, title="Expired, decide again")
 
 
 @stepup.purpose("item_requeue")
@@ -670,9 +735,9 @@ def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_P
     returns how many were posted."""
     if claude_queue.backlog(conn) > claude_queue.BACKLOG_BATCH:
         return 0
-    rows = conn.execute(
-        "SELECT i.*, g.grant_id FROM items i JOIN grants g USING (stable_id)"
-        " WHERE i.status = 'awaiting_approval' AND g.status = 'issued'"
+    rows = conn.execute(  # old mail never gets a card (OD-507 §2)
+        "SELECT i.*, g.grant_id FROM items i JOIN grants g USING (stable_id)"  # noqa: S608
+        f" WHERE i.status = 'awaiting_approval' AND g.status = 'issued' AND NOT {marked.sql('i.')}"
         " ORDER BY i.updated_at, i.stable_id").fetchall()  # fmt: skip
     posted = 0
     for row in rows:
@@ -724,6 +789,10 @@ def _ttl(conn: sqlite3.Connection, address_id: str, *, send: bool) -> timedelta:
     row = conn.execute("SELECT json_extract(overrides, '$.' || ?) FROM addresses"
                        " WHERE address_id = ?", (key, address_id)).fetchone()  # fmt: skip
     return timedelta(days=int(row[0])) if row and row[0] is not None else default
+
+
+def _marked(item: sqlite3.Row) -> bool:
+    return marked.is_marked(_facts(item))
 
 
 def _item(conn: sqlite3.Connection, sid: str) -> sqlite3.Row:

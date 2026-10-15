@@ -82,6 +82,7 @@ class DnsCache:
         self._deadline = clock.monotonic() + budget_s
         self._memo: dict[tuple[str, str], Answer] = {}
         self.queries = 0  # network queries made (for tests and the check's log line)
+        self.hits = 0  # lookups answered from the memo or the table (`check.completed`, OD-507)
 
     def over_budget(self) -> bool:
         return self._clock.monotonic() > self._deadline
@@ -93,9 +94,11 @@ class DnsCache:
     def get(self, name: str, rtype: str = "TXT") -> Answer:
         key = (name.lower().rstrip("."), rtype.upper())
         if key in self._memo:
+            self.hits += 1
             return self._memo[key]
         cached = self._load(key)
         if cached is not None:
+            self.hits += 1
             self._memo[key] = cached
             return cached
         if self.over_budget():

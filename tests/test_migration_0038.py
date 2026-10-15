@@ -163,7 +163,7 @@ def test_0038_converts_a_and_b_and_keeps_every_row(
     c = _before(db_path, monkeypatch)
     _populate(c)
     before = _counts(c)
-    assert db.migrate(c) == ["0038_local_models_removed.sql"]
+    assert db.migrate(c, up_to=38) == ["0038_local_models_removed.sql"]
     assert _counts(c) == before  # the rebuild lost nothing, and no child was cascaded away
     assert c.execute("PRAGMA foreign_key_check").fetchall() == []
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1  # back on
@@ -236,7 +236,7 @@ def test_a_no_fk_migration_refuses_inside_a_transaction(
         db.migrate(c)
     c.execute("ROLLBACK")
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert db.migrate(c) == ["0038_local_models_removed.sql"]
+    assert db.migrate(c, up_to=38) == ["0038_local_models_removed.sql"]
     c.close()
 
 
@@ -388,7 +388,7 @@ def test_only_the_rebuilt_tables_children_are_checked(
     with write_tx(c):
         c.execute("INSERT INTO excerpts (stable_id, classifier_text) VALUES ('gone0001', 'x')")
     c.execute("PRAGMA foreign_keys=ON")
-    assert db.migrate(c) == ["0038_local_models_removed.sql"]
+    assert db.migrate(c, up_to=38) == ["0038_local_models_removed.sql"]
     assert db.orphans(c, "addresses") == []
     assert ("excerpts", 1, "items") in [tuple(r)[:3] for r in c.execute("PRAGMA foreign_key_check")]
     c.close()

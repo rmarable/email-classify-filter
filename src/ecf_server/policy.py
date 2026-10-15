@@ -102,6 +102,7 @@ class Context:
     templates: frozenset[str] = frozenset()  # enabled template ids
     forwards: frozenset[str] = frozenset()  # forward allow-list entry ids
     keywords_stored: bool = True  # the provider keeps custom keywords (probe; OD-439)
+    historical: bool = False  # a scan's or reprocess's item: every hide needs approval (OD-507)
 
 
 def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
@@ -310,7 +311,7 @@ def _mode(ctx: Context, name: str, high_risk: bool) -> Mode:
     if name in SAFE:
         return "auto"
     if name in HIDE_ACTIONS:
-        if high_risk or ctx.sensitivity == "high" or ctx.batch_risky:
+        if high_risk or ctx.sensitivity == "high" or ctx.batch_risky or ctx.historical:
             return "approve"
         if fixed_item(ctx.classification, "phishing"):  # P6 (OD-500)
             return "approve"

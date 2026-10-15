@@ -11,7 +11,7 @@ from typing import Protocol
 import pytest
 
 from ecf.errors import InvalidInputError
-from ecf_server.mail import FLAGGED, ROLES, SEEN, MailSource
+from ecf_server.mail import FLAGGED, PHASES, ROLES, SEEN, MailSource
 
 KW = "$ecf_test_suspicious"
 
@@ -120,6 +120,24 @@ class MailSourceContract:
         assert src.find_message_id("<nope@synthetic.acme.example>") == []
         assert src.uids_since(DAY1 + timedelta(days=2)) == [uids[2]]
         assert src.uids_since(DAY1) == [uids[0], uids[2]]
+        # BEFORE is by date too, and excludes its own day (OD-507, plan §3.2)
+        assert src.uids_since(DAY1, DAY1 + timedelta(days=2)) == [uids[0]]
+        assert src.uids_since(DAY1, DAY1 + timedelta(days=3)) == [uids[0], uids[2]]
+
+    def test_timings_by_phase(self, harness: Harness) -> None:
+        """Each source times its own work (OD-507, plan §5 c): searches, fetches and stores land
+        in their phase, never negative."""
+        uids = self._fill(harness, 2)
+        src = harness.source
+        before = src.timings()
+        assert set(before) == set(PHASES) and all(v >= 0 for v in before.values())
+        src.uids_since(DAY1)
+        src.fetch(uids[0])
+        src.add_keyword(uids[0], KW)
+        after = src.timings()
+        assert all(after[p] >= before[p] for p in PHASES)
+        assert after["search"] > before["search"] and after["fetch"] > before["fetch"]
+        assert after["store"] > before["store"]
 
     def test_capabilities_and_folders(self, harness: Harness) -> None:
         src = harness.source

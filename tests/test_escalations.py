@@ -313,3 +313,32 @@ def test_why_gives_weak_reasons_only_when_no_fraud_reason_says_why() -> None:
     assert cards.why({"triggers": {"fraud_weak": [weak]}}) == weak
     both = {"triggers": {"fraud": ["DMARC fail on a payment item"], "fraud_weak": [weak]}}
     assert cards.why(both) == "DMARC fail on a payment item"
+
+
+# ---- the Classified line (OD-507 §6) ---------------------------------------------------------
+
+
+def test_cards_say_how_the_item_was_classified_and_by_which_model(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _slack(conn, clock)
+    _item(conn, clock, "k" * 64, FRAUD)
+    row = conn.execute("SELECT * FROM items").fetchone()
+    assert "Classified" not in dict(cards.item_card(row).fields)  # not classified: nothing
+    cls = {"category": "invoice", "priority": "high", "fraud_risk": "low"}
+    for model, shown in (("claude-sonnet-5-5", "by Claude Sonnet 5.5"),
+                         ("claude-opus-5-5", "by Claude Opus 5.5"),
+                         ("gemma4:12b", "by a model no longer installed"),
+                         ("claude-sonnet-4-5", "by a model no longer installed")):  # fmt: skip
+        with write_tx(conn):
+            conn.execute("UPDATE items SET classification = ?, pinned_models = ?",
+                         (json.dumps(cls), json.dumps({"classifier": model})))  # fmt: skip
+        row = conn.execute("SELECT * FROM items").fetchone()
+        f = dict(cards.item_card(row).fields)
+        assert f["Classified"] == f"invoice, high priority, {shown}"
+    with write_tx(conn):
+        conn.execute("UPDATE items SET human_correction = ?",
+                     (json.dumps({"category": "receipt", "priority": "high"}),))  # fmt: skip
+    row = conn.execute("SELECT * FROM items").fetchone()
+    assert dict(cards.item_card(row).fields)["Classified"] == (
+        "receipt, high priority, corrected by you")  # fmt: skip

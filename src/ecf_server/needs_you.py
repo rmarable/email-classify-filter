@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.status import OPEN, Status
-from ecf_server import cards, inbox, pause, slack_admin, slack_out, slack_routes
+from ecf_server import cards, inbox, pause, scans, slack_admin, slack_out, slack_routes
 from ecf_server.chat import Button, Card
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -70,6 +70,7 @@ def card(conn: sqlite3.Connection, *, computer: str, last_connected: datetime) -
         lines.append(f"... and {len(listed) - TOP} more")
     if stale_bulk:
         lines.append(f"{len(stale_bulk)} stale email(s) waiting 30+ days: ecf inbox --stale")
+    lines += scans.inbox_lines(conn, inbox.inbox(conn, old=True))  # one line per run (OD-507)
     paused = pause.paused_addresses(conn)
     if paused:
         lines.append(f"Paused: {', '.join(paused)} (fraud checks continue)")

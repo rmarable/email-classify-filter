@@ -34,7 +34,7 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import fixed_item
-from ecf_server import items, policy
+from ecf_server import items, marked, policy
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.state_machine import Status, TransitionContext
@@ -110,10 +110,11 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
 # `i.status IN (...)` as its own term, as `items_claude_waiting` (0038) is defined, so SQLite can
 # use that partial index (review R2; test_claude_queue checks the plans)
 _IN_QUEUE = "i.status IN ('awaiting_claude', 'clarified')"
+# old mail a scan or reprocess marked never counts here (OD-507 §2): `scans.waiting_line` instead
 _WAITING = (
     " FROM items i JOIN addresses a USING (address_id)"
     f" WHERE a.removed_at IS NULL AND {_IN_QUEUE} AND (i.status = 'awaiting_claude'"
-    " OR (i.status = 'clarified' AND a.preset = 'C'))"
+    f" OR (i.status = 'clarified' AND a.preset = 'C')) AND NOT {marked.sql('i.')}"
 )
 
 
@@ -142,10 +143,12 @@ def reminder_hours(conn: sqlite3.Connection) -> int:
 
 def backlog(conn: sqlite3.Connection) -> int:
     """Items waiting at `awaiting_claude` on addresses that are neither paused nor removed (§5.3;
-    v3.0.0, P9: the local model's backlog before)."""
+    v3.0.0, P9: the local model's backlog before), old mail apart (OD-507 §2: a scan never turns
+    new mail's cards into digest lines)."""
     row = conn.execute("SELECT count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608
                        f" WHERE a.removed_at IS NULL AND a.paused = 0 AND {_IN_QUEUE}"
-                       " AND i.status = 'awaiting_claude'").fetchone()  # fmt: skip
+                       f" AND i.status = 'awaiting_claude' AND NOT {marked.sql('i.')}"
+                       ).fetchone()  # fmt: skip
     return int(row[0])
 
 
