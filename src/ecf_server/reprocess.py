@@ -373,8 +373,10 @@ def _move(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row, mode: str,
     ctx = TransitionContext(reprocess=True)
     frm = Status(r["status"])
     if mode == "reclassify":  # its whole key is written when Claude's classification is stored
+        # the old classification goes in the same write, or `/ecf-review` would only offer the
+        # item to the actor (`claude_review.need_of`); its key is in the `item.reprocessed` audit
         items.transition(conn, clock, sid, Status.AWAITING_CLAUDE, ctx, actor="service",
-                         expected=frm)  # fmt: skip
+                         expected=frm, clear_classification=True)  # fmt: skip
         return
     items.transition(conn, clock, sid, Status.PROPOSED, ctx, actor="service", expected=frm)
     decide.apply(conn, clock, sid, actor=False)  # planned again; never the actor (no model)

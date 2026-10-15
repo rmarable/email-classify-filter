@@ -65,8 +65,10 @@ def transition(
     *,
     actor: str,
     expected: Status | None = None,
+    clear_classification: bool = False,
 ) -> Status:
-    """Move one item to `to`. Returns the previous status.
+    """Move one item to `to`. Returns the previous status. `clear_classification`: the stored
+    classification goes in the same write, so the item is classified again (a reprocess).
 
     Raises NotFoundError, ConflictError (unexpected current status, non-edge, or a concurrent
     change), or PolicyDeniedError (a guard refused).
@@ -98,10 +100,11 @@ def transition(
             # claude_since: when it started waiting for Claude (the fallback's timeout, V1.4)
             cur = conn.execute(
                 "UPDATE items SET status = ?, updated_at = ?, clarification_rounds = ?, "
-                "expiry_count = ?, claude_since = CASE WHEN ? THEN ? ELSE claude_since END"
+                "expiry_count = ?, claude_since = CASE WHEN ? THEN ? ELSE claude_since END,"
+                " classification = CASE WHEN ? THEN NULL ELSE classification END"
                 " WHERE stable_id = ? AND status = ?",
-                (to.value, now, rounds, expiries, to in WAITS_FOR_CLAUDE, now, stable_id,
-                 frm.value),
+                (to.value, now, rounds, expiries, to in WAITS_FOR_CLAUDE, now,
+                 clear_classification, stable_id, frm.value),
             )  # fmt: skip
         if cur.rowcount != 1:
             raise ConflictError("item changed concurrently")

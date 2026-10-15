@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: `ecf reprocess` sent an email it must classify again back to `/ecf-review` with its old classification, so it was only offered to the actor and never classified again; the old classification is now cleared as it moves (OD-507).
 - `ecf eval run --classifier-backend jev` gains three measurement switches for v3.0.0 step 3, none of them for the gate: `--jev-fraud-risk choice`, `--jev-option-order reversed` and `--jev-extra-question injection_attempt` (`planning-docs/v3.0.0-STEP3.md`).
 - Jev eval runs, their rescores and preset D runs now apply ecf's Jev mapping (`data/jev_mapping.json`): an answer just under yes can be marked unsure, which only adds caution (flagged and left, no hide); the file ships empty, so nothing changes until step 3 sets it. Result files are format 3; an ecf from step 2 refuses them with a message (step 4 P1).
 - Recorded decisions for v3.0.0 step 4 (`planning-docs/v3.0.0-STEP4.md`): a preset D address has its new mail classified by TypeSafe Jev, with Claude still the actor; while Jev is down its mail waits, with a Slack notice, and Claude doesn't classify it (a fallback is considered for v3.0.1); adding a D address needs the TypeSafe key, a step-up and a typed answer that the account owner agreed; Jev's "unsure" answers only ever add caution (OD-509, OD-510, OD-511).
