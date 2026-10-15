@@ -104,8 +104,7 @@ class JevAsker:
         self.client = jev.Client(setup.key, transport=setup.transport, clock=clock,
                                  stop=RUN.stop, wait=setup.wait, on_pause=self._paused,
                                  budget_s=setup.budget_s,
-                                 concurrency=opts.jev_concurrency, pin=opts.jev_pin,
-                                 variants=frozenset(opts.jev_questions))  # fmt: skip
+                                 concurrency=opts.jev_concurrency)  # fmt: skip
         self.pin = self.client.pin
         # until a request gets a reply classed ok or request error (not a provider fault): a 404
         # or 422 then stops the run (§5.3, J11)
@@ -189,10 +188,10 @@ class JevAsker:
         """What the run asked with (P13): top-level, so `ecf eval compare` prints differences."""
         pin = self.pin
         return {
-            "prompt_digest": jev.prompt_digest(schema, pin=pin, variants=self.client.variants),
+            "prompt_digest": jev.prompt_digest(schema, pin=pin),
             "input_format": jev.state_format_id(),
             "excerpt_cap": jev.excerpt_cap(),
-            "gate_key": jev.gate_key(schema, rules_now, pin=pin, variants=self.client.variants),
+            "gate_key": jev.gate_key(schema, rules_now, pin=pin),
         }  # fmt: skip
 
     def figures(self, schema: CompiledSchema, faulted: dict[str, str],
@@ -207,8 +206,8 @@ class JevAsker:
         return self.client.stats.summary() | {
             "pin": self.pin,
             "options": {"state": "s1", "preamble": "state", "fraud_risk": "choice",
-                        "concurrency": self.opts.jev_concurrency,
-                        "questions": list(self.opts.jev_questions)},
+                        "requires_action": "three questions",
+                        "concurrency": self.opts.jev_concurrency},
             "schema_digest": schema.digest,
             "end_to_end_ms": spread(self.end_to_end_ms),
             "end_to_end_faulted_ms": spread(self.end_to_end_faulted_ms),

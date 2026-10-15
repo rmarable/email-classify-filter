@@ -39,8 +39,8 @@ Responder = Callable[[httpx.Request], httpx.Response]
 
 
 def body(**over: Any) -> dict[str, Any]:
-    """The recorded reply, with `fraud_risk` answered as the choice ecf asks for since step 3
-    (the recording answered a score: its level probabilities keyed by level name)."""
+    """The recorded reply, answered as ecf asks since step 3: `fraud_risk` as a choice (the
+    recording answered a score) and `requires_action` as its three questions."""
     b = json.loads(json.dumps(FIXTURE["body"]))
     b["model"] = PIN
     fr = b["answers"]["fraud_risk"]
@@ -51,6 +51,9 @@ def body(**over: Any) -> dict[str, Any]:
         "probabilities": probs,
         "confidence": fr["confidence"],
     }
+    # `requires_action` answered as the three questions ecf asks since step 3 (K1, OD-514)
+    ra = b["answers"].pop("requires_action")["noul"]
+    b["answers"] |= {k: {"noul": ra} for k in jev.K1_PARTS}
     b.update(over)
     return b
 
@@ -145,7 +148,8 @@ def test_request_shape() -> None:
     b = _body(sent=("crypto_payment",))
     assert set(b) == {"model", "questions", "state"} and b["model"] == PIN
     q = b["questions"]
-    assert list(q) == list(SCHEMA.fields)  # schema order, keyed by field name
+    asked = [p for n in SCHEMA.fields for p in (jev.K1_PARTS if n == "requires_action" else [n])]
+    assert list(q) == asked  # schema order, keyed by field name; requires_action as its parts
     fr, cat = SCHEMA.fields["fraud_risk"], SCHEMA.fields["category"]
     assert q["fraud_risk"]["type"] == "choice"  # step 3 (J4, OD-512): levels, `none` last
     texts = dict(zip(fr.values, fr.value_descriptions, strict=True))
@@ -656,7 +660,9 @@ def test_the_key_never_leaks_and_the_request_id_stays_in_the_log() -> None:
     texts = [repr(results), repr(r.logs), str(err.value), repr(err.value.__dict__)]
     assert all(KEY not in t for t in texts)
     calls = [kw for e, kw in r.logs if e == "jev.call"]
-    assert calls[0]["request_id"] == REQUEST_ID and calls[0]["n_questions"] == len(SCHEMA.fields)
+    assert (
+        calls[0]["request_id"] == REQUEST_ID and calls[0]["n_questions"] == len(SCHEMA.fields) + 2
+    )
     assert {"state", "value", "message"}.isdisjoint(calls[0])
     assert all(REQUEST_ID not in repr(dataclasses.asdict(x)) for x in results)
     assert "request_id" not in {f.name for f in dataclasses.fields(jev.Result)}
@@ -914,8 +920,8 @@ def test_the_prompt_digest_changes_with_each_input(monkeypatch: pytest.MonkeyPat
     with monkeypatch.context() as m:  # the same options in another order (Jev leans to the first)
         asked = jev.questions
 
-        def reordered(schema: Any, variants: frozenset[str] = frozenset()) -> dict[str, Any]:
-            q = asked(schema, variants)
+        def reordered(schema: Any) -> dict[str, Any]:
+            q = asked(schema)
             q["category"] = q["category"] | {
                 "criteria": dict(reversed(list(q["category"]["criteria"].items())))
             }
@@ -928,83 +934,48 @@ def test_the_prompt_digest_changes_with_each_input(monkeypatch: pytest.MonkeyPat
 
 
 def test_jev_asks_the_v3_schema_not_the_local_one() -> None:
-    assert set(_body()["questions"]) == set(SCHEMA.fields)
+    assert set(_body()["questions"]) == set(SCHEMA.fields) - {"requires_action"} | set(jev.K1_PARTS)
     assert set(_body()["questions"]) != set(load_schema_v2().fields)
 
 
-# Step 3's rewording arms (addendum draft 2, 2026-10-15): eval-only ways of asking Jev's weakest
-# fields, and another Jev version through `pin`.
+# `requires_action` as three questions (step 3's K1, OD-514), and the request bounds.
 
 
-def test_k1_asks_requires_action_as_three_questions_folded_to_their_largest() -> None:
-    q = jev.questions(SCHEMA, frozenset({"K1"}))
+def test_requires_action_is_asked_as_three_questions_folded_to_their_largest() -> None:
+    q = jev.questions(SCHEMA)
     assert "requires_action" not in q and set(jev.K1_PARTS) <= set(q)
     at = list(SCHEMA.fields).index("requires_action")
     assert list(q)[at : at + 3] == list(jev.K1_PARTS)  # where the field was
     b = body()
-    del b["answers"]["requires_action"]
     b["answers"] |= {
         "ra_do": {"noul": 0.2},
         "ra_reply": {"noul": 0.7},
         "ra_deadline": {"noul": 0.1},
     }
-    folded = jev.as_asked(b, SCHEMA, frozenset({"K1"}))["answers"]
+    folded = jev.as_asked(b, SCHEMA)["answers"]
     assert folded["requires_action"] == {"noul": 0.7} and not set(jev.K1_PARTS) & set(folded)
-    ans = systemone.map_answers(jev.as_asked(b, SCHEMA, frozenset({"K1"})), SCHEMA)
+    ans = systemone.map_answers(jev.as_asked(b, SCHEMA), SCHEMA)
     assert ans.classification is not None and ans.classification["requires_action"] is True
     assert ans.probabilities["requires_action"] == {"true": 0.7}
-    del b["answers"]["ra_reply"]  # a part missing: unanswered, a failed attempt
-    assert (
-        systemone.map_answers(jev.as_asked(b, SCHEMA, frozenset({"K1"})), SCHEMA).classification
-        is None
-    )
+    old = body()
+    old["answers"]["requires_action"] = {"noul": 0.9}  # an answer to a question not asked
+    del old["answers"]["ra_reply"]  # and a part missing: unanswered, a failed attempt
+    assert systemone.map_answers(jev.as_asked(old, SCHEMA), SCHEMA).classification is None
 
 
-def test_k3_and_k5_texts_map_one_to_one_onto_the_schema_levels() -> None:
-    assert list(jev.K3_PRIORITY) == list(SCHEMA.fields["priority"].values)
-    assert set(jev.K5_FRAUD) <= set(SCHEMA.fields["fraud_risk"].values)
-    q = jev.questions(SCHEMA, frozenset({"K3", "K5"}))
-    assert q["priority"]["criteria"] == list(jev.K3_PRIORITY.values())
-    fr = q["fraud_risk"]["criteria"]
-    assert list(fr) == ["low", "medium", "high", "none"]  # order unchanged, none last
-    assert fr["none"] == jev.K5_FRAUD["none"] and fr["low"] == jev.K5_FRAUD["low"]
-
-
-def test_each_variant_moves_the_digests_and_none_moves_todays() -> None:
+def test_the_three_questions_are_in_the_gate_key(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = rules.load_starter_rules(SCHEMA)
-    base_key, base_prompt = jev.gate_key(SCHEMA, rs), jev.prompt_digest(SCHEMA)
-    assert jev.gate_key(SCHEMA, rs, variants=frozenset()) == base_key
-    keys = {base_key} | {jev.gate_key(SCHEMA, rs, variants=frozenset(v))
-                         for v in (["K1"], ["K3"], ["K5"], ["K1", "K3"])}  # fmt: skip
-    prompts = {base_prompt} | {jev.prompt_digest(SCHEMA, variants=frozenset(v))
-                               for v in (["K1"], ["K3"], ["K5"], ["K1", "K3"])}  # fmt: skip
-    assert len(keys) == len(prompts) == 5
-    assert jev.prompt_digest(SCHEMA, pin="jev-1.14.0") != base_prompt
+    base = jev.gate_key(SCHEMA, rs)
+    monkeypatch.setitem(jev.K1_PARTS, "ra_reply", "Changed.")
+    assert jev.gate_key(SCHEMA, rs) != base
 
 
-def test_another_version_must_be_versioned_and_must_answer_itself() -> None:
-    with pytest.raises(InvalidInputError, match="versioned"):
-        jev.Client(lambda: KEY, transport=httpx.MockTransport(ok()), pin="jev-preview")
-    r = rig(ok())  # the fixture's reply names the pinned version, not 1.14.0
-    r.client.pin = "jev-1.14.0"
-    with pytest.raises(jev.JevError):
-        classify(r)
-
-
-def test_the_eval_lists_the_same_variants() -> None:
-    from ecf_server import evalrun  # noqa: PLC0415
-
-    assert evalrun.JEV_VARIANTS == jev.VARIANTS
-
-
-@pytest.mark.parametrize("variants", [(), ("K1",), ("K3",), ("K5",), ("K1", "K3", "K5")])
-def test_every_variant_stays_under_the_request_bounds(variants: tuple[str, ...]) -> None:
-    """Measured 2026-10-15: today 15,285 bytes, all three arms 15,851 (16 KB bound); with 400-CJK
-    attachment names 24,035 and 24,601 (25 KB bound)."""
+def test_every_request_stays_under_the_bounds() -> None:
+    """Measured 2026-10-15 with the three questions: 15,566 bytes worst case (16 KB bound),
+    24,316 with 400-CJK attachment names (25 KB)."""
     client = jev.http_client(httpx.MockTransport(ok()))
     for e, bound in ((_worst(), 16 * 1024), (_worst("附" * 400), 25 * 1024)):
         b = jev.request_body(SCHEMA, e, tuple(signals.WORDING), pin=PIN,
-                             token="0123456789abcdef", redact=True,
-                             variants=frozenset(variants))  # fmt: skip
+                             token="0123456789abcdef", redact=True)  # fmt: skip
         assert len(jev.build_request(client, b, KEY).content) <= bound
         assert not jev.estimate(b).over
