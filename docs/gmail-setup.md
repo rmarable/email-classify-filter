@@ -77,8 +77,8 @@ IMAP itself needs no switch: "IMAP access is always turned on in Gmail"
 
 You may watch another person's Google account only when **its owner** creates the app password and
 agrees to ecf processing their mail as SPEC §12.4 describes: subjects, senders and ecf's
-classifications go to your Slack, and on presets B and C email content goes to Anthropic while you
-run `/ecf-review` (SPEC §12.4, OD-427). Ask them to read this guide first. ecf can't check that
+classifications go to your Slack, and email content goes to Anthropic (preset C) while you run
+`/ecf-review` (SPEC §12.4, OD-427). Ask them to read this guide first. ecf can't check that
 they agreed; that is your responsibility (SPEC §12.2).
 
 A real-mail test corpus (`ecf corpus fetch`, not built yet) may be made only from a mailbox you own,

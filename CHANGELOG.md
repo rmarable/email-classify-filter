@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Privacy statement and disclaimer: TypeSafe receives only the eval's synthetic text in v3.0.0; what TypeSafe publishes about retention and sub-processors is recorded, with what it doesn't state. The 5,000-email test corpus and synthetic training cards are recorded as later items (SPEC §1.2).
 - The choice of Claude model for each actor role (`actor_high`, `actor`), planned for v3.0.1, moves into v3.0.0 (OD-517).
 - Preset D (TypeSafe Jev classifier + Claude actor) is held back from v3.0.0: addresses can be preset C only (`ecf address add --preset D`, `ecf init`, import and restore refuse D); Jev remains for evaluation, and the weekly model watch no longer asks TypeSafe for its model list (OD-516).
 - TypeSafe Jev is shelved for v3.0.0: in a matched test it classified 14.8 points worse than Claude (211 vs 256 of 304) with equal safety, so v3.0.0 ships preset C only and Jev stays eval-only; Jev and Claude are not mixed for classification (OD-516).
