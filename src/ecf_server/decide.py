@@ -20,6 +20,13 @@ After the classifier stores a classification, `apply` plans (policy.py) and move
 The proposal stored on the item holds the mailbox actions the runner executes (`actions`, bound to
 the grant's hash) and the plan's reasons (`plan`: rule, dropped actions and why, risk, and whether
 the digest offers "confirm this sender's category"). `decision_source` is `rule` or `actor`.
+
+**An executed item `ecf reprocess` decides again** (OD-507 §4.3, P3; `facts.reprocess_from`
+`executed`): the new plan is recorded, but only what it adds runs. When `done` holds a move
+(archive, junk, move), the message isn't in INBOX: no mailbox action runs, and a plan that now
+differs is audited (`item.reprocess_differs`) for the run's summary, which points at `ecf item
+undo`. Still in INBOX: added labels run, an added hide goes for approval (old mail, §2), dropped
+labels stay and are counted. The item ends `executed` again (an empty grant when nothing runs).
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ from ecf_server import (
     config,
     items,
     jobs,
+    marked,
     outbound_plan,
     policy,
     probe,
@@ -88,7 +96,12 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
         templates=frozenset(outbound_plan.enabled_templates(conn)),
         forwards=frozenset(outbound_plan.forward_entries(conn)),
         keywords_stored=probe.keywords_stored(conn, item["address_id"]),
+        historical=marked.is_marked(facts),  # old mail (OD-507 §2)
     )
+
+
+def item_marked(item: sqlite3.Row) -> bool:
+    return marked.is_marked(json.loads(item["facts"] or "{}"))
 
 
 def plan_for(conn: sqlite3.Connection, item: sqlite3.Row) -> tuple[Context, Plan]:
@@ -97,8 +110,9 @@ def plan_for(conn: sqlite3.Connection, item: sqlite3.Row) -> tuple[Context, Plan
 
 
 def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = None,
-          *, source: str = "rule") -> Status:  # fmt: skip
-    """Move a classified item on by its plan; returns its new status."""
+          *, source: str = "rule", actor: bool = True) -> Status:  # fmt: skip
+    """Move a classified item on by its plan; returns its new status. `actor` False: the plan as
+    the rules made it, never handed to the actor (`ecf reprocess --rules-only` calls no model)."""
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
     if p is None:
         _ctx, p = plan_for(conn, item)
@@ -106,10 +120,13 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
                                (item["address_id"],)).fetchone()["stage"])  # fmt: skip
     if any(a.name == "escalate" for a in p.actions):
         _escalate(conn, clock, item)
-    mailbox = [MailAction(a.name, a.target, a.payload) for a in p.actions if a.name in MAILBOX]
-    needs_person = any(a.mode == "approve" for a in p.actions if a.name in MAILBOX)
+    planned = [a for a in p.actions if a.name in MAILBOX]
+    if _again_executed(item):  # only what the new plan adds (module notes)
+        planned = _added(conn, clock, item, planned, to_actor=p.to_actor)
+    mailbox = [MailAction(a.name, a.target, a.payload) for a in planned]
+    needs_person = any(a.mode == "approve" for a in planned)
     _record(conn, clock, sid, p, mailbox, source)
-    if p.to_actor and source == "rule":  # the actor decides next: Claude (V1.4)
+    if p.to_actor and source == "rule" and actor:  # the actor decides next: Claude (V1.4)
         return claude_queue.to_actor(conn, clock, sid)
     ctx = TransitionContext(stage=stage)
     if item["status"] != Status.PROPOSED:  # from classified, or clarified after an answer
@@ -123,12 +140,59 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
             return Status.EXECUTING
         items.transition(conn, clock, StableId(sid), Status.HELD, ctx, actor="service")
         return Status.HELD
-    if needs_person:
-        backlog = claude_queue.backlog(conn)
-        approvals.request(conn, clock, sid, mailbox, card=backlog <= BACKLOG_BATCH)
+    if needs_person:  # old mail gets no card: its run's summary counts it (OD-507 §2)
+        card = not item_marked(item) and claude_queue.backlog(conn) <= BACKLOG_BATCH
+        approvals.request(conn, clock, sid, mailbox, card=card)
         return Status.AWAITING_APPROVAL
     _run(conn, clock, sid, mailbox, ctx)
     return Status.EXECUTING
+
+
+_MOVES = frozenset({"archive", "move", "junk"})  # as mailbox_actions.MOVES
+
+
+def _again_executed(item: sqlite3.Row) -> bool:
+    facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+    return facts.get("reprocess_from") == "executed"
+
+
+def done_key(name: str, where: Any) -> tuple[str, Any]:
+    """An action as `done` records it and as a plan names it, comparable (review M1): archive
+    and junk by name (their folder is the role's), a move and a copy by folder, a label by
+    target. `where` is a record's `target` or `folder`, or a planned action's target."""
+    return (name, None) if name in ("archive", "junk") else (name, where)
+
+
+def done_keys(done: list[dict[str, Any]]) -> set[tuple[str, Any]]:
+    return {done_key(str(r["name"]), r.get("target", r.get("folder"))) for r in done}
+
+
+def _added(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
+           planned: list[policy.Planned], *, to_actor: bool) -> list[policy.Planned]:  # fmt: skip
+    """What a reprocessed executed item's new plan adds to what ecf did (`done`): nothing when
+    the message was moved out of INBOX (audited when the plan now differs, unless the plan
+    continues to the actor, whose decision is still to come: review H2)."""
+    doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
+    done: list[dict[str, Any]] = doc.get("done") or []
+    had = done_keys(done)
+    now = {done_key(a.name, a.target) for a in planned}
+    moved = sorted(k for k in had if k[0] in _MOVES)
+    new_moves = sorted(k for k in now if k[0] in _MOVES)
+    dropped = sum(1 for k in had if k[0] == "label" and k not in now)
+    differs = bool(moved) and new_moves != moved
+    if not to_actor and (differs or dropped):
+        facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+        with write_tx(conn):
+            conn.execute(
+                "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
+                " VALUES (?, ?, ?, 'item.reprocess_differs', 'service', 'ok', ?)",
+                (to_ts(clock.now()), item["address_id"], item["stable_id"],
+                 json.dumps({"run": facts.get("reprocess"),
+                             "hides": bool(new_moves) if differs else None,
+                             "dropped_labels": dropped})))  # fmt: skip
+    if moved:
+        return []
+    return [a for a in planned if done_key(a.name, a.target) not in had]
 
 
 def record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan, source: str) -> None:

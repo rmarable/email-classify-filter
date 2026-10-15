@@ -25,7 +25,9 @@ from ecf_server.mail import (
     InboxState,
     MessageMeta,
     PartInfo,
+    PhaseTimer,
     check_keyword,
+    timed,
 )
 from ecf_server.mail import _imapclient as lib
 
@@ -67,11 +69,16 @@ class ImapSource:
         self._ctx = ctx
         self._conn: lib.Conn | None = None
         self._readonly: bool | None = None
+        self.phase_timer = PhaseTimer()
 
     # -- connection ------------------------------------------------------------------------------
     def _connect(self) -> lib.Conn:
         if self._conn is not None:
             return self._conn
+        return self._open()
+
+    @timed("connect")
+    def _open(self) -> lib.Conn:
         try:
             conn = lib.Conn(self._host, self._port, self._ctx, CONNECT_S, COMMAND_S)
         except (OSError, lib.IMAPClientError, imaplib.IMAP4.error) as exc:
@@ -92,6 +99,7 @@ class ImapSource:
         self._conn, self._readonly = conn, None
         return conn
 
+    @timed("select")
     def _inbox(self, *, readonly: bool = True) -> tuple[lib.Conn, dict[str, Any]]:
         conn = self._connect()
         info = self._call(lambda: conn.select(INBOX, readonly=readonly))
@@ -160,15 +168,21 @@ class ImapSource:
             permanent_flags=lib.flag_set(info.get("PERMANENTFLAGS")),
         )
 
+    @timed("search")
     def uids_after(self, last_uid: int) -> list[int]:
         conn = self._fresh()
         found = self._call(lambda: conn.search(["UID", f"{last_uid + 1}:*"]))
         return [u for u in found if u > last_uid]  # `n:*` can return the highest UID (§5.1)
 
-    def uids_since(self, when: datetime) -> list[int]:
+    @timed("search")
+    def uids_since(self, when: datetime, before: datetime | None = None) -> list[int]:
         conn = self._fresh()
-        return self._call(lambda: conn.search(["SINCE", when.date()]))
+        crit: list[Any] = ["SINCE", when.date()]
+        if before is not None:
+            crit += ["BEFORE", before.date()]
+        return self._call(lambda: conn.search(crit))
 
+    @timed("search")
     def find_message_id(self, message_id: str) -> list[int]:
         conn = self._fresh()
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
@@ -176,6 +190,7 @@ class ImapSource:
         # (SPEC §21.2, OD-450): keep only UIDs a FETCH returns with exactly this Message-ID.
         return sorted(u for u, m in self.meta(hits).items() if m.message_id == message_id)
 
+    @timed("search")
     def existing(self, uids: Iterable[int]) -> set[int]:
         conn = self._fresh()
         out: set[int] = set()
@@ -184,6 +199,7 @@ class ImapSource:
             out.update(u for u in found if u in chunk)
         return out
 
+    @timed("fetch")
     def meta(self, uids: Iterable[int]) -> dict[int, MessageMeta]:
         conn = self._reads()
         out: dict[int, MessageMeta] = {}
@@ -200,11 +216,13 @@ class ImapSource:
                 )
         return out
 
+    @timed("fetch")
     def fetch(self, uid: int) -> bytes | None:
         conn = self._reads()
         data = self._call(lambda: conn.fetch([uid], ["BODY.PEEK[]"]))
         return lib.as_bytes(data[uid].get("BODY[]")) if uid in data else None
 
+    @timed("fetch")
     def fetch_part(self, uid: int, section: str, limit: int) -> bytes | None:
         if not _valid_section(section) or limit <= 0:
             raise ValueError(f"bad section or limit: {section!r}, {limit}")
@@ -214,6 +232,7 @@ class ImapSource:
             return None
         return lib.as_bytes(data[uid].get(f"BODY[{section}]<0>")) or None
 
+    @timed("fetch")
     def structure(self, uid: int) -> list[PartInfo] | None:
         conn = self._reads()
         data = self._call(lambda: conn.fetch([uid], ["BODYSTRUCTURE"]))
@@ -221,6 +240,7 @@ class ImapSource:
             return None
         return [PartInfo(**p) for p in lib.leaf_parts(data[uid]["BODYSTRUCTURE"])]
 
+    @timed("fetch")
     def flags(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         conn = self._reads()
         out: dict[int, frozenset[str]] = {}
@@ -241,14 +261,17 @@ class ImapSource:
     def set_seen(self, uid: int, seen: bool) -> None:
         self._store(uid, SEEN, add=seen)
 
+    @timed("store")
     def move(self, uid: int, folder: str) -> None:
         conn = self._writes()
         self._relocate(conn, uid, folder)
 
+    @timed("store")
     def copy(self, uid: int, folder: str) -> None:
         conn = self._writes()
         self._call(lambda: conn.copy([uid], folder))
 
+    @timed("search")
     def find_in(self, folder: str, message_id: str) -> list[int]:
         conn = self._other(folder, readonly=True)
         hits = self._call(lambda: conn.search(["HEADER", "Message-ID", message_id]))
@@ -259,26 +282,31 @@ class ImapSource:
                       if lib.envelope_message_id(d.get("ENVELOPE")) == message_id]  # fmt: skip
         return sorted(found)
 
+    @timed("fetch")
     def fetch_in(self, folder: str, uid: int) -> bytes | None:
         conn = self._other(folder, readonly=True)
         data = self._call(lambda: conn.fetch([uid], ["BODY.PEEK[]"]))
         return lib.as_bytes(data[uid].get("BODY[]")) if uid in data else None
 
+    @timed("store")
     def move_back(self, folder: str, uid: int) -> None:
         self._refuse_on_gmail(folder, "move a message back out of")
         conn = self._other(folder, readonly=False)
         self._relocate(conn, uid, INBOX)
 
+    @timed("store")
     def copy_back(self, folder: str, uid: int) -> None:
         conn = self._other(folder, readonly=True)  # COPY changes nothing in the source folder
         self._call(lambda: conn.copy([uid], INBOX))
 
+    @timed("fetch")
     def gmail_msgid(self, uid: int) -> int | None:
         if not self._is_gmail():
             return None
         conn = self._reads()
         return self._call(lambda: conn.gmail_msgids([uid])).get(uid)
 
+    @timed("search")
     def gmail_find(self, folder: str, msgid: int) -> list[int]:
         if not self._is_gmail():
             return []
@@ -297,6 +325,7 @@ class ImapSource:
         if roles & GMAIL_KEEP:
             raise MailUnavailableError(f"Gmail: ecf never tries to {what} {folder}")
 
+    @timed("fetch")
     def gmail_labels(self, uids: Iterable[int]) -> dict[int, frozenset[str]]:
         if not self._is_gmail():
             return {}
@@ -319,10 +348,12 @@ class ImapSource:
         found = self._call(lambda: conn.gmail_search("in:inbox"))
         return shown, len(found)
 
+    @timed("store")
     def append(self, folder: str, raw: bytes, flags: Iterable[str] = ()) -> None:
         conn = self._connect()
         self._call(lambda: conn.append(folder, raw, list(flags)))
 
+    @timed("store")
     def delete_in(self, folder: str, uid: int) -> None:
         self._refuse_on_gmail(folder, "delete a message in")
         conn = self._other(folder, readonly=False)
@@ -344,6 +375,7 @@ class ImapSource:
         else:
             raise MailUnavailableError(f"{self._host} supports neither MOVE nor UIDPLUS")
 
+    @timed("select")
     def _other(self, folder: str, *, readonly: bool) -> lib.Conn:
         """Select another folder; the next INBOX call selects INBOX again."""
         conn = self._connect()
@@ -351,12 +383,16 @@ class ImapSource:
         self._readonly = None
         return conn
 
+    @timed("store")
     def _store(self, uid: int, flag: str, *, add: bool) -> None:
         conn = self._writes()
         if add:
             self._call(lambda: conn.add_flags([uid], [flag]))
         else:
             self._call(lambda: conn.remove_flags([uid], [flag]))
+
+    def timings(self) -> dict[str, float]:
+        return dict(self.phase_timer.seconds)
 
     def close(self) -> None:
         self._drop()

@@ -23,6 +23,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 import tracemalloc
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,7 +35,7 @@ from ecf.status import OPEN, Status
 from ecf_server import download_budget, items, keywords, leases, own_mail, probe, triggers
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
-from ecf_server.isolate import Isolator
+from ecf_server.isolate import Isolated, Isolator
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource, MessageMeta
 from ecf_server.message import (
@@ -62,6 +63,7 @@ LARGE_LOCK = threading.Lock()  # large messages are processed one at a time serv
 MB = 1024 * 1024
 DEFAULT_MAX = {"high": 64 * MB, "standard": 16 * MB}  # OD-024 (64 MB kept, OD-195)
 DEFAULT_SCAN = 10 * MB  # OD-027
+CHILD_KEYS = ("messages", "child_s", "auth_s", "dns_hits", "dns_queries")
 
 
 class Analyzer(Protocol):
@@ -119,6 +121,9 @@ class PageResult:
     own_skipped: int = 0  # ecf's own mail come back (own_mail; V1.5)
     second_install: bool = False  # mail from another install on this mailbox: address paused
     restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372): paused
+    # the isolation children's counts, summed (OD-507, plan §5 d): child wall time, DKIM/DMARC
+    # time, DNS answers without the network, network queries, messages
+    child: dict[str, float] = field(default_factory=lambda: dict.fromkeys(CHILD_KEYS, 0.0))
 
 
 def address_config(conn: sqlite3.Connection, address_id: str) -> AddressConfig:
@@ -275,17 +280,87 @@ def fetch_page(  # noqa: PLR0913 - keyword-only options after the five collabora
 @dataclass
 class Backfill:
     """Progress of `ecf backfill` for one address (OD-216): mail that arrived since `since`, up to
-    the cursor's position when it started (`end_uid`); `after_uid` is the last UID handled."""
+    the cursor's position when it started (`end_uid`); `after_uid` is the last UID handled.
 
-    since: str  # ISO date
+    From v3.0.0 step 5 (OD-507 §3.2, P7): `since` and `until` are UTC times (an older row's `since`
+    is a date), and the range is bounded once, at the first page: `uids` is the packed list of the
+    messages in range (`pack`), `first_uid` and `last_uid` its ends. A row without them (started
+    before the upgrade) reads as before: a SEARCH SINCE per page. `run_id` names the scan (its
+    items' `facts.scan_run`, its Slack summary, `ecf approve --scan`); `held` counts the mail in
+    range ecf already had."""
+
+    since: str  # UTC time (`%Y-%m-%dT%H:%M:%S.%fZ`), or an ISO date in an older row
     act: bool
     uidvalidity: int
     end_uid: int
     after_uid: int = 0
+    until: str | None = None
+    run_id: str = ""
+    first_uid: int | None = None
+    last_uid: int | None = None
+    uids: str | None = None
+    held: int = 0
 
     def to_json(self) -> dict[str, Any]:
-        return {"since": self.since, "act": self.act, "uidvalidity": self.uidvalidity,
-                "end_uid": self.end_uid, "after_uid": self.after_uid}  # fmt: skip
+        out: dict[str, Any] = {"since": self.since, "act": self.act,
+                               "uidvalidity": self.uidvalidity, "end_uid": self.end_uid,
+                               "after_uid": self.after_uid}  # fmt: skip
+        if self.run_id:
+            out |= {"until": self.until, "run_id": self.run_id, "first_uid": self.first_uid,
+                    "last_uid": self.last_uid, "uids": self.uids, "held": self.held}  # fmt: skip
+        return out
+
+    def since_at(self) -> datetime:
+        """`since` as a moment: a bare date is UTC midnight, as before (and for N-1 clients)."""
+        return utc_moment(self.since)
+
+
+def utc_moment(value: str) -> datetime:
+    """A stored range end: the parser's UTC time, or a bare date at UTC midnight (P13)."""
+    if len(value) == 10:
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
+    return from_ts(value)
+
+
+def pack(uids: list[int]) -> str:
+    """Sorted UIDs as an IMAP-style set: `1:5,7,9:20`."""
+    out: list[str] = []
+    for u in sorted(set(uids)):
+        if out and out[-1].split(":")[-1] == str(u - 1):
+            head = out[-1].split(":")[0]
+            out[-1] = f"{head}:{u}"
+        else:
+            out.append(str(u))
+    return ",".join(out)
+
+
+def unpack(text: str) -> list[int]:
+    out: list[int] = []
+    for part in filter(None, text.split(",")):
+        a, _, b = part.partition(":")
+        out += range(int(a), int(b or a) + 1)
+    return out
+
+
+def scan_range(src: MailSource, since: datetime, until: datetime | None, end_uid: int) -> list[int]:
+    """The INBOX UIDs at or below `end_uid` whose INTERNALDATE is in [since, until] (OD-507 §3.2,
+    P7). IMAP SINCE and BEFORE compare the server's date, ignoring time and zone (RFC 3501
+    §6.4.4), so one SEARCH from the day before `since` to two days after `until` finds every
+    candidate; only the boundary days' candidates (not in a second SEARCH two days inside each
+    end) have their INTERNALDATE fetched, to cut to the second."""
+    day = timedelta(days=1)
+    outer = [u for u in src.uids_since(since - day, until + 2 * day if until else None)
+             if u <= end_uid]  # fmt: skip
+    inner_start = since + 2 * day
+    inner_end = until - day if until else None
+    inner: set[int] = set()
+    if inner_end is None or inner_start < inner_end:
+        inner = set(src.uids_since(inner_start, inner_end))
+    edge = [u for u in outer if u not in inner]
+    dates = src.meta(edge)
+    kept = {u for u, m in dates.items()
+            if m.internaldate >= since and (until is None or m.internaldate <= until)}  # fmt: skip
+    return sorted(u for u in outer if u in inner or u in kept)
 
 
 def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collaborators
@@ -312,22 +387,15 @@ def backfill_page(  # noqa: PLR0913 - keyword-only options after the six collabo
         return result
     cur = load_cursor(conn, cfg.address_id)
     waiting = set(cur.deferred) if cur else set[int]()
-    known = {
-        r[0]
-        for r in conn.execute(
-            "SELECT json_extract(locator, '$.uid') FROM items WHERE address_id = ?"
-            " AND json_extract(locator, '$.uidvalidity') = ?",
-            (cfg.address_id, bf.uidvalidity),
-        )
-    }
-    since = datetime.fromisoformat(bf.since).replace(tzinfo=UTC)
+    known = known_uids(conn, cfg.address_id, bf.uidvalidity)
     todo = [
-        u for u in src.uids_since(since)
+        u for u in _candidates(src, bf, known)
         if bf.after_uid < u <= bf.end_uid and u not in known and u not in waiting
     ]  # fmt: skip
     page = todo[:PAGE_MESSAGES]
     metas = src.meta(page)
     pg = _Page(conn, clock, src, cfg, lease, bf.uidvalidity, result, analyzer, isolator)
+    pg.scan = bf.run_id or "-"  # its items are marked at creation (OD-507 §2)
     pg.budget_left = download_budget.left(conn, clock, cfg.address_id, gmail=cfg.gmail)
     started = clock.monotonic()
     end = deadline if deadline is not None else started + MAX_PER_CHECK_S
@@ -395,6 +463,25 @@ def _deferred(pg: _Page, cur: Cursor, end: float, lost: threading.Event | None) 
     return cur
 
 
+def _candidates(src: MailSource, bf: Backfill, known: set[int]) -> list[int]:
+    """The scan's UIDs: bounded once, at its first page (P7); a row from before the upgrade
+    searches by date each page, as before."""
+    if bf.run_id and bf.uids is None:
+        inrange = scan_range(src, bf.since_at(), utc_moment(bf.until) if bf.until else None,
+                             bf.end_uid)  # fmt: skip
+        bf.uids = pack(inrange)
+        bf.first_uid, bf.last_uid = (inrange[0], inrange[-1]) if inrange else (0, 0)
+        bf.held = sum(1 for u in inrange if u in known)
+    return unpack(bf.uids) if bf.uids is not None else src.uids_since(bf.since_at())
+
+
+def known_uids(conn: sqlite3.Connection, address_id: str, uidvalidity: int) -> set[int]:
+    """UIDs of the messages ecf holds under `uidvalidity`."""
+    return {r[0] for r in conn.execute(
+        "SELECT json_extract(locator, '$.uid') FROM items WHERE address_id = ?"
+        " AND json_extract(locator, '$.uidvalidity') = ?", (address_id, uidvalidity))}  # fmt: skip
+
+
 @dataclass
 class _Page:
     conn: sqlite3.Connection
@@ -414,6 +501,7 @@ class _Page:
     budget_spent: bool = False
     flags: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
     labels: dict[int, frozenset[str]] = field(default_factory=dict[int, frozenset[str]])
+    scan: str = ""  # a backfill page: its run id ("-" for an older row); items marked (§2)
 
     def over_budget(self, need: int) -> bool:
         """Fetching `need` more bytes would pass Gmail's download budget: stop (OD-440)."""
@@ -459,13 +547,24 @@ def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
         pg.fetch_s += clock.monotonic() - t0
         pg.downloaded(len(raw))
         if pg.isolator is not None:  # every message, with a time limit (OD-204)
+            t1 = time.perf_counter()  # a measurement, not the check's clock (OD-507)
             got = pg.isolator(raw, cfg.max_scan_bytes)
+            _count_child(pg.result, time.perf_counter() - t1, got)
             _store(pg, uid, got.parsed, raw, {}, internaldate, got.auth, got.excerpts)
         else:
             _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
     except (LeaseLostError, MailUnavailableError):  # not the message's fault
         _give_back(conn, cfg.address_id, uv, uid)
         raise
+
+
+def _count_child(result: PageResult, took: float, got: Isolated) -> None:
+    c = result.child
+    c["messages"] += 1
+    c["child_s"] += took
+    c["auth_s"] += got.stats.auth_s
+    c["dns_hits"] += got.stats.dns_hits
+    c["dns_queries"] += got.stats.dns_queries
 
 
 def _process_large(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
@@ -558,6 +657,10 @@ def _store(
     found = pg.analyzer.analyze(parsed, raw, auth, labels) if pg.analyzer else {}
     facts = _facts(parsed) | extra | found
     facts["identity_digest"] = digest
+    if pg.scan:  # scanned mail: marked before sender history sees it (OD-507 §2, P12)
+        facts["backfill"] = 1
+        if pg.scan != "-":
+            facts["scan_run"] = pg.scan
     if facts.get("ecf_mail") == own_mail.OWN:  # ecf's own mail came back: no item (§8.4)
         with write_tx(conn):
             _fence(conn, clock, lease)
@@ -742,10 +845,13 @@ def close_gone(
     """Close open items whose message has left INBOX (moved, archived or deleted by a person) as
     `resolved_by_mailbox` (§6.2). With `close_stale` (the caller knows recovery after a reset is
     done), items still pointing at another UIDVALIDITY weren't found again, so their message is
-    gone too (V1.1 review). Returns how many."""
+    gone too (V1.1 review). An executed item `ecf reprocess` reopened whose message ecf itself
+    moved is left alone until it is executed again (`facts.reprocess_moved`, cleared then;
+    OD-507 §4.3, P3, review H1). Returns how many."""
     rows = conn.execute(
         "SELECT stable_id, locator FROM items WHERE address_id = ?"
-        " AND status IN (SELECT value FROM json_each(?))",
+        " AND status IN (SELECT value FROM json_each(?))"
+        " AND json_extract(facts, '$.reprocess_moved') IS NULL",
         (lease.address_id, json.dumps(sorted(OPEN))),
     ).fetchall()
     by_uid: dict[int, str] = {}

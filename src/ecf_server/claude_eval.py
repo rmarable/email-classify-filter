@@ -519,6 +519,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
         summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields (R9)
         summary["input_format"] = CLAUDE_INPUT_FORMAT  # Jev vs C prints "different inputs"
+    summary["rules_digest"] = rules.composed_digest(run.schema, None)  # as items (OD-507, P14)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["keywords_digest"] = triggers.keywords_digest()

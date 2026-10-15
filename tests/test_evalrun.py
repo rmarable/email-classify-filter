@@ -173,7 +173,7 @@ def test_a_null_run_writes_metrics_only_and_never_passes_the_gate(
     assert summary["schema_digest"] == load_schema().digest
     assert "prompt_digest" not in summary  # the null arm asks nothing
     assert summary["keywords_digest"] == triggers.keywords_digest()  # (Q3)
-    assert summary["rules_digest"] == evalrun.rules.starter_digest()  # step 7
+    assert summary["rules_digest"] == evalrun.rules.composed_digest(load_schema(), None)  # OD-507
     assert summary["scoring"] == "live"
     assert summary["excerpt_prep"] == evalrun.excerpt.VERSION
     assert conn.execute("SELECT value FROM settings WHERE key = ?",
@@ -581,7 +581,7 @@ def _acted_run(root: Path, tmp_path: Path, action: str) -> Path:
     summary: dict[str, object] = dict(evalrun.summarize(out, 0, schema=schema))
     summary |= {
         "scoring": "live",
-        "rules_digest": evalrun.rules.starter_digest(),
+        "rules_digest": evalrun.rules.composed_digest(schema, None),
         "keywords_digest": triggers.keywords_digest(),
         "measurements": {"calls": call_figures(out)},
     }

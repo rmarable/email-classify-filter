@@ -33,6 +33,7 @@ from ecf_server import (
     inbox,
     model_watch,
     pause,
+    scans,
     schedule,
     scheduled_export,
     slack_admin,
@@ -127,6 +128,9 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
         lines.append(f"Waiting for /ecf-review more than {claude_queue.reminder_hours(conn)} h:"
                      f" {sum(o.count for o in late)} ({each}; the oldest since {oldest} UTC)."
                      " Run `ecf claude` and type /ecf-review.")  # fmt: skip
+    old = scans.waiting_line(conn)  # old mail: its own line, never in the counts above (OD-507)
+    if old:
+        lines.append(old[0].upper() + old[1:] + ".")
     for usage in (stats.daily_line(conn, now - DAY), claude_usage.daily_line(conn, now - DAY)):
         if usage:
             lines.append(usage)

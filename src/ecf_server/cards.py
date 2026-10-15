@@ -5,13 +5,20 @@ flags and what was done, and how to open the email (`ecf item show <id>`; no pro
 search URL is known and verified yet, §10.1 "where known"). Never the body; a short excerpt only
 through Show excerpt, visible to you alone (OD-214). Every string here may come from an email:
 `slack_render` shows it as plain text.
+
+A classified item's card also says how it was classified (OD-507 §6, D14, P26): "Classified:
+<category>, <priority> priority, by <model>", the model by its display name ("Claude Sonnet
+5.5"), "a model no longer installed" for one this release doesn't pin (the local model's, before
+v3.0.0), and "corrected by you" after your correction. Nothing for an item not classified.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
+from importlib import resources
 from typing import Any
 
 from ecf_server.chat import Button, Card
@@ -81,6 +88,7 @@ def item_card(item: sqlite3.Row, *, mention: str = "", title: str = "") -> Card:
         fields=(
             ("From", sender_line(item, facts)),
             ("Subject", subject_line(item)),
+            *((("Classified", line),) if (line := classified_line(item)) else ()),
             ("Why", why(facts)),
             ("Sender check", sender_check(facts)),
             ("Flags", flags(facts)),
@@ -91,6 +99,53 @@ def item_card(item: sqlite3.Row, *, mention: str = "", title: str = "") -> Card:
         note=PAYMENT_NOTE if payment_or_fraud(facts) else "",
         mention=mention,
     )
+
+
+def escalation_line(r: sqlite3.Row) -> str:
+    """One escalated item in a list (a burst card, a scan summary's reply)."""
+    facts: dict[str, Any] = json.loads(r["facts"] or "{}")
+    who = sender_line(r, facts)
+    return (f"{TITLES[kind(facts)]}: {who}: {subject_line(r)}"
+            f" (ecf item show {r['stable_id'][:SHORT_ID]})")  # fmt: skip
+
+
+_MODEL_ID = re.compile(r"claude-(haiku|sonnet|opus)-(\d+)-(\d+)(?:-\d{8})?")
+NOT_INSTALLED = "a model no longer installed"
+
+
+@functools.cache
+def _known_models() -> frozenset[str]:
+    """Every model ID this release pins (`models.lock`: the roles and their lifecycle)."""
+    raw = json.loads(resources.files("ecf_server.data").joinpath("models.lock").read_text("utf-8"))
+    ids = {str(v) for k, v in raw.items() if not k.startswith("_") and isinstance(v, str)}
+    return frozenset(ids | {str(k) for k in raw.get("lifecycle", {})})
+
+
+def model_name(model_id: str | None) -> str:
+    """A model ID as a person reads it: `claude-sonnet-5-5` is "Claude Sonnet 5.5"."""
+    m = _MODEL_ID.fullmatch(model_id or "")
+    if model_id not in _known_models() or m is None:
+        return NOT_INSTALLED
+    return f"Claude {m.group(1).title()} {m.group(2)}.{m.group(3)}"
+
+
+def classified_line(item: sqlite3.Row) -> str | None:
+    """The card's "Classified" field (module notes), or None for an unclassified item."""
+    keys = item.keys()
+    if "classification" not in keys or not item["classification"]:
+        return None
+    cls: dict[str, Any] = json.loads(item["classification"])
+    fix: dict[str, Any] = json.loads(item["human_correction"] or "{}") if (
+        "human_correction" in keys) else {}  # fmt: skip
+    changed = {k: v for k, v in fix.items() if cls.get(k) != v}
+    cls |= {k: v for k, v in changed.items() if k in ("category", "priority")}
+    pinned: dict[str, Any] = json.loads(item["pinned_models"] or "{}") if (
+        "pinned_models" in keys) else {}  # fmt: skip
+    by = "corrected by you" if changed else f"by {model_name(pinned.get('classifier'))}"
+    parts = [str(cls[k]) for k in ("category",) if cls.get(k)]
+    if cls.get("priority"):
+        parts.append(f"{cls['priority']} priority")
+    return ", ".join([*parts, by])
 
 
 NOT_RECORDED = " (sender not recorded before V1.2)"

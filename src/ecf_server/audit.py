@@ -67,6 +67,7 @@ def query(
     address_id: str | None = None,
     event_prefix: str | None = None,
     since: str | None = None,
+    until: str | None = None,
     after_id: int | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -81,6 +82,9 @@ def query(
     if since:
         where.append("ts >= ?")
         args.append(since)
+    if until:
+        where.append("ts <= ?")
+        args.append(until)
     if after_id is not None:
         where.append("id > ?")
         args.append(after_id)

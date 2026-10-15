@@ -131,6 +131,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
         "model_calls": 0,
         "claude_calls": 0,
         "claude_sessions": 0,
+        "slack_calls": 0,
         "batches": 0,
     }
     while True:
@@ -166,6 +167,9 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     counts["claude_sessions"] = _batched(
         conn, "DELETE FROM claude_sessions WHERE rowid IN (SELECT rowid FROM claude_sessions"
         " WHERE started_at < ? LIMIT ?)", (cutoff,))  # fmt: skip
+    counts["slack_calls"] = _batched(  # left out of the bundle (OD-507, P17)
+        conn, "DELETE FROM slack_calls WHERE rowid IN (SELECT rowid FROM slack_calls"
+        " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
     # what an unclicked "Approve all" or "All others correct" button binds: gone once its grants
     # have expired (every click re-checks each one anyway)
     stale = to_ts(clock.now() - BATCH_TTL)

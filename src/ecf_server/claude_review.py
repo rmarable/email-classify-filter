@@ -84,7 +84,9 @@ from ecf_server import (
     decide,
     excerpt,
     health,
+    marked,
     policy,
+    scans,
     signals,
     telemetry,
 )
@@ -178,8 +180,9 @@ def review_queue(
     batches: dict[str, list[str]] = {}
     round_id = new_random_id()[:12]
     with write_tx(conn):  # the pick and the claims in one transaction: no item claimed twice
-        rows = conn.execute(sql + " ORDER BY i.updated_at, i.stable_id LIMIT ?",
-                            (*args, limit + 1)).fetchall()  # fmt: skip
+        # new mail first: old mail a scan or reprocess marked only when none waits (OD-507 §2)
+        rows = conn.execute(sql + f" ORDER BY {marked.sql('i.')}, i.updated_at, i.stable_id"
+                            " LIMIT ?", (*args, limit + 1)).fetchall()  # fmt: skip
         # One agent type per round, and none while this session's claims for another are out:
         # the model check can't tell overlapping work of two models apart (telemetry.py; v1.0.0
         # eval run). An expired claim's agent may still be running for `GRACE`: until then no
@@ -1061,11 +1064,12 @@ def remind(conn: sqlite3.Connection, clock: Clock, notifier: Notifier,
     for aid, o in late.items():
         if aid in paused:
             continue
+        old = scans.waiting_line(conn)  # its own line (OD-507 §2)
         health.open_alert(
             conn, clock, notifier, REMIND_ALERT, aid,
             f"{aid}: {o.count} email(s) have waited more than {hours} h for /ecf-review (the"
             f" oldest since {o.oldest[:16].replace('T', ' ')} UTC). Run `ecf claude` and type"
-            " /ecf-review.",
+            " /ecf-review." + (f" Also: {old}." if old else ""),
         )  # fmt: skip
     for (aid,) in conn.execute("SELECT address_id FROM alerts WHERE kind = ? AND resolved_at IS"
                                " NULL", (REMIND_ALERT,)).fetchall():  # fmt: skip

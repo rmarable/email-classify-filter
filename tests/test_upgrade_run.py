@@ -306,7 +306,8 @@ def test_success_records_the_upgrade_and_a_refused_regrant_does_not_roll_back(
     clock = FakeClock()
     assert upgrade_state.settle(c, clock) is True
     assert upgrade_state.settle(c, clock) is False  # once
-    events = [r[0] for r in c.execute("SELECT event FROM audit WHERE event LIKE 'upgrade.%'")]
+    events = [r[0] for r in c.execute("SELECT event FROM audit WHERE event LIKE 'upgrade.%'"
+                                      " ORDER BY id")]  # fmt: skip
     assert events == ["upgrade.completed", "upgrade.settled"]
     c.close()
     with pytest.raises(EcfError, match="no upgrade is waiting"):

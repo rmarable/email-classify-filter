@@ -52,9 +52,20 @@ def test_edges_match_spec() -> None:
     assert spec - ours == set(), f"in SPEC, not in code: {sorted(spec - ours)}"
 
 
-def test_terminal_exits_are_only_undo_and_fix() -> None:
+def test_terminal_exits_are_only_undo_fix_and_reprocess() -> None:
     exits = {(f, t) for f in TERMINAL for t in sm.TRANSITIONS[f]}
-    assert exits == {(S.EXECUTED, S.UNDOING), (S.UNDONE, S.PROPOSED)}
+    again = {(f, t) for f in (S.OBSERVED, S.EXECUTED)
+             for t in (S.AWAITING_CLAUDE, S.CLASSIFIED, S.PROPOSED)}  # fmt: skip
+    assert exits == {(S.EXECUTED, S.UNDOING), (S.UNDONE, S.PROPOSED)} | again
+
+
+def test_only_reprocess_reopens_an_observed_or_executed_item() -> None:
+    """OD-507 §4.3 (P3): the new edges are guarded by `TransitionContext.reprocess`."""
+    for f in (S.OBSERVED, S.EXECUTED):
+        for t in (S.AWAITING_CLAUDE, S.CLASSIFIED, S.PROPOSED):
+            with pytest.raises(PolicyDeniedError):
+                sm.check_transition(f, t, TransitionContext(stage=Stage.LIVE, fix=True))
+            sm.check_transition(f, t, TransitionContext(reprocess=True))
 
 
 def _reachable(start: Status) -> set[Status]:

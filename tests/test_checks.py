@@ -298,3 +298,26 @@ def test_a_check_against_dovecot(
         assert wrong.status == "login_rejected"
     finally:
         admin.logout()
+
+
+def test_check_completed_carries_imap_and_auth_timings(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock
+) -> None:
+    """Capture points c and d (OD-507, plan §5): the source's own phase times and the isolation
+    children's counts land on `check.completed`; no message content."""
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    box.fake.deliver(BEC)
+    r = run(env, clock, box)
+    t = r.timings
+    assert set(t["imap_s"]) == {"connect", "select", "search", "fetch_new", "fetch_backfill",
+                                "store"}  # fmt: skip
+    assert box.fake.timings()["fetch"] > 0  # measured; the report keeps milliseconds
+    assert t["imap_s"]["fetch_new"] >= 0 and t["imap_s"]["fetch_backfill"] == 0
+    assert t["auth"]["messages"] == 1 and t["auth"]["child_s"] >= t["auth"]["auth_s"] >= 0
+    row = conn.execute("SELECT data FROM audit WHERE event = 'check.completed'"
+                       " ORDER BY id DESC LIMIT 1").fetchone()  # fmt: skip
+    data = json.loads(row["data"])
+    assert data["timings"] == t
+    assert "Subject" not in row["data"] and "@" not in json.dumps(data["timings"])

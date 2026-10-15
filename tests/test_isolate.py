@@ -89,3 +89,21 @@ def test_checks_use_an_isolator_only_with_a_database_file(db_path: Path) -> None
     memory = sqlite3.connect(":memory:")
     memory.row_factory = sqlite3.Row
     assert checks._isolator(memory, DnsCache(memory, FakeClock())) is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_the_child_reports_its_auth_time_and_dns_counts(
+    db_path: Path, conn: sqlite3.Connection
+) -> None:
+    """Capture point d (OD-507, plan §5): DKIM/DMARC time and DNS answers found without the
+    network come back in the child's JSON; no message content in them."""
+    for name in ("_dmarc.vendor-a.example", "_dmarc.example"):
+        conn.execute("INSERT INTO dns_cache (name, rtype, answer, negative, expires_at)"
+                     " VALUES (?, 'TXT', ?, 1, '2999-01-01T00:00:00.000000Z')",
+                     (name, '{"status": "nxdomain", "records": []}'))  # fmt: skip
+    got = subprocess_isolator(db_path, dns_cap_s=600, dns_budget=lambda: 30.0)(
+        invoice("A <a@vendor-a.example>"), 1000)  # fmt: skip
+    assert got.stats.auth_s >= 0 and got.stats.dns_hits >= 1 and got.stats.dns_queries == 0
+    assert isolate.decode(isolate.encode(got)).stats == got.stats
+    old = isolate.encode(got)
+    del old["stats"]  # a result without counts still reads
+    assert isolate.decode(old).stats == isolate.ChildStats()

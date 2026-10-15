@@ -746,7 +746,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             summary["determinism"] = determinism
         summary["excerpt_prep"] = excerpt.VERSION
         summary["keywords_digest"] = triggers.keywords_digest()
-        summary["rules_digest"] = rules.starter_digest()
+        summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
         summary["scoring"] = "live"
         summary["label_map_unlabelled"] = map_effect(cases)
         summary["backend"] = opts.backend
@@ -1464,7 +1464,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
             summary[key] = before[key]
     _spawns_again(summary, out)
     summary["keywords_digest"] = triggers.keywords_digest()
-    summary["rules_digest"] = rules.starter_digest()
+    summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
     summary["scoring"] = "policy"
     summary["label_map_unlabelled"] = map_effect(cases)
     summary["fraud_under"] = fraud_under(out, cases, schema)
@@ -1492,7 +1492,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
-    tag = f"{triggers.keywords_digest()[:6]}{rules.starter_digest()[:6]}"
+    tag = f"{triggers.keywords_digest()[:6]}{rules.composed_digest(schema, None)[:6]}"
     path = write_result(result_path.parent, new, f"{old.run_id}-policy-{tag}.json")
     return {"path": str(path), "summary": summary}
 

@@ -20,6 +20,10 @@ traceback could quote message text.
 The child also cuts the excerpts (SPEC §5.1 step 4), so removing text addressed to an automated
 reader (OD-254) runs under the same time limit; it returns them redacted, for the models, and
 unredacted, for the corpus label screen (SPEC §16.7, OD-466).
+
+It also returns counts for the check's `check.completed` row (OD-507, plan §5 d): the seconds
+DKIM/DMARC took, DNS answers found without the network (this child's memo or the cache table) and
+network queries (approximate when prefetched in parallel). The parent times the whole child apart.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -51,11 +56,20 @@ def timeout_for(size: int) -> float:
     return TIMEOUT_BASE_S + TIMEOUT_PER_MB_S * size / (1024 * 1024)
 
 
+class ChildStats(NamedTuple):
+    """What the child measured (module notes); no message content."""
+
+    auth_s: float = 0.0
+    dns_hits: int = 0
+    dns_queries: int = 0
+
+
 class Isolated(NamedTuple):
     parsed: ParsedMessage
     auth: AuthOutcome
     excerpts: tuple[str, str]  # classifier, actor; injection text removed (OD-254)
     plain: tuple[str, str]  # the same cuts, not redacted
+    stats: ChildStats = ChildStats()
 
 
 # (raw, max_scan_bytes) -> the parsed message, its sender-authentication outcome and its excerpts
@@ -91,15 +105,16 @@ def subprocess_isolator(
     return run
 
 
-def isolated(parsed: ParsedMessage, auth: AuthOutcome) -> Isolated:
+def isolated(parsed: ParsedMessage, auth: AuthOutcome, stats: ChildStats | None = None) -> Isolated:
     """The result for a parsed and verified message: its excerpts are cut here."""
     redacted, plain = parsed.excerpt_sets(triggers.redact_injection)
-    return Isolated(parsed, auth, redacted, plain)
+    return Isolated(parsed, auth, redacted, plain, stats or ChildStats())
 
 
 def encode(result: Isolated) -> dict[str, Any]:
     return {"parsed": asdict(result.parsed), "auth": asdict(result.auth),
-            "excerpts": list(result.excerpts), "plain": list(result.plain)}  # fmt: skip
+            "excerpts": list(result.excerpts), "plain": list(result.plain),
+            "stats": result.stats._asdict()}  # fmt: skip
 
 
 def decode(data: dict[str, Any]) -> Isolated:
@@ -136,7 +151,10 @@ def decode(data: dict[str, Any]) -> Isolated:
     plain = tuple(str(x) for x in data["plain"])
     if len(excerpts) != 2 or len(plain) != 2:
         raise ValueError("two excerpts expected")
-    return Isolated(parsed, auth, (excerpts[0], excerpts[1]), (plain[0], plain[1]))
+    st: dict[str, Any] = data.get("stats") or {}
+    stats = ChildStats(float(st.get("auth_s", 0.0)), int(st.get("dns_hits", 0)),
+                       int(st.get("dns_queries", 0)))  # fmt: skip
+    return Isolated(parsed, auth, (excerpts[0], excerpts[1]), (plain[0], plain[1]), stats)
 
 
 def _reason(stdout: bytes) -> str:
@@ -164,8 +182,10 @@ def main(argv: list[str]) -> int:
             if budget_s is not None
             else DnsCache(conn, clock, cap_s=cap_s)
         )
+        began = time.perf_counter()
         auth = senderauth.evaluate(raw, parsed, dns)
-        out = json.dumps(encode(isolated(parsed, auth)))
+        stats = ChildStats(round(time.perf_counter() - began, 4), dns.hits, dns.queries)
+        out = json.dumps(encode(isolated(parsed, auth, stats)))
     except Exception as exc:  # any failure: reported by type only, never by message
         sys.stdout.write(json.dumps({"error": type(exc).__name__}))
         return EXIT_ERROR

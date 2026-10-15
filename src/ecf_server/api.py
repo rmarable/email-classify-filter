@@ -89,10 +89,12 @@ from ecf_server import (
     outbound_remind,
     passphrase,
     pause,
+    reprocess,
     restore,
     retention,
     routereport,
     ruletest,
+    scans,
     schedule,
     scheduled_export,
     send_actions,
@@ -108,10 +110,11 @@ from ecf_server import (
     stepup,
     telemetry,
     telemetry_app,
+    timings,
 )
 from ecf_server import upgrade_state as upgrade_state_mod
 from ecf_server.chat import FakeChat
-from ecf_server.clock import Clock, FakeClock, SystemClock, to_ts
+from ecf_server.clock import Clock, FakeClock, SystemClock, from_ts, to_ts
 from ecf_server.facts import PUBLIC_DOMAINS
 from ecf_server.log_bridge import log
 from ecf_server.mail.smtp import SenderFactory
@@ -360,6 +363,8 @@ def create_app(state: ServiceState) -> Starlette:
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
             *_data_routes(state, allow),
+            *_backfill_routes(state, allow),
+            *_reprocess_routes(state, allow),
             *_setup_routes(state, allow),
             *_model_routes(state, allow),
             *_watch_routes(state, allow),
@@ -620,7 +625,10 @@ def _item_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def list_inbox(request: Request) -> JSONResponse:
         q = request.query_params
         aid, stale = q.get("address_id"), q.get("stale") in ("1", "true")
-        return _with_conn(lambda c: {"items": inbox.inbox(c, address_id=aid, stale_only=stale)})
+        return _with_conn(lambda c: {
+            "items": inbox.inbox(c, address_id=aid, stale_only=stale),
+            "runs": scans.inbox_lines(c, inbox.inbox(c, address_id=aid, stale_only=stale,
+                                                      old=True))})  # OD-507 §2  # fmt: skip
 
     @allow(Caller.CLI)
     def show(request: Request) -> JSONResponse:
@@ -1207,21 +1215,34 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
         address, so it comes only without `address` and for preset C (A and B went in v3.0.0;
         their `model_calls` rows stay until pruned with the logs)."""
         q = request.query_params
-        try:
-            hours = float(q.get("hours", "168"))
-        except ValueError as exc:
-            raise InvalidInputError("hours: a number") from exc
-        if not 0 < hours <= 24 * 366:
-            raise InvalidInputError("hours: more than 0, at most a year")
+        now = state.clock.now()
+        if "since" in q:  # the range parser's UTC form (OD-507); `hours` from older clients
+            try:
+                since = from_ts(q["since"])
+            except ValueError as exc:
+                raise InvalidInputError("since: a UTC time, 2026-09-01T00:00:00.000000Z") from exc
+        else:
+            try:
+                hours = float(q.get("hours", "168"))
+            except ValueError as exc:
+                raise InvalidInputError("hours: a number") from exc
+            if not 0 < hours <= 24 * 366:
+                raise InvalidInputError("hours: more than 0, at most a year")
+            since = now - timedelta(hours=hours)
+        if not now - timedelta(days=366) <= since < now:
+            raise InvalidInputError("since: in the past, at most a year back")
         conn = state.connect()
         try:
+            if q.get("stages") == "1":  # `ecf stats --stages` (OD-507 §5 a, b)
+                return JSONResponse(timings.stages(conn, since))
             ref = q.get("address")
             aid = addresses.get_address(conn, ref)["address_id"] if ref else None
-            since = state.clock.now() - timedelta(hours=hours)
             preset = q.get("preset")
             out = stats.report(conn, since, address=aid, preset=preset)
             if aid is None and preset in (None, "C"):
                 out["claude"] = claude_usage.report(conn, since)
+            if aid is None:  # posts aren't per address (OD-507 §5 e)
+                out["slack"] = timings.slack(conn, since)
             return JSONResponse(out)
         finally:
             conn.close()
@@ -1234,7 +1255,7 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
-    """SPEC §6.5, §10.2 (V1.2 step 11): retention and backfill; CLI only."""
+    """SPEC §6.5 (V1.2 step 11): retention; CLI only."""
 
     @allow(Caller.CLI)
     def show_retention(_request: Request) -> JSONResponse:
@@ -1260,16 +1281,52 @@ def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(r)
 
+    return [
+        Route("/v1/retention", show_retention, methods=["GET"]),
+        Route("/v1/retention", set_retention, methods=["POST"]),
+    ]
+
+
+def _backfill_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.2 (V1.2 step 11; OD-507 §3): `ecf backfill`; CLI only."""
+
     @allow(Caller.CLI)
     def start_backfill(request: Request) -> JSONResponse:
+        """A bare `since` date is UTC midnight (v2.2.x clients); the new client sends UTC times
+        from the range parser, with `until` and what was typed (OD-507 §3.1, P13)."""
         body = _body(request)
         ref, since, act = _str(body, "address_id"), _str(body, "since"), body.get("act") is True
+        until, nonce = _opt_str(body, "until"), _opt_str(body, "nonce_id")
+        raw = body.get("typed")
+        typed = {k: str(v)[:80] for k, v in cast(dict[str, Any], raw).items()
+                 if k in ("since", "until")} if isinstance(raw, dict) else None  # fmt: skip
         conn = state.connect()
         try:
-            r = backfill.start(conn, state.clock, ref, since, act=act)
+            r = backfill.start(conn, state.clock, ref, since, act=act, until=until, nonce=nonce,
+                               typed=typed)  # fmt: skip
         finally:
             conn.close()
         return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def count_backfill(request: Request) -> JSONResponse:
+        """`ecf backfill --act`'s count: asked here, answered by the next check (P11)."""
+        body = _body(request)
+        conn = state.connect()
+        try:
+            return JSONResponse(backfill.request_count(
+                conn, state.clock, _str(body, "address_id"), _str(body, "since"),
+                _opt_str(body, "until")))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def backfill_count(request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse(backfill.count(conn, request.query_params.get("address_id", "")))
+        finally:
+            conn.close()
 
     @allow(Caller.CLI)
     def backfill_status(_request: Request) -> JSONResponse:
@@ -1290,10 +1347,59 @@ def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     return [
         Route("/v1/backfill/stop", stop_backfill, methods=["POST"]),
-        Route("/v1/retention", show_retention, methods=["GET"]),
-        Route("/v1/retention", set_retention, methods=["POST"]),
+        Route("/v1/backfill/count", count_backfill, methods=["POST"]),
+        Route("/v1/backfill/count", backfill_count, methods=["GET"]),
         Route("/v1/backfill", start_backfill, methods=["POST"]),
         Route("/v1/backfill", backfill_status, methods=["GET"]),
+    ]
+
+
+def _reprocess_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    """SPEC §10.2 (OD-507 §4): `ecf reprocess`; CLI only."""
+
+    @allow(Caller.CLI)
+    def start_reprocess(request: Request) -> JSONResponse:
+        """`ecf reprocess` (OD-507 §4.2): `dry_run` counts only; otherwise the job starts."""
+        body = _body(request)
+        ref, since = _str(body, "address_id"), _str(body, "since")
+        until, nonce = _opt_str(body, "until"), _opt_str(body, "nonce_id")
+        rules_only, force = body.get("rules_only") is True, body.get("force") is True
+        raw = body.get("typed")
+        typed = {k: str(v)[:80] for k, v in cast(dict[str, Any], raw).items()
+                 if k in ("since", "until")} if isinstance(raw, dict) else None  # fmt: skip
+        conn = state.connect()
+        try:
+            if body.get("dry_run") is True:
+                return JSONResponse(reprocess.dry_run(
+                    conn, state.clock, ref, since, until, rules_only=rules_only,
+                    force=force))  # fmt: skip
+            return JSONResponse(reprocess.start(conn, state.clock, ref, since, until,
+                                                rules_only=rules_only, force=force, nonce=nonce,
+                                                typed=typed))  # fmt: skip
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def reprocess_status(_request: Request) -> JSONResponse:
+        conn = state.connect()
+        try:
+            return JSONResponse({"runs": reprocess.status(conn)})
+        finally:
+            conn.close()
+
+    @allow(Caller.CLI)
+    def stop_reprocess(request: Request) -> JSONResponse:
+        ref = _str(_body(request), "address_id")
+        conn = state.connect()
+        try:
+            return JSONResponse(reprocess.stop(conn, state.clock, ref))
+        finally:
+            conn.close()
+
+    return [
+        Route("/v1/reprocess/stop", stop_reprocess, methods=["POST"]),
+        Route("/v1/reprocess", start_reprocess, methods=["POST"]),
+        Route("/v1/reprocess", reprocess_status, methods=["GET"]),
     ]
 
 
@@ -1856,8 +1962,33 @@ def _decision_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return _with_conn(lambda c: {"results": approvals.approve_pending(
             c, state.clock, state.notifier, confirm, nonce=nonce)})  # fmt: skip
 
+    @allow(Caller.CLI)
+    def undo(request: Request) -> JSONResponse:
+        """`ecf item undo <id>` (OD-507 §4.3, P3): the digest's Undo, at the next check."""
+        ref = str(request.path_params["ref"])
+
+        def queue(c: sqlite3.Connection) -> dict[str, Any]:
+            item = inbox.find(c, ref)
+            what = digests.queue_undo(c, state.clock, item, "os_user")
+            return {"id": item["stable_id"], "undo": what}
+
+        return _with_conn(queue)
+
+    @allow(Caller.CLI)
+    def scan(request: Request) -> JSONResponse:
+        """`ecf approve --scan <run id>` (OD-507 §3.5, P9): the list, then the confirmed set."""
+        body, run_id = _body(request), str(request.path_params["run"])
+        ids = body.get("confirm_ids")
+        if ids is None:
+            return _with_conn(lambda c: approvals.scan_pending(c, run_id))
+        confirm, nonce = _str_list(ids), _opt_str(body, "nonce_id")
+        return _with_conn(lambda c: {"results": approvals.approve_scan(
+            c, state.clock, state.notifier, run_id, confirm, nonce=nonce)})  # fmt: skip
+
     return [
         Route("/v1/approvals/pending", pending, methods=["POST"]),
+        Route("/v1/approvals/scan/{run}", scan, methods=["POST"]),
+        Route("/v1/items/{ref}/undo", undo, methods=["POST"]),
         Route("/v1/items/{ref}/approve", approve, methods=["POST"]),
         Route("/v1/items/{ref}/reject", reject, methods=["POST"]),
         Route("/v1/items/{ref}/cancel", cancel, methods=["POST"]),
@@ -2001,6 +2132,7 @@ def _check_routes(state: ServiceState, allow: Allow) -> list[Route]:
                 address_id=q.get("address_id"),
                 event_prefix=q.get("event"),
                 since=q.get("since"),
+                until=q.get("until"),
                 after_id=after,
                 limit=limit,
             )

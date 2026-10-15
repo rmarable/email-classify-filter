@@ -826,3 +826,19 @@ def test_s4_current_rules_never_raises(conn: sqlite3.Connection, name: str,
     got.evaluate(policy.rule_input(_ctx(classification={"phishing": True})))
     if name == "value_is_a_default_id":  # the default rules refused: fixed + otherwise
         assert [r.id for r in got.rules] == [*rules.fixed_ids(), rules.CATCH_ALL]
+
+
+@settings(max_examples=2000, deadline=None)
+@given(CONTEXTS, st.sampled_from(sorted(HIDE_ACTIONS)))
+def test_historical_means_every_hide_needs_approval(ctx: Context, proposed: str) -> None:
+    """OD-507 §2 (P9): old mail a scan or reprocess marked never hides on its own, whether the
+    rules plan the hide or the actor proposes it."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    old = replace(ctx, historical=True, action_policy={})  # even with every hide `auto`
+    known = policy.labels(SCHEMA, old.rules)
+    p = policy.plan(old, known)
+    assert all(a.mode == "approve" for a in p.hides)
+    got = policy.proposal(old, p, proposed, "Receipts" if proposed == "move" else None, known)
+    if isinstance(got, Planned):
+        assert got.mode == "approve"

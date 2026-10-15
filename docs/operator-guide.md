@@ -25,7 +25,9 @@ first, each labelled by what it waits for, plus paused addresses, and Pause all 
 sender, Reply-To mismatch, not addressed to this mailbox, not fully scanned, bulk), what was done,
 and `ecf item show <id>`. Payment and fraud items say "This acts on the email only. ecf never pays
 anything." No email body is posted; **Show excerpt** shows the first 200 characters of the stored
-excerpt to you only (SPEC §9.2).
+excerpt to you only (SPEC §9.2). A classified email's card also says how it was classified ("Classified: invoice, high
+priority, by Claude Sonnet 5.5", or "corrected by you"). Old mail from `ecf backfill` or `ecf
+reprocess` gets no card: each run has one summary in the summary channel instead.
 
 **Escalations** (possible fraud, regulator mail) get their own card and mention you, so you're
 notified on desktop and phone. Fraud, quarantine and regulator escalations are never rolled up;
@@ -75,6 +77,7 @@ Approvals expire after 4 days for sends and 14 days for everything else; on expi
   ```sh
   ecf approve --pending     # lists them (sends separately), asks, one step-up for the non-sends
   ecf approve <id>          # one item: shows what it does (a draft in full), asks; every send needs its own
+  ecf approve --scan <id>   # a backfill's or reprocess's waiting actions: listed, one step-up
   ecf reject <id>
   ```
 
@@ -104,6 +107,7 @@ question is model output and can be wrong (SPEC §9.9).
 - An undone draft is deleted only when it's unchanged in Drafts; one you edited, sent or deleted is
   left alone ("draft not deleted").
 - **Dismiss** closes an item with no payment, fraud or regulator signal (`resolved_manual`).
+- `ecf item undo <id>` is Undo from the terminal, for any item a digest would offer it on.
 
 ## Mail pretending to be someone you work with
 
@@ -253,8 +257,9 @@ that mentions you after twice that (48 hours) (SPEC §10.3, §13.3).
 
 ```sh
 ecf status                           # service, each address, backlog, outbound
-ecf logs [--address <a>] [--since 2h] [--event check.] [-f]   # audit log, never message content
-ecf stats [--since 7d] [--address <a>] [--preset <p>]          # model tokens, speed, plan usage
+ecf logs [--address <a>] [--since 2h] [--until 1h] [--event check.] [-f]   # audit log, never message content
+ecf stats [--since 7d] [--address <a>] [--preset <p>]          # model tokens, speed, plan usage, Slack
+ecf stats --stages [--since 7d]      # how long mail spends in each stage
 ecf doctor                           # everything ecf depends on, with fixes
 ```
 

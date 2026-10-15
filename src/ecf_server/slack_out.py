@@ -14,6 +14,9 @@ ordered per channel and sent one at a time, at most one per second per channel.
 - Rate limits hold the post, like the network (not counted as a failure).
 - Other Slack errors retry with the queue's backoff; a post that gives up opens `Slack Delivery
   Failed` naming what was lost (`ecf doctor` lists them too).
+- Each job that completes (posted, given up, or its channel gone) leaves one `slack_calls` row:
+  queued and done times, tries, seconds in Slack calls, rate-limit holds and pacing, the key's
+  kind only (OD-507). `ecf stats` reads it; pruned with the logs, not in the bundle.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -108,6 +111,7 @@ class SlackSender:
         self._chat, self._clock, self._notifier = chat, clock, notifier
         self._resolve, self._sleep, self._mono = resolve, sleep, monotonic
         self._last_post: dict[str, float] = {}
+        self._tally: dict[str, _Tally] = {}  # per job until it completes (`slack_calls`)
         self.failing_since: datetime | None = None
 
     def run_once(self, conn: sqlite3.Connection) -> bool:
@@ -115,20 +119,45 @@ class SlackSender:
         if job is None:
             return False
         p = job.payload
-        self._pace(str(p["channel"]))
+        tally = self._tally.setdefault(job.job_id, _Tally())
+        tally.tries += 1
+        tally.pace_s += self._pace(str(p["channel"]))
+        began = self._mono()
         try:
             self._do(conn, p)
         except SlackNetworkError:
+            tally.call_s += self._mono() - began
             jobs.hold(conn, self._clock, job.job_id, WORKER, NETWORK_HOLD_S, "network")
             self._network_failed(conn)
             return True
         except SlackError as exc:
+            tally.call_s += self._mono() - began
             self._slack_failed(conn, job, p, exc)
             return True
+        tally.call_s += self._mono() - began
         jobs.complete(conn, job.job_id, WORKER)
+        self._record(conn, job, p, "posted")
         self.failing_since = None
         health.resolve_alert(conn, self._clock, self._notifier, ALERT, None)
         return True
+
+    def _record(self, conn: sqlite3.Connection, job: jobs.Job, p: dict[str, Any],
+                outcome: str) -> None:  # fmt: skip
+        """One `slack_calls` row for a job that completed (OD-507, §5 e): times and counts, the
+        key's kind only, never its text. A restart loses the tallies of jobs then in flight."""
+        t = self._tally.pop(job.job_id, _Tally())
+        kind = str(p.get("key") or p.get("op", "post")).partition(":")[0][:40]
+        now = to_ts(self._clock.now())
+        with write_tx(conn):
+            row = conn.execute("SELECT created_at FROM jobs WHERE job_id = ?",
+                               (job.job_id,)).fetchone()  # fmt: skip
+            conn.execute(
+                "INSERT INTO slack_calls (ts, queued_at, op, kind, outcome, attempts, call_ms,"
+                " rate_hold_s, pace_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (now, row["created_at"] if row else now, str(p.get("op", "post")), kind, outcome,
+                 max(t.tries, 1), round(t.call_s * 1000), t.rate_hold_s,
+                 round(t.pace_s * 1000)),
+            )  # fmt: skip
 
     def _slack_failed(
         self, conn: sqlite3.Connection, job: jobs.Job, p: dict[str, Any], exc: SlackError
@@ -139,9 +168,11 @@ class SlackSender:
             health.open_alert(conn, self._clock, self._notifier, ALERT, None,
                               f"Slack refused ecf ({exc.code}). {FIX}")  # fmt: skip
         elif exc.code in RATE_LIMITED:
+            self._tally.setdefault(job.job_id, _Tally()).rate_hold_s += RATE_HOLD_S
             jobs.hold(conn, self._clock, job.job_id, WORKER, RATE_HOLD_S, exc.code)
         elif exc.code in CHANNEL_GONE and p.get("op") == "post":
             jobs.complete(conn, job.job_id, WORKER)
+            self._record(conn, job, p, "channel_gone")
             _channel_gone(conn, self._clock, str(p["channel"]), str(p["key"]), exc.code)
             health.open_alert(conn, self._clock, self._notifier, ALERT, None,
                               f"A Slack channel ecf posts to is gone ({exc.code}); ecf creates it"
@@ -150,6 +181,7 @@ class SlackSender:
             state = jobs.fail(conn, self._clock, job.job_id, WORKER, f"slack:{exc.code}")
             log.warning("slack.post_failed", code=exc.code, method=exc.method, state=state)
             if state == "dead":
+                self._record(conn, job, p, "dead")
                 health.open_alert(conn, self._clock, self._notifier, ALERT, None,
                                   f"A Slack post gave up ({exc.code}): {_what(p)}. The email is"
                                   " still in ecf inbox")  # fmt: skip
@@ -186,13 +218,17 @@ class SlackSender:
         if pin:
             self._chat.pin(ref)
 
-    def _pace(self, channel: str) -> None:
+    def _pace(self, channel: str) -> float:
+        """Wait out the channel's 1 post per second; returns the seconds slept."""
         last = self._last_post.get(channel)
+        slept = 0.0
         if last is not None:
             wait = PACE_S - (self._mono() - last)
             if wait > 0:
                 self._sleep(wait)
+                slept = wait
         self._last_post[channel] = self._mono()
+        return slept
 
     def _network_failed(self, conn: sqlite3.Connection) -> None:
         now = self._clock.now()
@@ -202,6 +238,16 @@ class SlackSender:
             health.open_alert(conn, self._clock, self._notifier, ALERT, None,
                               f"Slack unreachable for {minutes} minutes while the network is up;"
                               " posts are held and will be sent")  # fmt: skip
+
+
+@dataclass
+class _Tally:
+    """One job's Slack work so far: tries, seconds in calls, rate-limit holds, pacing."""
+
+    tries: int = 0
+    call_s: float = 0.0
+    rate_hold_s: int = 0
+    pace_s: float = 0.0
 
 
 def _what(p: dict[str, Any]) -> str:

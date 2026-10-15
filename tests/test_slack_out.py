@@ -302,3 +302,57 @@ def test_needs_you_is_pinned_again_when_it_was_deleted(
     clock.advance(2)
     s.run_once(conn)
     assert web.methods()[-3:] == ["chat.update", "chat.postMessage", "pins.add"]
+
+
+# ---- slack_calls (OD-507, plan §5 e) ---------------------------------------------------------
+
+
+def test_each_completed_job_leaves_one_slack_calls_row_without_text(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    web, t = FakeWeb(), Timer()
+    s = SlackSender(SlackChat(web), clock, FakeNotifier(), sleep=t.sleep, monotonic=t.mono)
+    slack_out.enqueue_post(conn, clock, key="item:" + "a" * 64, route=C1,
+                           card=Card("Invoice 42 from billing@vendor-a.example"))  # fmt: skip
+    slack_out.enqueue_post(conn, clock, key="burst:ap:x", route=C1, card=Card("x"))
+    web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "ratelimited")]
+    s.run_once(conn)  # held for a rate limit: no row yet
+    assert conn.execute("SELECT count(*) FROM slack_calls").fetchone()[0] == 0
+    clock.advance(slack_out.RATE_HOLD_S)
+    while s.run_once(conn):
+        pass
+    rows = [dict(r) for r in conn.execute("SELECT * FROM slack_calls ORDER BY id")]
+    assert [(r["kind"], r["outcome"], r["attempts"], r["rate_hold_s"]) for r in rows] == [
+        ("item", "posted", 2, slack_out.RATE_HOLD_S), ("burst", "posted", 1, 0)]  # fmt: skip
+    assert rows[1]["pace_ms"] == 1000  # the second post on C1 waited a second
+    assert all(r["queued_at"] <= r["ts"] for r in rows)
+    assert "Invoice" not in str(rows) and "vendor-a" not in str(rows)  # no payload (Q19)
+
+
+def test_a_dead_post_and_a_gone_channel_are_recorded(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    web, n = FakeWeb(), FakeNotifier()
+    s = _sender(web, clock, n)
+    slack_out.enqueue_post(conn, clock, key="digest:1", route=C1, card=Card("d"))
+    for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+        s.run_once(conn)
+        clock.advance(3600)
+    slack_out.enqueue_post(conn, clock, key="needs-you", route=RouteRef("C9"), card=Card("n"))
+    web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "channel_not_found")]
+    s.run_once(conn)
+    got = conn.execute("SELECT kind, outcome, attempts FROM slack_calls ORDER BY id").fetchall()
+    assert [tuple(r) for r in got] == [("digest", "dead", jobs.DEFAULT_MAX_ATTEMPTS),
+                                       ("needs-you", "channel_gone", 1)]  # fmt: skip
+
+
+def test_retention_prunes_slack_calls(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    from ecf_server import retention  # noqa: PLC0415 - only this test
+
+    s = _sender(FakeWeb(), clock, FakeNotifier())
+    slack_out.enqueue_post(conn, clock, key="k", route=C1, card=Card("x"))
+    s.run_once(conn)
+    clock.advance(400 * 86400)
+    assert retention.run(conn, clock)["slack_calls"] == 1
+    assert conn.execute("SELECT count(*) FROM slack_calls").fetchone()[0] == 0

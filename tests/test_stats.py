@@ -136,13 +136,14 @@ def test_the_route_and_the_cli_screen(conn: sqlite3.Connection, db_path: Path, c
     assert "no recorded model calls in this period" in capsys.readouterr().out
 
 
-def test_since_takes_hours_or_days() -> None:
-    assert cli_stats.hours_of("24h") == 24 and cli_stats.hours_of("7d") == 168
-    assert cli_stats.hours_of("1.5d") == 36
+def test_since_takes_the_range_parsers_forms() -> None:
+    """OD-507 §3.1: `--since` is on the one parser; a fractional age (`1.5d`) is refused now."""
     import typer  # noqa: PLC0415
 
-    with pytest.raises(typer.BadParameter):
-        cli_stats.hours_of("a week")
+    assert cli_stats.since_param("24h").endswith("Z") and cli_stats.since_param("2026-09-01")
+    for bad in ("a week", "1.5d"):
+        with pytest.raises(typer.BadParameter):
+            cli_stats.since_param(bad)
 
 
 def test_eval_compare_prints_each_runs_figures(tmp_path: Path) -> None:
@@ -278,3 +279,82 @@ def test_latency_split_from_the_recorded_calls(tmp_path: Path) -> None:
             " (p95 4.00), writing 57% of the total") in out.output  # fmt: skip
     assert ("B    classifier cache after an actor call: 1 of 1 calls reused under 90% of the"
             " prefix, prompt 7.00 s median") in out.output  # fmt: skip
+
+
+# ---- stages and Slack (OD-507 §5 a, b, e) ----------------------------------------------------
+
+
+def _walk(conn: sqlite3.Connection, clock: FakeClock, sid: str, path: list[tuple[str, int]],
+          facts: dict[str, Any] | None = None) -> None:  # fmt: skip
+    """An item created now, then moved along `path` by direct audit rows (status, seconds)."""
+    from ecf.ids import AddressId, StableId  # noqa: PLC0415
+    from ecf_server import items  # noqa: PLC0415
+
+    items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
+                      content_hash="h", facts=json.dumps(facts or {}))  # fmt: skip
+    was = "new"
+    for to, secs in path:
+        clock.advance(secs)
+        with write_tx(conn):
+            conn.execute("INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome,"
+                         " data) VALUES (?, 'ap', ?, 'item.transitioned', 'service', 'ok', ?)",
+                         (to_ts(clock.now()), sid,
+                          json.dumps({"from": was, "to": to})))  # fmt: skip
+        was = to
+
+
+def test_stages_per_transition_claude_wait_and_marked_items_apart(
+    conn: sqlite3.Connection, clock: FakeClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ecf_server import timings  # noqa: PLC0415
+
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('ap', 'ap@acme.example', 'standard', 'C', 'now')")  # fmt: skip
+    start = clock.now()
+    _walk(conn, clock, "a" * 64, [("awaiting_claude", 2), ("classified", 60), ("observed", 1)])
+    _walk(conn, clock, "b" * 64, [("awaiting_claude", 4), ("classified", 120)])
+    _walk(conn, clock, "c" * 64, [("awaiting_claude", 1), ("classified", 9000)], {"backfill": 1})
+    _walk(conn, clock, "d" * 64, [("observed", 5)])
+    with write_tx(conn):
+        conn.execute("UPDATE items SET origin = 'other' WHERE stable_id = ?", ("d" * 64,))
+    r = timings.stages(conn, start)
+    new = {s["stage"]: s for s in r["new_mail"]["stages"]}
+    assert r["new_mail"]["items"] == 2 and r["imported_left_out"] == 1
+    assert new["new → awaiting_claude"]["n"] == 2 and new["new → awaiting_claude"]["p95_s"] == 4
+    assert r["new_mail"]["claude_wait"] == {"n": 2, "median_s": 60.0, "p95_s": 120.0}
+    assert r["scan_or_reprocess"]["claude_wait"]["median_s"] == 9000  # never mixed in
+    cli_stats.show_stages(r)
+    out = capsys.readouterr().out
+    assert "waiting for /ecf-review: 60 s median, 120 s p95 (n 2)" in out
+    assert "1 imported item(s) left out" in out
+
+
+def test_the_route_takes_since_and_gives_stages_and_the_slack_block(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ecf_server.api import ServiceState, create_app  # noqa: PLC0415
+
+    with write_tx(conn):
+        conn.execute("INSERT INTO slack_calls (ts, queued_at, op, kind, outcome, attempts,"
+                     " call_ms, rate_hold_s, pace_ms) VALUES (?, ?, 'post', 'item', 'posted',"
+                     " 2, 400, 60, 1000)", (to_ts(clock.now()),
+                                           to_ts(clock.now() - timedelta(seconds=61))))  # fmt: skip
+    state = ServiceState(install="t", token="tok", started_at="2026-10-01T12:00:00.000000Z",
+                         clock=clock, db_path=db_path)  # fmt: skip
+
+    async def get(path: str) -> httpx.Response:
+        transport = httpx.ASGITransport(app=create_app(state))
+        async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
+            return await c.get(path, headers={"Authorization": "Bearer tok"})
+
+    since = to_ts(clock.now() - timedelta(days=1))
+    body = anyio.run(get, f"/v1/stats?since={since}").json()
+    assert body["slack"]["posts"] == 1 and body["slack"]["retries"] == 1
+    assert body["slack"]["wait"]["median_s"] == 61 and body["slack"]["rate_hold_s"] == 60
+    assert "new_mail" in anyio.run(get, f"/v1/stats?since={since}&stages=1").json()
+    assert anyio.run(get, "/v1/stats?since=yesterday").status_code == 400
+    far = to_ts(clock.now() - timedelta(days=400))
+    assert anyio.run(get, f"/v1/stats?since={far}").status_code == 400
+    cli_stats.show_slack(body["slack"])
+    assert "1 post(s); 1 retries; 1 rate-limited (60 s held)" in capsys.readouterr().out

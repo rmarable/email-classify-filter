@@ -12,8 +12,10 @@ from typing import Any
 
 import anyio
 import httpx
+import pytest
+import typer
 
-from ecf.cli import _log_line, _since  # pyright: ignore[reportPrivateUsage]
+from ecf.cli import _log_line, _range  # pyright: ignore[reportPrivateUsage]
 from ecf.paths import Paths
 from ecf_server import audit, checks, db
 from ecf_server.api import ServiceState, create_app
@@ -108,6 +110,9 @@ def test_query_filters(conn: sqlite3.Connection, clock: FakeClock) -> None:
     ]
     since = to_ts(clock.now() - timedelta(minutes=5))
     assert names(audit.query(conn, INSTALL, since=since)) == ["check.failed", "config.applied"]
+    assert names(audit.query(conn, INSTALL, since=since, until=since)) == []  # OD-507
+    first = audit.query(conn, INSTALL)[0]["ts"]
+    assert names(audit.query(conn, INSTALL, until=first)) == ["check.completed", "action.granted"]
     assert names(audit.query(conn, INSTALL, limit=1)) == ["config.applied"]
     assert names(audit.query(conn, INSTALL, after_id=3)) == ["config.applied"]
     assert audit.query(conn, INSTALL, event_prefix="%") == []  # no LIKE wildcards
@@ -172,10 +177,16 @@ def test_logs_route(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -
     assert anyio.run(get, "?limit=abc").status_code == 400
 
 
-def test_cli_since_and_lines() -> None:
-    assert _since("2026-09-29T08:00") == "2026-09-29T08:00"
-    got = datetime.strptime(_since("2h"), "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+def test_cli_since_until_and_lines() -> None:
+    """`ecf logs` reads --since and --until with the one parser (OD-507 §3.1)."""
+    got, end = _range("2h", None)
+    assert got is not None and end is None
     assert abs((datetime.now(UTC) - timedelta(hours=2)) - got) < timedelta(seconds=5)
+    start, end = _range("3d", "1d")
+    assert start is not None and end is not None and end - start == timedelta(days=2)
+    assert _range(None, "2026-09-29T08:00Z") == (None, datetime(2026, 9, 29, 8, tzinfo=UTC))
+    with pytest.raises(typer.BadParameter):
+        _range("3 days", None)
     line = _log_line(
         {
             "id": 1,

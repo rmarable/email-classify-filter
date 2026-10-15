@@ -13,6 +13,10 @@ The pre-check queues each escalation (`escalations` table, state `pending`); the
 - Escalations V1.1 recorded as pending go into one summary post in the summary channel: counts by
   address and the 5 most severe of the last 7 days (OD-211); no thread each.
 
+Escalations of items a scan or reprocess marked (`marked.py`) aren't posted here: their rows are
+marked merged under the run's summary key, and the run's summary thread lists them (`scans.py`;
+OD-507 §2, §3.4). New mail during a scan posts as usual.
+
 Buttons: Show excerpt answers with an ephemeral message only you see (OD-214); Dismiss resolves a
 non-payment, non-fraud, non-regulator item (none of V1.2's escalations qualify; the rule is
 enforced here as well as by not showing the button). Undo is offered on digests (`digests.py`),
@@ -29,7 +33,7 @@ from typing import Any
 from ecf.errors import NotFoundError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import OPEN, Status
-from ecf_server import cards, items, slack_admin, slack_in, slack_out, slack_routes
+from ecf_server import cards, items, marked, slack_admin, slack_in, slack_out, slack_routes
 from ecf_server.chat import Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
@@ -66,6 +70,10 @@ def _post_address(
     conn: sqlite3.Connection, clock: Clock, aid: str, route: RouteRef, member: str
 ) -> int:
     rows = _items(conn, "e.state = 'pending' AND e.address_id = ?", (aid,))
+    marked_rows = [r for r in rows if marked.is_marked(_facts(r))]
+    for r in marked_rows:  # a scan's or reprocess's: its run's summary thread (OD-507 §2, PF8)
+        _mark(conn, clock, [r["stable_id"]], "merged", marked.head_key(marked.run_of(_facts(r))))
+    rows = [r for r in rows if not marked.is_marked(_facts(r))]
     rows = _cap(conn, clock, aid, route, rows)
     if not rows:
         return 0
@@ -160,18 +168,14 @@ def _cap(conn: sqlite3.Connection, clock: Clock, aid: str, route: RouteRef,
 
 
 def _burst_card(title: str, rows: list[sqlite3.Row], member: str) -> Card:
-    lines = [_line(r) for r in rows[:BURST_LIST]]
+    lines = [line(r) for r in rows[:BURST_LIST]]
     if len(rows) > BURST_LIST:
         lines.append(f"... and {len(rows) - BURST_LIST} more: ecf inbox")
     note = cards.PAYMENT_NOTE if any(cards.payment_or_fraud(_facts(r)) for r in rows) else ""
     return Card(title, text="\n".join(lines), note=note, mention=member)
 
 
-def _line(r: sqlite3.Row) -> str:
-    facts = _facts(r)
-    who = cards.sender_line(r, facts)
-    return (f"{cards.TITLES[cards.kind(facts)]}: {who}: {cards.subject_line(r)}"
-            f" (ecf item show {r['stable_id'][: cards.SHORT_ID]})")  # fmt: skip
+line = cards.escalation_line
 
 
 def _summarize_v11(conn: sqlite3.Connection, clock: Clock, member: str) -> int:
@@ -193,7 +197,7 @@ def _summarize_v11(conn: sqlite3.Connection, clock: Clock, member: str) -> int:
     top = sorted(recent, key=lambda r: (cards.severity(_facts(r)), r["esc_created_at"]))
     text = ["None in the last 7 days."]
     if top:
-        text = ["Most severe of the last 7 days:", *(_line(r) for r in top[:SUMMARY_TOP])]
+        text = ["Most severe of the last 7 days:", *(line(r) for r in top[:SUMMARY_TOP])]
     per_address = [(aid, f"{n} ({last} in the last 7 days)") for aid, (n, last) in counts.items()]
     card = Card(
         f"{len(rows)} escalation(s) recorded before Slack was connected",

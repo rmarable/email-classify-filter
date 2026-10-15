@@ -34,6 +34,7 @@ from ecf_server import (
     digest_actions,
     jobs,
     mailbox_actions,
+    marked,
     pause,
     schedule,
     slack_admin,
@@ -108,9 +109,9 @@ def post_now(conn: sqlite3.Connection, clock: Clock, ref: str) -> dict[str, Any]
 
 
 def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) -> Card | None:
-    rows = conn.execute(
-        "SELECT * FROM items WHERE address_id = ? AND created_at > ? AND created_at <= ?"
-        " ORDER BY created_at, stable_id",
+    rows = conn.execute(  # old mail: its run's summary instead (OD-507 §2)
+        "SELECT * FROM items WHERE address_id = ? AND created_at > ? AND created_at <= ?"  # noqa: S608
+        f" AND NOT {marked.sql()} ORDER BY created_at, stable_id",
         (aid, to_ts(since), to_ts(now)),
     ).fetchall()
     if not rows:
@@ -196,12 +197,26 @@ def may_undo(facts: dict[str, Any]) -> bool:
 @slack_in.handles(UNDO)
 def _undo_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (click.ref,)).fetchone()
+    try:
+        queue_undo(conn, clock, item, f"slack:{click.user}")
+    except ConflictError:
+        _tell(conn, clock, click, "Nothing to undo here (fraud and regulator labels stay).")
+        raise
+    _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
+                              " within a minute while your computer is awake.")  # fmt: skip
+
+
+def queue_undo(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row | None,
+               actor: str) -> str:  # fmt: skip
+    """The digest's Undo, for its button and `ecf item undo <id>` (OD-507 §4.3, P3): what the
+    model's plan did (`mailbox_actions.undoable`), else the pre-check's labels and flag
+    (`may_undo`); done at the item's next check. Returns which; raises ConflictError when
+    there's nothing to undo (fraud and regulator labels stay)."""
     if item is not None and mailbox_actions.undoable(item):  # what the model's plan did (V1.3)
-        _queue_model_undo(conn, clock, item, click)
-        return
+        _queue_model_undo(conn, clock, item, actor)
+        return "plan"
     facts: dict[str, Any] = json.loads(item["facts"] or "{}") if item else {}
     if item is None or not may_undo(facts):
-        _tell(conn, clock, click, "Nothing to undo here (fraud and regulator labels stay).")
         raise ConflictError("nothing to undo")
     facts["precheck"] = dict(facts.get("precheck") or {}) | {"undo": "queued"}
     now = to_ts(clock.now())
@@ -216,14 +231,13 @@ def _undo_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'action.undo_requested', ?, 'ok', '{}')",
-            (now, item["address_id"], item["stable_id"], f"slack:{click.user}"),
+            (now, item["address_id"], item["stable_id"], actor),
         )
-    _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
-                              " within a minute while your computer is awake.")  # fmt: skip
+    return "pre-check"
 
 
 def _queue_model_undo(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
-                      click: slack_in.Click) -> None:  # fmt: skip
+                      actor: str) -> None:  # fmt: skip
     doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
     doc["undo"] = "queued"
     now = to_ts(clock.now())
@@ -233,11 +247,9 @@ def _queue_model_undo(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'action.undo_requested', ?, 'ok', '{}')",
-            (now, item["address_id"], item["stable_id"], f"slack:{click.user}"),
+            (now, item["address_id"], item["stable_id"], actor),
         )
     jobs.make_due(conn, clock, item["address_id"])
-    _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
-                              " within a minute while your computer is awake.")  # fmt: skip
 
 
 def run_model_undos(conn: sqlite3.Connection, clock: Clock, src: MailSource, address_id: str,

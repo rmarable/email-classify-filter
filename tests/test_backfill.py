@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,7 +44,16 @@ def _since(clock: FakeClock, days: int) -> str:
     return (clock.now() - timedelta(days=days)).date().isoformat()
 
 
-def _items(conn: sqlite3.Connection) -> dict[int, sqlite3.Row]:
+def counted(env: Env, clock: FakeClock, box: Box, since: str, until: str | None = None) -> dict[
+        str, Any]:  # fmt: skip
+    """`--act`'s count (P11): asked, then answered by the next check under the lease."""
+    conn, _ = env
+    backfill.request_count(conn, clock, "ap", since, until)
+    run(env, clock, box)
+    return backfill.count(conn, "ap")
+
+
+def items_by_uid(conn: sqlite3.Connection) -> dict[int, sqlite3.Row]:
     return {json.loads(r["locator"])["uid"]: r for r in conn.execute("SELECT * FROM items")}
 
 
@@ -57,10 +67,16 @@ def test_records_only_decides_and_closes_without_acting(env: Env, clock: FakeClo
     assert run(env, clock, box).status == "first_run"  # starts from now
     new = box.fake.deliver(PLAIN)
     r = backfill.start(conn, clock, "ap", _since(clock, 10), act=False)
-    assert r == {"address_id": "ap", "since": _since(clock, 10), "act": False}
+    assert r == {
+        "address_id": "ap",
+        "since": _since(clock, 10),
+        "until": None,
+        "act": False,
+        "run_id": r["run_id"],
+    }  # a bare date: UTC midnight, as v2.2.x sent it (P13)
     report = run(env, clock, box)
     assert (report.created, report.backfill_created, report.backfill_remaining) == (1, 2, 0)
-    got = _items(conn)
+    got = items_by_uid(conn)
     assert set(got) == {new, old_fraud, old_plain}
     assert got[new]["status"] == Status.AWAITING_CLAUDE  # new mail: the ordinary path (C)
     for uid in (old_fraud, old_plain):
@@ -84,10 +100,11 @@ def test_act_runs_the_pre_check_as_for_new_mail(env: Env, clock: FakeClock) -> N
         conn.execute("UPDATE addresses SET stage = 'assist'")
     old_fraud = _old(box, clock, BEC, 2)
     run(env, clock, box)
+    counted(env, clock, box, _since(clock, 7))
     backfill.start(conn, clock, "ap", _since(clock, 7), act=True)
     report = run(env, clock, box)
     assert report.backfill_created == 1 and report.escalations == 1
-    item = _items(conn)[old_fraud]
+    item = items_by_uid(conn)[old_fraud]
     assert item["status"] == Status.AWAITING_CLAUDE and item["prechecked"] == 1
     assert box.fake.flags([old_fraud])[old_fraud]  # labelled and flagged (assist)
     assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
@@ -132,16 +149,17 @@ def test_refusals(env: Env, clock: FakeClock) -> None:
         backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
     run(env, clock, box)
     for bad in ("last week", "2026-13-01"):
-        with pytest.raises(InvalidInputError, match="date like"):
+        with pytest.raises(InvalidInputError, match="use a date"):
             backfill.start(conn, clock, "ap", bad, act=False)
     with pytest.raises(InvalidInputError, match="future"):
         backfill.start(conn, clock, "ap", _since(clock, -2), act=False)
     backfill.start(conn, clock, "ap", _since(clock, 7), act=False)
     with pytest.raises(ConflictError, match="already running"):
         backfill.start(conn, clock, "ap", _since(clock, 3), act=True)
-    assert backfill.status(conn) == [
-        {"address_id": "ap", "since": _since(clock, 7), "act": False, "outcome": "running",
-         "items": 0, "fraud": 0}]  # fmt: skip
+    [running] = backfill.status(conn)
+    assert running | {"run_id": "x"} == {
+        "address_id": "ap", "since": _since(clock, 7), "act": False, "outcome": "running",
+        "items": 0, "fraud": 0, "until": None, "run_id": "x", "held": 0}  # fmt: skip
     queued = conn.execute("SELECT payload FROM jobs WHERE queue = 'fetch'").fetchall()
     assert [json.loads(q[0]) for q in queued] == [{"reason": "backfill"}]
 
@@ -186,10 +204,10 @@ def test_a_pass_that_failed_to_decide_is_picked_up_next_time(
 
     monkeypatch.setattr(backfill, "decide", fail)
     assert run(env, clock, box).status == "internal_error"
-    assert _items(conn)[old]["status"] == Status.NEW  # created, not decided
+    assert items_by_uid(conn)[old]["status"] == Status.NEW  # created, not decided
     monkeypatch.setattr(backfill, "decide", real)
     run(env, clock, box)
-    assert _items(conn)[old]["status"] == Status.OBSERVED
+    assert items_by_uid(conn)[old]["status"] == Status.OBSERVED
     assert backfill.load(conn, "ap") is None
 
 

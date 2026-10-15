@@ -448,4 +448,4 @@ def test_0037_checkpoints_and_the_release_names_it() -> None:
     assert 37 in db.CHECKPOINT_AFTER
     release = json.loads((ROOT / "src/ecf_server/data/release.json").read_text())
     newest = max(m[0] for m in db._migration_files())  # pyright: ignore[reportPrivateUsage]
-    assert release["schema_version"] == newest >= 37  # 38 from v3.0.0 (ADR 0031)
+    assert release["schema_version"] == newest >= 37  # 38 from v3.0.0 (ADR 0031), 39 OD-507

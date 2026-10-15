@@ -85,11 +85,19 @@ def test_compose_puts_the_fixed_rules_before_a_file_that_would_hide_fraud() -> N
     assert _rule({}, rule_set=composed) == "hide_all"
 
 
-def test_the_digest_covers_both_files() -> None:
+def test_the_composed_digest_covers_both_files_the_schema_and_the_applied_text() -> None:
+    """One rules digest for items and eval results (OD-507 §4.1, P14): it changes with either
+    shipped file, the schema and the applied text, and is cached on the composed set (P27)."""
     data = resources.files("ecf_server.data")
-    h = hashlib.sha256(data.joinpath("fixed_rules.yaml").read_bytes()
-                       + data.joinpath("starter_rules.yaml").read_bytes())  # fmt: skip
-    assert rules.starter_digest() == h.hexdigest()
+    files = {n: hashlib.sha256(data.joinpath(n).read_bytes()).hexdigest()
+             for n in ("fixed_rules.yaml", "starter_rules.yaml")}  # fmt: skip
+    assert rules._file_digests() == files  # pyright: ignore[reportPrivateUsage]
+    base = rules.composed_digest(SCHEMA, None)
+    assert len(base) == 64 and rules.compose(SCHEMA).digest == base
+    hide_all = "version: 1\nrules:\n  - {id: hide_all, then: [archive]}\n"
+    assert rules.compose(SCHEMA, hide_all).digest == rules.composed_digest(SCHEMA, hide_all) != base
+    assert rules.composed_digest(load_schema_v2(), None) != base
+    assert rules.fallback_rules(SCHEMA).digest not in ("", base)
 
 
 @pytest.mark.parametrize("schema", [load_schema_v2(), load_schema_v2_0_0()],

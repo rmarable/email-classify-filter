@@ -4,6 +4,11 @@ Used by `ecf check` now and by the scheduler (V1.1 step 11b). The app password i
 secret store at each connect (never kept). A busy lease, a mail error, a rejected login or a lost
 lease becomes a report, not an exception; the outcome is stored in `check_state` and audited as
 `check.completed` or `check.failed` (counts only, never content).
+
+`timings` on the report (OD-507, plan §5 c, d): the mailbox's own IMAP times by phase (connect and
+login, select, search with its NOOP, fetch of new mail, fetch of backfilled mail, store) and the
+isolation children's (their wall time, DKIM/DMARC time, DNS answers without the network and
+network queries), summed over the check.
 """
 
 from __future__ import annotations
@@ -68,6 +73,7 @@ class CheckReport:
     second_install: bool = False  # mail from another install: the address was paused (§13.6)
     restored_keywords: bool = False  # ecf's labels on new mail after a restore (OD-372)
     download_budget: bool = False  # Gmail's daily download budget stopped fetching (OD-440)
+    timings: dict[str, Any] = field(default_factory=dict[str, Any])  # module notes (OD-507)
     error: str | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -152,7 +158,7 @@ InLease = Callable[[sqlite3.Connection, Clock, MailSource, str, str, int, Callab
 IN_LEASE: list[InLease] = []
 
 
-def _locked_check(
+def _locked_check(  # noqa: PLR0915 - one check, start to finish
     conn: sqlite3.Connection,
     clock: Clock,
     report: CheckReport,
@@ -209,13 +215,18 @@ def _locked_check(
                 install=install,
                 max_scan_bytes=cfg.max_scan_bytes,
             )
+            before_backfill = src.timings()
+            child = dict(page.child)
             if page.remaining == 0 and page.stopped != "lease_lost":  # new mail first
                 outcomes += _backfill(conn, clock, src, cfg, lease, report, install=install,
                                       analyzer=analyzer, lost=renewer.lost, dns=dns,
-                                      deadline=deadline)  # fmt: skip
+                                      deadline=deadline, child=child)  # fmt: skip
+            backfill.run_count(conn, clock, src, address_id, lease)  # an --act count (P11)
+            backfill_fetch = src.timings()["fetch"] - before_backfill["fetch"]
             for work in IN_LEASE:  # queued Undos (digests.py), actions (mailbox_actions.py)
                 work(conn, clock, src, address_id, install, cfg.max_scan_bytes,
                      renewer.lost.is_set)  # fmt: skip
+            report.timings = _timings(src.timings(), backfill_fetch, child)
         report.status = _page_status(page)
         report.created, report.duplicates = len(page.created), page.duplicates
         report.relocated = page.relocated
@@ -254,13 +265,17 @@ def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
     lost: threading.Event,
     dns: DnsCache,
     deadline: float,
+    child: dict[str, float],
 ) -> list[precheck.Outcome]:
-    """A page of an `ecf backfill` in progress, after the new mail (V1.2 step 11b)."""
+    """A page of an `ecf backfill` in progress, after the new mail (V1.2 step 11b); its
+    isolation children's counts are added to `child`."""
     bf = backfill.load(conn, cfg.address_id)
     if bf is None:
         return []
     page = backfill_page(conn, clock, src, cfg, lease, bf, lost=lost, analyzer=analyzer,
                          deadline=deadline, isolator=_isolator(conn, dns))  # fmt: skip
+    for k, v in page.child.items():
+        child[k] = child.get(k, 0.0) + v
     if page.stopped == "reset":
         backfill.finish(conn, clock, cfg.address_id, bf, "mailbox reset")
         return []
@@ -274,6 +289,19 @@ def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
     if page.remaining == 0 and page.stopped == "done":
         backfill.finish(conn, clock, cfg.address_id, bf, "done")
     return outcomes
+
+
+def _timings(imap: dict[str, float], backfill_fetch: float,
+             child: dict[str, float]) -> dict[str, Any]:  # fmt: skip
+    """The report's `timings` (module notes): seconds to the millisecond, counts as integers."""
+    phases = {k: v for k, v in imap.items() if k != "fetch"}
+    phases |= {"fetch_new": imap.get("fetch", 0.0) - backfill_fetch,
+               "fetch_backfill": backfill_fetch}  # fmt: skip
+    counts = ("messages", "dns_hits", "dns_queries")
+    return {
+        "imap_s": {k: round(max(v, 0.0), 3) for k, v in phases.items()},
+        "auth": {k: (int(v) if k in counts else round(v, 3)) for k, v in child.items()},
+    }
 
 
 def _isolator(conn: sqlite3.Connection, dns: DnsCache) -> Isolator | None:

@@ -139,6 +139,9 @@ def executor_for(
     def run(
         conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, planned: list[Planned]
     ) -> list[str]:
+        if not planned and _again_executed(item):  # reprocessed, nothing added: no IMAP at all
+            _remember(conn, clock, item["stable_id"], [])  # (its message may have moved)
+            return []
         folders = {f.name: f.roles for f in src.folders()}
         roles = GMAIL_ROLE if probe.is_gmail(conn, item["address_id"]) else ROLE
         why = refusal(conn, item, planned, folders) or next(
@@ -237,14 +240,26 @@ def _save_draft(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: s
             "content_hash": built.content_hash}  # fmt: skip
 
 
+def _again_executed(item: sqlite3.Row) -> bool:
+    """An executed item `ecf reprocess` decided again (OD-507 §4.3)."""
+    facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+    return facts.get("reprocess_from") == "executed"
+
+
 def _remember(conn: sqlite3.Connection, clock: Clock, sid: str,
               record: list[dict[str, Any]]) -> None:  # fmt: skip
-    row = conn.execute("SELECT proposal FROM items WHERE stable_id = ?", (sid,)).fetchone()
+    """Record what was done, for Undo. A reprocessed executed item's new record is appended, so
+    its original move stays findable (P3); then it is an ordinary executed item again."""
+    row = conn.execute("SELECT proposal, facts FROM items WHERE stable_id = ?", (sid,)).fetchone()
     doc: dict[str, Any] = json.loads(row["proposal"] or "{}")
-    doc["done"] = record
+    again = _again_executed(row)
+    doc["done"] = [*(doc.get("done") or []), *record] if again else record
     with write_tx(conn):
         conn.execute("UPDATE items SET proposal = ?, updated_at = ? WHERE stable_id = ?",
                      (json.dumps(doc, sort_keys=True), to_ts(clock.now()), sid))  # fmt: skip
+        if again:
+            conn.execute("UPDATE items SET facts = json_remove(facts, '$.reprocess_from',"
+                         " '$.reprocess_moved') WHERE stable_id = ?", (sid,))  # fmt: skip
 
 
 # Undo: which executed actions ecf may take back, and taking one back (deleting ecf's draft,

@@ -7,14 +7,14 @@ import logging
 import re
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__, service_unit, watch
+from ecf import __version__, cli_history, service_unit, timerange, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
@@ -93,6 +93,7 @@ make_destroy_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 app.add_typer(make_corpus_app(_paths), name="corpus")
 make_stats_command(app, _paths)
+cli_history.make_reprocess_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
 
@@ -289,13 +290,20 @@ def _check_line(r: dict[str, Any]) -> str:
 def backfill(
     address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
     since: Annotated[
-        str | None, typer.Option("--since", help="Read mail that arrived since this date.")
+        str | None,
+        typer.Option("--since", help="From: a date, a time (2026-09-29T08:00) or an age (3d)."),
+    ] = None,
+    until: Annotated[
+        str | None, typer.Option("--until", help="Up to this time (default now); same forms.")
     ] = None,
     act: Annotated[
-        bool, typer.Option("--act", help="Label, flag and escalate as for new mail.")
+        bool,
+        typer.Option("--act", help="Pre-check and classify as for new mail (step-up over 500)."),
     ] = False,
     stop: Annotated[bool, typer.Option("--stop", help="End a running backfill.")] = False,
-    yes: Annotated[bool, typer.Option("--yes", help="Don't ask before --act.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Don't ask before --act (step-up still applies).")
+    ] = False,
 ) -> None:
     """Read older mail (records only unless --act); with no address, show each backfill."""
     with LocalClient(_paths()) as c:
@@ -307,21 +315,13 @@ def backfill(
             typer.echo(f"stopped the backfill of {r['address_id']}; {r['items']} read so far stay")
             return
         if since is None:
-            raise typer.BadParameter("add --since <date>, e.g. --since 2026-09-01")
-        if act and not yes:
-            stage = next((s["stage"] for s in c.get("/v1/stages")["addresses"]
-                          if address in (s["address_id"], s.get("email"))), "?")  # fmt: skip
-            typer.echo(f"--act runs the pre-check on every email since {since} as on new mail;"
-                       f" {address} is in {stage} (shadow does nothing, assist labels and flags),"
-                       " and escalations post to Slack.")  # fmt: skip
-            if not typer.confirm("Go ahead?", default=False):
-                raise typer.Exit(1)
-        r = c.request("POST", "/v1/backfill", {"address_id": address, "since": since, "act": act})
-    how = "labels, flags and escalations as for new mail" if r["act"] else (
+            raise typer.BadParameter("add --since, e.g. --since 2026-09-01 or --since 30d")
+        r = cli_history.run_backfill(c, address, since, until, act=act, yes=yes)
+    how = "classified as new mail, after it" if r["act"] else (
         "records only: nothing is done to the mailbox or escalated")  # fmt: skip
-    typer.echo(f"backfill of {r['address_id']} since {r['since']} started ({how}); it runs with"
-               " the checks, new mail first. Progress: ecf backfill; to end it:"
-               f" ecf backfill {r['address_id']} --stop")  # fmt: skip
+    typer.echo(f"backfill {r['run_id']} of {r['address_id']} started ({how}); it runs with the"
+               " checks, new mail first, with one Slack summary. Progress: ecf backfill; to end"
+               f" it: ecf backfill {r['address_id']} --stop")  # fmt: skip
 
 
 def _backfill_status(rows: list[dict[str, Any]]) -> None:
@@ -330,8 +330,10 @@ def _backfill_status(rows: list[dict[str, Any]]) -> None:
         fraud = (f", {r['fraud']} with a fraud signal (ecf logs --address {r['address_id']}"
                  " --event precheck)") if r.get("fraud") else ""  # fmt: skip
         when = "" if r["outcome"] == "running" else f" at {r['at'][:16]}"
-        typer.echo(f"{r['address_id']:<16} since {r['since']} ({how}): {r['outcome']}{when},"
-                   f" {r['items']} read{fraud}")  # fmt: skip
+        until = f" until {str(r['until'])[:16]}" if r.get("until") else ""
+        held = f", {r['held']} already held" if r.get("held") else ""
+        typer.echo(f"{r['address_id']:<16} since {str(r['since'])[:16]}{until} ({how}):"
+                   f" {r['outcome']}{when}, {r['items']} read{held}{fraud}")  # fmt: skip
     if not rows:
         typer.echo("no backfill yet")
 
@@ -345,6 +347,9 @@ def logs(
     since: Annotated[
         str | None, typer.Option("--since", help="A time (2026-09-29T08:00) or an age (2h, 3d).")
     ] = None,
+    until: Annotated[
+        str | None, typer.Option("--until", help="Up to this time or age, in the same forms.")
+    ] = None,
     limit: Annotated[int, typer.Option("--limit", help="How many of the newest events.")] = 50,
     follow: Annotated[
         bool, typer.Option("--follow", "-f", help="Keep showing new events.")
@@ -356,8 +361,9 @@ def logs(
         params["address_id"] = address
     if event:
         params["event"] = event
-    if since:
-        params["since"] = _since(since)
+    if since or until:  # the range parser (OD-507 §3.1)
+        start, end = _range(since, until)
+        params |= {k: timerange.stamp(v) for k, v in (("since", start), ("until", end)) if v}
     with LocalClient(_paths()) as c:
         last = 0
         while True:
@@ -371,14 +377,15 @@ def logs(
             time.sleep(2)
 
 
-def _since(value: str) -> str:
-    """An age like 30m, 2h or 3d becomes a UTC timestamp; anything else is passed through."""
-    m = re.fullmatch(r"(\d+)([mhd])", value.strip())
-    if not m:
-        return value
-    unit = {"m": "minutes", "h": "hours", "d": "days"}[m.group(2)]
-    when = datetime.now(UTC) - timedelta(**{unit: int(m.group(1))})
-    return when.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def _range(since: str | None, until: str | None) -> tuple[datetime | None, datetime | None]:
+    """`--since`/`--until` through the one parser (OD-507 §3.1), refused with its hint."""
+    now = datetime.now(UTC)
+    try:
+        if since is None:
+            return None, timerange.parse(until or "0s", now=now, what="--until")
+        return timerange.resolve(since, until, now=now)
+    except InvalidInputError as exc:
+        raise typer.BadParameter(exc.detail) from None
 
 
 def _log_line(e: dict[str, Any]) -> str:

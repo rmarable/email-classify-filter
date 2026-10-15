@@ -6,6 +6,12 @@ the classifier's prompt digest is Claude's (`claude_review.prompt_digest`).
 - **Recorded:** the classification, the pinned models and the pin key (`pinned_models`, which the
   go-live gate binds to) and a `batch_id`; then the item moves to `classified` and the policy
   applies.
+- **Reprocessing key** (OD-507 §4.1; P14-P16): `pinned_models` also holds `provider`, `prompt`
+  (the full digest of the provider's own prompt function) and `rules` (`rules.composed_digest`
+  of the rules in force), beside `classifier` and `schema`; `ecf reprocess` compares them.
+- **`item.classified`** (OD-507 §5, D12): one audit row per stored classification: each schema
+  field's value (enum, level or boolean; never text), the model and 16-hex digest prefixes.
+  Never pruned, like the rest of the audit log; the values outlive the item (SPEC §6.5).
 
 Model output can raise risk but never lower it: what the classification may do is decided by the
 rules and policy (V1.3 step 4), never here.
@@ -19,6 +25,7 @@ from typing import Any
 
 from ecf.errors import ConflictError
 from ecf.ids import StableId
+from ecf.schema import CompiledSchema, FieldKind
 from ecf_server import claude_pins, config, decide, items
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -37,23 +44,35 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     batch_id: str | None = None,
     actor: str = "classifier",
     schema_digest: str | None = None,
+    provider: str = "claude",
+    context: TransitionContext | None = None,
 ) -> bool:
     """Record a classification and move the item to `classified`, then apply the policy
     (Claude's from `awaiting_claude`, V1.4 step 3).
     `schema_digest` is the schema the model was asked with: when the effective schema changed
     since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
-    item is asked again with the new one (OD-478)."""
+    item is asked again with the new one (OD-478). `context` is the transition's (a reprocessed
+    item's, OD-507 §4.3)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
+    # digests read before the write lock (P27); recomputed in it only if the schema moved
+    known = config.current_schema(conn)
+    keys = _keys(conn, known, provider)
     with write_tx(conn):  # read and record in one transaction: the schema can't move between
         schema = config.current_schema(conn)
         if schema_digest is not None and schema_digest != schema.digest:
             log.info("classifier.schema_changed", stable_id=stable_id[:8])
             return False
-        pinned = {
-            "schema": schema.digest,  # was the integer 1 before v2 (S16)
-            "pin_key": claude_pins.address_key(conn, aid),
-        } | models  # the gate's key (V1.4 step 2)
+        if schema.digest != known.digest:
+            keys = _keys(conn, schema, provider)
+        pinned = (
+            {
+                "schema": schema.digest,  # was the integer 1 before v2 (S16)
+                "pin_key": claude_pins.address_key(conn, aid),
+            }
+            | keys
+            | models
+        )  # the gate's key (V1.4 step 2); the reprocessing key (OD-507)
         conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"
             " schema_version = ? WHERE stable_id = ? AND status = ?",
@@ -67,9 +86,16 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
                 expected.value,
             ),
         )
+        conn.execute(
+            "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
+            " VALUES (?, ?, ?, 'item.classified', ?, 'ok', ?)",
+            (to_ts(clock.now()), aid, stable_id, actor,
+             json.dumps(classified_row(classification, schema, pinned), sort_keys=True)),
+        )  # fmt: skip
     try:
-        items.transition(conn, clock, StableId(stable_id), Status.CLASSIFIED, TransitionContext(),
-                         actor=actor, expected=expected)  # fmt: skip
+        items.transition(conn, clock, StableId(stable_id), Status.CLASSIFIED,
+                         context or TransitionContext(), actor=actor,
+                         expected=expected)  # fmt: skip
     except ConflictError:
         log.info("classifier.item_moved_on", stable_id=stable_id[:8])  # resolved meanwhile
         return True
@@ -78,3 +104,50 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     except Exception as exc:  # the tick's sweep tries again; the classification is kept
         log.error("policy.apply_failed", stable_id=stable_id[:8], error_type=type(exc).__name__)
     return True
+
+
+_PROMPTS: dict[tuple[str, str], str] = {}  # (provider, schema digest) -> its prompt digest
+
+
+def prompt_digest(schema: CompiledSchema, provider: str) -> str | None:
+    """The full digest of `provider`'s own prompt function (P15): Claude's for C. Jev's (preset
+    D) arrives with step 4; until then an unknown provider records none. Kept per schema digest
+    (the prompt is a function of the schema and this release)."""
+    if provider != "claude":
+        return None
+    key = (provider, schema.digest)
+    if key not in _PROMPTS:
+        from ecf_server import claude_review  # noqa: PLC0415 - claude_review imports this module
+
+        if len(_PROMPTS) >= 32:
+            _PROMPTS.clear()
+        _PROMPTS[key] = claude_review.prompt_digest(schema)
+    return _PROMPTS[key]
+
+
+def _keys(conn: sqlite3.Connection, schema: CompiledSchema, provider: str) -> dict[str, Any]:
+    """The reprocessing key's new parts (module notes)."""
+    out: dict[str, Any] = {"provider": provider, "rules": config.current_rules(conn).digest}
+    prompt = prompt_digest(schema, provider)
+    if prompt is not None:
+        out["prompt"] = prompt
+    return out
+
+
+def classified_row(classification: dict[str, Any], schema: CompiledSchema,
+                   pinned: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+    """`item.classified`'s data (D12, P20): each schema field's value when it is one of the
+    field's own values or a boolean, so no text a model wrote can reach the audit log; the model
+    and 16-hex prefixes of the digests."""
+    fields: dict[str, Any] = {}
+    for name, spec in schema.fields.items():
+        v = classification.get(name)
+        if spec.kind is FieldKind.BOOLEAN:
+            if isinstance(v, bool):
+                fields[name] = v
+        elif isinstance(v, str) and v in spec.values:
+            fields[name] = v
+    digests = {k: str(pinned[k]).removeprefix("schema-")[:16]
+               for k in ("schema", "prompt", "rules") if pinned.get(k)}  # fmt: skip
+    return {"fields": fields, "model": pinned.get("classifier"),
+            "provider": pinned.get("provider"), "digests": digests}  # fmt: skip
