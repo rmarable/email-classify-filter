@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 
@@ -101,13 +101,6 @@ class JevAsker:
 
     def __init__(self, opts: Options, clock: Clock, setup: Setup) -> None:
         self.opts = opts
-        self.fmt: Literal["s1", "s2"] = "s2" if opts.jev_state == "s2" else "s1"
-        self.preamble: Literal["state", "instructions"] = (
-            "instructions" if opts.jev_preamble == "instructions" else "state")  # fmt: skip
-        self.variant = jev.Variant(
-            fraud_risk="choice" if opts.jev_fraud_risk == "choice" else "score",
-            option_order="reversed" if opts.jev_option_order == "reversed" else "schema",
-            extra=(opts.jev_extra,) if opts.jev_extra else ())  # fmt: skip
         self.client = jev.Client(setup.key, transport=setup.transport, clock=clock,
                                  stop=RUN.stop, wait=setup.wait, on_pause=self._paused,
                                  budget_s=setup.budget_s,
@@ -144,8 +137,7 @@ class JevAsker:
         email = case_email(case, text)  # the `.eml` parse is not Jev's time (J13)
         t0 = time.monotonic()
         res = self.client.classify(schema, email, sent, first=self.first,
-                                   redact=self.opts.redact, fmt=self.fmt,
-                                   preamble=self.preamble, variant=self.variant)  # fmt: skip
+                                   redact=self.opts.redact)  # fmt: skip
         took = 1000 * (time.monotonic() - t0)
         (self.end_to_end_ms if res.fault is None else self.end_to_end_faulted_ms).append(took)
         self.first = self.first and not res.replied
@@ -196,12 +188,10 @@ class JevAsker:
         """What the run asked with (P13): top-level, so `ecf eval compare` prints differences."""
         pin = self.pin
         return {
-            "prompt_digest": jev.prompt_digest(schema, fmt=self.fmt, preamble=self.preamble,
-                                               pin=pin, variant=self.variant),
-            "input_format": jev.state_format_id(self.fmt, self.preamble),
+            "prompt_digest": jev.prompt_digest(schema, pin=pin),
+            "input_format": jev.state_format_id(),
             "excerpt_cap": jev.excerpt_cap(),
-            "gate_key": jev.gate_key(schema, rules_now, fmt=self.fmt, preamble=self.preamble,
-                                     pin=pin, variant=self.variant),
+            "gate_key": jev.gate_key(schema, rules_now, pin=pin),
         }  # fmt: skip
 
     def figures(self, schema: CompiledSchema, faulted: dict[str, str],
@@ -215,8 +205,8 @@ class JevAsker:
             by_type[f] = by_type.get(f, 0) + 1
         return self.client.stats.summary() | {
             "pin": self.pin,
-            "options": {"state": self.opts.jev_state, "preamble": self.opts.jev_preamble,
-                        "concurrency": self.opts.jev_concurrency} | self.variant.doc(),
+            "options": {"state": "s1", "preamble": "state", "fraud_risk": "choice",
+                        "concurrency": self.opts.jev_concurrency},
             "schema_digest": schema.digest,
             "end_to_end_ms": spread(self.end_to_end_ms),
             "end_to_end_faulted_ms": spread(self.end_to_end_faulted_ms),

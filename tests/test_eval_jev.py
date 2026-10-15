@@ -169,9 +169,12 @@ def test_a_jev_run_end_to_end_on_the_fake(
     row = _row(conn)
     assert (row["pair"], row["digest"], row["gate_passed"]) == ("jev/hosted", s["gate_key"], 0)
     j = s["jev"]
-    assert j["pin"] == PIN and j["options"] == {"state": "s1", "preamble": "state",
-                                                "concurrency": 1, "fraud_risk": "score",
-                                                "option_order": "schema", "extra": []}  # fmt: skip
+    assert j["pin"] == PIN and j["options"] == {
+        "state": "s1",
+        "preamble": "state",
+        "fraud_risk": "choice",
+        "concurrency": 1,
+    }
     assert j["latency_ms_by_concurrency"]["1"]["n"] == 10  # 5 cases + 5 determinism repeats
     # every 200's usage, repeats included (P21), and its cost line
     assert j["input_tokens_billed"] == 2 * sum(TOKENS.values())
@@ -213,7 +216,7 @@ def test_signals_are_sent_and_no_signals_leaves_them_out(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
     """OD-486: the same signals block the classifiers get; `--no-signals` is allowed for Jev
-    (R3) and makes the run not for the gate."""
+    (R3; step 3 measured it and kept the signals, OD-512) and makes the run not for the gate."""
     del conn
     wording = tuple(signals.WORDING.values())
     on = Fake()
@@ -227,23 +230,17 @@ def test_signals_are_sent_and_no_signals_leaves_them_out(
     assert snap["result"]["options"]["for_gate"] is False
 
 
-def test_measurement_options_make_the_run_not_for_the_gate(
+def test_the_concurrency_option_is_for_jev_and_only_1(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
+    """Only `--jev-concurrency` is left (1 in v3.0.0, S3-D4); step 3's other switches went with
+    its choice of configuration (OD-512)."""
     del conn
-    fake = Fake()
-    snap = run_jev(db_path, clock, root, fake, jev_state="s2", jev_preamble="instructions")
-    s = snap["result"]
-    assert s["options"]["for_gate"] is False
-    assert s["options"]["measuring"] == ["jev_state s2", "jev_preamble instructions"]
-    assert s["input_format"] == jev.state_format_id("s2", "instructions")
-    assert all(isinstance(st, dict) for st in fake.states if st != jev.KEY_CHECK_STATE)
-    _clear()
     with pytest.raises(InvalidInputError, match=r"not in v3\.0\.0"):
         run_jev(db_path, clock, root, Fake(), jev_concurrency=2)
     with pytest.raises(InvalidInputError, match="for the jev backend"):
         evalrun.start(lambda: db.connect(db_path), clock, db_path.parent,
-                      evalrun.Options(root, jev_state="s2"), spawn=_inline)  # fmt: skip
+                      evalrun.Options(root, jev_concurrency=2), spawn=_inline)  # fmt: skip
 
 
 def test_no_redact_only_with_fraud_only(
@@ -672,7 +669,7 @@ def test_preset_d_needs_a_complete_source_on_the_pin(
     _clear()
     with pytest.raises(InvalidInputError, match="there is none"):
         _start_d(db_path, clock, root)
-    run_jev(db_path, clock, root, Fake(), signals=False)  # an experiment
+    run_jev(db_path, clock, root, Fake(), for_gate=False)  # an experiment
     _clear()
     with pytest.raises(InvalidInputError, match="there is none"):
         _start_d(db_path, clock, root)
@@ -825,56 +822,10 @@ def test_preset_d_holds_what_its_source_run_held(
             assert "flag" in w.result.actions and w.result.unsure == ["phishing"]
 
 
-class Asked(Fake):
-    """The fake, keeping each case's questions."""
-
-    def __init__(self, **over: Any) -> None:
-        super().__init__(**over)
-        self.questions: list[dict[str, Any]] = []
-
-    def __call__(self, req: httpx.Request) -> httpx.Response:
-        sent = json.loads(req.content)
-        if isinstance(sent["state"], str) and "Subject: " in sent["state"]:
-            self.questions.append(sent["questions"])
-        return super().__call__(req)
-
-
-def test_the_measurement_switches_ask_and_map_as_they_say(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """J4-J6: fraud_risk asked as a choice with `none` last and mapped back to its level;
-    choice options reversed; the injection question asked, recorded with the probabilities,
-    never classified, and scored on its own; each is a measurement, not for the gate."""
-    answers = json.loads(json.dumps(body()["answers"]))
-    answers["fraud_risk"] = {
-        "choice": "none",
-        "probabilities": {"none": 0.7, "low": 0.2, "medium": 0.05, "high": 0.05},
-    }
-    answers["injection_attempt"] = {"noul": 0.9}
-    fake = Asked(answers=answers)
-    snap = run_jev(db_path, clock, root, fake, jev_fraud_risk="choice",
-                   jev_option_order="reversed", jev_extra="injection_attempt")  # fmt: skip
-    s = snap["result"]
-    assert s["options"]["for_gate"] is False
-    assert s["options"]["measuring"] == ["jev_fraud_risk choice", "jev_option_order reversed",
-                                         "jev_extra injection_attempt"]  # fmt: skip
-    q = fake.questions[0]
-    schema = evalrun.load_schema()
+def test_fraud_risk_is_asked_as_a_choice_with_none_last() -> None:
+    """J4 (OD-512): levels in schema order, `none` last, mapped back to a level."""
+    q = jev.questions(evalrun.load_schema())
     assert q["fraud_risk"]["type"] == "choice"
-    assert list(q["fraud_risk"]["criteria"]) == ["low", "medium", "high", "none"]  # never reversed
-    assert list(q["category"]["criteria"]) == list(reversed(schema.fields["category"].values))
-    assert q["injection_attempt"]["type"] == "noul"
-    result = load_result(Path(_row(conn)["path"]))
-    c = result.cases[0]
-    assert c.got["fraud_risk"] == "none" and "injection_attempt" not in c.got
-    assert c.probabilities is not None and c.probabilities["injection_attempt"] == {"true": 0.9}
-    extra = s["extra"]["injection_attempt"]
-    assert extra["positives"] == extra["tp"] + extra["fn"] and extra["fn"] == 0
-    assert s["prompt_digest"] != jev.prompt_digest(schema, pin=PIN)
-
-
-def test_fraud_risk_as_a_choice_lists_none_last_in_schema_order() -> None:
-    q = jev.questions(evalrun.load_schema(), variant=jev.Variant(fraud_risk="choice"))
     assert list(q["fraud_risk"]["criteria"]) == ["low", "medium", "high", "none"]
 
 
@@ -895,7 +846,6 @@ def test_the_sweep_tables_every_candidate_from_recorded_runs(
     per group a row per candidate, each scored under its own bound on every card and on each
     fold (true cards caught only grow as the bound falls); the bar tables; no file written; a
     run asked differently is refused."""
-    del monkeypatch
     paths: list[Path] = []
     for p in (0.4, 0.2):  # phishing's mean probability 0.3
         answers = json.loads(json.dumps(body()["answers"]))
@@ -924,7 +874,8 @@ def test_the_sweep_tables_every_candidate_from_recorded_runs(
     assert all(abs(c.probabilities["phishing"]["true"] - 0.3) < 1e-9 for c in mean)
     assert all(c.got["phishing"] is False for c in mean)
     assert sweep.report(paths, root) == r  # deterministic
-    snap = run_jev(db_path, clock, root, Fake(), jev_option_order="reversed")
+    _banded(monkeypatch, bands={"phishing": 0.4})  # another mapping: another prompt digest
+    snap = run_jev(db_path, clock, root, Fake())
     assert snap["state"] == "done", snap
     with pytest.raises(InvalidInputError, match="asked differently"):
         sweep.report([*paths, Path(_row(conn)["path"])], root)
