@@ -1214,8 +1214,32 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         ),
     ] = "state",
     jev_concurrency: Annotated[
-        int, typer.Option("--jev-concurrency", help="With jev: 1 (the only value in step 2).")
+        int, typer.Option("--jev-concurrency", help="With jev: 1 (the only value in v3.0.0).")
     ] = 1,
+    jev_fraud_risk: Annotated[
+        str,
+        typer.Option(
+            "--jev-fraud-risk",
+            help="With jev: ask fraud_risk as a score (default) or a choice; choice is a"
+            " measurement, not for the gate.",
+        ),
+    ] = "score",
+    jev_option_order: Annotated[
+        str,
+        typer.Option(
+            "--jev-option-order",
+            help="With jev: choice options in schema order (default) or reversed; reversed is"
+            " a measurement, not for the gate.",
+        ),
+    ] = "schema",
+    jev_extra_question: Annotated[
+        str | None,
+        typer.Option(
+            "--jev-extra-question",
+            help="With jev: also ask injection_attempt (recorded, never classified); a"
+            " measurement, not for the gate.",
+        ),
+    ] = None,
 ) -> None:
     """Run the synthetic set through ecf's rules with the null classifier (every field at its
     least risky value; seconds, no model): the rules-alone floor and a wiring check, never
@@ -1229,7 +1253,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if claude:
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
-        jev_opts = (jev_state, jev_preamble, jev_concurrency) != ("s1", "state", 1)
+        jev_opts = (
+            jev_state,
+            jev_preamble,
+            jev_concurrency,
+            jev_fraud_risk,
+            jev_option_order,
+            jev_extra_question,
+        ) != ("s1", "state", 1, "score", "schema", None)
         if classifier_backend != "null" or not redact or not_for_gate or not signals or jev_opts:
             raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
                                     " --no-signals and the --jev-* options are for `ecf eval"
@@ -1243,7 +1274,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "backend": classifier_backend, "redact": redact, "for_gate": not not_for_gate,
             "signals": signals, "copy_to": str(copy) if copy else None,
             "jev_state": jev_state, "jev_preamble": jev_preamble,
-            "jev_concurrency": jev_concurrency})  # fmt: skip
+            "jev_concurrency": jev_concurrency, "jev_fraud_risk": jev_fraud_risk,
+            "jev_option_order": jev_option_order, "jev_extra": jev_extra_question})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:
         typer.echo(f"  The result is also written to {copy}/ when the run ends.")

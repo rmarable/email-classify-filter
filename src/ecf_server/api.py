@@ -927,7 +927,10 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
                                signals=body.get("signals") is not False,
                                jev_state=_opt_str(body, "jev_state") or "s1",
                                jev_preamble=_opt_str(body, "jev_preamble") or "state",
-                               jev_concurrency=_jev_concurrency(body))  # fmt: skip
+                               jev_concurrency=_jev_concurrency(body),
+                               jev_fraud_risk=_opt_str(body, "jev_fraud_risk") or "score",
+                               jev_option_order=_opt_str(body, "jev_option_order") or "schema",
+                               jev_extra=_opt_str(body, "jev_extra"))  # fmt: skip
         asker = None
         if opts.backend == evalrun.JEV:  # the key is read here, then re-read per try (P12, J10)
             from ecf_server import evaljev, jev  # noqa: PLC0415 - eval only, not a service import

@@ -491,7 +491,7 @@ def _check_user_rule(r: Rule, *, last: bool, source: str) -> None:
     conds = [r.when, r.actor.continue_if if isinstance(r.actor, ContinueIf) else None]
     conds += [a.if_ for a in r.then]
     for cond in conds:
-        for c in _compares(cond):
+        for c in compares(cond):
             for v in _wanted(c):
                 use = REMOVED_VALUES.get((str(c.field), str(v))) if c.field else None
                 if use is not None:
@@ -499,13 +499,14 @@ def _check_user_rule(r: Rule, *, last: bool, source: str) -> None:
                                             f" asks for; use `{use}`")  # fmt: skip
 
 
-def _compares(c: Compare | And | Or | Not | None) -> list[Compare]:
+def compares(c: Compare | And | Or | Not | None) -> list[Compare]:
+    """Every comparison inside a condition, however nested."""
     if c is None:
         return []
     if isinstance(c, And | Or):
-        return [x for part in (c.and_ if isinstance(c, And) else c.or_) for x in _compares(part)]
+        return [x for part in (c.and_ if isinstance(c, And) else c.or_) for x in compares(part)]
     if isinstance(c, Not):
-        return _compares(c.not_)
+        return compares(c.not_)
     return [c]
 
 

@@ -137,3 +137,9 @@ name = "The classifier never imports Jev (v3.0.0 step 2, P9): step 4 dispatches 
 type = "forbidden"
 source_modules = ["ecf_server.classifier"]
 forbidden_modules = ["ecf_server.jev"]
+
+[[tool.importlinter.contracts]]
+name = "Jev's mapping has no transport (v3.0.0 step 3): the service's readers may use it"
+type = "forbidden"
+source_modules = ["ecf_server.jev_mapping"]
+forbidden_modules = ["ecf_server.jev", "ecf_server.evaljev", "ecf_server.evalrun", "httpx"]

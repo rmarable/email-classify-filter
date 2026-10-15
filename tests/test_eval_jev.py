@@ -1,12 +1,13 @@
 """`ecf eval run --classifier-backend jev` and `/ecf-eval --preset D` (v3.0.0 step 2d;
 planning-docs/JEV-STEP2.md §6, §8 "Eval (2d)"; OD-503, OD-504): a run on the fake transport,
 per-case figures, signals, the refusals, faulted cases scored as failures, incomplete runs, the
-stops that fail a run, the inputs `compare` warns on, rescore preservation, result format 2,
-preset D's source query and the report lines. Every Jev call goes to an `httpx.MockTransport`;
-`tests/conftest.py` makes the real transport raise."""
+stops that fail a run, the inputs `compare` warns on, rescore preservation, the result format (3
+from step 3), preset D's source query and the report lines. Every Jev call goes to an
+`httpx.MockTransport`; `tests/conftest.py` makes the real transport raise."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shutil
@@ -30,7 +31,18 @@ from ecf.eval.results import (
     load_result,
 )
 from ecf.paths import Paths
-from ecf_server import claude_eval, claude_pins, db, evaljev, evalrun, jev, schedule, signals
+from ecf_server import (
+    claude_eval,
+    claude_pins,
+    db,
+    evaljev,
+    evalrun,
+    jev,
+    jev_mapping,
+    policy,
+    schedule,
+    signals,
+)
 from ecf_server.clock import FakeClock
 from ecf_server.secretstore.memory import MemorySecretStore
 from tests.test_addresses import call, make_state
@@ -158,7 +170,8 @@ def test_a_jev_run_end_to_end_on_the_fake(
     assert (row["pair"], row["digest"], row["gate_passed"]) == ("jev/hosted", s["gate_key"], 0)
     j = s["jev"]
     assert j["pin"] == PIN and j["options"] == {"state": "s1", "preamble": "state",
-                                                "concurrency": 1}  # fmt: skip
+                                                "concurrency": 1, "fraud_risk": "score",
+                                                "option_order": "schema", "extra": []}  # fmt: skip
     assert j["latency_ms_by_concurrency"]["1"]["n"] == 10  # 5 cases + 5 determinism repeats
     # every 200's usage, repeats included (P21), and its cost line
     assert j["input_tokens_billed"] == 2 * sum(TOKENS.values())
@@ -171,7 +184,7 @@ def test_a_jev_run_end_to_end_on_the_fake(
     assert KEY not in text and "req_" not in text.lower() and "request_id" not in text
     assert "Updated remittance" not in text  # no message text (I5)
     result = load_result(Path(row["path"]))
-    assert result.format == RESULT_FORMAT == 2
+    assert result.format == RESULT_FORMAT == 3
     assert all(c.tries == 1 and c.fault is None and c.confidence for c in result.cases)
     assert len(fake.cases) == 10 and evalrun.RUN.snapshot()["state"] == "done"
 
@@ -226,7 +239,7 @@ def test_measurement_options_make_the_run_not_for_the_gate(
     assert s["input_format"] == jev.state_format_id("s2", "instructions")
     assert all(isinstance(st, dict) for st in fake.states if st != jev.KEY_CHECK_STATE)
     _clear()
-    with pytest.raises(InvalidInputError, match="not in step 2"):
+    with pytest.raises(InvalidInputError, match=r"not in v3\.0\.0"):
         run_jev(db_path, clock, root, Fake(), jev_concurrency=2)
     with pytest.raises(InvalidInputError, match="for the jev backend"):
         evalrun.start(lambda: db.connect(db_path), clock, db_path.parent,
@@ -516,7 +529,7 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     old = load_result(path)
     rescore = evalrun.rescore_synthetic if how == "synthetic" else evalrun.rescore_through_policy
     new = load_result(Path(rescore(root, path, clock)["path"]))
-    assert new.format == 2
+    assert new.format == 3
     for a, b in zip(old.cases, new.cases, strict=True):
         for k in (*evalrun.KEPT_CASE_FIELDS, "probabilities", "classifier_ms"):
             assert getattr(a, k) == getattr(b, k), (a.id, k)
@@ -529,16 +542,16 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     assert s1.get("incomplete_reason") == ("faulted_safety_card" if incomplete else None)
 
 
-def test_format_2_and_the_old_client_message(
+def test_format_3_and_the_old_client_message(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
     root: Path, tmp_path: Path,
 ) -> None:  # fmt: skip
-    """P16: files without `format` read as 1; this ecf writes 2; from this version on, an ecf
-    refuses a file of a later format with a reason, not a validation dump (an ecf from before
-    format 2 can't read a format-2 file at all, J9)."""
+    """P16: files without `format` read as 1; this ecf writes 3 (step 3's band fields); an ecf
+    from step 2 on refuses a file of a later format with a reason, not a validation dump (an ecf
+    from before format 2 can't read a format-2 file at all, J9)."""
     del conn
     path = _jev_result(monkeypatch, db_path, clock, root, incomplete=False)
-    assert json.loads(path.read_text())["format"] == 2
+    assert json.loads(path.read_text())["format"] == 3
     raw = json.loads(path.read_text())
     del raw["format"]
     for c in raw["cases"]:
@@ -549,8 +562,8 @@ def test_format_2_and_the_old_client_message(
     assert load_result(older).format == 1
     from ecf.eval import results  # noqa: PLC0415
 
-    monkeypatch.setattr(results, "RESULT_FORMAT", 1)  # an older client
-    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 2\); run `uv"):
+    monkeypatch.setattr(results, "RESULT_FORMAT", 2)  # a step-2 client
+    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 3\); run `uv"):
         load_result(path)
 
 
@@ -739,3 +752,235 @@ def test_compare_prints_jev_figures_faults_and_why_a_run_is_incomplete(
     measuring = {"classifier": True, "actor": False, "measuring": ["jev_state s2"]}
     assert caveat(s | {"complete": True, "options": measuring}) == (
         " (jev backend: not for the gate until step 4; jev_state s2)")  # fmt: skip
+
+
+# Step 3: Jev's caution in the eval. A banded mapping holds the cases its unsure fields name, the
+# same in a live run, in a remap of its result and in a preset D run on it; the measurement
+# switches ask and map as they say.
+
+
+def _banded(monkeypatch: pytest.MonkeyPatch, **doc: Any) -> jev_mapping.JevMapping:
+    m = jev_mapping.parse({"bands": {}, "bars": {}, "none_bars": {}} | doc)
+    monkeypatch.setattr(jev_mapping, "load", lambda: m)
+    return m
+
+
+def _unsure_phishing() -> dict[str, Any]:
+    answers = json.loads(json.dumps(body()["answers"]))
+    answers["phishing"] = {"noul": 0.4}  # a no today; unsure under a 0.3 band
+    return {"answers": answers}
+
+
+def test_a_band_holds_the_unsure_cases_live_and_a_remap_agrees(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """§3.2-§3.4: every answered case is unsure on phishing, so each is flagged and left with no
+    hide; the result records it (format 3) and its digest names the mapping; `remap` of the
+    result under the same mapping scores every case the same, and under no band as a run with
+    no band does."""
+    shipped = jev.prompt_digest(evalrun.load_schema(), pin=PIN)
+    m = _banded(monkeypatch, bands={"phishing": 0.3})
+    snap = run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    s = snap["result"]
+    assert s["prompt_digest"] != shipped  # the mapping is in it
+    assert s["band"]["held_cases"] == 5 and s["band"]["unsure"] == {"phishing": 5}
+    assert s["band"]["mapping_digest"] == jev_mapping.digest(m)
+    result = load_result(Path(_row(conn)["path"]))
+    for c in result.cases:
+        assert c.unsure == ["phishing"] and "unsure: phishing" in (c.held or [])
+        assert "flag" in c.actions and not set(c.actions) & set(jev_mapping.HIDE_ACTIONS)
+        assert c.fields.get("phishing") in (None, False)  # unsure is never right (P2)
+    inputs = evaljev.remap_inputs(root, clock, evalrun.load_schema())
+    again = {c.id: c for c in evaljev.remap(result, inputs, m)}
+    for c in result.cases:
+        r = again[c.id]
+        assert (r.actions, r.safety, r.correct, r.held, r.unsure) == (
+            c.actions, c.safety, c.correct, c.held, c.unsure), c.id  # fmt: skip
+    _clear()
+    monkeypatch.setattr(jev_mapping, "load", jev_mapping.JevMapping)
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    plain = {c.id: c for c in load_result(Path(_row(conn)["path"])).cases}
+    for r in evaljev.remap(result, inputs, jev_mapping.JevMapping()):
+        p = plain[r.id]
+        assert (r.actions, r.safety, r.correct, r.held) == (p.actions, p.safety, p.correct, None)
+
+
+def test_preset_d_holds_what_its_source_run_held(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """§3.1: D's source carries each case's unsure and below-bar fields, and D's plan is held
+    the same way."""
+    del conn
+    _banded(monkeypatch, bands={"phishing": 0.3})
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    for w in run.works:
+        assert w.derived.unsure == {"phishing"}
+        if w.result is not None:  # scored at once (no actor asked)
+            assert "flag" in w.result.actions and w.result.unsure == ["phishing"]
+
+
+class Asked(Fake):
+    """The fake, keeping each case's questions."""
+
+    def __init__(self, **over: Any) -> None:
+        super().__init__(**over)
+        self.questions: list[dict[str, Any]] = []
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        sent = json.loads(req.content)
+        if isinstance(sent["state"], str) and "Subject: " in sent["state"]:
+            self.questions.append(sent["questions"])
+        return super().__call__(req)
+
+
+def test_the_measurement_switches_ask_and_map_as_they_say(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """J4-J6: fraud_risk asked as a choice with `none` last and mapped back to its level;
+    choice options reversed; the injection question asked, recorded with the probabilities,
+    never classified, and scored on its own; each is a measurement, not for the gate."""
+    answers = json.loads(json.dumps(body()["answers"]))
+    answers["fraud_risk"] = {
+        "choice": "none",
+        "probabilities": {"none": 0.7, "low": 0.2, "medium": 0.05, "high": 0.05},
+    }
+    answers["injection_attempt"] = {"noul": 0.9}
+    fake = Asked(answers=answers)
+    snap = run_jev(db_path, clock, root, fake, jev_fraud_risk="choice",
+                   jev_option_order="reversed", jev_extra="injection_attempt")  # fmt: skip
+    s = snap["result"]
+    assert s["options"]["for_gate"] is False
+    assert s["options"]["measuring"] == ["jev_fraud_risk choice", "jev_option_order reversed",
+                                         "jev_extra injection_attempt"]  # fmt: skip
+    q = fake.questions[0]
+    schema = evalrun.load_schema()
+    assert q["fraud_risk"]["type"] == "choice"
+    assert list(q["fraud_risk"]["criteria"]) == ["low", "medium", "high", "none"]  # never reversed
+    assert list(q["category"]["criteria"]) == list(reversed(schema.fields["category"].values))
+    assert q["injection_attempt"]["type"] == "noul"
+    result = load_result(Path(_row(conn)["path"]))
+    c = result.cases[0]
+    assert c.got["fraud_risk"] == "none" and "injection_attempt" not in c.got
+    assert c.probabilities is not None and c.probabilities["injection_attempt"] == {"true": 0.9}
+    extra = s["extra"]["injection_attempt"]
+    assert extra["positives"] == extra["tp"] + extra["fn"] and extra["fn"] == 0
+    assert s["prompt_digest"] != jev.prompt_digest(schema, pin=PIN)
+
+
+def test_fraud_risk_as_a_choice_lists_none_last_in_schema_order() -> None:
+    q = jev.questions(evalrun.load_schema(), variant=jev.Variant(fraud_risk="choice"))
+    assert list(q["fraud_risk"]["criteria"]) == ["low", "medium", "high", "none"]
+
+
+def _sweep() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "jev_sweep", Path(__file__).parent.parent / "scripts" / "jev_sweep.py")  # fmt: skip
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_sweep_tables_every_candidate_from_recorded_runs(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """§6 as decided (D1, D2): two runs' mean probabilities; folds that split every card once;
+    per group a row per candidate, each scored under its own bound on every card and on each
+    fold (true cards caught only grow as the bound falls); the bar tables; no file written; a
+    run asked differently is refused."""
+    del monkeypatch
+    paths: list[Path] = []
+    for p in (0.4, 0.2):  # phishing's mean probability 0.3
+        answers = json.loads(json.dumps(body()["answers"]))
+        answers["phishing"] = {"noul": p}
+        run_jev(db_path, clock, root, Fake(answers=answers))
+        paths.append(Path(_row(conn)["path"]))
+        _clear()
+    before = sorted(paths[0].parent.iterdir())
+    sweep = _sweep()
+    r = sweep.report(paths, root)
+    assert sorted(paths[0].parent.iterdir()) == before  # writes nothing
+    assert set(r["folds"]["a"]) | set(r["folds"]["b"]) == set(SUBJECTS)
+    assert not set(r["folds"]["a"]) & set(r["folds"]["b"])
+    for g in r["groups"].values():
+        rows = g["table"]
+        assert [x["lo"] for x in rows] == list(sweep.CANDIDATES)
+        for x in rows:  # the folds add up to the whole
+            for k in ("false_flagged", "true_caught_unsure", "true_clear_no"):
+                assert x["a"][k] + x["b"][k] == x["all"][k]
+        caught = [x["all"]["true_caught_unsure"] for x in rows[1:]]  # 0.30 .. 0.45
+        assert caught == sorted(caught, reverse=True)
+    phishing = {x["lo"]: x for x in r["groups"]["phishing"]["table"]}
+    assert phishing[None]["held_cases"] == 0 and phishing[0.30]["held_cases"] == 5  # p 0.3
+    assert set(r["bars"]) == {"category", "sender_type"}
+    mean = sweep.mean_cases([load_result(p) for p in paths], evalrun.load_schema())
+    assert all(abs(c.probabilities["phishing"]["true"] - 0.3) < 1e-9 for c in mean)
+    assert all(c.got["phishing"] is False for c in mean)
+    assert sweep.report(paths, root) == r  # deterministic
+    snap = run_jev(db_path, clock, root, Fake(), jev_option_order="reversed")
+    assert snap["state"] == "done", snap
+    with pytest.raises(InvalidInputError, match="asked differently"):
+        sweep.report([*paths, Path(_row(conn)["path"])], root)
+
+
+def test_the_sweep_leaves_out_an_answer_that_didnt_map(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """D3: a 200 whose answers don't map is no card in the means, never a made-up answer."""
+    answers = json.loads(json.dumps(body()["answers"]))
+    del answers["phishing"]
+    run_jev(db_path, clock, root, Fake(answers=answers))
+    result = load_result(Path(_row(conn)["path"]))
+    assert all(c.got.get("phishing") is None for c in result.cases)
+    mean = _sweep().mean_cases([result], evalrun.load_schema())
+    assert [c.got for c in mean] == [c.got for c in result.cases]  # kept as recorded: failures
+
+
+def test_a_policy_rescore_of_a_banded_result_holds_the_same(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """D5, D6: `rescore --through-policy` of a banded result holds every case as the run did
+    and keeps the band figures; `rescore --synthetic` keeps them too."""
+    _banded(monkeypatch, bands={"phishing": 0.3})
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    path = Path(_row(conn)["path"])
+    live = load_result(path)
+    for rescore in (evalrun.rescore_through_policy, evalrun.rescore_synthetic):
+        new = load_result(Path(rescore(root, path, clock)["path"]))
+        band = cast(dict[str, Any], (new.summary or {})["band"])
+        assert band["held_cases"] == 5
+        for a, b in zip(live.cases, new.cases, strict=True):
+            assert (a.actions, a.held, a.unsure, a.safety) == (b.actions, b.held, b.unsure,
+                                                               b.safety), a.id  # fmt: skip
+
+
+def test_preset_d_drops_an_actors_hide_on_an_unsure_case(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """D6: the hold comes after the actor's proposal, so an archive it proposes on an unsure
+    case is dropped and the email left and flagged; D's summary has the band figures."""
+    del conn
+    _banded(monkeypatch, bands={"phishing": 0.3})
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    w = run.works[0]
+    w.plan = evalrun.planned(w.case, w.classification or {}, w.facts, run.rules, run.known)[1]
+    # an archive the actor proposed and policy accepted (`_proposed` appends it), then scored
+    w.plan.actions.append(policy.Planned("archive", None, "auto"))
+    w.result, w.stage = None, "act"
+    claude_eval._score(run, w)  # pyright: ignore[reportPrivateUsage]
+    assert w.result is not None and "archive" not in w.result.actions
+    assert "flag" in w.result.actions and "unsure: phishing" in (w.result.held or [])
+    assert w.plan is not None and any(d.name == "archive" for d in w.plan.dropped)
