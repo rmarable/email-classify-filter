@@ -114,10 +114,24 @@ def read_wheel(path: Path) -> Release:
     return Release(path, cast("dict[str, Any]", info), pins)
 
 
+NOUL_TRUE = 0.5  # `ecf_server.systemone.NOUL_TRUE`, in the mapping's digest
+
+
 def mapping_digest(doc: Any) -> str:
-    """A `jev_mapping.json`'s canonical digest, as the service computes it
-    (`ecf_server.jev_keys.mapping_digest`): formatting never moves it."""
-    raw = json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    """A `jev_mapping.json`'s digest as the service computes it (`ecf_server.jev_mapping.digest`
+    over the parsed mapping: numbers as floats, tables sorted, the fixed yes threshold and tie
+    rule), so formatting or the comment never moves it. The new wheel's service checks the file;
+    a table that isn't an object reads as empty here."""
+    d: dict[str, Any] = cast("dict[str, Any]", doc) if isinstance(doc, dict) else {}
+
+    def table(key: str) -> dict[str, float]:
+        raw: Any = d.get(key) or {}
+        t = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+        return {k: float(v) for k, v in sorted(t.items()) if isinstance(v, int | float)}
+
+    canon = {"noul_true": NOUL_TRUE, "score_tie": "higher", "bands": table("bands"),
+             "bars": table("bars"), "none_bars": table("none_bars")}  # fmt: skip
+    raw = json.dumps(canon, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

@@ -25,6 +25,7 @@ from ecf_server import (
     jev,
     jev_dispatch,
     jev_keys,
+    jev_mapping,
     model_watch,
     pause,
     reprocess,
@@ -196,11 +197,25 @@ def test_the_wheel_names_jevs_pin_and_mapping(tmp_path: Path) -> None:
     assert (fams, hit) == (["jev"], ["d"])
 
 
+def test_the_client_digests_a_mapping_as_the_service_does() -> None:
+    """The upgrade check (`ecf`, which can't import the service) and Jev's gate key
+    (`jev_mapping.digest`) agree on the shipped mapping and on a banded one, whatever its
+    formatting or comment."""
+    shipped = json.loads((Path(jev_mapping.__file__).parent / "data" / jev_mapping.FILE)
+                         .read_text("utf-8"))  # fmt: skip
+    assert upgrade_check.mapping_digest(shipped) == jev_mapping.digest()
+    doc = {"_comment": "x", "version": 1, "bands": {"phishing": 0.3, "bank_detail_change": 0.25},
+           "bars": {"sender_type": 1}, "none_bars": {"fraud_risk": 0.6}}  # fmt: skip
+    assert upgrade_check.mapping_digest(doc) == jev_mapping.digest(jev_mapping.parse(doc))
+    same = upgrade_check.mapping_digest(doc | {"_comment": "y"})
+    assert same == upgrade_check.mapping_digest(doc)
+
+
 def test_the_service_names_ds_pin_users(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add(conn, clock, "c", "C")
     add(conn, clock, "d", "D")
     st = upgrade_state.state(conn, clock, api_version=1, sessions=0)
-    assert st["pins"]["jev"] == PIN and "jev_mapping" not in st["pins"]
+    assert st["pins"]["jev"] == PIN and st["pins"]["jev_mapping"] == jev_mapping.digest()
     assert st["pin_users"]["jev"] == ["d"] and st["pin_users"]["actor"] == ["c", "d"]
     assert "d" not in st["pin_users"]["classifier"]
 

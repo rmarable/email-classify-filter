@@ -163,10 +163,11 @@ class ServiceClient(jev.Client):
 
     def classify(self, schema: CompiledSchema, email: jev.Email, sent: tuple[str, ...], *,
                  first: bool = False, redact: bool = True, fmt: jev.StateFormat = "s1",
-                 preamble: jev.Preamble = "state") -> jev.Result:  # fmt: skip
+                 preamble: jev.Preamble = "state",
+                 variant: jev.Variant = jev.DEFAULT) -> jev.Result:  # fmt: skip
         self._short_used = False
         return super().classify(schema, email, sent, first=first, redact=redact, fmt=fmt,
-                                preamble=preamble)  # fmt: skip
+                                preamble=preamble, variant=variant)  # fmt: skip
 
     def _breaker_gate(self) -> float:
         return 0.0  # the tick probes while Jev is down; no in-call cool-down

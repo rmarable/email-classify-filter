@@ -23,6 +23,7 @@ from ecf_server import (
     jev,
     jev_dispatch,
     jev_keys,
+    jev_mapping,
     rules,
     settings,
 )
@@ -38,8 +39,8 @@ FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "jev" / "reply.json")
 PIN = jev.load_pin()
 # Jev's digests for the shipped schema and starter rules, pinned byte for byte (step 4, P5): the
 # only literal digests in the suite; step 3's merge updates these two constants
-SHIPPED_GATE_KEY = "jev:jev-1.13.0+fb054e575c647498+jev-s1-state-591085348159+c0f3d8c33ed4d64c"
-SHIPPED_PROMPT_DIGEST = "b0328533caf07634b0a2a65a571dab289b56d1275914cf98e92ba22ae6a8b6ea"
+SHIPPED_GATE_KEY = "jev:jev-1.13.0+09ee40d8eb2c6a2c+jev-s1-state-591085348159+4bda346d85b2e354"
+SHIPPED_PROMPT_DIGEST = "7d5d7c4a69471f0107a43465cda400afb77bbd6e2d01bdb95899d3290ffcf852"
 
 
 def ok(**over: Any) -> Any:
@@ -171,7 +172,7 @@ def test_jev_keys_reads_the_lock_and_names_the_model() -> None:
     assert jev_keys.display_name(PIN) == f"TypeSafe Jev {PIN.removeprefix('jev-')}"
     assert jev_keys.display_name("claude-sonnet-5-5") is None
     assert jev_keys.KEY_SECRET == jev.KEY_SECRET and jev_keys.HOST == jev.HOST
-    assert jev_keys.mapping_digest() is None  # step 3 ships the mapping
+    assert jev_keys.mapping_digest() == jev_mapping.digest()  # step 3 ships the mapping
 
 
 # Where D items wait (§2.1, P13): the Claude queue, but never C's counts or /ecf-review's classify.

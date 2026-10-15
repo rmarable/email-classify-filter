@@ -22,7 +22,6 @@ pin from `jev.lock` and the digest of step 3's `jev_mapping.json` when the relea
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -58,13 +57,13 @@ def pin() -> str:
 
 
 def mapping_digest() -> str | None:
-    """The canonical digest of the shipped `jev_mapping.json` (sorted keys, compact), or None when
-    this release ships none (step 3 adds it)."""
-    raw = _data(MAPPING)
-    if raw is None:
+    """The digest of the shipped `jev_mapping.json` as Jev's gate key has it
+    (`jev_mapping.digest`: the parsed mapping, canonical), or None when this release ships none."""
+    if _data(MAPPING) is None:
         return None
-    doc = json.dumps(json.loads(raw), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(doc.encode("utf-8")).hexdigest()
+    from ecf_server import jev_mapping  # noqa: PLC0415 - jev_mapping imports policy, which reads us
+
+    return jev_mapping.digest()
 
 
 def display_name(model_id: str | None) -> str | None:
