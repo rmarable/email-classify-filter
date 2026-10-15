@@ -39,8 +39,8 @@ KEY = "ts-test-key-CANARY-91c2"  # invented
 PIN = jev.load_pin()
 # Jev's digests for the shipped schema and starter rules, pinned byte for byte (step 4, P5);
 # re-pinned to step 3's settings (OD-512)
-SHIPPED_GATE_KEY = "jev:jev-1.13.0+65e64c628ce580a0+jev-s1-state-591085348159+756d5a46eeb1a384"
-SHIPPED_PROMPT_DIGEST = "f18ab4fb150751cfcec8b1c4771b1e075617e4ba86d7778c5f8b381342365e4f"
+SHIPPED_GATE_KEY = "jev:jev-1.13.0+65e64c628ce580a0+jev-s1-state-591085348159+0fd82c418986dfe7"
+SHIPPED_PROMPT_DIGEST = "d5b1400d354e2171f42b20539e9466c8dd82a7e166f8546c4bac498a72534eb2"
 
 
 def ok(**over: Any) -> Any:
