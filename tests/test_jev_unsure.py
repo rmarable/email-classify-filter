@@ -38,7 +38,8 @@ from ecf_server.policy import Context
 from ecf_server.rules import HIDE_ACTIONS
 from tests.test_claude_review import row
 from tests.test_decide import KNOWN_BULK, MARKETING, make_address, make_classified
-from tests.test_jev_dispatch import FIXTURE, add_d, d_item, drain, ok, rig
+from tests.test_jev import body as jev_body
+from tests.test_jev_dispatch import add_d, d_item, drain, ok, rig
 from tests.test_policy import CONTEXTS, SCHEMA
 
 FIXED = dict.fromkeys(FIXED_ITEMS, False)
@@ -74,7 +75,7 @@ def test_the_drain_stores_jevs_caution_beside_the_answer(
     _banded(monkeypatch, bands={"phishing": 0.3}, bars={"category": 0.95})
     add_d(conn, clock)
     sid = d_item(conn, clock)
-    answers = json.loads(json.dumps(FIXTURE["body"]["answers"]))
+    answers = jev_body()["answers"]
     answers["phishing"] = {"noul": 0.4}  # a no today; unsure under a 0.3 band
     live, _script, _waits = rig(ok(answers=answers))
     assert drain(conn, clock, live).ok == 1
@@ -90,17 +91,31 @@ def test_the_drain_stores_jevs_caution_beside_the_answer(
     assert "unsure: phishing; below bar: category" in str(cards.classified_line(r))
 
 
-def test_with_the_shipped_mapping_the_drain_stores_no_caution(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
+@pytest.mark.parametrize(("over", "unsure", "below"), [
+    ({}, [], []),  # the recorded reply: every banded no at 0.1, both choices at 0.9
+    ({"bank_detail_change": {"noul": 0.35}}, ["bank_detail_change"], []),  # band 0.30
+    ({"requires_action": {"noul": 0.45}}, ["requires_action"], []),  # band 0.40
+    ({"phishing": {"noul": 0.45}}, [], []),  # no band for phishing (OD-512)
+    ({"category": {"choice": "invoice", "probabilities": {"invoice": 0.55, "other": 0.45}}},
+     [], ["category"]),  # bar 0.6
+])  # fmt: skip
+def test_the_shipped_mapping_marks_only_its_own_bands(
+    conn: sqlite3.Connection, clock: FakeClock, over: dict[str, Any], unsure: list[str],
+    below: list[str]
+) -> None:  # fmt: skip
+    """Step 3's shipped mapping (OD-512): bands 0.30 and 0.40, bars category 0.6 and
+    sender_type 0.5, no `fraud_risk` bar; the recorded reply's `none` at 0.7 is never unsure."""
     add_d(conn, clock)
     sid = d_item(conn, clock)
-    live, _script, _waits = rig(ok())
+    answers = jev_body()["answers"] | over
+    live, _script, _waits = rig(ok(answers=answers))
     drain(conn, clock, live)
     j = json.loads(row(conn, sid)["facts"])["jev"]
-    assert (j["unsure"], j["below_bar"]) == ([], [])
+    assert (j["unsure"], j["below_bar"]) == (unsure, below)
     assert j["probabilities"]["payment_related"] == {"true": 0.8}
-    assert ";" not in str(cards.classified_line(row(conn, sid)))
+    assert j["probabilities"]["fraud_risk"]["none"] == 0.7
+    line = str(cards.classified_line(row(conn, sid)))
+    assert ("unsure:" in line, "below bar:" in line) == (bool(unsure), bool(below))
 
 
 def test_a_claude_store_drops_an_earlier_jev_caution(conn: sqlite3.Connection,

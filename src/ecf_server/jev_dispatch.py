@@ -197,12 +197,9 @@ class ServiceClient(jev.Client):
         self.long_wait_s: float | None = None  # the last `long_wait`'s Retry-After
 
     def classify(self, schema: CompiledSchema, email: jev.Email, sent: tuple[str, ...], *,
-                 first: bool = False, redact: bool = True, fmt: jev.StateFormat = "s1",
-                 preamble: jev.Preamble = "state",
-                 variant: jev.Variant = jev.DEFAULT) -> jev.Result:  # fmt: skip
+                 first: bool = False, redact: bool = True) -> jev.Result:  # fmt: skip
         self._short_used = False
-        return super().classify(schema, email, sent, first=first, redact=redact, fmt=fmt,
-                                preamble=preamble, variant=variant)  # fmt: skip
+        return super().classify(schema, email, sent, first=first, redact=redact)
 
     def _breaker_gate(self) -> float:
         return 0.0  # the tick probes while Jev is down; no in-call cool-down
