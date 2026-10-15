@@ -333,6 +333,10 @@ def _db(tmp_path: Path, clock: Any) -> sqlite3.Connection:
 
     conn = db.connect(tmp_path / "ecf.db")
     db.migrate(conn)
+    # The bounds measure ecf's code, not the disk: with the service's synchronous=FULL each commit's
+    # fsync counts in process_time as system time, which on the CI runner made the store test about
+    # three times its Mac figure on every run (2026-10-15), whatever the re-timing.
+    conn.execute("PRAGMA synchronous=OFF")
     conn.execute("INSERT INTO addresses (address_id, email, sensitivity, stage, preset, created_at)"
                  " VALUES ('ap', 'ap@acme.example', 'standard', 'live', 'C', 'now')")  # fmt: skip
     conn.execute("INSERT INTO probe (address_id, host, probed_at) VALUES ('ap', 'h', 'now')")
