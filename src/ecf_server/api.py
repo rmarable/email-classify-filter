@@ -919,10 +919,10 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
     def start_eval(request: Request) -> JSONResponse:
         body = _body(request)
         if body.get("corpus_session") is not None:  # R-D5, P5: no model runs over real mail
-            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031); real"
-                                    " mail goes to Jev only through a preset D address (step"
-                                    " 4). `ecf eval routes --corpus` and `ecf eval rescore"
-                                    " --corpus` still read a corpus")  # fmt: skip
+            raise InvalidInputError("corpus runs aren't available since v3.0.0 (ADR 0031): no"
+                                    " model is run over real mail in an eval. `ecf eval routes"
+                                    " --corpus` and `ecf eval rescore --corpus` still read a"
+                                    " corpus")  # fmt: skip
         root = Path(_str(body, "root")).expanduser()
         if not root.is_absolute() or not (root / "labels.jsonl").is_file():
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
