@@ -14,6 +14,10 @@ the logs); Jev's from v3.0.0 step 4.
 
 Grouped by model (manifest digest) and role. Calls follow `log_retention_days` (model_calls is
 pruned with the logs).
+
+**Jev** (preset D, v3.0.0 step 4; `model_calls.backend = 'jev'`, migration 0040): apart, as
+`jev`: classifier calls and probes, failed calls by fault, billed input tokens per email, and the
+call time (median and p95 of `ms`); `ecf stats` and the daily summary show one line.
 """
 
 from __future__ import annotations
@@ -98,11 +102,12 @@ def _time(values: Sequence[float]) -> dict[str, float | None]:
 def report(conn: sqlite3.Connection, since: datetime, *, address: str | None = None,
            preset: str | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf stats`: figures by model and role since `since`, and all roles together."""
-    rows = conn.execute(
+    every = conn.execute(
         "SELECT * FROM model_calls WHERE ts >= ? AND (? IS NULL OR address_id = ?)"
         " AND (? IS NULL OR preset = ?) ORDER BY digest, role",
         (to_ts(since), address, address, preset, preset),
     ).fetchall()
+    rows = [r for r in every if r["backend"] != "jev"]
     groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
     for r in rows:
         groups.setdefault((r["digest"], r["role"]), []).append(r)
@@ -112,7 +117,28 @@ def report(conn: sqlite3.Connection, since: datetime, *, address: str | None = N
         "groups": [{"model": d, "role": role} | summarize(map(_call, rs))
                    for (d, role), rs in groups.items()],
         "all": summarize(map(_call, rows), emails=emails),
+        "jev": (j := jev_summary([r for r in every if r["backend"] == "jev"]))
+        | {"line": jev_line(j)},
     }  # fmt: skip
+
+
+def jev_summary(rows: list[sqlite3.Row]) -> dict[str, Any]:
+    """Jev's calls (step 4): classifier calls and probes, failures by fault, billed input tokens
+    per email classified, and the call time."""
+    calls = [r for r in rows if r["role"] == "classifier"]
+    ok = [r for r in calls if r["outcome"] == "ok"]
+    faults: dict[str, int] = {}
+    for r in calls:
+        if r["outcome"] != "ok":
+            faults[str(r["fault"] or "error")] = faults.get(str(r["fault"] or "error"), 0) + 1
+    tokens = sum(int(r["prompt_tokens"] or 0) for r in ok)
+    seconds = [r["ms"] / 1000 for r in ok if r["ms"] is not None]
+    return {"calls": len(calls), "emails": len(ok), "failed": len(calls) - len(ok),
+            "faults": faults, "probes": sum(1 for r in rows if r["role"] == "probe"),
+            "input_tokens": tokens,
+            "tokens_per_email": _r(tokens / len(ok), 0) if ok else None,
+            "seconds": _time(seconds),
+            "models": sorted({str(r["model"]) for r in rows if r["model"]})}  # fmt: skip
 
 
 def _call(r: sqlite3.Row) -> Call:
@@ -120,9 +146,33 @@ def _call(r: sqlite3.Row) -> Call:
                 r["prompt_ns"], r["eval_ns"], r["load_ns"], r["total_ns"])  # fmt: skip
 
 
-def daily_line(conn: sqlite3.Connection, since: datetime) -> str | None:
+def jev_line(j: dict[str, Any]) -> str | None:
+    """Jev's line for `ecf stats` and the daily summary, or None when it wasn't called."""
+    if not j["calls"]:
+        return None
+    out = f"TypeSafe Jev: {j['calls']} calls for {j['emails']} email(s)"
+    if j["failed"]:
+        out += f" ({j['failed']} failed: " + ", ".join(
+            f"{k} {v}" for k, v in sorted(j["faults"].items())) + ")"  # fmt: skip
+    if j["tokens_per_email"] is not None:
+        out += f", about {j['tokens_per_email']:.0f} input tokens per email"
+    sec = j["seconds"]
+    if sec["median"] is not None:
+        out += f", {sec['median']:.2f} s per call (p95 {sec['p95']:.2f})"
+    return out
+
+
+def jev_daily_line(conn: sqlite3.Connection, since: datetime,
+                   r: dict[str, Any] | None = None) -> str | None:  # fmt: skip
+    """`r`: a `report` already made (the daily summary makes one for both lines)."""
+    line = jev_line((r or report(conn, since))["jev"])
+    return f"{line} (ecf stats)" if line else None
+
+
+def daily_line(conn: sqlite3.Connection, since: datetime,
+               r: dict[str, Any] | None = None) -> str | None:  # fmt: skip
     """One line for the daily summary, or None when the model didn't run."""
-    a = report(conn, since)["all"]
+    a = (r or report(conn, since))["all"]
     if not a["calls"]:
         return None
     gen, sec = a["generation_tps"], a["seconds"]

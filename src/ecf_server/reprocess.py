@@ -52,6 +52,7 @@ from ecf_server import (
     config,
     decide,
     items,
+    jev_keys,
     scans,
     stepup,
 )
@@ -73,10 +74,16 @@ _MOVES = frozenset({"archive", "move", "junk"})
 
 
 def current_key(conn: sqlite3.Connection, address_id: str) -> dict[str, Any]:
-    """The key an item classified now would get (preset C; D's with step 4)."""
+    """The key an item classified now would get: Claude's for C; for D (v3.0.0 step 4, S4-D16)
+    Jev's pin and the prompt digest `jev_dispatch` stored."""
     schema = config.current_schema(conn)
-    sens = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
-                        (address_id,)).fetchone()["sensitivity"]  # fmt: skip
+    a = conn.execute("SELECT sensitivity, preset FROM addresses WHERE address_id = ?",
+                     (address_id,)).fetchone()  # fmt: skip
+    if a["preset"] == jev_keys.PRESET:
+        return {"provider": "jev", "classifier": jev_keys.pin(),
+                "prompt": classifier.jev_prompt(conn, schema), "schema": schema.digest,
+                "rules": config.current_rules(conn).digest}  # fmt: skip
+    sens = a["sensitivity"]
     role = "classifier_high" if sens == "high" else "classifier"
     return {"provider": "claude", "classifier": claude_pins.effective(conn)[role],
             "prompt": classifier.prompt_digest(schema, "claude"), "schema": schema.digest,
@@ -372,11 +379,20 @@ def _move(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row, mode: str,
     sid = r["stable_id"]
     ctx = TransitionContext(reprocess=True)
     frm = Status(r["status"])
-    if mode == "reclassify":  # its whole key is written when Claude's classification is stored
+    if mode == "reclassify":  # its whole key is written when the classification is stored
         # the old classification goes in the same write, or `/ecf-review` would only offer the
         # item to the actor (`claude_review.need_of`); its key is in the `item.reprocessed` audit
         items.transition(conn, clock, sid, Status.AWAITING_CLAUDE, ctx, actor="service",
                          expected=frm, clear_classification=True)  # fmt: skip
+        preset = conn.execute("SELECT preset FROM addresses WHERE address_id = ?",
+                              (r["address_id"],)).fetchone()[0]  # fmt: skip
+        if preset == jev_keys.PRESET:
+            # D: Jev's drain takes only an unclassified item, after new mail (S4-D16, P12)
+            with write_tx(conn):
+                # and Jev's old caution (`facts.jev`), read with no classification otherwise
+                conn.execute("UPDATE items SET facts = json_remove(facts, '$.jev_attempts',"
+                             " '$.jev') WHERE stable_id = ?", (sid,))  # fmt: skip
+            jev_keys.WAKE.set()
         return
     items.transition(conn, clock, sid, Status.PROPOSED, ctx, actor="service", expected=frm)
     decide.apply(conn, clock, sid, actor=False)  # planned again; never the actor (no model)

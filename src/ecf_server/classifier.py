@@ -13,6 +13,11 @@ the classifier's prompt digest is Claude's (`claude_review.prompt_digest`).
   field's value (enum, level or boolean; never text), the model and 16-hex digest prefixes.
   Never pruned, like the rest of the audit log; the values outlive the item (SPEC §6.5).
 
+- **Preset D** (v3.0.0 step 4; OD-509): TypeSafe Jev's drain (`jev_dispatch`) stores with
+  `provider="jev"`. Its UPDATE also requires `classification IS NULL` (P3): a store that touched
+  no row (classified meanwhile) writes no audit row and moves nothing. Jev's prompt digest is the
+  one `jev_dispatch` stored (`jev_keys.stored`): this module never imports `jev`.
+
 Model output can raise risk but never lower it: what the classification may do is decided by the
 rules and policy (V1.3 step 4), never here.
 """
@@ -26,7 +31,7 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import CompiledSchema, FieldKind
-from ecf_server import claude_pins, config, decide, items
+from ecf_server import claude_pins, config, decide, items, jev_keys
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -46,13 +51,18 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     schema_digest: str | None = None,
     provider: str = "claude",
     context: TransitionContext | None = None,
+    jev: dict[str, Any] | None = None,
 ) -> bool:
     """Record a classification and move the item to `classified`, then apply the policy
     (Claude's from `awaiting_claude`, V1.4 step 3).
     `schema_digest` is the schema the model was asked with: when the effective schema changed
     since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
-    item is asked again with the new one (OD-478). `context` is the transition's (a reprocessed
-    item's, OD-507 §4.3)."""
+    item is asked again with the new one (OD-478); Jev's guarded store over a classification also
+    writes nothing and returns False. `context` is the transition's (a reprocessed
+    item's, OD-507 §4.3). `jev`: Jev's `facts.jev` (unsure and below-bar fields, probabilities,
+    confidence; `jev_facts.record`), stored beside the classification in the same write; any
+    other store removes an earlier one, so Claude's classification is never read with Jev's
+    caution (OD-511)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
     # digests read before the write lock (P27); recomputed in it only if the schema moved
@@ -73,19 +83,30 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
             | keys
             | models
         )  # the gate's key (V1.4 step 2); the reprocessing key (OD-507)
-        conn.execute(
-            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"
-            " schema_version = ? WHERE stable_id = ? AND status = ?",
+        # Jev's drain stores only over no classification (P3): never twice
+        guard = " AND classification IS NULL" if provider == "jev" else ""
+        facts = (
+            "json_set(coalesce(facts, '{}'), '$.jev', json(?))" if jev is not None
+            else "CASE WHEN ? IS NULL AND json_extract(facts, '$.jev') IS NOT NULL"
+                 " THEN json_remove(facts, '$.jev') ELSE facts END"
+        )  # fmt: skip
+        cur = conn.execute(
+            "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"  # noqa: S608
+            f" schema_version = ?, facts = {facts} WHERE stable_id = ? AND status = ?{guard}",
             (
                 json.dumps(classification, sort_keys=True),
                 json.dumps(pinned, sort_keys=True),
                 batch_id or f"single:{stable_id[:16]}",
                 to_ts(clock.now()),
                 schema.version,
+                json.dumps(jev, sort_keys=True) if jev is not None else None,
                 stable_id,
                 expected.value,
             ),
         )
+        if guard and cur.rowcount != 1:  # nothing written: the caller's claim isn't done
+            log.info("classifier.already_classified", stable_id=stable_id[:8])
+            return False
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'item.classified', ?, 'ok', ?)",
@@ -110,9 +131,9 @@ _PROMPTS: dict[tuple[str, str], str] = {}  # (provider, schema digest) -> its pr
 
 
 def prompt_digest(schema: CompiledSchema, provider: str) -> str | None:
-    """The full digest of `provider`'s own prompt function (P15): Claude's for C. Jev's (preset
-    D) arrives with step 4; until then an unknown provider records none. Kept per schema digest
-    (the prompt is a function of the schema and this release)."""
+    """The full digest of `provider`'s own prompt function (P15): Claude's for C (Jev's, for D, is
+    the stored one: `jev_prompt`); another provider records none. Kept per schema digest (the
+    prompt is a function of the schema and this release)."""
     if provider != "claude":
         return None
     key = (provider, schema.digest)
@@ -128,10 +149,18 @@ def prompt_digest(schema: CompiledSchema, provider: str) -> str | None:
 def _keys(conn: sqlite3.Connection, schema: CompiledSchema, provider: str) -> dict[str, Any]:
     """The reprocessing key's new parts (module notes)."""
     out: dict[str, Any] = {"provider": provider, "rules": config.current_rules(conn).digest}
-    prompt = prompt_digest(schema, provider)
+    prompt = prompt_digest(schema, provider) if provider != "jev" else jev_prompt(conn, schema)
     if prompt is not None:
         out["prompt"] = prompt
     return out
+
+
+def jev_prompt(conn: sqlite3.Connection, schema: CompiledSchema) -> str | None:
+    """Jev's prompt digest for `schema`, as `jev_dispatch` stored it (`jev.keys`); None when the
+    stored one was for another schema."""
+    k = jev_keys.stored(conn)
+    return str(k["prompt_digest"]) if k.get("schema") == schema.digest and k.get(
+        "prompt_digest") else None  # fmt: skip
 
 
 def classified_row(classification: dict[str, Any], schema: CompiledSchema,

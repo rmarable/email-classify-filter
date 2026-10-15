@@ -137,7 +137,7 @@ def test_typesafe_set_replace_clear(env: Env, conn: sqlite3.Connection) -> None:
     assert [n.split(" (install")[0] for n in notices] == [
         "The TypeSafe API key was set", "The TypeSafe API key was replaced",
         "The TypeSafe API key was removed"]  # fmt: skip
-    assert "(install `t`); a running Jev eval stops." in notices[2]
+    assert "(install `t`); a running Jev eval stops and preset D mail waits." in notices[2]
     assert all("ecf models api-key clear --provider typesafe" in n for n in notices)
     assert env.audit(conn) == [("models.jev_key_set", {"replaced": False}),
                                ("models.jev_key_set", {"replaced": True}),

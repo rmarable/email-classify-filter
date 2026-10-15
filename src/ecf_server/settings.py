@@ -133,6 +133,8 @@ _install = [
     Key("review_sample_rate", "install", _int(0, 100), 10),  # percent, after the gate count
     Key("claude_review_reminder_hours", "install", _int(1, 168), 24),  # OD-115 (V1.4 step 9)
     Key("export_keep", "install", _int(1, 365), 14),  # scheduled bundles kept (§11.9; V1.5)
+    # awake, online minutes of Jev faults before Jev is down for preset D (OD-510; step 3 sets it)
+    Key("jev_down_after_minutes", "install", _int(5, 1440), 15),
 ]
 _address = [
     Key("max_message_bytes", "address", _megabytes, "64 MB high, 16 MB standard"),

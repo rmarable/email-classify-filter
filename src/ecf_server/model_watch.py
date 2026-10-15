@@ -17,6 +17,11 @@
   System Error (`models_api`), cleared by the next success; offline (the host doesn't resolve)
   waits an hour and raises nothing.
 - **Ollama library:** the tags-page watch went with the local model in v3.0.0 (ADR 0031).
+- **TypeSafe's models** (only with the TypeSafe key; v3.0.0 step 4, hand-off 6): `GET /v1/models`
+  once a week, recording each listed alias's `release_date` (top key `models`; items `name`,
+  `description`, `release_date`; SPEC §21.2's live check). The listing shows aliases only, so it
+  can't see the pinned version retire (`jev.lock`); a failure is shown in `ecf models status`
+  only, offline waits an hour.
 - **ecf releases** (operator decision D7, 2026-10-06): the release list of ecf's GitHub
   repository through `gh` (ecf/release_source.py; metadata only, nothing downloaded), once a
   week. The newest stable release newer than this ecf goes on the next daily summary, once,
@@ -24,7 +29,8 @@
   status` only. The service runs it only when given a lister (`service.py`).
 
 Nothing here ever changes a pin: a newer model is never adopted automatically. The watch sends no
-mail content anywhere: an API key to api.anthropic.com, and to GitHub only `gh`'s own sign-in.
+mail content anywhere: an API key to api.anthropic.com or api.typesafe.ai, and to GitHub only
+`gh`'s own sign-in.
 """
 
 from __future__ import annotations
@@ -34,13 +40,13 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from ecf import __version__, release_source
 from ecf.errors import ConflictError, EcfError, InvalidInputError
-from ecf_server import alerts, claude_pins, health
+from ecf_server import alerts, claude_pins, health, jev_keys
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -59,6 +65,8 @@ REMIND_DAYS = (30, 7)
 NEXT, CLAUDE, RETIRE = ("model_watch.next_at", "model_watch.claude",
                         "model_watch.retirement")  # fmt: skip
 RELEASE = "model_watch.release"
+JEV = "model_watch.jev"  # TypeSafe's aliases and their release dates (step 4)
+JEV_MODELS_URL = f"https://{jev_keys.HOST}/v1/models"
 GITHUB_HOST = "api.github.com"
 API_ALERT, MISSING_ALERT, RETIRE_KIND = "models_api", "models_missing", "model_retirement"
 HttpFactory = Callable[[], httpx.Client]
@@ -229,9 +237,12 @@ def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: Secre
     is a week on, or an hour on when a host didn't resolve."""
     offline = False
     key = _key(store)
+    jev_key = _key(store, jev_keys.KEY_SECRET)
     with http() as client:
         if key:
             offline |= _claude(conn, clock, notifier, client, key) == "offline"
+        if jev_key:
+            offline |= _jev(conn, clock, client, jev_key) == "offline"
     if releases is not None:
         offline |= _release(conn, clock, releases) == "offline"
     now = clock.now()
@@ -240,11 +251,11 @@ def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: Secre
     return status(conn)
 
 
-def _key(store: SecretStore | None) -> str | None:
+def _key(store: SecretStore | None, name: str = KEY_SECRET) -> str | None:
     if store is None:
         return None
     try:
-        return store.get(KEY_SECRET)
+        return store.get(name)
     except Exception:  # a locked store: run without the key this time
         return None
 
@@ -300,6 +311,38 @@ def _claude(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, client: 
     else:
         health.resolve_alert(conn, clock, notifier, MISSING_ALERT, None)
     return "ok"
+
+
+def _jev(conn: sqlite3.Connection, clock: Clock, client: httpx.Client, key: str) -> str:
+    """TypeSafe's aliases and their `release_date` (hand-off 6); numbers and names only."""
+    now = to_ts(clock.now())
+    if not health.resolves(jev_keys.HOST):
+        return "offline"
+    try:
+        headers = {"Authorization": f"Bearer {key}", "User-Agent": "ecf"}
+        r = client.get(JEV_MODELS_URL, headers=headers, timeout=TIMEOUT_S)
+        if r.status_code != 200:
+            raise ModelsApiError(f"http_{r.status_code}", f"HTTP {r.status_code}")
+        listed: Any = r.json().get("models")
+        aliases = {str(m["name"]): str(m.get("release_date") or "")
+                   for m in cast("list[dict[str, Any]]", listed)}  # fmt: skip
+    except httpx.TimeoutException:
+        err = f"no answer in {TIMEOUT_S:.0f} s"
+    except httpx.TransportError as e:
+        err = f"network error ({type(e).__name__})"
+    except ModelsApiError as e:
+        err = str(e)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        err = "an answer ecf can't read"
+    else:
+        with write_tx(conn):
+            _put(conn, JEV, {"checked_at": now, "error": None, "aliases": aliases}, now)
+            _audit(conn, now, "models.watch", {"part": "jev", "listed": len(aliases)})
+        return "ok"
+    with write_tx(conn):
+        _put(conn, JEV, (_get(conn, JEV) or {}) | {"error": err, "failed_at": now}, now)
+        _audit(conn, now, "models.watch", {"part": "jev", "error": err})
+    return "failed"
 
 
 class ModelsApiError(Exception):
@@ -421,6 +464,8 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "api_key": bool(_get(conn, "model_watch.api_key_set")),
         "claude": _get(conn, CLAUDE),
         "release": _release_status(conn),
+        "jev": _get(conn, JEV),  # TypeSafe's aliases (step 4)
+        "jev_pin": jev_keys.pin(),
         "retiring": retiring(conn),
         "lifecycle": {
             m: {

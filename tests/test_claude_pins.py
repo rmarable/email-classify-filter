@@ -69,8 +69,9 @@ def test_the_lock_names_every_role_with_a_claude_id() -> None:
 
 def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert claude_pins.GATE_ROLES == {"C": ("classifier", "classifier_high", "actor",
-                                            "actor_high")}  # D from step 4  # fmt: skip
-    assert claude_pins.PAIR == {"C": "claude/claude"}
+                                            "actor_high"),
+                                      "D": ("actor", "actor_high")}  # step 4  # fmt: skip
+    assert claude_pins.PAIR == {"C": "claude/claude", "D": "jev/claude"}
     c = claude_pins.pins(conn, "C")
     assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt"}
     assert c["prompt"] == claude_review.prompt_digest(load_schema())[:16]  # Q4

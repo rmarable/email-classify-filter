@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf_server import (
@@ -42,6 +42,8 @@ from ecf_server import (
     claude_queue,
     config,
     items,
+    jev_facts,
+    jev_mapping,
     jobs,
     marked,
     outbound_plan,
@@ -70,6 +72,10 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
     addr = conn.execute("SELECT sensitivity, outbound, preset FROM addresses"
                         " WHERE address_id = ?", (item["address_id"],)).fetchone()  # fmt: skip
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+    keys = item.keys()  # a Row: `in` tests its values, not its columns
+    # a person's Fix settles a field: it isn't unsure any more
+    if jev_facts.KEY in facts and "human_correction" in keys and item["human_correction"]:
+        facts[jev_facts.KEY] = _settled(facts[jev_facts.KEY], json.loads(item["human_correction"]))
     cfg = config.current(conn)
     policy_doc: dict[str, Any] = cfg["action_policy"] or {}
     standard: dict[str, str] = policy_doc.get("standard") or {}
@@ -100,13 +106,35 @@ def context(conn: sqlite3.Connection, item: sqlite3.Row,
     )
 
 
+def _settled(doc: Any, fix: dict[str, Any]) -> Any:
+    """`facts.jev` without the fields a person's Fix gave a value: they aren't unsure any more."""
+    if not isinstance(doc, dict):
+        return doc
+    d: dict[str, Any] = dict(cast("dict[str, Any]", doc))
+    for k in ("unsure", "below_bar"):
+        names: Any = d.get(k)
+        if isinstance(names, list):
+            d[k] = [n for n in cast("list[Any]", names) if n not in fix]
+    return d
+
+
+def held(ctx: Context, p: Plan) -> Plan:
+    """`p` with Jev's caution (OD-511): on a case `facts.jev` names unsure or below-bar fields,
+    every hide dropped and the email left and flagged (`jev_mapping.hold`, as the D eval does).
+    Without `facts.jev` (C, old mail), `p` unchanged."""
+    d = jev_facts.derived(ctx.facts)
+    if not d:
+        return p
+    return jev_mapping.hold(ctx, p, d, policy.labels(ctx.rules.schema, ctx.rules), ctx.rules)
+
+
 def item_marked(item: sqlite3.Row) -> bool:
     return marked.is_marked(json.loads(item["facts"] or "{}"))
 
 
 def plan_for(conn: sqlite3.Connection, item: sqlite3.Row) -> tuple[Context, Plan]:
     ctx = context(conn, item)
-    return ctx, policy.plan(ctx, policy.labels(ctx.rules.schema, ctx.rules))
+    return ctx, held(ctx, policy.plan(ctx, policy.labels(ctx.rules.schema, ctx.rules)))
 
 
 def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = None,
@@ -116,6 +144,8 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
     if p is None:
         _ctx, p = plan_for(conn, item)
+    else:  # the actor's proposal, or a held plan released: Jev's caution again (idempotent)
+        p = held(context(conn, item), p)
     stage = Stage(conn.execute("SELECT stage FROM addresses WHERE address_id = ?",
                                (item["address_id"],)).fetchone()["stage"])  # fmt: skip
     if any(a.name == "escalate" for a in p.actions):

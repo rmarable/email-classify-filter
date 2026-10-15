@@ -551,10 +551,15 @@ def test_import_replace_clears_the_old_converted_record(
     assert stages._announced(target) == ["a1", "b1"]  # pyright: ignore[reportPrivateUsage]
 
 
-def test_a_bundle_with_a_preset_d_address_is_refused(conn: sqlite3.Connection) -> None:
-    """R11: D arrives with Jev's step 4; until then a D row would break the tick."""
+def test_a_bundle_with_a_preset_d_address_loads_from_step_4(conn: sqlite3.Connection) -> None:
+    """R11, lifted by v3.0.0 step 4: a D row loads; any other preset is refused."""
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('d1', 'd1@acme.example', 'standard', 'D', ?)", (OLD,))  # fmt: skip
-    with pytest.raises(BadBundleError, match="preset D isn't available until Jev's step 4"):
+    importer.validate(conn, {})
+    with write_tx(conn):
+        conn.execute("PRAGMA ignore_check_constraints = 1")
+        conn.execute("UPDATE addresses SET preset = 'E' WHERE address_id = 'd1'")
+        conn.execute("PRAGMA ignore_check_constraints = 0")
+    with pytest.raises(BadBundleError, match="preset E isn't one this version has"):
         importer.validate(conn, {})

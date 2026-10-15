@@ -32,18 +32,23 @@ from ecf.eval.results import (
 )
 from ecf.paths import Paths
 from ecf_server import (
+    actor,
     claude_eval,
     claude_pins,
     db,
     evaljev,
     evalrun,
+    gate,
     jev,
+    jev_dispatch,
+    jev_keys,
     jev_mapping,
     policy,
     schedule,
     signals,
 )
 from ecf_server.clock import FakeClock
+from ecf_server.db import write_tx
 from ecf_server.secretstore.memory import MemorySecretStore
 from tests.test_addresses import call, make_state
 from tests.test_claude_review import extend
@@ -579,8 +584,9 @@ def test_preset_d_takes_jevs_classifications_from_its_source_run(
     root: Path,
 ) -> None:  # fmt: skip
     """D5, P15: the latest complete Jev run on the pin, its prompt digest, the default schema and
-    this set; a faulted source case keeps its failure (P1); comparison only (D isn't in
-    `claude_pins.PAIR` until step 4); its inputs are the source run's."""
+    this set; a faulted source case keeps its failure (P1); comparison only while the service
+    has stored no Jev gate key for D (step 4, P8: `test_jev_dispatch` has the pinned run); its
+    inputs are the source run's."""
     monkeypatch.setattr(jev, "FAULT_SHARE", 0.4)
     run_jev(db_path, clock, root, Fake({"billing-plan-question": 500}))
     source = _row(conn)
@@ -596,7 +602,7 @@ def test_preset_d_takes_jevs_classifications_from_its_source_run(
     assert failed.classification is None and failed.result is not None
     assert failed.result.correct is False and failed.result.safety is False
     assert all(w.stage in ("act", "done") for w in run.works)  # nothing to classify
-    assert "D" not in claude_pins.PAIR
+    assert not jev_keys.stored(conn)  # no service ran here: D's Jev side is unknown
     # no case went to the actor on these answers: the run ended as soon as it was prepared
     assert run.state == "done"
     saved = _row(conn)
@@ -606,6 +612,50 @@ def test_preset_d_takes_jevs_classifications_from_its_source_run(
     for k in claude_eval.SOURCE_KEYS:
         assert m[k] == src[k], k
     assert m["claude"]["source_run"] == source["run_id"] and m["claude"]["preset"] == "D"
+
+
+def test_preset_d_on_the_stored_jev_key_is_pinned_and_its_check_names_the_source(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """v3.0.0 step 4, P8: with the service's Jev gate key stored and the source run on it, a D
+    run on the pinned actors is keyed by D's pin key (so it counts for D's gate) and its D Check
+    names the source run and pin."""
+    run_jev(db_path, clock, root, Fake())
+    source = _row(conn)
+    _clear()
+    jev_dispatch.refresh_keys(conn, clock)
+    assert source["digest"] == jev_keys.stored(conn)["gate_key"]  # the eval's own gate key
+    with write_tx(conn):
+        conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
+                     " VALUES ('d', 'd@acme.example', 'standard', 'D', 't')")  # fmt: skip
+    r = _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert r["pinned"] is True and run is not None
+    assert run.key == claude_pins.address_key(conn, "d")
+    saved = _row(conn)
+    m = json.loads(saved["metrics"])
+    assert saved["pair"] == "jev/claude"
+    assert m["jev_source"]["run_id"] == source["run_id"] and m["jev_source"]["pin"] == PIN
+    clean = m | {"unsafe": [], "fraud_guard_missed": [], "confirmed": 5, "complete": True}
+    with write_tx(conn):
+        conn.execute("UPDATE eval_runs SET metrics = ? WHERE run_id = ?",
+                     (json.dumps(clean), saved["run_id"]))  # fmt: skip
+    check = gate.synthetic(conn, run.key, "D")
+    assert check.ok and f"Jev source run {source['run_id'][:8]} on {PIN}" in check.detail
+    with write_tx(conn):
+        conn.execute("UPDATE eval_runs SET metrics = ? WHERE run_id = ?",
+                     (json.dumps({k: v for k, v in clean.items() if k != "jev_source"}),
+                      saved["run_id"]))  # fmt: skip
+    assert not gate.synthetic(conn, run.key, "D").ok
+    # step 4 P5: scored with this version's mapping, or not evidence
+    assert clean["band"]["mapping_digest"] == jev_mapping.digest()
+    for band in (None, clean["band"] | {"mapping_digest": "0" * 64}):
+        bad = {k: v for k, v in clean.items() if k != "band"} | ({"band": band} if band else {})
+        with write_tx(conn):
+            conn.execute("UPDATE eval_runs SET metrics = ? WHERE run_id = ?",
+                         (json.dumps(bad), saved["run_id"]))  # fmt: skip
+        check = gate.synthetic(conn, run.key, "D")
+        assert not check.ok and "this version's Jev mapping" in check.detail
 
 
 def test_preset_d_needs_a_source_with_every_case_and_records_fraud_only(
@@ -647,12 +697,12 @@ def test_a_preset_d_or_unpinned_run_is_never_gate_eligible(
     caveat = cli._run_caveat  # pyright: ignore[reportPrivateUsage]
     d = {"complete": True, "gate_passed": False, "options": {"classifier": True, "actor": True},
          "claude": {"preset": "D", "pinned": False}}  # fmt: skip
-    assert caveat(d) == ", comparison only (preset D, until step 4)"
+    assert caveat(d) == ", " + cli.PRESET_D_ONLY
     c = d | {"claude": {"preset": "C", "pinned": False}}
     assert caveat(c) == ", comparison only (not the pinned models)"
     assert caveat(d | {"claude": {"preset": "C", "pinned": True}}) == ""
     pin_kind = cli._pin_kind  # pyright: ignore[reportPrivateUsage]
-    assert pin_kind({"preset": "D", "pinned": False}) == "comparison only (preset D, until step 4)"
+    assert pin_kind({"preset": "D", "pinned": False}) == cli.PRESET_D_ONLY
     assert pin_kind({"preset": "C", "pinned": True}) == "pinned models"
 
 
@@ -745,10 +795,10 @@ def test_compare_prints_jev_figures_faults_and_why_a_run_is_incomplete(
     assert caveat(s) == " (incomplete: a fraud, escalation or injection card faulted)"
     assert caveat(s | {"incomplete_reason": "budget", "cases": 3}) == (
         " (stopped after 3 cases: the waiting budget was spent)")  # fmt: skip
-    assert caveat(s | {"complete": True}) == " (jev backend: not for the gate until step 4)"
+    assert caveat(s | {"complete": True}) == f" ({cli.BACKEND_CAVEAT['jev']})"
     measuring = {"classifier": True, "actor": False, "measuring": ["jev_state s2"]}
     assert caveat(s | {"complete": True, "options": measuring}) == (
-        " (jev backend: not for the gate until step 4; jev_state s2)")  # fmt: skip
+        f" ({cli.BACKEND_CAVEAT['jev']}; jev_state s2)")  # fmt: skip
 
 
 # Step 3: Jev's caution in the eval. A banded mapping holds the cases its unsure fields name, the
@@ -911,6 +961,50 @@ def test_a_policy_rescore_of_a_banded_result_holds_the_same(
         for a, b in zip(live.cases, new.cases, strict=True):
             assert (a.actions, a.held, a.unsure, a.safety) == (b.actions, b.held, b.unsure,
                                                                b.safety), a.id  # fmt: skip
+
+
+def test_preset_d_derives_unsure_from_its_sources_probabilities(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """Step 4 P5: D's unsure and below-bar fields come from the source's recorded probabilities
+    through `jev_mapping.derive`, the service's function, not from the fields the source run
+    wrote: a source result with them blanked still holds every case."""
+    _banded(monkeypatch, bands={"phishing": 0.3})
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    path = Path(_row(conn)["path"])
+    result = load_result(path)
+    blank = result.model_copy(update={"cases": [c.model_copy(update={"unsure": None,
+                                                                    "below_bar": None})
+                                                for c in result.cases]})  # fmt: skip
+    path.write_text(blank.model_dump_json(), "utf-8")
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    assert all(w.derived.unsure == {"phishing"} for w in run.works if w.classification)
+
+
+def test_preset_d_offers_the_actor_no_hide_on_an_unsure_requires_action(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """OD-511: `requires_action` unsure reads as yes for `actor.allowed`, as in the service."""
+    del conn
+    _banded(monkeypatch, bands={"requires_action": 0.3})
+    answers = json.loads(json.dumps(body()["answers"]))
+    answers["requires_action"] = {"noul": 0.4}
+    answers["requires_reply"] = {"noul": 0.1}
+    run_jev(db_path, clock, root, Fake(answers=answers))
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    w = next(w for w in run.works if w.classification)
+    assert w.derived.unsure == {"requires_action"}
+    offered = actor.offered(claude_eval._context(run, w, risk=True))  # pyright: ignore[reportPrivateUsage]
+    assert not set(offered) & set(jev_mapping.HIDE_ACTIONS)
+    assert set(actor.allowed(w.classification or {})) & set(jev_mapping.HIDE_ACTIONS)
 
 
 def test_preset_d_drops_an_actors_hide_on_an_unsure_case(

@@ -21,6 +21,7 @@ name).
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from ecf.ids import StableId
@@ -37,7 +38,7 @@ REASON_MAX = 300
 
 
 def allowed(
-    classification: dict[str, Any],
+    classification: Mapping[str, Any],
     *,
     templates: frozenset[str] = frozenset(),
     forwards: frozenset[str] = frozenset(),
@@ -99,8 +100,9 @@ def problem(action: Any, target: Any, reason: Any, labels: frozenset[str],  # no
 
 
 def offered(ctx: policy.Context) -> tuple[str, ...]:
-    """The actions this item's actor is offered."""
-    return allowed(ctx.classification, templates=ctx.templates, forwards=ctx.forwards)
+    """The actions this item's actor is offered: Jev's unsure `requires_action` counts as yes, so
+    no hide is offered (`policy.risk`, OD-511)."""
+    return allowed(policy.risk(ctx), templates=ctx.templates, forwards=ctx.forwards)
 
 
 def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: policy.Context,

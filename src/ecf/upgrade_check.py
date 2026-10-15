@@ -14,7 +14,10 @@ it imports nothing from the service package.
   schema at least this install's; a data format this one or the next; this CLI at least
   `min_client`.
 - **Model pins** (OD-381): families whose pin changes, and the addresses that use them, which
-  drop to `assist` when the upgrade completes.
+  drop to `assist` when the upgrade completes. From v3.0.0 step 4 (S4-D12, P18) the wheel's
+  `jev.lock` is the "jev" pin and the canonical digest of its `jev_mapping.json` (step 3's, when
+  the wheel ships one) the "jev_mapping" pin: either changed moves preset D's gate key, so the D
+  addresses (the service's `pin_users`) drop to assist.
 - **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the shipped classifier prompt's
   digest (shipped schema). It was in the local gate key, so a different one, or one either side
   lacks (before v2.1.0), counts as "prompt" and every address is affected. From v3.0.0 it is
@@ -35,6 +38,7 @@ it imports nothing from the service package.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -70,7 +74,9 @@ def version_key(v: str) -> tuple[int, int, int, int, int]:
 class Release:
     wheel: Path
     info: dict[str, Any]
-    pins: dict[str, str]  # Claude family -> model ID; "local" -> the Ollama digest before v3.0.0
+    # Claude family -> model ID; "local" -> the Ollama digest before v3.0.0; "jev" -> the Jev pin
+    # and "jev_mapping" -> its mapping's digest (v3.0.0 step 4)
+    pins: dict[str, str]
 
     @property
     def version(self) -> str:
@@ -87,6 +93,10 @@ def read_wheel(path: Path) -> Release:
             names = set(z.namelist())
             local: Any = (json.loads(z.read(DATA + "ollama.lock"))
                           if DATA + "ollama.lock" in names else {})  # fmt: skip
+            jev: Any = (json.loads(z.read(DATA + "jev.lock"))
+                        if DATA + "jev.lock" in names else {})  # fmt: skip
+            mapping: Any = (json.loads(z.read(DATA + "jev_mapping.json"))
+                            if DATA + "jev_mapping.json" in names else None)  # fmt: skip
     except (zipfile.BadZipFile, KeyError, ValueError) as exc:
         raise InvalidInputError(f"{path.name} isn't an ecf wheel with release information"
                                 f" ({type(exc).__name__})") from None  # fmt: skip
@@ -96,7 +106,37 @@ def read_wheel(path: Path) -> Release:
     digest = cast("dict[str, Any]", local).get("digest") if isinstance(local, dict) else None
     if isinstance(digest, str):
         pins["local"] = digest
+    model = cast("dict[str, Any]", jev).get("model") if isinstance(jev, dict) else None
+    if isinstance(model, str):
+        pins["jev"] = model
+    if mapping is not None:
+        pins["jev_mapping"] = mapping_digest(mapping)
     return Release(path, cast("dict[str, Any]", info), pins)
+
+
+NOUL_TRUE = 0.5  # `ecf_server.systemone.NOUL_TRUE`, in the mapping's digest
+
+
+def mapping_digest(doc: Any) -> str:
+    """A `jev_mapping.json`'s digest as the service computes it (`ecf_server.jev_mapping.digest`
+    over the parsed mapping: numbers as floats, tables sorted, the fixed yes threshold and tie
+    rule), so formatting or the comment never moves it. The new wheel's service checks the file;
+    a table that isn't an object reads as empty here."""
+    d: dict[str, Any] = cast("dict[str, Any]", doc) if isinstance(doc, dict) else {}
+
+    def table(key: str) -> dict[str, float]:
+        raw: Any = d.get(key) or {}
+        t = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+        return {
+            k: float(v)
+            for k, v in sorted(t.items())
+            if isinstance(v, int | float) and not isinstance(v, bool)
+        }  # as `_number`
+
+    canon = {"noul_true": NOUL_TRUE, "score_tie": "higher", "bands": table("bands"),
+             "bars": table("bars"), "none_bars": table("none_bars")}  # fmt: skip
+    raw = json.dumps(canon, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)

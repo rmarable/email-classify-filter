@@ -73,8 +73,25 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   schema serves both (SPEC §7.1). From v3.0.0 safety rests on five yes/no fixed items (bank-detail
   change, regulator claim, phishing, claims to be a colleague, private individual), not on the
   category (OD-500).
-- **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor, from v3.0.0
-  step 4. A and B (the local model) are removed in v3.0.0 (below).
+- **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor (v3.0.0
+  step 4). A and B (the local model) are removed in v3.0.0 (below).
+- **Adding a D address** (SPEC §7.10): `--preset D` asks for the TypeSafe key if none is stored
+  (`ecf models api-key set --provider typesafe` underneath: one check call, a Security Notice),
+  then asks whether the account owner agreed to their mail going to TypeSafe (api.typesafe.ai, US)
+  as well as to Anthropic, then step-up. Refused while your own fields are stored (D uses the
+  shipped schema). The agreement belongs to the address: an import or restore clears it, and
+  `ecf resume <address>` asks again. D mail is classified within a minute or so of its check;
+  the actor still waits for `/ecf-review`. D's case is immediacy, not cost: classification no
+  longer uses your Claude plan, and TypeSafe bills about US$0.0001 per email.
+- **Jev down:** when TypeSafe refuses the key, stops serving the pinned version, asks for a long
+  wait, sends answers ecf can't map, or keeps failing for `jev_down_after_minutes` (15; `ecf
+  settings set`; while failing ecf retries only every 30 s to 5 min), Jev is down for
+  the install: one Slack/desktop alert with how many D emails wait, and `ecf status` / `ecf
+  doctor` say why. **D mail waits; nothing else classifies it** (no Claude fallback in v3.0.0).
+  ecf probes TypeSafe every 30 s to 5 min and resumes on its own after two good answers; a retired
+  pin needs an ecf upgrade. An email Jev can't classify in 3 tries waits too (`ecf doctor` lists
+  it; one System Error names those of each run). Before rolling back below v3.0.0, clear the key: `ecf models api-key clear --provider
+  typesafe`.
 - **Sensitivity** `standard` or `high` (finance mailboxes: stricter gate, extra checks, a
   10-minute delay on sends). `ecf sensitivity set <address> high` is instant; lowering needs a
   reason and step-up, and sends a Security Notice (§9.1).

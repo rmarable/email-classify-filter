@@ -133,9 +133,11 @@ def counts(conn: sqlite3.Connection, run_id: str) -> dict[str, int]:
 
 def waiting_line(conn: sqlite3.Connection) -> str | None:
     """The reminder's and daily summary's separate line (plan §2), or None."""
+    # a D item with no classification waits for Jev, not for /ecf-review (step 4, P13)
     row = conn.execute(
         "SELECT count(*) FROM items WHERE status IN ('awaiting_claude', 'clarified') AND "  # noqa: S608
-        + marked.sql()).fetchone()  # fmt: skip
+        + marked.sql() + " AND NOT (classification IS NULL AND address_id IN (SELECT address_id"
+        " FROM addresses WHERE preset = 'D'))").fetchone()  # fmt: skip
     n = int(row[0])
     if not n:
         return None

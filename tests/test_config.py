@@ -910,3 +910,15 @@ def test_rules_using_a_fact_this_version_does_not_know_give_way_to_the_starter_r
     _apply(conn, clock, "version: 1\nrules: default\n")
     config.schema_tick(conn, clock, n)
     assert _open_alerts(conn) == []
+
+
+@pytest.mark.usefixtures("extensions_on")
+def test_your_fields_are_refused_while_an_address_is_preset_d(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """v3.0.0 step 4, S4-D6: D asks the shipped schema only; `schema: default` still applies."""
+    _setup(conn, clock, "D")
+    with pytest.raises(InvalidInputError, match="refused while an address uses preset D"):
+        config.parse(conn, SCHEMA_DOC)
+    config.parse(conn, "version: 1\nschema: default")
+    assert "preset D refuses your fields, so none goes to TypeSafe" in config.PRIVACY_LINE

@@ -21,7 +21,15 @@ from typing import Any
 from ecf import __version__
 from ecf.errors import InvalidInputError
 from ecf.schema import load_schema
-from ecf_server import claude_pins, claude_review, config, export_bundle, initsetup, stages
+from ecf_server import (
+    claude_pins,
+    claude_review,
+    config,
+    export_bundle,
+    initsetup,
+    jev_keys,
+    stages,
+)
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -33,11 +41,18 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
           sessions: int) -> dict[str, Any]:  # fmt: skip
     lock = claude_pins.load_lock()
     pins = {f: lock[f] for f in claude_pins.ROLES}
+    # preset D's Jev pin and mapping, as the wheel files read them (step 4, S4-D12, P18)
+    pins["jev"] = jev_keys.pin()
+    if (mapping := jev_keys.mapping_digest()) is not None:
+        pins["jev_mapping"] = mapping
     users: dict[str, list[str]] = {}
     for aid, preset in conn.execute("SELECT address_id, preset FROM addresses WHERE removed_at"
                                     " IS NULL ORDER BY address_id"):  # fmt: skip
         for f in claude_pins.GATE_ROLES[preset]:
             users.setdefault(f, []).append(aid)
+        if preset == jev_keys.PRESET:
+            for f in ("jev", "jev_mapping"):
+                users.setdefault(f, []).append(aid)
     executing = conn.execute("SELECT count(*) FROM items WHERE status IN ('executing',"
                              " 'undoing')").fetchone()[0]  # fmt: skip
     leases = conn.execute("SELECT count(*) FROM leases WHERE expires_at > ?",

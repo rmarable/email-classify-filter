@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -498,3 +499,24 @@ def test_s4_r1_rules_on_fields_reads_every_place_a_rule_names_one() -> None:
     ]}  # fmt: skip
     assert importer.rules_on_fields(doc, SOCCER) == ["a", "b", "c"]
     assert importer.rules_on_fields(None, SOCCER) == []
+
+
+def test_a_d_addresss_agreement_to_typesafe_stays_behind(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """v3.0.0 step 4, P9: the owner agrees again on this install before Jev sees the mail."""
+    real = _source
+
+    def source_d(c: sqlite3.Connection) -> None:
+        real(c)
+        with write_tx(c):
+            c.execute("UPDATE addresses SET preset = 'D', overrides = json_set(overrides,"
+                      " '$.jev_consent_at', 't')")  # fmt: skip
+
+    monkeypatch.setattr(sys.modules[__name__], "_source", source_d)
+    path = _bundle(conn, clock, tmp_path)
+    _import(target, clock, path)
+    a = target.execute("SELECT preset, paused, overrides FROM addresses").fetchone()
+    assert (a["preset"], a["paused"]) == ("D", 1)
+    assert "jev_consent_at" not in json.loads(a["overrides"])

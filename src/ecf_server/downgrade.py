@@ -13,7 +13,13 @@ beside it and changes that copy only:
 - open grants are voided; open approvals go to `expired` and approved, delayed and executing
   items to `failed_unknown` (items.map_downgraded); claims, leases, in-progress marks and queued
   actions are cleared, so nothing runs twice (OD-331);
-- every address is paused and `live` becomes `assist`.
+- every address is paused and `live` becomes `assist`;
+- preset D's gate rows (`pair_key` `jev/...`, v3.0.0 step 4) are dropped: a version before it has
+  no preset D. A D address added after the upgrade isn't in the snapshot, so it is lost; mail Jev
+  classified since is fetched again and decided by the older version (its actions may run again
+  under that version's path). The TypeSafe key stays in the Keychain, where the older version
+  doesn't look: `ecf models api-key clear --provider typesafe` before going back removes it (S4-D14,
+  P19).
 
 `ecf upgrade --to` then puts the copy in place of the database and reinstalls the older wheel.
 """
@@ -78,6 +84,8 @@ def _merge(conn: sqlite3.Connection, live: Path) -> None:
                          if "address_id" in cols else "")  # fmt: skip
                 conn.execute(f'INSERT OR REPLACE INTO main."{t}" ({names}) SELECT {names}'  # noqa: S608
                              f' FROM cur."{t}"{where}')  # fmt: skip
+            if "gate" in have:  # a version before step 4 has no preset D
+                conn.execute("DELETE FROM main.gate WHERE pair_key LIKE 'jev/%'")
             if "grants" in have:
                 conn.execute("UPDATE main.grants SET status = 'voided' WHERE status IN"
                              " ('issued', 'approved')")  # fmt: skip

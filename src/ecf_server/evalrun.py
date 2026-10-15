@@ -38,7 +38,8 @@ determinism repeats compare answers and probabilities (to 1e-6) and record their
 The result file holds case IDs, booleans and metrics only, never message or model text (I5); it is
 written to `<data dir>/evals/<run id>.json` (0600) and summarized in `eval_runs` (migration 0020),
 keyed by the backend's digest. `gate_passed` is computed here, never taken from a caller, and only a
-**complete** run on a backend in `GATE_BACKENDS` (none until v3.0.0 step 4) with redaction on, with
+**complete** run on a backend in `GATE_BACKENDS` (none: preset D's evidence is a pinned `/ecf-eval
+--preset D` run on a Jev run's classifications, v3.0.0 step 4, P8) with redaction on, with
 the classifier and the actor, not marked `--not-for-gate`, can pass it (§9.3; P5): a null run
 never does. **Limits:** a hard runtime cap, and `stop()`.
 
@@ -131,7 +132,8 @@ FATAL = frozenset({"auth", "pin", "quota", "long_wait"})
 # floor(2% n) faulted cases), faulted_safety_card (it carried on), budget (the waiting budget)
 INCOMPLETE_REASONS = ("stopped", "faulted", "faulted_safety_card", "budget")
 PROB_TOLERANCE = 1e-6  # a determinism repeat's probabilities match within this
-# the backends whose runs can pass the go-live gate (R-D6, P5): none until v3.0.0 step 4
+# the backends whose runs can pass the go-live gate (R-D6, P5): none. A Jev run has no actor; it
+# is the source of preset D's `/ecf-eval --preset D` run, which is D's gate evidence (step 4, P8)
 GATE_BACKENDS: frozenset[str] = frozenset()
 # backends removed in v3.0.0 (ADR 0031): refused by `eval run`; their results still rescore
 REMOVED_BACKENDS = ("gemma", "systemone:")
@@ -463,7 +465,8 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, on a gate-eligible backend with redaction on
     (`gate_eligible`: `/ecf-eval`'s pinned runs; for `ecf eval run` a backend in
-    `GATE_BACKENDS`, none until v3.0.0 step 4, so a null, Jev or unredacted run never passes,
+    `GATE_BACKENDS`, none (D's evidence is `/ecf-eval --preset D`, step 4), so a null, Jev or
+    unredacted run never passes,
     §7.8, R1, P5), not marked not for the gate (`for_gate`, false too when an eval-only switch
     is off; plan 0.3). A faulted Jev case has no answer, so it is scored, and counted unsafe, as a
     failure (P1); `faulted` lists them and `incomplete_reason` says why an incomplete run is
@@ -533,7 +536,8 @@ def _check_options(opts: Options) -> None:
 
 
 def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:
-    """D9: a Jev run asks the default schema; user fields on preset D are decided in step 4."""
+    """D9: a Jev run asks the default schema; preset D refuses your own fields in v3.0.0
+    (step 4, S4-D6)."""
     conn = connect()
     try:
         effective = config.current_schema(conn)
@@ -728,8 +732,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
                 stopped, reason = f"{why} during the determinism repeats", why
         if reason is None and safety_faulted:
             reason = "faulted_safety_card"  # the run carried on (§5.4)
-        # no actor (preset D's is measured through `/ecf-eval`); no backend is gate-eligible in
-        # step 2, so neither a null nor a Jev run passes (§7.8, P5)
+        # no actor (preset D's is measured through `/ecf-eval`); no backend is gate-eligible, so
+        # neither a null nor a Jev run passes (§7.8, P5; D's gate: `/ecf-eval --preset D`, P8)
         summary: dict[str, object] = dict(summarize(
             results, diffs, complete=reason is None, classifier=opts.classifier, actor=False,
             gate_eligible=opts.backend in GATE_BACKENDS and opts.redact,

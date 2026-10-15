@@ -14,8 +14,10 @@ OD-014, OD-273, OD-461, OD-474; V1.4 step 2).
   address using it, which drop to assist until their gate passes again (§7.5); a Haiku override
   replaces only the main session, which isn't a gate pin (OD-474).
 - **Pins per address** (operator decision 2026-10-02): everything its preset uses, whatever its
-  sensitivity. C: both classifiers and both actors (preset D's from v3.0.0 step 4; A and B were
-  removed in v3.0.0, ADR 0031). The main session classifies nothing, so it isn't a gate pin.
+  sensitivity. C: both classifiers and both actors. D (v3.0.0 step 4, OD-509): both actors and
+  TypeSafe Jev, keyed by the Jev gate key and prompt digest `jev_dispatch` stored (`jev_keys`;
+  "unknown" before it has, so no gate passes on it). A and B were removed in v3.0.0 (ADR 0031).
+  The main session classifies nothing, so it isn't a gate pin.
 - **Key**: what reviews, eval runs and the gate row are matched on: a short hash of the pins (a
   record made before V1.4 holds preset A's Ollama digest, which `key` still reads).
 """
@@ -31,14 +33,16 @@ from importlib import resources
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf_server import addresses, config, slack_admin, stepup
+from ecf_server import addresses, config, jev_keys, slack_admin, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import Notifier
 
 ROLES = ("main_session", "classifier", "classifier_high", "actor", "actor_high")
-GATE_ROLES = {"C": ("classifier", "classifier_high", "actor", "actor_high")}  # D: step 4
-PAIR = {"C": "claude/claude"}  # gate.pair_key
+# the Claude roles each preset's gate binds; D's classifier is Jev (`jev_keys`)
+GATE_ROLES = {"C": ("classifier", "classifier_high", "actor", "actor_high"),
+              "D": ("actor", "actor_high")}  # fmt: skip
+PAIR = {"C": "claude/claude", "D": "jev/claude"}  # gate.pair_key
 OVERRIDE_KEY = "claude_model_override"  # settings row: {family: id}
 _ID = re.compile(r"claude-(haiku|sonnet|opus)-[0-9][a-z0-9-]{0,40}")
 
@@ -119,6 +123,13 @@ def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
 
     out = {r: eff[r] for r in GATE_ROLES[preset]}
     out["schema"] = schema.digest  # Claude classifies with it too (OD-475, OD-478)
+    if preset == jev_keys.PRESET:  # Jev's gate key and prompt, for this schema (step 4, P6)
+        k = jev_keys.stored(conn)
+        current = k.get("schema") == schema.digest
+        out["jev"] = str(k.get("gate_key")) if current and k.get("gate_key") else jev_keys.UNKNOWN
+        out["prompt"] = (str(k["prompt_digest"])[:16] if current and k.get("prompt_digest")
+                         else jev_keys.UNKNOWN)  # fmt: skip
+        return out
     out["prompt"] = claude_review.prompt_digest(schema)[:16]  # and the signals (Q4, OD-484)
     return out
 

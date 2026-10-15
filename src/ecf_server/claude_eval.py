@@ -19,12 +19,16 @@ decisions 2026-10-02, OD-287 to OD-292).
   run's models), is keyed `eval-...`, and is for comparison only.
 - **Preset B** (OD-289), which took Gemma's classifications from an `ecf eval run`, was removed
   with Gemma in v3.0.0 (ADR 0031); its result files still load and rescore (R-D12).
-- **Preset D** (v3.0.0 step 2d; D5, P15): Jev's classifications from the latest complete `ecf
-  eval run --classifier-backend jev` on the pinned Jev version, its prompt digest, the default
-  schema and this version of the set, not an experiment, its result file present; Claude is the
-  actor. A faulted Jev case (no answer) is scored as a failure (P1). Comparison only (an
-  `eval-...` key) until step 4 adds D to `claude_pins.PAIR`; its schema, prompt digest, input
-  format and excerpt cap are the source run's.
+- **Preset D** (v3.0.0 step 2d; D5, P15; step 4, P8): Jev's classifications from the latest
+  `ecf eval run --classifier-backend jev` that is complete, redacted (`redact` true), not marked
+  not for the gate nor an experiment, on the pinned Jev version, its prompt digest, the default
+  schema and this version of the set, with every case of this run and its result file present;
+  Claude is the actor. A faulted Jev case (no answer) is scored as a failure (P1). On the pinned
+  actors, and with a source run whose gate key is the one the service stored for D
+  (`jev_keys.stored`), it is keyed by D's pin key and counts for D's gate (`claude_pins.PAIR`,
+  step 4); otherwise it is comparison only (an `eval-...` key). Its schema, prompt digest, input
+  format and excerpt cap are the source run's, and the summary names the source run and pin
+  (`jev_source`) for the D Check.
 - **Scoring** is `ecf eval run`'s (`evalrun.score`, the starter rules, policy, the safety checks);
   the result file and `eval_runs` row have its format, plus the run's Claude figures. Preset C
   classifies its first 10 cases twice (determinism, §16.5).
@@ -75,6 +79,8 @@ from ecf_server import (
     config,
     evalrun,
     excerpt,
+    jev_facts,
+    jev_keys,
     jev_mapping,
     policy,
     rules,
@@ -92,10 +98,9 @@ EXPIRY = timedelta(hours=24)
 BATCH_MAX = 5
 ACTOR_CHARS = 4000  # as `ecf eval run` and the stored actor excerpt
 ROLES = ("classifier", "classifier_high", "actor", "actor_high")
-# the Claude roles each preset's eval uses: C's are its gate pins; D's actor (D isn't in
-# `claude_pins.GATE_ROLES` or `PAIR` until step 4, so a D run is comparison only)
-USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": ("actor", "actor_high")}
-D_PAIR = "jev/claude"  # a D run's `eval_runs.pair` until step 4 adds D to `claude_pins.PAIR`
+# the Claude roles each preset's eval uses: its gate pins (D's classifier is Jev)
+USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": claude_pins.GATE_ROLES["D"]}
+D_PAIR = claude_pins.PAIR["D"]  # a D run's `eval_runs.pair`
 CLAUDE_INPUT_FORMAT = "claude-v1"  # a C run's `input_format`, so Jev vs C prints the difference
 # the inputs a D run takes from its source Jev run (P13)
 SOURCE_KEYS = ("schema_digest", "prompt_digest", "input_format", "excerpt_cap")
@@ -262,8 +267,9 @@ def role_of(agent: str) -> str:
 def models_for(conn: sqlite3.Connection, opts: Options,
                source_key: str | None = None) -> tuple[dict[str, str], bool, str]:  # fmt: skip
     """The run's model per role, whether they are the pins in force for the preset's roles, and
-    the run's key (the gate's pin key, or `eval-...`). A D run is never pinned until step 4: its
-    key binds the actor models, its source Jev run's gate key and the schema."""
+    the run's key (the gate's pin key, or `eval-...`). A D run is pinned only when its source Jev
+    run's gate key is the one the service stored for D (step 4, P8); otherwise its key binds the
+    actor models, its source run's gate key and the schema."""
     eff = claude_pins.effective(conn)
     models = {r: eff[r] for r in ROLES}
     for model, roles in ((opts.classifier_model, ("classifier", "classifier_high")),
@@ -276,6 +282,9 @@ def models_for(conn: sqlite3.Connection, opts: Options,
         models |= dict.fromkeys(roles, model)
     used = USED_ROLES[opts.preset]
     pinned = opts.preset in claude_pins.PAIR and all(models[r] == eff[r] for r in used)
+    if opts.preset == jev_keys.PRESET:  # Jev's side must be D's current one too (P8)
+        pinned = pinned and source_key is not None and source_key == jev_keys.stored(conn).get(
+            "gate_key")  # fmt: skip
     if pinned:
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
@@ -304,9 +313,9 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
     the set, complete, redacted and not an experiment, its result file present, with every case
     of this run (`ids`: a `--fraud-only` source can't serve a full run, J4): its run ID, each
     case's classification (a faulted case's is empty, so it is scored as a failure, P1), its
-    inputs (SOURCE_KEYS) and each case's unsure and below-bar fields (step 3: the source's prompt
-    digest names the mapping they were derived under). Which other sources D may take is open
-    (removal P19)."""
+    inputs (SOURCE_KEYS) and each case's unsure and below-bar fields, derived from its recorded
+    probabilities with `jev_mapping.derive`, as the service derives them (step 4 P5; the source's
+    prompt digest names the mapping). Which other sources D may take is open (removal P19)."""
     from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
 
     pin, prompt = evaljev.source_inputs(schema)
@@ -319,7 +328,7 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         figures: dict[str, Any] = m.get("jev") or {}
         if (m.get("backend") != evalrun.JEV or figures.get("pin") != pin
                 or m.get("prompt_digest") != prompt or m.get("schema_digest") != schema.digest
-                or m.get("complete") is not True or m.get("redact") is False):  # fmt: skip
+                or m.get("complete") is not True or m.get("redact") is not True):  # fmt: skip
             continue
         if o.get("for_gate") is False or o.get("switches_off") or o.get("measuring"):
             continue  # an experiment: its classifications aren't production's
@@ -329,10 +338,16 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         if not ids <= {c.id for c in result.cases}:
             continue  # a source without some of this run's cases (a `--fraud-only` run)
         got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
-        derived = {c.id: jev_mapping.Derived(frozenset(c.unsure or ()),
-                                             frozenset(c.below_bar or ()))
-                   for c in result.cases}  # fmt: skip
-        return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}, derived
+        # unsure and below bar derived again from the source's probabilities by the service's
+        # own function (step 4 P5), under the shipped mapping its prompt digest names
+        derived = {c.id: jev_mapping.derive(got[c.id], c.probabilities) for c in result.cases}
+        source = {k: m[k] for k in SOURCE_KEYS if k in m}
+        det: dict[str, Any] = m.get("determinism") or {}
+        if det:  # shown in the D Check (P16): the source's field flips and faulted pairs
+            pairs: list[Any] = det.get("faulted_pairs") or []
+            source["jev_determinism"] = {"field_flips": det.get("field_flips") or {},
+                                         "faulted_pairs": len(pairs)}  # fmt: skip
+        return str(row["run_id"]), got, source, derived
     raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
                             " --classifier-backend jev` on the pinned Jev version, the default"
                             " schema and this version of the set, covering this run's cases, and"
@@ -453,8 +468,14 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
 # records and the run's Claude figures.
 
 
-def _context(run: Run, w: Work) -> policy.Context:
-    return policy.Context(_cls(w), w.facts, run.opts.sensitivity, run.rules, {},
+def _context(run: Run, w: Work, *, risk: bool = False) -> policy.Context:
+    """`risk`: with the case's unsure fields in `facts.jev`, as the service's actor stage sees
+    them (OD-511). The rule plan is made without, and `evalrun.held` adds the caution after, as in
+    step 3's runs, so its figures (hides the hold dropped) stay comparable; the actions agree."""
+    facts = w.facts
+    if risk and w.derived:
+        facts = facts | {jev_facts.KEY: jev_facts.record(w.derived, None, None)}
+    return policy.Context(_cls(w), facts, run.opts.sensitivity, run.rules, {},
                           frozenset())  # fmt: skip
 
 
@@ -481,7 +502,7 @@ def _proposed(run: Run, w: Work, proposal: dict[str, Any] | None) -> None:
     if proposal is not None and w.plan is not None:
         w.proposal = {"action": str(proposal["action"]), "target": str(proposal["target"] or "")}
         if proposal["action"] != "needs_clarification":
-            one = policy.proposal(_context(run, w), w.plan, w.proposal["action"],
+            one = policy.proposal(_context(run, w, risk=True), w.plan, w.proposal["action"],
                                   w.proposal["target"] or None, run.known)  # fmt: skip
             if isinstance(one, policy.Planned):
                 w.plan.actions.append(one)
@@ -524,8 +545,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                for w in run.works if w.result is not None]  # fmt: skip
     if not results:
         return
-    # only a run on the pinned models can pass the gate: an unpinned run, and every preset D
-    # run until step 4 (never pinned), is comparison only (J8)
+    # only a run on the pinned models can pass the gate: an unpinned run is comparison only (J8;
+    # a D run also needs its source run on D's current key, P8)
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 gate_eligible=run.pinned, schema=run.schema,
                                                 fraud_only=run.opts.fraud_only)  # fmt: skip
@@ -534,6 +555,10 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         # the caution its source's answers asked for (step 3): the same mapping, by the source's
         # prompt digest
         summary["band"] = evalrun.band_figures(results, [w.case for w in run.works], run.rules)
+        # the source run and the pin it matched (`_jev_run`), for the D Check (P8)
+        summary["jev_source"] = {"run_id": run.source_run, "pin": jev_keys.pin(),
+                                 **({"determinism": summary.pop("jev_determinism")}
+                                    if "jev_determinism" in summary else {})}  # fmt: skip
     else:
         summary["schema_digest"] = run.schema.digest  # what the classifier was asked
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
@@ -957,7 +982,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
             out |= claude_review.schema_fields(run.schema) | {"signals": sent}
         else:
             out |= {"classification": _cls(w),
-                    "actions": list(actor.allowed(_cls(w))),
+                    "actions": list(actor.offered(_context(run, w, risk=True))),
                     "labels": sorted(run.known), "move_folders": [],
                     "earlier_answers": []}  # fmt: skip
     return out
@@ -987,7 +1012,7 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
             return again
         w = _claimed(run, clock, session_id, ref, token, agent, "act")
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
-                                           actor.allowed(_cls(w)))  # fmt: skip
+                                           actor.offered(_context(run, w, risk=True)))  # fmt: skip
         if why is not None:
             return _invalid(run, w, [why], digest)
         return _hold(clock, run, w, session_id, {"proposal": proposal}, digest)

@@ -69,7 +69,23 @@ def watch_lines(w: dict[str, Any] | None) -> list[str]:
                 out.append(f"  newer in a pinned family: {', '.join(sorted(cl['newer']))}")
         else:
             out.append(f"model watch: Models API not read yet; next run {nxt}")
-    return out + _release_lines(w.get("release") or {})
+    return out + _jev_lines(w) + _release_lines(w.get("release") or {})
+
+
+def _jev_lines(w: dict[str, Any]) -> list[str]:
+    """Preset D's Jev pin (`jev.lock`) and the TypeSafe aliases the watch last read (v3.0.0 step
+    4): the listing shows aliases only, so it can't see the pin retire."""
+    if not w.get("jev_pin"):
+        return []
+    out = [f"Jev pin (jev.lock): {w['jev_pin']}"]
+    j: dict[str, Any] = w.get("jev") or {}
+    if j.get("error"):
+        out.append(f"  TypeSafe's models: couldn't read them ({j['error']})")
+    elif j.get("checked_at"):
+        aliases: dict[str, Any] = j.get("aliases") or {}
+        listed = ", ".join(f"{a} released {d or 'unknown'}" for a, d in sorted(aliases.items()))
+        out.append(f"  TypeSafe's aliases, read {str(j['checked_at'])[:10]}: {listed or 'none'}")
+    return out
 
 
 def _release_lines(rel: dict[str, Any]) -> list[str]:

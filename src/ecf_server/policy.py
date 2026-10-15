@@ -35,16 +35,22 @@ Hypothesis over the whole classification space (`tests/test_policy.py`).
   (send_refusal), and outbound must be on for the address; while it's off the proposal is
   dropped as suppressed (kept on the item as `suppressed_action`) and the item is flagged (§8.4).
   The payload (recipient and text) is resolved by the caller, which has the database.
+- **Jev's unsure fields** (preset D, v3.0.0 step 4, OD-511): the risk readers here (the fraud
+  signal, the hide blockers, payment or fraud, the approval mode's phishing test, hence high risk
+  and the alert echo) read `jev_facts.risk_view`: an unsure field as yes, `fraud_risk` as `low`.
+  The rules read the stored classification (`rule_input`), so an unsure field fires no rule. The
+  hold that drops every hide on such a case is `jev_mapping.hold`, applied after this plan.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ecf.schema import CompiledSchema, fixed_item
-from ecf_server import precheck
+from ecf_server import jev_facts, precheck
 from ecf_server.rules import HIDE_ACTIONS, CompiledRules, Hide, LabelFrom, RuleInput
 
 Mode = Literal["auto", "approve"]
@@ -123,11 +129,16 @@ def labels(schema: CompiledSchema, rules: CompiledRules) -> frozenset[str]:
     return frozenset(n for n in names if _LABEL.fullmatch(n))
 
 
+def risk(ctx: Context) -> Mapping[str, Any]:
+    """The classification the risk readers read: Jev's unsure fields as yes (OD-511)."""
+    return jev_facts.risk_view(ctx.classification, ctx.facts)
+
+
 def fraud_signal(ctx: Context) -> bool:
     t: dict[str, Any] = ctx.facts.get("triggers") or {}
     return bool(t.get("fraud") or t.get("fraud_weak") or t.get("lookalikes")
                 or ctx.facts.get("quarantined")
-                or ctx.classification.get("fraud_risk") in FRAUD_RISKY)  # fmt: skip
+                or risk(ctx).get("fraud_risk") in FRAUD_RISKY)  # fmt: skip
 
 
 def hide_blockers(ctx: Context, action: str | None = None) -> list[str]:
@@ -135,7 +146,7 @@ def hide_blockers(ctx: Context, action: str | None = None) -> list[str]:
     about; phishing blocks every hide but `junk`, so the fixed rule can still junk it (OD-500).
     Without one, every blocker is listed."""
     t: dict[str, Any] = ctx.facts.get("triggers") or {}
-    cls = ctx.classification
+    cls = risk(ctx)
     out: list[str] = []
     if ctx.facts.get("content_unscanned"):
         out.append("content not fully scanned")
@@ -166,9 +177,10 @@ def corroborated(ctx: Context) -> bool:
 
 def payment_or_fraud(ctx: Context) -> bool:
     """I3: the pre-check's test OR the classifier's `payment_related` or fraud risk."""
+    cls = risk(ctx)
     return (precheck.payment_or_fraud(ctx.facts)
-            or ctx.classification.get("payment_related") is True
-            or ctx.classification.get("fraud_risk") in ("medium", "high"))  # fmt: skip
+            or cls.get("payment_related") is True
+            or cls.get("fraud_risk") in ("medium", "high"))  # fmt: skip
 
 
 HighRiskReason = Literal["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
@@ -313,7 +325,7 @@ def _mode(ctx: Context, name: str, high_risk: bool) -> Mode:
     if name in HIDE_ACTIONS:
         if high_risk or ctx.sensitivity == "high" or ctx.batch_risky or ctx.historical:
             return "approve"
-        if fixed_item(ctx.classification, "phishing"):  # P6 (OD-500)
+        if fixed_item(risk(ctx), "phishing"):  # P6 (OD-500)
             return "approve"
         return "auto" if ctx.action_policy.get(name, "auto") == "auto" else "approve"
     return "approve"

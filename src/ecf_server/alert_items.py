@@ -30,7 +30,7 @@ from datetime import timedelta
 from typing import Any
 
 from ecf.schema import fixed_item
-from ecf_server import alert_mail, alerts, marked, slack_admin
+from ecf_server import alert_mail, alerts, jev_facts, marked, slack_admin
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 
@@ -129,7 +129,8 @@ def _kind(r: sqlite3.Row) -> tuple[str | None, str]:
     facts: dict[str, Any] = json.loads(r["facts"] or "{}")
     if facts.get("alert_echo"):
         return None, ""  # OD-330: never an alert email about mail answering one
-    cls: dict[str, Any] = json.loads(r["classification"] or "{}")
+    # Jev's unsure fields as yes (OD-511)
+    cls = jev_facts.risk_view(json.loads(r["classification"] or "{}"), facts)
     plan: dict[str, Any] = (json.loads(r["proposal"] or "{}").get("plan")) or {}
     t: dict[str, Any] = facts.get("triggers") or {}
     fraud = [why for hit, why in (

@@ -9,7 +9,9 @@ through Show excerpt, visible to you alone (OD-214). Every string here may come 
 A classified item's card also says how it was classified (OD-507 §6, D14, P26): "Classified:
 <category>, <priority> priority, by <model>", the model by its display name ("Claude Sonnet
 5.5"), "a model no longer installed" for one this release doesn't pin (the local model's, before
-v3.0.0), and "corrected by you" after your correction. Nothing for an item not classified.
+v3.0.0), and "corrected by you" after your correction. Nothing for an item not classified. A
+preset D item's adds the fields TypeSafe Jev was unsure of or under the confidence bar on (`;
+unsure: phishing; below bar: category`, OD-511): no rule labels them.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import sqlite3
 from importlib import resources
 from typing import Any
 
+from ecf_server import jev_facts, jev_keys
 from ecf_server.chat import Button, Card
 from ecf_server.precheck import payment_or_fraud
 
@@ -122,7 +125,10 @@ def _known_models() -> frozenset[str]:
 
 
 def model_name(model_id: str | None) -> str:
-    """A model ID as a person reads it: `claude-sonnet-5-5` is "Claude Sonnet 5.5"."""
+    """A model ID as a person reads it: `claude-sonnet-5-5` is "Claude Sonnet 5.5", and preset D's
+    pinned `jev-1.13.0` (`jev.lock`) "TypeSafe Jev 1.13.0" (v3.0.0 step 4, hand-off 2)."""
+    if model_id is not None and model_id == jev_keys.pin():
+        return jev_keys.display_name(model_id) or NOT_INSTALLED
     m = _MODEL_ID.fullmatch(model_id or "")
     if model_id not in _known_models() or m is None:
         return NOT_INSTALLED
@@ -130,7 +136,8 @@ def model_name(model_id: str | None) -> str:
 
 
 def classified_line(item: sqlite3.Row) -> str | None:
-    """The card's "Classified" field (module notes), or None for an unclassified item."""
+    """The card's "Classified" field (module notes), or None for an unclassified item; a preset D
+    item's adds Jev's unsure and below-bar fields ("; unsure: phishing")."""
     keys = item.keys()
     if "classification" not in keys or not item["classification"]:
         return None
@@ -145,7 +152,10 @@ def classified_line(item: sqlite3.Row) -> str | None:
     parts = [str(cls[k]) for k in ("category",) if cls.get(k)]
     if cls.get("priority"):
         parts.append(f"{cls['priority']} priority")
-    return ", ".join([*parts, by])
+    # Jev's caution (OD-511): the fields it was unsure of or under the bar on, no rule's label
+    facts: dict[str, Any] = json.loads(item["facts"] or "{}") if "facts" in keys else {}
+    jev = jev_facts.card_line(facts)
+    return ", ".join([*parts, by]) + (f"; {jev}" if jev else "")
 
 
 NOT_RECORDED = " (sender not recorded before V1.2)"

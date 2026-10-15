@@ -20,7 +20,7 @@ from ecf.cli_models import watch_lines
 from ecf.doctor import Level, judge_model_watch
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.release_source import ReleaseError, ReleaseInfo
-from ecf_server import claude_pins, daily, db, health, model_watch
+from ecf_server import claude_pins, daily, db, health, jev_keys, model_watch
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
@@ -282,10 +282,9 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
     st = model_watch.status(conn)
     lines = watch_lines(st)
     assert f"  {SONNET}: Active, retirement not before 2027-09-28 (models.lock)" in lines
-    assert lines[-1] == (
+    assert lines[-2:] == [
         "model watch: no Models API key (optional: ecf models api-key set --provider anthropic);"
-        " next run within a minute"
-    )
+        " next run within a minute", f"Jev pin (jev.lock): {jev_keys.pin()}"]  # fmt: skip
     today = clock.now().date()
     checks = judge_model_watch({"model_watch": st}, today)
     assert [(c.name, c.level) for c in checks] == [("model watch", Level.OK)]
@@ -299,7 +298,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
                     _http(lambda _r: httpx.Response(503, json={})))  # fmt: skip
     st = model_watch.status(conn)
     st["api_key"] = True  # stored through the API in real use
-    assert "model watch: Models API failed: HTTP 503; next run" in watch_lines(st)[-1]
+    assert "model watch: Models API failed: HTTP 503; next run" in watch_lines(st)[-2]
     assert any(c.detail == "the Models API failed: HTTP 503"
                for c in judge_model_watch({"model_watch": st}, today))  # fmt: skip
     assert datetime.fromisoformat(str(st["next_at"]).replace("Z", "+00:00")) > clock.now()

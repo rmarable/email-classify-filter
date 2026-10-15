@@ -45,6 +45,7 @@ from ecf_server import (
     export_keys,
     import_plan,
     items,
+    jev_keys,
     settings,
     stepup,
 )
@@ -188,6 +189,9 @@ def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> dict[str, Any]
     items.map_imported(staged, import_plan.REPOST, import_plan.UNKNOWN)
     with write_tx(staged):
         staged.execute("UPDATE eval_runs SET path = ''")  # the result file stayed behind
+        # a D address's owner agrees again on this install before Jev sees its mail (P9)
+        staged.execute("UPDATE addresses SET overrides = json_remove(overrides, ?)",
+                       (f"$.{jev_keys.CONSENT}",))  # fmt: skip
     return dropped
 
 
@@ -315,9 +319,9 @@ def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]
     for a in staged.execute("SELECT address_id, email, overrides, preset FROM addresses"):
         if not re.fullmatch(SLUG_PATTERN, str(a["address_id"])):
             raise BadBundleError("an address ID isn't valid")
-        if a["preset"] not in addresses.PRESETS:  # after 0038 only D can be left (review R11)
+        if a["preset"] not in addresses.PRESETS:  # 0038 converts A and B; C and D load
             raise BadBundleError(f"address {a['address_id']}: preset {a['preset']} isn't"
-                                 " available until Jev's step 4")  # fmt: skip
+                                 " one this version has")  # fmt: skip
         try:
             addr_spec(str(a["email"]))
         except InvalidInputError:

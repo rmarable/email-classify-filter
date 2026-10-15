@@ -60,6 +60,7 @@ CLASS_OF = {
     "alert_email": "system",
     "export_failed": "system",
     "schema_extension": "system",
+    "jev_down": "system",
     "operator_input": "operator",
     "claude_review": "operator",
     "claude_review_overdue": "operator",
