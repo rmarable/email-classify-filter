@@ -178,8 +178,8 @@ def test_a_jev_run_end_to_end_on_the_fake(
         "state": "s1",
         "preamble": "state",
         "fraud_risk": "choice",
+        "requires_action": "three questions",
         "concurrency": 1,
-        "questions": [],
     }
     assert j["latency_ms_by_concurrency"]["1"]["n"] == 10  # 5 cases + 5 determinism repeats
     # every 200's usage, repeats included (P21), and its cost line
@@ -994,7 +994,7 @@ def test_preset_d_offers_the_actor_no_hide_on_an_unsure_requires_action(
     del conn
     _banded(monkeypatch, bands={"requires_action": 0.3})
     answers = json.loads(json.dumps(body()["answers"]))
-    answers["requires_action"] = {"noul": 0.4}
+    answers |= {k: {"noul": 0.4} for k in jev.K1_PARTS}  # asked as three questions (OD-514)
     answers["requires_reply"] = {"noul": 0.1}
     run_jev(db_path, clock, root, Fake(answers=answers))
     _clear()
@@ -1030,22 +1030,3 @@ def test_preset_d_drops_an_actors_hide_on_an_unsure_case(
     assert w.result is not None and "archive" not in w.result.actions
     assert "flag" in w.result.actions and "unsure: phishing" in (w.result.held or [])
     assert w.plan is not None and any(d.name == "archive" for d in w.plan.dropped)
-
-
-def test_rewording_arms_and_another_version_are_measurements(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
-) -> None:
-    """Step 3 addendum draft 2: `--jev-questions` and `--jev-pin` take a run out of the gate,
-    are named in `measuring`, move the prompt digest, and refuse unknown arms and aliases."""
-    del conn
-    snap = run_jev(db_path, clock, root, Fake(), jev_questions=("K3", "K5"))
-    s = snap["result"]
-    assert s["options"]["for_gate"] is False
-    assert s["options"]["measuring"] == ["jev_questions K3,K5"]
-    assert s["prompt_digest"] == jev.prompt_digest(evalrun.load_schema(), pin=PIN,
-                                                   variants=frozenset({"K3", "K5"}))  # fmt: skip
-    _clear()
-    with pytest.raises(InvalidInputError, match="isn't one of"):
-        run_jev(db_path, clock, root, Fake(), jev_questions=("K9",))
-    with pytest.raises(InvalidInputError, match="never an alias"):
-        run_jev(db_path, clock, root, Fake(), jev_pin="jev-preview")

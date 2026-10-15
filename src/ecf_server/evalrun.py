@@ -54,7 +54,6 @@ import hashlib
 import json
 import os
 import random
-import re
 import sqlite3
 import threading
 import time
@@ -124,9 +123,6 @@ EVAL_ROOT = "eval_root"  # setting: the synthetic set the last gate-able run use
 FRAUD_RULES = frozenset({"fraud_guard", "fraud_weak"})
 NULL = "null"  # the null classifier: every field at its least risky value (§7.8, R5)
 JEV = "jev"  # TypeSafe Jev (v3.0.0 step 2d, OD-503)
-# step 3's rewording arms (`jev.VARIANTS`; named here because the classifier's closure, which
-# includes this module, never imports `jev`)
-JEV_VARIANTS = ("K1", "K3", "K5")
 BACKENDS = (NULL, JEV)
 # a Jev stop that fails the run, with no result (§5.4): the key refused or removed, the pin, a
 # quota code, a `Retry-After` past the waiting budget and over 60 s or the whole budget (a
@@ -186,9 +182,6 @@ class Options:
     # format, preamble placement, `fraud_risk` type, option order, an extra question) went once
     # it chose the configuration (OD-512); their runs' files keep the record
     jev_concurrency: int = 1
-    # step 3's rewording arms and another Jev version (addendum draft 2, 2026-10-15): eval only
-    jev_questions: tuple[str, ...] = ()  # of K1, K3, K5
-    jev_pin: str | None = None  # a versioned Jev ID other than the pin
 
     @property
     def switches_off(self) -> list[str]:
@@ -198,9 +191,7 @@ class Options:
     @property
     def measuring(self) -> list[str]:
         """The Jev measurement options away from their defaults, as `name value`."""
-        out = [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
-        out += [f"jev_questions {','.join(self.jev_questions)}"] if self.jev_questions else []
-        return out + ([f"jev_pin {self.jev_pin}"] if self.jev_pin else [])
+        return [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -542,11 +533,6 @@ def _check_options(opts: Options) -> None:
         raise InvalidInputError("a jev run classifies: --no-classifier is for the null backend")
     if opts.jev_concurrency != 1:
         raise InvalidInputError("--jev-concurrency above 1 is not in v3.0.0 (S3-D4)")
-    if bad := [v for v in opts.jev_questions if v not in JEV_VARIANTS]:
-        raise InvalidInputError(f"--jev-questions: {', '.join(bad)} isn't one of"
-                                f" {', '.join(JEV_VARIANTS)}")  # fmt: skip
-    if opts.jev_pin is not None and not re.fullmatch(r"jev-\d+\.\d+\.\d+", opts.jev_pin):
-        raise InvalidInputError("--jev-pin takes a versioned Jev ID (jev-X.Y.Z), never an alias")
 
 
 def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:

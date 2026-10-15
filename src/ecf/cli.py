@@ -1234,22 +1234,6 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     jev_concurrency: Annotated[
         int, typer.Option("--jev-concurrency", help="With jev: 1 (the only value in v3.0.0).")
     ] = 1,
-    jev_questions: Annotated[
-        str,
-        typer.Option(
-            "--jev-questions",
-            help="With jev: step 3's rewording arms, comma-separated (K1, K3, K5); a"
-            " measurement, not for the gate.",
-        ),
-    ] = "",
-    jev_pin: Annotated[
-        str | None,
-        typer.Option(
-            "--jev-pin",
-            help="With jev: ask this versioned Jev ID instead of the pin (e.g. jev-1.14.0);"
-            " a measurement, not for the gate.",
-        ),
-    ] = None,
 ) -> None:
     """Run the synthetic set through ecf's rules with the null classifier (every field at its
     least risky value; seconds, no model): the rules-alone floor and a wiring check, never
@@ -1264,7 +1248,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
         if (classifier_backend != "null" or not redact or not_for_gate or not signals
-                or jev_concurrency != 1 or jev_questions or jev_pin):  # fmt: skip
+                or jev_concurrency != 1):  # fmt: skip
             raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
                                     " --no-signals and --jev-concurrency are for `ecf eval run`"
                                     " without --claude")  # fmt: skip
@@ -1276,9 +1260,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "root": str(root.resolve()), "classifier": classifier, "fraud_only": fraud_only,
             "backend": classifier_backend, "redact": redact, "for_gate": not not_for_gate,
             "signals": signals, "copy_to": str(copy) if copy else None,
-            "jev_concurrency": jev_concurrency, "jev_pin": jev_pin,
-            "jev_questions": [v.strip() for v in jev_questions.split(",")
-                              if v.strip()]})  # fmt: skip
+            "jev_concurrency": jev_concurrency})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:
         typer.echo(f"  The result is also written to {copy}/ when the run ends.")

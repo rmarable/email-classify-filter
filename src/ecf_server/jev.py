@@ -272,12 +272,9 @@ def state(email: Email, sent: tuple[str, ...], token: str, *, redact: bool) -> s
             f"\n\n{_excerpt(email.text)}\n<<<END EMAIL {token}>>>")  # fmt: skip
 
 
-# Step 3's rewording arms (addendum draft 2, operator 2026-10-15): eval-only ways of asking Jev's
-# weakest fields, chosen with `--jev-questions`; the one adopted becomes the plain path and the
-# rest are deleted. K1 asks `requires_action` as three narrow yes/no questions (folded back into
-# one answer, its largest probability); K3 and K5 give `priority` and `fraud_risk` Jev-only level
-# texts.
-VARIANTS = ("K1", "K3", "K5")
+# `requires_action` is asked as three narrow yes/no questions and folded back into one answer,
+# the largest probability (step 3's K1: about 9 points less mail deferred to Claude at the same
+# accuracy and gates; operator decision 2026-10-15, OD-514).
 K1_PARTS = {
     "ra_do": "The email asks us to do something: pay, sign, approve, confirm, send, book, fix or"
     " provide something.",
@@ -286,39 +283,21 @@ K1_PARTS = {
     " happens.",
 }
 FEEDS = {"requires_action": tuple(K1_PARTS)}  # the extra questions each field is answered by
-K3_PRIORITY = {
-    "low": "Nothing is lost if nobody reads it this week: news, receipts, notices that need"
-    " nothing.",
-    "medium": "Someone should read it within a working day: an ordinary request, question or"
-    " bill that isn't due soon.",
-    "high": "Someone should read it today: a request with a near deadline, a customer or supplier"
-    " problem, or money due soon.",
-    "urgent": "Within hours: money, access or a service at risk today, an outage, a security"
-    " problem, or a deadline today.",
-}
-K5_FRAUD = {
-    "none": "A routine message from a sender acting as expected, asking for nothing unusual.",
-    "low": "Anything unusual about who sent it, what it asks, or how it asks, short of medium.",
-}
 
 
-def questions(schema: CompiledSchema, variants: frozenset[str] = frozenset()) -> dict[str, Any]:
+def questions(schema: CompiledSchema) -> dict[str, Any]:
     """One question per field of the effective schema, in order, keyed by field name (keys
     aren't sent to the model, /api). `fraud_risk` is asked as a choice of its levels, `none` last
-    (step 3's J4: it under-rated fewer cases than the score; P17, OD-512); `as_asked` maps the
-    answer back to its most probable level. `variants`: step 3's rewording arms (eval only)."""
+    (step 3's J4: it under-rated fewer cases than the score; P17, OD-512); `requires_action` as
+    the three `K1_PARTS` in its place (OD-514). `as_asked` maps both back."""
     q = systemone.questions(schema)
-    if "K3" in variants and (p := schema.fields.get("priority")) is not None:
-        q["priority"] = q["priority"] | {"criteria": [K3_PRIORITY.get(v, v) for v in p.values]}
     if (f := schema.fields.get("fraud_risk")) is not None:
         texts = list(f.value_descriptions) + [""] * (len(f.values) - len(f.value_descriptions))
         crit = {v: d or v for v, d in zip(f.values, texts, strict=True)}
         order = [v for v in f.values if v != "none"] + (["none"] if "none" in crit else [])
-        if "K5" in variants:
-            crit |= {v: t for v, t in K5_FRAUD.items() if v in crit}
         q["fraud_risk"] = {"type": "choice", "instructions": f.description,
                            "criteria": {v: crit[v] for v in order}}  # fmt: skip
-    if "K1" in variants and "requires_action" in q:
+    if "requires_action" in q:
         at = list(q).index("requires_action")
         items = list(q.items())
         parts = [(k, {"type": "noul", "instructions": t}) for k, t in K1_PARTS.items()]
@@ -327,9 +306,8 @@ def questions(schema: CompiledSchema, variants: frozenset[str] = frozenset()) ->
 
 
 def request_body(schema: CompiledSchema, email: Email, sent: tuple[str, ...], *, pin: str,
-                 token: str, redact: bool,
-                 variants: frozenset[str] = frozenset()) -> dict[str, Any]:  # fmt: skip
-    return {"model": pin, "questions": questions(schema, variants),
+                 token: str, redact: bool) -> dict[str, Any]:  # fmt: skip
+    return {"model": pin, "questions": questions(schema),
             "state": state(email, sent, token, redact=redact)}  # fmt: skip
 
 
@@ -721,11 +699,10 @@ def _confidence(body: Mapping[str, Any]) -> dict[str, float]:
     return out
 
 
-def as_asked(body: dict[str, Any], schema: CompiledSchema,
-             variants: frozenset[str] = frozenset()) -> dict[str, Any]:  # fmt: skip
+def as_asked(body: dict[str, Any], schema: CompiledSchema) -> dict[str, Any]:
     """A reply in the shape `systemone.map_answers` reads: `fraud_risk`, asked as a choice,
     turned back into a score's level probabilities (its most probable level is the answer; Jev's
-    `choice` key itself isn't used). Under K1, the three `requires_action` questions are folded
+    `choice` key itself isn't used). The three `requires_action` questions are folded
     into one answer, the largest probability (a yes to any is a yes); a missing part leaves the
     field unanswered, so the case fails as any unmapped answer does. The parts never reach
     `schema.validate`."""
@@ -734,7 +711,8 @@ def as_asked(body: dict[str, Any], schema: CompiledSchema,
     if not isinstance(answers, dict) or f is None:
         return body
     got = dict(cast("dict[str, Any]", answers))
-    if "K1" in variants:
+    if "requires_action" in schema.fields:
+        got.pop("requires_action", None)  # never asked: only the three parts answer it
         parts = [got.pop(k, None) for k in K1_PARTS]
         ps = [cast("dict[str, Any]", a).get("noul") for a in parts if isinstance(a, dict)]
         nums = [float(p) for p in ps if isinstance(p, int | float) and not isinstance(p, bool)]
@@ -769,7 +747,6 @@ class Client:
         wait: Callable[[float], bool] | None = None, rng: random.Random | None = None,
         emit: Emit | None = None, on_pause: Callable[[str], None] | None = None,
         budget_s: float = WAIT_BUDGET_S, concurrency: int = 1, timeout_s: float = TIMEOUT_S,
-        variants: frozenset[str] = frozenset(),
     ) -> None:  # fmt: skip
         if concurrency != 1:
             raise InvalidInputError("--jev-concurrency above 1 is not in step 2")
@@ -777,7 +754,6 @@ class Client:
         self.pin = pin or load_pin()
         if not _PIN.fullmatch(self.pin):
             raise InvalidInputError(f"{self.pin!r} isn't a versioned Jev ID (jev-X.Y.Z)")
-        self.variants = variants  # step 3's rewording arms (eval only)
         self.clock: Clock = clock or SystemClock()
         self.stop = stop or threading.Event()
         self._wait = wait or self.stop.wait
@@ -975,8 +951,7 @@ class Client:
         its `fault`). The key is re-read before each try and the request rebuilt with it (J10)."""
         self._stopped()
         token = secrets.token_hex(8)
-        body = request_body(schema, email, sent, pin=self.pin, token=token, redact=redact,
-                            variants=self.variants)  # fmt: skip
+        body = request_body(schema, email, sent, pin=self.pin, token=token, redact=redact)
         est = estimate(body)
         if est.over:
             self.stats.faulted["request_error"] += 1
@@ -1078,7 +1053,7 @@ class Client:
         need = n_in if n_in is not None else math.ceil(est.total / PACE_BYTES_PER_TOKEN)
         self._note_limits(reply.headers, need)
         self.stats.latency_ms.setdefault(level, []).append(reply.http_ms)
-        ans = systemone.map_answers(as_asked(body, schema, self.variants), schema)
+        ans = systemone.map_answers(as_asked(body, schema), schema)
         return Result(ans.classification, ans.probabilities, _confidence(body), n_in, n_out,
                       classifier_ms=reply.http_ms, wait_ms=int(waited * 1000), tries=tries,
                       concurrency=level, status=200, replied=True)  # fmt: skip
@@ -1152,30 +1127,27 @@ def _in_order(q: dict[str, Any]) -> dict[str, Any]:
             if isinstance(v.get("criteria"), dict) else v for k, v in q.items()}  # fmt: skip
 
 
-def questions_digest(schema: CompiledSchema, rules: CompiledRules,
-                     variants: frozenset[str] = frozenset()) -> str:  # fmt: skip
+def questions_digest(schema: CompiledSchema, rules: CompiledRules) -> str:
     """The gate fields' questions, each with the extra questions that answer it (`FEEDS`)."""
-    q = _in_order(questions(schema, variants))
+    q = _in_order(questions(schema))
     rows: list[list[Any]] = []
     for n in gate_fields(schema, rules):
         extra = [[k, q[k]] for k in FEEDS.get(n, ()) if k in q]
-        rows.append([n, q.get(n), extra] if extra else [n, q[n]])  # today's form without extras
+        rows.append([n, q.get(n), extra] if extra else [n, q[n]])
     return _sha(rows)
 
 
-def gate_key(schema: CompiledSchema, rules: CompiledRules, *, pin: str | None = None,
-             variants: frozenset[str] = frozenset()) -> str:  # fmt: skip
+def gate_key(schema: CompiledSchema, rules: CompiledRules, *, pin: str | None = None) -> str:
     """`jev:<pin>+<questions digest>+<state format id>+<mapping digest>` (§5.7)."""
-    return (f"jev:{pin or load_pin()}+{questions_digest(schema, rules, variants)[:16]}"
+    return (f"jev:{pin or load_pin()}+{questions_digest(schema, rules)[:16]}"
             f"+{state_format_id()}+{mapping_digest()[:16]}")  # fmt: skip
 
 
-def prompt_digest(schema: CompiledSchema, *, pin: str | None = None,
-                  variants: frozenset[str] = frozenset()) -> str:  # fmt: skip
+def prompt_digest(schema: CompiledSchema, *, pin: str | None = None) -> str:
     """The preamble, the full question JSON (every field, in order), the caps, the state format,
     the signals wording, the mapping digest and the pin."""
     return _sha({"preamble": systemone.PREAMBLE,
-                 "questions": _in_order(questions(schema, variants)),
+                 "questions": _in_order(questions(schema)),
                  "caps": [NAME_CHARS, SUBJECT_CHARS, MAX_ATTACHMENTS, EXCERPT_CHARS],
                  "state_format": state_format_id(), "signals": signals.WORDING,
                  "mapping": mapping_digest(), "pin": pin or load_pin()})  # fmt: skip
