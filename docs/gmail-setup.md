@@ -81,7 +81,7 @@ classifications go to your Slack, and email content goes to Anthropic (preset C)
 `/ecf-review` (SPEC §12.4, OD-427). Ask them to read this guide first. ecf can't check that
 they agreed; that is your responsibility (SPEC §12.2).
 
-A real-mail test corpus (`ecf corpus fetch`, not built yet) may be made only from a mailbox you own,
+A real-mail test corpus (`ecf corpus fetch`) may be made only from a mailbox you own,
 never from someone else's account you watch (SPEC §16.7, OD-466).
 
 ## What ecf does and doesn't do on Gmail

@@ -3,6 +3,8 @@
 - **Status:** accepted (operator decisions 2026-10-14, OD-506: R-D1 to R-D14 and Phase R P1-P28
   of the removal plan); part of v3.0.0; not built yet (stages R1-R3 of the plan). Supersedes ADR
   0005 and the Ollama half of ADR 0023; amends ADR 0006, 0017, 0022, 0025, 0028 and 0030.
+- **Built** in v3.0.0 (migration 0038; `remove-local` merged 2026-10-14, `518bab4`). Preset D
+  is held back from v3.0.0 (2026-10-15, OD-516): v3.0.0 ships preset C only.
 - **Context source:** `planning-docs/REMOVE-LOCAL-MODELS.md` (draft 2, approved 2026-10-14);
   its Phase R review (four read-only agents; findings P1-P28 in
   `state-archive/remove-local/review-findings.md`, gitignored); `planning-docs/JEV-STEP2.md`

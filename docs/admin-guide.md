@@ -11,9 +11,11 @@ same computer (default `default`). Linux isn't supported until roadmap milestone
 ## Install
 
 ```sh
-uv tool install email-classify-filter          # the supported method, from v1.0.0
-uv build && uv tool install dist/email_classify_filter-*.whl   # until then, from a checkout
+uv tool install ./email_classify_filter-*.whl   # a release's wheel (GitHub Releases; README)
+uv build && uv tool install dist/email_classify_filter-*.whl   # or built from a checkout
 ```
+
+There is no PyPI package (OD-458): download and check a release's wheel as the README says.
 
 `ecf upgrade` works only on a `uv tool` install (OD-380). Requirements are in the README.
 
@@ -75,7 +77,7 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   category (OD-500).
 - **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor (v3.0.0
   step 4), **held back in v3.0.0 (OD-516)**: addresses can be preset C only, and `--preset D` is
-  refused. Jev remains for evaluation (`/ecf-eval --preset D`). A and B (the local model) are
+  refused. Jev remains for evaluation (`ecf eval run --claude --preset D`, then `/ecf-eval`). A and B (the local model) are
   removed in v3.0.0 (below).
 - **Adding a D address** (held back in v3.0.0, OD-516; SPEC §7.10): `--preset D` asks for the TypeSafe key if none is stored
   (`ecf models api-key set --provider typesafe` underneath: one check call, a Security Notice),
@@ -105,6 +107,13 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
 - `ecf address remove <address>` resolves its open items (step-up when any is a payment or fraud
   item), archives its Slack channel and deletes its app password; ecf's labels stay on messages.
   It's refused while the address sends alert email.
+- **Senders** (SPEC §8.5, §9.6; per address, `--address` when you have more than one):
+  `ecf sender set-reply-to <sender> <domain>` records the Reply-To domain to expect from that
+  sender, so its mail isn't flagged for a Reply-To that differs from its From (`--clear` expects
+  none again); `ecf sender set-verified <sender>` marks the sender human-verified, which turns off
+  only the unverified-payment-sender flag (rule 1a) for its mail; fraud checks stay on (`--off`
+  flags it again). Both need step-up; `--clear` and `--off` don't. `ecf sender show` and
+  `ecf sender confirm` are in the operator guide.
 
 ## Old mail: backfill and reprocess
 
@@ -240,8 +249,10 @@ runs before the default rules instead of replacing them. The dry run of any `ecf
 and `ecf doctor` say so until you apply rules again; end the file with `- {id: otherwise, actor:
 continue}` to keep the old meaning.
 
-**Your own fields** (preset C only; SPEC §7.1, §9.7, OD-502; built behind a switch, on in v3.0.0
-only if its measurement passes, SPEC §1.5a item 2b). The `schema` section adds fields (enum,
+**Your own fields** (preset C only; SPEC §7.1, §9.7, OD-502; built behind a switch, **off in
+v3.0.0**: its measurement failed, SPEC §1.5a item 2b, so `ecf config apply` refuses a `schema`
+section with "your fields are off in this release"; the rest of this part describes the layer
+for when it is on). The `schema` section adds fields (enum,
 ordinal or boolean) and `category` values on top of ecf's fields:
 
 ```yaml
@@ -283,10 +294,10 @@ schema:
 - **Caps:** 8 fields, 16 values or levels each, 4 category values, 180 characters per
   description, 4,000 characters of prompt text. The dry run and `ecf doctor` print the bytes of
   schema each Claude classification carries (7,663 shipped; about 13 KB at the caps).
-- **Preset C only** (D's handling is decided in v3.0.0 step 4).
+- **Preset C only** (a D address is refused while your own fields are stored; SPEC §7.10).
 - **Gate cost of an edit:** any change, a description typo included, drops live C addresses to
   `assist`, and live needs a passing `/ecf-eval` run (full or `--fraud-only`) and 100 reviews
-  (200 on `high`) again; the step-up dialog says so per address. Step 4 of v3.0.0 narrows this.
+  (200 on `high`) again; the step-up dialog says so per address.
 - **Privacy:** your field and value names and descriptions go to Anthropic with each Claude
   classification request, and the chosen values with each actor request; never put email content
   or secrets in them. The names also go to Slack (the Fix form, review lines).
@@ -330,10 +341,12 @@ days old run, older stay held).
 `/ecf-eval` in `ecf claude`; it uses your Claude plan. `ecf eval run --classifier-backend null`
 runs the rules alone (a floor and a wiring check; it never counts for the gate).
 `ecf eval run --classifier-backend jev` sends the synthetic cards to TypeSafe Jev (it needs the
-TypeSafe key; not for the gate until v3.0.0 step 4), and `ecf eval run --claude --preset D` then
-uses its classifications with Claude as the actor (comparison only). `ecf eval
+TypeSafe key; a Jev run itself never counts for the gate), and `ecf eval run --claude --preset D`
+then uses its classifications with Claude as the actor (D's gate evidence, SPEC §7.10; preset D
+is held back, OD-516). `ecf eval
 status|stop|compare`. Results are keyed by the pinned models. Old
-results from the local model can still be read and rescored (`ecf eval rescore`).
+results from the local model can still be read and rescored without a model (`ecf eval rescore
+--synthetic`, with or without `--through-policy`).
 
 **Pinned models:** a release that changes a pinned model (a Claude model ID) drops
 the addresses using it from `live` to `assist` until their gate passes again (SPEC §9.3, OD-381).
@@ -601,7 +614,7 @@ dialog names the old and new fingerprints), then `ecf export now` so a readable 
 **Stolen laptop** (SPEC §12.1): full-disk encryption and a screen lock are what protect it. Then,
 from another computer: revoke each mailbox's app password at your provider (Gmail:
 [Gmail setup](gmail-setup.md#revoking-ecfs-access)); revoke ecf's Slack
-tokens (or remove its app) in Slack; sign out ecf's Claude login (presets B and C) in your Claude
+tokens (or remove its app) in Slack; sign out ecf's Claude login in your Claude
 account. SPEC names these steps but not each provider's screens. On a new computer:
 `ecf init --restore <bundle>` with your backup key; it lists what's left (Slack tokens,
 `ecf address set <a> --app-password` with the new passwords, `ecf check`, `ecf resume`, `ecf
