@@ -306,9 +306,9 @@ def test_the_route_passes_the_key_and_transport_to_the_run(
 
 def test_a_corpus_session_is_refused_through_the_socket(running: Paths, root: Path) -> None:
     """P5: corpus runs are gone (R-D5), and the service refuses a request naming a corpus
-    session, Jev's included: real mail reaches Jev only through a preset D address (step 4)."""
+    session, Jev's included: real mail never reaches Jev in v3.0.0 (preset D held back, OD-516)."""
     with LocalClient(running) as c:
-        with pytest.raises(InvalidInputError, match="preset D address"):
+        with pytest.raises(InvalidInputError, match="no model is run over real mail"):
             c.request("POST", "/v1/eval/runs", {"root": str(root), "backend": "jev",
                                                 "corpus_session": "s" * 32})  # fmt: skip
         assert c.get("/v1/eval/runs")["current"]["state"] == "idle"
