@@ -255,7 +255,7 @@ def test_init_offers_the_claude_login_once_an_address_uses_c(
     assert "claude        done   ecf's own configuration is logged in" in r.output
 
 
-# ---- V1.5 step 13b: alert email and backups (OD-400 to OD-403) -----------------------------------
+# V1.5 step 13b (OD-400 to OD-403): init's alert email and backup steps, and skipped steps.
 
 
 def test_a_skipped_step_is_recorded(conn: sqlite3.Connection, clock: FakeClock) -> None:

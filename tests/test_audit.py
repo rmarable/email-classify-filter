@@ -45,7 +45,7 @@ def read(path: Path) -> list[dict[str, Any]]:
     return [json.loads(x) for x in path.read_text().splitlines()]
 
 
-# ---- files ----------------------------------------------------------------------------------
+# Audit files: each row is written once per address and day, in batches.
 
 
 def test_flush_writes_each_row_once_per_address_and_day(
@@ -81,9 +81,6 @@ def test_flush_in_batches(conn: sqlite3.Connection, clock: FakeClock, tmp_path: 
     assert ids == sorted(set(ids)) and len(ids) == audit.BATCH + 5
 
 
-# ---- queries --------------------------------------------------------------------------------
-
-
 def test_query_filters(conn: sqlite3.Connection, clock: FakeClock) -> None:
     add(conn, clock, "check.completed", "ap")
     add(conn, clock, "action.granted", "ap")
@@ -116,9 +113,6 @@ def test_query_filters(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert names(audit.query(conn, INSTALL, limit=1)) == ["config.applied"]
     assert names(audit.query(conn, INSTALL, after_id=3)) == ["config.applied"]
     assert audit.query(conn, INSTALL, event_prefix="%") == []  # no LIKE wildcards
-
-
-# ---- no message content ---------------------------------------------------------------------
 
 
 def test_audit_lines_carry_no_message_content(
@@ -159,7 +153,8 @@ def test_audit_lines_carry_no_message_content(
         assert secret not in text, secret
 
 
-# ---- API, CLI, service ----------------------------------------------------------------------
+# The audit log through the logs route, the CLI's --since and line options, and the service
+# tick that copies it.
 
 
 def test_logs_route(conn: sqlite3.Connection, db_path: Path, clock: FakeClock) -> None:

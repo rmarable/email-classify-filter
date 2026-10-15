@@ -117,7 +117,8 @@ def check(conn: sqlite3.Connection, clock: FakeClock, fake: FakeDns, raw: bytes)
     return sa.evaluate(raw, parse(raw), DnsCache(conn, clock, lookup=fake))
 
 
-# ---- pass and alignment ---------------------------------------------------------------------
+# DKIM pass and DMARC alignment: aligned and RSA signatures pass, relaxed and strict alignment,
+# and an unrelated signer isn't aligned.
 
 
 def test_aligned_signature_passes(conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns) -> None:
@@ -175,7 +176,8 @@ def test_no_dmarc_record_still_passes_on_exact_alignment(
     assert out.result == "pass" and out.policy is None
 
 
-# ---- strictness (OD-047, OD-187) ------------------------------------------------------------
+# Strictness (OD-047, OD-187): signatures that leave room for added content (l= tag, unsigned
+# Subject, an extra unsigned copy) aren't a pass.
 
 
 def test_l_tag_is_not_a_pass(conn: sqlite3.Connection, clock: FakeClock, dns: FakeDns) -> None:
@@ -223,7 +225,8 @@ def test_unsigned_mime_headers_still_pass_but_are_recorded(
     assert out.result == "pass" and out.mime_headers_signed is False
 
 
-# ---- fail and none --------------------------------------------------------------------------
+# Fail and none: tampered or forged mail fails, while a missing key, DNS error, revoked key,
+# unsigned or oversized mail is none rather than a broken signature.
 
 
 @pytest.mark.parametrize(
@@ -303,7 +306,8 @@ def test_oversized_is_none(conn: sqlite3.Connection, clock: FakeClock, dns: Fake
     assert dns.asked == []
 
 
-# ---- DMARC discovery ------------------------------------------------------------------------
+# Finding the DMARC policy: the organizational domain's sp and np, the limited tree walk, and
+# several records at one name being discarded.
 
 
 def cache(conn: sqlite3.Connection, dns: FakeDns) -> DnsCache:
@@ -340,7 +344,7 @@ def test_multiple_records_at_one_name_are_discarded(conn: sqlite3.Connection, dn
     assert sa.discover_policy(cache(conn, dns), "vendor-a.example") is None
 
 
-# ---- the DNS cache --------------------------------------------------------------------------
+# The DNS cache: TTL cap, negative entries and errors, the lookup budget and prefetch.
 
 
 def test_cache_ttl_cap_negative_and_errors(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -386,7 +390,8 @@ def test_ambiguous_from_is_none_even_when_signed(
     assert out.result == "none" and "ambiguous" in out.reason
 
 
-# ---- V1.1 review (2026-09-29) ---------------------------------------------------------------
+# Cases from the V1.1 review (2026-09-29): malformed or odd headers and DNS errors never become a
+# pass or a crash.
 
 
 def test_bare_cr_in_the_headers_is_never_a_pass(

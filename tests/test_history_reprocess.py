@@ -323,7 +323,8 @@ def test_an_item_with_an_undo_queued_is_skipped(conn: sqlite3.Connection, clock:
     assert n["skipped"] == {"undo queued": 1}
 
 
-# ---- live: an added hide on mail still in INBOX (review M7) ----------------------------------
+# Reprocessing live mail (review M7): a hide added on mail still in the INBOX waits for
+# `ecf approve --scan`, and the done marker is appended, also after a reclassify.
 
 
 def _inbox_item(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource,

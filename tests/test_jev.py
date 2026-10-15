@@ -116,16 +116,14 @@ def classify(r: Rig, **kw: Any) -> jev.Result:
     return r.client.classify(SCHEMA, EMAIL, (), **kw)
 
 
-# ---- the lock ----------------------------------------------------------------------------------
-
-
 def test_the_lock_pins_a_versioned_id() -> None:
     raw = json.loads((Path(jev.__file__).parent / "data" / "jev.lock").read_text("utf-8"))
     assert raw["model"] == PIN and jev._PIN.fullmatch(PIN)  # pyright: ignore[reportPrivateUsage]
     assert PIN not in ("jev-latest", "jev-preview")
 
 
-# ---- the request -------------------------------------------------------------------------------
+# The request: its shape, header and size caps, injection marking, and exact headers with no
+# environment settings and no redirects.
 
 
 def _body(email: jev.Email = EMAIL, sent: tuple[str, ...] = (), *, redact: bool = True,
@@ -288,7 +286,8 @@ def test_exact_headers_no_env_and_no_redirects(monkeypatch: pytest.MonkeyPatch) 
     assert r.client.http._trust_env is False  # pyright: ignore[reportPrivateUsage]
 
 
-# ---- answers -----------------------------------------------------------------------------------
+# Answers: a good reply maps with its figures, an unmappable one is a failed attempt, and a score
+# tie goes up.
 
 
 def test_a_good_reply_maps_with_its_figures() -> None:
@@ -321,7 +320,8 @@ def test_a_score_tie_goes_up() -> None:
     assert res.classification is not None and res.classification["fraud_risk"] == "medium"
 
 
-# ---- Retry-After -------------------------------------------------------------------------------
+# Retry-After and rate limits: short pauses, announced waits, stops, 429 back-off and proactive
+# pacing.
 
 
 def test_retry_after_forms() -> None:
@@ -405,7 +405,8 @@ def test_a_429_on_a_request_near_a_limit_is_a_request_error(
     assert res.fault == "request_error" and res.status == 429 and len(r.script.seen) == 1
 
 
-# ---- provider faults, auth, pin, request errors ------------------------------------------------
+# Provider faults, auth, pin and request errors: which are retried, which fail one case and which
+# stop the run.
 
 
 def _trickle(clock: FakeClock, chunks: int, step_s: float) -> Responder:
@@ -504,7 +505,8 @@ def test_other_request_errors_fail_the_case_without_a_retry(code: int) -> None:
     assert res.fault == "request_error" and res.status == code and len(r.script.seen) == 1
 
 
-# ---- the breaker, AIMD, the budget -------------------------------------------------------------
+# The circuit breaker, AIMD concurrency and the waiting budget: opening, probing, cool-downs
+# doubling to their cap, and the budget ending a run.
 
 
 def test_the_breaker_opens_and_the_probe_half_opens_it() -> None:
@@ -597,7 +599,8 @@ def test_the_early_stop_bar() -> None:
     assert jev.fault_limit(304) == 6 and jev.fault_limit(155) == 3
 
 
-# ---- interruptible -----------------------------------------------------------------------------
+# Interruptible waits: a stop during a cool-down or pause returns at once, and a late result is
+# discarded.
 
 
 def test_stop_during_a_cool_down_returns_at_once() -> None:
@@ -636,7 +639,7 @@ def test_an_in_flight_result_after_stop_is_discarded() -> None:
     assert [kw["usage_in"] for e, kw in r.logs if e == "jev.call"] == [2400]
 
 
-# ---- leaks -------------------------------------------------------------------------------------
+# Leaks: the key never reaches the log, the request ID does, and new content keys are scrubbed.
 
 
 def test_the_key_never_leaks_and_the_request_id_stays_in_the_log() -> None:
@@ -663,7 +666,8 @@ def test_new_content_keys_are_scrubbed() -> None:
     assert set(no_content(None, "info", dict(raw)).values()) == {"[redacted]"}
 
 
-# ---- diff-review fixes (J1-J13) ----------------------------------------------------------------
+# Diff-review fixes (J1-J13): budget and Retry-After edge cases, pacing, usage counts, key
+# re-reads and the pin check.
 
 
 def test_a_short_retry_after_past_the_remaining_budget_keeps_the_partial_result() -> None:
@@ -804,7 +808,7 @@ def test_check_key_and_the_probe_compare_the_reply_model_with_the_pin() -> None:
     assert err.value.cls == "pin"
 
 
-# ---- the key's check and set_key ---------------------------------------------------------------
+# The key's check and set_key: one minimal POST, and the key stored only after it passes.
 
 
 def test_check_key_is_one_minimal_post_within_5_s() -> None:
@@ -837,7 +841,7 @@ def test_set_key_stores_only_after_the_check(conn: sqlite3.Connection, clock: Fa
     assert KEY not in repr(audit)
 
 
-# ---- digests -----------------------------------------------------------------------------------
+# Digests: the gate key and the prompt digest change with each input, and Jev asks the v3 schema.
 
 
 def _with_description(schema: CompiledSchema, name: str, text: str) -> CompiledSchema:

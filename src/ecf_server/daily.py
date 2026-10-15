@@ -168,7 +168,8 @@ def _count(conn: sqlite3.Connection, sql: str, *args: Any) -> int:
     return int(conn.execute(sql, args).fetchone()[0])
 
 
-# ---- channel members (OD-215) -----------------------------------------------------------------
+# Channel members (OD-215): the hourly check for anyone other than you and the bot in a
+# recorded channel.
 
 
 def recorded_others(conn: sqlite3.Connection) -> dict[str, list[str]]:

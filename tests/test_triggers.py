@@ -54,7 +54,7 @@ def hits(body: str, **kw: Any) -> dict[str, list[str]]:
     return tr.scan(tr.texts_of(parse(mail(body, **kw))))
 
 
-# ---- keywords -------------------------------------------------------------------------------
+# Keyword matching: case rules for acronyms and phrases, disguised keywords, and hidden HTML.
 
 
 def test_acronyms_are_case_sensitive_whole_words() -> None:
@@ -91,9 +91,6 @@ def test_hidden_html_and_other_places_are_scanned() -> None:
     assert "IRS" in hits("hi", sender="IRS Refunds <refund@tax.example>")["regulator"]
 
 
-# ---- lookalike domains ----------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("domain", "known", "want"),
     [
@@ -120,7 +117,8 @@ def test_lookalike(domain: str, known: str, want: bool) -> None:
     assert tr.lookalike(domain, known) is want
 
 
-# ---- the triggers ---------------------------------------------------------------------------
+# The fraud and regulator triggers, each fired on hand-built facts: what fires alone, what
+# needs a second signal, and what must not fire.
 
 
 def found(**kw: Any) -> dict[str, Any]:
@@ -279,7 +277,8 @@ def test_ordinary_mentions_of_assistants_dont_fire(body: str) -> None:
     assert not any(r.startswith("text addressed") for r in fire(body).fraud)
 
 
-# ---- end to end -----------------------------------------------------------------------------
+# End to end through the analyzer: a bank change from a new sender, ambiguous From headers, and
+# domains that must not count as lookalikes.
 
 
 def test_analyzer_flags_a_bank_change_from_a_new_sender(
@@ -362,7 +361,8 @@ def test_the_watched_providers_domain_is_a_lookalike_target() -> None:
     assert fire("hi", from_domain="ymail.com", providers=("gmail.com",)).lookalikes == []  # OD-430
 
 
-# ---- org addresses and impersonation (V1.6) -------------------------------------------------
+# Org addresses and impersonation (V1.6), plus the facts built from keyword combinations (BEC
+# opener, tax forms, gift-card codes, credentials, IBANs, wallets).
 
 PAT = OrgAddress("patlee@gmail.com", "Pat Lee")
 DANA = OrgAddress("dana.ruiz@acme.example", "Dana Ruiz")
@@ -767,7 +767,8 @@ def test_excerpt_is_redacted_before_the_cut() -> None:
     assert out == f"{tr.INJECTION_MARK}\n\nPlease call me back."
 
 
-# ---- scan speed (pre-classifier plan step 2a) ------------------------------------------------
+# Scan speed (pre-classifier plan step 2a): the single combined scan finds what one search per
+# pattern found, and is unchanged on the eval cards.
 
 EVAL = Path(__file__).parent / "eval"
 
@@ -811,7 +812,8 @@ def test_scan_is_unchanged_on_the_eval_cards(part: str) -> None:
         assert _keyword_hits(texts) == _one_pattern_at_a_time(texts), card.name
 
 
-# ---- hot path (pre-classifier plan step 3b) ---------------------------------------------------
+# Hot-path optimisations (pre-classifier plan step 3b): each faster path is checked against the
+# slower one it replaced, and the scan stops at the message limit.
 
 
 def test_the_ascii_confusables_apply_in_any_order() -> None:
@@ -994,7 +996,8 @@ def test_batched_redaction_matches_paragraph_by_paragraph() -> None:
             assert tr.redact_injection(text) == _redact_before_step_3b(text), repr(text[:200])
 
 
-# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+# Routes (OD-490, pre-classifier plan step 4): which routes with a second signal become fraud
+# reasons, the credential veto, origins, and the eval and pipeline using them.
 
 CRED = {"credential": ["password"], "credential_ask": ["reply with"]}
 GIFT = {"gift_card": ["gift cards"], "gift_card_ask": ["send me the codes"]}

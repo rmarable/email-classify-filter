@@ -88,7 +88,9 @@ def _approval(conn: sqlite3.Connection, clock: FakeClock, sid: str, facts: dict[
     return sid
 
 
-# ---- §2 row by row --------------------------------------------------------------------------
+# Old mail found by a scan, row by row (§2): new mail still escalates at once, old mail goes to
+# the summary, gets no card or re-offer, stays out of digests and "Approve all", and is reviewed
+# last.
 
 
 def test_new_mail_during_a_scan_escalates_at_once_and_old_mail_goes_to_the_summary(
@@ -196,7 +198,8 @@ def test_the_marker() -> None:
     assert marked.head_key(None) == "scan:-"
 
 
-# ---- the run's summary (§3.4) ---------------------------------------------------------------
+# The run's Slack summary (§3.4): posted at start, edited until the run settles, queued before its
+# first replies, and safe against lines another thread wrote.
 
 
 def test_the_summary_head_at_start_replies_as_found_and_edits_until_settled(
@@ -238,7 +241,7 @@ def test_the_summary_head_at_start_replies_as_found_and_edits_until_settled(
     assert dict(_posts(conn)[-1]["card"]["fields"])["State"] == "stopped"
 
 
-# ---- ecf approve --scan (§3.5) --------------------------------------------------------------
+# `ecf approve --scan` (§3.5): it shows the run's set and binds one step-up to exactly that set.
 
 
 def test_approve_scan_shows_the_set_and_binds_one_step_up_to_it(

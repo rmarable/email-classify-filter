@@ -73,7 +73,8 @@ class BundleError(Exception):
     """A bundle that can't be trusted or read; the text never includes its contents."""
 
 
-# ---- contents -----------------------------------------------------------------------------------
+# Contents: the allowed tables from one consistent copy, the manifest, and the tar.gz
+# plaintext they make.
 
 
 def snapshot_tables(conn: sqlite3.Connection, scratch_dir: Path) -> dict[str, list[dict[str, Any]]]:
@@ -130,7 +131,7 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-# ---- the file -----------------------------------------------------------------------------------
+# The file: sealing, signing, reading and verifying a bundle, and writing it safely.
 
 
 @dataclass(frozen=True)

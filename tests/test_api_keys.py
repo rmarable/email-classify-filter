@@ -83,7 +83,8 @@ def env(conn: sqlite3.Connection, db_path: Path) -> Env:
     return Env(db_path)
 
 
-# ---- the checks (CLI and service) --------------------------------------------------------------
+# The key checks shared by the CLI and the service: a fixed list of providers, malformed keys
+# refused, surrounding whitespace stripped.
 
 
 def test_providers_are_a_fixed_list() -> None:
@@ -116,7 +117,8 @@ def test_ends_are_stripped() -> None:
     assert api_keys.check_key("anthropic", ANT_KEY) == ANT_KEY
 
 
-# ---- the routes --------------------------------------------------------------------------------
+# The key routes: set, replace and clear for each provider, a key the provider refuses is not
+# stored, the old route is gone, and only the CLI (never MCP) can reach them.
 
 
 def test_typesafe_set_replace_clear(env: Env, conn: sqlite3.Connection) -> None:
@@ -205,7 +207,8 @@ def test_mcp_has_no_key_tool() -> None:
     assert _mcp_paths() == set()
 
 
-# ---- the CLI -----------------------------------------------------------------------------------
+# The `ecf` key commands: they set and clear each provider, check the key and the service's
+# version before sending anything, and need a terminal.
 
 
 class Fake:

@@ -111,7 +111,7 @@ def parse_key_text(text: str) -> bytes:
     return root
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers: HKDF-Expand, and the bech32 encoding and checks of the written-down key.
 
 
 def _expand(prk: bytes, info: bytes) -> bytes:

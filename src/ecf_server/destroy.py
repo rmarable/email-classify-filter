@@ -239,7 +239,8 @@ def residue(rec: dict[str, Any]) -> list[str]:
     return out
 
 
-# ---- the steps ----------------------------------------------------------------------------------
+# The steps of a destroy, in order: start, notices, the dead-man message, channels, the
+# Slack app and the secrets. The dead-man message is disarmed so it can't fire later.
 
 
 def _start(conn: sqlite3.Connection, clock: Clock) -> None:
@@ -340,7 +341,8 @@ def _secrets(conn: sqlite3.Connection, ctx: Context) -> dict[str, Any]:
     return {"deleted": deleted}
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers for the steps: the bot token, the unreachable-Slack error, and what the summary
+# shows (the save, the role and the addresses).
 
 
 def _get_bot(store: SecretStore) -> str | None:
@@ -378,7 +380,7 @@ def _addresses(conn: sqlite3.Connection) -> list[dict[str, str]]:
     ]
 
 
-# ---- in the foreground --------------------------------------------------------------------------
+# `ecf-server destroy`: the same steps run in the foreground when the service is down.
 
 
 def main(install: str, confirm: str, *, ask_token: bool) -> int:

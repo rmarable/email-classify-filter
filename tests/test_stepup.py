@@ -141,7 +141,8 @@ def test_audit_has_no_password(conn: sqlite3.Connection, clock: FakeClock) -> No
     assert "hunter2" not in json.dumps(rows)
 
 
-# ---- API and client -------------------------------------------------------------------------
+# Step-up through the API and the client: routes refuse MCP-profile tokens, the client steps up
+# for what the service names, and the dialog never shows email text or made-up values.
 
 
 def _state(db_path: Path, clock: FakeClock, s: FakeStepper) -> ServiceState:

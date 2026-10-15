@@ -37,9 +37,6 @@ def _row(conn: sqlite3.Connection, sid: str) -> sqlite3.Row:
     return row
 
 
-# ---- recording ----------------------------------------------------------------------------------
-
-
 @pytest.mark.usefixtures("extensions_on")
 def test_a_schema_change_during_the_call_asks_again_instead_of_recording(
     conn: sqlite3.Connection, clock: FakeClock

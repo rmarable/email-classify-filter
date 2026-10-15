@@ -170,7 +170,8 @@ def _set_last(conn: sqlite3.Connection, aid: str, now: datetime) -> None:
         slack_admin.put_setting(conn, LAST + aid, to_ts(now), to_ts(now), actor="service")
 
 
-# ---- Undo -----------------------------------------------------------------------------------
+# Undo: what the pre-check or the model's plan did that Undo may remove, the button, and
+# carrying out queued Undos inside a check.
 
 
 def undoable_actions(facts: dict[str, Any]) -> list[Planned]:

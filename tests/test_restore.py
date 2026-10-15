@@ -100,7 +100,7 @@ def _settings(c: sqlite3.Connection) -> dict[str, Any]:
     return {r[0]: json.loads(r[1]) for r in c.execute("SELECT key, value FROM settings")}
 
 
-# ---- a new computer -----------------------------------------------------------------------------
+# Restoring on a new computer, keeping a changed fixed rule and dropping the bundle's own fields.
 
 
 def test_restore_on_a_new_computer(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,
@@ -174,7 +174,8 @@ def test_s4_restore_drops_the_bundles_own_fields(
     assert config.current(fresh)["schema"] is None
 
 
-# ---- the same computer --------------------------------------------------------------------------
+# Restoring on the same computer: bundle checks, manual bundles needing a signature and the key, and
+# the step-up bound to the bundle.
 
 
 def test_restore_on_the_same_computer(conn: sqlite3.Connection, clock: FakeClock,
@@ -267,7 +268,7 @@ def test_the_step_up_is_bound_to_the_bundle(
     assert _one(fresh, "SELECT count(*) FROM addresses") == 0
 
 
-# ---- resume gate and preview --------------------------------------------------------------------
+# Resuming after a restore waits for a passing check; the preview shows the differences.
 
 
 def test_resume_waits_for_a_passing_check(
@@ -305,7 +306,7 @@ def test_preview_differences(conn: sqlite3.Connection, clock: FakeClock, tmp_pat
                                "outbound": True}]  # fmt: skip
 
 
-# ---- route and CLI ------------------------------------------------------------------------------
+# The route and the CLI.
 
 
 def test_route_and_cli(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,

@@ -154,7 +154,7 @@ def test_the_service_classifier_path_never_imports_systemone() -> None:
     assert not names & {"classifier", "ollama", "jev"} and "ecf_server.ollama" not in mods
 
 
-# ---- `ecf eval compare` of archived decision-model and Gemma results (R-D12) -------------------
+# `ecf eval compare` of archived decision-model and Gemma results (R-D12).
 
 
 def _file(tmp: Path, name: str, backend: str, correct: list[bool], **extra: Any) -> Path:

@@ -213,7 +213,7 @@ def test_sonnet_input_per_case_or_not_in_the_result() -> None:
     assert out["read_bytes"].startswith("not in the result")
 
 
-# ---- C22: plan §7's noise reference from the S3b pair ------------------------------------------
+# C22: the S3b pair's committed fixture reproduces plan §7's noise reference.
 
 S3B = Path(__file__).resolve().parent / "data" / "s3b_noise_pair.json"
 ROW = r"^[a-z0-9-]+ [01] [01-]+ [01-] [cu][sn]$"

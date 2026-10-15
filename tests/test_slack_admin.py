@@ -116,7 +116,8 @@ def _audit_events(conn: sqlite3.Connection) -> list[str]:
     return [r["event"] for r in conn.execute("SELECT event FROM audit ORDER BY id")]
 
 
-# ---- install --------------------------------------------------------------------------------
+# Installing the Slack app: the manifest's scopes, what is stored, bad or foreign tokens refused,
+# and a failed install leaving nothing behind.
 
 
 def test_the_manifest_asks_for_socket_mode_and_the_tested_scopes() -> None:
@@ -217,7 +218,7 @@ def test_install_twice_is_refused(
                             member="U0ME1")  # fmt: skip
 
 
-# ---- member confirmation --------------------------------------------------------------------
+# Member confirmation: only the pending member, clicking with the right nonce, confirms.
 
 
 class Clicks:
@@ -263,7 +264,8 @@ def test_only_the_pending_member_confirms_and_only_with_the_nonce(
     assert _audit_events(conn).count("slack.click_failed") == 2
 
 
-# ---- step-up changes ------------------------------------------------------------------------
+# Changes that need step-up: new tokens (same workspace only) and a new member, who replaces the
+# old one only once confirmed; both need Slack installed.
 
 
 def _verified(conn: sqlite3.Connection, clock: FakeClock, exc: StepupRequiredError) -> str:
@@ -356,9 +358,6 @@ def test_changes_need_slack_installed(
         slack_admin.reauthorize(conn, clock, slack.web, CONFIG, "default")
 
 
-# ---- reauthorize ----------------------------------------------------------------------------
-
-
 def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
     conn: sqlite3.Connection, clock: FakeClock, store: MemorySecretStore, slack: FakeSlack
 ) -> None:
@@ -395,9 +394,6 @@ def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
     assert slack.calls[1][2]["text"] == f"item:{one}"[:10]
 
 
-# ---- through the API ------------------------------------------------------------------------
-
-
 def test_install_route_stores_tokens_and_reconnects(
     conn: sqlite3.Connection, db_path: Path, store: MemorySecretStore, slack: FakeSlack
 ) -> None:
@@ -425,7 +421,8 @@ def test_install_route_stores_tokens_and_reconnects(
     assert r.json()["pending_member"] == "U0ME1" and store.get(BOT_SECRET) == BOT
 
 
-# ---- nothing secret reaches the log (the imaplib lesson, V1.1) ------------------------------
+# Nothing secret reaches the debug log from real Slack SDK traffic (the imaplib lesson, V1.1), plus
+# recovery after an install stopped halfway or tokens were replaced.
 
 
 class _FakeSlackHTTP(BaseHTTPRequestHandler):

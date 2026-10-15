@@ -73,7 +73,8 @@ templates:
 
 V = "version: 1\n"
 
-# ---- validation -----------------------------------------------------------------------------
+# Validating a config document: bad documents are refused, and a change to one section must
+# keep the others valid.
 
 
 @pytest.mark.parametrize(
@@ -129,7 +130,8 @@ def test_a_change_elsewhere_must_keep_the_other_sections_valid(
         config.parse(conn, "version: 1\nmove_folders: [Other]")  # the applied rule moves there
 
 
-# ---- apply ----------------------------------------------------------------------------------
+# Applying a config: dry run, step-up, audit and notice; the nonce covers one document; and
+# `default` returns sections to their shipped values.
 
 
 def test_dry_run_step_up_apply_audit_and_notice(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -248,7 +250,8 @@ def test_a_reset_must_keep_the_other_sections_valid(
     assert {c["section"] for c in r.changes} == {"move_folders", "rules"}
 
 
-# ---- rules test -----------------------------------------------------------------------------
+# `ecf rules test`: what a rules change would do on a case set, the profiles it runs under, and
+# what it refuses or skips.
 
 
 @pytest.fixture
@@ -415,9 +418,6 @@ def test_rules_test_skips_unbuilt_cases_and_refuses_paths_outside(
         ruletest.run(clock, starter, STARTER.read_text("utf-8"), tmp_path / "nope")
 
 
-# ---- through the service and the CLI -------------------------------------------------------
-
-
 def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small_set: Path) -> None:
     rules_file = tmp_path / "rules.yaml"
     rules_file.write_text(_drop_rule(STARTER.read_text("utf-8"), "invoice"))
@@ -445,7 +445,8 @@ def test_cli_rules_test_and_config_dry_run(running: Paths, tmp_path: Path, small
     assert "your rules that can hide mail (when ecf's checks allow it): invoice" in r.output
 
 
-# ---- org addresses (V1.6) ---------------------------------------------------------------------
+# Org addresses (V1.6): stored lowercased, org domains may be empty for public-provider
+# addresses, and forwards to personal accounts are named in the dialog.
 
 
 def test_org_addresses_are_stored_lowercased_with_names_tidied(
@@ -520,7 +521,8 @@ def test_the_summary_puts_the_riskiest_change_first_and_counts_what_it_cuts() ->
     assert len(alone) <= 50
 
 
-# ---- schema extensions (OD-478) -------------------------------------------------------------
+# Schema extensions (OD-478): dry run, step-up and apply, the caps and budget line, and how
+# rules and the gate key use the added fields.
 
 SCHEMA_DOC = """version: 1
 schema:
@@ -671,7 +673,8 @@ def test_the_schema_route(conn: sqlite3.Connection, clock: FakeClock, db_path: P
     assert got["digest"] == config.current_schema(conn).digest != load_schema().digest
 
 
-# ---- review fixes (OD-478) ---------------------------------------------------------------------
+# Fixes from the OD-478 review: empty or wrongly typed schemas, ordering, the dialog, starter
+# ID checks, and an extension that no longer compiles failing closed.
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -804,7 +807,8 @@ def test_a_stored_extension_that_no_longer_compiles_fails_closed(
     assert config.current_schema(conn).digest == load_schema().digest
 
 
-# ---- extensions off in v2.0.0 (OD-481) ---------------------------------------------------------
+# With extensions off (v2.0.0, OD-481): schema sections are refused, stored extensions are
+# ignored, and rules that use them give way to the starter rules.
 
 
 def _open_alerts(conn: sqlite3.Connection) -> list[str]:

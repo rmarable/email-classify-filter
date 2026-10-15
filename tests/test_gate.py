@@ -395,7 +395,7 @@ def test_recording_a_review_marks_the_email_changed(
     assert conn.execute("SELECT updated_at FROM items").fetchone()[0] > before
 
 
-# ---- the CLI's screens ------------------------------------------------------------------------
+# The CLI's gate screens: each check and what to do, and what happened to held emails.
 
 
 def _checks(**ok: bool) -> list[dict[str, Any]]:
@@ -440,7 +440,7 @@ def test_the_cli_reports_what_happened_to_held_emails(capsys: pytest.CaptureFixt
     ]
 
 
-# ---- S3b diff review B1: the one-time demotion after 0037 (OD-500, P4) -------------------------
+# S3b diff review B1 (OD-500, P4): the one-time demotion of live addresses after migration 0037.
 
 
 def _apply_0037(conn: sqlite3.Connection) -> None:

@@ -100,7 +100,8 @@ def _audit(conn: sqlite3.Connection, event: str) -> list[dict[str, Any]]:
     return [json.loads(r[0]) for r in rows]
 
 
-# ---- the service's part -------------------------------------------------------------------------
+# The service's part of removing Slack: tokens are revoked and the app deleted where possible,
+# what's left is reported, and refusals or an unreachable Slack forget nothing.
 
 
 def test_with_tokens_the_bot_token_is_revoked_and_everything_slack_is_forgotten(env: Env) -> None:
@@ -236,7 +237,7 @@ def test_a_pending_app_is_removed_too(conn: sqlite3.Connection, clock: FakeClock
     assert _slack_settings(conn) == []
 
 
-# ---- afterwards ---------------------------------------------------------------------------------
+# After removal: a fresh install works and item cards are posted again.
 
 
 def test_install_works_again_from_scratch(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -299,7 +300,7 @@ def test_item_cards_after_removal_and_a_new_install(env: Env) -> None:
     assert slack_out.message_ref(env.conn, f"item:{sid}") is None  # posted fresh, not edited
 
 
-# ---- the Slack thread ---------------------------------------------------------------------------
+# The Slack thread stays idle while removal holds it, and reconnects only if still installed.
 
 
 def _wait(cond: Callable[[], bool], timeout: float = 10.0) -> bool:
@@ -347,9 +348,6 @@ def test_held_keeps_the_thread_idle_and_reconnects_only_if_still_installed(
         thread.join(10)
 
 
-# ---- the route ----------------------------------------------------------------------------------
-
-
 def test_route_needs_step_up_and_holds_the_slack_thread(env: Env, db_path: Path) -> None:
     st = make_state(db_path, env.store)
     st.clock, st.slack_web, st.notifier = env.clock, env.web, env.notifier
@@ -376,7 +374,7 @@ def test_route_needs_step_up_and_holds_the_slack_thread(env: Env, db_path: Path)
     assert s["app_id"] is None and s["channels"] == []
 
 
-# ---- the CLI ------------------------------------------------------------------------------------
+# The CLI: removal needs the typed workspace name, step-up and a terminal.
 
 
 @pytest.fixture

@@ -46,7 +46,8 @@ def _posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [json.loads(r[0]) for r in rows]
 
 
-# ---- settings -------------------------------------------------------------------------------
+# Settings: values parse, each key lives at the install or address level, and each reaches the
+# code that reads it.
 
 
 def test_parsers() -> None:
@@ -116,7 +117,8 @@ def test_settings_reach_their_readers(conn: sqlite3.Connection, clock: FakeClock
     assert needs_you.mark_stale(conn, clock) == ["a" * 64]  # 7 days, not 30
 
 
-# ---- stages ---------------------------------------------------------------------------------
+# Stages and sensitivity: moving up needs step-up (live also needs the gate), going back is
+# instant, and lowering sensitivity needs a reason and sends a notice.
 
 
 def test_assist_needs_step_up_live_needs_the_gate_and_going_back_is_instant(

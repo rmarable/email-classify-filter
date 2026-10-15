@@ -61,7 +61,8 @@ def _v2_doc() -> dict[str, Any]:
     return dict(load_yaml(text, source="v2"))
 
 
-# ---- composition ------------------------------------------------------------------------------
+# Composition: the fixed rules run first, then the junk rule and the default rules, and the
+# digest covers both files.
 
 
 def test_the_fixed_rules_run_first_then_the_default_rules() -> None:
@@ -114,7 +115,8 @@ def test_the_fixed_rules_compile_on_a_schema_without_the_items(schema: Any) -> N
     assert old.evaluate(RuleInput(no_items, {})).rule_id == "otherwise"
 
 
-# ---- the fixed items, their kept sources and from_v2 (P1, P2, P3; S3b) ------------------------
+# The fixed items, their kept sources and from_v2 (P1, P2, P3; S3b): each item or kept source
+# reaches its fixed rule.
 
 
 EXTERNAL_MONEY = {"sender_origin": "external", "payment_keyword": True}
@@ -175,7 +177,8 @@ def test_the_kept_sources_are_the_fixed_rules_kept_clauses() -> None:
         assert clause not in body, clause  # S3b: no bridge clause
 
 
-# ---- refusals and the catch-all --------------------------------------------------------------
+# Refusals and the catch-all: a file can't redefine a fixed rule or use a removed value, and every
+# file ends with a catch-all.
 
 
 @pytest.mark.parametrize("rid", FIXED)
@@ -215,7 +218,7 @@ def test_a_file_without_a_catch_all_gets_one_and_never_raises() -> None:
     assert (d.rule_id, d.actions, d.to_actor) == ("otherwise", (), True)
 
 
-# ---- cache (P8) --------------------------------------------------------------------------------
+# The rules cache (P8): keyed on the schema and the text, and current rules follow a change.
 
 
 def test_the_cache_is_keyed_on_the_schema_and_the_text() -> None:
@@ -240,7 +243,8 @@ def test_current_rules_follow_a_change_to_the_stored_rules(conn: sqlite3.Connect
     assert [r.id for r in config.current_rules(conn).rules] == [*FIXED, "mine"]
 
 
-# ---- the v2 applied rules (P7) ---------------------------------------------------------------
+# The v2 applied rules (P7): converting a v2 set drops its unchanged fixed rules, and a customised
+# one stops the conversion.
 
 
 def _store(conn: sqlite3.Connection, clock: FakeClock, doc: dict[str, Any]) -> None:
@@ -318,9 +322,6 @@ def test_a_customised_fixed_rule_falls_back_to_the_starter_rules_with_a_system_e
     assert "remove it and the other fixed rules (fraud_guard," in alert["detail"]
 
 
-# ---- the rules test's stand-in -----------------------------------------------------------------
-
-
 def test_the_rules_test_stand_in_reaches_fraud_guard_through_the_items() -> None:
     """Card labels, then hand-set fixed items, then derived ones (S2 review F4): a card hand-set
     `bank_detail_change: true` reaches fraud_guard whatever its category, through any proposed
@@ -339,7 +340,8 @@ def test_the_rules_test_stand_in_reaches_fraud_guard_through_the_items() -> None
     assert proposed.evaluate(RuleInput(derived, {})).rule_id == "fraud_guard"
 
 
-# ---- diff review A4, A7 (2026-10-13) ----------------------------------------------------------
+# Diff review A4, A7 (2026-10-13): a refused set is cached and logged once, and a set of only
+# unchanged fixed rules becomes the default.
 
 
 def test_a_refused_set_is_cached_as_refused_and_logged_once(
@@ -388,7 +390,8 @@ def test_a_set_of_only_unchanged_fixed_rules_becomes_the_default(
     assert config.convert_rules(conn, to_ts(clock.now())) == {"converted": False}
 
 
-# ---- v3.0.0 step 5: rule 5 renamed `spam_or_phishing` -> `phishing` (OD-508; PH2) -------------
+# Rule 5 renamed from `spam_or_phishing` to `phishing` in v3.0.0 step 5 (OD-508; PH2): new mail's
+# label, refused and allowed ids, and when a v2 copy converts.
 
 OLD_HINT = "ecf renamed its fixed rule spam_or_phishing to phishing in v3.0.0"
 

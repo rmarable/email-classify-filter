@@ -83,7 +83,7 @@ def _alerts(conn: sqlite3.Connection) -> dict[str, str]:
         "SELECT kind, detail FROM alerts WHERE resolved_at IS NULL")}  # fmt: skip
 
 
-# ---- models.lock ------------------------------------------------------------------------------
+# models.lock: every pinned model has a lifecycle entry.
 
 
 def test_every_pin_has_a_lifecycle_entry_and_none_retires_yet() -> None:
@@ -96,7 +96,8 @@ def test_every_pin_has_a_lifecycle_entry_and_none_retires_yet() -> None:
     assert all(e.retires is None for e in life.values())  # verified 2026-10-08
 
 
-# ---- retirement --------------------------------------------------------------------------------
+# Retirement: a retiring pin is announced, then again 30 and 7 days before, and ecf claude refuses a
+# pin past its date until an override replaces it.
 
 
 def test_a_retiring_pin_is_announced_then_30_and_7_days_before(
@@ -154,7 +155,8 @@ def test_ecf_claude_refuses_a_pin_past_its_date_until_an_override_replaces_it(
     assert model_watch.retiring(conn) == []
 
 
-# ---- the Models API ----------------------------------------------------------------------------
+# The Models API watch: newer models in a pinned family, paging, failures as system errors until a
+# success, offline and no-key behaviour, and the weekly schedule.
 
 
 def test_a_newer_model_in_a_pinned_family_goes_on_the_daily_summary_once(
@@ -253,9 +255,6 @@ def test_due_weekly_and_one_watch_at_a_time(conn: sqlite3.Connection, clock: Fak
     assert model_watch.start(*args, spawn=lambda f: f()) is True
 
 
-# ---- the key -----------------------------------------------------------------------------------
-
-
 def test_the_key_is_stored_only_once_the_api_accepts_it(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -276,9 +275,6 @@ def test_the_key_is_stored_only_once_the_api_accepts_it(
     assert audit == [("models.api_key_set", '{"listed": 3, "replaced": false}'),
                      ("models.api_key_cleared", "{}")]  # fmt: skip
     assert "sk-ant" not in json.dumps(audit)
-
-
-# ---- what the CLI shows ------------------------------------------------------------------------
 
 
 def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
@@ -309,7 +305,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
     assert datetime.fromisoformat(str(st["next_at"]).replace("Z", "+00:00")) > clock.now()
 
 
-# ---- ecf releases (operator decision D7, 2026-10-06) -------------------------------------------
+# ecf releases (operator decision D7, 2026-10-06): a newer release goes on the daily summary once.
 
 
 def test_a_newer_release_goes_on_the_daily_summary_once(

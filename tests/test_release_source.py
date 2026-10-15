@@ -102,7 +102,7 @@ def _rel(tag: str, *, prerelease: bool = False, **kw: Any) -> dict[str, Any]:
     return {"prerelease": prerelease, "assets": assets(tag, **kw)}
 
 
-# ---- tags, listing and selection --------------------------------------------------------------
+# Tags, release listing and choosing a pre-release, and gh missing or signed out.
 
 
 def test_tags_and_versions() -> None:
@@ -139,7 +139,8 @@ def test_gh_missing_or_signed_out() -> None:
         release_source.list_releases(fake.gh())
 
 
-# ---- fetch and verify -------------------------------------------------------------------------
+# Fetching and verifying a release: tampered wheels, disagreeing manifest and sums, the wrong tag or
+# version, and missing assets are refused.
 
 
 def test_fetch_verifies_and_keeps_the_wheel(tmp_path: Path) -> None:
@@ -212,7 +213,8 @@ def test_a_local_sums_file(tmp_path: Path) -> None:
         release_source.check_sums_file(other, sums)
 
 
-# ---- the CLI ----------------------------------------------------------------------------------
+# The upgrade CLI: newest stable, release candidates, going back, refusals, a wheel with sums, and
+# what it says when already installed.
 
 
 @pytest.fixture

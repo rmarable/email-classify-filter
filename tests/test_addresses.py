@@ -85,7 +85,8 @@ def add(env: Env, r: ad.AddRequest) -> dict[str, Any]:
     return ad.add_address(conn, clock, secrets, mail, r, actor="os_user")
 
 
-# ---- adding ---------------------------------------------------------------------------------
+# Adding an address: org domains are set by the first address, public and duplicate addresses
+# are refused, Gmail needs no IMAP host, and a rejected login stores nothing.
 
 
 def test_first_address_sets_org_domains_and_stores_the_secret(env: Env) -> None:
@@ -211,7 +212,8 @@ def test_domains_are_idna_normalized() -> None:
     assert ad.default_address_id("Accounts.Payable@acme.example") == "accounts-payable"
 
 
-# ---- rotating and removing ------------------------------------------------------------------
+# Rotating an app password (checked before it replaces the old one) and removing an address,
+# including what removal does to open items and when it needs step-up.
 
 
 def test_new_app_password_is_checked_before_it_replaces_the_old_one(env: Env) -> None:
@@ -323,7 +325,8 @@ def test_remove_with_a_fraud_item_needs_step_up_for_that_exact_set(env: Env) -> 
     assert a["resolved"] == 2
 
 
-# ---- the API --------------------------------------------------------------------------------
+# The addresses API: add, list, rotate and remove over HTTP, the Slack channel each address
+# gets, and the refusals for bad bodies, non-CLI callers and a missing secret store.
 
 TOKEN = "cli-token"
 
@@ -463,7 +466,7 @@ def test_api_without_a_secret_store_says_why(conn: sqlite3.Connection, db_path: 
     assert ServiceUnavailableError.code.value == r.json()["code"]
 
 
-# ---- hidden prompts -------------------------------------------------------------------------
+# Hidden password prompts refuse to run without a terminal.
 
 
 class Tty(io.StringIO):
@@ -487,7 +490,8 @@ def test_hidden_prompt_with_a_terminal() -> None:
         hidden("pw: ", stdin=Tty(), ask=lambda _p: "")
 
 
-# ---- against Dovecot ------------------------------------------------------------------------
+# Adding an address against a real IMAP server (Dovecot), and the CLI refusing before it asks
+# anything when there is no terminal.
 
 
 @pytest.mark.imap

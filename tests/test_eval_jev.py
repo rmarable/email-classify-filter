@@ -131,7 +131,8 @@ def _row(conn: sqlite3.Connection) -> sqlite3.Row:
     return conn.execute("SELECT * FROM eval_runs ORDER BY rowid DESC").fetchone()  # the latest
 
 
-# ---- a run ---------------------------------------------------------------------------------------
+# A Jev eval run on the fake: what it records per case, which signals it sends, and which options
+# or inputs are refused or take the run out of the gate.
 
 
 def test_a_jev_run_end_to_end_on_the_fake(
@@ -297,7 +298,8 @@ def test_a_corpus_session_is_refused_through_the_socket(running: Paths, root: Pa
         assert c.get("/v1/eval/runs")["current"]["state"] == "idle"
 
 
-# ---- faults, stops and incomplete runs -----------------------------------------------------------
+# Faults and stops: faulted cases score as failures, the fault limit and the waiting budget stop a
+# run or mark it incomplete, and auth or pin stops leave no result.
 
 
 def test_faulted_cases_are_scored_as_failures_and_listed(
@@ -470,7 +472,8 @@ def test_the_determinism_check_compares_probabilities_too() -> None:
     assert evalrun.same_answer(evalrun.Asked(None), evalrun.Asked(None))
 
 
-# ---- inputs, rescore, format ---------------------------------------------------------------------
+# Inputs, rescoring and the result format: Jev against C names its input differences, a rescore
+# keeps every Jev field, and older clients get a clear message.
 
 
 def test_jev_vs_c_prints_different_inputs(
@@ -551,7 +554,8 @@ def test_format_2_and_the_old_client_message(
         load_result(path)
 
 
-# ---- /ecf-eval --preset D ------------------------------------------------------------------------
+# `/ecf-eval --preset D`: a D run takes Jev's classifications from a complete source run on the
+# pin and is never gate eligible.
 
 
 def _start_d(db_path: Path, clock: FakeClock, root: Path, **kw: Any) -> dict[str, Any]:
@@ -692,9 +696,6 @@ def test_a_c_run_records_its_input_format(
     with pytest.raises(InvalidInputError, match="preset C or D"):
         claude_eval.start(lambda: db.connect(db_path), clock, db_path.parent,
                           claude_eval.Options(root, preset="B"), spawn=_inline)  # fmt: skip
-
-
-# ---- report lines --------------------------------------------------------------------------------
 
 
 def test_compare_prints_jev_figures_faults_and_why_a_run_is_incomplete(

@@ -394,7 +394,7 @@ def test_the_new_settings(conn: sqlite3.Connection, morning: FakeClock) -> None:
     assert settings.get(conn, "escalations_per_hour", "ap") == 5
 
 
-# ---- escalations_per_hour ---------------------------------------------------------------------
+# escalations_per_hour: escalations over the cap roll up into one, fraud never does.
 
 
 def test_escalations_over_the_cap_roll_up_but_fraud_never_does(

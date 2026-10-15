@@ -46,7 +46,7 @@ def completed(out: str, rc: int = 0) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], rc, out, "")
 
 
-# ---- client
+# The client against a running service: status, a wrong token, and no service at all.
 
 
 def test_client_status(running: Paths) -> None:
@@ -67,7 +67,8 @@ def test_client_no_service(tmp_path: Path) -> None:
     assert e.value.detail == NOT_RUNNING
 
 
-# ---- doctor checks
+# Doctor's individual checks: disk encryption, the service unit, Python version, data folder
+# permissions and the database.
 
 
 @pytest.mark.parametrize(
@@ -158,7 +159,7 @@ def test_run_checks_against_a_running_service(running: Paths) -> None:
     assert stat.S_IMODE(running.data_dir.stat().st_mode) == 0o700
 
 
-# ---- CLI
+# The CLI's status and doctor commands, and its refusal of a bad install name.
 
 
 def test_cli_status_without_service(home: Path) -> None:
@@ -180,7 +181,8 @@ def test_cli_rejects_bad_install_name() -> None:
     assert r.exit_code == 2
 
 
-# ---- judge_status branches
+# judge_status: how each field of the service's status maps to a doctor level, plus the exit
+# code, sizes, and the swap and core dump checks.
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 GOOD_STATUS: dict[str, object] = {

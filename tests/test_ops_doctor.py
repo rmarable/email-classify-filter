@@ -43,7 +43,7 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     return {r["name"]: r for r in rows}
 
 
-# ---- schema (OD-478) ---------------------------------------------------------------------------
+# The schema row (OD-478), including the rules row that only warns and extensions turned off.
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -108,9 +108,6 @@ def test_schema_row_with_extensions_off(conn: sqlite3.Connection) -> None:
     assert "unknown field 'a'" in row["detail"]
 
 
-# ---- Gmail --------------------------------------------------------------------------------------
-
-
 def test_gmail_rows(conn: sqlite3.Connection) -> None:
     """V1.6 (OD-438, OD-440): only for addresses in Gmail mode; All Mail and the folder limit."""
     for aid in ("plain", "ok", "hidden", "limited"):
@@ -133,7 +130,8 @@ def test_gmail_rows(conn: sqlite3.Connection) -> None:
     assert got["gmail limited"]["detail"] == "IMAP shows 1000 of 4211 inbox messages"
 
 
-# ---- SMTP ---------------------------------------------------------------------------------------
+# SMTP rows: a missing or failing server warns, or fails when outbound or alert email needs it;
+# a send accepted after a failed check counts as ok.
 
 
 def test_smtp_rows_warn_or_fail_by_use(conn: sqlite3.Connection) -> None:
@@ -164,7 +162,7 @@ def test_a_send_accepted_after_a_failed_check_is_ok(conn: sqlite3.Connection) ->
     assert row["level"] == "ok" and "last send accepted 2026-10-02T09:00Z" in row["detail"]
 
 
-# ---- alert email and reach ----------------------------------------------------------------------
+# Alert email and reach: the alert email rows, and a warning when nothing but Slack can reach you.
 
 
 def _outbox(conn: sqlite3.Connection, state: str, created: str, settled: str | None = None) -> None:
@@ -208,7 +206,7 @@ def test_reach_warns_when_nothing_but_slack_is_left(conn: sqlite3.Connection) ->
     assert ops_doctor.reach(conn, "none") == []
 
 
-# ---- backups ------------------------------------------------------------------------------------
+# Backups: not set up, a missing folder or one on the same disk, and how old the last backup is.
 
 
 @pytest.fixture
@@ -280,9 +278,6 @@ def test_backup_age_levels(conn: sqlite3.Connection, clock: FakeClock, data_dir:
     _set(conn, scheduled_export.SCHEDULE_KEY, "off")
     off = age()
     assert off["level"] == "warn" and "export_schedule: off" in off["detail"]
-
-
-# ---- the route and doctor -----------------------------------------------------------------------
 
 
 def test_the_route_and_doctor_rows(conn: sqlite3.Connection, db_path: Path,

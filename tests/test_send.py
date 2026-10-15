@@ -198,7 +198,8 @@ def test_unknown_stays_unknown_where_the_provider_keeps_no_copy(
     assert (_row(conn)["status"], _row(conn)["searches"]) == ("unknown", 0)
 
 
-# ---- the action runner ------------------------------------------------------------------------
+# The action runner: how an approved send settles on an unknown outcome, a final refusal and a
+# temporary refusal, and that settling runs in every check.
 
 SEND = [Planned("reply_template", "received")]
 

@@ -321,7 +321,8 @@ def test_check_by_this_client_against_a_v1_service(
     assert "drop to assist until their gate passes again: ap, b" in r.output
 
 
-# ---- v3.0.0: local models removed (ADR 0031; R-D9, R-D10, P3, P4) ------------------------------
+# v3.0.0 removed the local models (ADR 0031; R-D9, R-D10, P3, P4): the new prompt digest
+# moves no address.
 
 
 def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_path: Path) -> None:
@@ -338,7 +339,8 @@ def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_pat
     assert r.pin_changes == ["prompt"] and r.affected == ["ap", "b"]  # after 3.0: as before
 
 
-# ---- v3.0.0 step 5: rules with a fixed id, named after the upgrade (OD-508) -------------------
+# v3.0.0 step 5 (OD-508): rules with a fixed id are named after the upgrade, and the stub
+# ollama.lock reads with both the old and the new read_wheel.
 
 
 def _v2_starter_rules() -> dict[str, Any]:

@@ -44,7 +44,8 @@ def conn(db_path: Path) -> Iterator[sqlite3.Connection]:
     c.close()
 
 
-# ---- real service processes (short /tmp folder: socket path limits) --------------------------
+# Real service processes, started under a short /tmp home because Unix socket paths have a
+# length limit, and the autouse fixtures and switches the tests around them share.
 
 
 @pytest.fixture

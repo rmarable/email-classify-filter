@@ -175,7 +175,8 @@ def run(  # noqa: PLR0913 - collaborators, then keyword-only inputs
     return done | {"left": [left] if left else []}
 
 
-# ---- the steps ----------------------------------------------------------------------------------
+# The steps of removing Slack: the notice, disarming the dead-man message, then forgetting
+# Slack's routes, messages and jobs.
 
 
 def _notice(

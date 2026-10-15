@@ -105,7 +105,8 @@ def test_a_second_install_pauses_once_and_raises_operator_input_needed(
     assert notifier.sent[-1][0].startswith("[ecf-alert] Resolved:")
 
 
-# ---- requeueing a send ---------------------------------------------------------------------------
+# Requeueing a send: one that may have gone is never requeued; one that surely failed is, with a
+# step-up, and on a high address it waits the delay again.
 
 
 def _failed_send(conn: sqlite3.Connection, clock: FakeClock, status: str, sent: str | None,

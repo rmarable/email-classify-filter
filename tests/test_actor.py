@@ -56,7 +56,8 @@ def _problem(reply: dict[str, Any], allowed: tuple[str, ...] = actor.ACTIONS) ->
     return claude_review.check_proposal(reply, LABELS, FOLDERS, allowed)
 
 
-# ---- the checks (I4) ----------------------------------------------------------------------------
+# The checks on the actor's reply (I4): anything outside its vocabulary is refused; known
+# targets pass.
 
 
 @pytest.mark.parametrize(
@@ -80,7 +81,7 @@ def test_known_targets_pass() -> None:
     assert _problem(_reply("move", "Receipts")) is None
 
 
-# ---- no hiding mail that needs someone (OD-250) --------------------------------------------------
+# The actor can't hide mail that needs someone (OD-250), and is never offered a hide for a request.
 
 
 def test_mail_that_needs_someone_cant_be_hidden_by_the_actor() -> None:
@@ -101,7 +102,8 @@ def test_the_actor_is_never_offered_a_hide_for_a_request(
     assert not set(actor.offered(ctx)) & {"mark_read", "archive", "move", "junk"}
 
 
-# ---- deciding -----------------------------------------------------------------------------------
+# Deciding: a proposal joins the rules' plan, a hide still needs corroboration, and a question
+# goes to you (even on a high-risk item), after which the actor decides again.
 
 
 def test_a_proposal_joins_the_rules_plan(conn: sqlite3.Connection, clock: FakeClock) -> None:

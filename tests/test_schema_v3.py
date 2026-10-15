@@ -87,7 +87,8 @@ V2_ANSWER: dict[str, Any] = {
 }  # fmt: skip
 
 
-# ---- the schema --------------------------------------------------------------------------------
+# The v3 schema itself: v2 plus the fixed items and priority texts, and an extension can't take a
+# fixed item's name.
 
 
 def test_v3_is_v2_plus_the_fixed_items_and_priority_texts() -> None:
@@ -139,7 +140,8 @@ def test_an_extension_cant_take_a_fixed_item_name() -> None:
         assert bad and "can't change one" in bad[0]
 
 
-# ---- the §9 table --------------------------------------------------------------------------
+# The §9 derivation table: each v2 value sets exactly its item, other values derive nothing, and a
+# v2 answer is completed to v3 without overwriting items it already gives.
 
 
 ROWS = [  # (field, value, the item it sets)
@@ -197,7 +199,8 @@ def test_from_v2_derives_the_items_then_reads_removed_values_as_least_informativ
     assert from_v2(V2_ANSWER) == with_fixed(V2_ANSWER)  # nothing removed: only the items
 
 
-# ---- eval labels (§10, P8) -------------------------------------------------------------------
+# Eval labels (§10, P8): fixed-item labels are derived from the v2 labels, the committed set's files
+# stay unchanged, and v2 results are completed to v3 when rescored.
 
 
 def test_labels_are_derived_and_a_missing_source_is_unlabelled() -> None:
@@ -281,7 +284,8 @@ def test_a_v2_result_is_completed_to_v3_when_rescored() -> None:
     assert evalrun._lacks_fixed(r.got)  # pyright: ignore[reportPrivateUsage]
 
 
-# ---- migration 0036 --------------------------------------------------------------------------
+# Migration 0036 backfills the fixed items on stored v2 classifications exactly as the Python
+# table derives them.
 
 
 def _v2_db(db_path: Path, monkeypatch: pytest.MonkeyPatch, *, before: int = 36,
@@ -377,7 +381,8 @@ def test_the_python_table_names_only_v2_values() -> None:
             assert values - {"staff"} <= set(v2.fields[field].values)
 
 
-# ---- migration 0037 (S3b, OD-500, P9, P4) ----------------------------------------------------
+# Migration 0037 (S3b, OD-500, P9, P4): removed values are read on values only, gate passes are
+# cleared, and the release names the checkpoint.
 
 
 def test_0037_reads_removed_values_on_values_only_and_clears_gate_passes(

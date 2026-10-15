@@ -611,7 +611,8 @@ def second_signals(
     return [name for name, hit in signals if hit]
 
 
-# ---- routes (OD-490, pre-classifier plan step 4) --------------------------------------------
+# Routes (OD-490, pre-classifier plan step 4): which fraud route applies to a message and
+# its second signals, giving the route reasons.
 
 NO_HISTORY = "a sender with no established history"
 UNAUTHENTICATED_KNOWN = "a known sender without authentication"
@@ -773,7 +774,8 @@ def _other_triggers(
     return [reason for hit, reason in checks if hit]
 
 
-# ---- impersonation (trigger 7, V1.6) --------------------------------------------------------
+# Impersonation (trigger 7, V1.6): a sender claiming to be someone in the internal set
+# without being in it.
 
 
 def impersonation(
@@ -835,7 +837,7 @@ def _display_addresses(name: str) -> list[str]:
     return sorted({m.group(0) for m in _ADDRESS.finditer(text)})
 
 
-# ---- domains --------------------------------------------------------------------------------
+# Domains: lookalikes, SaaS tenants and domains written in a display name.
 
 
 def lookalike(domain: str, known: str) -> bool:

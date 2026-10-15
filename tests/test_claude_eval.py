@@ -152,7 +152,8 @@ def c_address(conn: sqlite3.Connection, clock: FakeClock) -> None:
                  (to_ts(clock.now()),))  # fmt: skip
 
 
-# ---- a run end to end ------------------------------------------------------------------------
+# A Claude eval run end to end: it scores like `ecf eval run`, hands out one agent type per
+# round under random references, and handles claims, holds, retries and expiry.
 
 
 def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
@@ -529,7 +530,8 @@ def test_a_session_ending_frees_its_claims(db_path: Path, clock: FakeClock, root
     assert len(nxt(db_path, clock, S2)["items"]) == 3
 
 
-# ---- claim records (v2.2.0 plan item 2) -------------------------------------------------------
+# Claim records (v2.2.0 plan item 2): each claim's round, spawn and times, and every way a
+# claim ends.
 
 
 def _work(item: dict[str, Any]) -> claude_eval.Work:
@@ -593,7 +595,8 @@ def test_every_way_a_claim_ends_is_recorded(db_path: Path, clock: FakeClock, roo
     assert run is not None and all(c.outcome is not None for w in run.works for c in w.claims)
 
 
-# ---- a mixed-up claim token (OD-499) -----------------------------------------------------------
+# A mixed-up claim token (OD-499): the cases involved are freed at once, up to a limit, while
+# other bad tokens still wait for expiry.
 
 
 def test_spawns_carry_the_tokens_and_items_none(
@@ -728,7 +731,8 @@ def test_a_run_with_a_mixed_up_claim_saves_its_result(
     assert outcomes.count("claim_mismatch") == 1
 
 
-# ---- a dropped spawn (OD-501) ----------------------------------------------------------------
+# A dropped spawn (OD-501): a spawn none of whose claims was read is freed after UNREAD_MIN,
+# never one with a read claim, and its run still saves its result.
 
 
 UNREAD_S = int(claude_review.UNREAD_MIN.total_seconds())
@@ -1027,7 +1031,8 @@ def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
     assert cast(dict[str, Any], (new.summary or {})["claude"])["spawns"] == spawns
 
 
-# ---- models, presets and options -------------------------------------------------------------
+# Models, presets and options: comparison runs, Claude-only model IDs, batching, the effective
+# schema and digest, and the facts and signals each case goes out with.
 
 
 def test_a_comparison_run_uses_the_eval_agents_and_never_counts_for_the_gate(
@@ -1148,7 +1153,8 @@ def test_a_case_goes_out_with_the_signals_gemma_gets(
     assert msg["signals"] == {"crypto_payment": signals.WORDING["crypto_payment"]}
 
 
-# ---- one at a time, stop and expiry ----------------------------------------------------------
+# One run at a time: stop saves what was scored, a run expires after 24 hours, and results
+# hold metrics only.
 
 
 def test_one_run_at_a_time_and_stop_saves_what_was_scored(
@@ -1189,7 +1195,7 @@ def test_eval_results_are_metrics_only(db_path: Path, clock: FakeClock, root: Pa
     assert not any(c in json.dumps(r) for c in CASES)
 
 
-# ---- the routes ------------------------------------------------------------------------------
+# The eval routes and their caller profiles, held submissions, and `eval next` through ecf-mcp.
 
 
 def test_the_routes_and_their_profiles(

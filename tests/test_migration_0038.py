@@ -151,7 +151,8 @@ def target(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     c.close()
 
 
-# ---- the migration ------------------------------------------------------------------------------
+# The migration: it runs without foreign keys and checkpoints, converts A and B addresses keeping
+# every row, and rolls back when the foreign-key check fails.
 
 
 def test_0038_runs_without_foreign_keys_and_checkpoints() -> None:
@@ -240,7 +241,7 @@ def test_a_no_fk_migration_refuses_inside_a_transaction(
     c.close()
 
 
-# ---- the announcement ---------------------------------------------------------------------------
+# The announcement: converted addresses are announced once, by a step that runs at service start.
 
 
 def _audit(c: sqlite3.Connection, event: str) -> list[dict[str, Any]]:
@@ -282,7 +283,8 @@ def test_the_start_step_runs_at_service_start() -> None:
     assert src.index("stages.announce_converted(") < src.index("config.activate_stored(")
 
 
-# ---- older bundles ------------------------------------------------------------------------------
+# Older bundles: a v2.2.3 bundle restores as converted and is announced again; a format-4 bundle
+# with A or B addresses imports as C, paused.
 
 
 def _old_bundle(db_path: Path, monkeypatch: pytest.MonkeyPatch, clock: FakeClock, tmp_path: Path,
@@ -362,7 +364,8 @@ def test_a_format_4_bundle_with_a_and_b_imports_as_c_paused(
     assert [c["waiting"] for c in stages.converted(target)] == [1, 0]
 
 
-# ---- diff review (R1-R11) -----------------------------------------------------------------------
+# Fixes from the diff review (R1-R11), one test each: exports, foreign-key checks and rollback, the
+# Claude queue index, the announcement's side effects and import edge cases.
 
 
 def test_the_unused_columns_are_never_exported(conn: sqlite3.Connection, clock: FakeClock) -> None:

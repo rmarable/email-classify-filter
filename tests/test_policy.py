@@ -102,7 +102,8 @@ CONTEXTS = st.builds(
 )
 
 
-# ---- invariants over the whole space --------------------------------------------------------
+# Invariants checked over the whole space of facts and classifications: hiding, pre-check
+# escalations, risk and targets.
 
 
 @settings(max_examples=3000, deadline=None)
@@ -178,7 +179,8 @@ def test_i4_every_target_is_known(ctx: Context) -> None:
         assert a.name in {"label", "flag", "escalate", "leave", *HIDE_ACTIONS}
 
 
-# ---- concrete cases -------------------------------------------------------------------------
+# Concrete cases: hiding and its corroboration, approval rules, high addresses, sends and their
+# guardrails, and labels.
 
 
 def _ctx(**kw: Any) -> Context:
@@ -367,7 +369,8 @@ def test_labels_include_what_the_extension_adds() -> None:
     assert "legal_notice" not in LABELS and "draft" not in LABELS
 
 
-# ---- v3.0.0 S3: fixed items, fixed rules (OD-500; plan §5 invariants) -------------------------
+# v3.0.0 S3 (OD-500; plan §5 invariants): the fixed items block every hide, phishing is junked only
+# with approval, a matching fixed rule decides, and v2 answers plan as before.
 
 FIXED = rules.load_fixed_rules(SCHEMA)
 # v2 answers (results and stored classifications from before v3), which still have the removed
@@ -521,7 +524,9 @@ def test_s3_labels_without_a_category_field() -> None:
     assert "remittance" not in got
 
 
-# ---- v3.0.0 S4: the user layer (OD-502; plan C14, P4, P14, P25) -------------------------------
+# v3.0.0 S4, the user layer (OD-502; plan C14, P4, P14, P25): its invariants checked over a pool
+# of extended schemas and user rule files.
+#
 # A pool built once, at import (P25): extended schemas with 0, 1, 4 and 8 user fields, each
 # composed with no user file, a replace, an off list, a catch-all file and an identical copy of a
 # default. Examples draw only the classification and facts, never a recompile.

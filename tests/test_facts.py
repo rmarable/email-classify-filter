@@ -68,7 +68,8 @@ def _days(n: int) -> timedelta:
     return timedelta(days=n)
 
 
-# ---- origin and history ---------------------------------------------------------------------
+# Sender origin and history: internal or external, when a sender counts as seen, and what builds
+# history.
 
 
 @pytest.mark.parametrize(
@@ -137,7 +138,8 @@ def test_confirmed_and_shared_platform_senders(conn: sqlite3.Connection) -> None
         assert g["shared_platform"] and not g["sender_seen_before"] and not g["sender_confirmed"]
 
 
-# ---- mismatches and bulk --------------------------------------------------------------------
+# Mismatches and bulk: Reply-To and recipient mismatches, bulk signals, and when bulk
+# corroborates.
 
 
 def test_reply_to_mismatch_and_expected_domain(conn: sqlite3.Connection) -> None:
@@ -194,7 +196,8 @@ def test_bulk_corroborates_only_when_authenticated_and_known(
     assert compute(conn, raw, auth="pass")["bulk_corroborates"]
 
 
-# ---- content_unscanned ----------------------------------------------------------------------
+# content_unscanned and the other content facts: unscanned reasons, internal and own addresses,
+# risky attachments, links and inline images.
 
 
 def test_unscanned_reasons(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -284,7 +287,8 @@ def test_unnamed_inline_images_are_not_attachments(conn: sqlite3.Connection) -> 
     assert f["unscanned_reasons"] == []
 
 
-# ---- the pipeline, end to end ---------------------------------------------------------------
+# The pipeline end to end: fetch with the analyzer builds sender history, notes to yourself real
+# and forged, the shared platform list and DNS caching.
 
 
 def test_fetch_with_the_analyzer_builds_sender_history(

@@ -113,7 +113,8 @@ class FakeExecutor:
         return [approvals.describe(actions)]
 
 
-# ---- requesting -----------------------------------------------------------------------------
+# Requesting an approval: a grant and a Slack card, the address must be live, and which
+# actions need step-up.
 
 
 def test_a_request_issues_a_grant_and_posts_a_card(
@@ -148,7 +149,8 @@ def test_what_needs_step_up() -> None:
     assert not approvals.needs_stepup(FRAUD, [Planned("label", "suspicious")])
 
 
-# ---- deciding -------------------------------------------------------------------------------
+# Deciding: a reversible approval is one click, a send clicked in Slack waits for your
+# computer, fraud hides need step-up, and stale buttons are refused.
 
 
 def test_a_reversible_approval_is_one_click_then_runs(
@@ -235,7 +237,7 @@ def test_a_stale_button_is_refused_and_you_are_told(
     assert "slack.click_failed" in events
 
 
-# ---- the 10-minute delay --------------------------------------------------------------------
+# The 10-minute delay before a high-sensitivity send: counted in awake time, and cancellable.
 
 
 def _delayed_send(conn: sqlite3.Connection, clock: FakeClock) -> str:
@@ -275,9 +277,6 @@ def test_cancel_during_the_delay(conn: sqlite3.Connection, db_path: Path, clock:
         approvals.cancel(conn, clock, sid, actor="os_user")
 
 
-# ---- expiry ---------------------------------------------------------------------------------
-
-
 def test_an_expired_approval_is_offered_once_more(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
@@ -296,9 +295,6 @@ def test_an_expired_approval_is_offered_once_more(
     clock.advance(15 * 86400)
     approvals.expire(conn, clock)
     assert _status(conn, sid) == Status.EXPIRED  # a second expiry: the daily summary lists it
-
-
-# ---- approve --pending ----------------------------------------------------------------------
 
 
 def test_pending_batches_non_sends_under_one_step_up(
@@ -322,7 +318,8 @@ def test_pending_batches_non_sends_under_one_step_up(
     assert _nonces(conn, hide) == [nonce] and _nonces(conn, send) == [None]
 
 
-# ---- running, failing, requeue --------------------------------------------------------------
+# Running approved actions: retries then failure and requeue, an outcome-unknown send is never
+# retried unchecked, and the decision routes and `ecf approve` on top of them.
 
 
 def test_a_failing_action_retries_then_fails_and_can_be_requeued(

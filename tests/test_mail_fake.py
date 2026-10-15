@@ -46,7 +46,8 @@ def test_reset_renumbers_under_a_new_uidvalidity() -> None:
     assert f.fetch(1) == message(1)
 
 
-# ---- GmailFakeSource (V1.6 step 6, OD-438): the contract, and Gmail's ways from step 0 ----------
+# GmailFakeSource (V1.6 step 6, OD-438): the mail source contract, and Gmail's ways of archiving,
+# labelling, appending and refusing, as found in step 0.
 
 LABEL = "Receipts"  # a user label folder
 

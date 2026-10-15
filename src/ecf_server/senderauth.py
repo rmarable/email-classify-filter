@@ -138,7 +138,7 @@ def evaluate(raw: bytes, parsed: ParsedMessage, dns: DnsCache) -> AuthOutcome:
     return out
 
 
-# ---- DMARC ----------------------------------------------------------------------------------
+# DMARC: finding the policy (RFC 9989), failing closed on DNS errors (§7.3).
 
 
 class PolicyUnknownError(Exception):
@@ -268,7 +268,7 @@ def _parent(domain: str) -> str:
     return domain.split(".", 1)[1] if "." in domain else domain
 
 
-# ---- DKIM -----------------------------------------------------------------------------------
+# DKIM: which signatures count and whether they align with the From domain.
 
 
 def _usable(sig: _dkim.Signature) -> bool:

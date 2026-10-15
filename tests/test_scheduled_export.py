@@ -88,7 +88,8 @@ def _run(conn: sqlite3.Connection, clock: FakeClock, store: MemorySecretStore | 
     return scheduled_export.run(conn, clock, n or FakeNotifier(), store, data_dir, "t")
 
 
-# ---- contents -----------------------------------------------------------------------------------
+# What a bundle holds: every table is either exported or deliberately left out, a bundle round-trips
+# without what it must omit, and a tampered or foreign bundle fails verification.
 
 
 def test_every_table_is_included_or_excluded(conn: sqlite3.Connection) -> None:
@@ -155,7 +156,8 @@ def test_tampered_or_foreign_bundles_fail_verification(
         export_bundle.verify(b"junk" * 40, keys)
 
 
-# ---- schedule and failures ----------------------------------------------------------------------
+# When exports run and what happens when they fail: hourly retries, then an alert that a later
+# success resolves, the failure reasons, and a single background thread.
 
 
 def test_due(conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out: Path) -> None:
@@ -237,7 +239,8 @@ def test_start_runs_in_a_thread_once(conn: sqlite3.Connection, clock: FakeClock,
                                   data_dir, "t", spawn=lambda f: f())  # fmt: skip
 
 
-# ---- pruning ------------------------------------------------------------------------------------
+# Pruning old bundles: the newest are kept, only this install's bundles are touched, and bundles
+# made under an earlier key still count.
 
 
 def test_prune_keeps_the_newest_and_touches_only_this_installs_bundles(
@@ -283,7 +286,8 @@ def test_bundles_from_an_earlier_key_are_still_pruned(
     assert r["pruned"] == [first]
 
 
-# ---- reporting and configuration ----------------------------------------------------------------
+# How scheduled exports are reported and set: the daily-digest line, the config and `export keep`
+# settings, the routes and the CLI's status and run-now commands.
 
 
 def test_daily_line(conn: sqlite3.Connection, clock: FakeClock, data_dir: Path,
