@@ -28,6 +28,7 @@ from ecf_server.secretstore.memory import MemorySecretStore
 from tests.test_claude_review import add
 
 HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
+ROLES = "classifier, classifier_high, actor, actor_high"  # Opus's from v3.0.0 (OD-520, OD-521)
 DAY = 86400
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -89,7 +90,8 @@ def _alerts(conn: sqlite3.Connection) -> dict[str, str]:
 def test_every_pin_has_a_lifecycle_entry_and_none_retires_yet() -> None:
     life = claude_pins.lifecycle()
     assert set(claude_pins.load_lock().values()) <= set(life)
-    assert life[SONNET] == claude_pins.Lifecycle("Active", None, date(2027, 9, 28))
+    assert SONNET not in claude_pins.load_lock().values()  # from v3.0.0 (OD-520, OD-521)
+    assert life[SONNET] == claude_pins.Lifecycle("Active", None, date(2027, 9, 28))  # cards
     assert life[OPUS] == claude_pins.Lifecycle("Active", None, date(2027, 9, 22))
     assert life[HAIKU] == claude_pins.Lifecycle("Active", None, date(2027, 10, 7))
     assert claude_pins.load_lock()["main_session"] == HAIKU  # the session only, OD-474
@@ -110,7 +112,7 @@ def test_a_retiring_pin_is_announced_then_30_and_7_days_before(
     assert model_watch.retirement_tick(conn, clock, n) == 1
     head, text = n.sent[-1]
     assert head == "[ecf-alert] Model Retirement Scheduled"
-    assert text.startswith(f"{OPUS} (actor_high) retires on 2026-11-15 (in 45 days)")
+    assert text.startswith(f"{OPUS} ({ROLES}) retires on 2026-11-15 (in 45 days)")
     assert "No ecf release that moves this pin is known yet" in text
     assert "(Anthropic recommends claude-opus-6)" in text
     assert model_watch.retirement_tick(conn, clock, n) == 0  # once per stage
@@ -131,9 +133,9 @@ def test_first_seen_inside_30_days_sends_one_alert(
 ) -> None:
     n = FakeNotifier()
     add(conn, clock, "b", "C")
-    _retiring(monkeypatch, SONNET, clock.now().date() + timedelta(days=20))
+    _retiring(monkeypatch, OPUS, clock.now().date() + timedelta(days=20))
     assert model_watch.retirement_tick(conn, clock, n) == 1
-    assert f"{SONNET} (classifier, classifier_high, actor) retires" in n.sent[-1][1]
+    assert f"{OPUS} ({ROLES}) retires" in n.sent[-1][1]
     clock.advance(12 * DAY)  # 8 days left: d30 already counted
     assert model_watch.retirement_tick(conn, clock, n) == 0
 
@@ -163,20 +165,21 @@ def test_a_newer_model_in_a_pinned_family_goes_on_the_daily_summary_once(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     seen: list[httpx.Request] = []
-    body = _models(("claude-sonnet-6", "2027-01-01T00:00:00Z"), ("claude-fable-6", "2027-01-02T"
-                   "00:00:00Z"), ("claude-sonnet-5", "2026-06-30T00:00:00Z"), *PINNED)  # fmt: skip
+    body = _models(("claude-opus-6", "2027-01-01T00:00:00Z"), ("claude-fable-6", "2027-01-02T"
+                   "00:00:00Z"), ("claude-opus-5", "2026-06-30T00:00:00Z"), ("claude-sonnet-6",
+                   "2027-01-03T00:00:00Z"), *PINNED)  # fmt: skip
     st = model_watch.run(conn, clock, FakeNotifier(), _store(), _http(_api(body, seen)))
     req = seen[0]
     assert req.url.host == "api.anthropic.com" and req.url.params["limit"] == "1000"
     assert req.headers["x-api-key"] == "sk-ant-test"
     assert req.headers["anthropic-version"] == "2023-06-01"
     assert len(seen) == 1  # the Models API only (no Ollama library from v3.0.0)
-    assert sorted(st["claude"]["newer"]) == ["claude-sonnet-6"]  # not older, not another family
+    assert sorted(st["claude"]["newer"]) == ["claude-opus-6"]  # not older, not another family
     assert st["next_at"] == to_ts(clock.now() + timedelta(days=7))
     lines = model_watch.daily_lines(conn)
     assert lines == [
-        "Newer Claude model(s) in a family ecf uses: claude-sonnet-6 (ecf pins"
-        f" {SONNET}). ecf never switches by itself; a release moves the pins."
+        "Newer Claude model(s) in a family ecf uses: claude-opus-6 (ecf pins"
+        f" {OPUS}). ecf never switches by itself; a release moves the pins."
     ]
     assert lines[0] in daily.card(conn, clock.now(), "2026-10-01").text.splitlines()
     with write_tx(conn):
@@ -281,7 +284,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
                                  monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
     st = model_watch.status(conn)
     lines = watch_lines(st)
-    assert f"  {SONNET}: Active, retirement not before 2027-09-28 (models.lock)" in lines
+    assert f"  {OPUS}: Active, retirement not before 2027-09-22 (models.lock)" in lines
     assert lines[-2:] == [
         "model watch: no Models API key (optional: ecf models api-key set --provider anthropic);"
         " next run within a minute", f"Jev pin (jev.lock): {jev_keys.pin()}"]  # fmt: skip
@@ -291,7 +294,7 @@ def test_status_and_doctor_lines(conn: sqlite3.Connection, clock: FakeClock,
     _retiring(monkeypatch, OPUS, today + timedelta(days=3))
     add(conn, clock, "c", "C")
     checks = judge_model_watch({"model_watch": model_watch.status(conn)}, today)
-    assert (checks[0].level, checks[0].detail) == (Level.WARN, "retires on 2026-10-04 (actor_high)")
+    assert (checks[0].level, checks[0].detail) == (Level.WARN, f"retires on 2026-10-04 ({ROLES})")
     later = judge_model_watch({"model_watch": model_watch.status(conn)}, date(2026, 10, 4))
     assert later[0].level == Level.FAIL and later[0].detail.startswith("retired on")
     model_watch.run(conn, clock, FakeNotifier(), _store(),

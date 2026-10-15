@@ -1,15 +1,17 @@
 """The pinned Claude models and what an address's go-live gate is bound to (SPEC §7.5, §9.3;
-OD-014, OD-273, OD-461, OD-474; V1.4 step 2).
+OD-014, OD-273, OD-461, OD-474, OD-520, OD-521; V1.4 step 2).
 
 - **`data/models.lock`** names the Claude model for each role: the main session (Haiku, OD-474;
-  Sonnet in v1.0.0, OD-461), `classifier`, `classifier_high` and `actor` (Sonnet), `actor_high`
-  (Opus). It ships in the wheel; only an ecf release changes it. Its
-  `lifecycle` records each pinned ID's state and retirement date from Anthropic's deprecations
-  page (V1.4 step 10; OD-299), which the weekly model watch (`model_watch.py`) announces and the
-  CI canary keeps current.
+  Sonnet in v1.0.0, OD-461), and `classifier`, `classifier_high`, `actor` and `actor_high` (Opus
+  from v3.0.0, OD-520, OD-521; Sonnet classified and acted before, with Opus as `actor_high`).
+  It ships in the wheel; only an ecf release changes it. Its `lifecycle` records each pinned ID's
+  state and retirement date from Anthropic's deprecations page (V1.4 step 10; OD-299), which the
+  weekly model watch (`model_watch.py`) announces and the CI canary keeps current; Sonnet 5.5's
+  entry stays, unchecked, so cards still name the mail it classified.
 - **Override** (`ecf settings set claude_model_override <id>|none`; operator decision 2026-10-02):
-  an ID replaces every pin in its family (a `claude-sonnet-*` ID replaces the Sonnet pins), one
-  override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused. It
+  an ID replaces every pin in its family (a `claude-opus-*` ID replaces the Opus pins), one
+  override per family; `none` clears them all. An ID whose family ecf doesn't pin is refused
+  (Sonnet from v3.0.0; migration 0041 removes a stored Sonnet override). It
   needs step-up and sends a Security Notice. An override of a gate pin changes the pins of every
   address using it, which drop to assist until their gate passes again (§7.5); a Haiku override
   replaces only the main session, which isn't a gate pin (OD-474).
@@ -171,7 +173,7 @@ def _proposed(conn: sqlite3.Connection, value: str) -> dict[str, str]:
         return {}
     fam = family(v)
     if fam is None:
-        raise InvalidInputError("a Claude model ID like claude-sonnet-5-5 (haiku, sonnet or opus"
+        raise InvalidInputError("a Claude model ID like claude-opus-5-5 (haiku, sonnet or opus"
                                 " family), or none")  # fmt: skip
     pinned = {i for i in load_lock().values() if family(i) == fam}
     if not pinned:

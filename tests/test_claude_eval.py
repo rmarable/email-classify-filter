@@ -262,8 +262,8 @@ def test_the_model_check_refuses_another_model_and_stops_the_session(
                                             item["agent"])  # fmt: skip
     tel = Telemetry()
     tel.open(S1)
-    out = settled(db_path, clock, got, Seen("claude-opus-5-5"), tel)
-    assert out["accepted"] is False and "claude-opus-5-5" in out["errors"][0]
+    out = settled(db_path, clock, got, Seen("claude-sonnet-5-5"), tel)
+    assert out["accepted"] is False and "claude-sonnet-5-5" in out["errors"][0]
     stopped = tel.stopped(S1)
     assert stopped is not None
     q = nxt(db_path, clock, S1, stopped=stopped)
@@ -1043,10 +1043,10 @@ def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
 def test_a_comparison_run_uses_the_eval_agents_and_never_counts_for_the_gate(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    r = start(db_path, clock, root, classifier_model="claude-opus-5-5")
-    assert r["pinned"] is False and r["models"]["classifier"] == "claude-opus-5-5"
+    r = start(db_path, clock, root, classifier_model="claude-sonnet-5-5")
+    assert r["pinned"] is False and r["models"]["classifier"] == "claude-sonnet-5-5"
     info = claude_eval.session_info(connector(db_path), clock)
-    assert info is not None and info["agents"]["ecf-eval-classifier"] == "claude-opus-5-5"
+    assert info is not None and info["agents"]["ecf-eval-classifier"] == "claude-sonnet-5-5"
     items = nxt(db_path, clock, S1)["items"]
     assert {i["agent"] for i in items} == {"ecf-eval-classifier"}
     claude_eval.release_session(S1)
@@ -1455,7 +1455,7 @@ def test_a_frozen_run_refuses_a_source_that_doesnt_fit(
 ) -> None:
     pinned = _source(conn, db_path, clock, root)
     with pytest.raises(InvalidInputError, match="no --classifier-model"):
-        start(db_path, clock, root, source_run=pinned, classifier_model="claude-opus-5-5")
+        start(db_path, clock, root, source_run=pinned, classifier_model="claude-sonnet-5-5")
     with pytest.raises(InvalidInputError, match="for preset C"):
         start(db_path, clock, root, preset="D", source_run=pinned)
     with pytest.raises(InvalidInputError, match="first 8 characters"):
@@ -1464,7 +1464,7 @@ def test_a_frozen_run_refuses_a_source_that_doesnt_fit(
         start(db_path, clock, root, source_run="ffffffffffff")
     with pytest.raises(InvalidInputError, match="didn't run at high"):
         start(db_path, clock, root, source_run=pinned, sensitivity="high")
-    unpinned = _source(conn, db_path, clock, root, classifier_model="claude-opus-5-5")
+    unpinned = _source(conn, db_path, clock, root, classifier_model="claude-sonnet-5-5")
     start(db_path, clock, root, source_run=unpinned)  # a candidate classifier's run serves
     claude_eval.stop(connector(db_path), clock)
     claude_eval.reset()

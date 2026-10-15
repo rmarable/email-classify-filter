@@ -4,7 +4,7 @@
   "version": "2.2.3",
   "api_version": 1,
   "data_format": 4,
-  "schema_version": 40,
+  "schema_version": 41,
   "classifier_schema": 3,
   "prompt_digest": "849bf9560aad135b62b066ab4182962e493ba3fb41f266dc07202bcc8047821c",
   "min_client": "0.1.0.dev0"

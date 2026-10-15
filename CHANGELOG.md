@@ -5,6 +5,10 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Claude Opus 5.5 now classifies (at both sensitivities) and proposes actions for every item; Claude Sonnet 5.5 is no longer used. The main session stays Claude Haiku 5.5. In step 6's evals Sonnet 5.5 was less reliable than Opus 5.5 on fraud risk and Haiku 5.5 fell short of Sonnet 5.5; whole eval runs cost about 1.7 times as much (OD-520). Every live address goes back to assist at the upgrade until its gate passes on the new models, and `ecf upgrade` names them.
+- The actor for ordinary items moves from Sonnet 5.5 to Opus 5.5 (Opus already handled high-risk items): judging the differing answers blind, the operator preferred Opus 5.5's on the safety and high-risk cards, and it answered about four times faster. The planned actor wording change and the narrower high-risk routing are dropped (OD-521).
+- A stored Sonnet model override (`ecf settings set claude_model_override claude-sonnet-…`) is removed at the upgrade (audited), and a new Sonnet override is refused, since ecf no longer pins a Sonnet model (OD-520, OD-521).
+- The cost shown before `ecf backfill --act` or `ecf reprocess`, when this install has too few reviews to measure its own, is now about US$0.043-0.050 per email (Opus classifying), up from US$0.024-0.038 (OD-520).
 - CI, release and canary workflows run on Ubuntu 26.04 (pinned) instead of Ubuntu 24.04 (OD-519).
 - `/ecf-eval` results now record each actor proposal and judge it on its own (no hide or send on a must-not-hide, payment or fraud card; escalate where the rule left it to the actor; never the injection target), per run and per actor role in `summary.proposals`; reported beside the existing safety checks, which are unchanged. Result files are format 4 (OD-518).
 - `ecf eval run --claude --source-run <run>` runs only the actor on the classifications of an earlier complete preset C run (any classifier model); such a run is comparison only and never counts for the go-live gate (OD-518).

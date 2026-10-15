@@ -59,46 +59,54 @@ def test_a_pin_that_gets_a_retirement_date_fails_until_models_lock_records_it(
     canary: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     page = DEPRECATIONS.replace(
-        "| claude-sonnet-5-5          | Active        | N/A                | Not sooner than"
-        " September 28, 2027 |",
-        "| claude-sonnet-5-5          | Deprecated    | October 1, 2026    | December 1, 2026"
+        "| claude-opus-5-5            | Active        | N/A                | Not sooner than"
+        " September 22, 2027 |",
+        "| claude-opus-5-5            | Deprecated    | October 1, 2026    | December 1, 2026"
         "                   |",
     )
     page += (
         "\n| Retirement date | Deprecated model | Recommended replacement |\n| --- | --- | ---"
-        " |\n| December 1, 2026 | `claude-sonnet-5-5` | `claude-sonnet-6` |\n"
+        " |\n| December 1, 2026 | `claude-opus-5-5` | `claude-opus-6` |\n"
     )
     rep = canary.check(page, OVERVIEW)
     assert rep.failures == [
-        "claude-sonnet-5-5: state Deprecated on the page, Active in models.lock",
-        "claude-sonnet-5-5: retirement 2026-12-01 on the page, not set in models.lock",
-        "claude-sonnet-5-5: 'not sooner than' not set on the page, 2027-09-28 in models.lock",
+        "claude-opus-5-5: state Deprecated on the page, Active in models.lock",
+        "claude-opus-5-5: retirement 2026-12-01 on the page, not set in models.lock",
+        "claude-opus-5-5: 'not sooner than' not set on the page, 2027-09-22 in models.lock",
     ]
-    assert "claude-sonnet-5-5: Anthropic recommends claude-sonnet-6" in rep.notes
+    assert "claude-opus-5-5: Anthropic recommends claude-opus-6" in rep.notes
     life = claude_pins.lifecycle()
-    life["claude-sonnet-5-5"] = claude_pins.Lifecycle(
-        "Deprecated", date(2026, 12, 1), None, "claude-sonnet-6"
+    life["claude-opus-5-5"] = claude_pins.Lifecycle(
+        "Deprecated", date(2026, 12, 1), None, "claude-opus-6"
     )
     monkeypatch.setattr(claude_pins, "lifecycle", lambda: life)
     assert canary.check(page, OVERVIEW).failures == []
 
 
 def test_a_model_ecf_doesnt_pin_can_change_without_a_failure(canary: ModuleType) -> None:
-    """Haiku isn't pinned (OD-461): its row on the page may change freely."""
+    """Haiku 4.5 isn't pinned, nor Sonnet from v3.0.0 (OD-520, OD-521): their rows on
+    the page may change freely."""
     page = DEPRECATIONS.replace(
         "| claude-haiku-4-5-20251001  | Active        | N/A                | Not sooner than"
         " October 15, 2026   |",
         "| claude-haiku-4-5-20251001  | Deprecated    | October 1, 2026    | December 1, 2026"
         "                   |",
+    ).replace(
+        "| claude-sonnet-5-5          | Active        | N/A                | Not sooner than"
+        " September 28, 2027 |",
+        "| claude-sonnet-5-5          | Deprecated    | October 1, 2026    | December 1, 2026"
+        "                   |",
     )
-    assert page != DEPRECATIONS
+    assert page.count("December 1, 2026") == 2
     assert canary.check(page, OVERVIEW).failures == []
 
 
 def test_a_newer_model_in_a_pinned_family_is_a_note_not_a_failure(canary: ModuleType) -> None:
-    rep = canary.check(DEPRECATIONS, OVERVIEW.replace("`claude-sonnet-5-5`", "`claude-sonnet-6`"))
+    rep = canary.check(DEPRECATIONS, OVERVIEW.replace("`claude-opus-5-5`", "`claude-opus-6`"))
     assert rep.failures == []
-    assert "newer in a pinned family: claude-sonnet-6 (the overview's lineup)" in rep.notes
+    assert "newer in a pinned family: claude-opus-6 (the overview's lineup)" in rep.notes
+    newer = OVERVIEW.replace("`claude-sonnet-5-5`", "`claude-sonnet-6`")
+    assert canary.check(DEPRECATIONS, newer).notes == []  # not a pinned family from v3.0.0
 
 
 @pytest.mark.parametrize("which", ["deprecations", "columns", "overview"])

@@ -60,10 +60,11 @@ CHECK_TIMEOUT_S = 900  # as schedule.py's check jobs
 ACT_CAP = 500  # emails to classify per `--act` scan without a step-up (D6, P11; SPEC §14.3)
 ESTIMATE_DAYS = 30
 ESTIMATE_MIN_ITEMS = 50  # fewer reviewed here: SPEC §21.2's whole-run figures instead (P1)
-# SPEC §21.2: whole C runs on schema v2, $6.45 and $10.25 for 268 cards; v3 adds 16-21% Sonnet input
-FALLBACK_PER_ITEM = (0.024, 0.038)
-FALLBACK_SOURCE = ("SPEC §21.2's whole eval runs on schema v2 ($6.45 and $10.25 for 268 emails;"
-                   " schema v3 adds 16-21% Sonnet input)")  # fmt: skip
+# SPEC §21.2, step 6: whole C runs with Opus classifying on schema v3, $12.87 at standard (Sonnet
+# actor, about $0.24 less than an Opus one) and $15.14 at high for 304 cards (OD-520, OD-521)
+FALLBACK_PER_ITEM = (0.043, 0.050)
+FALLBACK_SOURCE = ("SPEC §21.2's whole eval runs with Opus classifying (step 6: $12.87 at standard,"
+                   " $15.14 at high, for 304 emails)")  # fmt: skip
 # preset D (v3.0.0 step 4, hand-off 4, P20): TypeSafe bills input tokens only (/models, read
 # 2026-10-14); without a Jev run here, the live check's 13-question request (SPEC §21.2)
 JEV_USD_PER_M = 0.042

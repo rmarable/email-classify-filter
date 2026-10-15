@@ -329,17 +329,17 @@ def test_work_on_another_model_is_refused_and_stops_the_review(
     conn: sqlite3.Connection, state: ServiceState, review: Review
 ) -> None:
     sid, session, work, bearer, agent = review
-    export(state, bearer, logs(api_request(1, model="claude-opus-5-5")))
+    export(state, bearer, logs(api_request(1, model="claude-sonnet-5-5")))
     item = claim(state, work)
     got = classify(state, agent, item)
-    assert got["accepted"] is False and "claude-opus-5-5" in got["errors"][0]
+    assert got["accepted"] is False and "claude-sonnet-5-5" in got["errors"][0]
     assert conn.execute("SELECT status, classification FROM items").fetchone()[1] is None
     notifier = state.notifier
     assert isinstance(notifier, FakeNotifier)
     assert [t for t, _ in notifier.sent] == ["[ecf-alert] System Error"]
     q = api(state, "POST", "/v1/review-queue", {}, work).json()
     assert q["results"] == [{"id": sid, "outcome": "model_refused"}] and q["items"] == []
-    assert q["stopped"] == f"1 refused (model claude-opus-5-5, expected {CLASSIFIER})"
+    assert q["stopped"] == f"1 refused (model claude-sonnet-5-5, expected {CLASSIFIER})"
     api(state, "DELETE", f"/v1/sessions/{session}")
     st = api(state, "GET", "/v1/status").json()
     checks = {c.name: c for c in doctor.judge_claude(st)}
