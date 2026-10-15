@@ -31,6 +31,7 @@ from ecf_server import (
     claude_queue,
     claude_usage,
     inbox,
+    jev_keys,
     model_watch,
     pause,
     scans,
@@ -88,6 +89,7 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     waiting = inbox.inbox(conn)
     per_addr: dict[str, list[int]] = {}
     queue = claude_queue.waiting(conn)
+    jev = claude_queue.waiting_for_jev(conn)  # preset D, waiting for Jev (step 4, P13)
     open_ = json.dumps(sorted(OPEN))
     model = ("new", "classified")  # waiting for the local model, not for you
     claude = ("awaiting_claude", "clarified")  # waiting for /ecf-review (B and C; V1.4 step 9)
@@ -106,8 +108,10 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
                          " (SELECT value FROM json_each(?))", aid, json.dumps(model))  # fmt: skip
         n_model -= sum(1 for i in mine if i["status"] in model)  # escalated ones wait on you
         n_claude = queue.get(aid, 0) - sum(1 for i in mine if i["status"] in claude)
+        n_jev = jev.get(aid, 0)
         per_addr[aid] = [len(mine), n_model, n_claude,
-                         n_open - len(mine) - n_model - n_claude, esc, unscanned]  # fmt: skip
+                         n_open - len(mine) - n_model - n_claude - n_jev, esc, unscanned,
+                         n_jev]  # fmt: skip
     fields = tuple((aid, _counts(*n)) for aid, n in per_addr.items())
     lines: list[str] = []
     stale = [i for i in waiting if i["stale"]]
@@ -131,7 +135,11 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     old = scans.waiting_line(conn)  # old mail: its own line, never in the counts above (OD-507)
     if old:
         lines.append(old[0].upper() + old[1:] + ".")
-    for usage in (stats.daily_line(conn, now - DAY), claude_usage.daily_line(conn, now - DAY)):
+    if jev and jev_keys.state(conn).get("down"):
+        lines.append(f"TypeSafe Jev is down: {sum(jev.values())} preset D email(s) wait for it"
+                     " (no Claude fallback in v3.0.0; ecf doctor).")  # fmt: skip
+    for usage in (stats.daily_line(conn, now - DAY), stats.jev_daily_line(conn, now - DAY),
+                  claude_usage.daily_line(conn, now - DAY)):  # fmt: skip
         if usage:
             lines.append(usage)
     lines += model_watch.daily_lines(conn)
@@ -150,12 +158,14 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
 
 
 def _counts(waiting: int, model: int, claude: int, other: int, escalated: int,
-            unscanned: int) -> str:  # fmt: skip
+            unscanned: int, jev: int = 0) -> str:  # fmt: skip
     """Waiting on you apart from mail waiting for the classifier ("40 open" mixed them, V1.2
-    shadow run, 2026-09-30) or for `/ecf-review` (V1.4)."""
+    shadow run, 2026-09-30), for `/ecf-review` (V1.4) or for Jev (preset D, v3.0.0 step 4)."""
     parts = [f"{waiting} waiting on you"]
     if model:
         parts.append(f"{model} waiting for the classifier (V1.3)")
+    if jev:
+        parts.append(f"{jev} waiting for Jev")
     if claude:
         parts.append(f"{claude} waiting for /ecf-review")
     if other:

@@ -14,6 +14,13 @@ the derived signals, going to Anthropic (`owner_agreed`, which only `ecf resume 
 after asking in a terminal). Without it the address stays paused: a single resume is refused, and
 `--all` and the Slack buttons skip it. The agreement is recorded once (`CONSENTED`, and an
 `address.consent_confirmed` audit row with the address and time only); later resumes are ordinary.
+
+**Preset D** (v3.0.0 step 4, P9; OD-509): a D address without its owner's agreement to TypeSafe
+(`addresses.overrides.jev_consent_at`, which import and restore clear) resumes the same way: only
+by its own ref with `owner_agreed`, which `ecf resume <address>` sends after asking whether the
+owner agreed to their mail going to TypeSafe as well as Anthropic; the marker is then set, with an
+`address.consent_confirmed` audit row (`{"to": "typesafe"}`). The Jev drain checks the marker
+before every call.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ import sqlite3
 from typing import Any
 
 from ecf.errors import ConflictError, NotFoundError
-from ecf_server import addresses, restore, slack_in, slack_out
+from ecf_server import addresses, jev_keys, restore, slack_in, slack_out
 from ecf_server.chat import RouteRef
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -58,9 +65,23 @@ def needs_consent(conn: sqlite3.Connection, address_id: str) -> bool:
     return address_id in was and address_id not in (_setting(conn, CONSENTED) or [])
 
 
+def needs_jev_consent(conn: sqlite3.Connection, address_id: str) -> bool:
+    """A preset D address without its owner's agreement to TypeSafe (P9)."""
+    r = conn.execute("SELECT preset, overrides FROM addresses WHERE address_id = ?",
+                     (address_id,)).fetchone()  # fmt: skip
+    return bool(r and r["preset"] == jev_keys.PRESET and not jev_keys.consented(r["overrides"]))
+
+
 def awaiting_consent(conn: sqlite3.Connection) -> list[str]:
     """Paused converted addresses, not removed, that only `ecf resume <address>` can resume."""
-    return [aid for aid in paused_addresses(conn) if needs_consent(conn, aid)]
+    return [aid for aid in paused_addresses(conn)
+            if needs_consent(conn, aid) or needs_jev_consent(conn, aid)]  # fmt: skip
+
+
+def jev_consent_text(address_id: str) -> str:
+    return (f"{address_id} is preset D, so its mail goes to TypeSafe (api.typesafe.ai, US) once"
+            f" resumed: run `ecf resume {address_id}` in a terminal, which asks whether the"
+            f" account's owner agreed, or remove it (ecf address remove {address_id})")  # fmt: skip
 
 
 def consent_text(address_id: str) -> str:
@@ -90,12 +111,14 @@ def set_paused(
             raise ConflictError(next(iter(held.values())))
         targets = [aid for aid in targets if aid not in held]
         asked = {aid for aid in targets if needs_consent(conn, aid)}
-        if asked and (ref == ALL or not owner_agreed):  # consent is typed, one address at a time
+        jev = {aid for aid in targets if needs_jev_consent(conn, aid)}
+        if (asked or jev) and (ref == ALL or not owner_agreed):  # typed, one address at a time
             if ref != ALL:
-                raise ConflictError(consent_text(next(iter(asked))))
-            targets = [aid for aid in targets if aid not in asked]
+                aid = next(iter(asked or jev))
+                raise ConflictError(consent_text(aid) if aid in asked else jev_consent_text(aid))
+            targets = [aid for aid in targets if aid not in asked | jev]
     else:
-        asked = set[str]()
+        asked, jev = set[str](), set[str]()
     now = to_ts(clock.now())
     event = "address.paused" if paused else "address.resumed"
     with write_tx(conn):
@@ -114,6 +137,12 @@ def set_paused(
                 conn.execute("INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
                              " VALUES (?, ?, 'address.consent_confirmed', ?, 'ok', '{}')",
                              (now, aid, actor))  # fmt: skip
+            if aid in jev:  # the owner agreed to TypeSafe (P9): the address and time only
+                conn.execute("UPDATE addresses SET overrides = json_set(overrides, ?, ?) WHERE"
+                             " address_id = ?", (f"$.{jev_keys.CONSENT}", now, aid))  # fmt: skip
+                conn.execute("INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
+                             " VALUES (?, ?, 'address.consent_confirmed', ?, 'ok', ?)",
+                             (now, aid, actor, json.dumps({"to": "typesafe"})))  # fmt: skip
             conn.execute(
                 "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
                 " VALUES (?, ?, ?, ?, 'ok', ?)",

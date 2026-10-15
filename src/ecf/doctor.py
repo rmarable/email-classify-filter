@@ -194,8 +194,55 @@ def judge_status(st: dict[str, Any], now: datetime) -> list[Check]:
         out.append(Check("secret store", Level.OK, ss["backend"]))
     out += judge_addresses(st)
     out += judge_claude(st)
+    out += judge_jev(st)
     out += judge_model_watch(st, datetime.now(UTC).date())
     return out
+
+
+def judge_jev(st: dict[str, Any]) -> list[Check]:
+    """Preset D's TypeSafe Jev (v3.0.0 step 4, S4-D18; OD-510): only while an address uses D.
+    The key, the pin, the mapping, up or down and why, the drain, D addresses without the
+    owner's agreement, and emails at the attempt limit."""
+    j: dict[str, Any] = st.get("jev") or {}
+    if not j.get("addresses"):
+        return []
+    out: list[Check] = []
+    if j.get("key") is False:
+        out.append(Check("jev key", Level.FAIL, "no TypeSafe API key: preset D mail waits",
+                         "ecf models api-key set --provider typesafe"))  # fmt: skip
+    mapping = f", mapping {str(j['mapping'])[:12]}" if j.get("mapping") else ""
+    if j.get("down"):
+        out.append(Check("jev", Level.FAIL, str(j.get("detail") or "down"),
+                         "see the reason; ecf probes TypeSafe every few minutes"))  # fmt: skip
+    else:
+        drain: dict[str, Any] = j.get("drain") or {}
+        last = str(drain.get("last_ok") or "never")[:16].replace("T", " ")
+        out.append(Check("jev", Level.OK, f"up, pin {j.get('pin')}{mapping};"
+                         f" {j.get('waiting', 0)} waiting; last answer {last}"
+                         f"{' (drain running)' if drain.get('running') else ''}"))  # fmt: skip
+    no_consent: list[str] = j.get("no_consent") or []
+    for aid in no_consent:
+        out.append(Check(f"jev consent {aid}", Level.WARN, "preset D without the owner's"
+                         " agreement to TypeSafe: Jev doesn't classify its mail",
+                         f"ecf resume {aid} (asks), or ecf address remove {aid}"))  # fmt: skip
+    stuck: list[str] = j.get("at_limit") or []
+    if stuck:
+        out.append(Check("jev attempts", Level.WARN, f"{len(stuck)} email(s) Jev couldn't"
+                         f" classify in 3 tries wait: {', '.join(stuck[:10])}",
+                         "ecf item show <id>; no Claude fallback in v3.0.0"))  # fmt: skip
+    return out
+
+
+def jev_status_line(j: dict[str, Any] | None) -> str | None:
+    """`ecf status`'s Jev line (preset D, v3.0.0 step 4), or None with no D address."""
+    if not j or not j.get("addresses"):
+        return None
+    drain: dict[str, Any] = j.get("drain") or {}
+    state = f"DOWN ({j.get('reason')})" if j.get("down") else "up"
+    run = "running" if drain.get("running") else "idle"
+    last = str(drain.get("last_ok") or "never")[:16].replace("T", " ")
+    return (f"jev:       {state}, pin {j.get('pin')}; {j.get('waiting', 0)} waiting for Jev;"
+            f" drain {run}, last answer {last}")  # fmt: skip
 
 
 def judge_model_watch(st: dict[str, Any], today: date) -> list[Check]:

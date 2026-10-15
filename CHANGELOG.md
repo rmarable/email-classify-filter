@@ -5,6 +5,15 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Preset D: a D address's new mail is classified by TypeSafe Jev within a minute or so of its check, and Claude stays the actor at `/ecf-review`; `/ecf-review` never classifies D mail, and D mail waiting for Jev doesn't count toward the review reminders (OD-509).
+- `ecf address add --preset D` (and `ecf init`'s first address) asks for the TypeSafe key if none is stored, asks whether the account owner agreed to their mail going to TypeSafe, and needs step-up; it's refused while your own fields are stored. An import or restore clears that agreement and `ecf resume` asks again (OD-509).
+- `ecf import` and `ecf restore` now load a bundle with a preset D address instead of refusing it (OD-509).
+- When TypeSafe Jev is down (refused key, retired pin, a long wait, or failing for `jev_down_after_minutes`, default 15), D mail waits with one alert saying how many emails wait and why; ecf checks TypeSafe every 30 s to 5 min and resumes by itself; nothing else classifies D mail meanwhile (OD-510).
+- New install setting `jev_down_after_minutes` (5-1440, default 15) (OD-510).
+- `ecf status`, `ecf doctor`, `ecf stats`, `ecf models status` and the daily summary show Jev: up or down, emails waiting for Jev, the pin, TypeSafe's aliases, call counts and times; Slack cards say "by TypeSafe Jev 1.13.0" (OD-509).
+- `/ecf-eval --preset D` counts for a D address's go-live gate when it runs on the pinned actors and its Jev source run is complete, redacted and on D's current key; the gate's synthetic check names that source run (OD-509).
+- `ecf backfill --act` on a D address adds TypeSafe's cost and time to the estimate; `ecf reprocess` on a D address sends emails back to Jev (OD-509).
+- `ecf upgrade` names the D addresses that drop to assist when a release changes Jev's pin or mapping; going back below v3.0.0 drops D's gate records, and the TypeSafe key must be cleared by hand first (OD-509).
 - Jev asks `fraud_risk` as a choice of its levels (`none` last), which under-rated fraud less often in step 3's runs; ecf's Jev mapping now sets unsure bands (0.30 for bank detail change, regulator claim, claims internal and private individual; 0.40 for requires action) and confidence bars (category 0.6, sender type 0.5), so a borderline Jev answer is flagged and never hides mail (OD-512). This changes Jev's prompt digest and gate key.
 - `ecf eval run`'s step-3 measurement switches are gone: `--jev-state`, `--jev-preamble`, `--jev-fraud-risk`, `--jev-option-order` and `--jev-extra-question` (OD-512); `--no-signals` and `--jev-concurrency 1` stay.
 - Fixed: `ecf reprocess` sent an email it must classify again back to `/ecf-review` with its old classification, so it was only offered to the actor and never classified again; the old classification is now cleared as it moves (OD-507).

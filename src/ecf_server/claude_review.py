@@ -3,7 +3,8 @@
 - **`review_queue`** (one `ecf claude` session, WORK profile): first the outcomes of this session's
   earlier claims, each reported once; then it claims up to `limit` waiting items (oldest first, not
   on a paused or removed address, not claimed by a live claim) and returns, for each, what it needs
-  (`classify`: preset C at `awaiting_claude` with no classification; `act`: everything else) and the
+  (`classify`: preset C at `awaiting_claude` with no classification; `act`: everything else, preset
+  D's classified items included: Jev classifies D, v3.0.0 step 4) and the
   agent the service picked: `ecf-classifier`, or `ecf-classifier-high` on a `high` address;
   `ecf-actor`, or `ecf-actor-high` on a high-risk item (§8.2, computed by the service).
 - **Claims** last `CLAIM_TTL` (300 s, operator decision 2026-10-12, dispatch-stall plan;
@@ -118,10 +119,11 @@ _PROBLEMS = {"literal_error": "not one of the allowed values", "missing": "missi
              "extra_forbidden": "not a field of the schema", "bool_type": "must be true or false",
              "bool_parsing": "must be true or false"}  # fmt: skip
 
+# preset D's items only for the actor: Jev classifies them, never `/ecf-review` (step 4 §2.1)
 _WAITING = (
-    "SELECT i.* FROM items i JOIN addresses a USING (address_id)"
-    " WHERE a.removed_at IS NULL AND a.paused = 0 AND a.preset = 'C'"
-    " AND i.status IN ('awaiting_claude', 'clarified')"
+    "SELECT i.* FROM items i JOIN addresses a USING (address_id)"  # noqa: S608 - fixed terms
+    " WHERE a.removed_at IS NULL AND a.paused = 0 AND a.preset IN ('C', 'D')"
+    f" AND i.status IN ('awaiting_claude', 'clarified') AND NOT {claude_queue.FOR_JEV}"
     " AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.stable_id = i.stable_id"
     " AND (c.state = 'held' OR (c.state = 'claimed' AND c.expires_at > ?)))"
 )

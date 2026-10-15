@@ -64,6 +64,13 @@ ESTIMATE_MIN_ITEMS = 50  # fewer reviewed here: SPEC §21.2's whole-run figures 
 FALLBACK_PER_ITEM = (0.024, 0.038)
 FALLBACK_SOURCE = ("SPEC §21.2's whole eval runs on schema v2 ($6.45 and $10.25 for 268 emails;"
                    " schema v3 adds 16-21% Sonnet input)")  # fmt: skip
+# preset D (v3.0.0 step 4, hand-off 4, P20): TypeSafe bills input tokens only (/models, read
+# 2026-10-14); without a Jev run here, the live check's 13-question request (SPEC §21.2)
+JEV_USD_PER_M = 0.042
+JEV_TOKENS_FALLBACK = 2374
+JEV_FALLBACK_SOURCE = "the live check's 2,374 input tokens per email (SPEC §21.2)"
+CLAUDE_ACTOR_NOTE = ("the Claude actor's share, an estimate: this install's review sessions'"
+                     " cost per email, classifier and actor together (not separable)")  # fmt: skip
 
 
 def _key(address_id: str) -> str:
@@ -273,7 +280,9 @@ def run_count(conn: sqlite3.Connection, clock: Clock, src: MailSource, address_i
     held = sum(1 for u in inrange if u in known)
     k = len(inrange) - held
     doc |= {"state": "done", "in_range": len(inrange), "held": held, "to_classify": k,
-            "done_at": to_ts(clock.now()), "estimate": estimate(conn, clock.now(), k)}  # fmt: skip
+            "done_at": to_ts(clock.now()),
+            "estimate": estimate(conn, clock.now(), k, addresses.get_address(
+                conn, address_id)["preset"])}  # fmt: skip
     with write_tx(conn):
         _set(conn, clock, key, doc)
     return True
@@ -291,12 +300,16 @@ def _counted(conn: sqlite3.Connection, aid: str, since: str, until: str | None) 
     return int(doc["to_classify"])
 
 
-def estimate(conn: sqlite3.Connection, now: datetime, k: int) -> dict[str, Any]:
+def estimate(conn: sqlite3.Connection, now: datetime, k: int,
+             preset: str = "C") -> dict[str, Any]:  # fmt: skip
     """What classifying `k` emails with Claude may cost (P1): API-equivalent dollars per email
     from this install's `ecf claude` sessions in the last 30 days (every role and the main
     session, cache reads included: the sessions' cost over the emails they reviewed), else
     SPEC §21.2's whole-run figures, named as such; and the session time at this install's median
-    pace, else "not measured yet". Not a charge on a plan."""
+    pace, else "not measured yet". Not a charge on a plan. Preset D (step 4, P20) adds `jev`:
+    TypeSafe's dollars from the latest Jev eval run's billed input tokens per case (else the live
+    check's, labelled) and Jev's measured time; the Claude part is then labelled an estimate of
+    the actor's share."""
     since = to_ts(now - timedelta(days=ESTIMATE_DAYS))
     # review sessions only: an `/ecf-eval` session reviews no item (`items` counts the items its
     # submissions settled, telemetry.submitted), so its cost isn't spread over them (review L2)
@@ -320,7 +333,32 @@ def estimate(conn: sqlite3.Connection, now: datetime, k: int) -> dict[str, Any]:
     paces = [(from_ts(r["ended_at"]) - from_ts(r["started_at"])).total_seconds() / r["items"]
              for r in sessions if r["ended_at"] and r["items"]]  # fmt: skip
     out["minutes"] = round(statistics.median(paces) * k / 60) if paces else None
+    if preset == "D":
+        out["claude_note"] = CLAUDE_ACTOR_NOTE
+        out["jev"] = jev_estimate(conn, k)
     return out
+
+
+def jev_estimate(conn: sqlite3.Connection, k: int) -> dict[str, Any]:
+    """TypeSafe's part of preset D's estimate (P20): billed input tokens per email from the
+    latest Jev eval run here, else the live check's; Jev's median call time from `model_calls`."""
+    per, source = float(JEV_TOKENS_FALLBACK), JEV_FALLBACK_SOURCE
+    for (raw,) in conn.execute("SELECT metrics FROM eval_runs WHERE pair = 'jev/hosted'"
+                               " ORDER BY created_at DESC LIMIT 5"):  # fmt: skip
+        m: dict[str, Any] = json.loads(raw)
+        figures: dict[str, Any] = m.get("jev") or {}
+        billed = figures.get("input_tokens_billed")
+        n = m.get("cases")
+        if isinstance(billed, int) and isinstance(n, int) and n > 0 and billed > 0:
+            per, source = billed / n, f"the latest Jev eval run here ({n} cases)"
+            break
+    ms = sorted(int(r[0]) for r in conn.execute(
+        "SELECT ms FROM model_calls WHERE backend = 'jev' AND role = 'classifier' AND"
+        " outcome = 'ok' AND ms IS NOT NULL ORDER BY id DESC LIMIT 500"))  # fmt: skip
+    median_s = ms[len(ms) // 2] / 1000 if ms else None
+    return {"usd": round(per * k * JEV_USD_PER_M / 1e6, 4), "tokens_per_email": round(per),
+            "source": source,
+            "minutes": round(median_s * k / 60, 1) if median_s is not None else None}  # fmt: skip
 
 
 def _set(conn: sqlite3.Connection, clock: Clock, key: str, doc: dict[str, Any]) -> None:

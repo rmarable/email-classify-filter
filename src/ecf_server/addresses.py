@@ -28,7 +28,7 @@ from typing import Any
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import SLUG_PATTERN, StableId
 from ecf.status import OPEN, Status
-from ecf_server import internal, items, probe, stepup
+from ecf_server import internal, items, jev_keys, probe, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.facts import PUBLIC_DOMAINS
@@ -40,7 +40,7 @@ from ecf_server.state_machine import TransitionContext
 
 ORG_DOMAINS_KEY = "org_domains"
 SENSITIVITIES = ("standard", "high")
-PRESETS = ("C",)  # A and B went in v3.0.0 (ADR 0031); D arrives with step 4
+PRESETS = ("C", "D")  # A and B went in v3.0.0 (ADR 0031); D: Jev and Claude (step 4, OD-509)
 # the addresses migration 0038 (or an import or restore of an older bundle) converted from A or B
 # (v3.0.0, P3): {address_id: old preset}; the ids announced so far (`stages.announce_converted`);
 # the ids whose owner agreed (`pause`). Removing an address drops it from all three (review R5)
@@ -53,6 +53,7 @@ _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 
 MailFactory = Callable[[str, str, Callable[[], str]], MailSource]  # (host, user, password)
 SMTP_SET = "smtp_set"  # the step-up purpose for changing an address's SMTP server
+ADD_D = "address_add_d"  # the step-up purpose for adding a preset D address (JEV-STEP2 D3)
 ALERT_SENDER_KEY = "alerts.email.monitored_address"  # who sends alert email (alert_mail.py)
 GMAIL_IMAP = "imap.gmail.com"
 # Google allows 500 a day (support.google.com/mail/answer/22839, fetched 2026-10-05); whether
@@ -136,6 +137,8 @@ class AddRequest:
     org_domains: list[str] | None = None
     smtp_host: str | None = None  # default: smtp_default(imap_host)
     smtp_port: int | None = None
+    owner_agreed: bool = False  # preset D: the owner agreed to TypeSafe (typed in a terminal)
+    stepup_nonce: str | None = None  # preset D: step-up (JEV-STEP2 D3)
 
 
 def _check_password(pw: str) -> str:
@@ -203,6 +206,8 @@ def add_address(
     org, new_org = _org_domains_for(conn, req, domain)
 
     _refuse_duplicates(conn, address_id, email)
+    if req.preset == jev_keys.PRESET:
+        _check_preset_d(conn, clock, secrets, req, email)
     # network: outside any transaction
     found = login_and_probe(factory, host, email, password, smtp=smtp,
                             sender_factory=sender_factory)  # fmt: skip
@@ -225,6 +230,7 @@ def add_address(
                     " smtp_port, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (address_id, email, req.sensitivity, req.preset, smtp_host, smtp_port, now),
                 )
+            _consent(conn, now, address_id, req.preset, actor)
             probe.store(conn, clock, address_id, host, found)
             if internal.is_gmail(domain):  # unless the limit was set before (a revived address)
                 conn.execute("UPDATE addresses SET overrides = json_set(overrides,"
@@ -252,6 +258,47 @@ def add_address(
         secrets.delete(secret_name(address_id))
         raise
     return get_address(conn, address_id)
+
+
+def _check_preset_d(conn: sqlite3.Connection, clock: Clock, secrets: SecretStore, req: AddRequest,
+                    email: str) -> None:  # fmt: skip
+    """Preset D (step 4 §3.1, §3.3; OD-509): the TypeSafe key stored (by its secret's name), your
+    own fields not in use (D's schema is the shipped one, S4-D6), the owner's typed agreement
+    (`owner_agreed`, P22) and a step-up bound to the email (JEV-STEP2 D3), before any login."""
+    if not jev_keys.has_key(secrets.get):
+        raise InvalidInputError("preset D needs the TypeSafe API key first: ecf models api-key set"
+                                " --provider typesafe")  # fmt: skip
+    from ecf_server import config  # noqa: PLC0415 - config imports this module
+
+    if config.user_fields_stored(conn):
+        raise InvalidInputError("preset D uses the shipped schema only (v3.0.0): your own fields"
+                                " are stored; remove them first (`schema: default`, ecf config"
+                                " apply)")  # fmt: skip
+    if not req.owner_agreed:
+        raise InvalidInputError("preset D sends this mailbox's mail to TypeSafe (api.typesafe.ai,"
+                                " US) as well as to Anthropic: the account owner's agreement is"
+                                " needed (`ecf address add` asks in a terminal)")  # fmt: skip
+    stepup.consume(conn, clock, ADD_D, {"email": email.lower()}, req.stepup_nonce)
+
+
+def _consent(conn: sqlite3.Connection, now: str, address_id: str, preset: str, actor: str) -> None:
+    """Inside the caller's transaction: the owner's agreement to TypeSafe is this address's own,
+    never a removed one's (P9); set for D, with an audit row (the address and time only)."""
+    conn.execute("UPDATE addresses SET overrides = json_remove(overrides, ?) WHERE address_id = ?",
+                 (f"$.{jev_keys.CONSENT}", address_id))  # fmt: skip
+    if preset == jev_keys.PRESET:
+        conn.execute("UPDATE addresses SET overrides = json_set(overrides, ?, ?) WHERE"
+                     " address_id = ?", (f"$.{jev_keys.CONSENT}", now, address_id))  # fmt: skip
+        _audit(conn, now, address_id, "address.consent_confirmed", actor, {"to": "typesafe"})
+
+
+@stepup.purpose(ADD_D)
+def _describe_add_d(_conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bound:
+    """Bound to the mailbox's email: its mail goes to TypeSafe once added."""
+    email = str(target.get("email", ""))
+    return stepup.Bound(stepup.digest(ADD_D, email),
+                        f"ecf: add {email} as preset D (its mail goes to TypeSafe Jev and"
+                        " Claude)")  # fmt: skip
 
 
 def _org_domains_for(
@@ -515,6 +562,7 @@ def _row(r: sqlite3.Row) -> dict[str, Any]:
         "smtp_host": r["smtp_host"],
         "smtp_port": r["smtp_port"],
         "max_sends_per_day": json.loads(r["overrides"]).get("max_sends_per_day"),  # None: default
+        "jev_consent": jev_keys.consented(r["overrides"]),  # preset D's owner agreement (P9)
         "created_at": r["created_at"],
     }
 

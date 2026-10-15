@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 import typer
 
-from ecf import __version__, cli_history, service_unit, timerange, watch
+from ecf import __version__, api_keys, cli_history, service_unit, timerange, watch
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
@@ -28,7 +28,7 @@ from ecf.cli_slack import make_app as make_slack_app
 from ecf.cli_stats import make_stats_command
 from ecf.cli_upgrade import make_commands as make_upgrade_commands
 from ecf.client import LocalClient
-from ecf.doctor import Level, outbound_line, run_checks
+from ecf.doctor import Level, jev_status_line, outbound_line, run_checks
 from ecf.errors import EcfError, InvalidInputError
 from ecf.ids import SLUG_PATTERN
 from ecf.log import configure_logging
@@ -220,6 +220,8 @@ def status() -> None:
         typer.echo(f"{'':<16} {outbound_line(a)}")
         if a["last_error"] and a["last_status"] in CHECK_FAILED:
             typer.echo(f"{'':<16} last error: {a['last_error']}")
+    if (line := jev_status_line(st.get("jev"))) is not None:
+        typer.echo(line)
     for alert in st.get("alerts", []):
         typer.echo(f"ALERT      {alert['title']}: {alert['detail']}")
 
@@ -569,7 +571,12 @@ def address_add(
         str | None, typer.Option(help="standard, or high for finance mailboxes (extra checks).")
     ] = None,
     preset: Annotated[
-        str | None, typer.Option(help="C all-Claude (A and B were removed in v3.0.0).")
+        str | None,
+        typer.Option(
+            help="C all-Claude, or D: TypeSafe Jev classifies, Claude acts (needs the"
+            " TypeSafe key, the owner's agreement and step-up). A and B were removed"
+            " in v3.0.0."
+        ),
     ] = None,
     address_id: Annotated[
         str | None, typer.Option("--id", help="Short name (default: from the local part).")
@@ -597,7 +604,12 @@ def address_add(
 PRESET_NOTES = {
     "C": "Preset C: every message waits for /ecf-review (`ecf claude`) and uses your Claude plan;"
     " nothing else classifies it, however long it waits.",
+    "D": "Preset D: TypeSafe Jev classifies each message within a minute or so of its check; the"
+    " actor is still Claude at /ecf-review. Its mail goes to TypeSafe (api.typesafe.ai, US) as"
+    " well as to Anthropic. While Jev is down, D mail waits: nothing else classifies it.",
 }
+D_CONSENT = ("Has the account owner agreed to their mail going to TypeSafe (api.typesafe.ai, US),"
+             " as well as to Anthropic? [y/N]")  # fmt: skip
 
 
 def add_address(
@@ -623,7 +635,7 @@ def add_address(
             "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
         )
     if preset is None:
-        preset = typer.prompt("Preset (C all-Claude)", default="C")
+        preset = typer.prompt("Preset (C all-Claude, D TypeSafe Jev and Claude)", default="C")
     body: dict[str, object] = {
         "email": email,
         "imap_host": imap_host or known[domain],
@@ -646,8 +658,12 @@ def add_address(
         body["org_domains"] = [d.strip() for d in answer.split(",") if d.strip()]
     if body["preset"] in PRESET_NOTES:
         typer.echo(PRESET_NOTES[str(body["preset"])])
+    if body["preset"] == "D":
+        _preset_d(c, current, body)
     body["app_password"] = hidden(f"App password for {email} (hidden): ")
-    a: dict[str, Any] = c.request("POST", "/v1/addresses", body)
+    a: dict[str, Any] = with_step_up(
+        c, lambda n: c.request("POST", "/v1/addresses", body | ({"stepup_nonce": n} if n else {})),
+        echo=typer.echo)  # fmt: skip
     typer.echo(
         f"added {a['email']} as {a['address_id']!r}: {a['sensitivity']}, preset "
         f"{a['preset']}, stage {a['stage']}, outbound off"
@@ -662,6 +678,24 @@ def add_address(
     if a.get("slack_channel"):
         typer.echo(f"Slack: private channel {a['slack_channel']} is created within a minute")
     return a
+
+
+def _preset_d(c: LocalClient, current: dict[str, Any], body: dict[str, object]) -> None:
+    """Preset D's steps before the app password (v3.0.0 step 4, §3.1): the TypeSafe key when
+    none is stored (`ecf init` gets its key step here; one validating call and a Security Notice,
+    as `ecf models api-key set --provider typesafe`), then the owner's typed agreement. The
+    service checks both again, and asks for step-up."""
+    if not current.get("typesafe_key"):
+        typer.echo("Preset D needs the TypeSafe API key (checked by one call with no email"
+                   " content; a Security Notice follows).")  # fmt: skip
+        key = api_keys.check_key("typesafe", hidden(f"{api_keys.LABEL['typesafe']} (hidden): "))
+        c.request("POST", "/v1/models/keys/typesafe", {"key": key})
+        typer.echo("Stored the TypeSafe API key; TypeSafe accepted it.")
+    answer = typer.prompt(D_CONSENT, default="", show_default=False)
+    if answer.strip().lower() != "y":
+        typer.echo("Not added: preset D needs the owner's agreement (or add it as preset C).")
+        raise typer.Exit(1)
+    body["owner_agreed"] = True
 
 
 def _mb(size: int) -> str:
@@ -1155,9 +1189,9 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "--classifier-backend",
             help="null (default): every field at its least risky value, the rules alone (SPEC"
             " §7.8; never counts for the go-live gate). jev: TypeSafe Jev (needs `ecf models"
-            " api-key set --provider typesafe`; sends the synthetic cards to TypeSafe; not for"
-            " the gate until v3.0.0 step 4). gemma and systemone:<name> were removed in v3.0.0"
-            " (ADR 0031).",
+            " api-key set --provider typesafe`; sends the synthetic cards to TypeSafe; the"
+            " source of `/ecf-eval --preset D`, not a gate run itself). gemma and"
+            " systemone:<name> were removed in v3.0.0 (ADR 0031).",
         ),
     ] = "null",
     redact: Annotated[
@@ -1594,8 +1628,9 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
 }
 
 
-# a preset D run can't pass the gate until step 4 adds D to the pins (J8)
-PRESET_D_ONLY = "comparison only (preset D, until step 4)"
+# a preset D run passes the gate only on the pinned actors with a source Jev run on D's current
+# gate key (v3.0.0 step 4, P8; J8)
+PRESET_D_ONLY = "comparison only (preset D: not the pinned actors, or a Jev run off D's key)"
 
 
 def _pin_kind(f: dict[str, Any]) -> str:
@@ -1607,7 +1642,7 @@ def _pin_kind(f: dict[str, Any]) -> str:
 
 BACKEND_CAVEAT = {
     "null": "null backend: the rules alone, never for the gate",  # §7.8; R-D6
-    "jev": "jev backend: not for the gate until step 4",  # gate-eligible from v3.0.0 step 4
+    "jev": "jev backend: the source of /ecf-eval --preset D, not a gate run",  # step 4, P8
 }
 
 

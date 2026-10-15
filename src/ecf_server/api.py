@@ -82,6 +82,8 @@ from ecf_server import (
     inbox,
     initsetup,
     internal,
+    jev_dispatch,
+    jev_keys,
     manual_export,
     model_watch,
     ops_doctor,
@@ -185,6 +187,8 @@ class ServiceState:
     # TypeSafe's transport for the key check: None is the real one (`jev.default_transport`; a
     # fake in tests, v3.0.0 step 2a)
     jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
+    # preset D's Jev drain and probe in memory (v3.0.0 step 4; `jev_dispatch`, P4)
+    jev: jev_dispatch.Live = field(default_factory=jev_dispatch.Live, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
     watch_releases: model_watch.Releases | None = field(default=None, repr=False)
     power: Callable[[], schedule.Power] = field(default=schedule.host_power, repr=False)
@@ -275,6 +279,7 @@ def create_app(state: ServiceState) -> Starlette:
                 "slack": dict(state.slack),
                 "claude": _claude_status(state),
                 "model_watch": _with_db(state, model_watch.status, None),
+                "jev": _with_db(state, lambda c: _jev_status(state, c), None),
             }
         )
 
@@ -491,6 +496,11 @@ def _claude_status(state: ServiceState) -> dict[str, Any]:
                 "pins": claude_pins.effective(conn) if used else None}  # fmt: skip
     finally:
         conn.close()
+
+
+def _jev_status(state: ServiceState, conn: sqlite3.Connection) -> dict[str, Any]:
+    """Preset D's Jev (v3.0.0 step 4): up or down, the drain, what waits (`ecf status`, doctor)."""
+    return jev_dispatch.status(conn, state.jev, state.secrets)
 
 
 def _with_db[T](state: ServiceState, fn: Callable[[sqlite3.Connection], T], empty: T) -> T:
@@ -1237,7 +1247,7 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
             aid = addresses.get_address(conn, ref)["address_id"] if ref else None
             preset = q.get("preset")
             out = stats.report(conn, since, address=aid, preset=preset)
-            if aid is None and preset in (None, "C"):
+            if aid is None and preset in (None, "C", "D"):  # D's actor is Claude (step 4)
                 out["claude"] = claude_usage.report(conn, since)
             if aid is None:  # posts aren't per address (OD-507 §5 e)
                 out["slack"] = timings.slack(conn, since)
@@ -2164,6 +2174,9 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                     "org_addresses": len(internal.org_addresses(conn)),
                     "public_domains": sorted(PUBLIC_DOMAINS),
                     "imap_defaults": addresses.imap_defaults(),
+                    # preset D needs it (v3.0.0 step 4); by its secret's name
+                    "typesafe_key": state.secrets is not None
+                    and jev_keys.has_key(state.secrets.get),
                 }
             )
         finally:
@@ -2183,6 +2196,9 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
             org_domains=_str_list(org) if org is not None else None,
             smtp_host=_str(body, "smtp_host") if body.get("smtp_host") is not None else None,
             smtp_port=_port(body.get("smtp_port")),
+            # preset D (v3.0.0 step 4): asked in a terminal by `ecf address add` (P22)
+            owner_agreed=body.get("owner_agreed") is True,
+            stepup_nonce=_opt_str(body, "stepup_nonce"),
         )
         conn = state.connect()
         try:
@@ -2376,7 +2392,8 @@ def _key_notice(state: ServiceState, conn: sqlite3.Connection, provider: str, st
         return
     verb = ("replaced" if had else "set") if stored else "removed"
     if provider == "typesafe":
-        what = "a running Jev eval stops" if not stored else "Jev evals use it"
+        what = ("a running Jev eval stops and preset D mail waits" if not stored
+                else "Jev evals and preset D addresses use it")  # fmt: skip
     else:
         what = (
             "the weekly model watch uses it"

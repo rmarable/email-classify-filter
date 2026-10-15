@@ -35,7 +35,7 @@ def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         ] = "7d",
         address: Annotated[str | None, typer.Option("--address", help="One address.")] = None,
         preset: Annotated[
-            str | None, typer.Option("--preset", help="C (older calls may be A or B).")
+            str | None, typer.Option("--preset", help="C or D (older calls may be A or B).")
         ] = None,
         stages: Annotated[
             bool,
@@ -45,8 +45,9 @@ def make_stats_command(app: typer.Typer, paths: Callable[[], Paths]) -> None:
         ] = False,
     ) -> None:
         """Model usage: recorded model calls' tokens, speeds and load times by model and role
-        (the local model's, before v3.0.0), Claude's tokens, times and plan usage from `ecf
-        claude` sessions, and Slack post times. With --stages: time in each item stage."""
+        (the local model's, before v3.0.0), TypeSafe Jev's calls (preset D), Claude's tokens,
+        times and plan usage from `ecf claude` sessions, and Slack post times. With --stages:
+        time in each item stage."""
         params: dict[str, Any] = {"since": since_param(since)}
         if stages:
             with LocalClient(paths()) as c:
@@ -105,6 +106,9 @@ def show(r: dict[str, Any]) -> None:
             _figures(g)
         typer.echo("\nall roles")
         _figures(r["all"])
+    jev: dict[str, Any] = r.get("jev") or {}  # preset D's TypeSafe Jev (v3.0.0 step 4)
+    if jev.get("line"):
+        typer.echo(f"\n{jev['line']}")
     if "claude" in r:
         show_claude(r["claude"])
     if "slack" in r:

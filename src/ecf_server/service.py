@@ -1,7 +1,8 @@
 """`ecf-server local`: the local service process (SPEC §11.1).
 
 Threads: main (signals, watchdog, shutdown), uvicorn on the Unix socket, the telemetry receiver
-(uvicorn on a loopback port, V1.4 step 6), and the timer tick.
+(uvicorn on a loopback port, V1.4 step 6), and the timer tick, which starts one-shot threads (the
+model watch, scheduled export, and preset D's Jev drain and probe, `jev_dispatch`).
 The socket is created by ecf (umask 077, 0600, in a 0700 directory) because uvicorn's own setup
 would make it 0666. A single-instance lock guards the data directory.
 """
@@ -47,6 +48,7 @@ from ecf_server import (
     decide,
     destroy,
     health,
+    jev_dispatch,
     jobs,
     mailbox_actions,
     model_watch,
@@ -309,6 +311,7 @@ class Service:
                 stages.tick(conn, self.clock)  # gate announcements; live drops on a model change
                 model_watch.retirement_tick(conn, self.clock, self.state.notifier)  # §7.6
                 self._model_watch(conn)
+                self._jev(conn, awake, woke=woke)  # preset D (v3.0.0 step 4, OD-509, OD-510)
                 self._export(conn)  # scheduled export, in its own thread (V1.5 step 8b)
                 approvals.advance_delays(conn, self.clock, awake, woke=woke)
                 # approved and automatic actions run in their address's check, which has the
@@ -326,6 +329,16 @@ class Service:
             model_watch.start(self.state.connect, self.clock, self.state.notifier,
                               self.state.secrets, self.state.watch_http,
                               releases=self.state.watch_releases)  # fmt: skip
+
+    def _jev(self, conn: sqlite3.Connection, awake: float, *, woke: bool) -> None:
+        """Jev's keys, its up or down state, and its drain and probe, each in its own thread so
+        the timer never waits on TypeSafe (§4.3)."""
+        try:
+            jev_dispatch.tick(conn, self.clock, self.state.jev, self.state.notifier,
+                              self.state.connect, self.state.store, awake=awake,
+                              woke=woke)  # fmt: skip
+        except Exception as exc:  # retried next tick; the rest of the tick goes on
+            log.error("jev.tick_failed", error_type=type(exc).__name__)
 
     def _export(self, conn: sqlite3.Connection) -> None:
         """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""
@@ -516,6 +529,10 @@ class Service:
         config.convert_rules(conn, to_ts(self.clock.now()))  # v2 applied rules (P7, OD-500)
         config.mark_pre_layers(conn, to_ts(self.clock.now()))  # S4 layering (P3, OD-502)
         stages.demote_after_gate_change(conn, self.clock)  # 0037 cleared gate passes (B1)
+        try:  # D's pin key before anything reads it; the tick tries again
+            jev_dispatch.refresh_keys(conn, self.clock)
+        except Exception as exc:
+            log.error("jev.keys_failed", error_type=type(exc).__name__)
         _clear_stale(conn)
         self._prepare_state(conn)
         conn.close()
@@ -596,6 +613,7 @@ class Service:
 
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
+        self.state.jev.stop.set()  # a Jev drain ends after its call in flight
         web.join(STOP_TIMEOUT)
         timer.join(STOP_TIMEOUT)
         self.work.set()  # wake the checks worker so it sees the stop

@@ -368,6 +368,28 @@ def _resume_one(p: Paths, ref: str) -> str:
     return str(r["message"])
 
 
+JEV_CONSENT_QUESTION = ("Has the account owner agreed to their mail going to TypeSafe"
+                        " (api.typesafe.ai, US), as well as to Anthropic? [y/N]")  # fmt: skip
+
+
+def _jev_agreed(c: LocalClient, ids: set[str]) -> bool:
+    """A paused preset D address without the owner's agreement to TypeSafe (v3.0.0 step 4, P9;
+    an import or restore clears it): ask, in a terminal, as `ecf address add` does."""
+    got: dict[str, Any] = c.get("/v1/addresses")
+    listed = cast("list[dict[str, Any]]", got.get("addresses") or [])
+    rows = [a for a in listed if str(a["address_id"]).lower() in ids and a.get("preset") == "D"
+            and a.get("paused") and not a.get("jev_consent")]  # fmt: skip
+    if not rows:
+        return False
+    aid = str(rows[0]["address_id"])
+    require_terminal()
+    typer.echo(f"{aid} is preset D: once resumed, TypeSafe Jev classifies its mail.")
+    if typer.prompt(JEV_CONSENT_QUESTION, default="", show_default=False).strip().lower() == "y":
+        return True
+    typer.echo(f"{aid} stays paused. To stop watching it instead: ecf address remove {aid}")
+    raise typer.Exit(1)
+
+
 def _owner_agreed(c: LocalClient, ref: str) -> bool:
     """For an address v3.0.0 converted to C and paused (`converted` in `GET /v1/upgrade/state`,
     P3; operator decision 2026-10-14): ask, in a terminal, whether its owner agreed (OD-427).
@@ -384,7 +406,7 @@ def _owner_agreed(c: LocalClient, ref: str) -> bool:
     rows = [r for r in converted if str(r["address_id"]).lower() in ids
             and r.get("paused") and not r.get("consented")]  # fmt: skip
     if not rows:
-        return False
+        return _jev_agreed(c, ids)
     aid = str(rows[0]["address_id"])
     require_terminal()
     typer.echo(f"{aid} used preset {rows[0]['from']}, whose local model v3.0.0 removed: it is now"

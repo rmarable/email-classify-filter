@@ -85,10 +85,19 @@ def show_count(n: dict[str, Any]) -> None:
     else:
         typer.echo(f"about ${e['usd_low']:.2f}-{e['usd_high']:.2f} API-equivalent, from"
                    f" {e['source']}; not a charge on a plan")  # fmt: skip
+    if e.get("claude_note"):  # preset D: Claude is the actor only (v3.0.0 step 4, P20)
+        typer.echo(f"  ({e['claude_note']})")
     if e["minutes"] is not None:
         typer.echo(f"about {e['minutes']} minutes of /ecf-review session time")
     else:
         typer.echo("/ecf-review session time: not measured yet")
+    jev: dict[str, Any] = e.get("jev") or {}
+    if jev:
+        took = (f", about {jev['minutes']} minutes of Jev calls" if jev.get("minutes") is not None
+                else ", Jev's time not measured yet")  # fmt: skip
+        typer.echo(f"TypeSafe Jev: about ${jev['usd']:.4f} (about {jev['tokens_per_email']} input"
+                   f" tokens per email, {jev['source']}){took}; preset D's case is immediacy,"
+                   " not cost")  # fmt: skip
     typer.echo("while these wait, new mail is reviewed first; they don't count toward the"
                " reminders")  # fmt: skip
     if n["to_classify"] > ACT_CAP:

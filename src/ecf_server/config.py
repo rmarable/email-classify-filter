@@ -23,10 +23,11 @@ Security Notice.
 before `rules`: the rules in force (or the starter rules) must compile against the new effective
 schema, so removing a field or value a rule uses is refused, naming the rule (the OD-452
 pattern). Your fields are for preset C only (D8): a `schema` section other than `default` is
-refused while any address is preset A or B (and `addresses.add_address` refuses an A or B
-address while one is stored). An added value can't take a built-in label's name or the id of a
-fixed, default or applied rule, always (P2); a rule that labels from your field is refused when
-the field's values repeat another field's value or a label name (P12). Over a cap is refused with
+refused while any address is preset D (v3.0.0 step 4, S4-D6; A and B before v3.0.0), and
+`addresses.add_address` refuses a D address while one is stored. An added value can't take a
+built-in label's name or the id of a fixed, default or applied rule, always (P2); a rule that
+labels from your field is refused when the field's values repeat another field's value or a label
+name (P12). Over a cap is refused with
 every violation listed (`schema_limit`); the dry run carries the budget line (with the bytes per
 classify read, P16), the prompt lines the extension adds, the warnings (`extension_warnings`),
 the privacy line (§12.4, D10) and how the rules layer.
@@ -125,7 +126,8 @@ SCHEMA_ALERT = "schema_extension"  # System Error: the stored extension no longe
 SCHEMA_LEAD = "changes the classifier prompt; live addresses go back to assist"
 PRIVACY_LINE = ("privacy: your field and value names and descriptions go to Anthropic with each"
                 " Claude classification request, and the chosen values with each actor request"
-                " (preset C); never put email content or secrets in them")  # fmt: skip
+                " (preset C); preset D refuses your fields, so none goes to TypeSafe; never put"
+                " email content or secrets in them")  # fmt: skip
 ACTIVATED = "schema.activated"  # setting: the SHA-256 of the stored extension in use (D11)
 PRE_LAYERS = "rules.pre_layers"  # setting: a pre-S4 stored file without a catch-all (P3)
 LAYERS_CHECKED = "rules.layers_checked"  # setting: the first S4 start looked (P3)
@@ -152,6 +154,17 @@ def current(conn: sqlite3.Connection) -> dict[str, Any]:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (KEY[s],)).fetchone()
         out[s] = json.loads(row["value"]) if row else None
     return out
+
+
+def _preset_d(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM addresses WHERE removed_at IS NULL AND preset = 'D'"
+                        " LIMIT 1").fetchone() is not None  # fmt: skip
+
+
+def user_fields_stored(conn: sqlite3.Connection) -> bool:
+    """A stored extension, in force or not: `addresses.add_address` refuses preset D then
+    (v3.0.0 step 4, S4-D6)."""
+    return _stored(conn, "schema") is not None
 
 
 def _stored(conn: sqlite3.Connection, section: str) -> Any:
@@ -499,6 +512,9 @@ def _schema_and_rules(conn: sqlite3.Connection, doc: dict[str, Any], out: dict[s
     if "schema" in doc and "schema" not in out:
         if not extensions_enabled() and not imported:
             raise InvalidInputError(f"config: schema: {EXTENSIONS_OFF}")
+        if not imported and _preset_d(conn):  # D uses the shipped schema only (S4-D6)
+            raise InvalidInputError("config: schema: your own fields are refused while an"
+                                    " address uses preset D (v3.0.0)")  # fmt: skip
         out["schema"] = _schema(conn, doc["schema"], now["schema"],
                                 rules_doc or _effective(out, now, "rules"))  # fmt: skip
     if doc.get("schema") == DEFAULT:

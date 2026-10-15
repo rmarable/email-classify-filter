@@ -21,6 +21,12 @@ escalation (claude_review.escalate; v3.0.0, ADR 0031, P10).
 to digests, not one card each.
 
 `batch_risky` is the cross-item hide guard (§5.6) for Claude's batches (claude_review.py, step 3).
+
+**Preset D** (v3.0.0 step 4, §2.1; OD-509, P13): D items wait at `awaiting_claude` like C's, with
+no classification until TypeSafe Jev's drain (`jev_dispatch`) classifies them; then the actor is
+Claude's, as for C. `route_new` routes D as C and wakes the drain (`jev_keys.WAKE`). An item
+waiting for Jev (D, no classification) never counts in `waiting`, `backlog` or `overdue`, so the
+reminder and escalation leave it out: `waiting_for_jev` counts it instead.
 """
 
 from __future__ import annotations
@@ -34,13 +40,14 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import fixed_item
-from ecf_server import items, marked, policy
+from ecf_server import items, jev_keys, marked, policy
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.state_machine import Status, TransitionContext
 
-CLAUDE_PRESETS = frozenset({"C"})  # the actor is Claude
+CLAUDE_PRESETS = frozenset({"C", "D"})  # the actor is Claude
 CLAUDE_CLASSIFIES = frozenset({"C"})  # the classifier is Claude too
+QUEUED = frozenset({"C", "D"})  # new mail waits at `awaiting_claude` (D for Jev's drain, §2.1)
 REMIND_DEFAULT_H = 24  # claude_review_reminder_hours (§14.1)
 BACKLOG_BATCH = 100  # §5.3: above this many waiting, approvals go to digests, not one card each
 
@@ -52,14 +59,19 @@ def preset(conn: sqlite3.Connection, address_id: str) -> str:
 
 
 def route_new(conn: sqlite3.Connection, clock: Clock, sid: str) -> bool:
-    """A pre-checked email on a C address goes to the Claude queue; True if it moved."""
+    """A pre-checked email on a C or D address goes to the Claude queue (a D one waits there for
+    Jev, whose drain this wakes); True if it moved."""
     item = conn.execute("SELECT address_id, status FROM items WHERE stable_id = ?",
                         (sid,)).fetchone()  # fmt: skip
     if item is None or item["status"] != Status.NEW:
         return False
-    if preset(conn, item["address_id"]) not in CLAUDE_CLASSIFIES:
+    p = preset(conn, item["address_id"])
+    if p not in QUEUED:
         return False
-    return _move(conn, clock, sid, Status.NEW)
+    moved = _move(conn, clock, sid, Status.NEW)
+    if moved and p == jev_keys.PRESET:
+        jev_keys.WAKE.set()
+    return moved
 
 
 def to_actor(conn: sqlite3.Connection, clock: Clock, sid: str) -> Status:
@@ -88,9 +100,9 @@ SETTLED = timedelta(minutes=1)
 _SWEEP = (
     "SELECT i.stable_id, i.status FROM items i JOIN addresses a USING (address_id)"
     " WHERE a.removed_at IS NULL AND i.updated_at < ? AND ("
-    "(i.status = 'new' AND a.preset = 'C' AND i.prechecked = 1"
+    "(i.status = 'new' AND a.preset IN ('C', 'D') AND i.prechecked = 1"
     " AND coalesce(json_extract(i.facts, '$.precheck.stage'), '') <> 'backfill')"
-    " OR (i.status = 'classified' AND a.preset = 'C' AND i.decision_source = 'rule'"
+    " OR (i.status = 'classified' AND a.preset IN ('C', 'D') AND i.decision_source = 'rule'"
     " AND json_extract(i.proposal, '$.plan.to_actor') = 1))"
     " ORDER BY i.updated_at LIMIT ?"
 )
@@ -110,11 +122,14 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
 # `i.status IN (...)` as its own term, as `items_claude_waiting` (0038) is defined, so SQLite can
 # use that partial index (review R2; test_claude_queue checks the plans)
 _IN_QUEUE = "i.status IN ('awaiting_claude', 'clarified')"
+# a D item waiting for Jev's drain, not for `/ecf-review` (§2.1, P13)
+FOR_JEV = "(a.preset = 'D' AND i.classification IS NULL)"
 # old mail a scan or reprocess marked never counts here (OD-507 §2): `scans.waiting_line` instead
 _WAITING = (
     " FROM items i JOIN addresses a USING (address_id)"
     f" WHERE a.removed_at IS NULL AND {_IN_QUEUE} AND (i.status = 'awaiting_claude'"
-    f" OR (i.status = 'clarified' AND a.preset = 'C')) AND NOT {marked.sql('i.')}"
+    f" OR (i.status = 'clarified' AND a.preset IN ('C', 'D'))) AND NOT {marked.sql('i.')}"
+    f" AND NOT {FOR_JEV}"
 )
 
 
@@ -148,8 +163,18 @@ def backlog(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT count(*) FROM items i JOIN addresses a USING (address_id)"  # noqa: S608
                        f" WHERE a.removed_at IS NULL AND a.paused = 0 AND {_IN_QUEUE}"
                        f" AND i.status = 'awaiting_claude' AND NOT {marked.sql('i.')}"
-                       ).fetchone()  # fmt: skip
+                       f" AND NOT {FOR_JEV}").fetchone()  # fmt: skip
     return int(row[0])
+
+
+def waiting_for_jev(conn: sqlite3.Connection) -> dict[str, int]:
+    """D items waiting for Jev's drain, per address (§2.1): "waiting for Jev" in the daily summary
+    and `ecf status`; new and old mail alike."""
+    rows = conn.execute("SELECT i.address_id, count(*) FROM items i JOIN addresses a"  # noqa: S608
+                        f" USING (address_id) WHERE a.removed_at IS NULL AND {_IN_QUEUE}"
+                        f" AND i.status = 'awaiting_claude' AND {FOR_JEV}"
+                        " GROUP BY i.address_id ORDER BY i.address_id").fetchall()  # fmt: skip
+    return {r[0]: r[1] for r in rows}
 
 
 def overdue(conn: sqlite3.Connection, now: datetime, factor: int = 1) -> list[Overdue]:

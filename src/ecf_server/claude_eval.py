@@ -19,12 +19,16 @@ decisions 2026-10-02, OD-287 to OD-292).
   run's models), is keyed `eval-...`, and is for comparison only.
 - **Preset B** (OD-289), which took Gemma's classifications from an `ecf eval run`, was removed
   with Gemma in v3.0.0 (ADR 0031); its result files still load and rescore (R-D12).
-- **Preset D** (v3.0.0 step 2d; D5, P15): Jev's classifications from the latest complete `ecf
-  eval run --classifier-backend jev` on the pinned Jev version, its prompt digest, the default
-  schema and this version of the set, not an experiment, its result file present; Claude is the
-  actor. A faulted Jev case (no answer) is scored as a failure (P1). Comparison only (an
-  `eval-...` key) until step 4 adds D to `claude_pins.PAIR`; its schema, prompt digest, input
-  format and excerpt cap are the source run's.
+- **Preset D** (v3.0.0 step 2d; D5, P15; step 4, P8): Jev's classifications from the latest
+  `ecf eval run --classifier-backend jev` that is complete, redacted (`redact` true), not marked
+  not for the gate nor an experiment, on the pinned Jev version, its prompt digest, the default
+  schema and this version of the set, with every case of this run and its result file present;
+  Claude is the actor. A faulted Jev case (no answer) is scored as a failure (P1). On the pinned
+  actors, and with a source run whose gate key is the one the service stored for D
+  (`jev_keys.stored`), it is keyed by D's pin key and counts for D's gate (`claude_pins.PAIR`,
+  step 4); otherwise it is comparison only (an `eval-...` key). Its schema, prompt digest, input
+  format and excerpt cap are the source run's, and the summary names the source run and pin
+  (`jev_source`) for the D Check.
 - **Scoring** is `ecf eval run`'s (`evalrun.score`, the starter rules, policy, the safety checks);
   the result file and `eval_runs` row have its format, plus the run's Claude figures. Preset C
   classifies its first 10 cases twice (determinism, §16.5).
@@ -75,6 +79,7 @@ from ecf_server import (
     config,
     evalrun,
     excerpt,
+    jev_keys,
     jev_mapping,
     policy,
     rules,
@@ -92,10 +97,9 @@ EXPIRY = timedelta(hours=24)
 BATCH_MAX = 5
 ACTOR_CHARS = 4000  # as `ecf eval run` and the stored actor excerpt
 ROLES = ("classifier", "classifier_high", "actor", "actor_high")
-# the Claude roles each preset's eval uses: C's are its gate pins; D's actor (D isn't in
-# `claude_pins.GATE_ROLES` or `PAIR` until step 4, so a D run is comparison only)
-USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": ("actor", "actor_high")}
-D_PAIR = "jev/claude"  # a D run's `eval_runs.pair` until step 4 adds D to `claude_pins.PAIR`
+# the Claude roles each preset's eval uses: its gate pins (D's classifier is Jev)
+USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": claude_pins.GATE_ROLES["D"]}
+D_PAIR = claude_pins.PAIR["D"]  # a D run's `eval_runs.pair`
 CLAUDE_INPUT_FORMAT = "claude-v1"  # a C run's `input_format`, so Jev vs C prints the difference
 # the inputs a D run takes from its source Jev run (P13)
 SOURCE_KEYS = ("schema_digest", "prompt_digest", "input_format", "excerpt_cap")
@@ -262,8 +266,9 @@ def role_of(agent: str) -> str:
 def models_for(conn: sqlite3.Connection, opts: Options,
                source_key: str | None = None) -> tuple[dict[str, str], bool, str]:  # fmt: skip
     """The run's model per role, whether they are the pins in force for the preset's roles, and
-    the run's key (the gate's pin key, or `eval-...`). A D run is never pinned until step 4: its
-    key binds the actor models, its source Jev run's gate key and the schema."""
+    the run's key (the gate's pin key, or `eval-...`). A D run is pinned only when its source Jev
+    run's gate key is the one the service stored for D (step 4, P8); otherwise its key binds the
+    actor models, its source run's gate key and the schema."""
     eff = claude_pins.effective(conn)
     models = {r: eff[r] for r in ROLES}
     for model, roles in ((opts.classifier_model, ("classifier", "classifier_high")),
@@ -276,6 +281,9 @@ def models_for(conn: sqlite3.Connection, opts: Options,
         models |= dict.fromkeys(roles, model)
     used = USED_ROLES[opts.preset]
     pinned = opts.preset in claude_pins.PAIR and all(models[r] == eff[r] for r in used)
+    if opts.preset == jev_keys.PRESET:  # Jev's side must be D's current one too (P8)
+        pinned = pinned and source_key is not None and source_key == jev_keys.stored(conn).get(
+            "gate_key")  # fmt: skip
     if pinned:
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
@@ -319,7 +327,7 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         figures: dict[str, Any] = m.get("jev") or {}
         if (m.get("backend") != evalrun.JEV or figures.get("pin") != pin
                 or m.get("prompt_digest") != prompt or m.get("schema_digest") != schema.digest
-                or m.get("complete") is not True or m.get("redact") is False):  # fmt: skip
+                or m.get("complete") is not True or m.get("redact") is not True):  # fmt: skip
             continue
         if o.get("for_gate") is False or o.get("switches_off") or o.get("measuring"):
             continue  # an experiment: its classifications aren't production's
@@ -332,7 +340,13 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         derived = {c.id: jev_mapping.Derived(frozenset(c.unsure or ()),
                                              frozenset(c.below_bar or ()))
                    for c in result.cases}  # fmt: skip
-        return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}, derived
+        source = {k: m[k] for k in SOURCE_KEYS if k in m}
+        det: dict[str, Any] = m.get("determinism") or {}
+        if det:  # shown in the D Check (P16): the source's field flips and faulted pairs
+            pairs: list[Any] = det.get("faulted_pairs") or []
+            source["jev_determinism"] = {"field_flips": det.get("field_flips") or {},
+                                         "faulted_pairs": len(pairs)}  # fmt: skip
+        return str(row["run_id"]), got, source, derived
     raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
                             " --classifier-backend jev` on the pinned Jev version, the default"
                             " schema and this version of the set, covering this run's cases, and"
@@ -524,8 +538,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                for w in run.works if w.result is not None]  # fmt: skip
     if not results:
         return
-    # only a run on the pinned models can pass the gate: an unpinned run, and every preset D
-    # run until step 4 (never pinned), is comparison only (J8)
+    # only a run on the pinned models can pass the gate: an unpinned run is comparison only (J8;
+    # a D run also needs its source run on D's current key, P8)
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 gate_eligible=run.pinned, schema=run.schema,
                                                 fraud_only=run.opts.fraud_only)  # fmt: skip
@@ -534,6 +548,10 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         # the caution its source's answers asked for (step 3): the same mapping, by the source's
         # prompt digest
         summary["band"] = evalrun.band_figures(results, [w.case for w in run.works], run.rules)
+        # the source run and the pin it matched (`_jev_run`), for the D Check (P8)
+        summary["jev_source"] = {"run_id": run.source_run, "pin": jev_keys.pin(),
+                                 **({"determinism": summary.pop("jev_determinism")}
+                                    if "jev_determinism" in summary else {})}  # fmt: skip
     else:
         summary["schema_digest"] = run.schema.digest  # what the classifier was asked
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
