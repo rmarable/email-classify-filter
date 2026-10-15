@@ -57,7 +57,8 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     (Claude's from `awaiting_claude`, V1.4 step 3).
     `schema_digest` is the schema the model was asked with: when the effective schema changed
     since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
-    item is asked again with the new one (OD-478). `context` is the transition's (a reprocessed
+    item is asked again with the new one (OD-478); Jev's guarded store over a classification also
+    writes nothing and returns False. `context` is the transition's (a reprocessed
     item's, OD-507 §4.3). `jev`: Jev's `facts.jev` (unsure and below-bar fields, probabilities,
     confidence; `jev_facts.record`), stored beside the classification in the same write; any
     other store removes an earlier one, so Claude's classification is never read with Jev's
@@ -103,9 +104,9 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
                 expected.value,
             ),
         )
-        if guard and cur.rowcount != 1:
+        if guard and cur.rowcount != 1:  # nothing written: the caller's claim isn't done
             log.info("classifier.already_classified", stable_id=stable_id[:8])
-            return True
+            return False
         conn.execute(
             "INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome, data)"
             " VALUES (?, ?, ?, 'item.classified', ?, 'ok', ?)",

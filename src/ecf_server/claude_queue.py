@@ -122,6 +122,7 @@ def sweep(conn: sqlite3.Connection, clock: Clock, limit: int = 50) -> int:
 # `i.status IN (...)` as its own term, as `items_claude_waiting` (0038) is defined, so SQLite can
 # use that partial index (review R2; test_claude_queue checks the plans)
 _IN_QUEUE = "i.status IN ('awaiting_claude', 'clarified')"
+IN_QUEUE = _IN_QUEUE  # jev_dispatch's queries too
 # a D item waiting for Jev's drain, not for `/ecf-review` (§2.1, P13)
 FOR_JEV = "(a.preset = 'D' AND i.classification IS NULL)"
 # old mail a scan or reprocess marked never counts here (OD-507 §2): `scans.waiting_line` instead

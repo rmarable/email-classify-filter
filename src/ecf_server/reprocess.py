@@ -389,8 +389,9 @@ def _move(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row, mode: str,
         if preset == jev_keys.PRESET:
             # D: Jev's drain takes only an unclassified item, after new mail (S4-D16, P12)
             with write_tx(conn):
-                conn.execute("UPDATE items SET facts = json_remove(facts, '$.jev_attempts')"
-                             " WHERE stable_id = ?", (sid,))  # fmt: skip
+                # and Jev's old caution (`facts.jev`), read with no classification otherwise
+                conn.execute("UPDATE items SET facts = json_remove(facts, '$.jev_attempts',"
+                             " '$.jev') WHERE stable_id = ?", (sid,))  # fmt: skip
             jev_keys.WAKE.set()
         return
     items.transition(conn, clock, sid, Status.PROPOSED, ctx, actor="service", expected=frm)

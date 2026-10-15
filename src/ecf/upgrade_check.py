@@ -127,7 +127,11 @@ def mapping_digest(doc: Any) -> str:
     def table(key: str) -> dict[str, float]:
         raw: Any = d.get(key) or {}
         t = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-        return {k: float(v) for k, v in sorted(t.items()) if isinstance(v, int | float)}
+        return {
+            k: float(v)
+            for k, v in sorted(t.items())
+            if isinstance(v, int | float) and not isinstance(v, bool)
+        }  # as `_number`
 
     canon = {"noul_true": NOUL_TRUE, "score_tie": "higher", "bands": table("bands"),
              "bars": table("bars"), "none_bars": table("none_bars")}  # fmt: skip

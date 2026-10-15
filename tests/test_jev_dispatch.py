@@ -290,8 +290,8 @@ def test_the_drains_claim_keeps_ecf_review_off_and_the_store_is_guarded(
         conn.execute("UPDATE items SET classification = ? WHERE stable_id = ?",
                      (json.dumps(REQUEST), sid))  # fmt: skip
     audits = conn.execute("SELECT count(*) FROM audit").fetchone()[0]
-    assert classifier.store(conn, clock, sid, REQUEST, {"classifier": PIN}, provider="jev",
-                            expected=claude_queue.Status.AWAITING_CLAUDE)  # fmt: skip
+    assert not classifier.store(conn, clock, sid, REQUEST, {"classifier": PIN}, provider="jev",
+                                expected=claude_queue.Status.AWAITING_CLAUDE)  # fmt: skip
     assert conn.execute("SELECT count(*) FROM audit").fetchone()[0] == audits
     assert row(conn, sid)["status"] == "awaiting_claude"
     assert claude_review.review_queue(conn, clock, "s1")["items"] == []  # the drain's claim
@@ -621,3 +621,425 @@ def test_the_daily_summary_counts_mail_waiting_for_jev(conn: sqlite3.Connection,
                      (jev_keys.STATE, '{"down": true}', to_ts(clock.now())))  # fmt: skip
     assert "TypeSafe Jev is down: 1 preset D email(s) wait" in daily.card(
         conn, clock.now(), "2026-10-14").text  # fmt: skip
+
+
+# The step 4 diff review's fixes (R1-R15, 2026-10-15).
+
+
+def _set_state(conn: sqlite3.Connection, clock: FakeClock, st: dict[str, Any]) -> None:
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, ?,"
+                     " 'service') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                     (jev_keys.STATE, json.dumps(st), to_ts(clock.now())))  # fmt: skip
+
+
+def _attempts(conn: sqlite3.Connection, sid: str) -> int:
+    return int(json.loads(row(conn, sid)["facts"]).get("jev_attempts") or 0)
+
+
+def test_a_wake_restarts_the_liveness_clock(conn: sqlite3.Connection, clock: FakeClock,
+                                            db_path: Path) -> None:  # fmt: skip
+    """R1: a computer asleep longer than the limit isn't a stalled drain."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+    live, _, _ = rig(ok())
+    live.running, live.progress_at = True, to_ts(clock.now())
+    clock.advance(16 * 60)  # asleep
+    st = tick(conn, clock, live, db_path, awake=1, woke=True)
+    assert not st.get("down") and live.progress_at == to_ts(clock.now())
+    clock.advance(60)
+    assert not tick(conn, clock, live, db_path).get("down")
+    clock.advance(15 * 60)  # awake and still no progress: stalled
+    assert tick(conn, clock, live, db_path)["reason"] == "stalled"
+
+
+def test_the_probe_ladder_is_capped(conn: sqlite3.Connection, clock: FakeClock,
+                                    db_path: Path) -> None:  # fmt: skip
+    """R2: days of failing probes never overflow the ladder."""
+    cool_down = jev_dispatch._cool_down  # pyright: ignore[reportPrivateUsage]
+    assert cool_down(2000) == jev.COOL_DOWN_MAX_S
+    assert cool_down(jev_dispatch.LEVEL_CAP) == jev.COOL_DOWN_MAX_S > cool_down(
+        jev_dispatch.LEVEL_CAP - 1)  # fmt: skip
+    add_d(conn, clock)
+    d_item(conn, clock)
+    now = to_ts(clock.now())
+    _set_state(conn, clock, {"down": True, "reason": "faults", "since": now, "probe_at": now,
+                             "level": 2000, "probe_ok": 0})  # fmt: skip
+    live, _, _ = rig(status(503))
+    tick(conn, clock, live, db_path)  # the probe faults
+    st = tick(conn, clock, live, db_path)
+    assert st["down"] and st["level"] == jev_dispatch.LEVEL_CAP
+    assert st["probe_at"] == to_ts(clock.now() + timedelta(seconds=jev.COOL_DOWN_MAX_S))
+
+
+def test_one_item_typesafe_keeps_refusing_stops_being_sent(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path
+) -> None:
+    """R3: with no success yet, a request error that repeats on the same item in a later drain
+    counts, so the item reaches the attempt limit and waits, named in a System Error."""
+    add_d(conn, clock)
+    sid = d_item(conn, clock)
+    live, script, _ = rig(status(400))
+    notifier = FakeNotifier()
+    st: dict[str, Any] = {}
+    for _ in range(10):
+        st = tick(conn, clock, live, db_path, notifier=notifier)
+        clock.advance(60)
+    assert len(script.seen) == jev_dispatch.ATTEMPTS + 1  # the first refusal, then 3 counted
+    assert _attempts(conn, sid) == jev_dispatch.ATTEMPTS and not st.get("down")
+    assert jev_dispatch.claimable(conn, clock.now()) == 0
+    errors = [b for t, b in notifier.sent if t == "[ecf-alert] System Error"]
+    assert len(errors) == 1 and sid[:8] in errors[0]
+    assert jev_dispatch.status(conn, live, store())["at_limit"] == [sid[:8]]
+
+
+def test_the_request_error_streak_outlives_a_drain(conn: sqlite3.Connection, clock: FakeClock,
+                                                   db_path: Path) -> None:  # fmt: skip
+    """R3: distinct items refused across drains still read as the pin."""
+    add_d(conn, clock)
+    for n in range(3):
+        d_item(conn, clock, "d", n)
+    _set_state(conn, clock, {"request_errors": ["x1", "x2"]})
+    live, script, _ = rig(status(400))
+    out = drain(conn, clock, live)
+    assert out.stopped == "pin" and len(script.seen) == 1 and out.ran
+    live.outcomes.append(out)
+    live.spawn = lambda _fn: None
+    st = tick(conn, clock, live, db_path)
+    assert st["down"] and st["reason"] == "pin"
+    live.outcomes.append(jev_dispatch.Outcome(ok=1, ran=True))
+    _set_state(conn, clock, {"request_errors": ["x1"]})
+    assert "request_errors" not in tick(conn, clock, live, db_path)  # a success clears it
+
+
+def test_an_outage_sends_a_few_emails_not_one_a_tick(conn: sqlite3.Connection,
+                                                      clock: FakeClock,
+                                                      db_path: Path) -> None:  # fmt: skip
+    """R4: while faulting, a drain starts only at the end of a growing cool-down."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+    live, script, _ = rig(status(503))
+    st: dict[str, Any] = {}
+    for _ in range(30):
+        st = tick(conn, clock, live, db_path)
+        if st.get("down"):
+            break
+        clock.advance(60)
+    assert st["down"] and st["reason"] == "faults"
+    assert len(script.seen) <= 6  # was one a tick (about 15) before Jev went down
+    script.answers = [ok()]
+    _set_state(conn, clock, {"faulting": True, "fault_s": 0.0, "fault_level": 2,
+                             "retry_at": to_ts(clock.now() - timedelta(seconds=1))})  # fmt: skip
+    live.outcomes.clear()
+    tick(conn, clock, live, db_path)  # the cool-down is over: a drain, which succeeds
+    st = tick(conn, clock, live, db_path)
+    assert not st.get("faulting") and "retry_at" not in st and "fault_level" not in st
+
+
+def test_the_drains_queries_use_the_claude_queue_index(conn: sqlite3.Connection,
+                                                        clock: FakeClock) -> None:  # fmt: skip
+    """R5: the pick, the claimable count, the alert's count and the attempt-limit list read
+    `items_claude_waiting`."""
+    sql, args = jev_dispatch._claimable(clock.now())  # pyright: ignore[reportPrivateUsage]
+    detail_sql = ("SELECT count(*), min(i.claude_since) FROM items i JOIN addresses a USING"  # noqa: S608
+                  f" (address_id) WHERE a.removed_at IS NULL AND {claude_queue.IN_QUEUE} AND"
+                  f" i.status = 'awaiting_claude' AND {claude_queue.FOR_JEV}")  # fmt: skip
+    queries: list[tuple[str, list[Any]]] = [("SELECT count(*)" + sql, args),
+               (jev_dispatch.next_sql(sql), [*args, "[]"]),
+               (detail_sql, []),
+               (jev_dispatch.at_limit_sql(), [jev_dispatch.ATTEMPTS])]  # fmt: skip
+    for q, a in queries:
+        plan = " | ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + q, a))
+        assert "items_claude_waiting" in plan, (q, plan)
+    import inspect  # noqa: PLC0415
+
+    assert "claude_queue.IN_QUEUE" in inspect.getsource(jev_dispatch.detail)
+
+
+def test_the_pick_checks_its_candidate_again_under_the_lock(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5: a candidate taken between the read and the write transaction isn't claimed."""
+    add_d(conn, clock)
+    sid = d_item(conn, clock)
+    with write_tx(conn):  # classified meanwhile
+        conn.execute("UPDATE items SET classification = ? WHERE stable_id = ?",
+                     (json.dumps(REQUEST), sid))  # fmt: skip
+    stale = f"SELECT '{sid}' WHERE ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL"
+    monkeypatch.setattr(jev_dispatch, "next_sql", lambda _sql: stale)  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+    assert jev_dispatch.pick(conn, clock, []) is None
+    assert conn.execute("SELECT count(*) FROM claims").fetchone()[0] == 0
+
+
+def test_answers_that_dont_map_stop_the_drain_and_take_jev_down(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path
+) -> None:
+    """R6: UNMAPPED_STOP in a row stop the drain (the answer format), with one System Error for
+    the items that reached the limit, not one per item."""
+    add_d(conn, clock)
+    sids = [d_item(conn, clock, "d", n) for n in range(5)]
+    with write_tx(conn):
+        conn.execute("UPDATE items SET facts = json_set(facts, '$.jev_attempts', ?)",
+                     (jev_dispatch.ATTEMPTS - 1,))  # fmt: skip
+    live, script, _ = rig(ok(answers={}))
+    notifier = FakeNotifier()
+    jev_dispatch.refresh_keys(conn, clock)
+    out = jev_dispatch.drain(conn, clock, store, live, notifier)
+    assert out.stopped == "unmapped" and len(script.seen) == jev_dispatch.UNMAPPED_STOP
+    assert sum(_attempts(conn, s) == jev_dispatch.ATTEMPTS for s in sids) == 3
+    errors = [b for t, b in notifier.sent if t == "[ecf-alert] System Error"]
+    assert len(errors) == 1 and "3 emails" in errors[0]
+    assert sum(s[:8] in errors[0] for s in sids) == 3
+    live.outcomes.append(out)
+    live.spawn = lambda _fn: None
+    st = tick(conn, clock, live, db_path)
+    assert st["down"] and st["reason"] == "format"
+    assert "answer format" in jev_dispatch.detail(conn, st)
+
+
+def test_a_long_retry_after_delays_the_first_probe(conn: sqlite3.Connection, clock: FakeClock,
+                                                   db_path: Path) -> None:  # fmt: skip
+    """R8: the probe never asks before TypeSafe's long `Retry-After` (at most a day)."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+    live, _, _ = rig(status(429, {"retry-after": "3600"}))
+    out = drain(conn, clock, live)
+    assert out.stopped == "long_wait" and out.retry_after is not None
+    assert out.retry_after >= 3599
+    live.outcomes.append(out)
+    live.spawn = lambda _fn: None
+    st = tick(conn, clock, live, db_path)
+    assert st["down"] and st["reason"] == "long_wait"
+    probe_at = clock.now() + timedelta(seconds=out.retry_after)
+    assert st["probe_at"] == to_ts(probe_at)
+    _set_state(conn, clock, {})
+    live.outcomes.append(jev_dispatch.Outcome(stopped="long_wait", retry_after=10**9))
+    st = tick(conn, clock, live, db_path)
+    assert st["probe_at"] == to_ts(clock.now() + timedelta(days=1))
+
+
+def test_the_tick_never_looks_up_typesafe_itself(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R9: the DNS lookup runs in its own thread; the tick reads the last answer."""
+    import socket  # noqa: PLC0415
+
+    looked: list[str] = []
+
+    def getaddrinfo(host: str, *_a: Any, **_k: Any) -> Any:
+        looked.append(host)
+        raise OSError("offline")
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    add_d(conn, clock)
+    d_item(conn, clock)
+    _set_state(conn, clock, {"faulting": True, "fault_s": 0.0,
+                             "retry_at": to_ts(clock.now() + timedelta(hours=1))})  # fmt: skip
+    queued: list[Any] = []
+    live = Live(transport=httpx.MockTransport(Script(status(503))), spawn=queued.append)
+    st = tick(conn, clock, live, db_path, awake=60)
+    assert looked == [] and len(queued) == 1 and st["fault_s"] == 60  # last answer: online
+    queued.pop()()  # the lookup, in its own thread
+    assert looked == [jev_keys.HOST] and live.online is False and not live.resolving
+    st = tick(conn, clock, live, db_path, awake=60)
+    assert st["fault_s"] == 60 and looked == [jev_keys.HOST]  # offline: paused
+
+
+def test_the_alert_detail_is_written_only_when_it_changes(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path
+) -> None:
+    """R10: not an UPDATE of the alert every tick while Jev is down."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+    live, _, _ = rig(status(503))
+    live.spawn = lambda _fn: None
+    live.outcomes.append(jev_dispatch.Outcome(stopped="auth"))
+    tick(conn, clock, live, db_path)
+    seen: list[str] = []
+    conn.set_trace_callback(seen.append)
+    try:
+        for _ in range(5):
+            clock.advance(60)
+            tick(conn, clock, live, db_path)
+        assert not [q for q in seen if q.startswith("UPDATE alerts")]
+        d_item(conn, clock, "d", 9)  # one more waiting: the text changes
+        tick(conn, clock, live, db_path)
+        assert len([q for q in seen if q.startswith("UPDATE alerts")]) == 1
+    finally:
+        conn.set_trace_callback(None)
+    detail = conn.execute("SELECT detail FROM alerts WHERE kind = 'jev_down'").fetchone()[0]
+    assert "2 preset D email(s) wait" in detail
+
+
+def test_the_drain_remembers_only_failed_items(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R11: `tried` holds the items that failed in this drain, not every one it stored."""
+    add_d(conn, clock)
+    sids = [d_item(conn, clock, "d", n) for n in range(3)]
+    seen: list[list[str]] = []
+    real = jev_dispatch.pick
+
+    def pick(c: sqlite3.Connection, k: Any, tried: list[str]) -> Any:
+        seen.append(list(tried))
+        return real(c, k, tried)
+
+    monkeypatch.setattr(jev_dispatch, "pick", pick)
+    live, _, _ = rig(ok(answers={}), ok(), ok())
+    assert drain(conn, clock, live).ok == 2
+    failed = [s for s in sids if _attempts(conn, s)]
+    assert len(failed) == 1 and seen[-1] == failed
+
+
+def test_a_stalled_drain_is_told_to_stop_and_a_new_one_can_start(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path
+) -> None:
+    """R13: the stalled drain's own stop event is set and `running` clears; the old thread
+    ending later leaves a newer drain alone. The service's halt stops a drain too."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+    queued: list[Any] = []
+    live, _, _ = rig(ok())
+    live.spawn = queued.append
+    assert jev_dispatch.start_drain(lambda: conn, clock, store, live, FakeNotifier())
+    old = live.drain_stop
+    assert old is not None and live.running
+    clock.advance(15 * 60)
+    st = tick(conn, clock, live, db_path)
+    assert st["reason"] == "stalled" and old.is_set() and not live.running
+    assert jev_dispatch.start_drain(lambda: conn, clock, store, live, FakeNotifier())
+    new = live.drain_stop
+    assert new is not None and new is not old
+    live.halt()
+    assert new.is_set() and live.stop.is_set()
+
+
+def test_a_drain_that_cant_spawn_isnt_left_running(clock: FakeClock) -> None:
+    """R13: a failed thread start clears `running` (and `probing`) so the next tick tries."""
+    live, _, _ = rig(ok())
+
+    def broken(_fn: Any) -> None:
+        raise RuntimeError("can't start new thread")
+
+    live.spawn = broken
+    assert not jev_dispatch.start_drain(lambda: sqlite3.connect(":memory:"), clock, store,
+                                        live, FakeNotifier())  # fmt: skip
+    assert not live.running and live.drain_stop is None
+    assert not jev_dispatch.start_probe(lambda: sqlite3.connect(":memory:"), clock, store, live)
+    assert not live.probing
+    jev_dispatch.start_resolve(live)
+    assert not live.resolving
+
+
+def test_a_claim_ends_done_only_when_the_store_wrote(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R15: a store that wrote nothing releases the claim, and the drain doesn't ask again."""
+    add_d(conn, clock)
+    d_item(conn, clock)
+
+    def store_nothing(*_a: object, **_k: object) -> bool:
+        return False
+
+    monkeypatch.setattr(classifier, "store", store_nothing)
+    live, script, _ = rig(ok())
+    assert drain(conn, clock, live).ok == 1 and len(script.seen) == 1
+    assert conn.execute("SELECT state FROM claims").fetchone()[0] == "released"
+
+
+def test_wake_starts_a_drain_between_ticks(conn: sqlite3.Connection, clock: FakeClock,
+                                           db_path: Path) -> None:  # fmt: skip
+    """R15: `jev_keys.WAKE` between ticks starts a drain when one may run, and clears."""
+    from ecf_server import db  # noqa: PLC0415
+
+    add_d(conn, clock)
+    d_item(conn, clock)
+    jev_dispatch.refresh_keys(conn, clock)
+    live, script, _ = rig(ok())
+
+    def wake() -> bool:
+        jev_keys.WAKE.set()
+        return jev_dispatch.wake(conn, clock, live, FakeNotifier(), lambda: db.connect(db_path),
+                                 store)  # fmt: skip
+
+    _set_state(conn, clock, {"down": True, "probe_at": to_ts(clock.now())})
+    assert not wake() and not jev_keys.WAKE.is_set() and script.seen == []
+    _set_state(conn, clock, {"faulting": True,
+                             "retry_at": to_ts(clock.now() + timedelta(seconds=30))})  # fmt: skip
+    assert not wake() and script.seen == []  # in a faulting cool-down
+    _set_state(conn, clock, {})
+    live.outcomes.append(jev_dispatch.Outcome())
+    assert not wake()  # results the tick hasn't read: the tick decides
+    live.outcomes.clear()
+    assert wake() and len(script.seen) == 1
+
+
+def test_the_service_timer_answers_wake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R15: the timer's wait returns for `jev_keys.WAKE`, long before the next tick."""
+    import threading  # noqa: PLC0415
+
+    from ecf.paths import Paths  # noqa: PLC0415
+    from ecf_server import service  # noqa: PLC0415
+
+    monkeypatch.setattr(service, "WAKE_POLL_S", 0.01)
+    svc = service.Service(Paths("t", tmp_path / "home"), FakeClock(),
+                          service.Options(tick_seconds=3600), dev=True)  # fmt: skip
+    woke = threading.Event()
+    ticked: list[int] = []
+    monkeypatch.setattr(svc, "_jev_wake", lambda: (jev_keys.WAKE.clear(), woke.set()))
+    monkeypatch.setattr(svc, "tick", lambda: ticked.append(1))
+    timer = threading.Thread(target=svc._timer, daemon=True)  # pyright: ignore[reportPrivateUsage]
+    timer.start()
+    jev_keys.WAKE.set()
+    try:
+        assert woke.wait(5.0) and ticked == []
+    finally:
+        svc.stop.set()
+        timer.join(5.0)
+    assert not timer.is_alive()
+
+
+def test_the_daily_summary_makes_one_stats_report(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R15: the local-model and Jev lines share one `stats.report`."""
+    from ecf_server import daily, stats  # noqa: PLC0415
+
+    add_d(conn, clock)
+    d_item(conn, clock)
+    live, _, _ = rig(ok())
+    drain(conn, clock, live)
+    calls: list[int] = []
+    real = stats.report
+
+    def report(*a: Any, **k: Any) -> dict[str, Any]:
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(stats, "report", report)
+    text = daily.card(conn, clock.now(), "2026-10-14").text
+    assert len(calls) == 1 and "TypeSafe Jev: 1 calls" in text
+
+
+def test_the_tick_reads_the_shipped_files_once(
+    conn: sqlite3.Connection, clock: FakeClock, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R15: `jev.lock` (and `jev_mapping.json`) are read once, not every tick."""
+    pin = jev_dispatch._pin  # pyright: ignore[reportPrivateUsage]
+    pin.cache_clear()
+    reads: list[int] = []
+    real = jev.load_pin
+
+    def load_pin() -> str:
+        reads.append(1)
+        return real()
+
+    monkeypatch.setattr(jev, "load_pin", load_pin)
+    live, _, _ = rig(ok())
+    for _ in range(3):
+        tick(conn, clock, live, db_path)
+    assert len(reads) == 1
+    before = jev_keys._data.cache_info().misses  # pyright: ignore[reportPrivateUsage]
+    for _ in range(3):
+        jev_keys.pin()
+    assert jev_keys._data.cache_info().misses <= before + 1  # pyright: ignore[reportPrivateUsage]

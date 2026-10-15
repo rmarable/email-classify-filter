@@ -15,7 +15,7 @@ import pytest
 
 from ecf import upgrade_check
 from ecf.client import LocalClient
-from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
+from ecf.errors import ConflictError, InternalError, InvalidInputError, StepupRequiredError
 from ecf_server import (
     addresses,
     backfill,
@@ -171,6 +171,7 @@ def test_the_cli_asks_for_the_key_and_the_agreement(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(cli, "hidden", secret)
     monkeypatch.setattr(typer, "prompt", prompt)
+    monkeypatch.setattr(cli, "require_terminal", lambda: None)
     preset_d = cli._preset_d  # pyright: ignore[reportPrivateUsage]
     client = cast("LocalClient", Client())
     body: dict[str, object] = {"preset": "D"}
@@ -179,6 +180,28 @@ def test_the_cli_asks_for_the_key_and_the_agreement(monkeypatch: pytest.MonkeyPa
     assert body["owner_agreed"] is True
     with pytest.raises(typer.Exit):
         preset_d(client, {"typesafe_key": True}, {})
+
+
+def test_the_d_questions_need_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R12: without a terminal the agreement is never asked (nor the key), as in cli_items."""
+    import typer  # noqa: PLC0415
+
+    from ecf import cli  # noqa: PLC0415
+
+    asked: list[str] = []
+
+    def ask(text: str, **_k: object) -> str:
+        asked.append(text)
+        return "y"
+
+    monkeypatch.setattr(typer, "prompt", ask)
+    monkeypatch.setattr(cli, "hidden", ask)
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("y\n"))  # not a terminal
+    preset_d = cli._preset_d  # pyright: ignore[reportPrivateUsage]
+    body: dict[str, object] = {"preset": "D"}
+    with pytest.raises(InvalidInputError):
+        preset_d(cast("LocalClient", object()), {"typesafe_key": True}, body)
+    assert asked == [] and "owner_agreed" not in body
 
 
 # The pin and the mapping in upgrades (§2.4, S4-D12, P18).
@@ -209,6 +232,11 @@ def test_the_client_digests_a_mapping_as_the_service_does() -> None:
     assert upgrade_check.mapping_digest(doc) == jev_mapping.digest(jev_mapping.parse(doc))
     same = upgrade_check.mapping_digest(doc | {"_comment": "y"})
     assert same == upgrade_check.mapping_digest(doc)
+    # R14: a bool is no number to either side (the service's `_number` refuses it)
+    with_bool = doc | {"bars": {"sender_type": 1, "fraud_risk": True}}
+    assert upgrade_check.mapping_digest(with_bool) == upgrade_check.mapping_digest(doc)
+    with pytest.raises(InternalError):
+        jev_mapping.parse(with_bool)
 
 
 def test_the_service_names_ds_pin_users(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -265,11 +293,15 @@ def test_reprocessing_d_goes_to_the_drain(conn: sqlite3.Connection, clock: FakeC
     assert key["prompt"] == jev_keys.stored(conn)["prompt_digest"]
     sid = waiting_item(conn, clock, "d", classification=REQUEST)
     with write_tx(conn), db.items_writer("transition"):
-        conn.execute("UPDATE items SET status = 'observed' WHERE stable_id = ?", (sid,))
+        conn.execute("UPDATE items SET status = 'observed', facts = json_set(coalesce(facts,"
+                     " '{}'), '$.jev', json('{\"unsure\": [\"phishing\"]}'),"
+                     " '$.jev_attempts', 1) WHERE stable_id = ?", (sid,))  # fmt: skip
     jev_keys.WAKE.clear()
     reprocess._move(conn, clock, row(conn, sid), "reclassify", key)  # pyright: ignore[reportPrivateUsage]
     r = row(conn, sid)
     assert r["status"] == "awaiting_claude" and r["classification"] is None
+    facts = json.loads(r["facts"])  # R7: Jev's old caution goes with the old classification
+    assert "jev" not in facts and "jev_attempts" not in facts
     assert jev_keys.WAKE.is_set() and claude_queue.waiting_for_jev(conn) == {"d": 1}
     assert jev_dispatch.claimable(conn, clock.now()) == 1
     jev_keys.WAKE.clear()

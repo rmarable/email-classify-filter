@@ -162,14 +162,17 @@ def jev_line(j: dict[str, Any]) -> str | None:
     return out
 
 
-def jev_daily_line(conn: sqlite3.Connection, since: datetime) -> str | None:
-    line = jev_line(report(conn, since)["jev"])
+def jev_daily_line(conn: sqlite3.Connection, since: datetime,
+                   r: dict[str, Any] | None = None) -> str | None:  # fmt: skip
+    """`r`: a `report` already made (the daily summary makes one for both lines)."""
+    line = jev_line((r or report(conn, since))["jev"])
     return f"{line} (ecf stats)" if line else None
 
 
-def daily_line(conn: sqlite3.Connection, since: datetime) -> str | None:
+def daily_line(conn: sqlite3.Connection, since: datetime,
+               r: dict[str, Any] | None = None) -> str | None:  # fmt: skip
     """One line for the daily summary, or None when the model didn't run."""
-    a = report(conn, since)["all"]
+    a = (r or report(conn, since))["all"]
     if not a["calls"]:
         return None
     gen, sec = a["generation_tps"], a["seconds"]

@@ -138,7 +138,9 @@ def card(conn: sqlite3.Connection, now: datetime, today: str) -> Card:
     if jev and jev_keys.state(conn).get("down"):
         lines.append(f"TypeSafe Jev is down: {sum(jev.values())} preset D email(s) wait for it"
                      " (no Claude fallback in v3.0.0; ecf doctor).")  # fmt: skip
-    for usage in (stats.daily_line(conn, now - DAY), stats.jev_daily_line(conn, now - DAY),
+    figures = stats.report(conn, now - DAY)  # one report for both lines
+    for usage in (stats.daily_line(conn, now - DAY, figures),
+                  stats.jev_daily_line(conn, now - DAY, figures),
                   claude_usage.daily_line(conn, now - DAY)):  # fmt: skip
         if usage:
             lines.append(usage)

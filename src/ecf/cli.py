@@ -684,7 +684,8 @@ def _preset_d(c: LocalClient, current: dict[str, Any], body: dict[str, object]) 
     """Preset D's steps before the app password (v3.0.0 step 4, §3.1): the TypeSafe key when
     none is stored (`ecf init` gets its key step here; one validating call and a Security Notice,
     as `ecf models api-key set --provider typesafe`), then the owner's typed agreement. The
-    service checks both again, and asks for step-up."""
+    service checks both again, and asks for step-up. Needs a real terminal, checked first."""
+    require_terminal()
     if not current.get("typesafe_key"):
         typer.echo("Preset D needs the TypeSafe API key (checked by one call with no email"
                    " content; a Security Notice follows).")  # fmt: skip

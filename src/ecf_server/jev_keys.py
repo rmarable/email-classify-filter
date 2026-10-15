@@ -16,8 +16,8 @@ pin from `jev.lock` and the digest of step 3's `jev_mapping.json` when the relea
 - **The consent marker** (P9): `addresses.overrides.jev_consent_at`, set when the account's owner
   agreed to their mail going to TypeSafe (address add, or `ecf resume` of a D address without
   one); import and restore clear it.
-- **`WAKE`**: `claude_queue.route_new` sets it for a D item; the tick reads it, so new mail waits at
-  most one tick for the drain.
+- **`WAKE`**: `claude_queue.route_new` (and a D reprocess) sets it; the service's timer looks at it
+  every second or so between ticks (`jev_dispatch.wake`), so new mail starts the drain at once.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
+from functools import cache
 from importlib import resources
 from typing import Any, cast
 
@@ -43,7 +44,9 @@ _PIN = re.compile(r"^jev-(\d+\.\d+\.\d+)$")
 WAKE = threading.Event()
 
 
+@cache
 def _data(name: str) -> str | None:
+    """A shipped data file, read once: it changes only with an upgrade, which restarts us."""
     f = resources.files("ecf_server.data").joinpath(name)
     return f.read_text("utf-8") if f.is_file() else None
 

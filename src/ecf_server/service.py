@@ -18,6 +18,7 @@ import socket
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -49,6 +50,7 @@ from ecf_server import (
     destroy,
     health,
     jev_dispatch,
+    jev_keys,
     jobs,
     mailbox_actions,
     model_watch,
@@ -92,6 +94,7 @@ from ecf_server.slack_runtime import SlackRuntime
 from ecf_server.stepper import FakeStepper, host_stepper
 
 TICK_SECONDS = 60
+WAKE_POLL_S = 1.0  # how often the timer looks at `jev_keys.WAKE` between ticks
 WORKER = "checks"
 WATCHDOG_SECONDS = 300
 SLEEP_GAP_S = 120.0  # wall time running this far ahead of monotonic time between ticks: a sleep
@@ -221,8 +224,15 @@ class Service:
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
-        while not self.stop.wait(self.opts.tick_seconds):
-            self.tick()
+        """A tick every `tick_seconds`; between ticks, new preset D mail (`jev_keys.WAKE`) starts
+        Jev's drain within about WAKE_POLL_S."""
+        due = time.monotonic() + self.opts.tick_seconds
+        while not self.stop.wait(max(0.0, min(WAKE_POLL_S, due - time.monotonic()))):
+            if time.monotonic() >= due:
+                self.tick()
+                due = time.monotonic() + self.opts.tick_seconds
+            elif jev_keys.WAKE.is_set():
+                self._jev_wake()
 
     def tick(self) -> None:
         mono, wall = self.clock.monotonic(), self.clock.now()
@@ -339,6 +349,22 @@ class Service:
                               woke=woke)  # fmt: skip
         except Exception as exc:  # retried next tick; the rest of the tick goes on
             log.error("jev.tick_failed", error_type=type(exc).__name__)
+
+    def _jev_wake(self) -> None:
+        """New D mail between ticks: a drain now, if Jev is up and none runs (R15)."""
+        if self.state.db_path is None:
+            jev_keys.WAKE.clear()
+            return
+        try:
+            conn = db.connect(self.state.db_path)
+            try:
+                jev_dispatch.wake(conn, self.clock, self.state.jev, self.state.notifier,
+                                  self.state.connect, self.state.store)  # fmt: skip
+            finally:
+                conn.close()
+        except Exception as exc:  # the next tick starts it instead
+            jev_keys.WAKE.clear()
+            log.error("jev.wake_failed", error_type=type(exc).__name__)
 
     def _export(self, conn: sqlite3.Connection) -> None:
         """Scheduled export (SPEC §11.9), in its own thread so the timer never waits on it."""
@@ -613,7 +639,7 @@ class Service:
 
     def _join(self, web: threading.Thread, timer: threading.Thread, worker: threading.Thread,
               slack: threading.Thread) -> None:  # fmt: skip
-        self.state.jev.stop.set()  # a Jev drain ends after its call in flight
+        self.state.jev.halt()  # a Jev drain ends after its call in flight (its reply discarded)
         web.join(STOP_TIMEOUT)
         timer.join(STOP_TIMEOUT)
         self.work.set()  # wake the checks worker so it sees the stop
