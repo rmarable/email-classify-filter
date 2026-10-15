@@ -316,12 +316,16 @@ def kept_settings(staged: sqlite3.Connection) -> dict[str, str]:
 
 def validate(staged: sqlite3.Connection, kept: dict[str, str]) -> dict[str, Any]:
     """Re-check what the schema can't: addresses, kept settings, and the config (OD-359)."""
-    for a in staged.execute("SELECT address_id, email, overrides, preset FROM addresses"):
+    for a in staged.execute("SELECT address_id, email, overrides, preset, removed_at"
+                            " FROM addresses"):  # fmt: skip
         if not re.fullmatch(SLUG_PATTERN, str(a["address_id"])):
             raise BadBundleError("an address ID isn't valid")
         if a["preset"] not in addresses.PRESETS:  # 0038 converts A and B; C and D load
             raise BadBundleError(f"address {a['address_id']}: preset {a['preset']} isn't"
                                  " one this version has")  # fmt: skip
+        if a["removed_at"] is None and a["preset"] not in addresses.offered_presets():
+            # a removed D address stays: it gets no mail, and adding it again asks for a preset
+            raise BadBundleError(f"address {a['address_id']}: {addresses.D_HELD_BACK}")
         try:
             addr_spec(str(a["email"]))
         except InvalidInputError:

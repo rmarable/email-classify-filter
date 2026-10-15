@@ -17,7 +17,8 @@
   System Error (`models_api`), cleared by the next success; offline (the host doesn't resolve)
   waits an hour and raises nothing.
 - **Ollama library:** the tags-page watch went with the local model in v3.0.0 (ADR 0031).
-- **TypeSafe's models** (only with the TypeSafe key; v3.0.0 step 4, hand-off 6): `GET /v1/models`
+- **TypeSafe's models** (only with the TypeSafe key while preset D is available, so not in
+  v3.0.0 (OD-516); step 4, hand-off 6): `GET /v1/models`
   once a week, recording each listed alias's `release_date` (top key `models`; items `name`,
   `description`, `release_date`; SPEC §21.2's live check). The listing shows aliases only, so it
   can't see the pinned version retire (`jev.lock`); a failure is shown in `ecf models status`
@@ -46,7 +47,7 @@ import httpx
 
 from ecf import __version__, release_source
 from ecf.errors import ConflictError, EcfError, InvalidInputError
-from ecf_server import alerts, claude_pins, health, jev_keys
+from ecf_server import addresses, alerts, claude_pins, health, jev_keys
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -237,7 +238,8 @@ def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: Secre
     is a week on, or an hour on when a host didn't resolve."""
     offline = False
     key = _key(store)
-    jev_key = _key(store, jev_keys.KEY_SECRET)
+    # TypeSafe is asked only while preset D is available (held back, OD-516)
+    jev_key = _key(store, jev_keys.KEY_SECRET) if addresses.D_AVAILABLE else None
     with http() as client:
         if key:
             offline |= _claude(conn, clock, notifier, client, key) == "offline"

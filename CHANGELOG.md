@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Preset D (TypeSafe Jev classifier + Claude actor) is held back from v3.0.0: addresses can be preset C only (`ecf address add --preset D`, `ecf init`, import and restore refuse D); Jev remains for evaluation, and the weekly model watch no longer asks TypeSafe for its model list (OD-516).
 - TypeSafe Jev is shelved for v3.0.0: in a matched test it classified 14.8 points worse than Claude (211 vs 256 of 304) with equal safety, so v3.0.0 ships preset C only and Jev stays eval-only; Jev and Claude are not mixed for classification (OD-516).
 - Jev's unsure band on "needs action" is removed: since Jev asks it as three questions it caught no true case in step 3's runs and only flagged mail (OD-515). This changes Jev's gate key.
 - Jev now asks whether an email needs action as three narrow yes/no questions (asked to do something; asked for a reply; something due by a date), and any yes counts; in step 3's runs this sent about 9 points less mail to Claude at the same accuracy and safety (OD-514). This changes Jev's prompt digest and gate key, so preset D's gate needs fresh evidence.
