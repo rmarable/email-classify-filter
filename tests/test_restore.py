@@ -18,6 +18,7 @@ from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
 from ecf_server import (
+    addresses,
     backup_key,
     bundle_reader,
     db,
@@ -219,6 +220,20 @@ def test_bundles_restore_refuses(conn: sqlite3.Connection, clock: FakeClock, tmp
     with pytest.raises(InvalidInputError, match="stopped"):
         restore.restore(conn, clock, FakeNotifier(), MemorySecretStore(), conn_dir(conn), parsed,
                         str(path), KEY_TEXT, stopped=False, older_ok=True, nonce=None)  # fmt: skip
+
+
+def test_a_d_address_is_refused_while_d_is_held_back(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, fresh: sqlite3.Connection
+) -> None:
+    """OD-516: preset D is held back from v3.0.0, so a bundle with a D address doesn't restore."""
+    _source(conn)
+    with write_tx(conn):
+        conn.execute("UPDATE addresses SET preset = 'D'")
+    path = _backup(conn, clock, tmp_path, data=False)
+    with pytest.raises(bundle_reader.BadBundleError) as ei:
+        _restore(fresh, clock, path)
+    assert ei.value.detail == f"address ap: {addresses.D_HELD_BACK}"
+    assert _one(fresh, "SELECT count(*) FROM addresses") == 0
 
 
 def test_manual_bundles_need_a_signature_and_the_key(

@@ -19,6 +19,7 @@ from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
 from ecf_server import (
+    addresses,
     bundle_reader,
     config,
     db,
@@ -505,7 +506,9 @@ def test_a_d_addresss_agreement_to_typesafe_stays_behind(
     conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:  # fmt: skip
-    """v3.0.0 step 4, P9: the owner agrees again on this install before Jev sees the mail."""
+    """v3.0.0 step 4, P9: the owner agrees again on this install before Jev sees the mail
+    (preset D turned on: it is held back from v3.0.0, OD-516)."""
+    monkeypatch.setattr(addresses, "D_AVAILABLE", True)
     real = _source
 
     def source_d(c: sqlite3.Connection) -> None:
@@ -520,3 +523,30 @@ def test_a_d_addresss_agreement_to_typesafe_stays_behind(
     a = target.execute("SELECT preset, paused, overrides FROM addresses").fetchone()
     assert (a["preset"], a["paused"]) == ("D", 1)
     assert "jev_consent_at" not in json.loads(a["overrides"])
+
+
+@pytest.mark.parametrize("removed", [False, True])
+def test_a_d_address_is_refused_while_d_is_held_back(
+    conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path, target: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch, removed: bool,
+) -> None:  # fmt: skip
+    """OD-516: a bundle with a D address doesn't import while D is held back; a removed one
+    does (it gets no mail, and adding it again asks for a preset)."""
+    real = _source
+
+    def source_d(c: sqlite3.Connection) -> None:
+        real(c)
+        with write_tx(c):
+            c.execute("UPDATE addresses SET preset = 'D', removed_at = ?",
+                      ("2026-10-01T00:00:00Z" if removed else None,))  # fmt: skip
+
+    monkeypatch.setattr(sys.modules[__name__], "_source", source_d)
+    path = _bundle(conn, clock, tmp_path)
+    if removed:
+        _import(target, clock, path)
+        assert target.execute("SELECT preset FROM addresses").fetchone()[0] == "D"
+        return
+    with pytest.raises(bundle_reader.BadBundleError) as ei:
+        _import(target, clock, path)
+    assert ei.value.detail == f"address ap: {addresses.D_HELD_BACK}"
+    assert target.execute("SELECT count(*) FROM addresses").fetchone()[0] == 0

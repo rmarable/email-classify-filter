@@ -41,6 +41,9 @@ from ecf_server.state_machine import TransitionContext
 ORG_DOMAINS_KEY = "org_domains"
 SENSITIVITIES = ("standard", "high")
 PRESETS = ("C", "D")  # A and B went in v3.0.0 (ADR 0031); D: Jev and Claude (step 4, OD-509)
+D_AVAILABLE = False  # preset D is held back from v3.0.0 (OD-516): True lets addresses use it again
+D_HELD_BACK = ("preset D (TypeSafe Jev) isn't available in v3.0.0 (OD-516); add the address as"
+               " preset C")  # fmt: skip
 # the addresses migration 0038 (or an import or restore of an older bundle) converted from A or B
 # (v3.0.0, P3): {address_id: old preset}; the ids announced so far (`stages.announce_converted`);
 # the ids whose owner agreed (`pause`). Removing an address drops it from all three (review R5)
@@ -59,6 +62,18 @@ GMAIL_IMAP = "imap.gmail.com"
 # Google allows 500 a day (support.google.com/mail/answer/22839, fetched 2026-10-05); whether
 # mail sent over SMTP counts the same way is unverified, so ecf starts well below (§18)
 GMAIL_SENDS_PER_DAY = 100
+
+
+def offered_presets() -> tuple[str, ...]:
+    """The presets an address can be added (or imported) with: C only while D is held back."""
+    return PRESETS if D_AVAILABLE else tuple(p for p in PRESETS if p != jev_keys.PRESET)
+
+
+def _check_preset(preset: str) -> None:
+    if preset == jev_keys.PRESET and not D_AVAILABLE:
+        raise InvalidInputError(D_HELD_BACK)
+    if preset not in PRESETS:
+        raise InvalidInputError(f"preset must be one of {', '.join(offered_presets())}")
 
 
 def imap_defaults() -> dict[str, str]:
@@ -187,8 +202,7 @@ def add_address(
     email = req.email.strip()
     if req.sensitivity not in SENSITIVITIES:
         raise InvalidInputError(f"sensitivity must be one of {', '.join(SENSITIVITIES)}")
-    if req.preset not in PRESETS:
-        raise InvalidInputError(f"preset must be one of {', '.join(PRESETS)}")
+    _check_preset(req.preset)
     imap_host = req.imap_host.strip() or imap_defaults().get(domain)
     if not imap_host:
         raise InvalidInputError(f"the IMAP server for {domain} is needed (--imap-host)")

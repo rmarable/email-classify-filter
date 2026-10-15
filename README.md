@@ -52,7 +52,7 @@ Each address uses a preset:
 | Preset | Classifier | Actor | Runs |
 |---|---|---|---|
 | C | Claude | Claude | only when you type `/ecf-review` in `ecf claude` |
-| D (planned, v3.0.0 step 4) | TypeSafe Jev | Claude | Jev when mail arrives; Claude at `/ecf-review` |
+| D (held back from v3.0.0, OD-516) | TypeSafe Jev | Claude | Jev when mail arrives; Claude at `/ecf-review` |
 
 Nothing classifies a C address's mail until someone runs `/ecf-review`; the fraud and regulator
 rules still flag mail as it arrives (SPEC §4.1). v3.0.0 removes presets A and B, the local model
@@ -139,8 +139,8 @@ again; other approvals last 14 days. A computer left on keeps working around the
 
 Email content goes only to your mail provider, this computer, Slack (subjects, senders,
 classifications, the model's reason, your answers, and short excerpts when you ask), and Anthropic
-while you run `/ecf-review`. Once preset D exists, TypeSafe receives what its classifier
-needs (SPEC §12.4). Alert email carries no subject, sender or text.
+while you run `/ecf-review`. TypeSafe receives none of your mail in v3.0.0: preset D
+is held back (OD-516). Alert email carries no subject, sender or text.
 Backups are encrypted to your backup key. ecf logs no message content. The full statement is SPEC
 §12.4.
 

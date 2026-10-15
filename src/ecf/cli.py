@@ -573,9 +573,8 @@ def address_add(
     preset: Annotated[
         str | None,
         typer.Option(
-            help="C all-Claude, or D: TypeSafe Jev classifies, Claude acts (needs the"
-            " TypeSafe key, the owner's agreement and step-up). A and B were removed"
-            " in v3.0.0."
+            help="C all-Claude, the one preset in v3.0.0: A and B were removed and D"
+            " (TypeSafe Jev) is held back (OD-516)."
         ),
     ] = None,
     address_id: Annotated[
@@ -604,10 +603,16 @@ def address_add(
 PRESET_NOTES = {
     "C": "Preset C: every message waits for /ecf-review (`ecf claude`) and uses your Claude plan;"
     " nothing else classifies it, however long it waits.",
-    "D": "Preset D: TypeSafe Jev classifies each message within a minute or so of its check; the"
-    " actor is still Claude at /ecf-review. Its mail goes to TypeSafe (api.typesafe.ai, US) as"
-    " well as to Anthropic. While Jev is down, D mail waits: nothing else classifies it.",
 }
+# Preset D is held back from v3.0.0 (OD-516): the service offers it (`presets` in GET
+# /v1/addresses) only when `addresses.D_AVAILABLE` is on; until then this note and the D steps
+# below are unreachable, and the message matches the service's own refusal.
+PRESET_D_NOTE = ("Preset D: TypeSafe Jev classifies each message within a minute or so of its"
+                 " check; the actor is still Claude at /ecf-review. Its mail goes to TypeSafe"
+                 " (api.typesafe.ai, US) as well as to Anthropic. While Jev is down, D mail"
+                 " waits: nothing else classifies it.")  # fmt: skip
+D_HELD_BACK = ("preset D (TypeSafe Jev) isn't available in v3.0.0 (OD-516); add the address as"
+               " preset C")  # fmt: skip
 D_CONSENT = ("Has the account owner agreed to their mail going to TypeSafe (api.typesafe.ai, US),"
              " as well as to Anthropic? [y/N]")  # fmt: skip
 
@@ -625,6 +630,8 @@ def add_address(
 ) -> dict[str, Any]:
     """The prompts and request behind `ecf address add` (also used by `ecf init`)."""
     current = c.get("/v1/addresses")
+    offered = [str(p) for p in current.get("presets") or ["C"]]
+    _refuse_held_back(preset, offered)
     domain = email.rsplit("@", 1)[-1].strip().lower()
     known: dict[str, str] = current.get("imap_defaults") or {}
     if not imap_host and domain not in known:
@@ -635,7 +642,7 @@ def add_address(
             "Sensitivity (standard, or high for finance mailboxes)", default=suggestion
         )
     if preset is None:
-        preset = typer.prompt("Preset (C all-Claude, D TypeSafe Jev and Claude)", default="C")
+        preset = _ask_preset(offered)
     body: dict[str, object] = {
         "email": email,
         "imap_host": imap_host or known[domain],
@@ -680,12 +687,26 @@ def add_address(
     return a
 
 
+def _refuse_held_back(preset: str | None, offered: list[str]) -> None:
+    """`--preset D` while the service doesn't offer it: refused before any question (the service
+    refuses it too)."""
+    if (preset or "").strip().upper() == "D" and "D" not in offered:
+        raise InvalidInputError(D_HELD_BACK)
+
+
+def _ask_preset(offered: list[str]) -> str:
+    if offered == ["C"]:  # nothing to choose while D is held back (OD-516)
+        return "C"
+    return typer.prompt("Preset (C all-Claude, D TypeSafe Jev and Claude)", default="C")
+
+
 def _preset_d(c: LocalClient, current: dict[str, Any], body: dict[str, object]) -> None:
     """Preset D's steps before the app password (v3.0.0 step 4, §3.1): the TypeSafe key when
     none is stored (`ecf init` gets its key step here; one validating call and a Security Notice,
     as `ecf models api-key set --provider typesafe`), then the owner's typed agreement. The
     service checks both again, and asks for step-up. Needs a real terminal, checked first."""
     require_terminal()
+    typer.echo(PRESET_D_NOTE)
     if not current.get("typesafe_key"):
         typer.echo("Preset D needs the TypeSafe API key (checked by one call with no email"
                    " content; a Security Notice follows).")  # fmt: skip

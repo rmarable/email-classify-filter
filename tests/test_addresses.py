@@ -9,7 +9,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import httpx
@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ecf.cli import app
+from ecf.client import LocalClient
 from ecf.errors import (
     ConflictError,
     InvalidInputError,
@@ -530,3 +531,77 @@ def test_cli_refuses_before_asking_anything_without_a_terminal() -> None:
     assert isinstance(result.exception, InvalidInputError)
     assert result.exception.detail == NO_TERMINAL
     assert "Sensitivity" not in result.output
+
+
+# Preset D is held back from v3.0.0 (OD-516): C only, in the service, the API and the CLI.
+
+
+def test_preset_d_is_refused_while_held_back(env: Env) -> None:
+    conn, _clock, _secrets, mail = env
+    assert ad.offered_presets() == ("C",)
+    with pytest.raises(InvalidInputError) as ei:
+        add(env, req(preset="D", owner_agreed=True))
+    assert ei.value.detail == ad.D_HELD_BACK
+    assert mail.logins == [] and conn.execute("SELECT count(*) FROM addresses").fetchone()[0] == 0
+    with pytest.raises(InvalidInputError, match=r"preset must be one of C$"):
+        add(env, req(preset="A"))
+
+
+def test_the_api_offers_c_only_and_refuses_d(conn: sqlite3.Connection, db_path: Path) -> None:
+    st = make_state(db_path, MemorySecretStore())
+    assert call(st, "GET", "/v1/addresses").json()["presets"] == ["C"]
+    body = {"email": "ap@acme.example", "imap_host": "imap.acme.example", "sensitivity": "high",
+            "preset": "D", "app_password": GOOD, "org_domains": ["acme.example"],
+            "owner_agreed": True}  # fmt: skip
+    r = call(st, "POST", "/v1/addresses", body)
+    assert r.status_code == 400 and ad.D_HELD_BACK in r.text
+
+
+class _AddClient:
+    """`ecf address add`'s (and `ecf init`'s) side of the service: C offered, the POST recorded."""
+
+    def __init__(self) -> None:
+        self.posted: list[dict[str, Any]] = []
+
+    def get(self, _path: str) -> dict[str, Any]:
+        return {"org_domains": ["acme.example"], "public_domains": [], "imap_defaults": {},
+                "presets": ["C"]}  # fmt: skip
+
+    def request(self, _method: str, _path: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.posted.append(body)
+        return {"email": body["email"], "address_id": "ap", "sensitivity": body["sensitivity"],
+                "preset": body["preset"], "stage": "shadow"}  # fmt: skip
+
+
+def test_the_cli_and_init_never_offer_d(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ecf address add --preset D` stops before any question with the service's own message;
+    without --preset (as `ecf init` calls it) there is no preset question: C."""
+    import typer  # noqa: PLC0415
+
+    from ecf import cli  # noqa: PLC0415
+
+    asked: list[str] = []
+
+    def prompt(text: str, **_k: object) -> str:
+        asked.append(text)
+        return "standard"
+
+    monkeypatch.setattr(typer, "prompt", prompt)
+
+    def secret(_prompt: str) -> str:
+        return GOOD
+
+    monkeypatch.setattr(cli, "hidden", secret)
+    client = _AddClient()
+    lc = cast("LocalClient", client)
+    with pytest.raises(InvalidInputError) as ei:
+        cli.add_address(lc, "ap@acme.example", "imap.acme.example", None, "d", None)
+    assert ei.value.detail == cli.D_HELD_BACK == ad.D_HELD_BACK
+    assert asked == [] and client.posted == []
+    cli.add_address(lc, "ap@acme.example", "imap.acme.example", None, None, None)
+    assert [b["preset"] for b in client.posted] == ["C"]
+    assert not [t for t in asked if "Preset" in t]
+    assert "D" not in cli.PRESET_NOTES
+    r = CliRunner().invoke(app, ["address", "add", "--help"])
+    plain = " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", r.output)).split())
+    assert "TypeSafe key" not in plain and "held back (OD-516)" in plain

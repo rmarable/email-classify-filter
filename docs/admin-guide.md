@@ -74,8 +74,10 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   change, regulator claim, phishing, claims to be a colleague, private individual), not on the
   category (OD-500).
 - **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor (v3.0.0
-  step 4). A and B (the local model) are removed in v3.0.0 (below).
-- **Adding a D address** (SPEC §7.10): `--preset D` asks for the TypeSafe key if none is stored
+  step 4), **held back in v3.0.0 (OD-516)**: addresses can be preset C only, and `--preset D` is
+  refused. Jev remains for evaluation (`/ecf-eval --preset D`). A and B (the local model) are
+  removed in v3.0.0 (below).
+- **Adding a D address** (held back in v3.0.0, OD-516; SPEC §7.10): `--preset D` asks for the TypeSafe key if none is stored
   (`ecf models api-key set --provider typesafe` underneath: one check call, a Security Notice),
   then asks whether the account owner agreed to their mail going to TypeSafe (api.typesafe.ai, US)
   as well as to Anthropic, then step-up. Refused while your own fields are stored (D uses the
@@ -83,7 +85,7 @@ ecf address add ap@acme.example --imap-host imap.acme.example \
   `ecf resume <address>` asks again. D mail is classified within a minute or so of its check;
   the actor still waits for `/ecf-review`. D's case is immediacy, not cost: classification no
   longer uses your Claude plan, and TypeSafe bills about US$0.0001 per email.
-- **Jev down:** when TypeSafe refuses the key, stops serving the pinned version, asks for a long
+- **Jev down** (held back in v3.0.0, OD-516: applies only once D is on): when TypeSafe refuses the key, stops serving the pinned version, asks for a long
   wait, sends answers ecf can't map, or keeps failing for `jev_down_after_minutes` (15; `ecf
   settings set`; while failing ecf retries only every 30 s to 5 min), Jev is down for
   the install: one Slack/desktop alert with how many D emails wait, and `ecf status` / `ecf

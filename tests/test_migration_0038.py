@@ -551,11 +551,17 @@ def test_import_replace_clears_the_old_converted_record(
     assert stages._announced(target) == ["a1", "b1"]  # pyright: ignore[reportPrivateUsage]
 
 
-def test_a_bundle_with_a_preset_d_address_loads_from_step_4(conn: sqlite3.Connection) -> None:
-    """R11, lifted by v3.0.0 step 4: a D row loads; any other preset is refused."""
+def test_a_bundle_with_a_preset_d_address_loads_from_step_4(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R11, lifted by v3.0.0 step 4: a D row loads while D is on (it is held back from v3.0.0,
+    OD-516, and refused then); any other preset is refused."""
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('d1', 'd1@acme.example', 'standard', 'D', ?)", (OLD,))  # fmt: skip
+    with pytest.raises(BadBundleError, match=r"isn't available in v3\.0\.0 \(OD-516\)"):
+        importer.validate(conn, {})
+    monkeypatch.setattr(addresses, "D_AVAILABLE", True)
     importer.validate(conn, {})
     with write_tx(conn):
         conn.execute("PRAGMA ignore_check_constraints = 1")

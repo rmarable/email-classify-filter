@@ -2174,6 +2174,7 @@ def _address_routes(state: ServiceState, allow: Allow) -> list[Route]:
                     "org_addresses": len(internal.org_addresses(conn)),
                     "public_domains": sorted(PUBLIC_DOMAINS),
                     "imap_defaults": addresses.imap_defaults(),
+                    "presets": list(addresses.offered_presets()),  # C only while D is held back
                     # preset D needs it (v3.0.0 step 4); by its secret's name
                     "typesafe_key": state.secrets is not None
                     and jev_keys.has_key(state.secrets.get),

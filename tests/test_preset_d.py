@@ -45,6 +45,12 @@ PIN = jev.load_pin()
 KEY = "ts-test-key-CANARY-91c2"  # invented
 
 
+@pytest.fixture(autouse=True)
+def d_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preset D is held back from v3.0.0 (OD-516); its dormant code is tested with it on."""
+    monkeypatch.setattr(addresses, "D_AVAILABLE", True)
+
+
 @pytest.fixture
 def env(conn: sqlite3.Connection, clock: FakeClock) -> Env:
     return conn, clock, MemorySecretStore(), Mail()
@@ -336,6 +342,23 @@ def test_the_watch_records_jevs_aliases(conn: sqlite3.Connection, clock: FakeClo
     from ecf.cli_models import watch_lines  # noqa: PLC0415
 
     assert any("jev-latest released 2026-09-30" in x for x in watch_lines(st))
+
+
+def test_the_model_watch_leaves_typesafe_alone_while_d_is_held_back(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    monkeypatch.setattr(addresses, "D_AVAILABLE", False)
+    seen: list[httpx.Request] = []
+
+    def answer(r: httpx.Request) -> httpx.Response:
+        seen.append(r)
+        return httpx.Response(500)
+
+    s = MemorySecretStore()
+    s.set(jev_keys.KEY_SECRET, KEY)
+    model_watch.run(conn, clock, FakeNotifier(), s,
+                    lambda: httpx.Client(transport=httpx.MockTransport(answer)))  # fmt: skip
+    assert seen == [] and model_watch.status(conn)["jev"] is None
 
 
 # Rollback drops D's gate rows (§6, S4-D13).
