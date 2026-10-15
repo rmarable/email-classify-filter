@@ -71,7 +71,8 @@ def _item(conn: sqlite3.Connection, clock: FakeClock, sid: str, facts: dict[str,
                          (sid, address, to_ts(clock.now())))  # fmt: skip
 
 
-# ---- recognizing alert echoes (own_mail.alert_echo) ---------------------------------------------
+# Recognizing echoes of our own alert emails (own_mail.alert_echo): copies, bounces and
+# auto-replies that cite an alert, which trigger 9 then skips.
 
 
 def _install(conn: sqlite3.Connection) -> str:
@@ -136,7 +137,8 @@ def test_trigger_9_skips_a_copy_of_an_alert_only(conn: sqlite3.Connection) -> No
     assert fired({"auth_result": "fail", "alert_echo": "bounce"})
 
 
-# ---- labelled and left (policy) ------------------------------------------------------------------
+# Policy for an alert echo: it is labelled and left, unless it carries a fraud or regulatory
+# signal, which keeps its plan.
 
 
 def _ctx(facts: dict[str, Any], **cls: Any) -> Context:
@@ -166,7 +168,8 @@ def test_an_echo_with_a_fraud_or_regulatory_signal_keeps_its_plan() -> None:
     assert p.rule_id == "regulatory"
 
 
-# ---- Possible Fraud Attempt and Regulatory Mail Notice ------------------------------------------
+# Possible Fraud Attempt and Regulatory Mail Notice: each is emailed once, only when the install
+# routes alerts to email, and more than ten fraud emails an hour roll up.
 
 
 def test_fraud_and_regulatory_escalations_are_emailed_once(
@@ -227,7 +230,7 @@ def test_more_than_ten_fraud_emails_an_hour_roll_up(
     assert [r["state"] for r in _outbox(conn)].count("rolled_up") == 2  # OD-114: up to 10 an hour
 
 
-# ---- Unverified Payment Sender ------------------------------------------------------------------
+# Unverified Payment Sender alerts on high-sensitivity addresses are batched hourly.
 
 
 def test_unverified_payment_on_high_addresses_is_batched_hourly(
@@ -255,7 +258,8 @@ def test_unverified_payment_on_high_addresses_is_batched_hourly(
     assert "44444444" in _outbox(conn)[-1]["body"] and "11111111" not in _outbox(conn)[-1]["body"]
 
 
-# ---- send scheduled in 10 minutes ---------------------------------------------------------------
+# A send scheduled in 10 minutes is emailed once, and the starter rule IDs the alert kinds
+# rely on still exist.
 
 
 def test_a_delayed_send_is_emailed_once(conn: sqlite3.Connection, clock: FakeClock) -> None:

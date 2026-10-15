@@ -109,7 +109,7 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-# ---- install ------------------------------------------------------------------------------------
+# Install: creating the Slack app, installing it and checking its tokens.
 
 
 def create_app(
@@ -194,7 +194,7 @@ def fingerprint(bot_token: str, app_token: str) -> str:
     return hashlib.sha256(f"{bot_token}\n{app_token}".encode()).hexdigest()[:16]
 
 
-# ---- member ID ----------------------------------------------------------------------------------
+# Member ID: setting yours, confirmed by a button DMed to that member.
 
 
 def ask_confirmation(conn: sqlite3.Connection, clock: Clock, web: WebLike, member: str) -> None:
@@ -284,7 +284,7 @@ def set_member(
     return status(conn)
 
 
-# ---- tokens -------------------------------------------------------------------------------------
+# Tokens: replacing the app's tokens, under step-up.
 
 
 @stepup.purpose("slack_tokens")
@@ -336,7 +336,7 @@ def set_tokens(
     return status(conn)
 
 
-# ---- reauthorize --------------------------------------------------------------------------------
+# Reauthorize: after new tokens, every card ecf posted is edited or re-posted.
 
 
 def reauthorize(
@@ -358,7 +358,7 @@ def refresh(conn: sqlite3.Connection, clock: Clock) -> int:
     return slack_out.repost_all(conn, clock)
 
 
-# ---- Security Notice ----------------------------------------------------------------------------
+# Security Notice (§13.3): sent to the desktop and to each member named.
 
 
 def notice(
@@ -382,7 +382,7 @@ def notice(
         _audit(conn, to_ts(clock.now()), "security.notice", data)
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers: the installed identity, member checks, Slack calls, and the Slack settings rows.
 
 
 def _installed(conn: sqlite3.Connection) -> SlackIdentity:

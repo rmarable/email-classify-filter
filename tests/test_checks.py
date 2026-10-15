@@ -84,7 +84,8 @@ def run(
     )
 
 
-# ---- one check ------------------------------------------------------------------------------
+# One mail check of one address: the first run, a busy lease or second check is skipped, and
+# a missing password, rejected login or unknown address is reported.
 
 
 def test_first_run_then_a_fraud_mail(
@@ -163,7 +164,8 @@ def test_unknown_address(env: tuple[sqlite3.Connection, Path], clock: FakeClock)
         )
 
 
-# ---- the API --------------------------------------------------------------------------------
+# The checks API streams one check per address; status lists addresses; the CLI prints them;
+# and a check runs against a real IMAP server (Dovecot).
 
 
 def state_for(path: Path, box: Box, clock: FakeClock) -> ServiceState:

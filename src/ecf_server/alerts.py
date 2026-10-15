@@ -83,7 +83,8 @@ def title(kind: str, condition: str = "") -> str:
     return f"{PREFIX} {TITLES.get(kind, 'System Error')}" + (f": {condition}" if condition else "")
 
 
-# ---- routes -------------------------------------------------------------------------------------
+# Routes: where each alert class goes (its own setting, the install's, else Slack), and
+# showing and changing them.
 
 
 def _key(cls: str | None) -> str:
@@ -178,7 +179,8 @@ def set_routes(
     return show(conn)
 
 
-# ---- alert email (V1.5 step 7a; OD-333) ---------------------------------------------------------
+# Alert email (V1.5 step 7a; OD-333): setting and removing the address, and queueing
+# the email copies of alerts.
 
 
 @stepup.purpose("alerts_email")
@@ -328,7 +330,8 @@ def _notice(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, text: st
                        dms=[ident.member] if ident and ident.member else [])  # fmt: skip
 
 
-# ---- delivery -----------------------------------------------------------------------------------
+# Delivery: posting alerts to the summary channel, the test alert, and the report of
+# background jobs that gave up.
 
 
 def event(

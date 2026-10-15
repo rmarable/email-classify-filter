@@ -114,15 +114,13 @@ def _one(c: sqlite3.Connection, sql: str, *args: Any) -> Any:
     return c.execute(sql, args).fetchone()[0]
 
 
-# ---- table lists --------------------------------------------------------------------------------
-
-
 def test_every_exported_table_is_copied_or_handled_apart() -> None:
     assert set(importer.COPY) | set(importer.NOT_COPIED) == set(export_bundle.INCLUDED)
     assert not set(importer.COPY) & set(importer.NOT_COPIED)
 
 
-# ---- an import into an empty install ------------------------------------------------------------
+# An import into an empty install, a replace, the bound step-up, rollback on a bad row,
+# validation, and what happens to a bundle's own fields and v2 rules.
 
 
 def test_import_into_an_empty_install(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,
@@ -409,7 +407,7 @@ def test_a_bundles_other_rules_are_still_checked(
         _with_step_up(target, clock, go)
 
 
-# ---- routes and CLI -----------------------------------------------------------------------------
+# Routes and CLI: the import route and command, and S4 R1 rules on dropped fields.
 
 
 def test_route_and_cli(conn: sqlite3.Connection, clock: FakeClock, tmp_path: Path,

@@ -75,7 +75,8 @@ def _decide(compiled: rules.CompiledRules, cls: dict[str, Any]) -> str:
     return compiled.evaluate(RuleInput(cls, FACTS)).rule_id
 
 
-# ---- C5-C8: your fields' checks -------------------------------------------------------------
+# C5-C8, checks on your own fields: ordinals, descriptions, catch-all values, and names that
+# clash with fixed or default fields.
 
 
 def test_an_ordinal_given_as_a_list_is_refused() -> None:
@@ -290,7 +291,7 @@ def test_read_bytes_is_the_schema_text_and_json_schema() -> None:
     assert read_bytes(EXTENDED) > read_bytes(SCHEMA)
 
 
-# ---- C9, P14: unknown for every non-fixed field -----------------------------------------------
+# C9, P14: every non-fixed field may be unknown, so `not` over an unknown field never matches.
 
 NOT_RULES = """version: 1
 rules:
@@ -358,7 +359,8 @@ def test_every_accepted_classification_has_every_required_field() -> None:
         assert claude_review.check_classification(missing, EXTENDED)[0] is None, name
 
 
-# ---- C10-C12: the three layers ----------------------------------------------------------------
+# C10-C12, the three rule layers: new rules run between the fixed ones and the defaults, can
+# replace or turn off defaults, and the file says how it layers.
 
 
 def _ids(compiled: rules.CompiledRules) -> list[str]:
@@ -527,7 +529,8 @@ def test_strip_defaults_only_when_nothing_changes() -> None:
     assert rules.strip_defaults({"version": 1, "rules": raw["rules"]}, SCHEMA)[0] is None
 
 
-# ---- M0b, M0c (§7) ------------------------------------------------------------------------------
+# M0b, M0c (§7): a user file identical to the starter, or naming an unknown default field,
+# decides as before.
 
 
 def _cases() -> list[ruletest.Case]:
@@ -592,7 +595,7 @@ def test_m0c_an_unknown_default_field_decides_as_before_and_not_never_matches(
     assert now == then
 
 
-# ---- R5: RAW's "Soccer" example, end to end -----------------------------------------------------
+# R5: RAW's "Soccer" example, end to end.
 
 
 SOCCER_CONFIG = """version: 1
@@ -656,7 +659,8 @@ def test_the_soccer_example_end_to_end(conn: sqlite3.Connection, clock: FakeCloc
     assert old.rule_id == "soccer_club" and [a.name for a in old.actions] == ["label"]
 
 
-# ---- C13: the S4b premise -----------------------------------------------------------------------
+# C13, the S4b premise: no user schema changes what the fixed rules read, and the kept sources
+# and priority survive any accepted extension.
 
 
 @pytest.mark.parametrize(
@@ -729,7 +733,7 @@ def test_the_kept_sources_and_priority_survive_any_accepted_extension() -> None:
     assert _ids(rules.load_fixed_rules(s)) == FIXED
 
 
-# ---- review R3: a rule with no `when` only last, never with a default's id ---------------------
+# Review R3: a rule with no `when` is allowed only last, and never with a default's id.
 
 
 @pytest.mark.parametrize("rules_yaml", [

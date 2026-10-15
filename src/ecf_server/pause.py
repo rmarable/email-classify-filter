@@ -136,7 +136,7 @@ def describe(changed: list[str], paused: bool, waiting: list[str] | None = None)
     return f"Resumed {names}." + later
 
 
-# ---- Slack buttons ------------------------------------------------------------------------------
+# Slack buttons: Pause and Resume clicks.
 
 
 @slack_in.handles(PAUSE)

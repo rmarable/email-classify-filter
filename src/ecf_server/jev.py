@@ -72,7 +72,7 @@ KEY_SECRET = "jev-api-key"  # noqa: S105 - the secret store's entry name, not a 
 LOCK = "jev.lock"
 _PIN = re.compile(r"^jev-\d+\.\d+\.\d+$")
 
-# ---- placeholders, set in step 3 and recorded in SPEC §15.4 ----
+# Limits and timings: placeholders until step 3 sets them and SPEC §15.4 records them.
 TIMEOUT_S = 30.0  # per try: httpx's read timeout and the monotonic deadline (P17)
 CONNECT_S, WRITE_S, POOL_S = 5.0, 10.0, 5.0
 KEEPALIVE_S = 60.0
@@ -96,7 +96,7 @@ FAULT_SHARE = 0.02  # early stop past floor(0.02 n) faulted cases (P22)
 # placeholder until the live check (L8) measures it
 PACE_BYTES_PER_TOKEN = 4.0
 
-# ---- header lines (P10) ----
+# Caps on the header lines and excerpt sent to Jev (P10).
 NAME_CHARS = 300  # display name, and each attachment's name
 SUBJECT_CHARS = 300
 MAX_ATTACHMENTS = 10
@@ -104,7 +104,7 @@ MAX_ATTACHMENTS = 10
 EXCERPT_CHARS = CLASSIFIER_CHARS + 1
 UNKNOWN_DATE = "unknown"
 
-# ---- learned in the live check (SPEC §21.2); empty until then ----
+# Values learned in the live check (SPEC §21.2); empty until then.
 # error-code values ecf may keep in error text; any other code is dropped
 KNOWN_CODES: frozenset[str] = frozenset()
 QUOTA_CODES: frozenset[str] = frozenset()  # a 429 with one of these stops the run at once
@@ -758,7 +758,7 @@ class Client:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    # ---- waits
+    # Waits: stopping, sleeping within the run's budget, `Retry-After` and proactive pacing.
 
     def _stopped(self) -> None:
         if self.stop.is_set():
@@ -837,7 +837,7 @@ class Client:
                 until = self.clock.monotonic() + r
                 self._pace_until = max(self._pace_until or until, until)
 
-    # ---- the breaker
+    # The breaker: wait out its cool-down, then probe with a minimal POST.
 
     def _breaker_gate(self) -> float:
         """While the breaker is open: wait out its cool-down, then probe. Returns the seconds
@@ -893,7 +893,7 @@ class Client:
         self._opened()
         return False
 
-    # ---- one case
+    # One case: the call, its bill and log line, and what a 429, a fault or a 200 leads to.
 
     def _bill(self, body: Mapping[str, Any]) -> tuple[int | None, int | None]:
         """A 200's `usage` into the bill; one without input tokens is counted apart (J6)."""

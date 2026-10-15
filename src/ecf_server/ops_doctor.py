@@ -63,7 +63,7 @@ def checks(
     ]
 
 
-# ---- schema -------------------------------------------------------------------------------------
+# Schema: the database's schema version and the stored rules' warnings.
 
 
 def schema(conn: sqlite3.Connection) -> dict[str, str]:
@@ -103,7 +103,7 @@ def rules_rows(conn: sqlite3.Connection) -> list[dict[str, str]]:
                " shows what changes)") for w in config.rules_warnings(conn)]  # fmt: skip
 
 
-# ---- SMTP ---------------------------------------------------------------------------------------
+# SMTP: whether outgoing mail is set up and working, Gmail included.
 
 
 def smtp(conn: sqlite3.Connection) -> list[dict[str, str]]:
@@ -171,7 +171,7 @@ def _last_send(conn: sqlite3.Connection, address_id: str) -> str | None:
     return None if row is None or row[0] is None else str(row[0])
 
 
-# ---- alert email and reach ----------------------------------------------------------------------
+# Alert email and reach: whether you can still be told when Slack is down (§13.2).
 
 
 def alert_email(conn: sqlite3.Connection, now: datetime) -> list[dict[str, str]]:
@@ -205,7 +205,7 @@ def reach(conn: sqlite3.Connection, notifier: str) -> list[dict[str, str]]:
                + ("" if desktop_on else ", or ecf settings set notifications on"))]  # fmt: skip
 
 
-# ---- backups ------------------------------------------------------------------------------------
+# Backups: the key, the folder and the age of the newest bundle.
 
 
 def backups(conn: sqlite3.Connection, now: datetime, data_dir: Path) -> list[dict[str, str]]:

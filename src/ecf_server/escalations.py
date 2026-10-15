@@ -233,7 +233,7 @@ def _mark(conn: sqlite3.Connection, clock: Clock, sids: list[str], state: str, k
         )
 
 
-# ---- buttons --------------------------------------------------------------------------------
+# Buttons: Show excerpt (an ephemeral message, OD-214) and Dismiss, and closing the card.
 
 
 @slack_in.handles(cards.SHOW_EXCERPT)

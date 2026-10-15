@@ -52,7 +52,8 @@ def paths(tmp_path: Path) -> Paths:
     return Paths("t", tmp_path, honor_ecf_socket=False)
 
 
-# ---- ecf watch ----------------------------------------------------------------------------------
+# `ecf watch`: an allow-listed environment, stopping and restoring the unit, the lock, and a
+# marker left behind.
 
 
 def test_the_environment_is_an_allow_list() -> None:
@@ -121,7 +122,8 @@ def test_a_marker_left_behind_is_reported(paths: Paths) -> None:
     assert c.level is Level.FAIL and c.fix == "ecf service start"
 
 
-# ---- ecf check and status --------------------------------------------------------------------
+# `ecf check` and status: a large backlog batches approvals onto digests, held cards post once it
+# drops, and a busy check is reported rather than waited for.
 
 
 def _waiting_items(conn: sqlite3.Connection, clock: FakeClock, n: int) -> None:

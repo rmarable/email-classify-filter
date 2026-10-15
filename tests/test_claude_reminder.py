@@ -87,7 +87,8 @@ def test_a_claimed_item_still_counts(conn: sqlite3.Connection, clock: FakeClock)
     assert (o.address_id, o.count) == ("c", 2)
 
 
-# ---- the escalation at twice the hours (v3.0.0, ADR 0031, R-D4, P10) -------------------------
+# The escalation at twice the reminder hours (v3.0.0, ADR 0031, R-D4, P10): loud, mentions
+# you in Slack, skips paused addresses, and is counted in the daily summary.
 
 
 def test_the_escalation_opens_at_twice_the_hours_loud_and_resolves_when_the_queue_drains(

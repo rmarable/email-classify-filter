@@ -90,7 +90,8 @@ def hold(at_s: float, read_s: float | None = None) -> Hold:
                 read_at=None if read_s is None else at(read_s))  # fmt: skip
 
 
-# ---- parsing and judging -------------------------------------------------------------------
+# Parsing and judging telemetry: only numbers, models, times and codes are kept, and a submission
+# is judged by the subagent work in its time window.
 
 
 def test_only_numbers_models_times_and_codes_are_kept() -> None:
@@ -171,7 +172,8 @@ def test_plan_numbers_are_checked() -> None:
     ) == telemetry.Plan(None, None, None, None)
 
 
-# ---- the receiver --------------------------------------------------------------------------
+# The telemetry receiver: sessions from another install are refused and only a session's JSON
+# is taken.
 
 
 @pytest.fixture
@@ -262,7 +264,8 @@ def test_the_receiver_takes_only_a_sessions_json(conn: sqlite3.Connection,
     assert export(state, bearer, body).status_code == 401  # revoked with the session
 
 
-# ---- the model check -------------------------------------------------------------------------
+# The model check: a submission is held until telemetry catches up, and work on another model,
+# from another agent, or with nothing in its window is refused.
 
 
 def claim(state: ServiceState, work: str) -> dict[str, Any]:
@@ -393,7 +396,7 @@ def test_work_with_nothing_in_its_window_is_refused_when_the_session_ends(
     assert last["refused"] == 1 and last["refused_model"].startswith("none")
 
 
-# ---- plan usage, stats, daily, retention -----------------------------------------------------
+# Plan usage, stats, the daily digest and retention of Claude usage rows.
 
 
 def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
@@ -445,7 +448,8 @@ def test_retention_prunes_claude_usage(conn: sqlite3.Connection, clock: FakeCloc
     assert counts["claude_calls"] == 1 and counts["claude_sessions"] == 1
 
 
-# ---- the status-line script ------------------------------------------------------------------
+# The status-line script: it sends only plan numbers, shows eval progress and survives a dead
+# service.
 
 
 def test_the_status_line_sends_only_plan_numbers(monkeypatch: pytest.MonkeyPatch) -> None:

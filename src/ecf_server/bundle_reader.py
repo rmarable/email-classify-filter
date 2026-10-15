@@ -131,7 +131,8 @@ def read(conn: sqlite3.Connection, path: str, secret: str,
     return Parsed(o, signer, manifest, tables, typed)
 
 
-# ---- unpacking ----------------------------------------------------------------------------------
+# Unpacking: each member of a decrypted bundle checked before it is read, then the
+# manifest, the table rows and the version checks.
 
 
 def unpack(plaintext: bytes) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
@@ -258,7 +259,7 @@ def check_versions(conn: sqlite3.Connection, header: dict[str, Any],
                              f" {ours}); upgrade ecf first")  # fmt: skip
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers: reading the file and checking its signature against this install's keys.
 
 
 def _read(path: str) -> bytes:

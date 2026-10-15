@@ -73,7 +73,7 @@ def parsed(data: bytes) -> EmailMessage:
     return msg
 
 
-# ---- cards
+# Cards: parsing, profiles, templates, label maps and duplicate IDs.
 
 
 def test_card_parsing() -> None:
@@ -135,7 +135,7 @@ def test_duplicate_card_ids(tmp_path: Path) -> None:
         load_cards(tmp_path)
 
 
-# ---- builder
+# The builder: a build is deterministic and well formed, and its PDFs are plain.
 
 
 def test_build_is_deterministic_and_well_formed() -> None:
@@ -170,7 +170,8 @@ def test_generated_pdf_is_plain() -> None:
     assert b"SYNTHETIC TEST DOCUMENT" in text
 
 
-# ---- hygiene
+# The hygiene scan: what it flags as real-looking data, what it allows, and that a failed scan
+# writes nothing.
 
 
 @pytest.mark.parametrize(
@@ -241,9 +242,6 @@ def test_failed_hygiene_writes_nothing(tmp_path: Path) -> None:
     assert report.findings and not (tmp_path / "eml").exists()
 
 
-# ---- the committed set
-
-
 def test_committed_set_is_current(tmp_path: Path) -> None:
     """Rebuild the committed cards and compare with the committed .eml files and labels."""
     shutil.copytree(ROOT / "cases", tmp_path / "cases")
@@ -264,7 +262,7 @@ def test_committed_set_is_current(tmp_path: Path) -> None:
             assert (ROOT / entry["file"]).read_bytes() == (tmp_path / entry["file"]).read_bytes()
 
 
-# ---- metrics and results
+# Metrics and results: known metric values, and what `compare` warns about when two runs differ.
 
 
 def test_metrics_known_values() -> None:
@@ -473,7 +471,8 @@ def test_compare_fields_holm() -> None:
     assert (by["rule"].a_only, by["rule"].p_holm) == (1, 1.0) and not by["rule"].significant
 
 
-# ---- CLI
+# The CLI and field metrics: new-case, show and compare, subsets, per-field metrics, and
+# card-level injection targets.
 
 
 def test_cli_new_case_show_compare(tmp_path: Path) -> None:

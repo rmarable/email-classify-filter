@@ -78,7 +78,7 @@ def show(conn: sqlite3.Connection, data_dir: Path) -> dict[str, Any]:
     }
 
 
-# ---- the key ------------------------------------------------------------------------------------
+# The export key: making one and rotating to it.
 
 
 def new_key(conn: sqlite3.Connection, clock: Clock) -> dict[str, Any]:
@@ -164,7 +164,8 @@ def rotate(
     return show(conn, data_dir)
 
 
-# ---- export_dir ---------------------------------------------------------------------------------
+# `export_dir`: where bundles go, checked to be writable, outside the data directory and
+# on another disk.
 
 
 @stepup.purpose("export_dir")
@@ -242,7 +243,7 @@ def same_volume_or_none(path: Path, data_dir: Path) -> bool | None:
         return None
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers: settings reads and writes, the audit row, and the Security Notice.
 
 
 def _need_key(conn: sqlite3.Connection) -> dict[str, Any]:

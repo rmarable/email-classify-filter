@@ -93,7 +93,8 @@ def _card(p: dict[str, Any]) -> dict[str, str]:
     return dict(p["card"]["fields"])
 
 
-# ---- cards ----------------------------------------------------------------------------------
+# Escalation cards: what each shows (metadata only for fraud), the one mention, and severity
+# order.
 
 
 def test_a_fraud_card_shows_metadata_only_and_never_offers_dismiss(
@@ -155,7 +156,8 @@ def test_impersonation_without_a_payment_keyword_is_a_fraud_card() -> None:
     assert cards.kind(REGULATOR) == "regulator"
 
 
-# ---- posting --------------------------------------------------------------------------------
+# Posting: each escalation goes once to its channel, waits for the member ID and the channel, and
+# a burst merges into one thread.
 
 
 def test_each_escalation_is_posted_once_to_its_channel_mentioning_you(
@@ -229,7 +231,8 @@ def test_v11_escalations_get_one_summary_post(conn: sqlite3.Connection, clock: F
     assert {r[0] for r in conn.execute("SELECT state FROM escalations")} == {"summarized"}
 
 
-# ---- buttons --------------------------------------------------------------------------------
+# Card buttons and rendering: Show excerpt, Dismiss (refused on fraud), and how the sender and
+# reasons are shown.
 
 
 def _click(

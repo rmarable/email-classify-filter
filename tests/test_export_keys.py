@@ -31,7 +31,8 @@ from ecf_server.secretstore.memory import MemorySecretStore
 from ecf_server.stepper import FakeStepper
 from tests.test_addresses import TOKEN, call, make_state
 
-# ---- backup_key.py ------------------------------------------------------------------------------
+# backup_key.py: key text round trips and catches typos, the derivation is fixed, and
+# fingerprints compare as typed.
 
 
 def test_key_text_round_trips_and_forgives_case_spaces_and_lookalikes() -> None:
@@ -83,7 +84,8 @@ def test_fingerprint_shape_and_typed_comparison() -> None:
     assert not backup_key.same_fingerprint(fp[:-1] + ("Z" if fp[-1] != "Z" else "Y"), fp)
 
 
-# ---- export_keys.py -----------------------------------------------------------------------------
+# export_keys.py: the first key and rotation with step-up, the export folder's checks, and key
+# text redacted in logs.
 
 
 Call = Callable[[str | None], dict[str, Any]]
@@ -246,7 +248,8 @@ def test_key_text_is_redacted_in_logs(caplog: pytest.LogCaptureFixture) -> None:
     assert "ECF1-SECRET" not in caplog.text
 
 
-# ---- routes and CLI -----------------------------------------------------------------------------
+# Routes and CLI: the key routes, the CLI's rotate and dir set, and a locked store leaving the key
+# pending for a retry.
 
 
 def _state(db_path: Path) -> ServiceState:

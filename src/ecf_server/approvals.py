@@ -82,7 +82,8 @@ class Grant:
     expires_at: str
 
 
-# ---- what an action is --------------------------------------------------------------------------
+# What an action is: how actions are described on cards, and which ones (sends,
+# irreversible actions, hiding fraud or regulator mail) need step-up.
 
 
 def describe(actions: list[Planned]) -> str:
@@ -142,7 +143,7 @@ def _facts(item: sqlite3.Row) -> dict[str, Any]:
     return json.loads(item["facts"] or "{}")
 
 
-# ---- requesting ---------------------------------------------------------------------------------
+# Requesting: an approval for an item's planned actions, with its grant issued.
 
 
 def request(
@@ -195,7 +196,8 @@ def _issue(
     return grant_id
 
 
-# ---- deciding -----------------------------------------------------------------------------------
+# Deciding: approve, reject and cancel, from the CLI or Slack, and what an approved item
+# does next (run at once, wait out the send delay, or queue for this computer).
 
 
 @stepup.purpose("approve")
@@ -373,7 +375,7 @@ def cancel(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> d
     return {"status": Status.CANCELLED.value}
 
 
-# ---- approve --pending ---------------------------------------------------------------------------
+# `ecf approve --pending`: the approvals waiting for step-up, approved together under one.
 
 
 def pending(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -420,7 +422,8 @@ def approve_pending(
             for r, g in zip(rows, grants, strict=True)]  # fmt: skip
 
 
-# ---- approve --scan (OD-507 §3.5, P9) ----------------------------------------------------------
+# Approving a scan's or reprocess's waiting approvals (`ecf approve --scan`, OD-507 §3.5, P9):
+# old mail gets no card, so the run's list is shown and approved with one step-up; sends apart.
 
 
 def scan_pending(conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
@@ -474,7 +477,7 @@ def approve_scan(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, run
             for r, g in zip(rows, grants, strict=True)]  # fmt: skip
 
 
-# ---- the 10-minute delay -------------------------------------------------------------------------
+# The 10-minute send delay: counted down in awake time, announced on the card.
 
 
 def advance_delays(conn: sqlite3.Connection, clock: Clock, awake_s: float, *, woke: bool) -> int:
@@ -521,7 +524,8 @@ def _announce_delay(
     del grant_id
 
 
-# ---- expiry and requeue --------------------------------------------------------------------------
+# Expiry and requeue: approvals whose grant ran out are offered once more, and a failed
+# or stuck action can run again under a new grant (§6.2).
 
 
 def expire(conn: sqlite3.Connection, clock: Clock) -> int:
@@ -642,7 +646,7 @@ def _may_have_gone(conn: sqlite3.Connection, sid: str) -> bool:
                for g in used)  # fmt: skip
 
 
-# ---- grants -------------------------------------------------------------------------------------
+# Grants: the record that binds an approval to its item and actions.
 
 
 def _grant(conn: sqlite3.Connection, grant_id: str) -> Grant:
@@ -692,7 +696,8 @@ def _void(conn: sqlite3.Connection, sid: str) -> None:
                      " AND status IN ('issued', 'approved')", (sid,))  # fmt: skip
 
 
-# ---- cards --------------------------------------------------------------------------------------
+# Cards: posting and editing an item's approval card, and posting cards held back while
+# the backlog was high.
 
 
 def _card(
@@ -779,7 +784,8 @@ def has_card(conn: sqlite3.Connection, key: str) -> bool:
         (key,)).fetchone())  # fmt: skip
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers shared by the sections above: an address's approval TTL, the item, its stage and
+# sensitivity, and the audit row.
 
 
 def _ttl(conn: sqlite3.Connection, address_id: str, *, send: bool) -> timedelta:
@@ -832,7 +838,8 @@ def _audit(
         conn.execute(sql, args)
 
 
-# ---- Slack buttons ----------------------------------------------------------------------------
+# Slack buttons: Approve, Reject and Cancel clicks, each run as a decision that says why
+# when it's refused.
 
 
 @slack_in.handles(APPROVE)

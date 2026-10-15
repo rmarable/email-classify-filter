@@ -62,7 +62,7 @@ class ExportFailedError(Exception):
     """Why an export didn't happen, in words safe for a notification (no email content)."""
 
 
-# ---- settings -----------------------------------------------------------------------------------
+# Settings: the export schedule, whether exports are set up, and when one is due.
 
 
 def schedule(conn: sqlite3.Connection) -> str:
@@ -96,7 +96,8 @@ def due(conn: sqlite3.Connection, clock: Clock) -> bool:
     return last is None or now - from_ts(last["at"]) >= PERIOD[sched]
 
 
-# ---- running ------------------------------------------------------------------------------------
+# Running: one export at a time, its sequence number, pruning old bundles and the daily
+# summary's backup line.
 
 _RUNNING = threading.Lock()
 
@@ -239,7 +240,8 @@ def daily_line(conn: sqlite3.Connection) -> str:
     return text
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Helpers: the signing seed, clearing partial files a crash left, recording success or
+# failure, and the settings and audit rows.
 
 
 def signing_seed(key: dict[str, Any], store: SecretStore | None) -> bytes:

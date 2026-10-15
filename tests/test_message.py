@@ -48,7 +48,8 @@ def build(
     return m.as_bytes(policy=SMTP if crlf else SMTP.clone(linesep="\n"))
 
 
-# ---- content_hash ---------------------------------------------------------------------------
+# content_hash: it survives re-encoding and ignores headers, but changes with content, attachments
+# or bytes moved between parts.
 
 
 def test_hash_survives_re_encoding() -> None:
@@ -79,7 +80,7 @@ def test_moving_bytes_between_parts_changes_the_hash() -> None:
     assert a != b  # length framing: no two layouts give the same byte stream
 
 
-# ---- identity -------------------------------------------------------------------------------
+# Identity: a message's stable id and the normalized Message-ID.
 
 
 def test_stable_id() -> None:
@@ -109,7 +110,8 @@ def test_message_id_normalization(raw: str | None, want: str | None) -> None:
     assert normalize_message_id(raw) == want
 
 
-# ---- headers, parts, attachments ------------------------------------------------------------
+# Headers, parts and attachments: addresses and decoded names, attachments as metadata only, link
+# counts and mismatched anchors, and charset fallbacks.
 
 
 def test_headers_and_addresses() -> None:
@@ -225,7 +227,8 @@ def test_bad_charset_falls_back() -> None:
     assert "invoice attached" in parse(raw).full_text()
 
 
-# ---- HTML, hidden text, limits, excerpts ----------------------------------------------------
+# HTML and limits: hidden text is kept in full but not as visible, oversized parts are cut and
+# flagged, excerpts cut on a word, and the committed synthetic set parses.
 
 
 def test_hidden_html_text_is_in_full_but_not_visible() -> None:
@@ -287,7 +290,7 @@ def test_committed_synthetic_set_parses() -> None:
         assert p.from_count >= 1 and len(p.content_hash) == 64, f.name
 
 
-# ---- robustness -----------------------------------------------------------------------------
+# Robustness: random and corrupted bytes never crash the parser.
 
 _SEED = build(html="<p>hi <b>there</b></p>")
 
@@ -306,7 +309,8 @@ def test_corrupted_messages_never_crash(at: int, junk: bytes) -> None:
     assert len(p.content_hash) == 64
 
 
-# ---- oversized messages (parse_partial) -----------------------------------------------------
+# Oversized messages (parse_partial): cut base64 and quoted-printable still decode, and the hash
+# ignores routing headers but not parts.
 
 HEADER = (
     b"From: Vendor A <billing@vendor-a.example>\r\nTo: ap@acme.example\r\n"
@@ -343,7 +347,8 @@ def test_partial_hash_ignores_routing_headers_but_not_parts() -> None:
     assert parse(b"From: x@y.example\r\n\r\nhi").content_hash != a  # a different hash family
 
 
-# ---- header-parser fallback (CI found Python 3.12.3's parser crashing, 2026-09-29) ----------
+# Header-parser fallback, added after CI found Python 3.12.3's parser crashing (2026-09-29), plus
+# linear HTML end tags and separated table cells.
 
 
 def test_truncated_message_id_does_not_crash() -> None:

@@ -67,7 +67,7 @@ def _save(conn: sqlite3.Connection, clock: Clock, sid: str, state: dict[str, Any
                      (json.dumps(state), to_ts(clock.now()), sid))  # fmt: skip
 
 
-# ---- asking ---------------------------------------------------------------------------------
+# Asking: the actor's question goes to the person, as a card.
 
 
 def ask(
@@ -98,7 +98,7 @@ def _to_person(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row) -> str
     return Status.NEEDS_HUMAN.value
 
 
-# ---- answering --------------------------------------------------------------------------------
+# Answering: an answer from the CLI or Slack, checked by step-up, then recorded.
 
 
 @stepup.purpose("answer")
@@ -198,7 +198,7 @@ def _recorded(
     return {"status": Status.CLARIFIED.value}
 
 
-# ---- expiry ---------------------------------------------------------------------------------
+# Expiry: a Slack answer still waiting for step-up after `ANSWER_TTL` expires.
 
 
 def expire(conn: sqlite3.Connection, clock: Clock) -> int:
@@ -238,7 +238,7 @@ def _expire_one(
     return 1
 
 
-# ---- Slack ----------------------------------------------------------------------------------
+# Slack: the question card, its answer form and what happens when the form is sent.
 
 
 @slack_in.opens_form(ANSWER)

@@ -49,7 +49,7 @@ def _ids(compiled: rules.CompiledRules) -> list[str]:
     return [r.id for r in compiled.rules]
 
 
-# ---- C8, P12: reserved ids, labels from your fields --------------------------------------------
+# C8, P12: a rule may not label from a field that reuses a reserved id or catch-all label.
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -72,7 +72,7 @@ def test_a_rule_labelling_from_a_field_that_reuses_a_catch_all_is_refused(
     config.parse(conn, V + unique + label)  # values of its own: fine
 
 
-# ---- P2, P3, P17: apply checks the composed set ------------------------------------------------
+# P2, P3, P17: apply checks the composed rule set, not just the user's file.
 
 
 def test_apply_checks_the_composed_set(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -108,7 +108,7 @@ def test_apply_checks_the_composed_set(conn: sqlite3.Connection, clock: FakeCloc
     assert ids[n + 1 :] == [i for i in rules.default_ids() if i != "marketing"]
 
 
-# ---- C11: current_rules never raises ----------------------------------------------------------
+# C11: current_rules falls back twice and never raises, for any stored pair.
 
 
 def test_current_rules_falls_back_twice_and_never_raises(
@@ -155,7 +155,8 @@ def test_current_rules_never_raises_for_any_stored_pair(
     assert got.rules[-1].when is None
 
 
-# ---- D10, D14, P15, P16: what the dry run and the dialog say ------------------------------------
+# D10, D14, P15, P16: what the dry run and the dialog say, and descriptions naming a fixed field
+# refused.
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -201,7 +202,8 @@ def test_a_description_naming_a_fixed_field_is_refused(
         config.parse(conn, doc)
 
 
-# ---- D11, P11: first-start activation ----------------------------------------------------------
+# D11, P11: a stored extension is activated once at first start, and not when applied, broken or
+# off.
 
 
 def _members(n: FakeNotifier) -> list[str]:
@@ -263,7 +265,7 @@ def test_with_extensions_off_nothing_is_activated(conn: sqlite3.Connection,
     assert config.activate_stored(conn, clock, FakeNotifier()) == []
 
 
-# ---- P3: a stored file from before S4 without a catch-all -------------------------------------
+# P3: a stored file from before S4 without a catch-all is named until applied again.
 
 
 def test_a_pre_s4_file_without_a_catch_all_is_named_until_applied_again(
@@ -302,7 +304,7 @@ def test_a_file_with_a_catch_all_isnt_marked(conn: sqlite3.Connection, clock: Fa
     assert config.rules_warnings(conn) == []
 
 
-# ---- P24: the v2 conversion strips identical default copies only when nothing changes ---------
+# P24: the v2 conversion strips identical default copies only when the rule set is unchanged.
 
 
 def _v2_doc() -> dict[str, Any]:
@@ -329,7 +331,7 @@ def test_v2_conversion_strips_default_copies_only_when_the_set_is_unchanged(
     assert _ids(config.current_rules(conn)) == [*rules.fixed_ids(), *rest]  # marketing stays off
 
 
-# ---- §6, P8: the rollback ---------------------------------------------------------------------
+# §6, P8: the rollback restores settings, merges senders and never corroborates.
 
 
 @pytest.mark.usefixtures("extensions_on")

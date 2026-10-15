@@ -73,7 +73,7 @@ def _with_step_up(conn: sqlite3.Connection, clock: FakeClock,
     return fn(issued.nonce_id)
 
 
-# ---- passphrases --------------------------------------------------------------------------------
+# Passphrases: the one offered is six words from the list, and a typed one must be strong enough.
 
 
 def test_the_offered_passphrase_is_six_words_from_the_list() -> None:
@@ -105,7 +105,8 @@ def test_typed_passphrase_strength(secret: str, ok: bool) -> None:
         assert secret not in str(ei.value)
 
 
-# ---- the export ---------------------------------------------------------------------------------
+# The export itself: signed only with a backup key, path rules, weak passphrases refused before the
+# step-up, and the step-up bound to the path.
 
 
 def test_without_a_backup_key_the_export_is_unsigned(
@@ -196,7 +197,7 @@ def test_the_step_up_is_bound_to_the_path(
     assert not (out / "b.ecfb").exists()
 
 
-# ---- routes and CLI -----------------------------------------------------------------------------
+# The routes and the CLI, including the corpus files' other path suffix.
 
 
 def test_routes(conn: sqlite3.Connection, db_path: Path, out: Path) -> None:

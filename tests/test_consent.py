@@ -47,7 +47,8 @@ def _events(conn: sqlite3.Connection, event: str) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM audit WHERE event = ?", (event,)).fetchall()
 
 
-# ---- the service --------------------------------------------------------------------------------
+# The service side: a converted address resumes only with the owner's agreement, through the
+# route, never through resume-all or Slack's button, and doctor names it until then.
 
 
 def test_a_converted_address_resumes_only_with_the_owners_agreement(
@@ -119,7 +120,8 @@ def test_doctor_names_paused_converted_addresses_until_resumed() -> None:
     assert judge_converted([]) == []
 
 
-# ---- the CLI ------------------------------------------------------------------------------------
+# The CLI: `ecf resume` asks before resuming a converted address and only y resumes; resume-all
+# never asks, and the question needs a terminal.
 
 
 class Fake:

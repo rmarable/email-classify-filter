@@ -80,7 +80,7 @@ def started(conn: sqlite3.Connection, clock: FakeClock, src: MailSource) -> None
     assert run(conn, clock, src).first_run
 
 
-# ---- leases ---------------------------------------------------------------------------------
+# Leases: holder, expiry and fencing, and the renewer that keeps one and reports its loss.
 
 
 def test_lease_holder_expiry_and_fencing(setup: sqlite3.Connection, clock: FakeClock) -> None:
@@ -113,7 +113,8 @@ def test_renewer_keeps_the_lease_and_reports_loss(
         assert r.lost.is_set()
 
 
-# ---- pages ----------------------------------------------------------------------------------
+# Pages of mail: where a first run starts, page, time and size limits, crashes and quarantine,
+# mailbox resets and duplicates, and skipping own mail.
 
 
 def test_first_run_starts_from_now(setup: sqlite3.Connection, clock: FakeClock) -> None:

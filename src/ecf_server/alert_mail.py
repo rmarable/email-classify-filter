@@ -180,7 +180,8 @@ def counts(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     return {str(r[0]): int(r[1]) for r in rows}
 
 
-# ---- internals ----------------------------------------------------------------------------------
+# Internals: one delivery attempt, the message it sends, the Slack fallback when it
+# fails, and the hourly roll-ups of held alerts.
 
 
 def _attempt(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, sender_for: SenderFor,

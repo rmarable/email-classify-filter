@@ -69,7 +69,8 @@ def _facts(conn: sqlite3.Connection, sid: str) -> dict[str, Any]:
     )
 
 
-# ---- digests --------------------------------------------------------------------------------
+# Digests: their sections and Undo buttons, when they post (business hours, never idle), and a
+# digest on demand.
 
 
 def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.Connection) -> None:
@@ -164,7 +165,7 @@ def test_a_digest_on_demand_needs_a_channel(conn: sqlite3.Connection) -> None:
         digests.post_now(conn, clock, "ap")
 
 
-# ---- Undo -----------------------------------------------------------------------------------
+# Undo from a digest: queued for the next check, run inside it, and never on fraud.
 
 
 def _click(db_path: Path, clock: FakeClock, conn: sqlite3.Connection, ref: str) -> None:
@@ -224,7 +225,8 @@ def test_queued_undos_run_inside_the_check_and_never_on_fraud(
     assert any(t.startswith("Couldn't undo xxxxxxxx") for t in texts)
 
 
-# ---- the daily summary ----------------------------------------------------------------------
+# The daily summary: once per business day, what waits, and hourly checks of who is in the
+# channel.
 
 
 def test_the_daily_summary_posts_once_per_business_day(conn: sqlite3.Connection) -> None:

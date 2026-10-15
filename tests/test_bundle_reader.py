@@ -86,7 +86,8 @@ def _data(conn: sqlite3.Connection) -> None:
     _set(conn, "business_hours", {"days": [0], "start": "08:00", "end": "17:00", "tz": "UTC"})
 
 
-# ---- reading real bundles -----------------------------------------------------------------------
+# Reading real export bundles: our own scheduled bundle opens with the backup key, another
+# install's with its typed key, a manual one with its passphrase; bad signatures fail.
 
 
 def test_an_own_scheduled_bundle_opens_with_the_backup_key(
@@ -147,7 +148,8 @@ def test_a_manual_bundle_opens_with_its_passphrase(
         bundle_reader.read(conn, target["path"], "a wrong passphrase of length")
 
 
-# ---- hostile archives ---------------------------------------------------------------------------
+# Hostile and malformed archives, crafted by hand: links, bad rows, count mismatches, size and
+# count limits, versions and file checks must all be refused before anything is read in.
 
 
 def _tar(members: list[tarfile.TarInfo | tuple[str, bytes]]) -> bytes:
@@ -315,7 +317,7 @@ def test_file_checks(conn: sqlite3.Connection, out: Path, tmp_path: Path) -> Non
         bundle_reader.inspect(conn, str(link))
 
 
-# ---- preview, routes and CLI --------------------------------------------------------------------
+# The import preview, its routes and the CLI dry run.
 
 
 def test_preview(conn: sqlite3.Connection, clock: FakeClock, data_dir: Path, out: Path) -> None:

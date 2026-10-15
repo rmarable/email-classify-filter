@@ -212,7 +212,8 @@ def test_no_labelling_text_starts_with_an_article() -> None:
             assert not text.startswith(("A ", "An ")), text
 
 
-# ---- a card review page's answers for a card field (S3b, OD-500, P11) --------------------------
+# A card review page's answers for a card field (S3b, OD-500, P11): a relabel rewrites the card
+# and needs confirming again, bad answers are refused, and the review names a removed label.
 
 
 def _old_card(root: Path) -> None:

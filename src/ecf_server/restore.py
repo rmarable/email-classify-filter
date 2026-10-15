@@ -219,7 +219,8 @@ def resumed(conn: sqlite3.Connection, address_id: str) -> None:
     conn.execute("UPDATE settings SET value = ? WHERE key = ?", (json.dumps(left), AWAITING_KEY))
 
 
-# ---- helpers ------------------------------------------------------------------------------------
+# Applying a restore: the database written, audit rows merged, settings kept, a safety
+# copy made, and the sender changes counted.
 
 
 def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str,

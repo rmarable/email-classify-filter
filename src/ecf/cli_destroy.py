@@ -132,7 +132,8 @@ def run(p: Paths, t: Tools, *, ask_token: bool) -> bool:
     return True
 
 
-# ---- the service's part -------------------------------------------------------------------------
+# The service's part of `ecf destroy`: show what goes, offer an export, then ask the service
+# to run it, or run it here in the foreground when the service isn't answering (OD-387).
 
 
 def _service_part(p: Paths, t: Tools, *, ask_token: bool) -> bool:
@@ -256,7 +257,8 @@ def _wait_stopped(p: Paths, t: Tools) -> None:
         time.sleep(0.2)
 
 
-# ---- the CLI's part -----------------------------------------------------------------------------
+# The CLI's part, after the service's: log out of Claude, delete the data directory and
+# report other installs and anything left behind.
 
 
 def _cli_part(p: Paths, t: Tools) -> None:

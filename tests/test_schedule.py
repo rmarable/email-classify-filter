@@ -49,7 +49,7 @@ def due_in(conn: sqlite3.Connection, clock: FakeClock, r: CheckReport, power: Po
     return schedule.after_check(conn, clock, r, power) - clock.now()
 
 
-# ---- business hours and intervals -----------------------------------------------------------
+# Business hours, check intervals, and their settings and overrides.
 
 
 @pytest.mark.parametrize(
@@ -82,7 +82,8 @@ def test_intervals_settings_and_overrides(conn_ap: sqlite3.Connection, clock: Fa
     assert due_in(conn_ap, clock, report(), DESKTOP) == timedelta(minutes=120)  # clamped (OD-033)
 
 
-# ---- catch-up -------------------------------------------------------------------------------
+# Catch-up: it runs then cools down, on battery and when off, ends with the backlog, retries when
+# busy, and has a shorter cap on Mac laptops.
 
 
 def test_catch_up_runs_then_cools_down(conn_ap: sqlite3.Connection, clock: FakeClock) -> None:
@@ -127,7 +128,7 @@ def test_mac_laptops_get_the_shorter_cap(monkeypatch: pytest.MonkeyPatch) -> Non
     assert schedule.default_catch_up_max(AC_LAPTOP) == 60
 
 
-# ---- the tick -------------------------------------------------------------------------------
+# The tick: due addresses are enqueued once, and waking from sleep makes everything due.
 
 
 def queued(conn: sqlite3.Connection) -> int:
@@ -160,7 +161,8 @@ def test_waking_from_sleep_makes_everything_due(
     assert s.tick(conn_ap) == ["ap"]
 
 
-# ---- the service's worker -------------------------------------------------------------------
+# The service's worker: it runs checks, records and reschedules crashes, keeps due times set mid-
+# check, reports repeated timer failures once, and reads pmset therm.
 
 
 def test_service_tick_and_worker_run_a_check(

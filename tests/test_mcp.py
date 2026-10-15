@@ -92,7 +92,8 @@ def state(conn: sqlite3.Connection, db_path: Path) -> ServiceState:  # conn: mig
                         clock=FakeClock(), db_path=db_path)  # fmt: skip
 
 
-# ---- the tool list ---------------------------------------------------------------------------
+# The tool list: names, texts and hints, what the observe role sees, and work tools refused without
+# a session.
 
 
 def test_names_texts_and_hints() -> None:
@@ -135,7 +136,7 @@ def test_a_work_tool_without_a_session_is_refused(state: ServiceState) -> None:
     assert error_text(with_tools(state, "", body)).startswith("unauthorized: ")
 
 
-# ---- the tools against the service -----------------------------------------------------------
+# The tools against a real service: a full review round, and bad arguments returned as errors.
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -245,7 +246,8 @@ def test_bad_arguments_are_errors(conn: sqlite3.Connection, state: ServiceState)
     assert error_text(unknown).startswith("invalid_input: no tool")
 
 
-# ---- deadlines (OD-088) ----------------------------------------------------------------------
+# Deadlines (OD-088): no request starts after 100 seconds, the backstop answers "more pending", and
+# a request timeout is an error.
 
 
 def test_no_request_starts_after_100_seconds(state: ServiceState) -> None:
@@ -288,7 +290,8 @@ def test_a_request_timeout_is_an_error(state: ServiceState) -> None:
     assert seen == [10.0]
 
 
-# ---- the stdio process -----------------------------------------------------------------------
+# The ecf-mcp process over stdio: stdout carries only JSON-RPC, it needs stdio and an agent name,
+# the tool list matches its snapshot, and status works over the real socket.
 
 
 def _env(**extra: str) -> dict[str, str]:

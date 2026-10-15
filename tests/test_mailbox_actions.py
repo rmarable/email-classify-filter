@@ -294,9 +294,6 @@ def test_jobs_run_only_in_their_own_address_check(
     assert jobs.claim(conn, clock, jobs.Queue.ACTIONS, "w", address_id="nobody") is None
 
 
-# ---- against Dovecot ------------------------------------------------------------------------
-
-
 @pytest.mark.imap
 def test_archive_and_undo_on_a_real_server(conn: sqlite3.Connection, clock: FakeClock,
                                            dovecot_server: Any) -> None:  # fmt: skip
@@ -340,7 +337,8 @@ def test_archive_and_undo_on_a_real_server(conn: sqlite3.Connection, clock: Fake
         h.close()
 
 
-# ---- Gmail (V1.6 step 4, OD-438) ----------------------------------------------------------------
+# Gmail (V1.6 step 4, OD-438): archive to All Mail and undo, junk, label keywords, and what the
+# Gmail port never touches.
 
 ALL, SPAM, TRASH = GMAIL_ALL, GMAIL_SPAM, GMAIL_TRASH
 SPAM_CLS = MARKETING | {"category": "other", "phishing": True}  # S3b: the item

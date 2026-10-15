@@ -37,7 +37,8 @@ def facts(**triggers: Any) -> dict[str, Any]:
     return {"triggers": base | triggers}
 
 
-# ---- decisions ------------------------------------------------------------------------------
+# Decisions: they follow the SPEC table, several triggers add up without repeats, and quarantined
+# items escalate.
 
 
 def test_decisions_follow_the_spec_table() -> None:
@@ -68,7 +69,8 @@ def test_quarantined_items_are_escalated() -> None:
     assert d.escalate and d.reasons == ["possible fraud"]
 
 
-# ---- running it -----------------------------------------------------------------------------
+# Running the pre-check: shadow mode leaves the mailbox alone; live mode labels and flags under
+# single-use grants, can undo, and leaves changed messages alone.
 
 
 def _setup(conn: sqlite3.Connection, stage: str) -> None:

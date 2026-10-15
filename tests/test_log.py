@@ -71,7 +71,8 @@ def test_tracebacks_carry_no_locals(tmp_path: Path) -> None:
     assert "hunter2-very-secret" not in text and '"locals"' not in text
 
 
-# ---- V1.2: Slack material (security review of the V1.2 plan, 2026-09-29) -------------------
+# V1.2 Slack material (security review of the V1.2 plan, 2026-09-29): tokens and nested Slack
+# data are redacted, and the Slack library's debug output never reaches the log.
 
 # built at runtime, so no token-shaped string sits in the repo for secret scanners to flag
 BOT = "xox" + "b-" + "1234567890-0987654321-" + "A" * 24

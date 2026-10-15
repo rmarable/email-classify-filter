@@ -176,7 +176,8 @@ def submit_proposal(conn: sqlite3.Connection, clock: FakeClock, session: str, si
         conn, clock, session, sid, token, body, agent_of(conn, sid)))  # fmt: skip
 
 
-# ---- claiming --------------------------------------------------------------------------------
+# Claiming: the queue claims waiting items for one agent type at a time, waits for claims out,
+# and refuses expired, other sessions' or ended claims.
 
 
 def test_the_queue_claims_waiting_items_and_names_their_agent(
@@ -364,7 +365,7 @@ def test_claims_end_with_the_session_and_at_start(conn: sqlite3.Connection,
     assert [i["id"] for i in queue(conn, clock)["items"]] == [sid]
 
 
-# ---- reading ---------------------------------------------------------------------------------
+# Reading a message: it is wrapped, carries no facts, and the classifier gets the true signals.
 
 
 def test_the_message_is_wrapped_and_carries_no_facts_but_signals(conn: sqlite3.Connection,
@@ -418,7 +419,8 @@ def test_the_classifier_gets_the_true_signals_under_their_own_key(
         assert leaked not in rest
 
 
-# ---- submitting ------------------------------------------------------------------------------
+# Submitting: classifications are checked against the effective schema and go through the
+# rules; proposals are checked like the local actor's; questions go to you.
 
 
 @pytest.mark.usefixtures("extensions_on")
@@ -577,7 +579,8 @@ def test_an_item_resolved_meanwhile_ends_the_claim(conn: sqlite3.Connection,
     assert queue(conn, clock)["results"] == [{"id": sid, "outcome": "resolved_manual"}]
 
 
-# ---- the batch guard (§5.6) ---------------------------------------------------------------------
+# The batch guard (§5.6): a batch with an unclassified or risky item is risky, and a hide in
+# it needs approval.
 
 
 def test_a_batch_with_an_unclassified_or_risky_item_is_risky(
@@ -617,10 +620,8 @@ def test_a_hide_in_a_risky_batch_needs_approval() -> None:
     assert isinstance(guarded, policy.Planned) and guarded.mode == "approve"
 
 
-# ---- routes ----------------------------------------------------------------------------------
-
-
-# ---- a mixed-up claim token (OD-499) -----------------------------------------------------------
+# A mixed-up claim token (OD-499): the items involved are freed at once, up to a limit, and
+# audited; other bad tokens keep today's refusal.
 
 
 def claim_row(conn: sqlite3.Connection, sid: str) -> tuple[Any, ...]:
@@ -762,7 +763,8 @@ def test_its_own_token_from_the_wrong_agent_type_frees_the_item(
     assert claim_row(conn, x) == ("claimed", None)
 
 
-# ---- a dropped spawn (OD-501) ----------------------------------------------------------------
+# A dropped spawn (OD-501): a spawn none of whose claims was read is freed after UNREAD_MIN,
+# fenced and audited; one with a read claim never is.
 
 
 UNREAD_S = int(claude_review.UNREAD_MIN.total_seconds())
@@ -976,7 +978,8 @@ def test_an_items_own_earlier_token_never_frees_its_new_claim(
     assert submit_classification(conn, clock, S1, x, new, REQUEST)["accepted"]
 
 
-# ---- progress line ---------------------------------------------------------------------------
+# The progress line counts this session's rounds, frees, late agents and mix-ups; the review
+# routes follow.
 
 
 def test_the_progress_line_counts_this_sessions_rounds(

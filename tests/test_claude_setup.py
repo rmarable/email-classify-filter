@@ -90,7 +90,8 @@ def test_ecf_claude_login(claude: tuple[str, Path], tmp_path: Path) -> None:
     assert r.exit_code == 2 and "no other arguments" in r.output
 
 
-# ---- RECORD
+# The installed package against its RECORD file: changed files, version mismatches, and
+# editable installs read from direct_url.
 
 
 def _sha(data: bytes) -> str:
@@ -142,7 +143,8 @@ def test_editable_is_read_from_direct_url(tmp_path: Path) -> None:
     assert cs.editable(dist)
 
 
-# ---- doctor
+# Doctor's Claude checks: the work folder, Claude problems once preset B or C is in use, and
+# the pins in force.
 
 
 def test_doctor_reports_a_work_folder_ecf_claude_refuses(

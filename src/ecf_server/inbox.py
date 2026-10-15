@@ -157,7 +157,7 @@ def show(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
     }
 
 
-# ---- resolve ------------------------------------------------------------------------------------
+# Resolve: closing open items by ID or by age, under step-up bound to those exact items.
 
 
 @stepup.purpose("item_resolve")

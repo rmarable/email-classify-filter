@@ -187,7 +187,9 @@ def test_rank_of_unknown_level_is_a_clear_error() -> None:
         load_schema_v1().fields["priority"].rank("critical")
 
 
-# ---- extensions (OD-478) -------------------------------------------------------------------------
+# Operator schema extensions (OD-478): fields and category values are appended in the operator's
+# order, bad or oversized extensions are refused with every problem listed, and the safety core
+# can't change.
 
 EXT: dict[str, Any] = {
     "fields": {

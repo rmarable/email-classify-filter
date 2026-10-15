@@ -160,7 +160,7 @@ def test_server_regrant_refuses_while_the_service_runs(
     assert "the service is running" in capsys.readouterr().err
 
 
-# ---- macOS: a real Keychain item ----------------------------------------------------------------
+# macOS only: regrant reads a real Keychain item this Python wrote.
 
 
 @pytest.fixture

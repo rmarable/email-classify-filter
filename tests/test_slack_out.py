@@ -19,7 +19,8 @@ from ecf_server.slack_chat import SlackChat
 from ecf_server.slack_out import SlackSender
 from ecf_server.slack_render import blocks, clean, fallback
 
-# ---- rendering ------------------------------------------------------------------------------
+# Rendering: text is cleaned of hidden characters, links are defanged, and every text object is
+# plain text.
 
 
 def _texts(node: Any) -> list[dict[str, Any]]:
@@ -73,7 +74,7 @@ def test_every_text_object_is_plain_text() -> None:
     assert len(b[0]["text"]["text"]) <= 150
 
 
-# ---- the adapter ----------------------------------------------------------------------------
+# The Slack adapter: posts are plain, quiet and named, and a taken channel name is reused.
 
 
 class FakeWeb:
@@ -125,7 +126,8 @@ def test_channel_name_taken_is_reused_and_harmless_errors_pass() -> None:
         chat.invite(RouteRef("CGONE"), "U1")
 
 
-# ---- the queue ------------------------------------------------------------------------------
+# The outgoing queue: post once then edit, pacing per channel, holding on network errors and rate
+# limits, alerts, dead letters, and recovery when a channel or pin is gone.
 
 
 class Timer:

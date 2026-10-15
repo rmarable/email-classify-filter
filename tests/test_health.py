@@ -45,7 +45,7 @@ def after(
     health.after_check(conn, clock, n, CheckReport("ap", status, "t"), resolve=lambda _h: up)
 
 
-# ---- alerts ---------------------------------------------------------------------------------
+# Address alerts: unreachable and login-rejected alerts, their timing and backoff.
 
 
 def test_unreachable_after_15_minutes_while_the_network_is_up(
@@ -129,7 +129,8 @@ def test_a_new_app_password_clears_the_backoff(ap: sqlite3.Connection, clock: Fa
     assert row["login_failures"] == 0 and from_ts(row["next_due_at"]) == clock.now()
 
 
-# ---- notifications --------------------------------------------------------------------------
+# Notifications: macOS notifications pass text as arguments, failures aren't raised, and the
+# service picks its notifier.
 
 
 def test_mac_notifications_pass_text_as_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,9 +167,6 @@ def test_service_notifier_choice(
     assert isinstance(svc._notifier(), NullNotifier)  # pyright: ignore[reportPrivateUsage]
 
 
-# ---- API ------------------------------------------------------------------------------------
-
-
 def test_retry_route_and_alerts_in_status(
     ap: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:
@@ -189,7 +187,8 @@ def test_retry_route_and_alerts_in_status(
     assert alert["kind"] == "login_rejected"
 
 
-# ---- doctor ---------------------------------------------------------------------------------
+# Doctor: what it reports about addresses, alerts, DNS and org domains, and alerts removed with
+# their address.
 
 
 def test_doctor_reports_addresses_and_alerts() -> None:

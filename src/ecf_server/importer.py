@@ -164,7 +164,8 @@ def converted_in(staged: sqlite3.Connection) -> dict[str, str]:
     return {str(k): str(v) for k, v in was.items() if k in live}
 
 
-# ---- staging ------------------------------------------------------------------------------------
+# Staging: the bundle's rows loaded into a temporary database at its schema version,
+# migrated, then checked (kept settings, addresses, config, schema fields).
 
 
 def load(staged: sqlite3.Connection, parsed: Parsed, now: str) -> dict[str, Any] | None:
@@ -349,7 +350,7 @@ def _check_setting(key: str, value: Any) -> None:
         raise BadBundleError(f"setting {key} has a value ecf can't use") from None
 
 
-# ---- applying -----------------------------------------------------------------------------------
+# Applying: the staged copy written into the live database in one transaction.
 
 
 def _apply(conn: sqlite3.Connection, clock: Clock, staged_path: str, kept: dict[str, str], *,

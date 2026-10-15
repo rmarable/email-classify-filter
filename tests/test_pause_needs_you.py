@@ -68,7 +68,8 @@ def _status(conn: sqlite3.Connection, sid: str) -> str:
     return str(conn.execute("SELECT status FROM items WHERE stable_id = ?", (sid,)).fetchone()[0])
 
 
-# ---- pause ----------------------------------------------------------------------------------
+# Pause: one address or all and back, approved actions held without using attempts, and a delayed
+# send that runs out while paused waits for resume.
 
 
 def test_pause_one_all_and_back(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -158,7 +159,8 @@ def test_pause_all_from_the_pinned_message(
     assert note["op"] == "ephemeral" and note["text"].startswith("Paused ap, billing.")
 
 
-# ---- Needs you ------------------------------------------------------------------------------
+# The Needs-you message: what waits, stale items first, pinned once and edited only on change, and
+# nothing without a summary channel.
 
 
 def test_needs_you_lists_what_waits_stale_first(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -217,7 +219,8 @@ def test_stale_items_are_marked_and_announced_once(
     assert "1 stale email(s) waiting 30+ days: ecf inbox --stale" in c.text  # a `new` item
 
 
-# ---- the dead-man's switch ------------------------------------------------------------------
+# The dead man's switch: a scheduled Slack message kept ahead of its time, disarmed on a clean stop,
+# posted in business hours, and followed by a back-again note.
 
 
 class ScheduleWeb:

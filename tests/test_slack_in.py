@@ -70,7 +70,8 @@ def _queued(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [json.loads(r["payload"]) for r in rows]
 
 
-# ---- the listener ---------------------------------------------------------------------------
+# The Socket Mode listener: clicks are acked and queued, clicks from anyone else or repeated
+# envelopes are refused or dropped, and forms open and submit.
 
 
 def test_a_click_is_acked_and_queued(
@@ -164,7 +165,8 @@ def test_old_dedupe_rows_are_pruned(
     assert ids == ["new"]
 
 
-# ---- the click queue ------------------------------------------------------------------------
+# The click queue: handlers run, unknown actions and refused clicks are audited, and a crashing
+# handler is retried and then marked dead.
 
 
 def _enqueue(conn: sqlite3.Connection, clock: FakeClock, action: str) -> None:
@@ -231,7 +233,8 @@ def test_a_crashing_handler_is_retried_then_dead(
     assert _state(conn) == "dead"
 
 
-# ---- the connection manager -----------------------------------------------------------------
+# The connection manager: idle until installed, connecting and running both queues, retries,
+# channel problems, the dead man's message, and alerts when the connection keeps failing.
 
 
 class FakeSocket:
