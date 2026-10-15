@@ -51,13 +51,17 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
     schema_digest: str | None = None,
     provider: str = "claude",
     context: TransitionContext | None = None,
+    jev: dict[str, Any] | None = None,
 ) -> bool:
     """Record a classification and move the item to `classified`, then apply the policy
     (Claude's from `awaiting_claude`, V1.4 step 3).
     `schema_digest` is the schema the model was asked with: when the effective schema changed
     since (`ecf config apply` during the call), nothing is recorded and False is returned, so the
     item is asked again with the new one (OD-478). `context` is the transition's (a reprocessed
-    item's, OD-507 §4.3)."""
+    item's, OD-507 §4.3). `jev`: Jev's `facts.jev` (unsure and below-bar fields, probabilities,
+    confidence; `jev_facts.record`), stored beside the classification in the same write; any
+    other store removes an earlier one, so Claude's classification is never read with Jev's
+    caution (OD-511)."""
     aid = conn.execute("SELECT address_id FROM items WHERE stable_id = ?",
                        (stable_id,)).fetchone()["address_id"]  # fmt: skip
     # digests read before the write lock (P27); recomputed in it only if the schema moved
@@ -80,15 +84,21 @@ def store(  # noqa: PLR0913 - the record, then its state, batch, actor and schem
         )  # the gate's key (V1.4 step 2); the reprocessing key (OD-507)
         # Jev's drain stores only over no classification (P3): never twice
         guard = " AND classification IS NULL" if provider == "jev" else ""
+        facts = (
+            "json_set(coalesce(facts, '{}'), '$.jev', json(?))" if jev is not None
+            else "CASE WHEN ? IS NULL AND json_extract(facts, '$.jev') IS NOT NULL"
+                 " THEN json_remove(facts, '$.jev') ELSE facts END"
+        )  # fmt: skip
         cur = conn.execute(
             "UPDATE items SET classification = ?, pinned_models = ?, batch_id = ?, updated_at = ?,"  # noqa: S608
-            f" schema_version = ? WHERE stable_id = ? AND status = ?{guard}",
+            f" schema_version = ?, facts = {facts} WHERE stable_id = ? AND status = ?{guard}",
             (
                 json.dumps(classification, sort_keys=True),
                 json.dumps(pinned, sort_keys=True),
                 batch_id or f"single:{stable_id[:16]}",
                 to_ts(clock.now()),
                 schema.version,
+                json.dumps(jev, sort_keys=True) if jev is not None else None,
                 stable_id,
                 expected.value,
             ),

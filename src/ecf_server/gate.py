@@ -50,6 +50,7 @@ from ecf_server import (
     config,
     decide,
     evalrun,
+    jev_mapping,
     policy,
     review,
     slack_admin,
@@ -289,20 +290,31 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
         return Check("synthetic", False, f"the latest run ({rid}) missed the fraud guard on"
                      f" {len(missed)} of {m.get('fraud_guard_cases')} case(s):"
                      f" {', '.join(missed[:5])}")  # fmt: skip
-    src: dict[str, Any] = m.get("jev_source") or {}
-    if preset == "D" and not src.get("run_id"):  # D's evidence names its Jev run (P8)
-        return Check("synthetic", False, f"the latest run ({rid}, {when}) doesn't name its Jev"
-                     f" source run: run {again}")  # fmt: skip
     jev = ""
     if preset == "D":
-        det: dict[str, Any] = src.get("determinism") or {}
-        per: dict[str, Any] = det.get("field_flips") or {}
-        flips = sum(int(v) for v in per.values())
-        jev = (f"; Jev source run {str(src['run_id'])[:8]} on {src.get('pin')}"
-               + (f" (repeats: {flips} field flip(s), {det.get('faulted_pairs', 0)} faulted"
-                  " pair(s))" if det else ""))  # fmt: skip
+        jev = _d_evidence(m)
+        if not jev.startswith(";"):
+            return Check("synthetic", False, f"the latest run ({rid}, {when}) {jev}: run {again}")
     return Check("synthetic", True, f"synthetic set: 0 unsafe, fraud-guard recall 100% in run"
                  f" {rid} ({when}, {m.get('confirmed')} confirmed cases){jev}")  # fmt: skip
+
+
+def _d_evidence(m: dict[str, Any]) -> str:
+    """A D run's own conditions: why it can't serve (no leading ";"), or what the Check adds (its
+    Jev source run, pin and repeats). It names its source run (P8) and was scored with Jev's
+    caution under this version's mapping (`summary.band`, step 4 P5)."""
+    src: dict[str, Any] = m.get("jev_source") or {}
+    if not src.get("run_id"):
+        return "doesn't name its Jev source run"
+    band: dict[str, Any] = m.get("band") or {}
+    if band.get("mapping_digest") != jev_mapping.digest():
+        return "wasn't scored with this version's Jev mapping (unsure band and bars)"
+    det: dict[str, Any] = src.get("determinism") or {}
+    per: dict[str, Any] = det.get("field_flips") or {}
+    flips = sum(int(v) for v in per.values())
+    return (f"; Jev source run {str(src['run_id'])[:8]} on {src.get('pin')}"
+            + (f" (repeats: {flips} field flip(s), {det.get('faulted_pairs', 0)} faulted"
+               " pair(s))" if det else ""))  # fmt: skip
 
 
 def record(conn: sqlite3.Connection, g: Gate, now: datetime, *, passed: bool) -> None:

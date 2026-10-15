@@ -23,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from ecf_server import actions, claude_queue
+from ecf_server import actions, claude_queue, jev_facts
 from ecf_server.actions import Planned
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -72,9 +72,10 @@ class Decision:
 def item_payment_or_fraud(row: Any) -> bool:
     """`payment_or_fraud` for a stored item with the classifier's view added, as the policy's I3
     test has it (`policy.payment_or_fraud`): `payment_related`, or a medium or high fraud risk.
-    Model output can raise the step-up an item needs, never lower it."""
+    Model output can raise the step-up an item needs, never lower it; Jev's unsure fields read
+    as yes (`jev_facts.risk_view`, OD-511)."""
     facts: dict[str, Any] = json.loads(row["facts"] or "{}")
-    cls: dict[str, Any] = json.loads(row["classification"] or "{}")
+    cls = jev_facts.risk_view(json.loads(row["classification"] or "{}"), facts)
     return (payment_or_fraud(facts) or cls.get("payment_related") is True
             or cls.get("fraud_risk") in ("medium", "high"))  # fmt: skip
 

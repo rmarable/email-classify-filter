@@ -67,7 +67,9 @@ from ecf_server import (
     config,
     health,
     jev,
+    jev_facts,
     jev_keys,
+    jev_mapping,
     marked,
     rules,
     settings,
@@ -431,9 +433,13 @@ def _one(  # noqa: PLR0911 - one return per way an item ends
     out.request_errors.clear()
     with live.lock:
         live.had_ok, live.last_ok = True, to_ts(clock.now())
+    # Jev's caution beside the answer (OD-511): the stored yes stays p >= 0.5
+    derived = jev_mapping.derive(res.classification, res.probabilities)
     stored = classifier.store(conn, clock, sid, res.classification, {"classifier": client.pin},
                               expected=Status.AWAITING_CLAUDE, actor="jev",
-                              schema_digest=schema.digest, provider="jev")  # fmt: skip
+                              schema_digest=schema.digest, provider="jev",
+                              jev=jev_facts.record(derived, res.probabilities,
+                                                   res.confidence))  # fmt: skip
     # the schema changed during the call: asked again with the new one by a later drain (OD-478)
     _end_claim(conn, sid, "done" if stored else "released")
     return None

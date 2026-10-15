@@ -32,6 +32,7 @@ from ecf.eval.results import (
 )
 from ecf.paths import Paths
 from ecf_server import (
+    actor,
     claude_eval,
     claude_pins,
     db,
@@ -646,6 +647,15 @@ def test_preset_d_on_the_stored_jev_key_is_pinned_and_its_check_names_the_source
                      (json.dumps({k: v for k, v in clean.items() if k != "jev_source"}),
                       saved["run_id"]))  # fmt: skip
     assert not gate.synthetic(conn, run.key, "D").ok
+    # step 4 P5: scored with this version's mapping, or not evidence
+    assert clean["band"]["mapping_digest"] == jev_mapping.digest()
+    for band in (None, clean["band"] | {"mapping_digest": "0" * 64}):
+        bad = {k: v for k, v in clean.items() if k != "band"} | ({"band": band} if band else {})
+        with write_tx(conn):
+            conn.execute("UPDATE eval_runs SET metrics = ? WHERE run_id = ?",
+                         (json.dumps(bad), saved["run_id"]))  # fmt: skip
+        check = gate.synthetic(conn, run.key, "D")
+        assert not check.ok and "this version's Jev mapping" in check.detail
 
 
 def test_preset_d_needs_a_source_with_every_case_and_records_fraud_only(
@@ -951,6 +961,50 @@ def test_a_policy_rescore_of_a_banded_result_holds_the_same(
         for a, b in zip(live.cases, new.cases, strict=True):
             assert (a.actions, a.held, a.unsure, a.safety) == (b.actions, b.held, b.unsure,
                                                                b.safety), a.id  # fmt: skip
+
+
+def test_preset_d_derives_unsure_from_its_sources_probabilities(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """Step 4 P5: D's unsure and below-bar fields come from the source's recorded probabilities
+    through `jev_mapping.derive`, the service's function, not from the fields the source run
+    wrote: a source result with them blanked still holds every case."""
+    _banded(monkeypatch, bands={"phishing": 0.3})
+    run_jev(db_path, clock, root, Fake(**_unsure_phishing()))
+    path = Path(_row(conn)["path"])
+    result = load_result(path)
+    blank = result.model_copy(update={"cases": [c.model_copy(update={"unsure": None,
+                                                                    "below_bar": None})
+                                                for c in result.cases]})  # fmt: skip
+    path.write_text(blank.model_dump_json(), "utf-8")
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    assert all(w.derived.unsure == {"phishing"} for w in run.works if w.classification)
+
+
+def test_preset_d_offers_the_actor_no_hide_on_an_unsure_requires_action(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+    root: Path,
+) -> None:  # fmt: skip
+    """OD-511: `requires_action` unsure reads as yes for `actor.allowed`, as in the service."""
+    del conn
+    _banded(monkeypatch, bands={"requires_action": 0.3})
+    answers = json.loads(json.dumps(body()["answers"]))
+    answers["requires_action"] = {"noul": 0.4}
+    answers["requires_reply"] = {"noul": 0.1}
+    run_jev(db_path, clock, root, Fake(answers=answers))
+    _clear()
+    _start_d(db_path, clock, root)
+    run = claude_eval.current()
+    assert run is not None
+    w = next(w for w in run.works if w.classification)
+    assert w.derived.unsure == {"requires_action"}
+    offered = actor.offered(claude_eval._context(run, w, risk=True))  # pyright: ignore[reportPrivateUsage]
+    assert not set(offered) & set(jev_mapping.HIDE_ACTIONS)
+    assert set(actor.allowed(w.classification or {})) & set(jev_mapping.HIDE_ACTIONS)
 
 
 def test_preset_d_drops_an_actors_hide_on_an_unsure_case(

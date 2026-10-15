@@ -27,7 +27,10 @@ each email right, which the go-live gate counts (V1.3 step 6b).
   verdict (`correct`, no Fix at all; then no user field existed). A Fix to one of your own fields
   is counted (`user_fixed`) and reported, not gated. Fixed-item and fixed-field accuracy (no Fix
   to a `FIXED_ITEMS` value, or to another `ecf.schema.FIXED_FIELDS` value; apart, so `priority`,
-  the noisiest field, doesn't hide the items, P22) and category accuracy are reported too.
+  the noisiest field, doesn't hide the items, P22) and category accuracy are reported too. A
+  Fix that sets a field TypeSafe Jev was unsure of (preset D, `facts.jev`) to yes (`fraud_risk`
+  to `low`), what ecf already treated it as, counts as correct for the gate (`unsure_ok`;
+  OD-511, §9.3).
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from ecf_server import (
     claude_pins,
     config,
     digests,
+    jev_facts,
     schedule,
     slack_admin,
     slack_in,
@@ -86,7 +90,8 @@ MODEL_NOTE = "What ecf's model said (it can be wrong)."
 def needs_own_review(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
     """OD-239: payment, fraud, regulator or unscanned signals, or a `high` address."""
     facts: dict[str, Any] = json.loads(item["facts"] or "{}")
-    cls: dict[str, Any] = json.loads(item["classification"] or "{}")
+    # Jev's unsure fields as yes (OD-511)
+    cls = jev_facts.risk_view(json.loads(item["classification"] or "{}"), facts)
     t: dict[str, Any] = facts.get("triggers") or {}
     addr = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
                         (item["address_id"],)).fetchone()  # fmt: skip
@@ -310,11 +315,17 @@ def record(conn: sqlite3.Connection, clock: Clock, sid: str, *, actor: str, bulk
     now = to_ts(clock.now())
     # D4, P30: accurate for the gate unless a Fix changed one of the 13 fixed and default fields
     # (an absent fixed item is false, so a Fix to false isn't a change); your own fields reported
-    gated = {k for k, v in changed.items() if k in FIXABLE
+    # OD-511: a Fix that sets a field Jev was unsure of to what ecf already treated it as (yes;
+    # `fraud_risk` low) confirms the caution: a correct "unsure", not a gated miss (§9.3)
+    caution = jev_facts.cautious(cls, jev_facts.derived(json.loads(item["facts"] or "{}")))
+    unsure_ok = {k for k, v in changed.items()
+                 if caution.get(k) != cls.get(k) and v == caution.get(k)}  # fmt: skip
+    gated = {k for k, v in changed.items() if k in FIXABLE and k not in unsure_ok
              and not (k in FIXED_ITEMS and cls.get(k) is None and v is False)}  # fmt: skip
     review = {"verdict": verdict, "category_ok": "category" not in changed, "bulk": bulk,
               "gated_ok": not gated, "user_fixed": any(k not in FIXABLE for k in changed),
-              "by": actor, "at": now}  # fmt: skip
+              "by": actor, "at": now,
+              **({"unsure_ok": sorted(unsure_ok)} if unsure_ok else {})}  # fmt: skip
     _set_review(conn, clock.now(), sid, review, changed or None)
     with write_tx(conn):
         conn.execute(

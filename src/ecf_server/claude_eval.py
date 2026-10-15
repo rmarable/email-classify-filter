@@ -79,6 +79,7 @@ from ecf_server import (
     config,
     evalrun,
     excerpt,
+    jev_facts,
     jev_keys,
     jev_mapping,
     policy,
@@ -312,9 +313,9 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
     the set, complete, redacted and not an experiment, its result file present, with every case
     of this run (`ids`: a `--fraud-only` source can't serve a full run, J4): its run ID, each
     case's classification (a faulted case's is empty, so it is scored as a failure, P1), its
-    inputs (SOURCE_KEYS) and each case's unsure and below-bar fields (step 3: the source's prompt
-    digest names the mapping they were derived under). Which other sources D may take is open
-    (removal P19)."""
+    inputs (SOURCE_KEYS) and each case's unsure and below-bar fields, derived from its recorded
+    probabilities with `jev_mapping.derive`, as the service derives them (step 4 P5; the source's
+    prompt digest names the mapping). Which other sources D may take is open (removal P19)."""
     from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
 
     pin, prompt = evaljev.source_inputs(schema)
@@ -337,9 +338,9 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         if not ids <= {c.id for c in result.cases}:
             continue  # a source without some of this run's cases (a `--fraud-only` run)
         got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
-        derived = {c.id: jev_mapping.Derived(frozenset(c.unsure or ()),
-                                             frozenset(c.below_bar or ()))
-                   for c in result.cases}  # fmt: skip
+        # unsure and below bar derived again from the source's probabilities by the service's
+        # own function (step 4 P5), under the shipped mapping its prompt digest names
+        derived = {c.id: jev_mapping.derive(got[c.id], c.probabilities) for c in result.cases}
         source = {k: m[k] for k in SOURCE_KEYS if k in m}
         det: dict[str, Any] = m.get("determinism") or {}
         if det:  # shown in the D Check (P16): the source's field flips and faulted pairs
@@ -467,8 +468,14 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
 # records and the run's Claude figures.
 
 
-def _context(run: Run, w: Work) -> policy.Context:
-    return policy.Context(_cls(w), w.facts, run.opts.sensitivity, run.rules, {},
+def _context(run: Run, w: Work, *, risk: bool = False) -> policy.Context:
+    """`risk`: with the case's unsure fields in `facts.jev`, as the service's actor stage sees
+    them (OD-511). The rule plan is made without, and `evalrun.held` adds the caution after, as in
+    step 3's runs, so its figures (hides the hold dropped) stay comparable; the actions agree."""
+    facts = w.facts
+    if risk and w.derived:
+        facts = facts | {jev_facts.KEY: jev_facts.record(w.derived, None, None)}
+    return policy.Context(_cls(w), facts, run.opts.sensitivity, run.rules, {},
                           frozenset())  # fmt: skip
 
 
@@ -495,7 +502,7 @@ def _proposed(run: Run, w: Work, proposal: dict[str, Any] | None) -> None:
     if proposal is not None and w.plan is not None:
         w.proposal = {"action": str(proposal["action"]), "target": str(proposal["target"] or "")}
         if proposal["action"] != "needs_clarification":
-            one = policy.proposal(_context(run, w), w.plan, w.proposal["action"],
+            one = policy.proposal(_context(run, w, risk=True), w.plan, w.proposal["action"],
                                   w.proposal["target"] or None, run.known)  # fmt: skip
             if isinstance(one, policy.Planned):
                 w.plan.actions.append(one)
@@ -975,7 +982,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
             out |= claude_review.schema_fields(run.schema) | {"signals": sent}
         else:
             out |= {"classification": _cls(w),
-                    "actions": list(actor.allowed(_cls(w))),
+                    "actions": list(actor.offered(_context(run, w, risk=True))),
                     "labels": sorted(run.known), "move_folders": [],
                     "earlier_answers": []}  # fmt: skip
     return out
@@ -1005,7 +1012,7 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
             return again
         w = _claimed(run, clock, session_id, ref, token, agent, "act")
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
-                                           actor.allowed(_cls(w)))  # fmt: skip
+                                           actor.offered(_context(run, w, risk=True)))  # fmt: skip
         if why is not None:
             return _invalid(run, w, [why], digest)
         return _hold(clock, run, w, session_id, {"proposal": proposal}, digest)

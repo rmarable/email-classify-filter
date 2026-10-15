@@ -40,7 +40,7 @@ from typing import Any
 from ecf.errors import ConflictError
 from ecf.ids import StableId
 from ecf.schema import fixed_item
-from ecf_server import items, jev_keys, marked, policy
+from ecf_server import items, jev_facts, jev_keys, marked, policy
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.state_machine import Status, TransitionContext
@@ -217,8 +217,8 @@ def batch_risky(conn: sqlite3.Connection, sid: str) -> bool:
     for r in rows:
         if r["classification"] is None:
             return True
-        c: dict[str, Any] = json.loads(r["classification"])
         f: dict[str, Any] = json.loads(r["facts"] or "{}")
+        c = jev_facts.risk_view(json.loads(r["classification"]), f)  # unsure as yes (OD-511)
         t: dict[str, Any] = f.get("triggers") or {}
         if (fixed_item(c, "phishing") or c.get("fraud_risk") in policy.FRAUD_RISKY
                 or t.get("fraud") or t.get("fraud_weak") or t.get("lookalikes")

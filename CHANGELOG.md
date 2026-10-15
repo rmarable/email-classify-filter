@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Preset D: when TypeSafe Jev is unsure of an answer (just under yes, or `fraud_risk` none with low confidence) or under its confidence bar, ecf treats the field as yes for every risk check (step-up, Approve all, high risk, own review, alert emails), never hides the email, and flags and leaves it; the card says "unsure: <field>". Jev's probabilities are kept with the email (numbers only). The mapping ships empty, so nothing changes until step 3 sets it (OD-511).
+- Preset D's go-live gate: a Fix that sets a field Jev was unsure of to yes counts as accurate; `/ecf-eval --preset D` evidence must be scored with this version's Jev mapping, and a mapping change drops a live D address to assist (OD-511).
 - Preset D: a D address's new mail is classified by TypeSafe Jev within a minute or so of its check, and Claude stays the actor at `/ecf-review`; `/ecf-review` never classifies D mail, and D mail waiting for Jev doesn't count toward the review reminders (OD-509).
 - `ecf address add --preset D` (and `ecf init`'s first address) asks for the TypeSafe key if none is stored, asks whether the account owner agreed to their mail going to TypeSafe, and needs step-up; it's refused while your own fields are stored. An import or restore clears that agreement and `ecf resume` asks again (OD-509).
 - `ecf import` and `ecf restore` now load a bundle with a preset D address instead of refusing it (OD-509).

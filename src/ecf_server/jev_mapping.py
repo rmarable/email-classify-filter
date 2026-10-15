@@ -1,5 +1,5 @@
 """How Jev's probabilities may add caution (v3.0.0 step 3, `planning-docs/v3.0.0-STEP3.md` §3;
-step 4's P1, OD-511 to come; schema doc §4). No transport: the classifier's import closure may use
+step 4's P1, OD-511; schema doc §4). No transport: the classifier's import closure may use
 it (step 4's service readers), so it never imports `jev`, `evaljev`, `evalrun` or httpx (an
 import-linter contract).
 
@@ -31,7 +31,8 @@ from typing import Any, cast
 
 from ecf.errors import InternalError
 from ecf.schema import FIXED_ITEMS, KEPT_SOURCES
-from ecf_server import policy, systemone
+from ecf_server import jev_facts, policy, systemone
+from ecf_server.jev_facts import NO_BAND, Derived
 from ecf_server.rules import HIDE_ACTIONS, CompiledRules, ContinueIf, LabelFrom, Rule, compares
 
 FILE = "jev_mapping.json"
@@ -40,7 +41,7 @@ FILE = "jev_mapping.json"
 BANDABLE = frozenset({*FIXED_ITEMS, "payment_related", "requires_action"})
 BARRABLE = frozenset({"category", "sender_type"})  # the choice fields hide-capable rules read
 NONE_BARRABLE = frozenset({"fraud_risk"})  # a raise-only bar on p(none) (step 4 P17)
-CAUTIOUS = {"fraud_risk": "low"}  # an unsure field's value for the risk readers; else True
+CAUTIOUS = jev_facts.CAUTIOUS  # an unsure field's value for the risk readers; else True
 KEYS = frozenset({"_comment", "version", "bands", "bars", "none_bars", "score_tie"})
 # the choice fields every hide decision reads, through the hide blockers' fixed items
 # (`policy.hide_blockers` -> `fixed_item` -> KEPT_SOURCES: `sender_type`); below its bar, such a
@@ -53,18 +54,6 @@ class JevMapping:
     bands: Mapping[str, float] = field(default_factory=dict[str, float])  # field -> lo (< 0.5)
     bars: Mapping[str, float] = field(default_factory=dict[str, float])  # field -> bar (0-1]
     none_bars: Mapping[str, float] = field(default_factory=dict[str, float])  # field -> bar
-
-
-@dataclass(frozen=True)
-class Derived:
-    unsure: frozenset[str] = frozenset()
-    below_bar: frozenset[str] = frozenset()
-
-    def __bool__(self) -> bool:
-        return bool(self.unsure or self.below_bar)
-
-
-NO_BAND = Derived()
 
 
 def _number(v: Any) -> float | None:
@@ -167,11 +156,9 @@ def derive(classification: Mapping[str, Any] | None,
 
 def cautious(classification: Mapping[str, Any], derived: Derived) -> dict[str, Any]:
     """The classification the risk readers see: each unsure field as yes (`fraud_risk` as
-    `low`). Rules read the stored classification, never this."""
-    out = dict(classification)
-    for name in derived.unsure:
-        out[name] = CAUTIOUS.get(name, True)
-    return out
+    `low`, never lowered; `jev_facts.cautious`). Rules read the stored classification, never
+    this."""
+    return jev_facts.cautious(classification, derived)
 
 
 def rule_fields(r: Rule) -> set[str]:
