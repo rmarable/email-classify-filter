@@ -318,7 +318,7 @@ def test_why_gives_weak_reasons_only_when_no_fraud_reason_says_why() -> None:
     assert cards.why(both) == "DMARC fail on a payment item"
 
 
-# ---- the Classified line (OD-507 §6) ---------------------------------------------------------
+# The Classified line on cards (OD-507 §6): how an item was classified and by which model.
 
 
 def test_cards_say_how_the_item_was_classified_and_by_which_model(

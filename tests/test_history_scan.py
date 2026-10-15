@@ -30,7 +30,8 @@ def _note(i: int) -> bytes:
     return mail(f"Note {i}", sender="Pat <pat@friends.example>")
 
 
-# ---- the range, bounded once (P7) ------------------------------------------------------------
+# The scan range (P7): its boundary days are cut to the second in the server's time zone, and the
+# range is searched once, with pages walking the stored UIDs.
 
 
 def test_scan_range_cuts_the_boundary_days_to_the_second_in_the_servers_zone() -> None:
@@ -141,7 +142,8 @@ def test_the_service_resolves_ranges_and_refuses_bad_ones(clock: FakeClock) -> N
         backfill.resolve_range(clock, stamp(clock.now() + timedelta(days=1)), None)
 
 
-# ---- --act: count, estimate, cap (P1, P11) ---------------------------------------------------
+# `--act` on old mail (P1, P11): the count runs under the lease minus held mail, act needs a count
+# of exactly that range, and over the cap it needs a step-up bound to the range and count.
 
 
 def test_the_count_runs_under_the_lease_minus_held(env: Env, clock: FakeClock) -> None:
@@ -225,7 +227,8 @@ def test_the_estimate_uses_this_installs_sessions_else_specs_figures(
     assert e["minutes"] == 75  # median pace: 0.5 and 1 minute per email -> 0.75
 
 
-# ---- the CLI: --yes never skips the step-up ---------------------------------------------------
+# The CLI: `--yes` skips the question but never the step-up; new mail read during a scan isn't
+# marked as old.
 
 
 class FakeClient:

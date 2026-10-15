@@ -306,7 +306,8 @@ def test_needs_you_is_pinned_again_when_it_was_deleted(
     assert web.methods()[-3:] == ["chat.update", "chat.postMessage", "pins.add"]
 
 
-# ---- slack_calls (OD-507, plan §5 e) ---------------------------------------------------------
+# The `slack_calls` record (OD-507, plan §5 e): one row per completed job without text, dead posts
+# and gone channels recorded, and retention pruning it.
 
 
 def test_each_completed_job_leaves_one_slack_calls_row_without_text(

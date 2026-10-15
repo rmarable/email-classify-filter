@@ -293,7 +293,8 @@ def test_quote_containers_on_hostile_html(shape: str) -> None:
     assert len(out.unquoted) <= excerpt.HEAD_CHARS and len(out.quoted) <= excerpt.HEAD_CHARS
 
 
-# ---- v3.0.0 step 5 (OD-507 §5, P19): the history work's own costs ----------------------------
+# The history work's own costs (v3.0.0 step 5, OD-507 §5, P19): CPU-time bounds for storing a
+# classification with its audit row and for backfill pages on the fake mail source.
 # Bounds about three times what this Mac took on the branch (2026-10-14), each against the same
 # unit; main at 1daf644 took about the same per unit (the plan's before/after report). Smaller
 # than the measured sizes (1,000 stores, 400k audit rows) to keep the suite fast.

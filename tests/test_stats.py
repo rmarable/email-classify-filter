@@ -281,7 +281,8 @@ def test_latency_split_from_the_recorded_calls(tmp_path: Path) -> None:
             " prefix, prompt 7.00 s median") in out.output  # fmt: skip
 
 
-# ---- stages and Slack (OD-507 §5 a, b, e) ----------------------------------------------------
+# Stage timings and the Slack block in `ecf stats` (OD-507 §5 a, b, e): per transition, the Claude
+# wait and marked items apart, and the route's `since`.
 
 
 def _walk(conn: sqlite3.Connection, clock: FakeClock, sid: str, path: list[tuple[str, int]],

@@ -225,7 +225,8 @@ def _describe_act(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.Bo
     return stepup.Bound(stepup.digest("backfill_act", aid, since, until, True, k), prompt)
 
 
-# ---------------------------------------------------------------------------- the --act count
+# Counting old mail for `ecf backfill --act`: the request, the count run under the address lease
+# (in range, minus mail already held), and the number the CLI shows before any classifying.
 
 
 def request_count(conn: sqlite3.Connection, clock: Clock, ref: str, since: str,
