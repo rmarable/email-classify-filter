@@ -4,6 +4,9 @@
 - **Superseded in part** (2026-10-13, OD-500): its safety core (`SAFETY_VALUES`) is superseded
   by ADR 0030 (the fixed safety layer, v3.0.0); schema v2 itself stands as history and as what
   the local model is still asked.
+- **Local model removed** (2026-10-14, ADR 0031, OD-506): nothing is asked schema v2 any more;
+  from v3.0.0 it is read only for older results, labels and classifications, and schema v3
+  (OD-498) ships.
 - **Context source:** SPEC §7.1, §7.4, §8.6, §9.3, §11.9, §11.10, §12.1;
   `planning-docs/SCHEMA-V2-PLAN.md` (draft 1, after Phase R: findings S1-S16, C1-C15, E1-E15)
 

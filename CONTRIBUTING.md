@@ -15,9 +15,8 @@ rule and the commit rules are in `CLAUDE.md`.
   doesn't accept GNU syntax such as `\|` alternation or `sed -i` without a suffix argument.
   Nothing in the build or tests calls sed; Linux's sed is already GNU sed.
 - No Ollama or Gemma. v3.0.0 removes the local model (ADR 0031); nothing in the build or tests
-  needs Ollama. Until the removal's code lands, the three real Ollama/Gemma tests are deselected
-  at the merge gate (`CLAUDE.md`, macOS merge gate), and a dev service (`ecf-server dev`) calls
-  no local model (until then it did only with `ECF_DEV_MODEL=1`).
+  needs Ollama: the three real Ollama/Gemma tests went with it, and a dev service
+  (`ecf-server dev`) calls no local model.
 
 ## Set up
 

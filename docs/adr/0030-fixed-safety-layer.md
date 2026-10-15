@@ -11,6 +11,9 @@
 - **Amended** (2026-10-14, OD-508, v3.0.0 step 5): the junk rule's id and label are renamed
   `spam_or_phishing` → `phishing`, since it fires on schema v3's fixed item `phishing: true`,
   not on spam; no relabel of mail labelled before (SPEC §8.6).
+- **Merged** (S3a and S3b 2026-10-13 and 2026-10-14, `fb49b30`, `21f62c6`; S4 2026-10-14,
+  `f88971b`): the fixed layer ships in v3.0.0; S4's measurement failed (SPEC §1.5a item 2b), so
+  the user layer is off (`EXTENSIONS_ENABLED` False).
 - **Context source:** SPEC §7.1, §7.4b, §8.3, §8.6, §9.2, §9.3, §11.9; plan
   `planning-docs/S3-READERS-SWITCH.md` draft 2 (Phase R P1-P20, operator-accepted 2026-10-13);
   `planning-docs/v3.0.0-OPERATOR-SCHEMA.md` draft 3

@@ -20,9 +20,9 @@ release candidates (`vX.Y.Z-rcN`) record internal progress, not releases.
   changed bank details, a Reply-To that differs). Fraud and regulator rules run before any model.
 - Classifies each email (category, priority, fraud risk, payment-related) and proposes an action:
   label, flag, archive, a draft reply, a template reply or an internal forward.
-- From v3.0.0, on the all-Claude preset, lets you add your own classification fields and
-  categories on top of ecf's, and your own rules between ecf's fixed safety rules and its
-  defaults (shipped enabled only if its measurement passes; admin guide).
+- From v3.0.0, on the all-Claude preset, lets you add your own rules between ecf's fixed safety
+  rules and its defaults. Your own classification fields and categories are built but off in
+  v3.0.0: their measurement failed (admin guide; SPEC §1.5a item 2b).
 - Posts to Slack: escalations for possible fraud and regulator mail, approvals, digests, and a
   pinned "Needs you" list.
 - Does on its own only what you've allowed per address, and only after an address has passed its
@@ -40,8 +40,8 @@ It never:
 
 ## How it works
 
-One background service on your computer (a LaunchAgent on macOS, a systemd user unit on Linux)
-does all the work: fetching mail, the checks, rules and policy, Slack, step-up and the actions. It
+One background service on your computer (a LaunchAgent on macOS; the Linux code, a systemd user
+unit, is unsupported until milestone M5) does all the work: fetching mail, the checks, rules and policy, Slack, step-up and the actions. It
 keeps its state in SQLite and its secrets (app passwords, Slack tokens) in the macOS Keychain or,
 on Linux, Secret Service or `systemd-creds`. Full messages are held in memory only, never written
 to disk. The `ecf` command and the Claude Code plugin talk to it over a private socket and hold no
@@ -119,7 +119,7 @@ ecf status          # each address, the backlog, the service
 - `ecf approve --pending` lists approvals from Slack that wait for step-up at the computer;
   `ecf approve <id>` confirms one.
 - `ecf pause <address>` stops actions at once; fraud and regulator flagging keeps running.
-- `ecf claude`, then `/ecf-review`, runs Claude on the queue for presets B and C.
+- `ecf claude`, then `/ecf-review`, runs Claude on the queue (preset C).
 
 The operator guide (`docs/operator-guide.md`) covers daily use; the admin guide
 (`docs/admin-guide.md`) covers setup, configuration, backups, upgrades and recovery. Every command
@@ -139,7 +139,7 @@ again; other approvals last 14 days. A computer left on keeps working around the
 
 Email content goes only to your mail provider, this computer, Slack (subjects, senders,
 classifications, the model's reason, your answers, and short excerpts when you ask), and Anthropic
-while you run `/ecf-review`. TypeSafe receives none of your mail in v3.0.0: preset D
+while you run `/ecf-review` (`/ecf-eval` sends only the synthetic test cards). TypeSafe receives none of your mail in v3.0.0: preset D
 is held back (OD-516). Alert email carries no subject, sender or text.
 Backups are encrypted to your backup key. ecf logs no message content. The full statement is SPEC
 §12.4.

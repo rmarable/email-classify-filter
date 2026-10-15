@@ -230,8 +230,8 @@ doesn't turn outbound back on if you turned it off.
 
 ## Claude review
 
-Nothing classifies a C address's mail until you run Claude (preset D's actor items wait the same
-way, from v3.0.0 step 4); the fraud and regulator rules still flag mail as it arrives. Plan on a
+Nothing classifies a C address's mail until you run Claude (preset D's actor items would wait the same
+way; D is held back in v3.0.0, OD-516); the fraud and regulator rules still flag mail as it arrives. Plan on a
 review at least once a working day:
 
 ```sh

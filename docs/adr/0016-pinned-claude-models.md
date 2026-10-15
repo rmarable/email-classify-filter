@@ -3,6 +3,9 @@
 - **Status:** accepted (OD-014, OD-053, 2026-09-26; OD-268, OD-272, OD-273, OD-277, OD-278,
   OD-285, OD-307, 2026-10-02; amended by OD-461, 2026-10-06, and OD-474, 2026-10-08); implemented in
   V1.4 (steps 2, 6, 10 and 13)
+- **Superseded in part** (2026-10-15, OD-520, OD-521): every gate role (`classifier`,
+  `classifier_high`, `actor`, `actor_high`) is pinned to `claude-opus-5-5`, replacing OD-461's
+  Sonnet pins; Sonnet leaves `models.lock`; the main session stays `claude-haiku-5-5` (SPEC §7.5).
 - **Context source:** SPEC §7.5, §7.6, §9.3, §21.2; design plan
   (`docs/history/design-plan-2026-09-27.md`) "Runtimes and models"; `ecf_server/claude_pins.py`,
   `data/models.lock`, `telemetry.py`, `claude_review.py`, `model_watch.py`
