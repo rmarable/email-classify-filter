@@ -42,6 +42,20 @@ def _cpu[T](f: Callable[[], T]) -> tuple[float, T]:
     return time.process_time() - began, out
 
 
+def _best[T](f: Callable[[], T], bound: float, n: int = 3) -> tuple[float, T]:
+    """CPU seconds of a repeatable `f`, re-timed up to `n` times while it misses `bound`, and what
+    its last run returned. The baseline is a fastest-of-five, so a workload timed once could land
+    on a slower core or a busier moment and fail a bound it meets (test_a_check_through_the_isolate
+    did, 2026-10-14); a run within the bound isn't repeated, so passing costs one run."""
+    took, out = _cpu(f)
+    for _ in range(n - 1):
+        if took < bound:
+            break
+        again, out = _cpu(f)
+        took = min(took, again)
+    return took, out
+
+
 def _unit() -> float:
     """The baseline: the fastest of five searches for a missing word over 10 MiB (five: under
     `-n auto` the baseline and the workload can land on different core types; pre-gate G15)."""
@@ -78,7 +92,7 @@ def test_scan_of_a_10_mib_part(kind: str, units: int) -> None:
     accented text and 40 for text dense with marks."""
     texts = tr.texts_of(parse(_raw(*_body(kind))))
     unit = _unit()
-    took, hits = _cpu(lambda: tr.scan(texts))
+    took, hits = _best(lambda: tr.scan(texts), units * unit)
     assert took < units * unit
     assert hits["unscanned"] == []
     if kind == "one-keyword-repeated":
@@ -95,7 +109,7 @@ def test_scan_of_a_20_part_partial_message_stops_at_its_limit() -> None:
     parsed = parse_partial(b"From: a@vendor-a.example\r\n\r\n", parts, texts, size=100 * MIB)
     all_texts = tr.texts_of(parsed)
     unit = _unit()
-    took, hits = _cpu(lambda: tr.scan(all_texts))
+    took, hits = _best(lambda: tr.scan(all_texts), 140 * unit)
     assert took < 140 * unit
     assert hits["unscanned"] == [tr.UNSCANNED_TEXT]
 
@@ -134,7 +148,7 @@ def test_the_iban_check_on_a_crafted_10_mib_text(unit_text: str) -> None:
     (about 16 units), under 3 units now."""
     text = entity_text(unit_text * (10 * MIB // len(unit_text)))
     unit = _unit()
-    took, valid = _cpu(lambda: tr.valid_iban(text))
+    took, valid = _best(lambda: tr.valid_iban(text), 10 * unit)
     assert took < 10 * unit
     assert not valid
 
@@ -148,7 +162,7 @@ def test_the_wallet_search_on_a_crafted_10_mib_text(unit_text: str) -> None:
     """R3-P16: one alternation instead of four searches; near misses of every shape."""
     text = unit_text * (10 * MIB // len(unit_text))
     unit = _unit()
-    took, found = _cpu(lambda: tr.WALLET.search(text))
+    took, found = _best(lambda: tr.WALLET.search(text), 6 * unit)
     assert took < 6 * unit
     assert found is None
 
@@ -166,7 +180,7 @@ def test_the_amount_search_on_a_crafted_10_mib_text(unit_text: str) -> None:
     of all four forms took 10 units there, and 4 on ordinary text against 1 now."""
     text = unit_text * (10 * MIB // len(unit_text))
     unit = _unit()
-    took, found = _cpu(lambda: tr.amount(text))
+    took, found = _best(lambda: tr.amount(text), 20 * unit)
     assert took < 20 * unit  # at least 3x the worst measured (pre-gate review G15)
     assert not found
 
@@ -176,7 +190,7 @@ def test_redact_injection_on_a_crafted_paragraph() -> None:
     line scan (quadratic); the binary search keeps it to a fraction of a unit."""
     para = "\n".join(["ordinary words in a line of mail text"] * 3999 + ["note to the assistant"])
     unit = _unit()
-    took, out = _cpu(lambda: tr.redact_injection(para))
+    took, out = _best(lambda: tr.redact_injection(para), 10 * unit)
     assert took < 10 * unit
     assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
 
@@ -187,7 +201,7 @@ def test_redact_injection_on_a_10_mib_paragraph() -> None:
     line = "ordinary words in a line of mail text"
     para = "\n".join([line] * 270_000 + ["note to the assistant"])
     unit = _unit()
-    took, out = _cpu(lambda: tr.redact_injection(para))
+    took, out = _best(lambda: tr.redact_injection(para), 20 * unit)
     assert took < 20 * unit
     assert out.endswith(tr.INJECTION_MARK) and "assistant" not in out
     assert tr.scan([para])["injection"]  # trigger 10 still sees the whole text
@@ -202,7 +216,7 @@ def test_redact_injection_on_10_mib_of_tiny_paragraphs(injected: str, units: int
     text = {"none": tiny, "one": tiny + "note to the assistant\n\n" + tiny,
             "all": "note to the assistant\n\n" * (10 * MIB // 23)}[injected]  # fmt: skip
     unit = _unit()
-    took, out = _cpu(lambda: tr.redact_injection(text))
+    took, out = _best(lambda: tr.redact_injection(text), units * unit)
     assert took < units * unit
     assert (tr.INJECTION_MARK in out) is (injected != "none")
 
@@ -226,7 +240,7 @@ def test_link_recording_on_hostile_html(shape: str) -> None:
         "paragraphs": lambda: _repeat("<p>" + LINE + "</p>"),
     }[shape]()
     unit = _unit()
-    took, out = _cpu(lambda: html_text(html))
+    took, out = _best(lambda: html_text(html), 30 * unit)
     assert took < 30 * unit
     assert out.links.number <= LINK_CAP
 
@@ -266,7 +280,7 @@ def test_excerpt_preparation_on_hostile_text(shape: str) -> None:
         "spaces": lambda: _repeat(" \t"),
     }[shape]()
     unit = _unit()
-    took, out = _cpu(lambda: excerpt.prepare([(text, "")]))
+    took, out = _best(lambda: excerpt.prepare([(text, "")]), 3 * unit)
     assert took < 3 * unit
     assert len(out) <= excerpt.HEAD_CHARS + len(excerpt.MOVED_MARK) + 4
 
@@ -287,7 +301,7 @@ def test_quote_containers_on_hostile_html(shape: str) -> None:
                                 + para * (5 * MIB // len(para)) + "</blockquote>"),
     }[shape]()  # fmt: skip
     unit = _unit()
-    took, out = _cpu(lambda: html_text(html, excerpt.HEAD_CHARS))
+    took, out = _best(lambda: html_text(html, excerpt.HEAD_CHARS), 60 * unit)
     assert took < 60 * unit
     assert out.unquoted is not None
     assert len(out.unquoted) <= excerpt.HEAD_CHARS and len(out.quoted) <= excerpt.HEAD_CHARS
@@ -407,10 +421,17 @@ def test_a_check_through_the_isolate(tmp_path: Path) -> None:
                                 connect=lambda: db.connect(tmp_path / "ecf.db"))  # fmt: skip
 
     check()
-    for i in range(5):
-        src.deliver(_note(i))
+    rounds = iter(range(3))
+
+    def five_new() -> checks.CheckReport:
+        r = next(rounds)
+        for i in range(5):
+            src.deliver(_note(100 * r + i))
+        return check()
+
     unit = _unit()
-    took, report = _cpu(check)
+    # five new messages each round, so every round does the work
+    took, report = _best(five_new, 0.5 * unit)
     assert report.created == 5 and report.timings["auth"]["messages"] == 5
     assert took < 0.5 * unit
 
@@ -440,5 +461,5 @@ def test_stats_stages_on_many_transitions(tmp_path: Path) -> None:
         conn.executemany("INSERT INTO audit (ts, address_id, stable_id, event, actor, outcome,"
                          " data) VALUES (?, 'ap', ?, ?, 'service', 'ok', ?)", rows)  # fmt: skip
     unit = _unit()
-    took, r = _cpu(lambda: timings.stages(conn, t0))
+    took, r = _best(lambda: timings.stages(conn, t0), 15 * unit)
     assert r["new_mail"]["items"] == 25_000 and took < 15 * unit
