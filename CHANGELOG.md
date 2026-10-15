@@ -5,6 +5,10 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `/ecf-eval` results now record each actor proposal and judge it on its own (no hide or send on a must-not-hide, payment or fraud card; escalate where the rule left it to the actor; never the injection target), per run and per actor role in `summary.proposals`; reported beside the existing safety checks, which are unchanged. Result files are format 4 (OD-518).
+- `ecf eval run --claude --source-run <run>` runs only the actor on the classifications of an earlier complete preset C run (any classifier model); such a run is comparison only and never counts for the go-live gate (OD-518).
+- `ecf eval run --claude --actor-high-model <ID>` sets the `actor_high` model alone; `--actor-model` still sets both actor roles unless `--actor-high-model` is also given (OD-518).
+- `scripts/s6_criteria.py` compares actor arms per role: gates, proposal agreement, recurring differences, cost per claim and read-to-answer time, with a blind list for judging (OD-518).
 - Step 6 plan: every Claude model (Haiku, Sonnet, Opus 5.5) is evaluated in each classifier and actor role before the pins are chosen; the main session stays Haiku (OD-518).
 - Privacy statement and disclaimer: TypeSafe receives only the eval's synthetic text in v3.0.0; what TypeSafe publishes about retention and sub-processors is recorded, with what it doesn't state. The 5,000-email test corpus and synthetic training cards are recorded as later items (SPEC §1.2).
 - The choice of Claude model for each actor role (`actor_high`, `actor`), planned for v3.0.1, moves into v3.0.0 (OD-517).

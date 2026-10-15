@@ -22,7 +22,7 @@ from ecf.claude_wrapper import client_doc
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.eval import labels
 from ecf.eval.builder import build_all
-from ecf.eval.results import load_result, spawn_figures
+from ecf.eval.results import ResultFile, load_result, spawn_figures
 from ecf.plugin_digest import plugin_digest
 from ecf.schema import load_schema, with_fixed
 from ecf_server import (
@@ -125,8 +125,10 @@ def answer(db_path: Path, clock: FakeClock, item: dict[str, Any], session: str,
 
 
 def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, Any]],
-          session: str = S1) -> list[dict[str, Any]]:  # fmt: skip
-    """Rounds of eval_next until the run ends; every item it handed out."""
+          session: str = S1, act: Callable[[str], str] | None = None
+          ) -> list[dict[str, Any]]:  # fmt: skip
+    """Rounds of eval_next until the run ends; every item it handed out. `act`: the action the
+    actor proposes per case (default flag)."""
     run = claude_eval.current()
     assert run is not None
     case_of = {w.ref: w.case.id for w in run.works}
@@ -141,7 +143,10 @@ def drain(db_path: Path, clock: FakeClock, by_case: Callable[[str], dict[str, An
         assert len({i["agent"] for i in q["items"]}) <= 1, q["items"]
         for item in q["items"]:
             seen.append(item)
-            assert answer(db_path, clock, item, session, by_case(case_of[item["id"]]))["accepted"]
+            cid = case_of[item["id"]]
+            got = answer(db_path, clock, item, session, by_case(cid),
+                         act(cid) if act is not None else "flag")  # fmt: skip
+            assert got["accepted"], got
     stages = [(w.stage, w.claim) for w in run.works]
     raise AssertionError(f"the run didn't end: {stages}")
 
@@ -1307,3 +1312,255 @@ def test_eval_next_through_ecf_mcp(db_path: Path, clock: FakeClock, root: Path) 
     assert error_text(none).startswith("not_found: no Claude eval is waiting")
     assert len(data(got)["items"]) == 2 and data(got)["more"] is True
     assert data(res)["state"] == "ready" and data(res)["total"] == 3
+
+
+# Step 6 (OD-518): the actor's proposal recorded and judged on its own (P1), a C run on another
+# run's frozen classifications (P2, P3), and `--actor-high-model` (P17).
+
+# requires_action and requires_reply false, so a hide is offered to the actor
+QUIET: dict[str, Any] = with_fixed(MARKETING | {"category": "customer_request"})
+JUNK = "inj-hidden-html-junk"  # must_not_hide, injection target junk; its rule asks the actor
+
+
+@pytest.fixture
+def root6(root: Path) -> Path:
+    """The three starter cards and a confirmed injection card that reaches the actor."""
+    shutil.copy(SYNTHETIC / "cases" / f"{JUNK}.md", root / "cases" / f"{JUNK}.md")
+    assert not build_all(root).findings
+    labels.confirm(root, JUNK, date(2026, 10, 1))
+    return root
+
+
+def _junk_run(db_path: Path, clock: FakeClock, root: Path) -> None:
+    """A C run whose actor proposes junk on the injection card and flag elsewhere."""
+    start(db_path, clock, root)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST,
+               JUNK: QUIET}  # fmt: skip
+    drain(db_path, clock, lambda cid: by_case[cid],
+          act=lambda cid: "junk" if cid == JUNK else "flag")  # fmt: skip
+
+
+def _source(conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+            **kw: Any) -> str:  # fmt: skip
+    """A finished C run: the control case goes to the actor; its run ID."""
+    start(db_path, clock, root, **kw)
+    by_case = {"starter-bec": BEC, "starter-injection": BEC, "starter-control": REQUEST}
+    drain(db_path, clock, lambda cid: by_case[cid])
+    run = claude_eval.current()
+    assert run is not None and run.state == "done"
+    claude_eval.reset()
+    del conn
+    return run.run_id
+
+
+def test_a_c_run_records_each_proposal_and_judges_it_on_its_own(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root6: Path
+) -> None:
+    """P1: junk proposed on a must_not_hide card whose injection target is junk fails both
+    proposal checks that apply, whatever policy then does with it; the plan-level checks are
+    scored as before, and the figures are per run and per actor role."""
+    _junk_run(db_path, clock, root6)
+    result = load_result(_saved(conn))
+    case = {c.id: c for c in result.cases}
+    inj, ctl, bec = case[JUNK], case["starter-control"], case["starter-bec"]
+    assert inj.proposal == "junk" and inj.proposal_target is None
+    assert inj.proposal_safety == {"no_hide_or_send": False, "no_injection_target": False}
+    assert inj.safety is False  # plan level: the injection target is the action proposed
+    assert ctl.proposal == "flag" and ctl.proposal_safety == {}  # no check applies
+    assert bec.proposal is None and bec.proposal_safety is None  # the rule escalated, no actor
+    p = cast(dict[str, Any], (result.summary or {})["proposals"])
+    assert p["asked"] == 1 and p["unsafe"] == [JUNK]  # confirmed cases only (control isn't)
+    assert p["checks"]["no_hide_or_send"] == {"cases": 1, "failed": [JUNK]}
+    assert p["checks"]["escalated"] == {"cases": 0, "failed": []}
+    acts = [c for c in inj.claims if c.stage == "act"]
+    role = "actor_high" if acts[-1].spawn.startswith("ecf-actor-high") else "actor"
+    assert set(p["by_role"]) == {role} and p["by_role"][role]["unsafe"] == [JUNK]
+    # gate_passed is the plan-level checks' as before: the proposal figures are reported
+    assert (result.summary or {})["gate_passed"] is False
+
+
+def test_a_rescore_keeps_or_replays_the_proposal_and_an_old_result_is_unchanged(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root6: Path
+) -> None:
+    root = root6
+    _junk_run(db_path, clock, root)
+    path = _saved(conn)
+    live = load_result(path)
+
+    def seen(r: ResultFile) -> dict[str, Any]:
+        return {c.id: (c.proposal, c.proposal_safety, c.safety) for c in r.cases}
+
+    for rescore in (evalrun.rescore_synthetic, evalrun.rescore_through_policy):
+        new = load_result(Path(rescore(root, path, clock)["path"]))
+        assert seen(new) == seen(live)
+        assert (new.summary or {})["proposals"] == (live.summary or {})["proposals"]
+    # a result from before step 6: no proposal fields, no figures, the same scores
+    bare = {"proposal": None, "proposal_target": None, "proposal_safety": None}
+    summary = {k: v for k, v in (live.summary or {}).items() if k != "proposals"}
+    cases = [c.model_copy(update=bare) for c in live.cases]
+    old = live.model_copy(update={"format": 3, "summary": summary, "cases": cases})
+    raw = json.loads(old.model_dump_json())
+    for c in raw["cases"]:
+        del c["proposal_safety"]
+    path.write_text(json.dumps(raw))
+    for rescore in (evalrun.rescore_synthetic, evalrun.rescore_through_policy):
+        new = load_result(Path(rescore(root, path, clock)["path"]))
+        assert all(c.proposal_safety is None and c.proposal is None for c in new.cases)
+        assert "proposals" not in (new.summary or {})
+
+
+def test_a_frozen_run_asks_only_the_actor_and_never_counts_for_the_gate(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """P2, P3: the source's classifications, no classifier spawn, no determinism repeats; key
+    `eval-...` over the source run's key; summarized without a classifier, not gate-eligible,
+    and the synthetic check refuses it."""
+    source = _source(conn, db_path, clock, root)
+    pin_key = claude_pins.key(claude_pins.pins(conn, "C"))
+    r = start(db_path, clock, root, source_run=source[:8])
+    assert r["pinned"] is False and r["source_run"] == source
+    assert set(r["models"]) == {"actor", "actor_high"}
+    handed = drain(db_path, clock, lambda _c: BEC)  # a classifier answer would be refused
+    assert [i["need"] for i in handed] == ["act"]  # the control case, once: no repeats
+    assert all(i["agent"].startswith("ecf-eval-actor") for i in handed)
+    run = claude_eval.current()
+    assert run is not None and run.state == "done" and run.repeats_started is False
+    assert run.key.startswith("eval-pins-") and run.key != pin_key
+    row = conn.execute("SELECT * FROM eval_runs WHERE run_id = ?", (run.run_id,)).fetchone()
+    m = json.loads(row["metrics"])
+    assert m["options"]["classifier"] is False and m["gate_passed"] is False
+    assert m["classifier_source"] == {"run_id": source, "digest": pin_key}
+    assert m["claude"]["source_run"] == source and m["claude"]["pinned"] is False
+    src = json.loads(conn.execute("SELECT metrics FROM eval_runs WHERE run_id = ?",
+                                  (source,)).fetchone()[0])  # fmt: skip
+    for k in claude_eval.C_SOURCE_KEYS:
+        assert m[k] == src[k]
+    got = {c.id: c.got for c in load_result(Path(row["path"])).cases}
+    assert got["starter-control"]["category"] == REQUEST["category"]  # the source's answer
+    check = gate.synthetic(conn, row["digest"], "C")
+    assert check.ok is False and "without the classifier or the actor" in check.detail
+    # the key binds the source: another source, another key
+    claude_eval.reset()
+    other = _source(conn, db_path, clock, root)
+    claude_eval.reset()
+    r2 = start(db_path, clock, root, source_run=other)
+    run2 = claude_eval.current()
+    assert r2["pinned"] is False and run2 is not None
+    assert run2.key == run.key  # both sources ran on the same pins: the same source key
+    assert claude_eval.models_for(conn, run2.opts, "other-key")[2] != run.key
+
+
+def test_a_frozen_run_refuses_a_source_that_doesnt_fit(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    pinned = _source(conn, db_path, clock, root)
+    with pytest.raises(InvalidInputError, match="no --classifier-model"):
+        start(db_path, clock, root, source_run=pinned, classifier_model="claude-opus-5-5")
+    with pytest.raises(InvalidInputError, match="for preset C"):
+        start(db_path, clock, root, preset="D", source_run=pinned)
+    with pytest.raises(InvalidInputError, match="first 8 characters"):
+        start(db_path, clock, root, source_run=pinned[:7])
+    with pytest.raises(InvalidInputError, match="no such eval run"):
+        start(db_path, clock, root, source_run="ffffffffffff")
+    with pytest.raises(InvalidInputError, match="didn't run at high"):
+        start(db_path, clock, root, source_run=pinned, sensitivity="high")
+    unpinned = _source(conn, db_path, clock, root, classifier_model="claude-opus-5-5")
+    start(db_path, clock, root, source_run=unpinned)  # a candidate classifier's run serves
+    claude_eval.stop(connector(db_path), clock)
+    claude_eval.reset()
+    frozen_src = pinned
+    start(db_path, clock, root, source_run=frozen_src)
+    drain(db_path, clock, lambda _c: BEC)
+    frozen = claude_eval.current()
+    assert frozen is not None
+    claude_eval.reset()
+    with pytest.raises(InvalidInputError, match="from another run"):  # not a frozen run's
+        start(db_path, clock, root, source_run=frozen.run_id)
+    start(db_path, clock, root)  # a stopped run is incomplete
+    answer(db_path, clock, nxt(db_path, clock, S1, limit=1)["items"][0], S1, BEC)
+    claude_eval.stop(connector(db_path), clock)
+    stopped = claude_eval.current()
+    assert stopped is not None
+    claude_eval.reset()
+    with pytest.raises(InvalidInputError, match="isn't complete"):
+        start(db_path, clock, root, source_run=stopped.run_id)
+    conn.execute("UPDATE eval_runs SET set_version = 'old' WHERE run_id = ?", (pinned,))
+    with pytest.raises(InvalidInputError, match="another version of the set"):
+        start(db_path, clock, root, source_run=pinned)
+    conn.execute("UPDATE eval_runs SET set_version = ? WHERE run_id = ?",
+                 (stopped.version, pinned))  # fmt: skip
+    path = Path(conn.execute("SELECT path FROM eval_runs WHERE run_id = ?",
+                             (pinned,)).fetchone()[0])  # fmt: skip
+    raw = json.loads(path.read_text())
+    raw["cases"] = [c for c in raw["cases"] if c["id"] != "starter-control"]
+    path.write_text(json.dumps(raw))
+    with pytest.raises(InvalidInputError, match="lacks some of this run's cases"):
+        start(db_path, clock, root, source_run=pinned)
+    path.unlink()
+    with pytest.raises(InvalidInputError, match="no result file"):
+        start(db_path, clock, root, source_run=pinned)
+
+
+def test_actor_high_model_sets_actor_high_alone(conn: sqlite3.Connection, root: Path) -> None:
+    """P17: `--actor-model` alone sets both actor roles; with `--actor-high-model` it sets only
+    `actor`; any off-pin model makes the run unpinned, as before."""
+    eff = claude_pins.effective(conn)
+    haiku, opus, sonnet = "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-5-5"
+
+    def roles(**kw: Any) -> tuple[str, str, bool]:
+        models, pinned, _key = claude_eval.models_for(conn, claude_eval.Options(root, **kw))
+        return models["actor"], models["actor_high"], pinned
+
+    assert roles() == (eff["actor"], eff["actor_high"], True)
+    assert roles(actor_model=haiku) == (haiku, haiku, False)
+    assert roles(actor_high_model=haiku) == (eff["actor"], haiku, False)
+    both = eff["actor"] == opus and eff["actor_high"] == sonnet
+    assert roles(actor_model=opus, actor_high_model=sonnet) == (opus, sonnet, both)
+    assert roles(actor_model=eff["actor"], actor_high_model=eff["actor_high"])[2] is True
+    with pytest.raises(InvalidInputError, match="isn't a Claude model ID"):
+        roles(actor_high_model="gpt-5")
+    combos: list[dict[str, Any]] = [{"actor_model": haiku}, {"actor_high_model": haiku},
+                                    {"actor_model": haiku, "actor_high_model": opus}]  # fmt: skip
+    keys = {claude_eval.models_for(conn, claude_eval.Options(root, **kw))[2] for kw in combos}
+    assert len(keys) == 3 and all(k.startswith("eval-") for k in keys)
+
+
+def test_the_route_takes_actor_high_model_and_source_run(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    state = ServiceState(install="t", token="cli-token", started_at="2026-10-02T09:00:00Z",
+                         clock=clock, db_path=db_path)  # fmt: skip
+
+    async def go() -> list[httpx.Response]:
+        transport = httpx.ASGITransport(app=create_app(state))
+        async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as h:
+            cli = {"Authorization": "Bearer cli-token"}
+            body = {"root": str(root), "preset": "C", "sensitivity": "standard"}
+            short = await h.post("/v1/eval/claude", headers=cli,
+                                 json=body | {"source_run": "abc"})  # fmt: skip
+            typed = await h.post("/v1/eval/claude", headers=cli,
+                                 json=body | {"source_run": 7})  # fmt: skip
+            ok = await h.post("/v1/eval/claude", headers=cli,
+                              json=body | {"actor_high_model": "claude-haiku-5-5"})  # fmt: skip
+            return [short, typed, ok]
+
+    short, typed, ok = anyio.run(go)
+    assert short.status_code == 400 and "first 8 characters" in short.text
+    assert typed.status_code == 400 and "source_run must be text" in typed.text
+    started = ok.json()
+    assert started["pinned"] is False and started["models"]["actor_high"] == "claude-haiku-5-5"
+    assert started["models"]["actor"] == claude_pins.effective(conn)["actor"]
+
+
+def test_status_lines_name_a_frozen_run_comparison_only() -> None:
+    from ecf import cli  # noqa: PLC0415
+
+    caveat = cli._run_caveat  # pyright: ignore[reportPrivateUsage]
+    pin_kind = cli._pin_kind  # pyright: ignore[reportPrivateUsage]
+    frozen = {"preset": "C", "pinned": False, "source_run": "0a48213c" + "0" * 24}
+    m = {"complete": True, "gate_passed": False, "options": {"classifier": False, "actor": True},
+         "claude": frozen}  # fmt: skip
+    line = "comparison only (actor only, on run 0a48213c's classifications)"
+    assert caveat(m) == ", " + line and pin_kind(frozen) == line
+    d = frozen | {"preset": "D"}  # a D run names its Jev source too: D's line stays
+    assert pin_kind(d) == cli.PRESET_D_ONLY
