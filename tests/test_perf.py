@@ -56,6 +56,20 @@ def _best[T](f: Callable[[], T], bound: float, n: int = 3) -> tuple[float, T]:
     return took, out
 
 
+def _best_fresh[T](
+    setup: Callable[[int], T], run: Callable[[T], object], bound: float, n: int = 3
+) -> float:
+    """`_best` for a workload that changes state: `setup(round)` builds fresh input untimed, then
+    only `run` is timed, re-timed up to `n` times while it misses `bound`."""
+    took = float("inf")
+    for r in range(n):
+        data = setup(r)
+        took = min(took, _cpu(lambda d=data: run(d))[0])
+        if took < bound:
+            break
+    return took
+
+
 def _unit() -> float:
     """The baseline: the fastest of five searches for a missing word over 10 MiB (five: under
     `-n auto` the baseline and the workload can land on different core types; pre-gate G15)."""
@@ -344,23 +358,27 @@ def test_classifier_store_with_its_audit_row_per_item(tmp_path: Path) -> None:
 
     clock = FakeClock()
     conn = _db(tmp_path, clock)
-    sids: list[str] = []
-    for i in range(200):
-        sid = f"{i:05d}".ljust(64, "b")
-        items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
-                          content_hash="h", facts="{}")  # fmt: skip
-        items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE, TransitionContext(),
-                         actor="t")  # fmt: skip
-        sids.append(sid)
-    unit = _unit()
+    n = 200
 
-    def store() -> None:
+    def fresh(r: int) -> list[str]:  # 200 new items each round, so every round does the work
+        sids: list[str] = []
+        for i in range(n):
+            sid = f"{r}{i:05d}".ljust(64, "b")
+            items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
+                              content_hash="h", facts="{}")  # fmt: skip
+            items.transition(conn, clock, StableId(sid), Status.AWAITING_CLAUDE,
+                             TransitionContext(), actor="t")  # fmt: skip
+            sids.append(sid)
+        return sids
+
+    def store(sids: list[str]) -> None:
         for s in sids:
             classifier.store(conn, clock, s, GOOD, {"classifier": "x"},
                              expected=Status.AWAITING_CLAUDE)  # fmt: skip
 
-    took, _ = _cpu(store)
-    assert took / len(sids) < 0.04 * unit
+    unit = _unit()
+    took = _best_fresh(fresh, store, 0.04 * unit * n)
+    assert took / n < 0.04 * unit
 
 
 def test_a_30_message_page_and_backfill_pages_on_the_fake(tmp_path: Path) -> None:
@@ -386,11 +404,18 @@ def test_a_30_message_page_and_backfill_pages_on_the_fake(tmp_path: Path) -> Non
     assert cur is not None and cur.uidvalidity is not None
     bf = fetch.Backfill((old - timedelta(days=1)).date().isoformat(), False, cur.uidvalidity,
                         cur.last_uid, run_id="perf")  # fmt: skip
-    for i in range(30):
-        src.deliver(_note(5000 + i))
+    created: list[int] = []
+
+    def thirty(r: int) -> None:  # 30 new messages each round
+        for i in range(30):
+            src.deliver(_note(5000 + 100 * r + i))
+
+    def page_of(_: None) -> None:
+        created.append(len(fetch.fetch_page(conn, clock, src, cfg, lease).created))
+
     unit = _unit()
-    took, page = _cpu(lambda: fetch.fetch_page(conn, clock, src, cfg, lease))
-    assert len(page.created) == 30 and took < 0.7 * unit
+    took = _best_fresh(thirty, page_of, 0.7 * unit)
+    assert created and all(c == 30 for c in created) and took < 0.7 * unit
     took, _ = _cpu(lambda: [fetch.backfill_page(conn, clock, src, cfg, lease, bf)
                             for _ in range(3)])  # fmt: skip
     assert took / 3 < 0.7 * unit
