@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- CI, release and canary workflows run on Ubuntu 26.04 (pinned) instead of Ubuntu 24.04 (OD-519).
 - `/ecf-eval` results now record each actor proposal and judge it on its own (no hide or send on a must-not-hide, payment or fraud card; escalate where the rule left it to the actor; never the injection target), per run and per actor role in `summary.proposals`; reported beside the existing safety checks, which are unchanged. Result files are format 4 (OD-518).
 - `ecf eval run --claude --source-run <run>` runs only the actor on the classifications of an earlier complete preset C run (any classifier model); such a run is comparison only and never counts for the go-live gate (OD-518).
 - `ecf eval run --claude --actor-high-model <ID>` sets the `actor_high` model alone; `--actor-model` still sets both actor roles unless `--actor-high-model` is also given (OD-518).
