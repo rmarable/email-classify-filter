@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded decisions for v3.0.0 step 3, the Jev evaluation (`planning-docs/v3.0.0-STEP3.md`): Jev's answers stay yes at 0.5 as today, and an "unsure" band may only add caution below 0.5 (a flag, no automatic hide); the band, the confidence bars, the state format and the timeouts are measured on the synthetic set with cross-fitting and a fresh held-out batch, and compared with preset C at a fixed 5-point margin; Jev choosing the actor tier moves to v3.0.1, and the user-field measurements wait until the user layer is switched on.
 - `ecf stats --since` no longer takes fractional ages such as `1.5d`; give `36h` instead (OD-507).
 - `ecf backfill`, `ecf reprocess`, `ecf logs` and `ecf stats` read times one way: a date, a date and time (to the second, with a zone or in this Mac's), a time today, or an age (`90s 30m 2h 3d 2w 6mo 1y`, or `1h30m`); anything else, including `1.5d`, `3 days` and `30min`, is refused with the forms listed, and the range is shown in UTC before it runs. `ecf logs` gains `--until`; `ecf backfill` gains `--until` (OD-507).
 - `ecf backfill` reads its range once instead of searching the mailbox on every page, skips and counts mail ecf already has, and reads again mail that retention deleted (OD-507).
