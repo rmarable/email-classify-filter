@@ -13,7 +13,17 @@ import pytest
 from ecf.errors import ConflictError, StepupRequiredError
 from ecf.ids import AddressId, StableId
 from ecf.status import Status
-from ecf_server import digests, execute, fetch, items, leases, mailbox_actions, reprocess, scans
+from ecf_server import (
+    claude_review,
+    digests,
+    execute,
+    fetch,
+    items,
+    leases,
+    mailbox_actions,
+    reprocess,
+    scans,
+)
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail.fake import FakeMailSource
@@ -109,6 +119,9 @@ def test_a_run_moves_items_by_the_guarded_edges_in_batches(
     reprocess.tick(conn, clock)
     reprocess.tick(conn, clock)  # nothing left: finished
     assert [_status(conn, s) for s in old] == ["awaiting_claude"] * 3
+    for s in old:  # classified again at the next /ecf-review, not only shown to the actor
+        row = conn.execute("SELECT * FROM items WHERE stable_id = ?", (s,)).fetchone()
+        assert row["classification"] is None and claude_review.need_of(row) == "classify"
     assert _status(conn, replan) == "observed"  # shadow: planned again, recorded
     rows = conn.execute("SELECT data FROM audit WHERE event = 'item.reprocessed'").fetchall()
     assert len(rows) == 4 and all(len(json.loads(x[0])["new"]["rules"]) == 16 for x in rows)
