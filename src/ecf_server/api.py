@@ -992,7 +992,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             root, preset=_str(body, "preset"), sensitivity=_str(body, "sensitivity"),
             fraud_only=body.get("fraud_only") is True,
             classifier_model=_opt_str(body, "classifier_model"),
-            actor_model=_opt_str(body, "actor_model"), batch=batch,
+            actor_model=_opt_str(body, "actor_model"),
+            actor_high_model=_opt_str(body, "actor_high_model"),
+            source_run=_opt_str(body, "source_run"), batch=batch,
             copy_to=_copy_to(body))  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip

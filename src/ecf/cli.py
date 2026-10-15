@@ -1200,7 +1200,25 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         str | None, typer.Option("--classifier-model", help="With --claude: compare this model.")
     ] = None,
     actor_model: Annotated[
-        str | None, typer.Option("--actor-model", help="With --claude: compare this model.")
+        str | None,
+        typer.Option(
+            "--actor-model",
+            help="With --claude: compare this model in both actor roles (only `actor` with"
+            " --actor-high-model).",
+        ),
+    ] = None,
+    actor_high_model: Annotated[
+        str | None,
+        typer.Option("--actor-high-model", help="With --claude: compare this model as actor_high."),
+    ] = None,
+    source_run: Annotated[
+        str | None,
+        typer.Option(
+            "--source-run",
+            help="With --claude, preset C: take each case's classification from this complete,"
+            " pinned /ecf-eval run (ID or its first 8+ characters) and ask only the actor;"
+            " comparison only.",
+        ),
     ] = None,
     batch: Annotated[
         int, typer.Option("--batch", help="With --claude: items per classifier-high spawn (1-5).")
@@ -1274,7 +1292,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                                     " --no-signals and --jev-concurrency are for `ecf eval run`"
                                     " without --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
-                     actor_model, batch, copy)  # fmt: skip
+                     actor_model, batch, copy, actor_high_model=actor_high_model,
+                     source_run=source_run)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
@@ -1310,19 +1329,22 @@ def _copy_folder(copy_to: Path | None, cwd: Path | None = None) -> Path | None:
     return None
 
 
-def _claude_eval(root: Path, preset: str, sensitivity: str, fraud_only: bool,
+def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-only
+                 root: Path, preset: str, sensitivity: str, fraud_only: bool,
                  classifier_model: str | None, actor_model: str | None,
-                 batch: int, copy: Path | None) -> None:  # fmt: skip
+                 batch: int, copy: Path | None, *, actor_high_model: str | None = None,
+                 source_run: str | None = None) -> None:  # fmt: skip
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
             "fraud_only": fraud_only, "classifier_model": classifier_model,
-            "actor_model": actor_model, "batch": batch,
+            "actor_model": actor_model, "actor_high_model": actor_high_model,
+            "source_run": source_run, "batch": batch,
             "copy_to": str(copy) if copy else None})  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
            else PRESET_D_ONLY if r["preset"] == "D"
-           else "other models: for comparison only")  # fmt: skip
+           else _frozen_only(r) or "other models: for comparison only")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
                f" {r['preset']}, {r['sensitivity']}; {use} ({models}).")  # fmt: skip
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
@@ -1655,11 +1677,18 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
 PRESET_D_ONLY = "comparison only (preset D: not the pinned actors, or a Jev run off D's key)"
 
 
+def _frozen_only(f: dict[str, Any]) -> str | None:
+    """A preset C run on another run's classifications: comparison only (step 6, P2)."""
+    if f.get("preset") == "C" and f.get("source_run"):
+        return f"comparison only (actor only, on run {str(f['source_run'])[:8]}'s classifications)"
+    return None
+
+
 def _pin_kind(f: dict[str, Any]) -> str:
     """A Claude eval's models: the pins, or comparison only (J8)."""
     if f.get("pinned"):
         return "pinned models"
-    return PRESET_D_ONLY if f.get("preset") == "D" else "comparison"
+    return PRESET_D_ONLY if f.get("preset") == "D" else _frozen_only(f) or "comparison"
 
 
 BACKEND_CAVEAT = {
@@ -1679,6 +1708,7 @@ def _run_caveat(m: dict[str, Any]) -> str:  # noqa: PLR0911 - one return per cav
         cl = cast(dict[str, Any], claude)
         if cl.get("pinned") is False:  # never gate-eligible (J8)
             return (f", {PRESET_D_ONLY}" if cl.get("preset") == "D"
+                    else f", {frozen}" if (frozen := _frozen_only(cl)) is not None
                     else ", comparison only (not the pinned models)")  # fmt: skip
     # an eval-only switch off, or a Jev measurement option away from its default (§6)
     switched: list[Any] = opts.get("switches_off") or []

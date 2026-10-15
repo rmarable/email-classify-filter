@@ -1,8 +1,8 @@
 """`ecf eval run --classifier-backend jev` and `/ecf-eval --preset D` (v3.0.0 step 2d;
 planning-docs/JEV-STEP2.md §6, §8 "Eval (2d)"; OD-503, OD-504): a run on the fake transport,
 per-case figures, signals, the refusals, faulted cases scored as failures, incomplete runs, the
-stops that fail a run, the inputs `compare` warns on, rescore preservation, the result format (3
-from step 3), preset D's source query and the report lines. Every Jev call goes to an
+stops that fail a run, the inputs `compare` warns on, rescore preservation, the result format (4
+from step 6), preset D's source query and the report lines. Every Jev call goes to an
 `httpx.MockTransport`; `tests/conftest.py` makes the real transport raise."""
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ def test_a_jev_run_end_to_end_on_the_fake(
     assert KEY not in text and "req_" not in text.lower() and "request_id" not in text
     assert "Updated remittance" not in text  # no message text (I5)
     result = load_result(Path(row["path"]))
-    assert result.format == RESULT_FORMAT == 3
+    assert result.format == RESULT_FORMAT == 4
     assert all(c.tries == 1 and c.fault is None and c.confidence for c in result.cases)
     assert len(fake.cases) == 10 and evalrun.RUN.snapshot()["state"] == "done"
 
@@ -532,7 +532,7 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     old = load_result(path)
     rescore = evalrun.rescore_synthetic if how == "synthetic" else evalrun.rescore_through_policy
     new = load_result(Path(rescore(root, path, clock)["path"]))
-    assert new.format == 3
+    assert new.format == 4
     for a, b in zip(old.cases, new.cases, strict=True):
         for k in (*evalrun.KEPT_CASE_FIELDS, "probabilities", "classifier_ms"):
             assert getattr(a, k) == getattr(b, k), (a.id, k)
@@ -545,16 +545,16 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     assert s1.get("incomplete_reason") == ("faulted_safety_card" if incomplete else None)
 
 
-def test_format_3_and_the_old_client_message(
+def test_format_4_and_the_old_client_message(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
     root: Path, tmp_path: Path,
 ) -> None:  # fmt: skip
-    """P16: files without `format` read as 1; this ecf writes 3 (step 3's band fields); an ecf
+    """P16: files without `format` read as 1; this ecf writes 4 (step 6's proposal checks); an ecf
     from step 2 on refuses a file of a later format with a reason, not a validation dump (an ecf
     from before format 2 can't read a format-2 file at all, J9)."""
     del conn
     path = _jev_result(monkeypatch, db_path, clock, root, incomplete=False)
-    assert json.loads(path.read_text())["format"] == 3
+    assert json.loads(path.read_text())["format"] == 4
     raw = json.loads(path.read_text())
     del raw["format"]
     for c in raw["cases"]:
@@ -565,8 +565,8 @@ def test_format_3_and_the_old_client_message(
     assert load_result(older).format == 1
     from ecf.eval import results  # noqa: PLC0415
 
-    monkeypatch.setattr(results, "RESULT_FORMAT", 2)  # a step-2 client
-    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 3\); run `uv"):
+    monkeypatch.setattr(results, "RESULT_FORMAT", 3)  # a step-3 client
+    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 4\); run `uv"):
         load_result(path)
 
 
