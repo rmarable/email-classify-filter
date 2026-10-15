@@ -88,9 +88,11 @@ def test_no_double_claims_under_concurrency(
                         errors.append(f"two in flight for {job.address_id}")
                     in_flight[job.address_id] = job.job_id
                     claimed.append(job.job_id)
-                jobs.complete(c, job.job_id, name)
+                # Forget the address before completing: once complete() commits, another
+                # worker may rightly claim the address's next job.
                 with lock:
                     del in_flight[job.address_id]
+                jobs.complete(c, job.job_id, name)
         finally:
             c.close()
 
