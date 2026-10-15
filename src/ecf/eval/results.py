@@ -40,8 +40,9 @@ INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different in
               "read_bytes": "different inputs"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 # the result file's format (v3.0.0 step 2, P16): 1 for files without the key; 2 adds the Jev
-# per-case fields. A file of a later format is refused with a reason, not a validation dump
-RESULT_FORMAT = 2
+# per-case fields; 3 (step 3) the unsure, below-bar and held fields. A file of a later format is
+# refused with a reason, not a validation dump
+RESULT_FORMAT = 3
 
 
 class CallMetrics(BaseModel):
@@ -142,6 +143,12 @@ class CaseResult(BaseModel):
     confidence: dict[str, float] | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # a Jev case under step 3's mapping (format 3; `jev_mapping`): its unsure and below-bar
+    # fields, and why its hides were dropped and the email left and flagged; None in older files
+    # and when the mapping added no caution
+    unsure: list[str] | None = None
+    below_bar: list[str] | None = None
+    held: list[str] | None = None
 
 
 class ResultFile(BaseModel):

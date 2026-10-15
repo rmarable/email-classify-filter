@@ -12,6 +12,10 @@ digest it matches its source run on from here (`source_inputs`).
   `--no-redact` (synthetic `--fraud-only` only, P2).
 - **Stops (§5.4):** `evalrun.FATAL` (auth, pin, quota, long wait) fails the run with no result; a
   spent waiting budget or `ecf eval stop` keeps the cases scored so far.
+- **Remapping (step 3, §3.4):** `remap` scores a Jev result again under another mapping from its
+  recorded probabilities, in process and with no TypeSafe call, through the same plan and hold as
+  a live run (`evalrun.planned`, `evalrun.held`); `scripts/jev_sweep.py` fits step 3's bands and
+  bars with it.
 - **Determinism (§6):** a repeat agrees when its classification is the same and every probability
   is within `evalrun.PROB_TOLERANCE`; each pass's concurrency is recorded (P23). A pair where
   either pass faulted is left out and counted (`faulted_pairs`, J3); each repeat is a new request
@@ -23,12 +27,14 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 
+from ecf.eval.results import CaseResult, ResultFile
 from ecf.schema import CompiledSchema
-from ecf_server import jev, rules, ruletest
+from ecf_server import jev, jev_mapping, policy, rules, ruletest, triggers
 from ecf_server.clock import Clock
 from ecf_server.evalrun import (
     FATAL,
@@ -39,7 +45,11 @@ from ecf_server.evalrun import (
     Options,
     case_inputs,
     field_flips,
+    held,
+    load,
+    planned,
     same_answer,
+    score,
     spread,
 )
 
@@ -94,6 +104,10 @@ class JevAsker:
         self.fmt: Literal["s1", "s2"] = "s2" if opts.jev_state == "s2" else "s1"
         self.preamble: Literal["state", "instructions"] = (
             "instructions" if opts.jev_preamble == "instructions" else "state")  # fmt: skip
+        self.variant = jev.Variant(
+            fraud_risk="choice" if opts.jev_fraud_risk == "choice" else "score",
+            option_order="reversed" if opts.jev_option_order == "reversed" else "schema",
+            extra=(opts.jev_extra,) if opts.jev_extra else ())  # fmt: skip
         self.client = jev.Client(setup.key, transport=setup.transport, clock=clock,
                                  stop=RUN.stop, wait=setup.wait, on_pause=self._paused,
                                  budget_s=setup.budget_s,
@@ -131,7 +145,7 @@ class JevAsker:
         t0 = time.monotonic()
         res = self.client.classify(schema, email, sent, first=self.first,
                                    redact=self.opts.redact, fmt=self.fmt,
-                                   preamble=self.preamble)  # fmt: skip
+                                   preamble=self.preamble, variant=self.variant)  # fmt: skip
         took = 1000 * (time.monotonic() - t0)
         (self.end_to_end_ms if res.fault is None else self.end_to_end_faulted_ms).append(took)
         self.first = self.first and not res.replied
@@ -183,11 +197,11 @@ class JevAsker:
         pin = self.pin
         return {
             "prompt_digest": jev.prompt_digest(schema, fmt=self.fmt, preamble=self.preamble,
-                                               pin=pin),
+                                               pin=pin, variant=self.variant),
             "input_format": jev.state_format_id(self.fmt, self.preamble),
             "excerpt_cap": jev.excerpt_cap(),
             "gate_key": jev.gate_key(schema, rules_now, fmt=self.fmt, preamble=self.preamble,
-                                     pin=pin),
+                                     pin=pin, variant=self.variant),
         }  # fmt: skip
 
     def figures(self, schema: CompiledSchema, faulted: dict[str, str],
@@ -202,7 +216,7 @@ class JevAsker:
         return self.client.stats.summary() | {
             "pin": self.pin,
             "options": {"state": self.opts.jev_state, "preamble": self.opts.jev_preamble,
-                        "concurrency": self.opts.jev_concurrency},
+                        "concurrency": self.opts.jev_concurrency} | self.variant.doc(),
             "schema_digest": schema.digest,
             "end_to_end_ms": spread(self.end_to_end_ms),
             "end_to_end_faulted_ms": spread(self.end_to_end_faulted_ms),
@@ -210,3 +224,45 @@ class JevAsker:
             "determinism_concurrency": (determinism or {}).get("concurrency"),
             "cost": {"usd": round(billed * COST_PER_M_INPUT / 1e6, 6), "basis": COST_BASIS},
         }  # fmt: skip
+
+
+@dataclass(frozen=True)
+class RemapInputs:
+    """The cards and their facts, computed once for many remaps (as a run computes them)."""
+
+    cases: dict[str, tuple[Case, dict[str, Any]]]
+    rules: rules.CompiledRules
+    known: frozenset[str]
+
+
+def remap_inputs(root: Path, clock: Clock, schema: CompiledSchema) -> RemapInputs:
+    cases, _version = load(root, fraud_only=False)
+    rules_now = rules.load_starter_rules(schema)
+    scratch = ruletest.Scratch(clock)
+    try:
+        out = {c.id: (c, case_inputs(c, scratch, triggers.redact_injection)[0]) for c in cases}
+    finally:
+        scratch.close()
+    return RemapInputs(out, rules_now, policy.labels(schema, rules_now))
+
+
+def remap(result: ResultFile | list[CaseResult], inputs: RemapInputs,
+          mapping: jev_mapping.JevMapping) -> list[CaseResult]:  # fmt: skip
+    """A Jev result's cases scored again under `mapping`: each recorded classification planned
+    and held as a live run would (no actor: a Jev run has none). A case with no answer stays a
+    failure; a card no longer in the set is left out."""
+    out: list[CaseResult] = []
+    for r in result.cases if isinstance(result, ResultFile) else result:
+        if (found := inputs.cases.get(r.id)) is None:
+            continue
+        case, facts = found
+        cls = {k: v for k, v in r.got.items() if k != "rule"} or None
+        if cls is None or r.fault is not None:
+            out.append(score(case, None, None, None).model_copy(update={"fault": r.fault}))
+            continue
+        derived = jev_mapping.derive(cls, r.probabilities, mapping)
+        ctx, plan, _blocked = planned(case, cls, facts, inputs.rules, inputs.known)
+        plan, band = held(ctx, plan, derived, inputs.known, inputs.rules)
+        out.append(score(case, cls, plan, None, derived).model_copy(
+            update={"probabilities": r.probabilities} | band))  # fmt: skip
+    return out

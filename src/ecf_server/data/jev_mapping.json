@@ -1,0 +1,8 @@
+{
+  "_comment": "How Jev's probabilities may add caution (v3.0.0 step 3, planning-docs/v3.0.0-STEP3.md §3, §6; ecf_server/jev_mapping.py). bands: a yes/no field's lower bound (above 0, below 0.5): an answer from it up to 0.5 is unsure. bars: a choice field's lowest probability for its hides to stand. none_bars: fraud_risk's p(none) bar. Set from step 3's runs; empty adds no caution. Only an ecf release changes this file; its digest is in Jev's gate key.",
+  "version": 1,
+  "bands": {},
+  "bars": {},
+  "none_bars": {},
+  "score_tie": "higher"
+}

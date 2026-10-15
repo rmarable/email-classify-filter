@@ -75,6 +75,7 @@ from ecf_server import (
     config,
     evalrun,
     excerpt,
+    jev_mapping,
     policy,
     rules,
     ruletest,
@@ -152,6 +153,7 @@ class Work:
     cls_text: str = ""
     act_text: str = ""
     classification: dict[str, Any] | None = None
+    derived: jev_mapping.Derived = jev_mapping.NO_BAND  # preset D: its source case's (step 3)
     plan: policy.Plan | None = None
     proposal: dict[str, str] | None = None
     result: CaseResult | None = None
@@ -295,13 +297,16 @@ def agents_for(run: Run) -> dict[str, str]:
 
 
 def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids: set[str]
-             ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any]]:  # fmt: skip
+             ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any],
+                        dict[str, jev_mapping.Derived]]:  # fmt: skip
     """Preset D's source (D5, P15): the latest `ecf eval run --classifier-backend jev` on the
     pinned Jev version, its prompt digest and `schema` (v3, the default: D9), on this version of
     the set, complete, redacted and not an experiment, its result file present, with every case
     of this run (`ids`: a `--fraud-only` source can't serve a full run, J4): its run ID, each
-    case's classification (a faulted case's is empty, so it is scored as a failure, P1) and its
-    inputs (SOURCE_KEYS). Which other sources D may take is open (removal P19)."""
+    case's classification (a faulted case's is empty, so it is scored as a failure, P1), its
+    inputs (SOURCE_KEYS) and each case's unsure and below-bar fields (step 3: the source's prompt
+    digest names the mapping they were derived under). Which other sources D may take is open
+    (removal P19)."""
     from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
 
     pin, prompt = evaljev.source_inputs(schema)
@@ -324,7 +329,10 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
         if not ids <= {c.id for c in result.cases}:
             continue  # a source without some of this run's cases (a `--fraud-only` run)
         got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
-        return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}
+        derived = {c.id: jev_mapping.Derived(frozenset(c.unsure or ()),
+                                             frozenset(c.below_bar or ()))
+                   for c in result.cases}  # fmt: skip
+        return str(row["run_id"]), got, {k: m[k] for k in SOURCE_KEYS if k in m}, derived
     raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
                             " --classifier-backend jev` on the pinned Jev version, the default"
                             " schema and this version of the set, covering this run's cases, and"
@@ -350,10 +358,12 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
     source_run: str | None = None
     got: dict[str, dict[str, Any]] = {}
     source: dict[str, Any] = {}
+    derived: dict[str, jev_mapping.Derived] = {}
     try:
         schema = config.current_schema(conn)
         if opts.preset == "D":
-            source_run, got, source = _jev_run(conn, version, schema, {c.id for c in cases})
+            source_run, got, source, derived = _jev_run(conn, version, schema,
+                                                        {c.id for c in cases})  # fmt: skip
         models, pinned, key = models_for(conn, opts, _source_key(conn, source_run))
     finally:
         conn.close()
@@ -374,7 +384,7 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
 
     def work() -> None:
         try:
-            _prepare(connect, clock, run, got)
+            _prepare(connect, clock, run, got, derived)
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("claude_eval.prepare_failed", error_type=type(exc).__name__)
             with run.lock:
@@ -398,7 +408,8 @@ def _source_key(conn: sqlite3.Connection, source_run: str | None) -> str | None:
 
 
 def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
-             got: dict[str, dict[str, Any]] | None = None) -> None:  # fmt: skip
+             got: dict[str, dict[str, Any]] | None = None,
+             derived: dict[str, jev_mapping.Derived] | None = None) -> None:  # fmt: skip
     """ecf's analysis and the excerpts for each case, in order; each is claimable once ready. A
     D case is planned at once on its Jev classification (`got`), so only its actor is asked."""
     scratch = ruletest.Scratch(clock)
@@ -425,6 +436,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 w.facts, w.email, w.cls_text, w.act_text = facts, email, cls_text, act_text
                 if run.opts.preset == "D":  # an empty answer (a faulted case) fails (P1)
                     w.classification = (got or {}).get(w.case.id) or None
+                    w.derived = (derived or {}).get(w.case.id, jev_mapping.NO_BAND)
                     _classified(run, w)
                 else:
                     w.stage = "classify"
@@ -456,13 +468,13 @@ def _cls(w: Work) -> dict[str, Any]:
 def _classified(run: Run, w: Work) -> None:
     """After a classification (or none): plan it, then to the actor or scored."""
     if w.classification is None:
-        _score(w)
+        _score(run, w)
         return
     w.plan = policy.plan(_context(run, w), run.known)
     if w.plan.to_actor:
         w.stage = "act"
     else:
-        _score(w)
+        _score(run, w)
 
 
 def _proposed(run: Run, w: Work, proposal: dict[str, Any] | None) -> None:
@@ -473,11 +485,16 @@ def _proposed(run: Run, w: Work, proposal: dict[str, Any] | None) -> None:
                                   w.proposal["target"] or None, run.known)  # fmt: skip
             if isinstance(one, policy.Planned):
                 w.plan.actions.append(one)
-    _score(w)
+    _score(run, w)
 
 
-def _score(w: Work) -> None:
-    w.result = evalrun.score(w.case, w.classification, w.plan, w.proposal)
+def _score(run: Run, w: Work) -> None:
+    band: dict[str, Any] = {}
+    if w.plan is not None and w.derived:  # preset D: the caution Jev's answer asks for (step 3)
+        w.plan, band = evalrun.held(_context(run, w), w.plan, w.derived, run.known, run.rules)
+    w.result = evalrun.score(w.case, w.classification, w.plan, w.proposal, w.derived)
+    if band:
+        w.result = w.result.model_copy(update=band)
     w.stage = "done"
 
 
@@ -514,6 +531,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                                                 fraud_only=run.opts.fraud_only)  # fmt: skip
     if run.opts.preset == "D":  # what Jev was asked, with what: the source run's (P13)
         summary.update(run.source)
+        # the caution its source's answers asked for (step 3): the same mapping, by the source's
+        # prompt digest
+        summary["band"] = evalrun.band_figures(results, [w.case for w in run.works], run.rules)
     else:
         summary["schema_digest"] = run.schema.digest  # what the classifier was asked
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)

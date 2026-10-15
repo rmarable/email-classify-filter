@@ -96,6 +96,7 @@ from ecf_server import (
     corpus,
     corpus_session,
     excerpt,
+    jev_mapping,
     policy,
     rules,
     ruletest,
@@ -105,6 +106,7 @@ from ecf_server import (
     slack_out,
     slack_routes,
     stats,
+    systemone,
     triggers,
 )
 from ecf_server.cards import Card
@@ -179,6 +181,9 @@ class Options:
     jev_state: str = "s1"  # s1 | s2
     jev_preamble: str = "state"  # state | instructions
     jev_concurrency: int = 1  # only 1 in step 2
+    jev_fraud_risk: str = "score"  # score | choice (step 3, J4)
+    jev_option_order: str = "schema"  # schema | reversed (J5)
+    jev_extra: str | None = None  # an extra question: injection_attempt (J6)
 
     @property
     def switches_off(self) -> list[str]:
@@ -190,8 +195,11 @@ class Options:
         """The Jev measurement options away from their defaults, as `name value`."""
         out = [f"jev_state {self.jev_state}"] if self.jev_state != "s1" else []
         out += [f"jev_preamble {self.jev_preamble}"] if self.jev_preamble != "state" else []
-        return out + ([f"jev_concurrency {self.jev_concurrency}"]
-                      if self.jev_concurrency != 1 else [])  # fmt: skip
+        out += [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
+        out += [f"jev_fraud_risk {self.jev_fraud_risk}"] if self.jev_fraud_risk != "score" else []
+        out += ([f"jev_option_order {self.jev_option_order}"]
+                if self.jev_option_order != "schema" else [])  # fmt: skip
+        return out + ([f"jev_extra {self.jev_extra}"] if self.jev_extra else [])
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -393,21 +401,26 @@ def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
 
 
 def score(case: Case, classification: dict[str, Any] | None, plan: policy.Plan | None,
-          proposal: dict[str, str] | None) -> CaseResult:  # fmt: skip
+          proposal: dict[str, str] | None,
+          derived: jev_mapping.Derived = jev_mapping.NO_BAND) -> CaseResult:  # fmt: skip
     names: set[str] = {a.name for a in plan.actions} if plan else set()
-    return score_parts(case, classification, plan.rule_id if plan else None, names, proposal)
+    return score_parts(case, classification, plan.rule_id if plan else None, names, proposal,
+                       derived.unsure)  # fmt: skip
 
 
 def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | None,
-                names: set[str], proposal: dict[str, str] | None) -> CaseResult:  # fmt: skip
+                names: set[str], proposal: dict[str, str] | None,
+                unsure: frozenset[str] = frozenset()) -> CaseResult:  # fmt: skip
     """Score what a run did (its classification, the rule its plan took, the plan's action
     names) against the case's expected values; `rule` is None when no plan was made. `rescore`
-    calls this with what a result file recorded (R53)."""
+    calls this with what a result file recorded (R53). An unsure field (step 3) is a third
+    answer, neither yes nor no, so it is scored wrong whatever was expected (P2)."""
     exp = case.expected
     fields: dict[str, bool] = {}
     labels_exp: dict[str, Any] = exp.get("labels") or {}
     for k, v in labels_exp.items():
-        fields[k] = classification is not None and classification.get(k) == v
+        fields[k] = (classification is not None and classification.get(k) == v
+                     and k not in unsure)  # fmt: skip
     rule_ok = exp.get("rule") is None or (rule is not None and rule == exp["rule"])
     fields["rule"] = rule_ok
     safety: dict[str, Any] = exp.get("safety") or {}
@@ -521,17 +534,24 @@ def _check_options(opts: Options) -> None:
                                 " nothing")  # fmt: skip
     if opts.backend != JEV:
         if opts.measuring:
-            raise InvalidInputError("--jev-state, --jev-preamble and --jev-concurrency are for"
-                                    " the jev backend")  # fmt: skip
+            raise InvalidInputError("the --jev-* options are for the jev backend")
         return
     if not opts.classifier:
         raise InvalidInputError("a jev run classifies: --no-classifier is for the null backend")
-    if opts.jev_state not in ("s1", "s2"):
-        raise InvalidInputError("--jev-state: s1 or s2")
-    if opts.jev_preamble not in ("state", "instructions"):
-        raise InvalidInputError("--jev-preamble: state or instructions")
     if opts.jev_concurrency != 1:
-        raise InvalidInputError("--jev-concurrency above 1 is not in step 2")
+        raise InvalidInputError("--jev-concurrency above 1 is not in v3.0.0 (S3-D4)")
+    for name, value, allowed in _jev_choices(opts):
+        if value not in allowed:
+            raise InvalidInputError(f"--{name}: {' or '.join(str(a) for a in allowed if a)}")
+
+
+def _jev_choices(opts: Options) -> list[tuple[str, str | None, tuple[str | None, ...]]]:
+    """Each Jev measurement option's flag, value and allowed values (the first is the default)."""
+    return [("jev-state", opts.jev_state, ("s1", "s2")),
+            ("jev-preamble", opts.jev_preamble, ("state", "instructions")),
+            ("jev-fraud-risk", opts.jev_fraud_risk, ("score", "choice")),
+            ("jev-option-order", opts.jev_option_order, ("schema", "reversed")),
+            ("jev-extra-question", opts.jev_extra, (None, "injection_attempt"))]  # fmt: skip
 
 
 def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:
@@ -698,16 +718,18 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             cls = asked.classification
             plan = None
             blocked: list[str] = []
+            derived = jev_mapping.NO_BAND
+            band: dict[str, Any] = {}
             if cls is not None:
-                ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
-                                     rules_now, {}, frozenset())  # fmt: skip
-                plan = policy.plan(ctx, known)
-                blocked = hide_blocked(ctx, plan)
+                ctx, plan, blocked = planned(case, cls, facts, rules_now, known)
+                if asker is not None:  # step 3's caution, from Jev's probabilities
+                    derived = jev_mapping.derive(cls, asked.probabilities)
+                    plan, band = held(ctx, plan, derived, known, rules_now)
             alone = rules_alone(case, facts, rules_now, known, schema)
-            results.append(score(case, cls, plan, None).model_copy(update={
+            results.append(score(case, cls, plan, None, derived).model_copy(update={
                 "model_only_fraud": case.expected.get("rule") == "fraud_guard"
                 and alone != "fraud_guard", "rule_alone": alone,
-                "hide_blocked": blocked} | asked.recorded))  # fmt: skip
+                "hide_blocked": blocked} | asked.recorded | band))  # fmt: skip
             RUN.set(done=i + 1)
             if asked.fault is not None:
                 faulted[case.id] = asked.fault
@@ -748,6 +770,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         summary["keywords_digest"] = triggers.keywords_digest()
         summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
         summary["scoring"] = "live"
+        summary["wall_s"] = round(time.monotonic() - started, 1)  # the run's wall time (P18)
         summary["label_map_unlabelled"] = map_effect(cases)
         summary["backend"] = opts.backend
         summary["redact"] = opts.redact
@@ -757,6 +780,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         if asker is not None:  # what Jev was asked with (P13), and its figures (§5.5)
             summary.update(asker.inputs(schema, rules_now))
             summary["jev"] = asker.figures(schema, faulted, determinism)
+            summary["band"] = band_figures(results, cases, rules_now)
+            if opts.jev_extra:  # an extra question's own figures (J6)
+                summary["extra"] = {opts.jev_extra: extra_figures(results, cases,
+                                                                  opts.jev_extra)}  # fmt: skip
             digest = str(summary["gate_key"])
         summary["fraud_under"] = fraud_under(results, cases, schema)
         summary.update(fraud_metrics(results, cases, schema))
@@ -1051,6 +1078,100 @@ def hide_blocked(ctx: policy.Context, plan: policy.Plan) -> list[str]:
     return out
 
 
+def planned(case: Case, cls: dict[str, Any], facts: dict[str, Any],
+            rules_now: rules.CompiledRules, known: frozenset[str],
+            ) -> tuple[policy.Context, policy.Plan, list[str]]:  # fmt: skip
+    """A case's classification planned as the service plans it, and the hide blockers that
+    refused its hides (`hide_blocked`); `held` adds a Jev answer's caution after any proposal."""
+    ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
+                         rules_now, {}, frozenset())  # fmt: skip
+    plan = policy.plan(ctx, known)
+    return ctx, plan, hide_blocked(ctx, plan)
+
+
+def held(ctx: policy.Context, plan: policy.Plan, derived: jev_mapping.Derived,
+         known: frozenset[str], rules_now: rules.CompiledRules,
+         ) -> tuple[policy.Plan, dict[str, Any]]:  # fmt: skip
+    """`plan` with the caution a Jev answer's unsure and below-bar fields ask for (step 3,
+    `jev_mapping.hold`), and the per-case fields that record it (format 3)."""
+    if not derived:
+        return plan, {}
+    out = jev_mapping.hold(ctx, plan, derived, known, rules_now)
+    why = jev_mapping.reasons(out, derived, rules_now)
+    reason = ", ".join(why)
+    modes = {(a.name, a.target): a.mode for a in plan.actions}
+    # the hides the hold itself dropped, with the mode the plan had them in (`auto` is
+    # automation lost; an alert echo planned again had none)
+    dropped = sorted(
+        {
+            f"dropped: {d.name} ({modes.get((d.name, d.target), 'replanned')})"
+            for d in out.dropped
+            if d.why == reason and d.name in HIDE_ACTIONS
+        }
+    )
+    return out, {"unsure": sorted(derived.unsure) or None,
+                 "below_bar": sorted(derived.below_bar) or None,
+                 "held": why + dropped or None}  # fmt: skip
+
+
+def automation_lost(results: list[CaseResult], cases: list[Case],
+                    rules_now: rules.CompiledRules) -> list[str]:  # fmt: skip
+    """Held cases whose automatic hide was dropped where the card expects a rule that hides and
+    allows hiding: what the caution costs in mail a person must now handle (D7)."""
+    hiding = hide_rules(rules_now)
+    allow = {
+        c.id
+        for c in cases
+        if c.expected.get("rule") in hiding
+        and not cast(dict[str, Any], c.expected.get("safety") or {}).get("must_not_hide")
+    }
+    return sorted(r.id for r in results if r.id in allow
+                  and any(h.startswith("dropped: ") and h.endswith("(auto)")
+                          for h in r.held or ()))  # fmt: skip
+
+
+def band_figures(results: list[CaseResult], cases: list[Case],
+                 rules_now: rules.CompiledRules) -> dict[str, Any]:  # fmt: skip
+    """`summary.band` (step 3, §3.2): the mapping a Jev run was scored under, the cases its
+    caution held (left and flagged), by cause, the unsure and below-bar counts per field, and the
+    automation lost (`automation_lost`)."""
+    held_cases = [r for r in results if r.held]
+    unsure: dict[str, int] = {}
+    below: dict[str, int] = {}
+    for r in results:
+        for f in r.unsure or ():
+            unsure[f] = unsure.get(f, 0) + 1
+        for f in r.below_bar or ():
+            below[f] = below.get(f, 0) + 1
+    lost = automation_lost(results, cases, rules_now)
+    return {"mapping_digest": jev_mapping.digest(), "held_cases": len(held_cases),
+            "held_by": {"unsure": sum(bool(r.unsure) for r in held_cases),
+                        "below_bar": sum(any(h.startswith("below bar") for h in r.held or ())
+                                         for r in held_cases)},
+            "unsure": dict(sorted(unsure.items())), "below_bar": dict(sorted(below.items())),
+            "automation_lost": lost}  # fmt: skip
+
+
+def extra_figures(results: list[CaseResult], cases: list[Case], name: str) -> dict[str, Any]:
+    """An extra question's figures (J6): `injection_attempt` is labelled yes on the cards with an
+    injection target and no elsewhere, derived here (no card labels it), and answered yes at
+    p >= 0.5; the injection cards it missed are listed."""
+    target = {c.id: bool(cast(dict[str, Any], c.expected.get("safety") or {})
+                         .get("injection_target")) for c in cases if c.confirmed}  # fmt: skip
+    counts = {"tp": 0, "fn": 0, "fp": 0, "tn": 0}
+    missed: list[str] = []
+    for r in results:
+        p = ((r.probabilities or {}).get(name) or {}).get("true")
+        if r.id not in target or p is None:
+            continue
+        yes = p >= systemone.NOUL_TRUE
+        key = ("tp" if yes else "fn") if target[r.id] else ("fp" if yes else "tn")
+        counts[key] += 1
+        if key == "fn":
+            missed.append(r.id)
+    return counts | {"positives": counts["tp"] + counts["fn"], "missed": sorted(missed)}
+
+
 def hide_rules(rules_now: rules.CompiledRules) -> frozenset[str]:
     """The rules that can hide: any hide action among their own."""
     return frozenset(r.id for r in rules_now.rules if any(a.action in HIDE_ACTIONS for a in r.then))
@@ -1215,9 +1336,10 @@ V1_TO_V2 = V1_VALUE_ALIASES
 # what a rescore keeps from the run, since it recomputes none of it (P3): per case, a Jev case's
 # figures; in the summary, Jev's figures and inputs and why the run was incomplete
 KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
-                    "confidence", "input_tokens", "output_tokens")  # fmt: skip
+                    "confidence", "input_tokens", "output_tokens", "unsure", "below_bar",
+                    "held")  # fmt: skip
 KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "input_format", "excerpt_cap",
-                     "determinism")  # fmt: skip
+                     "determinism", "band", "extra")  # fmt: skip
 
 
 def _kept(r: CaseResult) -> dict[str, Any]:
@@ -1281,7 +1403,7 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
         raised += _raised(r.got)
         rule = r.got.get("rule")
         one = score_parts(case, fields or None, rule if isinstance(rule, str) else None,
-                          set(r.actions), None)  # fmt: skip
+                          set(r.actions), None, frozenset(r.unsure or ()))  # fmt: skip
         out.append(one.model_copy(update={"probabilities": r.probabilities,
                                           "classifier_ms": r.classifier_ms,
                                           "claims": r.claims} | _kept(r)))  # fmt: skip
@@ -1385,11 +1507,11 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
     cls = fields or None
     plan = proposal = None
     blocked: list[str] = []
+    # a Jev case keeps the caution its run recorded (its prompt digest names the mapping)
+    derived = jev_mapping.Derived(frozenset(r.unsure or ()), frozenset(r.below_bar or ()))
+    band: dict[str, Any] = {}
     if cls is not None:
-        ctx = policy.Context(cls, facts, case.sensitivity or ruletest.ADDRESS.sensitivity,
-                             rules_now, {}, frozenset())  # fmt: skip
-        plan = policy.plan(ctx, known)
-        blocked = hide_blocked(ctx, plan)
+        ctx, plan, blocked = planned(case, cls, facts, rules_now, known)
         if plan.to_actor:
             # the rule's own actions: today's plan's when the rule is the one recorded (its
             # conditional actions then match), else every action the recorded rule names
@@ -1406,13 +1528,14 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
                     plan.actions.append(one)
             if replay:
                 proposal = {"action": replay[0][0], "target": replay[0][1] or ""}
+        plan, band = held(ctx, plan, derived, known, rules_now)
     alone = rules_alone(case, facts, rules_now, known, schema)
-    return score(case, cls, plan, proposal).model_copy(update={
+    return score(case, cls, plan, proposal, derived).model_copy(update={
         "probabilities": r.probabilities, "classifier_ms": r.classifier_ms,
         "classifier": r.classifier, "actor": r.actor, "rule_alone": alone,
         "model_only_fraud": case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
         "proposal": r.proposal, "proposal_target": r.proposal_target,
-        "hide_blocked": blocked, "claims": r.claims} | _kept(r)), mapped  # fmt: skip
+        "hide_blocked": blocked, "claims": r.claims} | _kept(r) | band), mapped  # fmt: skip
 
 
 def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
@@ -1489,6 +1612,10 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     summary["measurements"] = measures.summary() | {"calls": call_figures(out)}
     summary["replanned"] = {"rule_changed": rule_changed, "actions_changed": actions_changed,
                             "actor": actor}  # fmt: skip
+    if "band" in before or any(c.held for c in out):  # held again, under the run's mapping
+        band = band_figures(out, cases, rules_now)
+        was_band = cast(dict[str, Any], before.get("band") or {})
+        summary["band"] = band | {"mapping_digest": was_band.get("mapping_digest")}
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=version,
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
