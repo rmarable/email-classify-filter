@@ -35,3 +35,13 @@ def digest_of(root: Traversable) -> str:
 def plugin_digest() -> str:
     """This install's plugin templates."""
     return digest_of(resources.files("ecf.data").joinpath("plugin"))
+
+
+@cache
+def actor_prompt_digest() -> str:
+    """SHA-256 of the actor's instructions as shipped (`agents/actor.md`, the template before its
+    agent name is filled in), so every actor agent shares it: part of the gate key (v3.0.1,
+    OD-523; SPEC §9.3)."""
+    return hashlib.sha256(
+        resources.files("ecf.data").joinpath("plugin", "agents", "actor.md").read_bytes()
+    ).hexdigest()

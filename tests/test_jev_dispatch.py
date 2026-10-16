@@ -157,7 +157,7 @@ def test_the_keys_are_stored_for_ds_pins(conn: sqlite3.Connection, clock: FakeCl
     assert doc["gate_key"] == jev.gate_key(s, rules.load_starter_rules(s))
     assert jev_keys.stored(conn) == doc
     pins = claude_pins.pins(conn, "D")
-    assert set(pins) == {"actor", "actor_high", "schema", "jev", "prompt"}
+    assert set(pins) == {"actor", "actor_high", "schema", "jev", "prompt", "actor_prompt"}
     assert pins["jev"] == doc["gate_key"] and pins["prompt"] == doc["prompt_digest"][:16]
     assert claude_pins.address_key(conn, "d") != claude_pins.key(claude_pins.pins(conn, "C"))
     clock.advance(5)

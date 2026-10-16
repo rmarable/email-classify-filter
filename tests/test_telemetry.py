@@ -224,9 +224,7 @@ def test_a_session_from_another_install_is_refused(
     assert refused.status_code == 409 and "different plugin" in refused.json()["detail"]
     assert api(state, "POST", "/v1/sessions", {"client": "2.2.0"}).status_code == 400
     assert api(state, "POST", "/v1/sessions", {"client": {"version": 2}}).status_code == 400
-    unchecked = api(state, "POST", "/v1/sessions").json()  # a client from before v2.2.0
-    work = unchecked["profile_token"]
-    refused = api(state, "POST", "/v1/eval/next", {}, token=work)
+    refused = api(state, "POST", "/v1/sessions")  # a client from before v2.2.0 (OD-523)
     assert refused.status_code == 409 and "older than the service" in refused.json()["detail"]
     monkeypatch.setattr(claude_eval, "progress", lambda: {"run_id": "abcd1234"})  # an eval open
     assert api(state, "POST", "/v1/sessions").status_code == 409

@@ -9,6 +9,8 @@ claude` sessions (OD-379). From v3.0.0 (ADR 0031) there is no local model pin; t
 is Claude's (`claude_review.prompt_digest`, P4), and `converted` names the addresses migration
 0038 converted from A or B to C and paused, with how many of their emails wait (P3), and
 `rules_customised` the applied rules' rules with a fixed id that stopped the v2 conversion (OD-508).
+From v3.0.1 `actor_prompt_digest` is the shipped actor's instructions' digest
+(`plugin_digest.actor_prompt_digest`, OD-523), in the gate key.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ecf import __version__
+from ecf import __version__, plugin_digest
 from ecf.errors import InvalidInputError
 from ecf.schema import load_schema
 from ecf_server import (
@@ -66,6 +68,8 @@ def state(conn: sqlite3.Connection, clock: Clock, *, api_version: int,
         # install's, with its schema extension, apart: an extension carries over an upgrade
         "prompt_digest": claude_review.prompt_digest(load_schema()),
         "effective_prompt_digest": claude_review.prompt_digest(config.current_schema(conn)),
+        # the shipped actor's instructions' digest, as release.json has it (v3.0.1, OD-523)
+        "actor_prompt_digest": plugin_digest.actor_prompt_digest(),
         # a stored extension, in force or not (OD-481): v2.2.0's upgrade check needs it (item 6)
         "extension_stored": config.current(conn)["schema"] is not None,
         # the C addresses a stored extension not yet in use would move to assist at the next

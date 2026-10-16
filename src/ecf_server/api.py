@@ -426,14 +426,11 @@ def _client_mismatch(what: str) -> ConflictError:
 
 def _client_checked(client: Any) -> bool:
     """`ecf claude`'s client against this install (v2.2.0; SPEC §10.3): a different version or
-    plugin is refused. A client too old to say (before v2.2.0) is refused while a Claude eval
-    is open, since the run's result would name prompts it didn't use; otherwise allowed and
-    logged, and its session can't run `/ecf-eval`."""
+    plugin is refused, and so is a client that doesn't say (v3.0.1, OD-523): every client since
+    v2.2.0 sends it, and an older one's session would review with instructions the gate key
+    doesn't name."""
     if client is None:
-        if claude_eval.progress() is not None:
-            raise _client_mismatch("is older than the service and an eval is open")
-        log.warning("session.client_unchecked")
-        return False
+        raise _client_mismatch("is older than the service")
     if not isinstance(client, dict):
         raise InvalidInputError("client must be an object")
     c = cast(dict[str, Any], client)

@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from ecf.cli import app
 from ecf.errors import ConflictError, InvalidInputError, StepupRequiredError
 from ecf.paths import Paths
+from ecf.plugin_digest import actor_prompt_digest
 from ecf.schema import load_schema
 from ecf_server import (
     claude_pins,
@@ -74,8 +75,12 @@ def test_each_preset_binds_what_it_uses(conn: sqlite3.Connection, clock: FakeClo
                                       "D": ("actor", "actor_high")}  # step 4  # fmt: skip
     assert claude_pins.PAIR == {"C": "claude/claude", "D": "jev/claude"}
     c = claude_pins.pins(conn, "C")
-    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt"}
+    assert set(c) == {"classifier", "classifier_high", "actor", "actor_high", "schema", "prompt",
+                      "actor_prompt"}  # fmt: skip
     assert c["prompt"] == claude_review.prompt_digest(load_schema())[:16]  # Q4
+    assert c["actor_prompt"] == actor_prompt_digest()[:16]  # OD-523
+    d = claude_pins.pins(conn, "D")  # held back from v3.0.0 (OD-516); its actor is Claude's
+    assert d["actor_prompt"] == c["actor_prompt"]
     assert claude_pins.key(c).startswith("pins-")
     assert claude_pins.key({"digest": DIGEST}) == DIGEST  # a pre-V1.4 record still reads
     for gone in ("A", "B"):
@@ -185,6 +190,25 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"  # unchanged pins
     _override(conn, clock, "claude-opus-5-6")  # every C gate role
+    stages.tick(conn, clock)
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
+
+
+def test_a_change_to_the_actors_instructions_drops_a_live_address_to_assist(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v3.0.1 (OD-523): `agents/actor.md` is in the gate key, so a release that edits it starts
+    every gate again."""
+    make_address(conn, clock, "assist")
+    _preset(conn, "C", "live")
+    g = gate.compute(conn, "ap")
+    with write_tx(conn):
+        gate.record(conn, g, clock.now(), passed=True)
+    before = claude_pins.address_key(conn, "ap")
+    stages.tick(conn, clock)
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"
+    monkeypatch.setattr(claude_pins, "actor_prompt_digest", lambda: "e" * 64)
+    assert claude_pins.address_key(conn, "ap") != before
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
 

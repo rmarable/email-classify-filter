@@ -79,7 +79,7 @@ from ecf.eval.results import (
     spawn_figures,
 )
 from ecf.ids import new_random_id
-from ecf.plugin_digest import plugin_digest
+from ecf.plugin_digest import actor_prompt_digest, plugin_digest
 from ecf.schema import CompiledSchema, read_bytes
 from ecf_server import (
     actor,
@@ -318,6 +318,7 @@ def models_for(conn: sqlite3.Connection, opts: Options,
         return models, True, claude_pins.key(claude_pins.pins(conn, opts.preset))
     keyed = {r: models[r] for r in used}
     keyed["schema"] = config.current_schema(conn).digest  # as in `claude_pins.pins` (OD-478)
+    keyed["actor_prompt"] = actor_prompt_digest()[:16]  # likewise (OD-523)
     if source_key is not None:
         keyed["jev" if opts.preset == jev_keys.PRESET else "source"] = source_key
     return models, False, "eval-" + claude_pins.key(keyed)
@@ -678,6 +679,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["rules_digest"] = rules.composed_digest(run.schema, None)  # as items (OD-507, P14)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
+    summary["actor_prompt_digest"] = actor_prompt_digest()  # the actor's instructions (OD-523)
     summary["keywords_digest"] = triggers.keywords_digest()
     summary["label_map_unlabelled"] = evalrun.map_effect([w.case for w in run.works])
     conn = connect()

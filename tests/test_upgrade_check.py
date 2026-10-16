@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 import ecf.cli_upgrade
-from ecf import __version__, upgrade_check
+from ecf import __version__, plugin_digest, upgrade_check
 from ecf.cli import app
 from ecf.errors import InvalidInputError
 from ecf.paths import Paths
@@ -35,6 +35,7 @@ LOCK = {"main_session": "claude-haiku-4-5-20251001", "classifier": "claude-haiku
         "classifier_high": "claude-sonnet-5-5", "actor": "claude-sonnet-5-5",
         "actor_high": "claude-opus-5-5"}  # fmt: skip
 PROMPT = "p" * 64
+ACTOR = "a" * 64  # the actor's instructions' digest (OD-523)
 
 
 def test_version_order() -> None:
@@ -47,12 +48,15 @@ def test_version_order() -> None:
 def _wheel(tmp: Path, *, version: str = "0.2.0", schema: int | None = None,  # noqa: PLR0913
            data_format: int = FORMAT, min_client: str = "0.1.0.dev0",
            lock: dict[str, str] | None = None, digest: str = "d" * 64, name: str = "w.whl",
-           classifier_schema: int = 2, prompt: str | None = PROMPT) -> Path:  # fmt: skip
+           classifier_schema: int = 2, prompt: str | None = PROMPT,
+           actor: str | None = ACTOR) -> Path:  # fmt: skip
     info = {"product": "email-classify-filter", "version": version, "api_version": 1,
             "data_format": data_format, "schema_version": SCHEMA if schema is None else schema,
             "min_client": min_client, "classifier_schema": classifier_schema}  # fmt: skip
     if prompt is not None:
         info["prompt_digest"] = prompt
+    if actor is not None:
+        info["actor_prompt_digest"] = actor
     path = tmp / name
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))
@@ -100,7 +104,8 @@ def test_install_detection(tmp_path: Path) -> None:
 def _state(**over: Any) -> dict[str, Any]:
     return {"version": "0.1.0", "schema_version": SCHEMA, "data_format": FORMAT - 1,
             "api_version": 1, "classifier_schema": 2, "prompt_digest": PROMPT,
-            "pins": LOCK | {"local": "d" * 64}, "pin_users": {"local": ["ap"], "actor": ["b"]},
+            "actor_prompt_digest": ACTOR, "pins": LOCK | {"local": "d" * 64},
+            "pin_users": {"local": ["ap"], "actor": ["b"]},
             "install_role": "test",
             "busy": {"executing": 0, "leases": 0, "claude_sessions": 0}} | over  # fmt: skip
 
@@ -126,9 +131,10 @@ def test_compare(tmp_path: Path) -> None:
 
 def test_a_new_classifier_schema_affects_every_address(tmp_path: Path) -> None:
     """OD-475: the schema digest is part of every gate key; a v1.0.0 service reports none (1)."""
-    v1 = {k: v for k, v in _state().items() if k not in ("classifier_schema", "prompt_digest")}
+    gone = ("classifier_schema", "prompt_digest", "actor_prompt_digest")
+    v1 = {k: v for k, v in _state().items() if k not in gone}
     r = upgrade_check.compare(v1, upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
-    assert r.pin_changes == ["schema", "prompt"] and r.affected == ["ap", "b"]
+    assert r.pin_changes == ["schema", "prompt", "actor_prompt"] and r.affected == ["ap", "b"]
     same = upgrade_check.compare(_state(), upgrade_check.read_wheel(_wheel(tmp_path)), "0.1.0")
     assert same.pin_changes == []
 
@@ -146,6 +152,27 @@ def test_a_new_prompt_affects_every_address(tmp_path: Path) -> None:
     none = upgrade_check.compare(_state(), upgrade_check.read_wheel(
         _wheel(tmp_path, prompt=None, name="n.whl")), "0.1.0")  # fmt: skip
     assert none.pin_changes == ["prompt"]
+
+
+def test_new_actor_instructions_affect_every_address(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
+    """OD-523: the actor's instructions are in the gate key from v3.0.1; a release without their
+    digest (3.0.0 and earlier) counts as new instructions, as does a service that doesn't report
+    one."""
+    rel = upgrade_check.read_wheel(_wheel(tmp_path, actor="b" * 64))
+    new = upgrade_check.compare(_state(), rel, "0.1.0")
+    assert new.pin_changes == ["actor_prompt"] and new.affected == ["ap", "b"]
+    v300 = {k: v for k, v in _state().items() if k != "actor_prompt_digest"}
+    old = upgrade_check.compare(v300, upgrade_check.read_wheel(
+        _wheel(tmp_path, name="v.whl")), "0.1.0")  # fmt: skip
+    assert old.pin_changes == ["actor_prompt"] and old.affected == ["ap", "b"]
+    none = upgrade_check.compare(_state(), upgrade_check.read_wheel(
+        _wheel(tmp_path, actor=None, name="n.whl")), "0.1.0")  # fmt: skip
+    assert none.pin_changes == ["actor_prompt"] and none.affected == ["ap", "b"]
+    ecf.cli_upgrade._print(rel, new, [])  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert "model pins that change: actor_prompt" in out
+    assert "the actor's instructions changed" in out
 
 
 def test_s4_stored_fields_not_yet_used_list_their_c_addresses(
@@ -202,6 +229,7 @@ def test_service_state(conn: sqlite3.Connection, clock: FakeClock) -> None:
     # what release.json carries (Q6): Claude's from v3.0.0 (R-D10, P4)
     shipped = claude_review.prompt_digest(load_schema())
     assert s["prompt_digest"] == shipped and s["effective_prompt_digest"] == shipped
+    assert s["actor_prompt_digest"] == plugin_digest.actor_prompt_digest()  # OD-523
     assert s["extension_stored"] is False and s["converted"] == []
     assert s["rules_customised"] == []
 
@@ -337,6 +365,22 @@ def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_pat
     later = _wheel(tmp_path, version="3.0.0", classifier_schema=3, prompt="g" * 64, name="l.whl")
     r = upgrade_check.after_upgrade("3.0.0", later, state | {"version": "3.0.1"})
     assert r.pin_changes == ["prompt"] and r.affected == ["ap", "b"]  # after 3.0: as before
+
+
+def test_after_an_upgrade_from_v2_the_actor_digest_arrives_unremarked(tmp_path: Path) -> None:
+    """P5 (OD-523): a 2.2.x wheel has no actor_prompt_digest; to 3.0.1 its arrival is expected
+    and moves no address. From 3.0.0, whose wheel lacks it too, it counts for every address."""
+    state = _state(version="3.0.1", classifier_schema=3, pins=LOCK,
+                   pin_users={"actor": ["ap", "b"]})  # fmt: skip
+    v2 = _wheel(tmp_path, version="2.2.3", classifier_schema=3, prompt="g" * 64, actor=None,
+                name="o.whl")  # fmt: skip
+    r = upgrade_check.after_upgrade("2.2.3", v2, state)
+    assert (r.pin_changes, r.affected) == ([], [])
+    v3 = _wheel(tmp_path, version="3.0.0", classifier_schema=3, actor=None, name="t.whl")
+    r = upgrade_check.after_upgrade("3.0.0", v3, state)
+    assert r.pin_changes == ["actor_prompt"] and r.affected == ["ap", "b"]
+    r = upgrade_check.after_upgrade("3.0.0", tmp_path / "gone.whl", state)  # unreadable: unknown
+    assert "actor_prompt" in r.pin_changes and r.affected == ["ap", "b"]
 
 
 # v3.0.0 step 5 (OD-508): rules with a fixed id are named after the upgrade, and the stub

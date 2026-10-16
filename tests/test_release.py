@@ -7,6 +7,7 @@ from importlib import resources
 from pathlib import Path
 
 from ecf import __version__
+from ecf.plugin_digest import actor_prompt_digest
 from ecf.schema import load_schema
 from ecf_server import api, claude_review, db, export_bundle
 
@@ -21,6 +22,7 @@ def test_release_json_matches_the_code() -> None:
     assert r["classifier_schema"] == load_schema().version
     # Claude's from v3.0.0 (ADR 0031, R-D10); a new wording: update it
     assert r["prompt_digest"] == claude_review.prompt_digest(load_schema())
+    assert r["actor_prompt_digest"] == actor_prompt_digest()  # in the gate key (OD-523)
     assert isinstance(r["min_client"], str)
 
 

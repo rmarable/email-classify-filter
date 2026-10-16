@@ -3,6 +3,7 @@ from typing import Any
 import anyio
 import httpx
 
+from ecf.claude_wrapper import client_doc
 from ecf.errors import PROBLEM_CONTENT_TYPE
 from ecf_server.api import ServiceState, create_app
 
@@ -59,19 +60,20 @@ def test_unknown_route_is_problem_json() -> None:
     assert r.status_code == 404 and body(r)["code"] == "not_found"
 
 
-def request(method: str, path: str, token: str | None = None) -> httpx.Response:
+def request(method: str, path: str, token: str | None = None,
+            json: Any = None) -> httpx.Response:  # fmt: skip
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     async def call() -> httpx.Response:
         transport = httpx.ASGITransport(app=APP)
         async with httpx.AsyncClient(transport=transport, base_url="http://ecf") as c:
-            return await c.request(method, path, headers=headers)
+            return await c.request(method, path, headers=headers, json=json)
 
     return anyio.run(call)
 
 
 def test_session_tokens() -> None:
-    made = request("POST", "/v1/sessions", "secret-token")
+    made = request("POST", "/v1/sessions", "secret-token", client_doc())
     assert made.status_code == 201
     work, sid = body(made)["profile_token"], body(made)["session_id"]
     assert body(made)["profile"] == "work"

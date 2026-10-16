@@ -21,7 +21,9 @@ OD-014, OD-273, OD-461, OD-474, OD-520, OD-521; V1.4 step 2).
   "unknown" before it has, so no gate passes on it). A and B were removed in v3.0.0 (ADR 0031).
   The main session classifies nothing, so it isn't a gate pin.
 - **Key**: what reviews, eval runs and the gate row are matched on: a short hash of the pins (a
-  record made before V1.4 holds preset A's Ollama digest, which `key` still reads).
+  record made before V1.4 holds preset A's Ollama digest, which `key` still reads). The pins
+  include `actor_prompt`, the digest of the actor's instructions (`agents/actor.md`) for both
+  presets, so a release that edits them starts every gate again (v3.0.1, OD-523).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.errors import ConflictError, InvalidInputError
+from ecf.plugin_digest import actor_prompt_digest
 from ecf_server import addresses, config, jev_keys, slack_admin, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -125,6 +128,7 @@ def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
 
     out = {r: eff[r] for r in GATE_ROLES[preset]}
     out["schema"] = schema.digest  # Claude classifies with it too (OD-475, OD-478)
+    out["actor_prompt"] = actor_prompt_digest()[:16]  # both presets' actor (OD-523)
     if preset == jev_keys.PRESET:  # Jev's gate key and prompt, for this schema (step 4, P6)
         k = jev_keys.stored(conn)
         current = k.get("schema") == schema.digest

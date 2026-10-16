@@ -321,12 +321,14 @@ PINS = LOCK | {"local": "d" * 64}
 
 
 PROMPT = "p" * 64  # a release.json prompt_digest (Q6)
+ACTOR = "a" * 64  # its actor_prompt_digest (OD-523)
 
 
 def _release_wheel(path: Path, version: str, classifier_schema: int | None,
-                   prompt: str | None = None) -> Path:  # fmt: skip
-    """A release wheel's data files; v1.x's release.json has no classifier_schema, and none
-    before v2.1.0 has a prompt_digest."""
+                   prompt: str | None = None, actor: str | None = ACTOR) -> Path:  # fmt: skip
+    """A release wheel's data files; v1.x's release.json has no classifier_schema, none before
+    v2.1.0 has a prompt_digest, and none before v3.0.1 an actor_prompt_digest (here it has one
+    unless told otherwise, so the other tests see no actor change)."""
     info: dict[str, Any] = {"product": "email-classify-filter", "version": version,
                             "api_version": 1, "data_format": 2, "schema_version": 33,
                             "min_client": "0.1.0"}  # fmt: skip
@@ -334,6 +336,8 @@ def _release_wheel(path: Path, version: str, classifier_schema: int | None,
         info["classifier_schema"] = classifier_schema
     if prompt is not None:
         info["prompt_digest"] = prompt
+    if actor is not None:
+        info["actor_prompt_digest"] = actor
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("ecf_server/data/release.json", json.dumps(info))
         z.writestr("ecf_server/data/models.lock", json.dumps(LOCK))
@@ -370,7 +374,8 @@ class NewService:
     (None, None, True, ["ap", "b"], ["schema", "prompt"]),  # from v1.0.0: its check saw nothing
     (2, PROMPT, True, [], []),  # nothing changed: no extra addresses
     (2, None, True, ["ap", "b"], ["prompt"]),  # from v2.0.0: no prompt digest yet (Q6)
-    (None, None, False, ["ap", "b"], ["schema", "prompt"]),  # unreadable: a 1.x had schema 1
+    # unreadable: a 1.x had schema 1, and its digests are unknown
+    (None, None, False, ["ap", "b"], ["schema", "prompt", "actor_prompt"]),
 ])  # fmt: skip
 def test_phase_two_names_addresses_the_old_check_could_not_see(  # noqa: PLR0913, PLR0917 - parameters
     paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -388,7 +393,7 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(  # noqa: PLR0913
         upgrade_run.start(paths, tools, old_version="1.0.0", new_version="2.0.0", new_wheel=new,
                           old_wheel=old, pin_changes=[], affected=[])  # fmt: skip
     service = NewService({"version": "2.0.0", "classifier_schema": 2, "prompt_digest": PROMPT,
-                          "pins": PINS,
+                          "actor_prompt_digest": ACTOR, "pins": PINS,
                           "pin_users": {"local": ["ap"], "actor": ["b"]}})  # fmt: skip
     monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
     tools, _m, _ran = _tools(paths)
@@ -453,7 +458,8 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
                           old_wheel=old, pin_changes=["local", "prompt"],
                           affected=["ap", "b"])  # fmt: skip
     service = NewService({"version": "3.0.0", "classifier_schema": 3, "prompt_digest": "c" * 64,
-                          "pins": LOCK, "pin_users": {"actor": ["ap", "b"]},
+                          "actor_prompt_digest": ACTOR, "pins": LOCK,
+                          "pin_users": {"actor": ["ap", "b"]},
                           "converted": [{"address_id": "ap", "from": "A", "waiting": 2}],
                           "rules_customised": [{"id": "phishing", "renamed_to": None,
                                                 "renamed_from": "spam_or_phishing"}]})  # fmt: skip
@@ -472,3 +478,33 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
     assert said in out
     assert "(OD-427)" in out
     assert "your rules file has a rule named phishing, which has the id of one of ecf's" in out
+
+
+def test_phase_two_from_3_0_0_says_the_actors_instructions_changed(
+    paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """v3.0.1 (OD-523, P3): a 3.0.0 phase 1 doesn't know the actor's digest and stores nothing;
+    the new CLI names every address, for the actor's instructions, not the model pins."""
+    old = _release_wheel(tmp_path / "old-3.0.0.whl", "3.0.0", 3, PROMPT, actor=None)
+    new = _release_wheel(tmp_path / "new-3.0.1.whl", "3.0.1", 3, PROMPT)
+    tools, _m, _ran = _tools(paths)
+    with pytest.raises(Handover):
+        upgrade_run.start(paths, tools, old_version="3.0.0", new_version="3.0.1", new_wheel=new,
+                          old_wheel=old, pin_changes=[], affected=[])  # fmt: skip
+    service = NewService({"version": "3.0.1", "classifier_schema": 3, "prompt_digest": PROMPT,
+                          "actor_prompt_digest": ACTOR, "pins": LOCK,
+                          "pin_users": {"actor": ["ap", "b"]}})  # fmt: skip
+    monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
+    tools, _m, _ran = _tools(paths)
+
+    def same(_p: Paths) -> upgrade_run.Tools:
+        return tools
+
+    monkeypatch.setattr(ecf.cli_upgrade, "_tools", same)
+    ecf.cli_upgrade._continue(paths)  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert service.finished[0]["pin_changes"] == ["actor_prompt"]
+    assert service.finished[0]["affected"] == ["ap", "b"]
+    assert "the actor's instructions changed: ap, b drop to assist" in out
+    assert "model pins changed" not in out

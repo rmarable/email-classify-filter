@@ -256,6 +256,7 @@ def _continue(p: Paths) -> None:
         changed = done.get("pin_changes", [])
         why = ("the classifier schema changed" if "schema" in changed
                else "the classifier prompt changed" if "prompt" in changed
+               else "the actor's instructions changed" if "actor_prompt" in changed
                else "model pins changed")  # fmt: skip
         names = done["affected"]
         typer.echo(f"{why}: {_drop(names)} to assist until {_their(names)} gate passes"
@@ -301,6 +302,8 @@ def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: l
     typer.echo(f"ecf {__version__} → {rel.version} ({rel.wheel.name})")
     if report.pin_changes:
         typer.echo(f"model pins that change: {', '.join(report.pin_changes)}")
+        if "actor_prompt" in report.pin_changes:  # OD-523: in the gate key from v3.0.1
+            typer.echo("  the actor's instructions changed")
         if report.affected:
             one = len(report.affected) == 1
             these = "this address drops" if one else "these addresses drop"

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ecf.claude_wrapper import client_doc
 from ecf.paths import Paths, default_root, paths_for
 from ecf_server.__main__ import dev_home_refusal
 from ecf_server.chat import Card, FakeChat, RouteRef
@@ -40,7 +41,8 @@ def test_dev_service(home: Path) -> None:
             assert bad.status_code == 400 and bad.json()["code"] == "invalid_input"
             assert c.get("/v1/dev/chat/posts", headers=auth(p)).json() == {"posts": []}
             assert c.delete("/v1/dev/chat/posts", headers=auth(p)).status_code == 200
-            work = c.post("/v1/sessions", headers=auth(p)).json()["profile_token"]
+            made = c.post("/v1/sessions", json=client_doc(), headers=auth(p)).json()
+            work = made["profile_token"]
             refused = c.get("/v1/dev/clock", headers={"Authorization": f"Bearer {work}"})
             assert refused.status_code == 403
     finally:
