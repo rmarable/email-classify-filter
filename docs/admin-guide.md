@@ -230,7 +230,7 @@ someone else's mail to a personal address without their agreement; ecf can't che
 mail just waits, nothing is skipped, and it carries on by itself.
 
 **"Mailbox Login Rejected" on Gmail:** changing your Google password cancels every app password
-([what to do](gmail-setup.md#using-an-app-password-instead)). Create a new one, then run
+([what to do](gmail-setup.md#after-a-password-change)). Create a new one, then run
 `ecf address set <address> --app-password`.
 
 ## Configuration
@@ -584,7 +584,7 @@ read. A manual export can still be brought in with its passphrase, using `ecf im
 computer:
 
 1. Cancel each mailbox's app password at your mail provider (Gmail:
-   [how](gmail-setup.md#using-an-app-password-instead)).
+   [how](gmail-setup.md#revoking-ecfs-access)).
 2. Cancel ecf's Slack tokens, or remove its app, in Slack.
 3. Sign ecf's Claude login out in your Claude account.
 
