@@ -72,8 +72,9 @@ mail on its own, like filing receipts. Fraud alerts always come to you either wa
 - **Slack**, where ecf sends alerts and you approve its suggestions. You need permission to add an
   app to your workspace.
 - **Claude Code** and a Claude account, for sorting everyday mail.
-- **For setup:** Python 3.12.6 or newer and [uv](https://docs.astral.sh/uv/), a tool that installs
-  Python programs.
+- **Nothing else to install first.** The install script below sets up the rest. If you'd rather
+  install by hand, you need [uv](https://docs.astral.sh/uv/), a tool that installs Python
+  programs, and Python 3.12 (3.12.6 or later) or 3.13.
 
 ecf works only while your Mac is on and awake. Nothing is lost while it's asleep (your email just
 waits), but nothing is checked either. If ecf stops checking during business hours, Slack tells
@@ -81,24 +82,39 @@ you.
 
 ## Getting started
 
-Open Terminal and download and install the latest version:
+Download `install-ecf-macos.sh` from the [latest release](https://github.com/rmarable/email-classify-filter/releases/latest)
+(under "Assets"). Open it in a text editor and read it first if you like; it's a plain script.
+Then open Terminal and run it:
 
 ```sh
-gh release download --repo rmarable/email-classify-filter --pattern '*'
-shasum -a 256 email_classify_filter-*.whl   # this number should match the one in SHA256SUMS
-uv tool install ./email_classify_filter-*.whl
+cd ~/Downloads
+sh install-ecf-macos.sh
 ```
 
-Then start the setup:
+The script:
+
+1. checks that FileVault and the screen lock are on;
+2. installs whatever is missing: uv, gh (GitHub's command-line tool, which ecf uses to download
+   upgrades) and Claude Code, each from its maker's own download, checked before use;
+3. downloads ecf, checks it against the checksums published with it, and installs it.
+
+It needs no administrator password and asks before changing your Terminal settings. Add
+`--dry-run` to see what it would do without changing anything, or `--homebrew` to install uv, gh
+and Claude Code with [Homebrew](https://brew.sh) instead.
+
+At the end it offers to sign you in to GitHub (needed later for upgrades) and to start the setup,
+`ecf init`. To start the setup yourself later, run:
 
 ```sh
 ecf init
 ```
 
+To install by hand instead, see the [admin guide](https://github.com/rmarable/email-classify-filter/blob/main/docs/admin-guide.md#install).
+
 The setup tells you what to have ready, then walks you through connecting Slack, adding your first
 mailbox, setting up backups and signing in to Claude. You can stop and come back later with
 `ecf init --resume`. If anything isn't working, `ecf doctor` tells you what's wrong and how to
-fix it.
+fix it. To remove ecf later, see [Removing ecf](https://github.com/rmarable/email-classify-filter/blob/main/docs/admin-guide.md#removing-ecf).
 
 ## Everyday use
 

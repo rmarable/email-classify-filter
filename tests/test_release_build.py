@@ -163,3 +163,23 @@ def test_main_writes_both_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert re.fullmatch(r"[0-9a-f]{40}", doc["commit"])
     assert doc["tag"] is None
     assert rb.sums_text(doc["files"]) == (out / "SHA256SUMS").read_text()
+
+
+def test_main_publishes_the_install_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both scripts are copied byte for byte and listed in SHA256SUMS and the manifest."""
+    out = tmp_path / "out"
+
+    def fake(o: Path, epoch: str) -> None:
+        del epoch
+        fake_build(o, "0.1.0.dev0")
+
+    monkeypatch.setattr(rb, "build", fake)
+    assert rb.main(["--out", str(out)]) == 0
+    doc = json.loads((out / "release-manifest.json").read_text())
+    for name in rb.SCRIPTS:
+        src = (SCRIPT.parent / name).read_bytes()
+        assert (out / name).read_bytes() == src
+        assert doc["files"][name] == hashlib.sha256(src).hexdigest()
+    assert rb.sums_text(doc["files"]) == (out / "SHA256SUMS").read_text()

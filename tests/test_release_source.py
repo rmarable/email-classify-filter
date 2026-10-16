@@ -46,12 +46,16 @@ def wheel_bytes(version: str) -> bytes:
     return buf.getvalue()
 
 
-def assets(tag: str, *, wheel_version: str | None = None) -> dict[str, bytes]:
-    """A release's assets as the release workflow publishes them (the R3 contract)."""
+def assets(tag: str, *, wheel_version: str | None = None, scripts: bool = False
+           ) -> dict[str, bytes]:  # fmt: skip
+    """A release's assets as the release workflow publishes them (the R3 contract); from v3.0.4
+    with the install and uninstall scripts too (`scripts`)."""
     version = release_source.tag_version(tag)
     whl = release_source.wheel_name(version)
     files = {whl: wheel_bytes(wheel_version or version),
              f"email_classify_filter-{version}.tar.gz": b"sdist"}  # fmt: skip
+    if scripts:
+        files |= {"install-ecf-macos.sh": b"#!/bin/sh\n", "uninstall-ecf-macos.sh": b"#!/bin/sh\n"}
     sums = {n: hashlib.sha256(b).hexdigest() for n, b in files.items()}
     files["SHA256SUMS"] = "".join(f"{h}  {n}\n" for n, h in sorted(sums.items())).encode()
     files["release-manifest.json"] = json.dumps(
@@ -150,6 +154,18 @@ def test_fetch_verifies_and_keeps_the_wheel(tmp_path: Path) -> None:
     assert upgrade_check.read_wheel(w).version == "1.0.0"
     assert oct(w.parent.stat().st_mode & 0o777) == "0o700"
     assert [p.name for p in (tmp_path / "releases").iterdir()] == ["v1.0.0"]  # no temp left
+
+
+def test_fetch_accepts_a_release_with_the_scripts(tmp_path: Path) -> None:
+    """The scripts are listed in SHA256SUMS and the manifest alike; only the wheel is fetched."""
+    fake = FakeGh({"v3.0.4": _rel("v3.0.4", scripts=True)})
+    w = release_source.fetch(fake.gh(), "v3.0.4", tmp_path / "releases" / "v3.0.4")
+    assert upgrade_check.read_wheel(w).version == "3.0.4"
+    assert sorted(p.name for p in w.parent.iterdir()) == [
+        "SHA256SUMS",
+        "email_classify_filter-3.0.4-py3-none-any.whl",
+        "release-manifest.json",
+    ]
 
 
 def _fails(tmp_path: Path, rel: dict[str, Any], tag: str, err: type[Exception], why: str) -> None:
