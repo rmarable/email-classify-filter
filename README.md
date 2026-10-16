@@ -14,6 +14,13 @@ Anyone who looks after a shared business mailbox, such as `billing@`, `invoices@
 `accounts@`, and worries about payment fraud. You don't need to be technical to use ecf day to
 day, but setting it up takes some comfort with the Terminal on a Mac.
 
+ecf works just as well on your personal email. It supports any mailbox you can reach over IMAP
+(the standard way mail programs read email) with an app password: Purelymail, personal Gmail,
+and other providers that offer both. When you add a mailbox, ecf checks that your provider has
+what it needs and tells you if anything is missing. So far only Purelymail and personal Gmail
+have been tested from start to finish; with other providers, that check when you add the mailbox
+is what tells you ecf can work with it.
+
 ## What happens when an email arrives
 
 Say a message lands in `billing@yourcompany.com` that claims to be from your usual supplier,
@@ -54,10 +61,10 @@ mail on its own, like filing receipts. Fraud alerts always come to you either wa
 
 - **A Mac**, with disk encryption (FileVault) and a screen lock turned on. ecf runs on your
   computer; there's no website or cloud service to sign up for.
-- **Your business email**, with an "app password". This is a separate password your email
-  provider gives you for programs like ecf, so ecf never needs your real one. Purelymail and
-  personal Gmail accounts work ([Gmail instructions](https://github.com/rmarable/email-classify-filter/blob/main/docs/gmail-setup.md)). Microsoft 365 and
-  Google Workspace don't work yet.
+- **Your email**, with an "app password". This is a separate password your email provider
+  gives you for programs like ecf, so ecf never needs your real one. Purelymail, personal Gmail
+  ([Gmail instructions](https://github.com/rmarable/email-classify-filter/blob/main/docs/gmail-setup.md)) and other IMAP providers that offer app passwords are
+  supported. Microsoft 365 and Google Workspace don't work yet.
 - **Slack**, where ecf sends alerts and you approve its suggestions. You need permission to add an
   app to your workspace.
 - **Claude Code** and a Claude account, for sorting everyday mail.
@@ -129,8 +136,9 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
 `v3.0.1` (2026-10-16) is the current version: a change to the instructions ecf gives Claude for
 proposing actions now sends live mailboxes back for the go-live test, as a model change does. It
-runs on macOS, for one person. Support for Linux, for teams and for an always-on version that
-doesn't need your Mac are planned. What changed in each version is in
+runs on macOS, for one person. Support for Linux, for teams, for an always-on version that
+doesn't need your Mac, and for connecting to Gmail directly through Google's own interface (which
+will also let Google Workspace accounts work) are planned. What changed in each version is in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## For developers
