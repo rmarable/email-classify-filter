@@ -29,13 +29,16 @@ while [ $# -gt 0 ]; do
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
+# uv takes a version range: 3.12 means 3.12.6 or later (ecf's floor), never an older 3.12.x it finds
 case "$python" in
-    3.12|3.13) ;;
+    3.12) py_spec=">=3.12.6,<3.13" ;;
+    3.13) py_spec=">=3.13,<3.14" ;;
     *) echo "--python takes 3.12 or 3.13; ecf isn't tested on $python" >&2; exit 2 ;;
 esac
 
 BIN="$HOME/.local/bin"
 ROOT="${ECF_HOME:-$HOME/Library/Application Support/ecf}"
+case "$ROOT" in /*) ;; *) ROOT="$PWD/$ROOT" ;; esac  # uv records the wheel's path; keep it absolute
 KEEP="$ROOT/_installer"         # not a valid install name, so ecf never takes it for one
 RECORD="$KEEP/install-record.json"
 ORIG_PATH="$PATH"
@@ -76,9 +79,15 @@ ver_ge() {
 
 sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
 
-# latest_tag OWNER/REPO: the tag GitHub's "latest release" page redirects to (no API, no login)
+# dl SECONDS FILE URL: download with retries, giving up on a connection that stalls
+dl() {
+    curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 2 --max-time "$1" -o "$2" "$3"
+}
+
+# latest_tag OWNER/REPO: where GitHub's "latest release" page redirects (no API, no login, no body)
 latest_tag() {
-    url=$(curl -fsSLo /dev/null -w '%{url_effective}' "$GITHUB/$1/releases/latest") ||
+    url=$(curl -fsS --connect-timeout 15 --retry 3 --retry-delay 2 --max-time 60 -o /dev/null \
+        -w '%{redirect_url}' "$GITHUB/$1/releases/latest") ||
         die "couldn't reach GitHub to find the latest release of $1"
     tag=${url##*/tag/}
     [ -n "$tag" ] && [ "$tag" != "$url" ] || die "GitHub didn't say which release of $1 is latest"
@@ -86,7 +95,8 @@ latest_tag() {
 }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/install-ecf.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"; exit 130' INT TERM  # Ctrl-C at a question stops; it never takes the default
 
 # How each prerequisite got here, for install-record.json: release, homebrew, official or "already"
 how_uv="already" how_gh="already" how_claude="already" path_line=0
@@ -122,6 +132,12 @@ case "$lock" in
 (\"Require password after screen saver begins or display is turned off\")." ;;
 esac
 
+if command -v ecf >/dev/null 2>&1 ||
+    { command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q "^email-classify-filter "; }; then
+    die "ecf is already installed ($(ecf --version 2>/dev/null || echo "version unknown")). To move
+to a newer release, use \`ecf upgrade\`; this script doesn't replace a working install."
+fi
+
 step "What ecf needs"
 if [ "$homebrew" = 1 ]; then
     command -v brew >/dev/null 2>&1 ||
@@ -137,8 +153,8 @@ install_uv() {
     base="$GITHUB/astral-sh/uv/releases/download/$tag"
     say "Downloading uv $tag from astral-sh/uv's GitHub releases"
     if [ "$dry" = 1 ]; then say "  (dry run) download $name, check it, put uv in $BIN"; return; fi
-    curl -fsSL -o "$TMP/$name" "$base/$name" || die "couldn't download $name"
-    curl -fsSL -o "$TMP/$name.sha256" "$base/$name.sha256" || die "couldn't download $name.sha256"
+    dl 600 "$TMP/$name" "$base/$name" || die "couldn't download $name"
+    dl 60 "$TMP/$name.sha256" "$base/$name.sha256" || die "couldn't download $name.sha256"
     want=$(awk '{print $1}' "$TMP/$name.sha256")
     [ "$(sha256_of "$TMP/$name")" = "$want" ] ||
         die "$name doesn't match its published sha256; nothing was installed"
@@ -158,8 +174,8 @@ install_gh() {
     base="$GITHUB/cli/cli/releases/download/$tag"
     say "Downloading gh $tag from cli/cli's GitHub releases"
     if [ "$dry" = 1 ]; then say "  (dry run) download $name, check it, put gh in $BIN"; return; fi
-    curl -fsSL -o "$TMP/$name" "$base/$name" || die "couldn't download $name"
-    curl -fsSL -o "$TMP/gh-sums" "$base/gh_${v}_checksums.txt" || die "couldn't download gh's checksums"
+    dl 600 "$TMP/$name" "$base/$name" || die "couldn't download $name"
+    dl 60 "$TMP/gh-sums" "$base/gh_${v}_checksums.txt" || die "couldn't download gh's checksums"
     want=$(awk -v n="$name" '$2 == n {print $1}' "$TMP/gh-sums")
     [ -n "$want" ] || die "gh's checksums don't list $name"
     [ "$(sha256_of "$TMP/$name")" = "$want" ] ||
@@ -179,7 +195,7 @@ install_claude() {
     else
         say "Downloading Claude Code's installer from claude.ai"
         if [ "$dry" = 1 ]; then say "  (dry run) run Anthropic's installer (claude.ai/install.sh)"; return; fi
-        curl -fsSL -o "$TMP/claude-install.sh" https://claude.ai/install.sh ||
+        dl 60 "$TMP/claude-install.sh" https://claude.ai/install.sh ||
             die "couldn't download Claude Code's installer"
         bash "$TMP/claude-install.sh" || die "Claude Code's installer failed"
         how_claude="official"
@@ -191,8 +207,9 @@ install_claude() {
         link=$(readlink "$real")
         case "$link" in /*) real=$link ;; *) real="$(dirname "$real")/$link" ;; esac
     done
-    if ! codesign --verify --strict "$real" 2>/dev/null ||
-        ! codesign -dvv "$real" 2>&1 | grep -q "^TeamIdentifier=$ANTHROPIC_TEAM\$"; then
+    # codesign's own requirement: an Apple-anchored Developer ID chain whose leaf is Anthropic's team
+    req="anchor apple generic and certificate leaf[subject.OU] = \"$ANTHROPIC_TEAM\""
+    if ! codesign --verify --strict -R="$req" "$real" 2>/dev/null; then
         die "$real isn't signed by Anthropic (team $ANTHROPIC_TEAM). Don't run it; remove it
 (Claude Code's uninstall steps: https://code.claude.com/docs/en/setup) and ask for help."
     fi
@@ -227,7 +244,8 @@ case ":$ORIG_PATH:" in
     *":$BIN:"*) ;;
     *)
         say "$BIN isn't on your PATH, so Terminal won't find uv, gh, claude or ecf there."
-        if ask "Add it to ~/.zprofile?" y; then
+        # only with a person at the keyboard (or --yes): piped input mustn't edit their profile
+        if { [ -t 0 ] || [ "$yes" = 1 ]; } && ask "Add it to ~/.zprofile?" y; then
             run sh -c "printf '\n# added by install-ecf-macos.sh\nexport PATH=\"\$HOME/.local/bin:\$PATH\"\n' >> \"\$HOME/.zprofile\""
             path_line=1
         else
@@ -236,10 +254,6 @@ case ":$ORIG_PATH:" in
 esac
 
 step "Downloading ecf"
-if command -v ecf >/dev/null 2>&1 || uv tool list 2>/dev/null | grep -q "^email-classify-filter "; then
-    die "ecf is already installed ($(ecf --version 2>/dev/null || echo "version unknown")). To move
-to a newer release, use \`ecf upgrade\`; this script doesn't replace a working install."
-fi
 tag=${version_arg:-$(latest_tag "$REPO")}
 case "$tag" in
     v[0-9]*.[0-9]*.[0-9]*) ;;
@@ -251,7 +265,7 @@ base="$GITHUB/$REPO/releases/download/$tag"
 say "ecf $tag from $GITHUB/$REPO/releases"
 if [ "$dry" = 0 ]; then
     for f in "$whl" SHA256SUMS release-manifest.json; do
-        curl -fsSL -o "$TMP/$f" "$base/$f" || die "couldn't download $f from release $tag"
+        dl 600 "$TMP/$f" "$base/$f" || die "couldn't download $f from release $tag"
     done
     have=$(sha256_of "$TMP/$whl")
     [ "$(awk -v n="$whl" '$2 == n {print $1}' "$TMP/SHA256SUMS")" = "$have" ] ||
@@ -261,7 +275,8 @@ nothing was installed"
         ! grep -q "^  \"version\": \"$version\"\$" "$TMP/release-manifest.json"; then
         die "release-manifest.json isn't for $tag; nothing was installed"
     fi
-    # The manifest's files and SHA256SUMS must list the same files with the same hashes.
+    # The manifest's files and SHA256SUMS must list the same files with the same hashes. These
+    # greps read release_build.manifest_text's layout (json.dumps, indent=2, sort_keys=True).
     sed -n '/^  "files": {/,/^  }/s/^    "\([^"]*\)": "\([0-9a-f]\{64\}\)",\{0,1\}$/\2  \1/p' \
         "$TMP/release-manifest.json" | sort >"$TMP/manifest-sums"
     grep -v '^$' "$TMP/SHA256SUMS" | sort >"$TMP/sums-sorted"
@@ -275,14 +290,14 @@ step "Installing ecf"
 # uv tool remembers the wheel it installed from, and `ecf upgrade` needs that file to stay put.
 dest="$KEEP/releases/$tag"
 if [ "$dry" = 1 ]; then
-    say "  (dry run) keep $whl in $dest; uv tool install --python $python <that wheel>"
+    say "  (dry run) keep $whl in $dest; uv tool install --python '$py_spec' <that wheel>"
 else
     mkdir -p "$ROOT" && chmod 0700 "$ROOT"
     mkdir -p "$dest"
     cp "$TMP/$whl" "$dest/$whl"
     [ "$(sha256_of "$dest/$whl")" = "$have" ] || die "the copy in $dest doesn't match"
     [ "$python" = 3.13 ] && say "Python 3.13: ecf's tests run on it on Linux, not on macOS."
-    uv tool install --python "$python" "$dest/$whl" || die "uv tool install failed"
+    uv tool install --python "$py_spec" "$dest/$whl" || die "uv tool install failed"
     say "Installed: $(ecf --version)"
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     cat >"$RECORD" <<EOF
@@ -316,6 +331,7 @@ fi
 step "Next: ecf init"
 say "ecf init sets up Slack, your first mailbox, backups and Claude, one step at a time."
 if [ "$dry" = 0 ] && [ -t 0 ] && ask "Start ecf init now?" y; then
+    rm -rf "$TMP"; trap - EXIT  # exec skips the EXIT trap
     exec ecf init
 fi
 say "When you're ready, open a new Terminal window and run: ecf init"

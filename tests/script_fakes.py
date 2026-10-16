@@ -1,9 +1,10 @@
 """Fake macOS commands and a fake GitHub for testing the install and uninstall scripts
 (scripts/install-ecf-macos.sh, scripts/uninstall-ecf-macos.sh; SPEC §17.4).
 
-Each script runs under /bin/sh with a temporary HOME and PATH = fakes, /usr/bin, /bin. The fakes
-log every call to `$LOG`; the fake curl serves files from `$FIX` by URL, so nothing touches the
-network or this Mac's real tools.
+Each script runs under /bin/sh with a temporary HOME and PATH = the fakes, then links to a fixed
+set of system tools (`SYSTEM_TOOLS`), never all of /usr/bin: GitHub's Linux runners ship a real gh
+there, which the install script would then find. The fakes log every call to `$LOG`; the fake curl
+serves files from `$FIX` by URL, so nothing touches the network or this computer's real tools.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import shutil
 import stat
 import subprocess
 import tarfile
@@ -24,6 +26,10 @@ INSTALL = REPO_ROOT / "scripts" / "install-ecf-macos.sh"
 UNINSTALL = REPO_ROOT / "scripts" / "uninstall-ecf-macos.sh"
 TEAM = "Q6L2SF6YDW"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+# What the scripts need from the system besides the fakes (gzip: tar -z runs it).
+SYSTEM_TOOLS = ("awk", "basename", "bash", "cat", "chmod", "cmp", "cp", "cut", "date", "dirname",
+                "grep", "gzip", "head", "id", "install", "ln", "mkdir", "mktemp", "readlink", "rm",
+                "sed", "sh", "shasum", "sort", "tar", "tr", "unzip")  # fmt: skip
 
 CURL = r"""#!/bin/sh
 out="" fmt="" url=""
@@ -31,6 +37,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -o|-*o) out=$2; shift 2 ;;
         -w) fmt=$2; shift 2 ;;
+        --connect-timeout|--retry|--retry-delay|--max-time) shift 2 ;;
         -*) shift ;;
         *) url=$1; shift ;;
     esac
@@ -102,10 +109,11 @@ MAC = {
     "sw_vers": "#!/bin/sh\necho 27.0\n",
     "fdesetup": '#!/bin/sh\necho "FileVault is ${FILEVAULT:-On}."\n',
     "sysadminctl": '#!/bin/sh\necho "sysadminctl[1] screenLock delay is immediate" >&2\n',
+    # passes only when asked to check a requirement naming the team that signed the binary
     "codesign": (
         '#!/bin/sh\necho "codesign $*" >>"$LOG"\n'
-        'case "$1" in --verify) exit "${CODESIGN_EXIT:-0}" ;; esac\n'
-        'echo "TeamIdentifier=${CODESIGN_TEAM:-' + TEAM + '}" >&2\n'
+        'case "$*" in *"leaf[subject.OU] = \\"${CODESIGN_TEAM:-' + TEAM + '}\\""*) exit 0 ;; esac\n'
+        "exit 1\n"
     ),
     "brew": '#!/bin/sh\necho "brew $*" >>"$LOG"\nexit 0\n',
 }
@@ -166,10 +174,16 @@ class Mac:
     def __post_init__(self) -> None:
         self.home = self.tmp / "home"
         self.fakes = self.tmp / "fakes"
+        self.system = self.tmp / "system"
         self.fix = self.tmp / "fix"
         self.log = self.tmp / "log"
         self.home.mkdir(parents=True)
         self.log.write_text("")
+        self.system.mkdir(parents=True)
+        for name in SYSTEM_TOOLS:
+            found = shutil.which(name, path="/usr/bin:/bin")
+            if found:
+                (self.system / name).symlink_to(found)
         for name, text in MAC.items():
             _exe(self.fakes / name, text)
         _exe(self.fakes / "curl", CURL)
@@ -197,20 +211,23 @@ class Mac:
         p.write_text(tag)
 
     def publish_tools(self) -> None:
-        """uv's and gh's release files, and Claude Code's installer, as their vendors publish."""
+        """uv's and gh's release files (both processors), and Claude Code's installer."""
         self.latest("astral-sh/uv", "0.13.1")
-        uv = _tar({"uv-aarch64-apple-darwin/uv": UV, "uv-aarch64-apple-darwin/uvx": UV})
         base = "https://github.com/astral-sh/uv/releases/download/0.13.1"
-        self.file(f"{base}/uv-aarch64-apple-darwin.tar.gz", uv)
-        self.file(f"{base}/uv-aarch64-apple-darwin.tar.gz.sha256",
-                  f"{sha(uv)}  uv-aarch64-apple-darwin.tar.gz\n".encode())  # fmt: skip
+        for arch in ("aarch64", "x86_64"):
+            name = f"uv-{arch}-apple-darwin"
+            uv = _tar({f"{name}/uv": UV, f"{name}/uvx": UV})
+            self.file(f"{base}/{name}.tar.gz", uv)
+            self.file(f"{base}/{name}.tar.gz.sha256", f"{sha(uv)}  {name}.tar.gz\n".encode())
         self.latest("cli/cli", "v2.102.0")
-        gh = _zip({"gh_2.102.0_macOS_arm64/bin/gh": GH, "gh_2.102.0_macOS_arm64/LICENSE": "MIT"})
         base = "https://github.com/cli/cli/releases/download/v2.102.0"
-        self.file(f"{base}/gh_2.102.0_macOS_arm64.zip", gh)
-        self.file(f"{base}/gh_2.102.0_checksums.txt",
-                  f"{'0' * 64}  gh_2.102.0_macOS_amd64.zip\n"
-                  f"{sha(gh)}  gh_2.102.0_macOS_arm64.zip\n".encode())  # fmt: skip
+        sums = ""
+        for arch in ("amd64", "arm64"):
+            name = f"gh_2.102.0_macOS_{arch}"
+            gh = _zip({f"{name}/bin/gh": GH, f"{name}/LICENSE": "MIT"})
+            self.file(f"{base}/{name}.zip", gh)
+            sums += f"{sha(gh)}  {name}.zip\n"
+        self.file(f"{base}/gh_2.102.0_checksums.txt", sums.encode())
         installer = (
             '#!/bin/bash\nmkdir -p "$HOME/.local/share/claude/versions" "$HOME/.local/bin"\n'
             f"cat >\"$HOME/.local/share/claude/versions/2.1.301\" <<'EOF'\n{CLAUDE}EOF\n"
@@ -255,7 +272,7 @@ class Mac:
         (d / "ecf.db").write_bytes(b"")
 
     def run(self, script: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
-        env = {"HOME": str(self.home), "PATH": f"{self.fakes}:/usr/bin:/bin", "LOG": str(self.log),
+        env = {"HOME": str(self.home), "PATH": f"{self.fakes}:{self.system}", "LOG": str(self.log),
                "FIX": str(self.fix), "TMPDIR": str(self.tmp), "LANG": "C"} | self.env  # fmt: skip
         return subprocess.run(["/bin/sh", str(script), *args], input=stdin, env=env,
                               capture_output=True, text=True, timeout=60, check=False)  # fmt: skip

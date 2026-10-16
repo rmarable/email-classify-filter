@@ -93,12 +93,13 @@ sh install-ecf-macos.sh
 
 The script:
 
-1. checks that FileVault and the screen lock are on;
+1. checks that FileVault is on, and warns you if the screen lock isn't;
 2. installs whatever is missing: uv, gh (GitHub's command-line tool, which ecf uses to download
    upgrades) and Claude Code, each from its maker's own download, checked before use;
 3. downloads ecf, checks it against the checksums published with it, and installs it.
 
-It needs no administrator password and asks before changing your Terminal settings. Add
+It needs no administrator password (unless you use Homebrew, below) and asks before changing your
+Terminal settings. Add
 `--dry-run` to see what it would do without changing anything, or `--homebrew` to install uv, gh
 and Claude Code with [Homebrew](https://brew.sh) instead.
 

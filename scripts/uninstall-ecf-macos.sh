@@ -8,7 +8,7 @@
 # Your mailboxes, and the mail in them, are never touched.
 set -eu
 
-dry=0
+dry=0 failed=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry=1; shift ;;
@@ -19,6 +19,7 @@ done
 
 BIN="$HOME/.local/bin"
 ROOT="${ECF_HOME:-$HOME/Library/Application Support/ecf}"
+case "$ROOT" in /*) ;; *) ROOT="$PWD/$ROOT" ;; esac
 KEEP="$ROOT/_installer"
 RECORD="$KEEP/install-record.json"
 PATH="$BIN:$PATH"
@@ -88,9 +89,10 @@ else
             continue
         fi
         if ask "Do you have a Slack configuration token to delete the Slack app too?" n; then
-            run ecf --install "$name" destroy --config-token || say "ecf destroy didn't finish for $name."
+            run ecf --install "$name" destroy --config-token || {
+                say "ecf destroy didn't finish for $name."; failed=1; }
         else
-            run ecf --install "$name" destroy || say "ecf destroy didn't finish for $name."
+            run ecf --install "$name" destroy || { say "ecf destroy didn't finish for $name."; failed=1; }
         fi
     done
 fi
@@ -100,7 +102,7 @@ left=$(installs)
 if [ -n "$left" ] && [ "$dry" = 0 ]; then
     say "Still installed: $(printf '%s' "$left" | tr '\n' ' '). ecf itself stays."
     say "Run this again when you want to remove those too."
-    exit 0
+    exit "$failed"
 fi
 if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q "^email-classify-filter "; then
     run uv tool uninstall email-classify-filter
@@ -120,7 +122,7 @@ say "  - any .ecfcorpus files you made, and their labels files"
 say "  - each mailbox's app password at your email provider: revoke it there"
 say "    (Gmail: https://myaccount.google.com/apppasswords)"
 say "  - the Slack app, unless you gave a configuration token (api.slack.com/apps)"
-if [ -d "$ROOT" ]; then
+if [ -d "$ROOT" ] && [ "$ROOT" != / ] && [ "$ROOT" != "$HOME" ] && [ "$ROOT" != "$HOME/" ]; then
     if ask "Delete ecf's leftover folder $ROOT (destroy records and kept release files)?" n; then
         run rm -rf "$ROOT"
     fi
@@ -136,8 +138,8 @@ remove_tool() { # name how
             esac ;;
         release)
             case "$1" in
-                uv) run uv cache clean || true
-                    run rm -f "$BIN/uv" "$BIN/uvx" ;;
+                uv) run rm -f "$BIN/uv" "$BIN/uvx"
+                    say "uv's download cache stays (other uv projects share it); \`uv cache dir\` shows where." ;;
                 gh) run rm -f "$BIN/gh" ;;
             esac ;;
         official) run rm -f "$BIN/claude"; run rm -rf "$HOME/.local/share/claude" ;;
