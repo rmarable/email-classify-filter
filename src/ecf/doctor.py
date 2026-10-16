@@ -63,7 +63,7 @@ def check_python() -> Check:
         return Check("python", Level.FAIL, found,
                      f"install Python {_v(MIN_PYTHON)}+ and reinstall ecf")  # fmt: skip
     if tuple(sys.version_info[:2]) > MAX_TESTED_PYTHON:
-        fix = "reinstall ecf with `uv tool install --force --python 3.12 <wheel>`"
+        fix = "reinstall ecf with `uv tool install --force --python '>=3.12.6,<3.13' <wheel>`"
         return Check("python", Level.WARN, f"{found} (ecf is tested on 3.12 and 3.13)", fix)
     return Check("python", Level.OK, found, "")
 

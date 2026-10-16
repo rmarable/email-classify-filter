@@ -22,7 +22,7 @@ def test_installs_a_verified_release_with_tools_already_here(tmp_path: Path) -> 
     assert r.returncode == 0, r.stdout + r.stderr
     kept = mac.root / "_installer" / "releases" / "v3.0.4" / whl
     assert kept.read_bytes() == b"wheel"
-    assert f"uv tool install --python 3.12 {kept}" in mac.calls()
+    assert f"uv tool install --python >=3.12.6,<3.13 {kept}" in mac.calls()
     assert "Verified:" in r.stdout and "can't show who published them" in r.stdout
     rec = json.loads((mac.root / "_installer" / "install-record.json").read_text())
     assert rec["ecf_tag"] == "v3.0.4" and rec["python"] == "3.12"
@@ -37,11 +37,12 @@ def test_installs_a_verified_release_with_tools_already_here(tmp_path: Path) -> 
 def test_installs_uv_gh_and_claude_from_their_vendors(tmp_path: Path) -> None:
     mac = Mac(tmp_path, tools=())
     mac.release()
-    r = mac.run(INSTALL, "--version", "v3.0.4", stdin="y\n")
+    r = mac.run(INSTALL, "--version", "v3.0.4", "--yes")
     assert r.returncode == 0, r.stdout + r.stderr
     for name in ("uv", "uvx", "gh", "claude"):
         assert (mac.bin / name).exists(), name
-    assert any(c.startswith("codesign --verify --strict") for c in mac.calls())
+    want = "codesign --verify --strict -R=anchor apple generic"
+    assert any(c.startswith(want) for c in mac.calls())
     rec = json.loads((mac.root / "_installer" / "install-record.json").read_text())
     assert (rec["uv"], rec["gh"], rec["claude_code"]) == ("release", "release", "official")
     assert rec["zprofile_path_line"] is True
@@ -159,4 +160,55 @@ def test_python_313_is_named_as_linux_tested(tmp_path: Path) -> None:
     r = mac.run(INSTALL, "--python", "3.13", stdin="n\n")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "tests run on it on Linux, not on macOS" in r.stdout
-    assert any(c.startswith("uv tool install --python 3.13 ") for c in mac.calls())
+    assert any(c.startswith("uv tool install --python >=3.13,<3.14 ") for c in mac.calls())
+
+
+def test_the_scripts_see_no_real_tools(tmp_path: Path) -> None:
+    """Only the fakes and SYSTEM_TOOLS are on PATH: a CI runner's real gh mustn't leak in."""
+    mac = Mac(tmp_path, tools=())
+    probe = tmp_path / "probe.sh"
+    probe.write_text("for t in uv gh claude ecf; do command -v $t && exit 1; done; exit 0\n")
+    r = mac.run(probe)
+    assert r.returncode == 0, r.stdout
+
+
+def test_piped_input_never_edits_zprofile(tmp_path: Path) -> None:
+    """Without a terminal or --yes, a "y" on stdin doesn't change the person's shell profile."""
+    mac = Mac(tmp_path)
+    mac.release()
+    r = mac.run(INSTALL, stdin="y\ny\ny\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (mac.home / ".zprofile").exists()
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in r.stdout
+
+
+def test_intel_mac_gets_the_x86_64_files(tmp_path: Path) -> None:
+    mac = Mac(tmp_path, tools=())
+    mac.env["ARCH"] = "x86_64"
+    mac.release()
+    r = mac.run(INSTALL, "--yes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = mac.calls()
+    assert any(c.endswith("/uv-x86_64-apple-darwin.tar.gz") for c in calls)
+    assert any(c.endswith("/gh_2.102.0_macOS_amd64.zip") for c in calls)
+
+
+def test_a_missing_release_file_stops_cleanly(tmp_path: Path) -> None:
+    mac = Mac(tmp_path)
+    whl = mac.release()
+    (mac.fix / "files" / "github.com/rmarable/email-classify-filter/releases/download/v3.0.4"
+     / whl).unlink()  # fmt: skip
+    r = mac.run(INSTALL)
+    assert r.returncode == 1
+    assert f"couldn't download {whl} from release v3.0.4" in r.stderr
+    assert not any(c.startswith("uv tool install") for c in mac.calls())
+    assert leftover_temp(tmp_path) == []
+
+
+def test_an_existing_install_stops_before_any_tool_is_installed(tmp_path: Path) -> None:
+    mac = Mac(tmp_path, tools=("uv",))
+    mac.release()
+    (mac.home / ".fake-uv-tools").write_text("email-classify-filter v3.0.2\n")
+    r = mac.run(INSTALL, "--yes")
+    assert r.returncode == 1 and "use `ecf upgrade`" in r.stderr
+    assert not (mac.bin / "gh").exists() and not (mac.home / ".zprofile").exists()

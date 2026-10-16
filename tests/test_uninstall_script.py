@@ -42,6 +42,16 @@ def test_destroys_each_install_then_removes_ecf(tmp_path: Path) -> None:
     assert (mac.root / "_installer").exists()
 
 
+def test_a_failed_destroy_exits_1(tmp_path: Path) -> None:
+    mac = Mac(tmp_path)
+    _installed(mac)
+    (mac.fakes / "ecf").write_text('#!/bin/sh\necho "ecf $*" >>"$LOG"\nexit 1\n')
+    r = mac.run(UNINSTALL, stdin="y\nn\n")
+    assert r.returncode == 1
+    assert "ecf destroy didn't finish for default." in r.stdout
+    assert not any(c.startswith("uv tool uninstall") for c in mac.calls())
+
+
 def test_a_kept_install_keeps_ecf(tmp_path: Path) -> None:
     mac = Mac(tmp_path)
     _installed(mac)
@@ -59,6 +69,7 @@ def test_tools_it_installed_are_kept_by_default_and_removed_on_yes(tmp_path: Pat
     assert r.returncode == 0, r.stdout + r.stderr
     assert (mac.bin / "uv").exists() and (mac.bin / "claude").exists()
     assert not (mac.bin / "gh").exists()
+    assert not any(c.startswith("uv cache") for c in mac.calls())
     assert "PATH line" in r.stdout
 
 
