@@ -7,6 +7,7 @@ name: ci
 on:
   workflow_dispatch:  # `gh workflow run ci.yml --ref <branch>`, when a push didn't start CI
   push:
+    branches: ["**"]  # not tags: a release tag's own run checks the commit (release.yml)
     paths-ignore: ["**/*.md", "docs/**", "planning-docs/**"]
   pull_request:
     branches: [main]
