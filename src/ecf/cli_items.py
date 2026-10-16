@@ -14,6 +14,7 @@ from ecf.paths import Paths
 from ecf.prompts import require_terminal
 from ecf.stepup import with_step_up
 from ecf.text import plain
+from ecf.upgrade_check import converted_notice
 
 PREVIEW = 20
 
@@ -163,9 +164,9 @@ def _decision_commands(app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         address: Annotated[str | None, typer.Argument(help="Address id or email.")] = None,
         every: Annotated[bool, typer.Option("--all", help="Every address.")] = False,
     ) -> None:
-        """Let ecf act on a paused address again. An address v3.0.0 converted from preset A or B
-        to C asks first whether its owner agreed to its mail going to Anthropic (a terminal is
-        needed; --all leaves it paused)."""
+        """Let ecf act on a paused address again. An address that was set up for a local model
+        ecf no longer has asks first whether its owner agreed to its mail going to Anthropic (a
+        terminal is needed; --all leaves it paused)."""
         if every or not address:
             typer.echo(_pause(address, every, "resume"))
             return
@@ -391,7 +392,7 @@ def _jev_agreed(c: LocalClient, ids: set[str]) -> bool:
 
 
 def _owner_agreed(c: LocalClient, ref: str) -> bool:
-    """For an address v3.0.0 converted to C and paused (`converted` in `GET /v1/upgrade/state`,
+    """For an address converted to C and paused (`converted` in `GET /v1/upgrade/state`,
     P3; operator decision 2026-10-14): ask, in a terminal, whether its owner agreed (OD-427).
     False when it needs no asking; "y" is True; anything else stops, saying how to remove it.
     The service checks it again: without `owner_agreed` it refuses (`pause.set_paused`)."""
@@ -409,9 +410,8 @@ def _owner_agreed(c: LocalClient, ref: str) -> bool:
         return _jev_agreed(c, ids)
     aid = str(rows[0]["address_id"])
     require_terminal()
-    typer.echo(f"{aid} used preset {rows[0]['from']}, whose local model v3.0.0 removed: it is now"
-               " preset C, and once resumed Claude (Anthropic) classifies its mail when you run"
-               " /ecf-review.")  # fmt: skip
+    typer.echo(f"{converted_notice(aid, int(rows[0].get('waiting') or 0))}. Once resumed,"
+               " Claude (Anthropic) classifies its mail when you run /ecf-review.")  # fmt: skip
     answer = typer.prompt(CONSENT_QUESTION, default="", show_default=False)
     if answer.strip().lower() == "y":
         return True

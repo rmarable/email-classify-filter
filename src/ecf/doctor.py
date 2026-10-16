@@ -1,6 +1,7 @@
 """`ecf doctor` (SPEC §13.2): the V1.0 checks, plus each milestone's own (Slack and step-up,
 Claude, and from V1.5 step 13a sending, alert email and backups). The local-model rows went in
-v3.0.0 (ADR 0031); the addresses it converted to C and paused are named until resumed (P3).
+v3.0.0 (ADR 0031); the addresses converted to C and paused (by v3.0.0's upgrade or an import
+of an older install's bundle) are named until resumed or removed (P3).
 
 Each check returns ok / warn / fail with the command that fixes it. Doctor reads SQLite directly
 (read-only) so it still works when the service is down.
@@ -28,6 +29,7 @@ from ecf.errors import EcfError, ServiceUnavailableError
 from ecf.paths import Paths
 from ecf.service_unit import ServiceManager, manager_for
 from ecf.status import CHECK_FAILED
+from ecf.upgrade_check import converted_notice
 
 MIN_PYTHON = (3, 12, 6)  # stricter address parsing (CVE-2023-27043, OD-454)
 MIN_SQLITE = (3, 37, 0)
@@ -377,9 +379,10 @@ def check_org_domains(paths: Paths) -> Check:
 
 
 def check_converted(paths: Paths) -> list[Check]:
-    """The addresses v3.0.0 converted from preset A or B to C and paused (migration 0038; ADR
-    0031, P3), from the service's `GET /v1/upgrade/state`: each one still paused is named until
-    resumed, which is the consent act (OD-427), or removed."""
+    """The addresses converted from preset A or B to C and paused (migration 0038, or an import
+    of a bundle from before v3.0.0; ADR 0031, P3), from the service's `GET /v1/upgrade/state`:
+    each one still paused is named until resumed, which is the consent act (OD-427), or
+    removed."""
     try:
         with LocalClient(paths) as c:
             st: dict[str, Any] = c.get("/v1/upgrade/state")
@@ -394,12 +397,11 @@ def judge_converted(rows: list[dict[str, Any]]) -> list[Check]:
     for r in rows:
         if not r.get("paused") or r.get("consented"):  # resumed, or paused since for another reason
             continue
-        aid, n = r["address_id"], int(r.get("waiting") or 0)
+        aid = str(r["address_id"])
         out.append(Check(f"converted {aid}", Level.WARN,
-                         f"was preset {r['from']}, now C and paused: its mail goes to Anthropic"
-                         f" once resumed; {n} email{'s' if n != 1 else ''} waiting",
-                         f"ecf resume {aid} once the account's owner agrees (OD-427), or ecf"
-                         f" address remove {aid}"))  # fmt: skip
+                         converted_notice(aid, int(r.get("waiting") or 0)),
+                         f"ecf resume {aid} once the account's owner agrees, or ecf address"
+                         f" remove {aid}"))  # fmt: skip
     return out
 
 

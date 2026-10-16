@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from ecf.paths import Paths
 from ecf.plugin_digest import actor_prompt_digest
 from ecf.schema import load_schema
 from ecf_server import (
+    classifier,
     claude_pins,
     claude_review,
     db,
@@ -211,6 +213,42 @@ def test_a_change_to_the_actors_instructions_drops_a_live_address_to_assist(
     assert claude_pins.address_key(conn, "ap") != before
     stages.tick(conn, clock)
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
+
+
+@pytest.fixture
+def fresh_prompts() -> Iterator[None]:
+    """`classifier._PROMPTS` keeps a prompt digest per schema for the whole process: cleared
+    around a test that patches what goes into it, so a patched value can't reach another test."""
+    classifier._PROMPTS.clear()  # pyright: ignore[reportPrivateUsage]
+    yield
+    classifier._PROMPTS.clear()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.usefixtures("fresh_prompts")
+def test_a_change_to_the_classifiers_instructions_moves_cs_key_only(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v3.0.2 (OD-524): `agents/classifier.md` is in `claude_review.prompt_digest`, so a release
+    that edits it starts every C gate again; D's `prompt` is Jev's and doesn't move."""
+    make_address(conn, clock, "assist")
+    _preset(conn, "C", "live")
+    g = gate.compute(conn, "ap")
+    with write_tx(conn):
+        gate.record(conn, g, clock.now(), passed=True)
+    schema = load_schema()
+    digest = claude_review.prompt_digest(schema)
+    key, d_pins = claude_pins.address_key(conn, "ap"), claude_pins.pins(conn, "D")
+    stages.tick(conn, clock)
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "live"
+    monkeypatch.setattr(claude_review, "classifier_prompt_digest", lambda: "e" * 64)
+    assert claude_review.prompt_digest(schema) != digest
+    assert claude_pins.address_key(conn, "ap") != key
+    assert claude_pins.pins(conn, "D") == d_pins
+    stages.tick(conn, clock)
+    assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
+    data = conn.execute("SELECT data FROM audit WHERE event = 'stage.changed'"
+                        " ORDER BY id DESC LIMIT 1").fetchone()[0]  # fmt: skip
+    assert "the classifier's or actor's instructions" in json.loads(data)["reason"]
 
 
 def test_the_override_from_the_cli(home: Path) -> None:

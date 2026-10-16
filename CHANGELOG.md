@@ -3,6 +3,11 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- A release that changes the instructions ecf gives Claude for classifying mail now sends live mailboxes back to assist until they pass the go-live test again, as a model change does. Upgrading to this release does it once, for every live mailbox (OD-524).
+- Upgrades no longer repeat the notice about mailboxes converted at v3.0.0; only the upgrade from 2.x to 3.x shows it. The notice, `ecf doctor` and `ecf resume` now describe such a mailbox the same plain way: set up for a local model ecf no longer has, now using Claude and paused until the account's owner agrees to their mail going to Anthropic (OD-524).
+
 ## v3.0.1 (2026-10-16)
 
 - A release that changes the instructions ecf gives Claude for proposing actions now sends every live mailbox back to assist until it passes the go-live test again, as a model change does; `ecf upgrade` names them and eval comparisons warn about "different actor instructions". Upgrading to this release does it once, for every live mailbox (OD-523).

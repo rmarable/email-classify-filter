@@ -6,8 +6,9 @@ force (the lock file's pins, before any `claude_model_override`, since a release
 file) and which addresses use each one (the gate's roles per preset), the install role (`prod`
 refuses `--wheel`), and what makes an upgrade wait: executing items, held leases, and open `ecf
 claude` sessions (OD-379). From v3.0.0 (ADR 0031) there is no local model pin; the prompt digest
-is Claude's (`claude_review.prompt_digest`, P4), and `converted` names the addresses migration
-0038 converted from A or B to C and paused, with how many of their emails wait (P3), and
+is Claude's (`claude_review.prompt_digest`, P4; from v3.0.2 it covers the classifier agent's
+instructions too), and `converted` names the addresses migration 0038 or an import converted
+from A or B to C and paused, with how many of their emails wait (P3), and
 `rules_customised` the applied rules' rules with a fixed id that stopped the v2 conversion (OD-508).
 From v3.0.1 `actor_prompt_digest` is the shipped actor's instructions' digest
 (`plugin_digest.actor_prompt_digest`, OD-523), in the gate key.

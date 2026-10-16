@@ -2,8 +2,9 @@
 OD-507, plan v3.0.0-STEP5 §4; D9-D11, P3, P5, P8, P14-P16).
 
 Mail ecf holds is decided again after its classifier, prompt, schema or rules changed. The key
-(`classifier.store` writes it to `pinned_models`): `provider`, `classifier` (model id), `prompt`,
-`schema` and `rules` (`rules.composed_digest`). Outside it, stated: the actor's pins, the action
+(`classifier.store` writes it to `pinned_models`): `provider`, `classifier` (model id), `prompt`
+(for C, with the classifier's instructions from v3.0.2, OD-524), `schema` and `rules`
+(`rules.composed_digest`). Outside it, stated: the actor's pins, the action
 policy, move folders, sensitivity, templates and forwards (`--force` covers them); no ecf version.
 
 - **Eligible:** status `observed` or `executed` (an allow-list), not reviewed or corrected

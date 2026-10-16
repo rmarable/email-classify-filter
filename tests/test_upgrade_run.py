@@ -373,7 +373,7 @@ class NewService:
 @pytest.mark.parametrize(("old_schema", "old_prompt", "readable", "affected", "changes"), [
     (None, None, True, ["ap", "b"], ["schema", "prompt"]),  # from v1.0.0: its check saw nothing
     (2, PROMPT, True, [], []),  # nothing changed: no extra addresses
-    (2, None, True, ["ap", "b"], ["prompt"]),  # from v2.0.0: no prompt digest yet (Q6)
+    (2, None, True, ["b"], ["prompt"]),  # from v2.0.0: no prompt digest yet (Q6); C's only
     # unreadable: a 1.x had schema 1, and its digests are unknown
     (None, None, False, ["ap", "b"], ["schema", "prompt", "actor_prompt"]),
 ])  # fmt: skip
@@ -394,7 +394,8 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(  # noqa: PLR0913
                           old_wheel=old, pin_changes=[], affected=[])  # fmt: skip
     service = NewService({"version": "2.0.0", "classifier_schema": 2, "prompt_digest": PROMPT,
                           "actor_prompt_digest": ACTOR, "pins": PINS,
-                          "pin_users": {"local": ["ap"], "actor": ["b"]}})  # fmt: skip
+                          "pin_users": {"local": ["ap"], "classifier": ["b"],
+                                        "actor": ["b"]}})  # fmt: skip
     monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
     tools, _m, _ran = _tools(paths)
 
@@ -408,9 +409,10 @@ def test_phase_two_names_addresses_the_old_check_could_not_see(  # noqa: PLR0913
     assert service.finished[0]["pin_changes"] == changes
     state = upgrade_run.read_state(paths)
     assert state is not None and state["affected"] == affected
-    if affected:
-        why = "schema" if "schema" in changes else "prompt"
-        assert f"the classifier {why} changed: ap, b drop to assist" in out
+    if "schema" in changes:
+        assert "the classifier schema changed: ap, b drop to assist" in out
+    elif affected:
+        assert "the classifier's instructions or prompt changed: b drops to assist" in out
     else:
         assert "drop to assist" not in out
     assert "ecf 2.0.0 is running (was 1.0.0)" in out
@@ -474,9 +476,10 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
     out = capsys.readouterr().out
     assert service.finished[0]["affected"] == [] and service.finished[0]["pin_changes"] == []
     assert "drop to assist" not in out
-    said = "ap was preset A, whose local model is removed: now C and paused, 2 emails waiting"
+    said = ("ap was set up for a local model ecf no longer has; it now uses Claude and stays"
+            " paused until the account's owner agrees to their mail going to Anthropic; 2 emails"
+            " waiting: ecf resume ap once they agree, or ecf address remove ap")  # fmt: skip
     assert said in out
-    assert "(OD-427)" in out
     assert "your rules file has a rule named phishing, which has the id of one of ecf's" in out
 
 
@@ -508,3 +511,37 @@ def test_phase_two_from_3_0_0_says_the_actors_instructions_changed(
     assert service.finished[0]["affected"] == ["ap", "b"]
     assert "the actor's instructions changed: ap, b drop to assist" in out
     assert "model pins changed" not in out
+
+
+def test_phase_two_from_3_0_1_names_c_addresses_for_the_prompt_and_no_conversion(
+    paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    """v3.0.2 (P1, P2, P8): a new prompt digest (classifier.md is in it) moves the C addresses
+    only, with the reason saying so; the service still reports v3.0.0's converted address, which
+    only the crossing from 2.x prints (doctor names it)."""
+    old = _release_wheel(tmp_path / "old-3.0.1.whl", "3.0.1", 3, PROMPT)
+    new = _release_wheel(tmp_path / "new-3.0.2.whl", "3.0.2", 3, "q" * 64)
+    tools, _m, _ran = _tools(paths)
+    with pytest.raises(Handover):
+        upgrade_run.start(paths, tools, old_version="3.0.1", new_version="3.0.2", new_wheel=new,
+                          old_wheel=old, pin_changes=["prompt"], affected=["ap"])  # fmt: skip
+    users = {"classifier": ["ap"], "classifier_high": ["ap"], "actor": ["ap", "dj"],
+             "actor_high": ["ap", "dj"], "jev": ["dj"]}  # fmt: skip
+    service = NewService({"version": "3.0.2", "classifier_schema": 3, "prompt_digest": "q" * 64,
+                          "actor_prompt_digest": ACTOR, "pins": LOCK, "pin_users": users,
+                          "converted": [{"address_id": "ap", "from": "A", "waiting": 2,
+                                         "paused": True, "consented": False}]})  # fmt: skip
+    monkeypatch.setattr(ecf.upgrade_run, "LocalClient", service)
+    tools, _m, _ran = _tools(paths)
+
+    def same(_p: Paths) -> upgrade_run.Tools:
+        return tools
+
+    monkeypatch.setattr(ecf.cli_upgrade, "_tools", same)
+    ecf.cli_upgrade._continue(paths)  # pyright: ignore[reportPrivateUsage]
+    out = capsys.readouterr().out
+    assert service.finished[0]["pin_changes"] == ["prompt"]
+    assert service.finished[0]["affected"] == ["ap"]  # not dj, preset D
+    assert "the classifier's instructions or prompt changed: ap drops to assist" in out
+    assert "local model" not in out and "ecf resume" not in out
