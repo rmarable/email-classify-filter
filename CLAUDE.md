@@ -103,6 +103,7 @@ uv build                                  # wheel + sdist
 ## Documentation style
 
 - Terse, precise, for a semi-technical reader; no filler.
+- **User-facing docs** (operator decision 2026-10-16): `README.md`, `docs/operator-guide.md`, `docs/admin-guide.md` and `docs/gmail-setup.md` are written for someone new to ecf who doesn't know what it does or how it works. Plain sentences in the second person; explain a term the first time it appears (step-up, stage, app password); worked examples over lists of conditions. No OD, ADR or SPEC § references, version-history asides or internal names (presets, rule ids, milestone codes) in their text; link to SPEC or the CHANGELOG for detail instead. Every edit keeps that standard, including small ones (a new flag, a release's Status line): don't drift back to spec-style. The style rules above still apply to SPEC, ADRs, CHANGELOG, CONTRIBUTING and planning docs.
 - One owner per topic: SPEC (design, threat model, limits), SECURITY.md (vulnerability reporting, supported versions, a summary pointing to SPEC), CONTRIBUTING (how-to only).
 - A "verified" fact cites its site and date; anything else reads "unverified, confirm in V1.x". "(rv)" marks a fact verified by a reviewer's cited source and not re-checked by Claude.
 - **Haiku versions** (operator decision 2026-10-12): a statement about Haiku 4.5's results or behaviour names 4.5 and says how Haiku 5.5 compares ("Haiku 5.5 not measured in this role" until it is). Model IDs in tests and fixtures aren't statements.

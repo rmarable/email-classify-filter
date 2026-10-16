@@ -1,126 +1,130 @@
-# Setting up a Gmail account for ecf
+# Getting a Gmail account ready for ecf
 
-What to do on Google's side before `ecf address add` watches a personal Gmail address
-(`@gmail.com` or `@googlemail.com`). ecf's side is in the [admin guide](admin-guide.md#gmail).
-`SPEC.md` is authoritative (§1.1, §12.2, §18). Facts about Google cite Google's own help pages,
-with the date they were checked.
+ecf can watch a personal Gmail account (an address ending in `@gmail.com` or `@googlemail.com`).
+Before you add it to ecf, a few things need setting up on Google's side. This guide walks through
+them. It takes about five minutes.
+
+Once you're done, add the account to ecf as the [admin guide](admin-guide.md#gmail) describes.
 
 ## What you need
 
-- A **personal** Google account. Work, school and organization accounts (Google Workspace) can't
-  have app passwords ([Google](https://support.google.com/accounts/answer/185833), checked
-  2026-10-05); ecf reaches them only with the Gmail API, roadmap milestone M6 (SPEC §1.2).
-- **2-Step Verification** turned on for that account.
-- An **app password** made for ecf.
+- **A personal Google account.** Work and school accounts (Google Workspace) won't work yet.
+  Google doesn't let them create the kind of password ecf needs.
+- **2-Step Verification** turned on for the account (step 1).
+- **An app password** for ecf (step 2).
 
-## App passwords
+## What's an app password?
 
-An app password is "a 16-digit passcode that gives a less secure app or device permission to
-access your Google Account" ([Google](https://support.google.com/accounts/answer/185833), checked
-2026-10-05). ecf uses it to read and act on the mailbox over IMAP and, once you turn sending on,
-to send over SMTP (both tested, SPEC §18). Anyone who has it can read and send your mail, so
-treat it like the account password.
-Google adds that app passwords "aren't recommended and are unnecessary in most cases"
-([Google](https://support.google.com/mail/answer/7126229), checked 2026-10-05); ecf needs one
-because v1 uses IMAP, not the Gmail API.
+ecf needs to log in to your mailbox to read and sort your mail, and later, if you turn it on, to
+send email for you. You don't give ecf your real Google password for that. Instead, Google lets
+you create an **app password**: a separate 16-character code that only works for reading and
+sending mail, and that you can cancel at any time without changing your real password.
 
-**Accounts that can't have one** ([Google](https://support.google.com/accounts/answer/185833),
-checked 2026-10-05):
+Treat it like your real password: anyone who has it can read and send your email. ecf stores it
+in your Mac's Keychain and nowhere else.
+
+Google says app passwords aren't recommended in most cases, because most apps can sign in to
+Google directly. ecf can't do that yet (support is planned), so for now it needs one.
+
+**Some accounts can't create app passwords:**
 
 - work, school or other organization accounts;
-- accounts with Advanced Protection;
-- accounts whose 2-Step Verification is set up only for security keys.
+- accounts using Google's Advanced Protection;
+- accounts where 2-Step Verification only uses security keys.
 
-**Changing the Google password revokes them:** "we revoke your app passwords when you change your
-Google Account password" ([Google](https://support.google.com/accounts/answer/185833), checked
-2026-10-05). After a password change ecf's logins fail; see
-[After a password change](#after-a-password-change).
+**Changing your Google password cancels every app password.** If you do, ecf stops being able to
+log in until you give it a new one. See [After a password change](#after-a-password-change).
 
 ## Step 1: turn on 2-Step Verification
 
-Open [myaccount.google.com/signinoptions/two-step-verification](https://myaccount.google.com/signinoptions/two-step-verification),
-or in your Google Account choose **Security & sign-in**, then under "How you sign in to Google"
-**Turn on 2-Step Verification**, and follow the steps
-([Google](https://support.google.com/accounts/answer/185839), checked 2026-10-05).
+Go to [myaccount.google.com/signinoptions/two-step-verification](https://myaccount.google.com/signinoptions/two-step-verification)
+and follow the steps. (Or, in your Google Account, open **Security & sign-in** and choose **Turn
+on 2-Step Verification**.)
 
 ## Step 2: create an app password
 
-1. Open [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and sign in
-   ([Google](https://support.google.com/accounts/answer/185833), checked 2026-10-05).
-2. Follow the page's steps. If it asks for a name, use one you'll recognise later, such as
-   `ecf on <computer>`.
-3. Type the 16-digit passcode Google shows into `ecf address add` when it asks (the prompt is
-   hidden). Don't save it in a file, a note or a chat; ecf keeps it in the macOS Keychain.
+1. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and sign
+   in.
+2. Follow the steps. When it asks for a name, pick one you'll recognise later, such as
+   `ecf on my MacBook`.
+3. Google shows you the 16-character code once. Type it into `ecf address add` when it asks (what
+   you type stays hidden). Don't save it in a file, a note or a chat message.
 
-Make one app password per computer, so you can revoke one without the others.
+Make a separate app password for each computer that runs ecf, so you can cancel one without
+affecting the others.
 
 ## Step 3: check two Gmail settings
 
-In Gmail on the web, open **Settings** (the gear), then **See all settings**.
+In Gmail on the web, click the gear icon, then **See all settings**.
 
-- **Forwarding and POP/IMAP, Folder size limits:** leave it at "Do not limit the number of
-  messages in an IMAP folder". The setting "limit[s] IMAP folders to contain no more than this
-  many messages" ([Google](https://support.google.com/mail/answer/7126229), checked 2026-10-05).
-  With a limit, ecf sees only part of your inbox and would treat the rest as handled elsewhere.
-  `ecf doctor` warns when it finds fewer messages over IMAP than Gmail's own search does.
-- **Labels, All Mail:** keep **Show in IMAP** ticked. ecf archives by moving mail to All Mail, so
-  without it archive actions are refused and `ecf doctor` warns. Google describes the **Show in
-  IMAP** box on a page written for Workspace users
-  ([Google](https://support.google.com/a/users/answer/11339703), checked 2026-10-05); that personal
-  accounts show the same box is unverified on Google's pages. All Mail was shown over IMAP on ecf's
-  personal test account (SPEC §18, 2026-10-05).
+- **Forwarding and POP/IMAP → Folder size limits:** make sure it says **Do not limit the number
+  of messages in an IMAP folder**. With a limit, ecf only sees part of your inbox and would treat
+  the rest as already dealt with. `ecf doctor` warns you if this looks wrong.
+- **Labels → All Mail:** make sure **Show in IMAP** is ticked. ecf archives an email by moving it
+  to All Mail, so without this, archiving fails and `ecf doctor` warns you.
 
-IMAP itself needs no switch: "IMAP access is always turned on in Gmail"
-([Google](https://support.google.com/mail/answer/7126229), checked 2026-10-05).
+You don't need to turn IMAP on; Gmail always has it on.
 
 ## Watching someone else's account
 
-You may watch another person's Google account only when **its owner** creates the app password and
-agrees to ecf processing their mail as SPEC §12.4 describes: subjects, senders and ecf's
-classifications go to your Slack, and email content goes to Anthropic (preset C) while you run
-`/ecf-review` (SPEC §12.4, OD-427). Ask them to read this guide first. ecf can't check that
-they agreed; that is your responsibility (SPEC §12.2).
+You can watch another person's Gmail account only if **they** create the app password and agree
+to what ecf does with their mail:
 
-A real-mail test corpus (`ecf corpus fetch`) may be made only from a mailbox you own,
-never from someone else's account you watch (SPEC §16.7, OD-466).
+- the subject, sender and ecf's verdict on each email go to your Slack;
+- the content of their emails goes to Anthropic (Claude's maker) whenever you run `/ecf-review`.
 
-## What ecf does and doesn't do on Gmail
+Ask them to read this guide first. ecf has no way of checking that they agreed, so that's up to
+you. If they later withdraw their agreement, cancel the app password (below).
 
-- It reads your **inbox only**. Mail Gmail puts in Spam is never checked (SPEC §12.2).
-- It never deletes anything in All Mail or Trash, and never moves anything out of them (OD-438).
-- Its labels are hidden IMAP keywords; they don't appear as Gmail labels (OD-445).
-- It starts with a limit of 100 sends a day per Gmail address. Gmail's own limit is 500 emails a
-  day; past it, "you should be able to send emails again within 1 to 24 hours"
-  ([Google](https://support.google.com/mail/answer/22839), checked 2026-10-05). Whether mail sent
-  over SMTP counts toward that limit the same way is unverified.
-- It stops downloading for an address before it passes 2,500 MB in 24 hours; new mail waits and
-  is read later, nothing is skipped, and ecf raises `Operator Input Needed: Gmail download limit
-  reached`. Google's download limit for personal accounts is unverified (SPEC §14.3).
+One more rule: ecf's real-mail test collection (`ecf corpus fetch`) may only be built from a
+mailbox you own, never from someone else's account you watch.
+
+## What ecf does and doesn't do in Gmail
+
+- It only reads your **inbox**. It never looks at what Gmail has put in Spam.
+- It never deletes anything, and never moves anything out of All Mail or Trash.
+- Its labels are invisible tags. You won't see them in Gmail's label list.
+- It sends at most 100 emails a day from a Gmail account, to stay well under Google's own limit
+  of 500 a day. (Google says that if you go over, sending usually works again within 1 to 24
+  hours.)
+- Google limits how much mail can be downloaded in a day, so ecf stops before it reaches 2,500 MB
+  in 24 hours and tells you. New mail just waits; nothing is skipped.
 
 ## Revoking ecf's access
 
-Open [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), find the app
-password you made for ecf and click **Remove**. "Once you revoke the App Password, the app can't
-access your Google Account again"
-([Google](https://support.google.com/accounts/answer/185833), checked 2026-10-05). Changing the
-Google Account password also revokes every app password (same page).
+Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), find the
+app password you made for ecf, and click **Remove**. ecf can't get into the account after that.
+Changing your Google password does the same for every app password at once.
 
-Revoke it when:
+Cancel it when:
 
-- you stop using ecf on that computer (`ecf address remove` and `ecf destroy` delete ecf's copy,
-  not Google's);
-- the computer is **lost or stolen**: do it from another device straight away, then follow the
-  stolen-laptop steps in the [admin guide](admin-guide.md#recovery);
-- you no longer have the owner's agreement to watch their account.
+- you stop using ecf on that computer. Removing the mailbox from ecf deletes ecf's copy of the
+  password, but not Google's.
+- the computer is **lost or stolen**. Do it straight away from another device, then follow the
+  stolen-laptop steps in the [admin guide](admin-guide.md#recovery).
+- you're watching someone else's account and they no longer agree.
 
 ## After a password change
 
-Google has revoked the old app password, so after 3 rejected logins ecf raises
-`[ecf-alert] Mailbox Login Rejected` and retries hourly. Create a new app password (step 2), then
-on the computer running ecf:
+Your old app password stopped working when you changed your Google password. After three failed
+logins, ecf sends the alert `[ecf-alert] Mailbox Login Rejected` and tries again every hour.
+
+To fix it, create a new app password (step 2), then run this on the computer running ecf:
 
 ```sh
 ecf address set <address> --app-password
 ```
 
-Checks resume and a `Resolved:` notice follows.
+ecf starts checking again, and Slack shows a "Resolved" notice.
+
+---
+
+What this guide says about Google comes from Google's help pages, checked on 2026-10-05:
+[app passwords](https://support.google.com/accounts/answer/185833),
+[2-Step Verification](https://support.google.com/accounts/answer/185839),
+[IMAP settings](https://support.google.com/mail/answer/7126229),
+[sending limits](https://support.google.com/mail/answer/22839) and
+[Show in IMAP](https://support.google.com/a/users/answer/11339703). That last page is written for
+Workspace accounts; on ecf's own personal test account, All Mail was shown over IMAP as expected.
+Two details aren't confirmed by Google's pages: whether mail sent by ecf counts toward the 500 a
+day the same way as mail sent in Gmail, and Google's exact download limit for personal accounts.
