@@ -4,6 +4,10 @@ This guide is for whoever looks after the mailbox: reading ecf's alerts, approvi
 suggests, and keeping the queue moving. Setting ecf up, changing its configuration and fixing
 problems are in the [admin guide](admin-guide.md). Right now one person does both jobs.
 
+**Before you rely on ecf, read the [disclaimer](../DISCLAIMER.md).** ecf makes fraud harder to miss
+but can't catch everything, comes with no warranty, and leaves you responsible for what you approve
+and for the mailboxes you connect.
+
 Every command has `--help`. Commands that need step-up (see below) say so there.
 
 ## A few words you'll see

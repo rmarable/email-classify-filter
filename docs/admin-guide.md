@@ -4,6 +4,10 @@ This guide is for whoever installs and looks after ecf: setup, mailboxes, config
 upgrades and fixing problems. Everyday use (Slack cards, approvals, `ecf inbox`) is in the
 [daily use guide](operator-guide.md). The complete technical design is in [SPEC.md](../SPEC.md).
 
+**Before you rely on ecf, read the [disclaimer](../DISCLAIMER.md).** ecf makes fraud harder to miss
+but can't catch everything, comes with no warranty, and leaves you responsible for what you approve
+and for the mailboxes you connect.
+
 Right now ecf is for one person, who is both the admin and the approver. It runs on macOS only;
 Linux support is planned.
 
