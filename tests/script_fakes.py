@@ -68,7 +68,8 @@ case "$1" in
                 {
                     echo '#!/bin/sh'
                     echo 'echo "ecf $*" >>"$LOG"'
-                    echo '[ "$1" = --version ] && echo "ecf 3.0.4"'
+                    echo '[ "$1" = version ] && echo 3.0.4 && exit 0'
+                    echo '[ "$1" = --version ] && exit 2  # ecf has no --version option'
                     echo 'exit 0'
                 } >"$HOME/.local/bin/ecf"
                 chmod +x "$HOME/.local/bin/ecf"
@@ -100,7 +101,8 @@ echo "ecf $*" >>"$LOG"
 if [ "$1" = --install ] && [ "$3" = destroy ]; then
     rm -rf "$HOME/Library/Application Support/ecf/$2"
 fi
-[ "$1" = --version ] && echo "ecf 3.0.4"
+[ "$1" = version ] && echo 3.0.4
+[ "$1" = --version ] && exit 2  # ecf has no --version option
 exit 0
 """
 

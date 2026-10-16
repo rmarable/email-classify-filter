@@ -134,7 +134,7 @@ esac
 
 if command -v ecf >/dev/null 2>&1 ||
     { command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q "^email-classify-filter "; }; then
-    die "ecf is already installed ($(ecf --version 2>/dev/null || echo "version unknown")). To move
+    die "ecf is already installed ($(ecf version 2>/dev/null || echo "version unknown")). To move
 to a newer release, use \`ecf upgrade\`; this script doesn't replace a working install."
 fi
 
@@ -298,7 +298,8 @@ else
     [ "$(sha256_of "$dest/$whl")" = "$have" ] || die "the copy in $dest doesn't match"
     [ "$python" = 3.13 ] && say "Python 3.13: ecf's tests run on it on Linux, not on macOS."
     uv tool install --python "$py_spec" "$dest/$whl" || die "uv tool install failed"
-    say "Installed: $(ecf --version)"
+    v=$(ecf version) || die "ecf installed, but \`ecf version\` doesn't run"
+    say "Installed: ecf $v"
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     cat >"$RECORD" <<EOF
 {

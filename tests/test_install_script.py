@@ -31,6 +31,7 @@ def test_installs_a_verified_release_with_tools_already_here(tmp_path: Path) -> 
     assert not (mac.home / ".zprofile").exists()
     assert "Run `gh auth login` before your first `ecf upgrade`." in r.stdout
     assert "run: ecf init" in r.stdout
+    assert "Installed: ecf 3.0.4" in r.stdout
     assert leftover_temp(tmp_path) == []
 
 
