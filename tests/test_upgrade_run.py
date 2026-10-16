@@ -286,8 +286,8 @@ def test_success_records_the_upgrade_and_a_refused_regrant_does_not_roll_back(
 
     class Client(ApiClient):
         def request(self, method: str, path: str, json: Any = None, **_: Any) -> Any:
-            if method == "GET":
-                return super().request(method, path)
+            if method == "GET":  # the service phase 1 installed: 0.2.0, as _start says
+                return super().request(method, path) | {"version": "0.2.0"}
             finished.append(json)
             return super().request(method, path, json | {"to": __version__})
 
