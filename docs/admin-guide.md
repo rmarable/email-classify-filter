@@ -1,164 +1,170 @@
-# ecf admin guide
+# Setting up and running ecf
 
-Setting up and running ecf: install, configuration, stages, models, Slack, alerts, backups,
-upgrades, removal and recovery. Day-to-day use (Slack cards, approvals, `ecf inbox`) is in the
-[operator guide](operator-guide.md). `SPEC.md` is authoritative; each section points to it.
+This guide is for whoever installs and looks after ecf: setup, mailboxes, configuration, backups,
+upgrades and fixing problems. Everyday use (Slack cards, approvals, `ecf inbox`) is in the
+[daily use guide](operator-guide.md). The complete technical design is in [SPEC.md](../SPEC.md).
 
-In v1 one person is admin and approver. Commands marked "(step-up)" in `--help` ask for Touch ID
-or your password at this computer (SPEC §9.6). `--install <name>` picks another install on the
-same computer (default `default`). Linux isn't supported until roadmap milestone M5 (OD-422).
+Right now ecf is for one person, who is both the admin and the approver. It runs on macOS only;
+Linux support is planned.
+
+## Before you start
+
+- **Step-up** is a second check at the computer itself: Touch ID or your Mac password. Commands
+  that change something security-related ask for it, and `--help` marks them "(step-up)". A Slack
+  click is never enough for these, so that someone with your Slack account alone can't do them.
+- **Security Notice:** whenever a security-related setting changes, ecf posts a Security Notice in
+  Slack (and alert email, if set up). If you see one you didn't cause, treat it as a warning.
+- **Several installs:** `--install <name>` picks a separate copy of ecf on the same computer, for
+  example a test one. Without it you get the install called `default`.
 
 ## Install
 
+Download the latest release from GitHub and install it (the [README](../README.md#getting-started)
+shows how to check the download):
+
 ```sh
-uv tool install ./email_classify_filter-*.whl   # a release's wheel (GitHub Releases; README)
-uv build && uv tool install dist/email_classify_filter-*.whl   # or built from a checkout
+uv tool install ./email_classify_filter-*.whl
 ```
 
-There is no PyPI package (OD-458): download and check a release's wheel as the README says.
-
-`ecf upgrade` works only on a `uv tool` install (OD-380). Requirements are in the README.
+There's no PyPI package. `ecf upgrade` only works on an install made this way, with `uv tool`. To
+build from a checkout of the code instead: `uv build && uv tool install
+dist/email_classify_filter-*.whl`.
 
 ## First setup: `ecf init`
 
-`ecf init` prints a "have ready" list, then runs each step the service doesn't already report
-done (SPEC §13.1):
+`ecf init` lists what to have ready, then goes through these steps, skipping any that are already
+done:
 
-1. starts the background service (installs its unit);
-2. checks disk encryption and the secret store;
-3. sets the install role, `prod` or `test`, once;
-4. Slack (`ecf slack install`, below);
-5. the first address (`ecf address add`, below), including your org domains (not asked for a
-   Gmail address);
-6. alert email (optional, default no);
-7. backups: a backup key, a folder, a first backup (default yes);
-8. Claude's login for `ecf claude`;
-9. confirms the unit is installed and running.
+1. Starts ecf's background service.
+2. Checks that disk encryption is on and the Keychain works.
+3. Asks whether this install is `prod` (real mail) or `test`. You only choose once.
+4. Connects Slack (see [Slack](#slack)).
+5. Adds your first mailbox (see [Mailboxes](#mailboxes)), including your organization's email
+   domains (not asked for a Gmail address).
+6. Alert email (optional, off by default).
+7. Backups: creates a backup key, picks a folder and makes the first backup.
+8. Signs in to Claude for `ecf claude`.
+9. Confirms the service is installed and running.
 
-- `ecf init --resume` continues without the checklist; a step you declined isn't asked again.
-- `ecf init status` shows each step.
-- `ecf init --restore <bundle>` sets up a new computer from a backup of this install (see
-  Recovery).
+If you stop partway, `ecf init --resume` continues; a step you said no to isn't asked again.
+`ecf init status` shows each step. `ecf init --restore <bundle>` sets up a new computer from a
+backup (see [Recovery](#recovery)).
 
-Then run `ecf doctor`. Every address starts in `shadow` with outbound off.
+Then run `ecf doctor`. Every mailbox starts in `shadow` (watch only) with sending off.
 
-## The service
+## The background service
+
+ecf does all its work in one background service. On macOS it's a LaunchAgent that starts when you
+log in. It only runs while the computer is on and awake.
 
 | Command | What it does |
 |---|---|
-| `ecf service install` | install the unit (launchd LaunchAgent, or systemd user unit) and start it |
-| `ecf service start` / `restart` | start it; both also clear a tripped crash-loop breaker |
-| `ecf service stop` | stop it until the next login; prefer `ecf pause` to keep fraud checks running |
-| `ecf service status` | whether the unit is installed and running |
-| `ecf service uninstall` | stop it and remove the unit; data is kept |
-| `ecf service regrant` | macOS: re-allow Keychain reads after Python changed (see Recovery) |
-| `ecf watch` | run the service in this terminal; the unit is stopped first and started afterwards |
+| `ecf service install` | Install the service and start it. |
+| `ecf service start` / `restart` | Start it. Either one also clears the crash-loop stop (see [Recovery](#recovery)). |
+| `ecf service stop` | Stop it until you next log in. Usually `ecf pause` is better, because it keeps fraud checks running. |
+| `ecf service status` | Whether the service is installed and running. |
+| `ecf service uninstall` | Stop it and remove it. Your data is kept. |
+| `ecf service regrant` | Let ecf read the Keychain again after Python changed (see [Recovery](#recovery)). |
+| `ecf watch` | Run the service in this Terminal window instead, for watching what it does. |
 
-The service runs only while the computer is on and awake (SPEC §4.1). Nothing classifies a C
-address's mail until someone runs `/ecf-review` in `ecf claude`; the fraud and regulator rules
-still flag mail as it arrives.
+ecf's fraud and regulator checks run on every email as it arrives. Claude only classifies
+everyday mail when someone runs `/ecf-review` in `ecf claude`.
 
-Linux (unverified): the unit runs in your login session; `loginctl enable-linger` lets it run
-without one (SPEC §11.14).
+## Secret store
 
-## Addresses
+ecf keeps every password and token (mailbox app passwords, Slack tokens, API keys) in the macOS
+Keychain, and nowhere else: never in files, settings or environment variables. Only the background
+service reads and writes them. If the Keychain is locked or stops letting ecf in, see
+[Recovery](#recovery).
+
+## Mailboxes
 
 ```sh
 ecf address add ap@acme.example --imap-host imap.acme.example \
-    --sensitivity high --preset C [--id ap] [--smtp-host … --smtp-port 465|587]
+    --sensitivity high [--id ap] [--smtp-host … --smtp-port 465|587]
 ```
 
-- `add` logs in over IMAP (and SMTP, sending nothing) before storing the app password, then probes
-  the mailbox. It needs a real terminal (hidden prompt). Org domains are asked with the first
-  address only; later changes go through `ecf config apply`.
-- One install can watch work and personal addresses together; from v2.0.0 one classification
-  schema serves both (SPEC §7.1). From v3.0.0 safety rests on five yes/no fixed items (bank-detail
-  change, regulator claim, phishing, claims to be a colleague, private individual), not on the
-  category (OD-500).
-- **Presets** (SPEC §4.2): C all-Claude; D, TypeSafe Jev classifier + Claude actor (v3.0.0
-  step 4), **held back in v3.0.0 (OD-516)**: addresses can be preset C only, and `--preset D` is
-  refused. Jev remains for evaluation (`ecf eval run --claude --preset D`, then `/ecf-eval`). A and B (the local model) are
-  removed in v3.0.0 (below).
-- **Adding a D address** (held back in v3.0.0, OD-516; SPEC §7.10): `--preset D` asks for the TypeSafe key if none is stored
-  (`ecf models api-key set --provider typesafe` underneath: one check call, a Security Notice),
-  then asks whether the account owner agreed to their mail going to TypeSafe (api.typesafe.ai, US)
-  as well as to Anthropic, then step-up. Refused while your own fields are stored (D uses the
-  shipped schema). The agreement belongs to the address: an import or restore clears it, and
-  `ecf resume <address>` asks again. D mail is classified within a minute or so of its check;
-  the actor still waits for `/ecf-review`. D's case is immediacy, not cost: classification no
-  longer uses your Claude plan, and TypeSafe bills about US$0.0001 per email.
-- **Jev down** (held back in v3.0.0, OD-516: applies only once D is on): when TypeSafe refuses the key, stops serving the pinned version, asks for a long
-  wait, sends answers ecf can't map, or keeps failing for `jev_down_after_minutes` (15; `ecf
-  settings set`; while failing ecf retries only every 30 s to 5 min), Jev is down for
-  the install: one Slack/desktop alert with how many D emails wait, and `ecf status` / `ecf
-  doctor` say why. **D mail waits; nothing else classifies it** (no Claude fallback in v3.0.0).
-  ecf probes TypeSafe every 30 s to 5 min and resumes on its own after two good answers; a retired
-  pin needs an ecf upgrade. An email Jev can't classify in 3 tries waits too (`ecf doctor` lists
-  it; one System Error names those of each run). Before rolling back below v3.0.0, clear the key: `ecf models api-key clear --provider
-  typesafe`.
-- **Sensitivity** `standard` or `high` (finance mailboxes: stricter gate, extra checks, a
-  10-minute delay on sends). `ecf sensitivity set <address> high` is instant; lowering needs a
-  reason and step-up, and sends a Security Notice (§9.1).
-- **SMTP host:** default is the IMAP host with `imap.` → `smtp.`, port 465.
-  `ecf address set <address> --smtp-host <host> [--smtp-port 587]` needs step-up and sends a
-  Security Notice, since the app password goes there (OD-324).
-- `ecf address list`; `ecf address retry <address>` checks at the next minute even while rejected
-  logins retry hourly.
-- `ecf address remove <address>` resolves its open items (step-up when any is a payment or fraud
-  item), archives its Slack channel and deletes its app password; ecf's labels stay on messages.
-  It's refused while the address sends alert email.
-- **Senders** (SPEC §8.5, §9.6; per address, `--address` when you have more than one):
-  `ecf sender set-reply-to <sender> <domain>` records the Reply-To domain to expect from that
-  sender, so its mail isn't flagged for a Reply-To that differs from its From (`--clear` expects
-  none again); `ecf sender set-verified <sender>` marks the sender human-verified, which turns off
-  only the unverified-payment-sender flag (rule 1a) for its mail; fraud checks stay on (`--off`
-  flags it again). Both need step-up; `--clear` and `--off` don't. `ecf sender show` and
-  `ecf sender confirm` are in the operator guide.
+- `add` asks for the mailbox's app password (typed hidden, so run it in a real Terminal window).
+  Before saving it, ecf logs in to check it works, and checks it can reach the outgoing mail
+  server too (without sending anything). Then it looks over the mailbox.
+- Your organization's domains are asked for with the first mailbox only. Change them later with
+  `ecf config apply`.
+- One install can watch work and personal mailboxes together.
+- `--id` sets a short name for the mailbox to use in commands (for example `ap`).
 
-## Old mail: backfill and reprocess
+**Sensitivity:** `standard`, or `high` for finance mailboxes. `high` means a stricter go-live
+test, extra checks, and a 10-minute pause before any email is sent. `ecf sensitivity set <address>
+high` takes effect at once. Lowering it needs a reason and step-up, and sends a Security Notice.
 
-ecf watches an address from its first check; mail that arrived before it, even after `ecf address
-add`, is read only by `ecf backfill` (SPEC §10.2; OD-507).
+**Outgoing mail server:** by default ecf uses the incoming server's name with `imap.` changed to
+`smtp.`, on port 465. `ecf address set <address> --smtp-host <host> [--smtp-port 587]` changes it.
+Because the app password is sent there, this needs step-up and sends a Security Notice.
+
+**Other commands:**
+
+- `ecf address list` lists your mailboxes.
+- `ecf address retry <address>` checks at the next minute, even if login failures have slowed ecf
+  to hourly retries.
+- `ecf address remove <address>` closes the mailbox's open items (step-up if any involve payments or
+  fraud), archives its Slack channel and deletes its app password. ecf's labels stay on your
+  messages. You can't remove a mailbox that sends ecf's alert email.
+
+**Senders:** two commands tell ecf about a particular sender (add `--address` if you have more
+than one mailbox):
+
+- `ecf sender set-reply-to <sender> <domain>` says which reply address domain to expect, so ecf
+  stops flagging that sender's mail for replies going somewhere else. `--clear` undoes it.
+- `ecf sender set-verified <sender>` marks a sender as checked by a person. That only turns off
+  the "payment from an unverified sender" flag for their mail; all fraud checks stay on. `--off`
+  undoes it.
+
+Both need step-up; undoing them doesn't. `ecf sender show` and `ecf sender confirm` are in the
+daily use guide.
+
+## Older mail: backfill and reprocess
+
+ecf reads a mailbox from its first check onwards. To look at mail that arrived before that, use
+`ecf backfill`:
 
 ```sh
-ecf backfill ap --since 2026-09-01 [--until 2026-09-30T18:00]   # records only: nothing done
-ecf backfill ap --since 30d --act        # counts, estimates, asks; step-up over 500
-ecf backfill ap --stop                   # what was read stays
-ecf reprocess ap --since 90d [--rules-only] [--force] [--dry-run]   # after a model or rules change
+ecf backfill ap --since 2026-09-01 [--until 2026-09-30T18:00]   # only records; changes nothing
+ecf backfill ap --since 30d --act        # counts, estimates the cost, asks; step-up over 500 emails
+ecf backfill ap --stop                   # stop; what was read is kept
+ecf reprocess ap --since 90d [--rules-only] [--force] [--dry-run]   # look again after a change
 ecf reprocess --status | ecf reprocess ap --stop
 ```
 
-- Times: a date, a date and time (`2026-09-29T08:00`, local unless you add `Z` or `-04:00`), a
-  time today (`08:00`), or an age (`90s 30m 2h 3d 2w 6mo 1y`, `1h30m`). The range is shown in UTC
-  first.
-- Old mail never gets a card or post of its own: each run posts one summary in the summary
-  channel, with fraud and regulator finds as replies; its hides all need approval, with
-  `ecf approve --scan <id>`; new mail is reviewed first and alerted at once as usual.
-- `--act` and `ecf reprocess` that classify with Claude show an estimate first (cost from your own
-  sessions, else ecf's measured runs; session time). Reprocess skips mail you reviewed or that
-  raised a fraud or regulator alert, and never moves mail ecf already moved: `ecf item undo <id>`
-  puts one back.
+- **Times** can be a date, a date and time (`2026-09-29T08:00`, your local time unless you add `Z`
+  or an offset like `-04:00`), a time today (`08:00`), or an age (`90s`, `30m`, `2h`, `3d`, `2w`,
+  `6mo`, `1y`, or combined like `1h30m`).
+- **Old mail doesn't flood Slack.** Each run posts one summary in the summary channel, with fraud
+  and regulator finds as replies underneath. Anything it would hide needs your approval, all at
+  once with `ecf approve --scan <id>`. New mail still comes first.
+- **Cost:** when Claude will classify the mail, ecf shows an estimate first, based on your own
+  past reviews if it has enough of them.
+- `reprocess` skips mail you've already reviewed and mail that raised a fraud or regulator alert,
+  and never moves mail ecf already moved. `ecf item undo <id>` puts one back.
 
 ## Gmail
 
-Personal Google accounts (`@gmail.com`, `@googlemail.com`) work over IMAP with an app password
-(SPEC §18, OD-425). Google Workspace accounts don't (they wait for milestone M6). Do Google's side
-first: [Gmail setup](gmail-setup.md) (2-Step Verification, the app password, two Gmail settings,
-someone else's account).
+Personal Gmail accounts (`@gmail.com`, `@googlemail.com`) work with an app password. Google
+Workspace (company) accounts don't yet. Do Google's side first, using
+[Gmail setup](gmail-setup.md): turning on 2-Step Verification, creating the app password, two
+Gmail settings, and what to do when the account belongs to someone else.
 
 ```sh
-ecf address add pat.lee@gmail.com --sensitivity high --preset C
+ecf address add pat.lee@gmail.com --sensitivity high
 ```
 
-- No `--imap-host`: ecf uses `imap.gmail.com`, and SMTP `smtp.gmail.com` on port 465.
-- It doesn't ask for org domains (a public provider's domain is never internal, OD-441).
-- It starts with a limit of 100 sends a day (Google allows 500, SPEC §18); `add` prints the
-  command to change it, `ecf address set <address> --max-sends-per-day <n>` (step-up).
-- When `org_addresses` is empty it suggests listing the people you work with (below).
-- Gmail is recognised by its IMAP capability, not the host name (OD-438).
+- You don't need `--imap-host`; ecf uses Gmail's servers.
+- It doesn't ask for organization domains, since `gmail.com` is never "internal".
+- It starts with a limit of 100 sends a day (Google allows 500). `add` prints the command to change
+  it: `ecf address set <address> --max-sends-per-day <n>` (step-up).
+- If you haven't listed the people you work with yet, it suggests doing so (below).
 
-**`org_addresses`** (in `ecf config apply`, SPEC §9.7): the exact addresses of people you work
-with, at any provider, each with an optional name of at least two words.
+**The people you work with (`org_addresses`):** with personal accounts there's no company domain to
+recognise colleagues by, so you list them, in the config file applied with `ecf config apply`.
+Each entry is an exact address at any provider, with an optional name of at least two words:
 
 ```yaml
 org_addresses:
@@ -166,457 +172,390 @@ org_addresses:
   - {address: dana@acme.example, name: Dana Ruiz}
 ```
 
-- Mail from a listed address that passes ecf's DMARC check counts as internal. Mail claiming a
-  listed address that doesn't pass raises a fraud alert, unless Gmail shows it is your own note to
-  yourself (OD-446).
-- Mail pretending to be a listed person (their name or address in the display name, a one-letter
-  Gmail typo of their address, or the same address at another public provider) is labelled
-  `suspicious` and flagged, and escalated when it's about money (SPEC §8.5; what you see is in the
-  [operator guide](operator-guide.md#mail-pretending-to-be-someone-you-work-with)). Names aren't
-  learned: unlisted people aren't covered.
-- At most 50 entries. Gmail ignores dots and `+tags`, so `patlee@` and `pat.lee+x@gmail.com` are
-  one account and can't both be listed. A one-word name is refused.
-- Only Gmail is verified to stop one account sending as another; an address at another provider is
-  only as trustworthy as that provider (SPEC §12.2, OD-447).
+- Mail from a listed address that passes ecf's authenticity check counts as internal. Mail claiming
+  to be from a listed address that fails the check raises a fraud alert, unless Gmail shows it's a
+  note you sent yourself.
+- Mail pretending to be a listed person (their name or address shown as the sender's name, a
+  one-letter typo of their Gmail address, or the same address at another provider) is labelled
+  `suspicious` and flagged, and escalated if it's about money. The daily use guide shows
+  [what you see](operator-guide.md#mail-pretending-to-be-someone-you-work-with). ecf doesn't learn
+  names: people you haven't listed aren't covered.
+- At most 50 entries, and a one-word name is refused. Gmail ignores dots and `+tags`, so
+  `patlee@gmail.com` and `pat.lee+x@gmail.com` are the same account and can't both be listed.
+- Only Gmail is known to stop one account sending as another. An address at another provider is
+  only as trustworthy as that provider.
 
-**Forwards to a personal account:** a `forward_allow_list` entry must be in `org_domains` or exactly
-in `org_addresses`, never a watched address. Adding one at a public provider puts "<address> is a
-personal account your organization doesn't control" in the step-up dialog. An org domain or
-address a forward needs can't be removed until the forward goes too (OD-437, OD-452). Don't
-forward another person's watched mail to a personal address without that owner's agreement
-(OD-437; ecf can't check it).
+**Forwarding to a personal account:** a forward can only go to an address in your organization's
+domains or listed exactly in `org_addresses`, and never to a mailbox ecf watches. When you add one
+at a public provider, the step-up dialog warns "<address> is a personal account your organization
+doesn't control". You can't remove a domain or address that a forward still needs. Don't forward
+someone else's mail to a personal address without their agreement; ecf can't check that for you.
 
-**`ecf doctor` on Gmail:**
+**What `ecf doctor` may say about Gmail:**
 
 | Row | Warning | Fix |
 |---|---|---|
-| `gmail <id>` | All Mail isn't shown over IMAP: archive fails and the email stays in the inbox | Gmail settings, Labels: Show in IMAP for All Mail; then `ecf address set <id> --app-password` (probes again) |
-| `gmail <id>` | IMAP shows N of M inbox messages | Gmail settings, Forwarding and POP/IMAP: Folder size limits, Do not limit |
-| `org domains` | no org domains or org addresses: mail pretending to be people you work with isn't detected | list them in `org_addresses`, or your domains in `org_domains` |
+| `gmail <id>` | All Mail isn't shown over IMAP: archive fails and the email stays in the inbox | In Gmail settings, Labels, tick "Show in IMAP" for All Mail. Then run `ecf address set <id> --app-password` so ecf checks again. |
+| `gmail <id>` | IMAP shows N of M inbox messages | In Gmail settings, Forwarding and POP/IMAP, set Folder size limits to "Do not limit". |
+| `org domains` | no org domains or org addresses: mail pretending to be people you work with isn't detected | List your colleagues in `org_addresses`, or your domains in `org_domains`. |
 
-Both Gmail rows come from the last probe; `ecf address add` prints the same warnings as `note:`
-lines.
+`ecf address add` prints the same warnings when it first checks the mailbox.
 
-**Download limit:** ecf stops downloading for a Gmail address before it passes 2,500 MB in 24
-hours and raises `Operator Input Needed: Gmail download limit reached (<address>)`; new mail waits,
-nothing is skipped, and the next check that isn't stopped resolves it (SPEC §14.3, OD-440).
+**Download limit:** Gmail limits how much can be downloaded in a day. ecf stops before it reaches
+2,500 MB in 24 hours and tells you (`Operator Input Needed: Gmail download limit reached`). New
+mail just waits, nothing is skipped, and it carries on by itself.
 
-**Mailbox Login Rejected on Gmail:** changing the Google Account password revokes every app
-password ([Gmail setup](gmail-setup.md#after-a-password-change)). Create a new one, then
+**"Mailbox Login Rejected" on Gmail:** changing your Google password cancels every app password
+([what to do](gmail-setup.md#after-a-password-change)). Create a new one, then run
 `ecf address set <address> --app-password`.
 
 ## Configuration
 
-**Security-relevant config** (org domains, org addresses, forward allow-list, move folders,
-templates, action policy, rules, `export_schedule`) changes only through a YAML file (SPEC §9.7,
-file shape there):
+**Security settings** (organization domains and addresses, the forward allow-list, folders ecf may
+move mail to, reply templates, what ecf may do on its own, and your rules) can only be changed
+through a YAML config file. That way every change is reviewed in one place:
 
 ```sh
-ecf rules test rules.yaml        # run proposed rules on the synthetic set; shows what changes
-ecf config apply config.yaml     # validated, diff shown, step-up, announced in Slack
+ecf rules test rules.yaml        # try new rules on ecf's test emails and show what changes
+ecf config apply config.yaml     # checks the file, shows the changes, asks for step-up, posts in Slack
 ```
 
-**Rules** (from v3.0.0, SPEC §8.6, OD-500, OD-502): three layers, in order:
+The file's full format is in SPEC.md (§9.7).
 
-1. ecf's fixed rules (fraud guard, regulatory, weak fraud, unverified payment sender, the junk
-   rule `phishing`), always first;
-2. your rules with new ids, in your file's order;
-3. ecf's default rules (`bug_report`, `invoice`, `payment_confirmation_remittance`,
-   `account_security`, `shipping`, `appointment_school_family`, `travel_finance`, `marketing`,
-   `automated_notification`, `requires_reply`, `otherwise`), in their own order. A rule in your
-   file with a default's id **replaces** that default where the default runs (rename it to keep
-   both); `default_rules_off: [marketing, ...]` beside `rules:` turns defaults off.
+### Rules
 
-A file whose **last rule has no `when`** matches everything, so the default rules never run: your
-file replaces them (as before v3.0.0). A rule with no `when` anywhere else, or one with a
-default rule's id, is refused. Only a bare last rule counts: a last rule like
-`{field: requires_reply, in: [true, false]}` also matches everything but isn't recognised, and the
-default rules would be added after it, unreachable. `ecf config apply` refuses an off list naming
-an id that isn't a default rule, `otherwise` or a fixed rule, an id both in your file and in the
-off list, and an off list in a file that replaces the defaults; the dry run says which layout
-applies, each default you replace (and where it runs), each one turned off, and your rules that
-can hide mail. A file can't reuse a fixed rule's id, can't test a removed value (`category`
-`vendor_change_request`, `regulatory`, `spam_or_phishing`; `sender_type` `team`: use
-`bank_detail_change`, `regulator_claim`, `phishing` or `claims_internal: true`), and needn't end
-with a catch-all (ecf adds `otherwise`). A condition on `category`, `sender_type` or one of your
-fields is **unknown** when the classification lacks the field or holds a value it doesn't have,
-and `not` over unknown is unknown, so it never matches. Default rule ids are part of the
-rules-file format: a release that renames one is a major version, and until you change your file
-an off id ecf no longer knows is skipped with an `ecf doctor` warning.
+Rules decide what happens to an email once it's classified: label it, flag it, file it, and so
+on. They run in three layers, in this order:
 
-**A rules file applied before v3.0.0's layering** without a rule with no `when` at the end now
-runs before the default rules instead of replacing them. The dry run of any `ecf config apply`
-and `ecf doctor` say so until you apply rules again; end the file with `- {id: otherwise, actor:
-continue}` to keep the old meaning.
+1. **ecf's fixed rules**, always first and never changeable: fraud, regulator mail, weak fraud
+   signals, payments from unverified senders, and phishing.
+2. **Your rules**, in the order they appear in your file.
+3. **ecf's default rules**, in their own order: `bug_report`, `invoice`,
+   `payment_confirmation_remittance`, `account_security`, `shipping`, `appointment_school_family`,
+   `travel_finance`, `marketing`, `automated_notification`, `requires_reply` and `otherwise`.
 
-**Your own fields** (preset C only; SPEC §7.1, §9.7, OD-502; built behind a switch, **off in
-v3.0.0**: its measurement failed, SPEC §1.5a item 2b, so `ecf config apply` refuses a `schema`
-section with "your fields are off in this release"; the rest of this part describes the layer
-for when it is on). The `schema` section adds fields (enum,
-ordinal or boolean) and `category` values on top of ecf's fields:
+You don't need to repeat ecf's rules in your file. Some ways to shape the defaults:
 
-```yaml
-schema:
-  fields:
-    contract_stage:
-      type: enum
-      description: Where a contract discussed in the email stands.
-      values:
-        draft: A draft is being exchanged.
-        signed: Both sides have signed.
-        other: No contract, or one at another stage.
-    vendor_tier:
-      type: ordinal
-      description: How much we rely on the sender as a supplier.
-      levels: {minor: An occasional supplier., key: A supplier we rely on.}
-    needs_signature: {type: boolean, description: The email asks us to sign something.}
-  category_values:
-    legal_notice: Letter from a lawyer or court about us.
-```
+- **Replace a default:** give your rule the same id as the default. Yours then runs in the
+  default's place. (Give it a different id to keep both.)
+- **Turn defaults off:** add `default_rules_off: [marketing, ...]` next to `rules:`.
+- **Replace all the defaults:** make your file's last rule one with no `when`. It matches
+  everything, so the defaults never run.
 
-- **Descriptions everywhere:** every field, value and level needs one (an ordinal's `levels` are
-  a mapping of level to text, not a list), one line of plain ASCII text, at most 180 characters.
-- **Catch-alls:** give each enum field `other`, `unknown` or `none` (a warning otherwise); those
-  three may repeat another field's value. Other added values need new names (not another field's
-  value, a field's name, a built-in label, or a fixed, default or applied rule's id). A rule that labels from
-  your field (`{label: {field: contract_stage}}`) is refused when its values repeat another
-  field's value or a label name.
-- **Names you can't use or mention:** you can't add or change ecf's fields. A description can't
-  refer to one of ecf's 11 fixed fields (`fraud_risk`, `payment_related`, `priority`,
-  `requires_action`, `requires_reply`, `deadline_mentioned`, `bank_detail_change`,
-  `regulator_claim`, `phishing`, `claims_internal`, `private_individual`) by its field name:
-  the classifier reads descriptions as instructions. A name with an underscore counts wherever
-  it appears; `priority` and `phishing` count only written as a field (in backticks; quoted or
-  marked up, as `"phishing"` or `**priority**`, before `:`, `=`, `->` or `=>`; after `set`; or
-  before one of its values: `phishing true`, `priority (high)`); any case.
-  The same words in plain English ("a high priority customer", "phishing attempts") only warn,
-  as does naming `category`, `sender_type` or another of your fields.
-- **Caps:** 8 fields, 16 values or levels each, 4 category values, 180 characters per
-  description, 4,000 characters of prompt text. The dry run and `ecf doctor` print the bytes of
-  schema each Claude classification carries (7,663 shipped; about 13 KB at the caps).
-- **Preset C only** (a D address is refused while your own fields are stored; SPEC §7.10).
-- **Gate cost of an edit:** any change, a description typo included, drops live C addresses to
-  `assist`, and live needs a passing `/ecf-eval` run (full or `--fraud-only`) and 100 reviews
-  (200 on `high`) again; the step-up dialog says so per address.
-- **Privacy:** your field and value names and descriptions go to Anthropic with each Claude
-  classification request, and the chosen values with each actor request; never put email content
-  or secrets in them. The names also go to Slack (the Fix form, review lines).
-- **Import and restore** leave out a bundle's fields and the rules that use them (both named in
-  the output, with the count of rules): apply your config file again here.
-- **Not yet** (S4b, after v3.0.0): turning off or replacing the values of `category` or
-  `sender_type`.
+`ecf config apply` refuses a file that would be confusing, and says why: a rule with no `when`
+anywhere but last, a rule reusing a fixed rule's id, an off list naming a rule that doesn't exist,
+and so on. Its dry run says which layout applies, which defaults you replace or turn off, and
+which of your rules can hide mail.
 
-A change to a template or the forward allow-list makes sends approved before it fail at execution
-(OD-317).
+Things to know when writing conditions:
 
-**Settings:** `ecf settings show` lists every key you can change, with its value;
-`ecf settings set <key> <value> [--address <address>]`. Keys owned by another command
-(`slack_member_id`, `alerts.routes`, `export_dir`, send limits, `outbound`, stage) name that
-command when you try. Install-wide and per-address keys are in SPEC §14.1-§14.2.
+- A rule can't test the values removed in v3.0.0 (`category` `vendor_change_request`, `regulatory`
+  and `spam_or_phishing`; `sender_type` `team`). Use the yes/no safety fields instead:
+  `bank_detail_change`, `regulator_claim`, `phishing` or `claims_internal: true`.
+- If an email's classification doesn't have a value a condition tests, the condition is treated as
+  unknown and never matches, even inside `not`.
+- A catch-all at the end is optional; ecf adds `otherwise` for you.
 
-**Retention:** `ecf retention show`; `ecf retention set <days>` (1-3650, step-up; lowering it sends
-a Security Notice). The audit log and items with fraud or regulator signals are never pruned
-(SPEC §6.5).
+**Rules files from before v3.0.0:** a file applied before v3.0.0 that doesn't end in a rule with no
+`when` now runs *before* the defaults instead of replacing them. `ecf config apply` and
+`ecf doctor` point this out until you apply rules again. To keep the old behaviour, end the file
+with `- {id: otherwise, actor: continue}`.
 
-## Stages and the go-live gate
+### Your own classification fields
 
-`ecf stage status` shows each address's stage, days in it, review progress and held items.
+ecf can be built to accept extra fields and categories of your own, but **this is turned off in
+v3.0.0**: it didn't pass its accuracy testing. `ecf config apply` refuses a `schema` section with
+"your fields are off in this release". SPEC.md (§7.1) describes how it will work.
 
-| Stage | ecf does | To get there |
+### Settings
+
+`ecf settings show` lists every setting you can change, with its current value.
+`ecf settings set <key> <value> [--address <address>]` changes one. A few settings belong to their
+own commands (Slack member, alert routes, backup folder, send limits, sending, stage); trying to
+set them this way tells you which command to use.
+
+A change to a reply template or the forward allow-list cancels sends that were approved before it.
+
+### Retention
+
+`ecf retention show`; `ecf retention set <days>` (1 to 3650, step-up). Lowering it sends a Security
+Notice. The audit log and anything with a fraud or regulator warning are never deleted.
+
+## Stages: letting ecf do more
+
+`ecf stage status` shows each mailbox's stage, how long it's been there, review progress and
+anything held.
+
+| Stage | What ecf does | How to get there |
 |---|---|---|
-| `shadow` | decides and posts; changes nothing | the default; going back is instant |
-| `assist` | labels, flags, escalates; other actions are held | `ecf stage set <a> assist` (step-up) |
-| `live` | full policy | `ecf stage set <a> live` (step-up, the go-live gate) |
+| `shadow` | Decides and tells you, but changes nothing. | Where every mailbox starts. Going back is instant. |
+| `assist` | Labels, flags and escalates; holds anything else for you. | `ecf stage set <a> assist` (step-up) |
+| `live` | Does everything its policy allows. | `ecf stage set <a> live` (step-up, plus the go-live test) |
 
-The gate (SPEC §9.3): `standard` needs 100 reviewed items at ≥ 85% accuracy, `high`
-200 at ≥ 90% (from v3.0.0 accuracy is the share of reviews whose Fix changed none of ecf's
-fixed fields, `category` or `sender_type`, so a Fix to one of your own fields doesn't count against
-it; before, category accuracy; the upgrade clears earlier passes), and both need 0 fraud-guard misses, 0 unsafe payment or fraud proposals and the
-injection set at 0 on the synthetic eval for the address's model pair (for C, a `/ecf-eval` run). `stage set live` names a missing eval
-result. `--override --reason <text>` waives the review count or accuracy, never the safety gates.
-`--held run|resolve-older|resolve-all` decides what happens to held emails (default `run`: up to 7
-days old run, older stay held).
+**The go-live test** checks that ecf has proven itself on that mailbox:
 
-**Eval:** `ecf eval run --claude --preset C [--fraud-only]` registers a run that you start with
-`/ecf-eval` in `ecf claude`; it uses your Claude plan. `ecf eval run --classifier-backend null`
-runs the rules alone (a floor and a wiring check; it never counts for the gate).
-`ecf eval run --classifier-backend jev` sends the synthetic cards to TypeSafe Jev (it needs the
-TypeSafe key; a Jev run itself never counts for the gate), and `ecf eval run --claude --preset D`
-then uses its classifications with Claude as the actor (D's gate evidence, SPEC §7.10; preset D
-is held back, OD-516). `ecf eval
-status|stop|compare`. Results are keyed by the pinned models. Old
-results from the local model can still be read and rescored without a model (`ecf eval rescore
---synthetic`, with or without `--through-policy`).
+- **Reviews:** a `standard` mailbox needs 100 reviewed emails with at least 85% correct; a `high`
+  one needs 200 with at least 90%. A review counts as correct when the Fix didn't change anything.
+- **Safety:** no missed fraud, no unsafe suggestions for payment or fraud emails, and no injection
+  attacks followed, on ecf's set of test emails. You get this by running an eval (below).
 
-**Pinned models:** a release that changes a pinned model (a Claude model ID) drops
-the addresses using it from `live` to `assist` until their gate passes again (SPEC §9.3, OD-381).
+`stage set live` tells you if an eval result is missing. `--override --reason <text>` can waive the
+number of reviews or the accuracy, but never the safety checks. `--held run|resolve-older|resolve-all`
+decides what happens to emails being held (default `run`: those up to 7 days old run, older ones
+stay held).
+
+**Evals:** `ecf eval run --claude --preset C [--fraud-only]` sets up a test run on ecf's synthetic
+test emails. You start it by typing `/ecf-eval` in `ecf claude`; it uses your Claude plan.
+`ecf eval status`, `stop` and `compare` follow it up. `ecf eval run --classifier-backend null` runs
+ecf's rules alone, as a quick wiring check that never counts for going live.
+
+**When ecf's Claude models change:** a release that changes which Claude model ecf uses drops every
+mailbox from `live` to `assist` until it passes the go-live test again. v3.0.0 did this when it
+moved every role to Claude Opus 5.5.
 
 ## Models
 
-- `ecf models status` shows the pinned Claude models and any override.
-- `ecf models api-key set|clear --provider anthropic|typesafe` stores or removes an API key:
-  `anthropic`, the optional Anthropic Models API key for the weekly model watch; `typesafe`, the
-  TypeSafe key for Jev (eval only for now). `--provider` is required. Each key is checked by one
-  call before it is stored, and every set, replace or removal posts a Security Notice (SPEC §7.6,
-  §7.9). `ecf models watch` runs the watch at the next tick.
+- `ecf models status` shows which Claude models ecf uses, and any override.
+- `ecf models api-key set|clear --provider anthropic` stores or removes an optional Anthropic API
+  key, used only to check weekly for new or retiring Claude models. ecf tests the key once before
+  saving it, and posts a Security Notice whenever it's added, changed or removed.
+  `ecf models watch` runs that weekly check at the next minute.
+
+ecf can also run its test emails through TypeSafe's Jev model for comparison
+(`ecf eval run --classifier-backend jev`, with `--provider typesafe` for its key). That's for
+testing only: in v3.0.0 none of your mail goes to TypeSafe, and mailboxes can't use Jev.
 
 ## Slack
 
-- `ecf slack install`: asks for a Slack configuration token (hidden), creates ecf's app, then the
-  bot and app-level tokens after you click "Install to Workspace", then a Confirm button DMed to
-  your member ID (SPEC §10.1). ecf creates `ecf-<install>-summary` and one channel per address.
-- `ecf slack status`: the app, workspace, member ID, connection and channels.
-- `ecf slack set-member <id>` (step-up): accept clicks from another member ID; the old one works
-  until the new one clicks Confirm.
-- `ecf slack set-tokens` (step-up): replace both tokens (same workspace and app).
-- `ecf slack reauthorize`: new configuration token, update the app's permissions, re-edit every
-  card.
+- `ecf slack install` asks for a Slack configuration token (typed hidden) and creates ecf's Slack
+  app. After you click "Install to Workspace" it asks for the two tokens Slack shows you, then
+  sends a Confirm button to your Slack account. ecf then creates its summary channel and one
+  channel per mailbox.
+- `ecf slack status` shows the app, workspace, your Slack account, the connection and the channels.
+- `ecf slack set-member <id>` (step-up) moves approvals to a different Slack account. The old one
+  keeps working until the new one clicks Confirm.
+- `ecf slack set-tokens` (step-up) replaces both tokens.
+- `ecf slack reauthorize` uses a new configuration token to update the app's permissions.
 
-If the workspace doesn't let apps create channels, `ecf slack status` says which private channel
+If your workspace doesn't let apps create channels, `ecf slack status` says which private channel
 to create and add ecf to.
 
 ## Alerts
 
-- `ecf alerts show`; `ecf alerts set [mail|system|operator|slack] --to slack|email|slack,email`
-  (step-up); `ecf alerts test` sends a test on every route.
-- `ecf alerts email set --from <watched address> --to <destination>` (step-up): alert email through
-  one of your mailboxes to an address ecf doesn't watch; a Security Notice and a test email first,
-  and email joins the default routes. `ecf alerts email off` (step-up) stops it.
-- Alert email carries no subject, sender or text; caps and fallback to Slack are in SPEC §13.3.
+- `ecf alerts show` lists where each kind of alert goes.
+- `ecf alerts set [mail|system|operator|slack] --to slack|email|slack,email` (step-up) changes it.
+- `ecf alerts test` sends a test alert everywhere.
+- `ecf alerts email set --from <watched address> --to <destination>` (step-up) turns on alert email:
+  ecf sends it from one of your mailboxes to an address it doesn't watch. It sends a Security
+  Notice and a test email first. `ecf alerts email off` (step-up) turns it off.
+- Alert email never contains a subject, sender or email text.
 - `ecf settings set notifications off` turns desktop notifications off.
 
-## Outbound
+## Sending email
 
-Off per address by default (ADR 0007, SPEC §8.4, §9.8).
+Sending is off for every mailbox until you turn it on.
 
-- `ecf outbound report <address>`: what it would have sent, your reviews, what a `high` address
-  still needs, send limits, recent sends and reminders.
-- `ecf outbound enable <address>` (step-up, Security Notice). A `high` address first needs 20
-  reviewed suppressed sends, 95% marked correct; there's no override.
-- `ecf outbound disable <address>`: instant; cancels sends in their 10-minute delay and voids
-  approved ones.
-- **Send limits:** 25 an hour, 250 a day by default.
+- `ecf outbound report <address>` shows what ecf would have sent, your reviews of those, what a
+  `high` mailbox still needs before it can send, the send limits, recent sends and reminders.
+- `ecf outbound enable <address>` (step-up, Security Notice) turns sending on. A `high` mailbox
+  must first have 20 held-back sends reviewed, with 95% marked correct. There's no override.
+- `ecf outbound disable <address>` turns it off at once, cancelling sends in their 10-minute pause
+  and any already approved.
+- **Send limits** are 25 an hour and 250 a day by default.
   `ecf address set <address> --max-sends-per-hour <n> --max-sends-per-day <n>` (step-up, Security
-  Notice). Reaching a limit holds the address's sends until `ecf outbound resume <address>`
-  (step-up); resume never turns outbound back on.
-- `ecf outbound snooze <address> [--days N]` / `dismiss <address>` for the reminders.
+  Notice) changes them. Hitting a limit holds that mailbox's sends until `ecf outbound resume
+  <address>` (step-up). Resuming never turns sending back on.
+- `ecf outbound snooze <address> [--days N]` and `ecf outbound dismiss <address>` quiet the
+  "sending is off" reminders.
 
-## Backups, export, import and restore
+## Backups, moving and restoring
 
-SPEC §11.9 has the formats and rules.
+### Setting up backups
 
-**Set up** (`ecf init` does both):
+`ecf init` does this for you. To do it by hand:
 
 ```sh
-ecf export keys rotate       # new key, shown once; type `saved`, then its fingerprint (step-up)
-ecf export dir set <folder>  # where backups go, ideally off this disk (step-up, fingerprint)
+ecf export keys rotate       # creates a new backup key, shown once (step-up)
+ecf export dir set <folder>  # where backups go, ideally not on this computer's disk (step-up)
 ```
 
-Keep the `ECF1-…` key in a password manager. ecf keeps only the halves that sign and encrypt, so
-it can't read its own backups. iCloud Drive, `~/Library/CloudStorage/*` and external disks count
-as off this disk; `ecf doctor` warns when the folder is on the same disk.
+When the key is shown, you type `saved` and then its fingerprint, to show you've kept it. **Keep the
+`ECF1-…` key in a password manager.** ecf itself can't read its own backups, so without the key
+nobody can. iCloud Drive, other cloud folders in `~/Library/CloudStorage` and external disks count
+as off this disk; `ecf doctor` warns if the folder is on the same disk.
 
-**Running:** a daily backup by default (`export_schedule` in `ecf config apply`: `daily`, `weekly`
-or `off`), newest 14 kept (`ecf settings set export_keep <n>`). `ecf export status` shows the last
-backup and failures; `ecf export now` makes one at once; `ecf export keys show` shows the key's
-fingerprint. Two failures in a row raise a System Error.
+### How backups run
 
-**Manual export:** `ecf export --to <file or folder>` (step-up) writes a bundle protected by a
-passphrase (ecf offers six words), readable without the backup key; use it to move data.
+A backup is made daily by default (`export_schedule` in the config file: `daily`, `weekly` or
+`off`), and the newest 14 are kept (`ecf settings set export_keep <n>`).
 
-**Import** another install's data: `ecf import <bundle> --dry-run` first, then
-`ecf import <bundle>` (step-up); `--replace` replaces this install's addresses and emails (asks
-for the install name). Addresses arrive paused, at most `assist`, outbound off. Secrets, Slack,
-the backup key and alert email are set up again.
+- `ecf export status` shows the last backup and any failures.
+- `ecf export now` makes one straight away.
+- `ecf export keys show` shows the key's fingerprint.
+- Two failures in a row raise a System Error.
 
-**Restore** this install: `ecf restore <bundle>` (step-up) with the backup key (and the
-passphrase for a manual export). It previews, warns when the bundle is older than your newest
-backup, asks you to confirm ecf is stopped everywhere else, and keeps a copy of the data it
-replaces for 7 days. Addresses come back paused at their previous stage; `ecf resume <address>`
-works once a mail check has passed since the restore.
+### Moving data to another install
 
-## Upgrade and rollback
+`ecf export --to <file or folder>` (step-up) writes a bundle protected by a passphrase (ecf suggests
+one made of six words). It doesn't need the backup key, so use it to move data.
 
-`ecf upgrade` installs the newest stable release from this repository's GitHub Releases, through
-your signed-in `gh`; `ecf upgrade --to vX.Y.Z[-rcN]` installs a named one (release candidates
-only by name), and `--to` an older version goes back to that upgrade's snapshot. It refuses unless
-the release's `release-manifest.json` and `SHA256SUMS` agree and the wheel matches them. Test
-installs can also upgrade from a local wheel (`prod` refuses `--wheel`):
+To bring it in: `ecf import <bundle> --dry-run` first, then `ecf import <bundle>` (step-up).
+`--replace` replaces this install's mailboxes and emails (it asks you to type the install's name).
+Imported mailboxes arrive paused, at most at `assist`, with sending off. Passwords, Slack, the
+backup key and alert email have to be set up again.
+
+### Restoring this install
+
+`ecf restore <bundle>` (step-up) needs the backup key (and the passphrase, for a manual export).
+It shows what it will do, warns if the bundle is older than your newest backup, asks you to
+confirm ecf isn't running anywhere else, and keeps a copy of the data it replaces for 7 days.
+Mailboxes come back paused at their old stage. `ecf resume <address>` works once a mail check has
+run since the restore.
+
+## Upgrading and going back
+
+`ecf upgrade` installs the newest release from GitHub, using your signed-in `gh` command.
+`ecf upgrade --to vX.Y.Z` installs a particular version; naming an older version goes back to it.
+ecf refuses a download unless its checksums match the release's published ones.
+
+On a `test` install you can also upgrade from a wheel file (a `prod` install refuses):
 
 ```sh
-ecf upgrade --wheel <file> --check   # all checks, nothing stopped
+ecf upgrade --wheel <file> --check   # run every check, change nothing
 ecf upgrade --wheel <file>
 ```
 
-It refuses while items are executing, a lease is held, an `ecf claude` session is open or
-`ecf watch` runs. It snapshots the database and keeps the running wheel, installs the new one,
-migrates, re-grants Keychain access on macOS and starts the service. A failed install, migration
-or start restores the old version by itself.
+An upgrade waits if anything is running: an action in progress, an open `ecf claude` session, or
+`ecf watch`. It saves a snapshot of the database, keeps the old version, installs the new one,
+updates the database, re-allows Keychain access and starts the service. If any of that fails, it
+puts the old version back by itself.
 
-`ecf upgrade --to <version>` goes back using that upgrade's snapshot (the newest 2 are kept).
-Before the new version's first good timer pass, the whole snapshot returns; after it, send
-history, sender records and gate history are kept, mail since the upgrade is read again, open
-approvals need deciding again, running actions become `failed_unknown`, and every address is
-paused at `assist` at most (SPEC §11.10, OD-331).
+**Going back:** `ecf upgrade --to <older version>` uses that upgrade's snapshot (the newest 2 are
+kept). If you go back before the new version has run properly once, everything returns as it was.
+After that, send history, sender records and go-live history are kept; mail since the upgrade is
+read again; open approvals need deciding again; actions that were running are marked as unknown;
+and every mailbox is paused, at most at `assist`.
 
-## Upgrading to v2.0.0 (schema v2)
+### Upgrading to v3.0.0
 
-v2.0.0 replaces classification schema v1 with v2, one schema for work and personal mail (SPEC
-§7.1, ADR 0024, OD-475).
+- **Classification changes.** Five yes/no safety questions now sit beside the categories:
+  bank-detail change, claims to be from a regulator, phishing, claims to be a colleague, and from a
+  private individual. They replace four old values (`category` `vendor_change_request`,
+  `regulatory`, `spam_or_phishing`, and `sender_type` `team`). A fake email now gets the category
+  of whatever it's pretending to be. Your stored mail is updated automatically.
+- **The go-live test starts again** for every mailbox, and live mailboxes drop to `assist`.
+- **Your rules file:** copies of the old starter rules in an applied file are cleaned up once,
+  automatically (and logged). A copy you changed stops that: ecf shows a System Error and uses its
+  default rules until you remove it. The junk rule is now called `phishing` (it was
+  `spam_or_phishing`); if you have your own rule with either name, rename it before upgrading.
+  Mail labelled as phishing before the upgrade keeps the old label
+  (`$ecf_<install>_spam_or_phishing`); new mail gets `$ecf_<install>_phishing`. Undo works on
+  both.
+- **Claude only.** v3.0.0 removes the local AI model (Gemma on Ollama) and the presets that used
+  it. See [Converted mailboxes](#v300-converted-addresses).
+- **Every Claude role now uses Claude Opus 5.5**, which costs more per email than before.
+- **Backups:** v3.0.0 reads backups of format 3 and 4. Export an older backup again on v2.2.x
+  before bringing it in.
 
-**What changes:** new categories `account_security`, `shipping`, `appointment`, `travel`,
-`finance` and `school_or_family`; `invoice`, `payment_confirmation`, `vendor_change_request` and
-`regulatory` also cover personal bills, receipts, account changes and government mail. New sender
-types `company`, `friend`, `family` and `person`; `staff` is now `team`.
+### v3.0.0: converted addresses
 
-**The go-live gate starts again** for every address: the gate is bound to the schema as well as
-the models, so v1 eval results no longer count and `live` addresses drop to `assist` (SPEC §9.3).
-`ecf upgrade` lists every address as affected. Then, per address:
+Mailboxes that used the local model are switched to Claude and **paused** during the upgrade. The
+upgrade output, a Security Notice and `ecf doctor` name each one and how many emails are waiting.
+While paused, fraud and regulator checks still run on new mail, but nothing goes to Anthropic.
 
-```sh
-ecf eval run --claude --preset C      # start it with /ecf-eval in ecf claude (v2.x also had
-                                      # local runs for presets A and B, removed in v3.0.0)
-ecf stage set <a> live                # step-up, once the safety gates pass on v2
-```
+- **Ask first.** From now on that mailbox's mail goes to Anthropic whenever someone runs
+  `/ecf-review`. If the mailbox belongs to someone else (for example a Gmail account you watch with
+  its owner's agreement), ask them before you resume it.
+- **Resume** with `ecf resume <address>`, which asks you to confirm the owner agreed. Waiting mail
+  is classified at the next `/ecf-review`. The mailbox restarts at `assist`.
+- **Or remove it** with `ecf address remove <address>`.
+- **What's different:** mail is only classified when someone runs `/ecf-review`, so plan on one at
+  least every working day. ecf reminds you after 24 hours and alerts you more loudly after 48.
+- **Ollama:** once the upgrade has settled, ecf removes its own Ollama login item and log folder.
+  Ollama itself and its model copies are yours to remove (`ollama rm` for each `ecf/gemma4-12b:*`).
+- **Going back** to v2.2.x restores the old setup from the snapshot, with Ollama still in place.
 
-**Rules files:** a file written for v1 still applies; `staff` is read as `team` and the rules that
-used it are named. To update the file, change `staff` to `team` (and use the new values if you
-want), then `ecf rules test rules.yaml` and `ecf config apply config.yaml`. The upgrade to v2
-never rewrote applied rules; the upgrade to v3.0.0 does, once (below; SPEC §8.6).
+### Older upgrades
 
-**Starter rules 5a-5d** label the new categories and flag account-security mail, and appointment
-or school and family mail with a deadline. None hides mail: personal-category mail stays in the
-inbox, labelled. To archive or move some of it, add your own rule with `ecf config apply` (format
-in SPEC §8.6); a hide still runs only when corroborated (SPEC §8.3). A new rule 1b clause labels
-`suspicious` and flags money mail from an outside sender the model reads as `person`, so a
-colleague writing from a personal address is still checked (OD-476).
+What changed in each earlier version, including v2.0.0's new categories, is in
+[CHANGELOG.md](../CHANGELOG.md).
 
-**Stored mail** is migrated automatically on upgrade (`staff` becomes `team`; migration 0034).
+## Removing ecf
 
-**Backups:** bundles are now data format 3; v2.0.0 imports and restores formats 3 and 2, but
-`v1.0.0` can't import a v2 bundle (SPEC §11.9). `ecf upgrade --to v1.0.0` goes back through the
-upgrade's snapshot, as above (SPEC §11.10).
+`ecf destroy [--config-token]` (step-up) removes an install completely. It refuses while anything
+is running or an upgrade hasn't settled, offers a backup if none was made in the last 24 hours, and
+asks you to type the install's name. Then it archives the Slack channels, deletes the Slack app
+(with `--config-token`; otherwise it turns the app off), deletes every stored password and token,
+removes the service, signs `ecf claude` out and deletes ecf's data. Your backups and mailboxes
+aren't touched.
 
-## Upgrading to v3.0.0 (schema v3)
+At the end it lists what's left for you: app passwords to cancel at your mail provider, the Slack
+app if it was kept, and Ollama if you used it with ecf before v3.0.0. If it's interrupted, run it
+again to finish.
 
-Not released yet; built in stages (SPEC §7.1, ADR 0030, OD-498, OD-500).
+## Health checks
 
-**What changes:** five yes/no fixed safety items are asked beside the categories, and the four
-values they replace are gone: `category` `vendor_change_request`, `regulatory` and
-`spam_or_phishing`, and `sender_type` `team`. A fake email gets the category of what it pretends
-to be. Stored mail is migrated on upgrade (migrations 0036 and 0037: the items set, the removed
-values read as `other` or `unknown`).
+`ecf doctor` checks everything ecf depends on (the service, the Keychain, disk encryption, Slack,
+each mailbox's incoming and outgoing servers, Claude, alert email and backups) and prints a fix
+for anything wrong. Also useful:
 
-**Rules files:** applied rules copied from the v2 starter rules lose their unchanged copies of the
-fixed rules once, at service start (audited); a changed copy stops that, shows as a System Error
-and in `ecf doctor`, and the starter rules apply until you remove it. A file that tests a removed
-value is refused with its replacement. The junk rule is now `phishing` (was `spam_or_phishing`,
-OD-508): a rule of yours with either id stops the conversion like a changed copy (System Error,
-default rules until you fix it), so give a rule of your own named `phishing` another id before
-upgrading. The check before the upgrade can't name it; `ecf upgrade` names it once the upgrade
-is done. Mail ecf labelled as phishing before v3.0.0, or planned before the upgrade and approved
-after it, keeps the keyword `$ecf_<install>_spam_or_phishing`; new mail gets
-`$ecf_<install>_phishing`. Undo works on both.
-
-**The go-live gate starts again** for preset C addresses (the schema is part of their key), and
-every address's stored pass is cleared (accuracy is now reviews with no Fix).
-
-## v3.0.0: converted addresses
-
-v3.0.0 removes presets A and B, Gemma and Ollama (ADR 0031, SPEC §4.3). Not released yet.
-
-- **At upgrade** every A or B address becomes C and is **paused**. The new `ecf upgrade` output,
-  a Security Notice and `ecf doctor` name each one with how many items wait. While paused, the
-  fraud and regulator rules still run on new mail, but nothing goes to Anthropic for it.
-- **Consent first.** A C address's mail goes to Anthropic at each `/ecf-review`. If the mailbox
-  belongs to someone else (for example a Gmail account you watch with its owner's agreement,
-  OD-427), ask the owner before you resume it.
-- **Resume:** `ecf resume <address>` confirms the owner agreed; its waiting mail is
-  classified at the next `/ecf-review`. It restarts at `assist`: live again needs a passing
-  `/ecf-eval` run and reviews (SPEC §9.3).
-- **Or remove:** `ecf address remove <address>`.
-- **What changes for it:** mail is classified only when someone runs `/ecf-review`, not at every
-  check; plan on a review at least once a working day. A reminder comes after
-  `claude_review_reminder_hours` (24 h) and a louder alert after twice that. Each item uses about
-  1.7-2.3k input tokens of your Claude plan (SPEC §4.1). A high-risk item that isn't fraud can now
-  get a send proposed (approval and step-up still apply).
-- **Ollama:** once the upgrade settles, ecf removes its own Ollama login item and log folder.
-  Ollama and the model copies are yours to remove (`ollama rm` for each `ecf/gemma4-12b:*` copy).
-- **Rollback** (`ecf upgrade --to <v2.2.x>`) brings A and B back from the snapshot (SPEC §11.10),
-  with Ollama still in place.
-- **Backups:** v3.0.0 reads bundles of format 3 and 4; re-export an older bundle on v2.2.x first.
-  Importing a bundle with A or B addresses converts and pauses them the same way.
-
-## Removing an install
-
-`ecf destroy [--config-token]` (step-up): refuses while anything runs or an upgrade hasn't
-settled; offers an export when none was made in 24 hours; asks you to type the install name. It
-archives the Slack channels, deletes the Slack app (with `--config-token`; otherwise turns its bot
-off), deletes every secret, removes the unit, signs `ecf claude` out and deletes the data folder.
-Backups and mailboxes are untouched. It ends with what's left for you: app passwords to revoke at
-your provider, the Slack app if kept, Ollama if you ran it for ecf before v3.0.0. Running it
-again finishes an interrupted destroy (SPEC §11.11).
-
-## Health: `ecf doctor`
-
-`ecf doctor` checks the service, secret store, disk encryption, Slack, each address's IMAP and
-SMTP, Claude, addresses converted and paused at the v3.0.0 upgrade, alert email and backups,
-and prints a fix for each failure (SPEC §13.2). `ecf status` shows addresses, backlog and the
-service; `ecf logs [--address] [--event] [--since] [--until] [-f]` shows the audit log (no message
-content); `ecf stats --stages` shows how long mail spends in each stage, and `ecf stats` the
-Slack post times.
+- `ecf status`: mailboxes, backlog and the service.
+- `ecf logs [--address] [--event] [--since] [--until] [-f]`: the audit log (never email content).
+- `ecf stats --stages`: how long mail spends at each step. `ecf stats`: Claude usage and Slack
+  timings.
 
 ## Recovery
 
-**Items needing a person** (SPEC §13.5): `ecf inbox` lists them. `ecf item show <id>` explains
-one. For `failed`, `failed_unknown` and stuck `executing`: `ecf item requeue <id>` runs the action
-again (a send only once it surely failed: refused by the server, or missing from Sent on two later
-checks; it needs a new approval and step-up, OD-322), or `ecf item resolve <id> --reason <text>`
-closes it. `needs_human` goes back through a new proposal or `ecf item resolve`.
-Bulk: `ecf item resolve --older-than <days> [--address <a>] --reason <text>`.
+**Emails that need a person:** `ecf inbox` lists them and `ecf item show <id>` explains one. For
+an action that failed, may or may not have happened (`failed_unknown`), or seems stuck:
 
-**Revoked Slack token:** `ecf slack set-tokens`, then `ecf slack reauthorize`.
+- `ecf item requeue <id>` tries again. For a send, only once ecf is sure it didn't go out (the
+  server refused it, or it's missing from Sent on two later checks); it needs a new approval and
+  step-up.
+- `ecf item resolve <id> --reason <text>` closes it without acting.
+- To close many old items at once: `ecf item resolve --older-than <days> [--address <a>] --reason
+  <text>`.
 
-**Mailbox Login Rejected** (new or revoked app password): `ecf address set <address>
---app-password`; checks resume and a `Resolved:` notice follows (OD-119).
+**Slack token revoked:** `ecf slack set-tokens`, then `ecf slack reauthorize`.
 
-**Secret store locked, or "Python changed"** (macOS): after Python under ecf changes, the service
-can't read its Keychain items and waits with "secret store needs you". Run `ecf service regrant`:
-it stops the service, reads each item with the Keychain dialog on (enter your login password,
-choose Always Allow), records the new interpreter only when every read succeeded, and starts the
-service. A locked Linux keyring (after a reboot, before you log in) is unverified until M5.
+**"Mailbox Login Rejected"** (the app password changed or was cancelled): create a new one at your
+provider, then `ecf address set <address> --app-password`. Checks resume and a "Resolved" notice
+follows.
 
-**Crash loop:** after 5 crashes in 10 minutes the service posts why and stays stopped until
-`ecf service start` (SPEC §11.1). A message that crashes the service twice is quarantined
-(`content_unscanned` and escalated) so the rest keep flowing (§5.1). SPEC has no further
-procedure; check `ecf logs` and `ecf doctor` before starting it again.
+**Keychain locked, or "Python changed":** after the Python that ecf uses is updated, macOS may stop
+letting the service read its Keychain items, and it waits with "secret store needs you". Run
+`ecf service regrant`. It stops the service, reads each item with the Keychain dialog showing
+(enter your login password and choose Always Allow), and starts the service again.
 
-**Mailbox reset** (the provider changed the mailbox's UIDVALIDITY): ecf recovers by itself. It
-re-reads INBOX mail from just before the last message it had, matches messages it already has,
-re-points open items to their new UIDs and audits `mailbox.reset` (SPEC §6.4). Items it can't
-find again close as `resolved_by_mailbox`. No command is needed.
+**Crash loop:** if the service crashes 5 times in 10 minutes, it posts why and stays stopped until
+`ecf service start`. Check `ecf logs` and `ecf doctor` before starting it. An email that crashes
+the service twice is set aside as quarantined and escalated, so the rest keep flowing.
 
-**Size and scan limits:** messages over `max_message_bytes` (16 MB `standard`, 64 MB `high`) get
-headers and the first `max_scan_bytes_per_part` (10 MB) of each text part only. Change them per
-address with `ecf settings set max_message_bytes <size> --address <a>` and
-`ecf settings set max_scan_bytes_per_part <size> --address <a>` (in MB, 1 to 64; SPEC §5.1).
-64 MB is the largest size whose memory use was measured (OD-220).
+**Mailbox reset:** sometimes a mail provider renumbers a mailbox. ecf notices, finds its messages
+again, and carries on by itself. Items it can't find again are closed. Nothing for you to do.
 
-**Two installs on one mailbox** (SPEC §13.6): another install's labels, or another copy's
-`X-ECF-Install` on your own mail, pause the address with "possible second install". Stop the other
-copy, then `ecf resume <address>`.
+**Very large emails:** emails over 16 MB (64 MB on a `high` mailbox) are only partly scanned: the
+headers, and the first 10 MB of each text part. You can change both per mailbox, in MB from 1 to
+64: `ecf settings set max_message_bytes <size> --address <a>` and `ecf settings set
+max_scan_bytes_per_part <size> --address <a>`.
 
-**Lost backup key:** SPEC defines no way to recover it. Scheduled backups made with it can't be
-read; a manual export can still be brought in with its passphrase through `ecf import` (not
-`ecf restore`, which needs the key). Run `ecf export keys rotate` for a new key (the
-dialog names the old and new fingerprints), then `ecf export now` so a readable backup exists.
+**Two copies of ecf on one mailbox:** if ecf sees another install's labels, or its own mail marked
+by another copy, it pauses the mailbox with "possible second install". Stop the other copy, then
+`ecf resume <address>`.
 
-**Stolen laptop** (SPEC §12.1): full-disk encryption and a screen lock are what protect it. Then,
-from another computer: revoke each mailbox's app password at your provider (Gmail:
-[Gmail setup](gmail-setup.md#revoking-ecfs-access)); revoke ecf's Slack
-tokens (or remove its app) in Slack; sign out ecf's Claude login in your Claude
-account. SPEC names these steps but not each provider's screens. On a new computer:
-`ecf init --restore <bundle>` with your backup key; it lists what's left (Slack tokens,
-`ecf address set <a> --app-password` with the new passwords, `ecf check`, `ecf resume`, `ecf
-doctor`). The restore raises the install's generation, so mail sent by the old computer is told
-apart (OD-318).
+**Lost backup key:** there's no way to recover it, and scheduled backups made with it can't be
+read. A manual export can still be brought in with its passphrase, using `ecf import` (not
+`ecf restore`, which needs the key). Run `ecf export keys rotate` for a new key, then
+`ecf export now` so you have a readable backup again.
+
+**Stolen laptop:** disk encryption and a screen lock are what protect it. Then, from another
+computer:
+
+1. Cancel each mailbox's app password at your mail provider (Gmail:
+   [how](gmail-setup.md#revoking-ecfs-access)).
+2. Cancel ecf's Slack tokens, or remove its app, in Slack.
+3. Sign ecf's Claude login out in your Claude account.
+
+On a new computer, run `ecf init --restore <bundle>` with your backup key. It lists what's left to
+do: new Slack tokens, `ecf address set <a> --app-password` with the new app passwords, `ecf check`,
+`ecf resume` and `ecf doctor`. ecf can tell mail sent by the old computer apart from the new one.

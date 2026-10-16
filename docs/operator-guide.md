@@ -1,154 +1,193 @@
-# Operator guide
+# Using ecf day to day
 
-Day-to-day use of ecf. Setup, configuration, stages, backups, upgrades and recovery are in the
-[admin guide](admin-guide.md). `SPEC.md` is authoritative; this guide points into it. Every
-command has `--help`, which marks the ones that need step-up.
+This guide is for whoever looks after the mailbox: reading ecf's alerts, approving what it
+suggests, and keeping the queue moving. Setting ecf up, changing its configuration and fixing
+problems are in the [admin guide](admin-guide.md). Right now one person does both jobs.
 
-In v1 one person is both operator and admin.
+Every command has `--help`. Commands that need step-up (see below) say so there.
 
-## What you see in Slack
+## A few words you'll see
 
-ecf posts in private channels it creates and invites you to (SPEC §10.1):
+- **Item:** one email that ecf is tracking.
+- **Card:** a Slack message about one item, with buttons.
+- **Step-up:** a second check at the computer itself (Touch ID or your Mac password) before ecf
+  does something risky. A Slack click alone isn't enough for those.
+- **Stage:** how much ecf may do on its own for a mailbox. Every mailbox starts in `shadow`
+  (watch only), can move to `assist` (labels and flags only) and then to `live` (handles routine
+  mail itself). Your reviews are what earn a mailbox the next stage.
+- **Sensitivity:** `standard`, or `high` for finance mailboxes. `high` means stricter checks and a
+  10-minute pause before any email goes out.
+- **The actor:** the part of ecf (Claude) that suggests what to do with an email after it's been
+  classified.
 
-- **`ecf-<install>-<address_id>`**, one per watched address: cards for emails that need you,
-  digests, review posts.
-- **`ecf-<install>-summary`**: the pinned "Needs you" message, the daily summary, alerts, notices.
+## Slack is where you work
 
-Every click is accepted only from your member ID. Clicks reach ecf only while the computer is
-awake; "Needs you" says "Buttons work only while <computer> is awake. Last connected <time>."
-A button that opens a form needs the computer awake (SPEC §10.1, Sleep).
+ecf creates private Slack channels and invites you:
 
-**"Needs you"** (pinned in the summary channel) lists what `ecf inbox` lists: the top 20, stale
-first, each labelled by what it waits for, plus paused addresses, and Pause all / Resume all.
+- **One channel per mailbox** (`ecf-<install>-<mailbox>`): cards for emails that need you,
+  digests and review posts.
+- **One summary channel** (`ecf-<install>-summary`): the pinned "Needs you" list, the daily
+  summary, alerts and notices.
 
-**Item cards** show the sender, subject, why ecf flagged it, the sender check, flags (first-time
-sender, Reply-To mismatch, not addressed to this mailbox, not fully scanned, bulk), what was done,
-and `ecf item show <id>`. Payment and fraud items say "This acts on the email only. ecf never pays
-anything." No email body is posted; **Show excerpt** shows the first 200 characters of the stored
-excerpt to you only (SPEC §9.2). A classified email's card also says how it was classified ("Classified: invoice, high
-priority, by Claude Opus 5.5", or "corrected by you"). Old mail from `ecf backfill` or `ecf
-reprocess` gets no card: each run has one summary in the summary channel instead.
+Only clicks from your own Slack account count. Buttons only work while the computer running ecf is
+awake; "Needs you" shows when it last connected.
 
-**Escalations** (possible fraud, regulator mail) get their own card and mention you, so you're
-notified on desktop and phone. Fraud, quarantine and regulator escalations are never rolled up;
-others beyond `escalations_per_hour` roll into one "N more escalations" thread per hour (SPEC
-§9.2).
+### "Needs you"
 
-**Digests** post at most hourly per address, in business hours only, and only when mail came in.
-They list weak fraud signals and unverified payment senders with what was done, with Undo and
-Pause buttons. After a gap of more than 2 hours a digest opens with "Caught up: N messages since
-<time>". `ecf digest <address>` posts one now. A digest's **Approve all N reversible** approves
-the fixed set it lists; it never includes sends, fraud-guard, unverified-sender, regulator,
-not-fully-scanned or `high`-address items (SPEC §9.5).
+A pinned message listing what's waiting on you: the top 20 items, oldest first, each saying what
+it's waiting for. It also shows paused mailboxes, and has Pause all and Resume all buttons. It
+always matches `ecf inbox`.
 
-**Review posts** (one per address channel per business hour, at most 20 emails) list what the
-model said about each email. See [Reviewing](#reviewing-shadow-and-assist).
+### Item cards
 
-**The daily summary** posts at the start of business hours: open, stale and expired items,
-not-fully-scanned counts, held-back sends, the last backup, backlog, newer
-models and releases, and anyone in ecf's channels besides you and the bot (SPEC §10.1).
+A card shows the sender, the subject, why ecf flagged the email, what it found when checking the
+sender, and any warning signs: a first-time sender, a reply address that goes somewhere else, an
+email not actually addressed to this mailbox, an email too big to scan fully, or bulk mail. It says
+what ecf did and how it classified the email (for example "Classified: invoice, high priority, by
+Claude Opus 5.5", or "corrected by you").
 
-**Alerts** read `[ecf-alert] <Title>`, and `[ecf-alert] Resolved: <Title>` when they clear. The
-titles and what raises each are in SPEC §13.3; the ones you'll see most:
+Cards never include the email's text. **Show excerpt** shows you, and only you, the first 200
+characters. Cards about payments or fraud say "This acts on the email only. ecf never pays
+anything."
 
-| Title | What to do |
+### Escalations
+
+Possible fraud and regulator mail get their own card and mention you, so your phone and desktop
+notify you. These are never bundled together. If a lot of other escalations arrive at once, the
+extras beyond the hourly limit (`escalations_per_hour`) are grouped into one "N more escalations"
+thread per hour.
+
+### Digests
+
+At most once an hour per mailbox, during business hours, and only when new mail came in. A digest
+lists the milder warning signs (weak fraud signals, payment emails from senders ecf hasn't
+verified) and what ecf did about each, with Undo and Pause buttons. After a gap of more than 2
+hours it opens with "Caught up: N messages since <time>". `ecf digest <address>` posts one
+straight away.
+
+**Approve all N reversible** approves exactly the list shown. It never includes sends, fraud,
+regulator, unverified-sender or not-fully-scanned items, or anything on a `high` mailbox.
+
+### Review posts
+
+Once per business hour per mailbox, up to 20 emails with what Claude made of each and what ecf
+would do. See [Reviewing](#reviewing-how-a-mailbox-earns-trust).
+
+### The daily summary
+
+Posted at the start of business hours: open, stale and expired items; emails that couldn't be
+fully scanned; sends held back; the last backup; the backlog; newer models or ecf releases; and
+anyone in ecf's channels other than you and ecf itself.
+
+### Alerts
+
+Alerts start with `[ecf-alert]`, and `[ecf-alert] Resolved:` when the problem clears. The ones
+you'll see most:
+
+| Alert | What to do |
 |---|---|
-| `Operator Input Needed: <condition> (<address>)` | the condition names it: approvals queued for step-up, stale items, outbound off, send limit reached, Claude review waiting, a send scheduled in 10 minutes, a possible second install, Gmail download limit reached (new mail waits; nothing to do) |
-| `Possible Fraud Attempt`, `Regulatory Mail Notice` | open the escalation card; check out of band before acting |
-| `Mail Provider Unreachable`, `Mailbox Login Rejected` | see the admin guide (recovery) |
-| `System Error`, `Slack Delivery Failed` | run `ecf doctor`; see the admin guide |
-| `Security Notice` | a security-relevant change was made; if it wasn't you, see the admin guide |
+| `Operator Input Needed: <what> (<address>)` | It says what's needed: approvals waiting at the computer, items going stale, sending is off, the send limit was reached, Claude review is overdue, a send goes out in 10 minutes, a possible second copy of ecf, or a Gmail download limit (new mail just waits; nothing to do). |
+| `Possible Fraud Attempt`, `Regulatory Mail Notice` | Open the card. Check by phone or another channel you trust before acting on the email. |
+| `Mail Provider Unreachable`, `Mailbox Login Rejected` | See [Recovery](admin-guide.md#recovery) in the admin guide. |
+| `System Error`, `Slack Delivery Failed` | Run `ecf doctor`, then see the admin guide. |
+| `Security Notice` | A security setting changed. If it wasn't you, see the admin guide. |
 
-**The dead-man's message**: "ecf hasn't checked in since <time> (<computer>)" posts if the computer
-sleeps, dies or the service stops without a clean stop; by default only in business hours
-(`deadman_offhours`, SPEC §10.1).
+### "ecf hasn't checked in"
+
+If the computer sleeps, shuts down or ecf stops unexpectedly, Slack posts "ecf hasn't checked in
+since <time> (<computer>)". By default this happens only during business hours (the
+`deadman_offhours` setting changes that).
 
 ## Approving and rejecting
 
-Approve and Reject buttons name the action ("Approve: archive email"). The first decision wins.
-Approvals expire after 4 days for sends and 14 days for everything else; on expiry nothing runs
-(SPEC §6.5).
+Buttons say exactly what they do ("Approve: archive email"). Whoever decides first wins.
+Approvals expire after 4 days for sends and 14 days for everything else; an expired approval does
+nothing.
 
-- **Reversible actions** (mark read, archive, move, junk, save a draft) are one click in Slack.
-- **Step-up actions** wait for you at the computer: every send, every irreversible action, and
-  hiding a fraud, quarantine or regulator email. Clicked in Slack, the card says "Queued for your
-  computer (N waiting)", keeps only Reject, and a desktop notification names the command:
+- **Reversible actions** (mark as read, archive, move, mark as junk, save a draft) take one click
+  in Slack.
+- **Risky actions need you at the computer:** every send, anything that can't be undone, and
+  hiding a fraud or regulator email. When you click one in Slack, the card says "Queued for your
+  computer (N waiting)" and keeps only Reject, and your desktop shows a notification with the
+  command to run:
 
   ```sh
-  ecf approve --pending     # lists them (sends separately), asks, one step-up for the non-sends
-  ecf approve <id>          # one item: shows what it does (a draft in full), asks; every send needs its own
-  ecf approve --scan <id>   # a backfill's or reprocess's waiting actions: listed, one step-up
+  ecf approve --pending     # list what's waiting and approve it (each send separately)
+  ecf approve <id>          # one item: shows exactly what it does (a draft in full), then asks
+  ecf approve --scan <id>   # everything waiting from one backfill or reprocess run
   ecf reject <id>
   ```
 
-  Step-up is Touch ID or your password (Linux, not supported until M5: your password via PAM). The
-  dialog names the action, sender, subject and address, plus a 4-character code that the CLI
-  prints too; check they match (SPEC §9.6).
-- **Sends on `high` addresses** then wait 10 minutes of awake time, announced in Slack with
-  **Cancel** (and emailed when alert email is on). `ecf cancel <id>` does the same.
+  The Touch ID or password dialog names the action, sender, subject and mailbox, plus a
+  4-character code. The command prints the same code. Check they match before you approve.
+- **Sends on a `high` mailbox** then wait 10 minutes (of the computer being awake). Slack
+  announces it with a **Cancel** button, and so does alert email if you use it. `ecf cancel <id>`
+  does the same.
 
 ## Answering ecf's questions
 
-When the model isn't sure it asks, on a card headed "ecf has a question (round N of 2)". The
-question is model output and can be wrong (SPEC §9.9).
+When Claude isn't sure about an email, ecf asks you on a card headed "ecf has a question (round
+N of 2)". The question comes from the AI, so it can be wrong.
 
-- **Answer** opens a form (computer awake); `ecf answer <id> [text]` answers from the CLI.
-- On payment or fraud items an answer needs step-up: from Slack it waits, and `ecf answer <id>` at
-  the computer shows it and confirms it.
-- A third question, or an answer expiring in round 2, moves the item to "Needs you: two rounds of
-  questions didn't settle it". An unconfirmed answer expires after 14 days.
+- **Answer** opens a form (the computer must be awake). `ecf answer <id> [text]` answers from the
+  terminal.
+- On payment or fraud emails, an answer also needs step-up: a Slack answer waits until you confirm
+  it with `ecf answer <id>` at the computer.
+- If two rounds of questions don't settle it, the item moves to "Needs you" as "two rounds of
+  questions didn't settle it". An answer you never confirm expires after 14 days.
 
 ## Undo and Dismiss
 
-- **Undo** (digests) removes labels and a flag ecf added. It never runs on fraud, weak-fraud,
-  lookalike, quarantine or regulator items, and never removes `suspicious` or `regulatory`. It runs
-  at the address's next check and tells you the result; a message that changed or left INBOX is
-  reported, not forced (SPEC §10.1).
-- An undone draft is deleted only when it's unchanged in Drafts; one you edited, sent or deleted is
-  left alone ("draft not deleted").
-- **Dismiss** closes an item with no payment, fraud or regulator signal (`resolved_manual`).
+- **Undo** (on digests) removes the labels and flag ecf added. It never works on fraud, lookalike,
+  regulator or quarantined emails, and never removes the `suspicious` or `regulatory` labels. It
+  runs at the mailbox's next check and tells you how it went. If the email changed or was moved
+  out of the inbox in the meantime, ecf reports that rather than forcing it.
+- An undone draft is deleted only if it's still unchanged in Drafts. If you edited, sent or deleted
+  it, ecf leaves it alone and says "draft not deleted".
+- **Dismiss** closes an item that has no payment, fraud or regulator warning.
 - `ecf item undo <id>` is Undo from the terminal, for any item a digest would offer it on.
 
 ## Mail pretending to be someone you work with
 
-When the admin lists people in `org_addresses` (admin guide, Gmail), ecf checks each email that
-isn't from them for signs it claims to be them (SPEC §8.5). The card's or `ecf item show`'s
-**Why** names what matched:
+If your admin has listed the people you work with (`org_addresses`), ecf checks every email from
+anyone else for signs it's pretending to be one of them. The card, or `ecf item show`, says what
+it noticed:
 
-| Why says | Meaning |
+| ecf says | Meaning |
 |---|---|
-| `display name matches Pat Lee, one of your org addresses, but the sender is x@gmail.com` | the sender used a listed person's name |
-| `display name shows pat.lee@gmail.com, an internal address, but the sender is x@gmail.com` | the display name shows an internal address that isn't the real sender |
-| `patlee1@gmail.com looks like patlee@gmail.com, one of your org addresses` | a one-letter Gmail typo, or the same name at another provider |
+| `display name matches Pat Lee, one of your org addresses, but the sender is x@gmail.com` | The sender is using a colleague's name. |
+| `display name shows pat.lee@gmail.com, an internal address, but the sender is x@gmail.com` | The name shown is a colleague's address, but the email came from somewhere else. |
+| `patlee1@gmail.com looks like patlee@gmail.com, one of your org addresses` | A one-letter typo of a colleague's Gmail address, or their name at a different provider. |
 
-- **About money** (a payment keyword, or the model says it's payment-related): labelled
-  `suspicious`, flagged and escalated: its own card, mentioning you.
-- **Otherwise:** labelled `suspicious` and flagged, and listed in the address's digest under weak
-  fraud signals.
+If the email is about money, it's labelled `suspicious`, flagged and escalated with its own card.
+Otherwise it's labelled `suspicious`, flagged, and listed in the digest.
 
-What to do: don't reply, pay, open links or change anything from the email. Contact the person
-through a channel you already trust (phone, or their known address in a new email) and ask. If it
-was really them writing from a new account, the admin adds that address to `org_addresses`. An
-outside person who happens to share a listed name is flagged too; resolve the item with
-`ecf item resolve <id> --reason <text>` (step-up on payment or fraud items).
+**What to do:** don't reply, pay, click links or change anything because of the email. Contact the
+person a way you already trust, by phone or by writing to their known address, and ask. If it
+really was them on a new account, your admin can add that address to the list. Someone outside
+who just happens to share a colleague's name gets flagged too; close those with
+`ecf item resolve <id> --reason <text>` (step-up for payment or fraud items).
 
-A different check covers a listed address itself: mail from it that doesn't pass ecf's DMARC check
-is a possible fraud attempt (a forged copy of your own Gmail address included), except your own
-notes to yourself on Gmail (SPEC §8.5, OD-446).
+A separate check covers mail that claims to come from a listed address itself. If it fails ecf's
+authenticity check, it's treated as a possible fraud attempt, including a forged copy of your own
+Gmail address. Notes you send to yourself on Gmail are the exception.
 
-## The inbox and single items
+## Finding and closing items
 
 ```sh
-ecf inbox [--address <a>] [--stale]     # everything waiting on you, stale first
-ecf item show <id>                      # what ecf keeps about one email, incl. its excerpt
+ecf inbox [--address <a>] [--stale]     # everything waiting on you, oldest first
+ecf item show <id>                      # everything ecf knows about one email, with its excerpt
 ecf item resolve <id>… --reason <text>  # close without acting (also --ids, --older-than N)
-ecf item requeue <id>                   # a failed or stuck action again, or back to the model
+ecf item requeue <id>                   # retry a failed or stuck action, or send back to Claude
 ```
 
-Item IDs work from 8 characters. Resolving payment or fraud items needs step-up; a bulk resolve
-shows the list first. Items open 30 days are marked stale. `item requeue` of a send runs only once
-the send is known not to have gone out, needs a new approval and step-up, and on a `high` address
-the 10-minute delay again (SPEC §8.4). The admin guide covers `failed_unknown` and stuck items.
+You only need the first 8 characters of an item ID. Closing a payment or fraud item needs
+step-up, and closing several at once shows you the list first. Items open for 30 days are marked
+stale.
+
+Retrying a send (`item requeue`) only happens once ecf is sure the first attempt didn't go out. It
+needs a fresh approval and step-up, and on a `high` mailbox the 10-minute pause again. The admin
+guide covers items stuck in `failed_unknown`.
 
 ## Pausing
 
@@ -157,118 +196,113 @@ ecf pause <address>|--all
 ecf resume <address>|--all
 ```
 
-Instant, no step-up, audited; also the Pause and Resume buttons. A paused address keeps its
-pre-check and fraud and regulator flagging; approved actions, delayed sends and model checks wait
-until you resume (SPEC §10.1, step 8a).
+Pausing is instant and needs no step-up; the Pause and Resume buttons do the same. A paused
+mailbox still gets its fraud and regulator checks. Approved actions, delayed sends and Claude's
+work wait until you resume.
 
-## Reviewing (shadow and assist)
+## Reviewing: how a mailbox earns trust
 
-Before an address goes `live`, your reviews are its evidence (SPEC §9.2, §9.3). Review posts list
-each email with what the model said (labelled as model output) and what ecf would do.
+Before a mailbox can go `live`, ecf needs proof it gets that mailbox right, and your reviews are
+that proof. Review posts list each email, what Claude said about it (marked as AI output) and what
+ecf would do.
 
-- **Fix** opens a form for the fields you correct: category, priority, sender type, fraud risk,
-  payment, the five safety items (bank-detail change, regulator claim, phishing, claims to be a
-  colleague, private individual), action, reply and deadline (from v3.0.0; 13 fields), then any
-  fields your admin added, labelled "(yours)". A Fix records only what you change and never
-  removes a trigger that already fired.
-- **Correct** appears on lines that need their own review: payment, fraud, regulator, bank-detail
-  change, phishing, claimed-colleague and not-fully-scanned items, and every item on a `high`
-  address.
-- **All others correct** marks the rest of that post.
+- **Fix** opens a form where you correct whatever is wrong. You can change the category,
+  priority, sender type, fraud risk, whether it's about a payment, the five safety questions
+  (bank-detail change, claims to be from a regulator, phishing, claims to be a colleague, from a
+  private individual), the suggested action, the reply and any deadline. A Fix records only what
+  you change, and never removes a warning ecf's fixed rules already raised.
+- **Correct** appears on emails that need checking one by one: payment, fraud, regulator,
+  bank-detail, phishing, claimed-colleague and not-fully-scanned emails, and every email on a
+  `high` mailbox.
+- **All others correct** marks the rest of the post as right.
 
-`ecf stage status` shows progress ("N/target reviewed, A% accurate, K to go"). A `standard` address
-needs 100 reviewed at 85% accuracy, a `high` one 200 at 90%, and no fraud-guard misses; from
-v3.0.0 accuracy is the share of reviews whose Fix changed none of ecf's 13 fields (category
-accuracy before): a Fix to a "(yours)" field is counted and shown, not held against the gate.
-Moving stages is an admin task (admin guide).
+`ecf stage status` shows progress ("N/target reviewed, A% accurate, K to go"). A `standard`
+mailbox needs 100 reviews with at least 85% correct; a `high` one needs 200 with at least 90%.
+Both need zero missed fraud. A review counts as correct when your Fix didn't change anything.
+Moving a mailbox to the next stage is an admin task.
 
 ## Senders
 
-The **Confirm category** button (on digests) only replies with the command; you confirm at the
-computer, with step-up, because a confirmed sender counts as known for the bank-detail trigger
-(SPEC §9.6):
+The **Confirm category** button on digests only shows you the command, because confirming a
+sender matters: a confirmed sender counts as known when ecf checks for bank-detail changes. You
+confirm at the computer, with step-up:
 
 ```sh
 ecf sender show <sender> [--address <a>]
 ecf sender confirm <sender> --category <c> [--address <a>]
 ```
 
-Only a category the current schema has can be confirmed (from v3.0.0 not `vendor_change_request`,
-`regulatory` or `spam_or_phishing`); a sender confirmed with one before keeps it, but it never
-counts toward hiding mail again.
-
 `sender set-reply-to` and `sender set-verified` are in the admin guide.
 
 ## Drafts, replies and forwards
 
-ecf can propose three outbound actions (ADR 0007, SPEC §8.4):
+ecf can suggest three kinds of outgoing email:
 
-- **Draft reply**: saved in your Drafts folder, never sent; you send it yourself. The card shows the
-  full text under "Draft written by ecf's model (it can be wrong; it is saved, never sent)", with
-  links shown but not clickable.
-- **Template reply** and **internal forward**: real sends. They need outbound on for the address,
-  your approval and step-up each time. A forward attaches the original email unchanged and goes only
-  to an entry on your forward allow-list.
+- **Draft reply:** saved in your Drafts folder and never sent; you send it yourself if you want
+  to. The card shows the whole text under "Draft written by ecf's model (it can be wrong; it is
+  saved, never sent)". Links in it are shown but not clickable.
+- **Template reply** and **internal forward:** these really send. Each one needs sending turned on
+  for the mailbox, your approval and step-up, every time. A forward attaches the original email
+  unchanged and can only go to an address on your forward allow-list.
 
-While outbound is off, a proposed send is held back as suppressed and the item is flagged.
-Reminders (`Operator Input Needed: outbound off (<address>)`) come 7 days after an address first
-goes live, then weekly, 5 in all, then a monthly line in the summary channel.
+While sending is off, ecf holds suggested sends back and flags the email. It reminds you that
+sending is off 7 days after a mailbox goes live, then weekly for five reminders, then once a month
+in the summary channel.
 
 ```sh
 ecf outbound report <address>            # what it would have sent, your reviews, sends, reminders
-ecf outbound snooze <address> [--days N] # 1-90 days, default 7
+ecf outbound snooze <address> [--days N] # quiet the reminders for 1-90 days (default 7)
 ecf outbound dismiss <address>           # no more reminders
-ecf outbound disable <address>           # off at once; approved and delayed sends are stopped
+ecf outbound disable <address>           # turn sending off now; approved and delayed sends stop
 ```
 
-Turning outbound on (`ecf outbound enable`) is in the admin guide.
+Turning sending on is in the admin guide.
 
-**Send limit**: by default 25 sends an hour and 250 a day per address. Reaching it holds every send
-of the address (nothing is lost) and raises `Operator Input Needed: send limit reached
-(<address>)` until you check what happened and run `ecf outbound resume <address>` (step-up). It
-doesn't turn outbound back on if you turned it off.
+**Send limit:** by default 25 emails an hour and 250 a day per mailbox. If a mailbox hits the
+limit, all its sends are held (nothing is lost) and ecf alerts you. Once you've checked what
+happened, `ecf outbound resume <address>` (step-up) lets them go. This never turns sending back on
+if you'd turned it off.
 
-## Claude review
+## Running Claude
 
-Nothing classifies a C address's mail until you run Claude (preset D's actor items would wait the same
-way; D is held back in v3.0.0, OD-516); the fraud and regulator rules still flag mail as it arrives. Plan on a
-review at least once a working day:
+Claude only reads your everyday mail when you ask it to. Until then, ecf's fraud and regulator
+checks still run on every email as it arrives, but nothing else is classified. Plan on a review
+at least once a working day:
 
 ```sh
-ecf claude          # opens Claude Code with ecf's own config and login
-/ecf-review         # typed inside that session
+ecf claude          # opens Claude Code with ecf's own settings and login
+/ecf-review         # type this inside that session
 ```
 
-The session works through the queue; its proposals arrive in Slack like any others, and Claude
-never approves. When items have waited more than 24 hours (`claude_review_reminder_hours`) ecf
-raises `Operator Input Needed: Claude review waiting (<address>)`, and from v3.0.0 a louder alert
-that mentions you after twice that (48 hours) (SPEC §10.3, §13.3).
+Claude works through the queue and its suggestions arrive in Slack like any others. Claude never
+approves anything. If emails have waited more than 24 hours (`claude_review_reminder_hours`), ecf
+alerts you, and after 48 hours it sends a louder alert that mentions you.
 
 ## Notifications and alert email
 
-- **Desktop notifications** carry no email text (address IDs, counts, commands). On macOS they show
-  as Script Editor (unverified); Linux desktops use `notify-send` (Linux isn't supported until M5); headless
-  Linux has none.
-- **Alert email** (if set up; admin guide) carries the same text, never a subject, sender or
-  excerpt. At most 10 an hour of one kind and 30 in all, then an hourly summary. `ecf alerts show`
-  lists where each class goes; `ecf alerts test` sends a test on every route.
+- **Desktop notifications** never include email text, just mailbox names, counts and commands.
+  On macOS they may appear as coming from Script Editor (not yet confirmed).
+- **Alert email**, if your admin set it up, carries the same text and never a subject, sender or
+  excerpt. At most 10 an hour of one kind and 30 in total, then one hourly summary.
+  `ecf alerts show` lists where each kind of alert goes; `ecf alerts test` sends a test everywhere.
 
 ## Checking on ecf
 
 ```sh
-ecf status                           # service, each address, backlog, outbound
-ecf logs [--address <a>] [--since 2h] [--until 1h] [--event check.] [-f]   # audit log, never message content
-ecf stats [--since 7d] [--address <a>] [--preset <p>]          # model tokens, speed, plan usage, Slack
-ecf stats --stages [--since 7d]      # how long mail spends in each stage
-ecf doctor                           # everything ecf depends on, with fixes
+ecf status                           # the service, each mailbox, the backlog, sending
+ecf logs [--address <a>] [--since 2h] [--until 1h] [--event check.] [-f]   # the audit log (never email content)
+ecf stats [--since 7d] [--address <a>]   # Claude usage, speed, Slack timings
+ecf stats --stages [--since 7d]      # how long mail spends at each step
+ecf doctor                           # checks everything ecf depends on, with fixes
 ```
 
-## After time away
+## Coming back after time away
 
-ecf works only while the computer is on and awake (README, "When you're away"). When you're back:
+ecf only works while the computer is on and awake. When you're back:
 
-1. Wake the computer on AC power; ecf catches up on its own (`ecf status` shows the backlog).
-2. Read "Needs you" or `ecf inbox`; escalations first.
-3. Approvals of sends older than 4 days have expired; approve again if still wanted.
-4. Run `ecf approve --pending` for anything queued for step-up.
-5. `ecf claude`, then `/ecf-review`.
+1. Wake the computer, plugged in if it's a laptop. ecf catches up on its own (`ecf status` shows
+   how much is left).
+2. Read "Needs you" or run `ecf inbox`. Escalations first.
+3. Approvals for sends older than 4 days have expired. Approve them again if you still want them.
+4. Run `ecf approve --pending` for anything waiting for step-up.
+5. Run `ecf claude`, then `/ecf-review`.

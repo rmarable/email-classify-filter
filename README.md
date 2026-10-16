@@ -1,186 +1,143 @@
-# email-classify-filter (ecf)
+# ecf: an email bodyguard for your business inbox
 
-ecf watches business mailboxes (for example `billing@` or `accounts-payable@`) over IMAP and
-classifies each message. It flags likely invoice and payment fraud and regulator mail with
-deterministic rules, and asks you to approve actions in Slack before anything risky happens. v1 runs
-on one Mac (Linux isn't supported yet; it is roadmap milestone M5) with Claude, and needs no cloud
-infrastructure of your own.
+Scammers love business email. A fake invoice that looks like it's from a real supplier. A message
+saying "we've changed banks, please pay our new account". An urgent request from your "CEO" who's
+actually someone in another country. One mistake can cost thousands.
 
-## Status
+ecf (short for email-classify-filter) is a program that reads your business email for you, spots
+those scams, and warns you before anyone pays. It also sorts the everyday mail (receipts,
+newsletters, customer questions) so the inbox stays manageable.
 
-`v3.0.0` (2026-10-16) is the latest release: Claude only (preset C), with Claude Opus 5.5
-classifying and acting; local models (Gemma, Ollama, presets A and B) are removed and TypeSafe
-Jev stays eval-only. Releases are macOS only, single-user local mode; `v1.0.0` (2026-10-08) was the
-first, and [`CHANGELOG.md`](CHANGELOG.md) lists every release. Milestone tags (`ms-…`) and
-release candidates (`vX.Y.Z-rcN`) record internal progress, not releases.
+## Who it's for
 
-## What it does
+Anyone who looks after a shared business mailbox, such as `billing@`, `invoices@` or
+`accounts@`, and worries about payment fraud. You don't need to be technical to use ecf day to
+day, but setting it up takes some comfort with the Terminal on a Mac.
 
-- Reads each watched mailbox every 10 minutes in business hours and every 30 otherwise.
-- Checks DKIM and DMARC itself and computes facts about the sender (first time, lookalike domain,
-  changed bank details, a Reply-To that differs). Fraud and regulator rules run before any model.
-- Classifies each email (category, priority, fraud risk, payment-related) and proposes an action:
-  label, flag, archive, a draft reply, a template reply or an internal forward.
-- From v3.0.0, on the all-Claude preset, lets you add your own rules between ecf's fixed safety
-  rules and its defaults. Your own classification fields and categories are built but off in
-  v3.0.0: their measurement failed (admin guide; SPEC §1.5a item 2b).
-- Posts to Slack: escalations for possible fraud and regulator mail, approvals, digests, and a
-  pinned "Needs you" list.
-- Does on its own only what you've allowed per address, and only after an address has passed its
-  go-live gate (stages `shadow` → `assist` → `live`).
+## What happens when an email arrives
 
-It never:
+Say a message lands in `billing@yourcompany.com` that claims to be from your usual supplier,
+asking you to send next month's payment to a new bank account.
 
-- pays anything: approvals on payment emails say "This acts on the email only. ecf never pays
-  anything.";
-- hides fraud or regulator email, or removes their labels;
-- sends mail you didn't approve: sending is off per address until you turn it on, every send needs
-  your approval and a step-up (Touch ID or your password) at the computer, and a draft only ever
-  lands in your Drafts folder;
-- lets a model approve anything, or hide mail on a model's word alone.
+1. **ecf checks it straight away.** Every 10 minutes during business hours, ecf looks for new
+   mail. It checks things a person can't easily see: whether the email really came from the
+   supplier's server, whether the sender's address is one letter off from the real one, and
+   whether replies would go somewhere else.
+2. **It warns you in Slack.** A bank-detail change from a suspicious sender is exactly what ecf
+   looks for, so it posts an alert to your Slack channel saying what the email is and why it
+   looks wrong.
+3. **It never hides it.** Suspected fraud always stays in the inbox, clearly flagged. ecf never
+   files it away or deletes it.
 
-## How it works
+Ordinary mail goes differently. When you're ready, you open Claude (an AI assistant from
+Anthropic) and type `/ecf-review`. Claude reads the waiting emails and suggests what to do with
+each one: "this is a receipt, file it", "this customer needs a reply, here's a draft", "this
+newsletter can be archived". The suggestions appear in Slack, and you tap Approve or Reject.
 
-One background service on your computer (a LaunchAgent on macOS; the Linux code, a systemd user
-unit, is unsupported until milestone M5) does all the work: fetching mail, the checks, rules and policy, Slack, step-up and the actions. It
-keeps its state in SQLite and its secrets (app passwords, Slack tokens) in the macOS Keychain or,
-on Linux, Secret Service or `systemd-creds`. Full messages are held in memory only, never written
-to disk. The `ecf` command and the Claude Code plugin talk to it over a private socket and hold no
-rules of their own.
+## What ecf will never do
 
-Each address uses a preset:
+- **Pay anything.** It works only with email. It can't move money.
+- **Hide a possible scam.** Anything that looks like fraud, or like a letter from a regulator,
+  stays where you can see it.
+- **Send an email without you.** Sending is off until you switch it on, and even then every
+  outgoing email needs your approval plus your fingerprint or password on the Mac.
+- **Let the AI decide alone.** Claude only suggests. The fraud checks are fixed rules that no AI
+  can overrule, and nothing important happens without a person saying yes.
 
-| Preset | Classifier | Actor | Runs |
-|---|---|---|---|
-| C | Claude | Claude | only when you type `/ecf-review` in `ecf claude` |
-| D (held back from v3.0.0, OD-516) | TypeSafe Jev | Claude | Jev when mail arrives; Claude at `/ecf-review` |
+## Learning your mailbox first
 
-Nothing classifies a C address's mail until someone runs `/ecf-review`; the fraud and regulator
-rules still flag mail as it arrives (SPEC §4.1). v3.0.0 removes presets A and B, the local model
-(Gemma on Ollama): an A or B address becomes C at upgrade and is paused until you resume it, which
-confirms its owner agreed to mail going to Anthropic (ADR 0031;
-[admin guide](docs/admin-guide.md#v300-converted-addresses)).
+When you add a mailbox, ecf starts out only watching: it shows you what it *would* do, and does
+nothing. Once its suggestions for that mailbox have proven reliable, you can let it handle routine
+mail on its own, like filing receipts. Fraud alerts always come to you either way.
 
-## Install
+## What you need
 
-Requirements: macOS (Linux isn't supported until milestone M5); Python 3.12.6 or newer
-and [uv](https://docs.astral.sh/uv/); full-disk encryption and a screen lock; a Slack workspace
-where you can install an app; an IMAP mailbox with app passwords (Purelymail is tested; Microsoft
-365 isn't supported, as it needs OAuth); Claude Code and a separate Claude login for
-`ecf claude`.
+- **A Mac**, with disk encryption (FileVault) and a screen lock turned on. ecf runs on your
+  computer; there's no website or cloud service to sign up for.
+- **Your business email**, with an "app password". This is a separate password your email
+  provider gives you for programs like ecf, so ecf never needs your real one. Purelymail and
+  personal Gmail accounts work ([Gmail instructions](https://github.com/rmarable/email-classify-filter/blob/main/docs/gmail-setup.md)). Microsoft 365 and
+  Google Workspace don't work yet.
+- **Slack**, where ecf sends alerts and you approve its suggestions. You need permission to add an
+  app to your workspace.
+- **Claude Code** and a Claude account, for sorting everyday mail.
+- **For setup:** Python 3.12.6 or newer and [uv](https://docs.astral.sh/uv/), a tool that installs
+  Python programs.
 
-Personal Gmail accounts (gmail.com) are supported over IMAP with an app password; Google
-Workspace accounts aren't yet. [`docs/gmail-setup.md`](docs/gmail-setup.md) covers Google's side.
+ecf works only while your Mac is on and awake. Nothing is lost while it's asleep (your email just
+waits), but nothing is checked either. If ecf stops checking during business hours, Slack tells
+you.
 
-From `v1.0.0`, each release is published only as a GitHub Release on this repository (wheel,
-sdist, `SHA256SUMS`, `release-manifest.json`); there is no PyPI package. Download the latest
-release's files (put a tag such as `v2.2.3` after `download` for a particular one) and install
-the wheel:
+## Getting started
+
+Open Terminal and download and install the latest version:
 
 ```sh
 gh release download --repo rmarable/email-classify-filter --pattern '*'
-shasum -a 256 email_classify_filter-*.whl   # compare with the wheel's line in SHA256SUMS
+shasum -a 256 email_classify_filter-*.whl   # this number should match the one in SHA256SUMS
 uv tool install ./email_classify_filter-*.whl
 ```
 
-`uv tool install` also accepts the wheel's URL. From `v1.0.0`, `ecf upgrade` checks what it downloads against the release's
-`SHA256SUMS`.
-
-To build the wheel from a checkout instead:
-
-```sh
-uv build
-uv tool install dist/email_classify_filter-*.whl
-```
-
-## First run
+Then start the setup:
 
 ```sh
 ecf init
 ```
 
-`init` prints a "have ready" list, then walks through: the background service, disk-encryption and
-secret-store checks, whether this install is `prod` or `test`, the Slack app, your first mailbox
-(its app password, your org domains, a probe of the mailbox, the preset), alert email (optional),
-backups (the backup key, shown once for your password manager, and a folder off this disk), and
-Claude's login. `ecf init --resume` picks up where you stopped;
-`ecf init status` shows each step. Every address starts in `shadow` with sending off.
+The setup tells you what to have ready, then walks you through connecting Slack, adding your first
+mailbox, setting up backups and signing in to Claude. You can stop and come back later with
+`ecf init --resume`. If anything isn't working, `ecf doctor` tells you what's wrong and how to
+fix it.
 
-Then:
+## Everyday use
 
-```sh
-ecf doctor          # everything ecf depends on, with fixes
-ecf status          # each address, the backlog, the service
-```
+- **Most of the time you're in Slack:** read the alerts, approve or reject suggestions, answer
+  ecf's questions, and undo anything you change your mind about.
+- **To sort the waiting mail**, run `ecf claude` and type `/ecf-review`.
+- **To see what's waiting on you**, run `ecf inbox`. To see why ecf treated an email the way it
+  did, run `ecf item show <id>`.
+- **To stop everything at once**, run `ecf pause <address>`. Fraud alerts keep working.
 
-## Day to day
+## Guides
 
-- In Slack you approve or reject, answer ecf's questions, undo and pause.
-- `ecf inbox` lists everything waiting on you; `ecf item show <id>` explains one email.
-- `ecf approve --pending` lists approvals from Slack that wait for step-up at the computer;
-  `ecf approve <id>` confirms one.
-- `ecf pause <address>` stops actions at once; fraud and regulator flagging keeps running.
-- `ecf claude`, then `/ecf-review`, runs Claude on the queue (preset C).
+The guides live here on GitHub (they aren't included in the download):
 
-The operator guide (`docs/operator-guide.md`) covers daily use; the admin guide
-(`docs/admin-guide.md`) covers setup, configuration, backups, upgrades and recovery. Every command
-has `--help`, which marks the ones that are admin-only, destructive or need step-up.
+- **[Daily use guide](https://github.com/rmarable/email-classify-filter/blob/main/docs/operator-guide.md):** Slack cards and alerts, approving and
+  rejecting, answering ecf's questions, reviewing, pausing, and coming back after time away.
+- **[Admin guide](https://github.com/rmarable/email-classify-filter/blob/main/docs/admin-guide.md):** setup, mailboxes, rules and settings, letting ecf do
+  more on its own, sending email, backups, upgrades, and fixing problems.
+- **[Gmail setup](https://github.com/rmarable/email-classify-filter/blob/main/docs/gmail-setup.md):** getting a personal Gmail account ready for ecf.
 
-## When you're away
+## Your privacy
 
-ecf runs only while the computer is on and awake. While it's off or asleep, nothing is checked:
-mail waits at your provider and nothing is lost, but fraud checks don't run either. If the
-computer sleeps or the service stops without a clean stop, a message scheduled in Slack posts
-"ecf hasn't checked in since …" (in business hours, unless you set `deadman_offhours`). On the
-first check back, ecf catches up (on AC power on laptops) and the digest opens with "Caught up: N
-messages since …". After a week away, approvals of sends have expired (4 days) and need approving
-again; other approvals last 14 days. A computer left on keeps working around the clock.
+Your email goes to four places only: your email provider, your own Mac, Slack (the subject,
+sender and ecf's verdict, plus a short excerpt if you ask for one), and Anthropic, Claude's maker,
+while you're running `/ecf-review`. ecf doesn't keep copies of your messages, doesn't log what they
+say, and encrypts its backups with a key only you have. The full privacy statement is in
+[SPEC.md](https://github.com/rmarable/email-classify-filter/blob/main/SPEC.md) (section 12.4).
 
-## Privacy
+If you use ecf for business mail, use a Claude Team or Enterprise plan. On a personal Pro or Max
+plan, turn off the setting that lets Anthropic use your chats to improve its models.
 
-Email content goes only to your mail provider, this computer, Slack (subjects, senders,
-classifications, the model's reason, your answers, and short excerpts when you ask), and Anthropic
-while you run `/ecf-review` (`/ecf-eval` sends only the synthetic test cards). TypeSafe receives none of your mail in v3.0.0: preset D
-is held back (OD-516). Alert email carries no subject, sender or text.
-Backups are encrypted to your backup key. ecf logs no message content. The full statement is SPEC
-§12.4.
+## Important
 
-## Security
+ecf makes fraud much harder to miss, but it can't catch everything. **Always confirm a payment
+request or a change of bank details by phone**, using a number you already have, not one from the
+email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
-ecf keeps everything on one computer, so whoever controls your user account controls ecf: use
-full-disk encryption and a screen lock. What ecf protects against, and what it doesn't, is in
-SPEC §12; [`SECURITY.md`](SECURITY.md) summarizes it. We recommend:
+## Status
 
-- **Slack:** two-factor sign-in, private channels, restricted app installs, and a periodic review
-  of who is in ecf's channels.
-- **Mail:** a separate app password per address, with two-factor sign-in on the account; your own
-  domain's SPF, DKIM and DMARC at `reject` or `quarantine`; rotate app passwords.
-- **Computers:** full-disk encryption, a screen lock, current patches.
-- **Claude:** Team or Enterprise for business mail; on Pro or Max, turn model-improvement sharing
-  off and keep extra usage off or capped.
-- **Process:** confirm any payment or bank change by phone or another channel you already trust;
-  review the audit log (`ecf logs`); keep the backup key in a password manager.
+`v3.0.0` (2026-10-16) is the current version. It runs on macOS, for one person. Support for Linux,
+for teams and for an always-on version that doesn't need your Mac are planned. What changed in
+each version is in [CHANGELOG.md](CHANGELOG.md).
 
-## Where things are
+## For developers
 
-- [`SPEC.md`](SPEC.md): the v1 specification (authoritative).
-- [`docs/adr/`](docs/adr/): decision records.
-- [`CHANGELOG.md`](CHANGELOG.md): changes, newest first.
-- [`docs/gmail-setup.md`](docs/gmail-setup.md): setting up a personal Gmail account for ecf.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to work on ecf.
-- [`docs/CURRENT-DESIGN-PLAN.md`](docs/CURRENT-DESIGN-PLAN.md): the latest design plan, including
-  the roadmap (AWS mode, teams, remote access, always-on).
-- [`docs/history/`](docs/history/): earlier design documents, kept for history.
-
-## Disclaimer
-
-ecf reduces risk; it does not remove it. It is provided as is, with no warranty, and the author
-accepts no liability for its use, its failure, or anything anyone does with it. Verify every
-payment and bank-detail change out of band. See [`DISCLAIMER.md`](DISCLAIMER.md) for acceptable
-use and the full terms.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to build and test ecf. [SPEC.md](SPEC.md) is the
+full technical design, [SECURITY.md](SECURITY.md) covers security and how to report a problem, and
+[docs/adr/](docs/adr/) records the decisions behind the design.
 
 ## License
 
-Apache License 2.0 with the Commons Clause restriction; see [`LICENSE`](LICENSE). This makes ecf
-source-available, not OSI open source: you may use and modify it, but not sell it or sell hosting
-or support for it. Fees for your own time, such as installation or training, are allowed.
+You can use and change ecf for free, but you can't sell it or sell hosting or support for it
+(Apache 2.0 with the Commons Clause). See [LICENSE](LICENSE).
