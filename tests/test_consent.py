@@ -1,4 +1,4 @@
-"""Resuming an address v3.0.0 converted from preset A or B to C is the consent act (ADR 0031, P3;
+"""Resuming an address converted from preset A or B to C is the consent act (ADR 0031, P3;
 operator decision 2026-10-14; OD-427): the service refuses it unless the request says the
 account's owner agreed, `--all` and the Slack buttons leave it paused, and `ecf resume <address>`
 asks in a terminal (no flag skips the question). Ordinary addresses resume as before."""
@@ -21,6 +21,7 @@ from ecf.doctor import Level, judge_converted
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.paths import Paths
 from ecf.prompts import NO_TERMINAL
+from ecf.upgrade_check import converted_notice
 from ecf_server import pause, slack_in, stages
 from ecf_server.api import ServiceState
 from ecf_server.clock import FakeClock, to_ts
@@ -114,8 +115,10 @@ def test_doctor_names_paused_converted_addresses_until_resumed() -> None:
             row | {"address_id": "c1", "consented": True}]  # fmt: skip
     (check,) = judge_converted(rows)
     assert (check.name, check.level) == ("converted a1", Level.WARN)
-    assert "was preset A" in check.detail and "3 emails waiting" in check.detail
-    assert check.fix.startswith("ecf resume a1 once the account's owner agrees (OD-427)")
+    assert check.detail == converted_notice("a1", 3)
+    assert check.detail.startswith("a1 was set up for a local model ecf no longer has; it now")
+    assert check.detail.endswith("their mail going to Anthropic; 3 emails waiting")
+    assert check.fix.startswith("ecf resume a1 once the account's owner agrees,")
     assert "ecf address remove a1" in check.fix
     assert judge_converted([]) == []
 
@@ -165,6 +168,8 @@ def test_ecf_resume_asks_and_y_resumes(cli: Fake, conn: sqlite3.Connection) -> N
     r = CliRunner().invoke(app, ["resume", "a1"], input="y\n")
     assert r.exit_code == 0, r.output
     assert QUESTION in r.output and "[y/N]" in r.output and "Resumed a1." in r.output
+    assert "a1 was set up for a local model ecf no longer has; it now uses Claude" in r.output
+    assert "Once resumed, Claude (Anthropic) classifies its mail" in r.output
     assert _posts(cli) == [("/v1/addresses/a1/resume", {"owner_agreed": True})]
     assert not pause.is_paused(conn, "a1")
 

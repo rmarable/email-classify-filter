@@ -1,7 +1,8 @@
 """Recording a classification (SPEC §5.1 step 5, §7; V1.3 step 3): `store`, which Claude's
 classifications go through (`claude_review`). The local classifier (Gemma 4 12B through Ollama),
 its prompt and its prompt digest were removed in v3.0.0 (ADR 0031; R-D14 keeps the module name);
-the classifier's prompt digest is Claude's (`claude_review.prompt_digest`).
+the classifier's prompt digest is Claude's (`claude_review.prompt_digest`, which covers the
+classifier's instructions, `agents/classifier.md`, from v3.0.2, OD-524).
 
 - **Recorded:** the classification, the pinned models and the pin key (`pinned_models`, which the
   go-live gate binds to) and a `batch_id`; then the item moves to `classified` and the policy

@@ -37,11 +37,22 @@ def plugin_digest() -> str:
     return digest_of(resources.files("ecf.data").joinpath("plugin"))
 
 
+def _template_digest(name: str) -> str:
+    """SHA-256 of an agent's instructions as shipped (`agents/<name>.md`, the template before its
+    agent name is filled in), so every agent rendered from it shares the digest."""
+    path = resources.files("ecf.data").joinpath("plugin", "agents", f"{name}.md")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 @cache
 def actor_prompt_digest() -> str:
-    """SHA-256 of the actor's instructions as shipped (`agents/actor.md`, the template before its
-    agent name is filled in), so every actor agent shares it: part of the gate key (v3.0.1,
-    OD-523; SPEC §9.3)."""
-    return hashlib.sha256(
-        resources.files("ecf.data").joinpath("plugin", "agents", "actor.md").read_bytes()
-    ).hexdigest()
+    """The actor's instructions (`agents/actor.md`): part of the gate key (v3.0.1, OD-523; SPEC
+    §9.3)."""
+    return _template_digest("actor")
+
+
+@cache
+def classifier_prompt_digest() -> str:
+    """The classifier's instructions (`agents/classifier.md`): a part of
+    `claude_review.prompt_digest`, so of C's gate key (v3.0.2, OD-524; SPEC §9.3)."""
+    return _template_digest("classifier")

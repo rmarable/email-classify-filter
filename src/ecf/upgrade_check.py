@@ -18,20 +18,24 @@ it imports nothing from the service package.
   `jev.lock` is the "jev" pin and the canonical digest of its `jev_mapping.json` (step 3's, when
   the wheel ships one) the "jev_mapping" pin: either changed moves preset D's gate key, so the D
   addresses (the service's `pin_users`) drop to assist.
-- **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the shipped classifier prompt's
-  digest (shipped schema). It was in the local gate key, so a different one, or one either side
-  lacks (before v2.1.0), counts as "prompt" and every address is affected. From v3.0.0 it is
-  Claude's (`claude_review.prompt_digest`, ADR 0031, P4), which C's gate key doesn't hold either
-  way; after an upgrade from before 3.0 its change is expected and affects no address
-  (`after_upgrade`). A v2.2.x client's pre-check still says every address drops (it can't be
-  patched; the release notes say so).
+- **Prompt** (plan 0.3, Q6): `release.json`'s `prompt_digest`, the digest of what ecf sends
+  Claude's classifier (`claude_review.prompt_digest` for the shipped schema, ADR 0031, P4: the
+  schema fields, the signals' wording, the excerpt preparation and, from v3.0.2, the classifier
+  agent's instructions `agents/classifier.md`). It is in C's gate key (`claude_pins`), so a
+  different one, or one either side lacks (before v2.1.0), counts as "prompt" and affects the C
+  addresses (users of `classifier` or `classifier_high`); D's key takes Jev's prompt instead
+  (v3.0.2, P1). Before v3.0.0 it was the local model's: after an upgrade from before 3.0 its
+  change is expected and affects no address (`after_upgrade`). A v2.2.x client's pre-check still
+  says every address drops (it can't be patched; the release notes say so).
 - **Actor's instructions** (v3.0.1, OD-523): `release.json`'s `actor_prompt_digest`, the shipped
   `agents/actor.md`'s digest, is in C's and D's gate key. Compared like the prompt, as
   "actor_prompt": different, or missing on either side (a release before 3.0.1), affects every
   address. After an upgrade from before 3.0 its arrival is expected and affects none, as for the
   prompt (P5); from 3.0.0 it counts (a 3.0.0 CLI's pre-check doesn't see it; phase 2 names them).
 - **Converted addresses** (v3.0.0, P3): the new service's `converted` (A and B addresses made C
-  and paused by migration 0038, with their waiting emails), printed after the upgrade.
+  and paused by migration 0038 or an import, with their waiting emails), printed after an upgrade
+  that crosses from before 3.0 only (v3.0.2, P8); `ecf doctor` names them until resumed or
+  removed. `converted_notice` is the one wording for all three places (P3).
 - **Rules with a fixed id** (v3.0.0 step 5, OD-508): after the upgrade, the new CLI names each
   applied rule that stopped the new service's v2 conversion (a rule of your own named `phishing`,
   or a changed copy of a fixed rule) and what to do; the old CLI's pre-check can't (phase 1 runs
@@ -60,6 +64,15 @@ DATA = "ecf_server/data/"
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:(rc)(\d+)|\.dev(\d+))?$")
 CLAUDE_FAMILIES = ("main_session", "classifier", "classifier_high", "actor", "actor_high")
 CLAUDE_PROMPT_MAJOR = 3  # release.json's prompt_digest is Claude's from v3.0.0 (P4)
+PROMPT_FAMILIES = ("classifier", "classifier_high")  # whose users' key holds the prompt (P1)
+
+
+def converted_notice(address_id: str, waiting: int) -> str:
+    """An address converted to C and paused (migration 0038 or an import; P3): the one wording
+    `ecf upgrade`, `ecf doctor` and `ecf resume` use."""
+    return (f"{address_id} was set up for a local model ecf no longer has; it now uses Claude and"
+            " stays paused until the account's owner agrees to their mail going to Anthropic;"
+            f" {waiting} email{'s' if waiting != 1 else ''} waiting")  # fmt: skip
 
 
 def version_key(v: str) -> tuple[int, int, int, int, int]:
@@ -242,8 +255,10 @@ def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str
     """(families whose pin changes, plus "schema", "prompt" and "actor_prompt"; the addresses
     that drop to assist). `uses` is family -> addresses. A new classifier schema asks every
     address differently (OD-475); a schema of None is unknown and counts as unchanged. `prompts`
-    is the (old, new) prompt digest: different, or missing on either side, is "prompt" (Q6);
-    `actor_prompts` the same for the actor's instructions, as "actor_prompt" (OD-523)."""
+    is the (old, new) prompt digest: different, or missing on either side, is "prompt" (Q6),
+    which moves only the C addresses' key (the users of `classifier` or `classifier_high`; D's
+    key holds Jev's prompt, P1); `actor_prompts` the same for the actor's instructions, as
+    "actor_prompt" (OD-523), which every address's key holds."""
     fams = sorted(f for f, v in new_pins.items() if old_pins.get(f) != v)
     affected = sorted({a for f in fams for a in uses.get(f, [])})
     everyone = sorted({a for addrs in uses.values() for a in addrs})
@@ -252,7 +267,7 @@ def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str
         affected = everyone
     if prompts is not None and (None in prompts or prompts[0] != prompts[1]):
         fams.append("prompt")
-        affected = everyone
+        affected = sorted(set(affected) | {a for f in PROMPT_FAMILIES for a in uses.get(f, [])})
     if actor_prompts is not None and (None in actor_prompts
                                       or actor_prompts[0] != actor_prompts[1]):  # fmt: skip
         fams.append("actor_prompt")
@@ -261,8 +276,10 @@ def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str
 
 
 def crosses_to_claude_prompt(old_version: str, state: dict[str, Any]) -> bool:
-    """An upgrade from before v3.0.0 to v3.0.0 or later: release.json's `prompt_digest` went from
-    the local model's to Claude's (P4), an expected change that moves no address."""
+    """An upgrade from before v3.0.0 to v3.0.0 or later. Two uses in `after_upgrade`:
+    release.json's `prompt_digest` went from the local model's to Claude's (P4), an expected
+    change that moves no address; and only this upgrade prints the addresses it converted to C
+    (`converted`, P8), so a later upgrade doesn't repeat them (`ecf doctor` still names them)."""
     try:
         new = version_key(str(state.get("version")))[0]
     except InvalidInputError:
@@ -279,7 +296,9 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
     compared: a 1.x release has no `classifier_schema`, so it was 1. From before 3.0 the prompt
     digest was the local model's, and v3.0.0's is Claude's (P4): the change is expected and isn't
     compared, nor is the actor's instructions' digest, which arrived in v3.0.1 (P5). The
-    addresses the new version converted to C (`converted`, P3) are listed."""
+    addresses the new version converted to C (`converted`, P3) are listed on that crossing only
+    (v3.0.2, P8): the service keeps them after it, and a rollback to 2.x and a new upgrade lists
+    those still not resumed again, by design (P9)."""
     try:
         old = read_wheel(old_wheel)
         old_pins = old.pins
@@ -298,7 +317,7 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
                                         int(state.get("classifier_schema", 1)),
                                         state["pin_users"], prompts=prompts,
                                         actor_prompts=actors)  # fmt: skip
-    listed: list[Any] = state.get("converted") or []
+    listed: list[Any] = (state.get("converted") or []) if crossing else []
     r.converted = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]
     listed = state.get("rules_customised") or []  # a service before step 5 has none
     r.rules_customised = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]

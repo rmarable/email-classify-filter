@@ -71,6 +71,7 @@ from pydantic import ValidationError
 
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import new_random_id
+from ecf.plugin_digest import classifier_prompt_digest
 from ecf.schema import CompiledSchema
 from ecf_server import (
     actor,
@@ -762,13 +763,15 @@ def record_classification(conn: sqlite3.Connection, clock: Clock, session_id: st
 
 def prompt_digest(schema: CompiledSchema) -> str:
     """SHA-256 over what ecf gives a Claude classifier besides the email (plan 0.3, Q4): the
-    schema's fields as `schema_fields` sends them, the signals' wording (OD-484) and the version
-    of the excerpt preparation (pre-classifier plan step 10; Claude reads the same excerpts).
-    Gemma's prompt isn't in it, so a Gemma-only change keeps the C pin key."""
+    schema's fields as `schema_fields` sends them, the signals' wording (OD-484), the version
+    of the excerpt preparation (pre-classifier plan step 10; Claude reads the same excerpts) and
+    the classifier's instructions (`agents/classifier.md`, from v3.0.2, OD-524), so a release that
+    edits any of them moves C's pin key."""
     parts = {
         "fields": schema_fields(schema),
         "signals": signals.WORDING,
         "excerpt_prep": excerpt.VERSION,
+        "classifier_template": classifier_prompt_digest(),
     }
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
 

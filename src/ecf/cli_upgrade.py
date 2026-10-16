@@ -255,19 +255,17 @@ def _continue(p: Paths) -> None:
     if done["affected"]:
         changed = done.get("pin_changes", [])
         why = ("the classifier schema changed" if "schema" in changed
-               else "the classifier prompt changed" if "prompt" in changed
+               else "the classifier's instructions or prompt changed" if "prompt" in changed
                else "the actor's instructions changed" if "actor_prompt" in changed
                else "model pins changed")  # fmt: skip
         names = done["affected"]
         typer.echo(f"{why}: {_drop(names)} to assist until {_their(names)} gate passes"
                    " again; re-run ecf eval run")  # fmt: skip
     converted: list[dict[str, Any]] = done.get("converted") or []
-    for c in converted:  # v3.0.0 (P3): A and B addresses, now C and paused
-        n = int(c.get("waiting") or 0)
-        typer.echo(f"{c.get('address_id')} was preset {c.get('from')}, whose local model is"
-                   f" removed: now C and paused, {n} email{'s' if n != 1 else ''} waiting; resume"
-                   " it only after the account's owner agrees to its mail going to Anthropic"
-                   " (OD-427), or remove it")  # fmt: skip
+    for c in converted:  # the crossing to 3.0 only (P3, P8): A and B addresses, now C and paused
+        aid = str(c.get("address_id"))
+        typer.echo(f"{upgrade_check.converted_notice(aid, int(c.get('waiting') or 0))}: ecf"
+                   f" resume {aid} once they agree, or ecf address remove {aid}")  # fmt: skip
     customised: list[dict[str, Any]] = done.get("rules_customised") or []
     for r in customised:  # OD-508: rules with a fixed id; the default rules apply meanwhile
         typer.echo(_customised_line(r))
@@ -304,6 +302,8 @@ def _print(rel: upgrade_check.Release, report: upgrade_check.Report, problems: l
         typer.echo(f"model pins that change: {', '.join(report.pin_changes)}")
         if "actor_prompt" in report.pin_changes:  # OD-523: in the gate key from v3.0.1
             typer.echo("  the actor's instructions changed")
+        if "prompt" in report.pin_changes:  # v3.0.2: classifier.md is in the prompt digest
+            typer.echo("  the classifier's instructions or prompt changed")
         if report.affected:
             one = len(report.affected) == 1
             these = "this address drops" if one else "these addresses drop"

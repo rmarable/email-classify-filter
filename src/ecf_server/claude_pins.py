@@ -23,7 +23,9 @@ OD-014, OD-273, OD-461, OD-474, OD-520, OD-521; V1.4 step 2).
 - **Key**: what reviews, eval runs and the gate row are matched on: a short hash of the pins (a
   record made before V1.4 holds preset A's Ollama digest, which `key` still reads). The pins
   include `actor_prompt`, the digest of the actor's instructions (`agents/actor.md`) for both
-  presets, so a release that edits them starts every gate again (v3.0.1, OD-523).
+  presets, so a release that edits them starts every gate again (v3.0.1, OD-523). C's `prompt`
+  (`claude_review.prompt_digest`) covers the classifier's instructions (`agents/classifier.md`)
+  from v3.0.2 (OD-524), so editing them starts every C gate again; D's `prompt` is Jev's.
 """
 
 from __future__ import annotations
@@ -136,7 +138,7 @@ def pins(conn: sqlite3.Connection, preset: str) -> dict[str, str]:
         out["prompt"] = (str(k["prompt_digest"])[:16] if current and k.get("prompt_digest")
                          else jev_keys.UNKNOWN)  # fmt: skip
         return out
-    out["prompt"] = claude_review.prompt_digest(schema)[:16]  # and the signals (Q4, OD-484)
+    out["prompt"] = claude_review.prompt_digest(schema)[:16]  # with classifier.md (OD-524)
     return out
 
 

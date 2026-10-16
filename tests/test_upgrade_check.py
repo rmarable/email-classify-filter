@@ -139,17 +139,18 @@ def test_a_new_classifier_schema_affects_every_address(tmp_path: Path) -> None:
     assert same.pin_changes == []
 
 
-def test_a_new_prompt_affects_every_address(tmp_path: Path) -> None:
-    """Q6: the prompt digest is in the local gate key; a release without one (v2.0.0 and
-    earlier) counts as a new prompt."""
-    new = upgrade_check.compare(_state(), upgrade_check.read_wheel(
+def test_a_new_prompt_affects_the_c_addresses(tmp_path: Path) -> None:
+    """Q6: the prompt digest is in C's gate key (v3.0.2, P1: not D's, so `b`, an actor user
+    only, isn't named); a release without one (v2.0.0 and earlier) counts as a new prompt."""
+    st = _state(pin_users={"classifier": ["ap"], "actor": ["ap", "b"]})
+    new = upgrade_check.compare(st, upgrade_check.read_wheel(
         _wheel(tmp_path, prompt="q" * 64)), "0.1.0")  # fmt: skip
-    assert new.pin_changes == ["prompt"] and new.affected == ["ap", "b"]
-    v2 = {k: v for k, v in _state().items() if k != "prompt_digest"}
+    assert new.pin_changes == ["prompt"] and new.affected == ["ap"]
+    v2 = {k: v for k, v in st.items() if k != "prompt_digest"}
     old = upgrade_check.compare(v2, upgrade_check.read_wheel(_wheel(tmp_path, name="v.whl")),
                                 "0.1.0")  # fmt: skip
-    assert old.pin_changes == ["prompt"] and old.affected == ["ap", "b"]
-    none = upgrade_check.compare(_state(), upgrade_check.read_wheel(
+    assert old.pin_changes == ["prompt"] and old.affected == ["ap"]
+    none = upgrade_check.compare(st, upgrade_check.read_wheel(
         _wheel(tmp_path, prompt=None, name="n.whl")), "0.1.0")  # fmt: skip
     assert none.pin_changes == ["prompt"]
 
@@ -362,9 +363,35 @@ def test_after_an_upgrade_from_v2_the_new_prompt_digest_moves_no_address(tmp_pat
                    pin_users={"actor": ["ap", "b"]}, converted=converted)  # fmt: skip
     r = upgrade_check.after_upgrade("2.2.3", old, state)
     assert (r.pin_changes, r.affected, r.converted) == ([], [], converted)
+    r = upgrade_check.after_upgrade("2.2.3", tmp_path / "gone.whl", state)  # unreadable old wheel
+    assert r.converted == converted  # still the crossing (P8)
     later = _wheel(tmp_path, version="3.0.0", classifier_schema=3, prompt="g" * 64, name="l.whl")
-    r = upgrade_check.after_upgrade("3.0.0", later, state | {"version": "3.0.1"})
-    assert r.pin_changes == ["prompt"] and r.affected == ["ap", "b"]  # after 3.0: as before
+    users = {"classifier": ["ap"], "classifier_high": ["ap"], "actor": ["ap", "b"]}
+    r = upgrade_check.after_upgrade("3.0.0", later,
+                                    state | {"version": "3.0.1", "pin_users": users})  # fmt: skip
+    assert r.pin_changes == ["prompt"] and r.affected == ["ap"]  # after 3.0: the C addresses
+    assert r.converted == []  # the service still reports it; only the crossing prints it (P8)
+
+
+def test_a_prompt_change_moves_only_the_c_addresses() -> None:
+    """v3.0.2 (P1): the prompt digest is in C's gate key, not D's (Jev's prompt is), so a new
+    one names the users of classifier and classifier_high; schema and the actor's instructions
+    still move every address."""
+    users = {"classifier": ["c1"], "classifier_high": ["c1", "c2"], "actor": ["c1", "c2", "d1"],
+             "actor_high": ["c1", "c2", "d1"], "jev": ["d1"]}  # fmt: skip
+    pins = {"actor": "x"}
+    fams, affected = upgrade_check.changes(pins, 3, pins, 3, users, prompts=("p", "q"))
+    assert (fams, affected) == (["prompt"], ["c1", "c2"])
+    fams, affected = upgrade_check.changes(pins, 3, pins, 3, users, prompts=(None, "q"))
+    assert (fams, affected) == (["prompt"], ["c1", "c2"])  # missing on one side counts
+    fams, affected = upgrade_check.changes(pins, 3, {"actor": "y"}, 3, users, prompts=("p", "q"))
+    assert (fams, affected) == (["actor", "prompt"], ["c1", "c2", "d1"])
+    _, affected = upgrade_check.changes(pins, 3, pins, 3, users, prompts=("p", "q"),
+                                        actor_prompts=("a", "b"))  # fmt: skip
+    assert affected == ["c1", "c2", "d1"]
+    _, affected = upgrade_check.changes(pins, 2, pins, 3, users, prompts=("p", "q"))
+    assert affected == ["c1", "c2", "d1"]
+    assert upgrade_check.changes(pins, 3, pins, 3, users, prompts=("p", "p")) == ([], [])
 
 
 def test_after_an_upgrade_from_v2_the_actor_digest_arrives_unremarked(tmp_path: Path) -> None:
