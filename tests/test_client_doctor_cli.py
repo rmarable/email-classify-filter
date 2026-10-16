@@ -104,9 +104,15 @@ def test_unit_check(status: UnitStatus, level: Level) -> None:
 
 
 @pytest.mark.parametrize(
-    ("version", "level"), [((3, 12, 5), Level.FAIL), ((3, 12, 6), Level.OK), ((3, 13, 0), Level.OK)]
+    ("version", "level"),
+    [
+        ((3, 12, 5), Level.FAIL),
+        ((3, 12, 6), Level.OK),
+        ((3, 13, 0), Level.OK),
+        ((3, 14, 0), Level.WARN),
+    ],
 )
-def test_python_check_needs_3_12_6(
+def test_python_check_needs_3_12_6_and_warns_past_3_13(
     monkeypatch: pytest.MonkeyPatch, version: tuple[int, int, int], level: Level
 ) -> None:
     monkeypatch.setattr(sys, "version_info", version)  # strict address parsing, OD-454

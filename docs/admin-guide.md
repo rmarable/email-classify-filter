@@ -23,16 +23,36 @@ Linux support is planned.
 
 ## Install
 
-Download the latest release from GitHub and install it (the [README](../README.md#getting-started)
-shows how to check the download):
+The easy way is the install script, `install-ecf-macos.sh`, from the
+[latest release](https://github.com/rmarable/email-classify-filter/releases/latest); the
+[README](../README.md#getting-started) walks through it. Its options:
+
+| Option | What it does |
+|---|---|
+| `--dry-run` | Show each step without downloading or changing anything. |
+| `--homebrew` | Install uv, gh and Claude Code with Homebrew (it must be installed already). |
+| `--version vX.Y.Z` | Install that release instead of the latest. |
+| `--python 3.13` | Use Python 3.13 instead of 3.12. ecf's tests run on 3.13 on Linux, not on macOS. |
+| `--yes` | Take the default answer to every question. |
+| `--allow-no-filevault` | Go on even though FileVault is off. Not recommended. |
+
+The script keeps the downloaded ecf file in ecf's own folder (`~/Library/Application
+Support/ecf/_installer`), because `ecf upgrade` needs it to go back if an upgrade fails. It also
+writes down which tools it installed, so the uninstall script can offer to remove them.
+
+**By hand:** install [uv](https://docs.astral.sh/uv/) and
+[gh](https://cli.github.com), then sign in with `gh auth login`. Download and check the release:
 
 ```sh
-uv tool install ./email_classify_filter-*.whl
+gh release download --repo rmarable/email-classify-filter --pattern '*'
+shasum -a 256 email_classify_filter-*.whl   # this number should match the one in SHA256SUMS
+uv tool install --python 3.12 ./email_classify_filter-*.whl
 ```
 
-There's no PyPI package. `ecf upgrade` only works on an install made this way, with `uv tool`. To
-build from a checkout of the code instead: `uv build && uv tool install
-dist/email_classify_filter-*.whl`.
+Keep the `.whl` file where it is afterwards, for the same reason as above.
+
+There's no PyPI package. `ecf upgrade` only works on an install made with `uv tool`. To build from
+a checkout of the code instead: `uv build && uv tool install dist/email_classify_filter-*.whl`.
 
 ## First setup: `ecf init`
 
@@ -498,6 +518,12 @@ aren't touched.
 At the end it lists what's left for you: app passwords to cancel at your mail provider, the Slack
 app if it was kept, and Ollama if you used it with ecf before v3.0.0. If it's interrupted, run it
 again to finish.
+
+**Removing everything:** `uninstall-ecf-macos.sh`, from the same release page as the install
+script, runs `ecf destroy` for each install on this Mac (it asks before each one, and whether you
+have a Slack configuration token), then removes ecf itself and lists what's left. Last, it offers
+to remove the tools the install script put there (uv, gh, Claude Code); the answer is no unless
+you say yes, since other programs may use them. Add `--dry-run` to see each step first.
 
 ## Health checks
 

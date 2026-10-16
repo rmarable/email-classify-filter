@@ -32,6 +32,7 @@ from ecf.status import CHECK_FAILED
 from ecf.upgrade_check import converted_notice
 
 MIN_PYTHON = (3, 12, 6)  # stricter address parsing (CVE-2023-27043, OD-454)
+MAX_TESTED_PYTHON = (3, 13)  # CI tests 3.12.6 and 3.13 (SPEC §17.4; operator decision 2026-10-16)
 MIN_SQLITE = (3, 37, 0)
 TICK_STALE_S = 180
 REGRANT_FIX = "ecf service regrant (choose Always Allow at each Keychain dialog)"
@@ -57,13 +58,14 @@ def _v(t: tuple[int, ...]) -> str:
 
 
 def check_python() -> Check:
-    ok = sys.version_info[:3] >= MIN_PYTHON
-    return Check(
-        "python",
-        Level.OK if ok else Level.FAIL,
-        sys.version.split()[0],
-        "" if ok else f"install Python {_v(MIN_PYTHON)}+ and reinstall ecf",
-    )
+    found = sys.version.split()[0]
+    if tuple(sys.version_info[:3]) < MIN_PYTHON:
+        return Check("python", Level.FAIL, found,
+                     f"install Python {_v(MIN_PYTHON)}+ and reinstall ecf")  # fmt: skip
+    if tuple(sys.version_info[:2]) > MAX_TESTED_PYTHON:
+        fix = "reinstall ecf with `uv tool install --force --python 3.12 <wheel>`"
+        return Check("python", Level.WARN, f"{found} (ecf is tested on 3.12 and 3.13)", fix)
+    return Check("python", Level.OK, found, "")
 
 
 def check_sqlite() -> Check:

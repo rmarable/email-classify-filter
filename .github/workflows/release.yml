@@ -1,7 +1,8 @@
 # Release (SPEC §17.4; operator decision D7, 2026-10-06): a pushed vX.Y.Z or vX.Y.Z-rcN tag runs
 # the Linux checks, builds the wheel and sdist reproducibly (scripts/release_build.py, which
 # refuses a tag whose version isn't the package's), and creates a GitHub Release on this repository
-# with the wheel, the sdist, SHA256SUMS and release-manifest.json. Nothing is published to PyPI.
+# with the wheel, the sdist, the install and uninstall scripts, SHA256SUMS and
+# release-manifest.json. Nothing is published to PyPI.
 # The macOS merge gate still runs locally before the tag (CLAUDE.md).
 name: release
 
@@ -94,5 +95,7 @@ jobs:
             "${prerelease[@]}" \
             "email_classify_filter-${version}-py3-none-any.whl" \
             "email_classify_filter-${version}.tar.gz" \
+            install-ecf-macos.sh \
+            uninstall-ecf-macos.sh \
             SHA256SUMS \
             release-manifest.json

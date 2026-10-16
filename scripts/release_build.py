@@ -5,7 +5,9 @@
 Builds the sdist and the wheel (from the sdist) with `uv build`, SOURCE_DATE_EPOCH set to the
 commit time, into DIR (which must be empty or absent), then writes:
 
-- `SHA256SUMS`: `<sha256 hex>  <filename>`, one line per built file, sorted by filename;
+- copies of `scripts/install-ecf-macos.sh` and `scripts/uninstall-ecf-macos.sh`, published beside
+  the wheel so a new Mac can install from the release page (SPEC §17.4, OD-526);
+- `SHA256SUMS`: `<sha256 hex>  <filename>`, one line per built file and script, sorted by filename;
 - `release-manifest.json`: {"commit", "files": {filename: sha256}, "tag", "version"}, keys sorted.
 
 With --tag, the tag must be `vX.Y.Z` or `vX.Y.Z-rcN`, its version (`X.Y.Z`, `X.Y.ZrcN`) must equal
@@ -30,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = "email_classify_filter"
 SUMS = "SHA256SUMS"
 MANIFEST = "release-manifest.json"
+SCRIPTS = ("install-ecf-macos.sh", "uninstall-ecf-macos.sh")
 TAG_RE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc([1-9]\d*))?$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -102,6 +105,16 @@ def check_built(out: Path, tag: str | None) -> tuple[str, dict[str, str]]:
     return version, {name: sha256_file(out / name) for name in names}
 
 
+def add_scripts(out: Path, hashes: dict[str, str]) -> dict[str, str]:
+    """Copy the install and uninstall scripts into `out`; returns `hashes` with theirs added."""
+    added = dict(hashes)
+    for name in SCRIPTS:
+        data = (ROOT / "scripts" / name).read_bytes()
+        (out / name).write_bytes(data)
+        added[name] = hashlib.sha256(data).hexdigest()
+    return added
+
+
 def git(*args: str) -> str:
     return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True,
                           text=True).stdout.strip()  # fmt: skip
@@ -132,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         epoch = git("log", "-1", "--format=%ct")
         build(out, epoch)
         version, hashes = check_built(out, tag)
+        hashes = add_scripts(out, hashes)
         (out / SUMS).write_text(sums_text(hashes))
         (out / MANIFEST).write_text(manifest_text(version, tag, commit, hashes))
     except ReleaseError as e:
