@@ -171,15 +171,23 @@ ecf reprocess --status | ecf reprocess ap --stop
 
 ## Gmail
 
-Personal Gmail accounts (`@gmail.com`, `@googlemail.com`) work with an app password. Google
-Workspace (company) accounts don't yet. Do Google's side first, using
-[Gmail setup](gmail-setup.md): turning on 2-Step Verification, creating the app password, two
-Gmail settings, and what to do when the account belongs to someone else.
+Personal Gmail accounts (`@gmail.com`, `@googlemail.com`) connect in one of two ways: by signing
+in with Google (recommended), or with an app password. Google Workspace (company) accounts don't
+work yet. Do Google's side first, using [Gmail setup](gmail-setup.md): registering your own copy
+of ecf with Google, or creating the app password, and what to do when the account belongs to
+someone else.
 
 ```sh
-ecf address add pat.lee@gmail.com --sensitivity high
+ecf address add pat.lee@gmail.com --access api --sensitivity high   # sign in with Google
+ecf address add pat.lee@gmail.com --sensitivity high                # app password
 ```
 
+- `--access api` opens your browser to sign in. Before the first one, run `ecf gmail client set`
+  once ([how](gmail-setup.md#step-5-give-ecf-the-client-id-and-secret)).
+- `ecf address set <address> --access api` (or `--access imap`) moves an address between the two.
+  ecf reads that inbox afresh but keeps what it learned: emails it was working on carry over.
+  With the address's current way (`--access api` on a signed-in address) it just signs in again,
+  which is the fix after a Google password change.
 - You don't need `--imap-host`; ecf uses Gmail's servers.
 - It doesn't ask for organization domains, since `gmail.com` is never "internal".
 - It starts with a limit of 100 sends a day (Google allows 500). `add` prints the command to change
@@ -225,12 +233,15 @@ someone else's mail to a personal address without their agreement; ecf can't che
 
 `ecf address add` prints the same warnings when it first checks the mailbox.
 
-**Download limit:** Gmail limits how much can be downloaded in a day. ecf stops before it reaches
+The two `gmail <id>` warnings above apply only to addresses connected with an app password.
+
+**Download limit (app passwords):** Gmail limits how much can be downloaded in a day. ecf stops before it reaches
 2,500 MB in 24 hours and tells you (`Operator Input Needed: Gmail download limit reached`). New
 mail just waits, nothing is skipped, and it carries on by itself.
 
 **"Mailbox Login Rejected" on Gmail:** changing your Google password cancels every app password
-([what to do](gmail-setup.md#after-a-password-change)). Create a new one, then run
+and ends ecf's sign-in with Google ([what to do](gmail-setup.md#after-a-password-change)). Sign
+in again with `ecf address set <address> --access api`, or create a new app password and run
 `ecf address set <address> --app-password`.
 
 ## Configuration
@@ -583,8 +594,8 @@ read. A manual export can still be brought in with its passphrase, using `ecf im
 **Stolen laptop:** disk encryption and a screen lock are what protect it. Then, from another
 computer:
 
-1. Cancel each mailbox's app password at your mail provider (Gmail:
-   [how](gmail-setup.md#revoking-ecfs-access)).
+1. Cancel each mailbox's app password at your mail provider, or ecf's access if you signed in
+   with Google (Gmail: [how](gmail-setup.md#revoking-ecfs-access)).
 2. Cancel ecf's Slack tokens, or remove its app, in Slack.
 3. Sign ecf's Claude login out in your Claude account.
 
