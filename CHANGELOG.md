@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.0.0 (2026-10-16)
 
 - Claude Opus 5.5 now classifies (at both sensitivities) and proposes actions for every item; Claude Sonnet 5.5 is no longer used. The main session stays Claude Haiku 5.5. In step 6's evals Sonnet 5.5 was less reliable than Opus 5.5 on fraud risk and Haiku 5.5 fell short of Sonnet 5.5; whole eval runs cost about 1.7 times as much (OD-520). Every live address goes back to assist at the upgrade until its gate passes on the new models, and `ecf upgrade` names them.
 - The actor for ordinary items moves from Sonnet 5.5 to Opus 5.5 (Opus already handled high-risk items): judging the differing answers blind, the operator preferred Opus 5.5's on the safety and high-risk cards, and it answered about four times faster. The planned actor wording change and the narrower high-risk routing are dropped (OD-521).

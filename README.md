@@ -8,8 +8,9 @@ infrastructure of your own.
 
 ## Status
 
-`v2.2.3` (2026-10-12) is the latest release: it fixes `ecf models install` with Ollama 0.40 on
-Apple silicon. Releases are macOS only, single-user local mode; `v1.0.0` (2026-10-08) was the
+`v3.0.0` (2026-10-16) is the latest release: Claude only (preset C), with Claude Opus 5.5
+classifying and acting; local models (Gemma, Ollama, presets A and B) are removed and TypeSafe
+Jev stays eval-only. Releases are macOS only, single-user local mode; `v1.0.0` (2026-10-08) was the
 first, and [`CHANGELOG.md`](CHANGELOG.md) lists every release. Milestone tags (`ms-…`) and
 release candidates (`vX.Y.Z-rcN`) record internal progress, not releases.
 
