@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.0.4 (2026-10-16)
 
 - New install and uninstall scripts for macOS, published with each release: `install-ecf-macos.sh` checks the Mac, installs uv, gh and Claude Code if missing (from each maker's own checked download, or with `--homebrew`), downloads and verifies ecf and installs it; `uninstall-ecf-macos.sh` runs `ecf destroy` for each install, removes ecf and lists what's left (OD-526).
 - `ecf doctor` warns when ecf runs on a Python newer than 3.13, which it isn't tested on (OD-526).

@@ -155,9 +155,9 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Status
 
-`v3.0.3` (2026-10-16) is the current version: every message about a mailbox that ecf moved to
-Claude when it stopped using local models now says the same thing, in plain words. It runs on
-macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
+`v3.0.4` (2026-10-16) is the current version: new install and uninstall scripts set up a new Mac
+in one step (or remove ecf completely), and `ecf doctor` warns if ecf runs on a Python it isn't
+tested on. It runs on macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
 your Mac, for connecting to Gmail directly through Google's own interface, and then for Google
 Workspace (company and school) accounts are planned. What changed in each version is in
 [CHANGELOG.md](CHANGELOG.md).
