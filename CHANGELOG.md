@@ -5,7 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
-- The Slack security notice for a mailbox converted at v3.0.0 now describes it the same plain way as `ecf upgrade`, `ecf doctor` and `ecf resume` (OD-524).
+- The Slack security notice for a mailbox converted at v3.0.0 now describes it the same plain way as `ecf upgrade`, `ecf doctor` and `ecf resume`, and all four say the owner must agree to their mail and what ecf derives from it going to Anthropic (OD-524).
 
 ## v3.0.2 (2026-10-16)
 

@@ -477,8 +477,9 @@ def test_phase_two_from_v2_drops_the_old_checks_prompt_and_names_converted_addre
     assert service.finished[0]["affected"] == [] and service.finished[0]["pin_changes"] == []
     assert "drop to assist" not in out
     said = ("ap was set up for a local model ecf no longer has; it now uses Claude and stays"
-            " paused until the account's owner agrees to their mail going to Anthropic; 2 emails"
-            " waiting: ecf resume ap once they agree, or ecf address remove ap")  # fmt: skip
+            " paused until the account's owner agrees to their mail, and what ecf derives from it,"
+            " going to Anthropic; 2 emails waiting: ecf resume ap once they agree, or ecf address"
+            " remove ap")  # fmt: skip
     assert said in out
     assert "your rules file has a rule named phishing, which has the id of one of ecf's" in out
 
