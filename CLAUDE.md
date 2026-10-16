@@ -119,4 +119,4 @@ uv build                                  # wheel + sdist
 
 ## Path-scoped rules
 
-`.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files. Now: `eval-synthetic.md` (`tests/eval/synthetic/**`). A `docs/roadmap/**` rule arrives with the first roadmap document; an `infra/**` rule with M1.
+`.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files. Now: `eval-synthetic.md` (`tests/eval/synthetic/**`) and `roadmap.md` (`docs/roadmap/**`). An `infra/**` rule arrives with M1.

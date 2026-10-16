@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- M6 (signing in to personal Gmail with Google instead of an app password) is planned for v3.1.0, ahead of the other roadmap milestones: each operator uses their own Google Cloud project, each address chooses IMAP or the Gmail API, and an address can move between them (OD-527 to OD-531; ADR 0032 proposed).
+
 ## v3.0.5 (2026-10-16)
 
 - `ecf upgrade` run from a copy of ecf that wasn't installed with `uv tool` (for example a development checkout) no longer deletes earlier downloads, one of which may be the file another install needs to roll back; it was refused anyway.

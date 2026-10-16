@@ -1,6 +1,7 @@
 # M6 Gmail API (personal Google accounts)
 
-Status: outline, not started. Split from Google Workspace accounts (now M7, `M7-GOOGLE-WORKSPACE.md`)
+Status: superseded 2026-10-16 by `docs/roadmap/m6-gmail-api.md` (OD-527 to OD-531); kept as
+history. Was: outline, not started. Split from Google Workspace accounts (now M7, `M7-GOOGLE-WORKSPACE.md`)
 by operator decision 2026-10-16 (OD-525, amends OD-426). Source: SPEC §1.2 "M6 Gmail API" as of
 `c544d53`. At M6's start this becomes `docs/roadmap/m6-gmail-api.md` and gets its own design review.
 
