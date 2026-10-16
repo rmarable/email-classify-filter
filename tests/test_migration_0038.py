@@ -267,7 +267,8 @@ def test_converted_addresses_are_announced_once(db_path: Path, monkeypatch: pyte
     assert [d["from"] for d in _audit(c, "address.converted")] == ["A", "B"]
     notices = [body for title, body in n.sent if title == "[ecf-alert] Security Notice"]
     assert len(notices) == 2
-    assert "a1" in notices[0] and "OD-427" in notices[0] and "1 email of it wait" in notices[0]
+    assert "a1 was set up for a local model ecf no longer has" in notices[0]
+    assert "1 email waiting" in notices[0] and "OD-427" not in notices[0]
     assert "ecf resume a1" in notices[0] and "ecf address remove a1" in notices[0]
     assert stages.announce_converted(c, clock, FakeNotifier()) == []  # once
     c.close()
@@ -329,7 +330,7 @@ def test_a_v2_2_3_bundle_restores_converted_and_announces_again(
     assert rows == {"a1": ("C", 1), "b1": ("C", 1)}
     assert fresh.execute("PRAGMA foreign_key_check").fetchall() == []
     assert [c["address_id"] for c in stages.converted(fresh)] == ["a1", "b1"]
-    said = [b for _t, b in n.sent if "now preset C" in b]
+    said = [b for _t, b in n.sent if "for a local model ecf no longer has" in b]
     assert len(said) == 2
     assert dict(fresh.execute("SELECT address_id, stage FROM addresses")) == {
         "a1": "assist",
@@ -337,7 +338,7 @@ def test_a_v2_2_3_bundle_restores_converted_and_announces_again(
     }
     again = FakeNotifier()
     _restore(fresh, clock, path, n=again)  # the bundle's settings replace the record
-    assert len([b for _t, b in again.sent if "now preset C" in b]) == 2
+    assert len([b for _t, b in again.sent if "for a local model ecf no longer has" in b]) == 2
 
 
 def test_a_format_4_bundle_with_a_and_b_imports_as_c_paused(
@@ -360,7 +361,7 @@ def test_a_format_4_bundle_with_a_and_b_imports_as_c_paused(
     assert tuple(row) == (0, 0)  # the bundle's values aren't carried (R1)
     bodies = [b for _t, b in n.sent]
     assert any("Converted to C, paused" in b and "a1, b1" in b for b in bodies)
-    assert len([b for b in bodies if "now preset C" in b]) == 2
+    assert len([b for b in bodies if "for a local model ecf no longer has" in b]) == 2
     assert [c["waiting"] for c in stages.converted(target)] == [1, 0]
 
 
