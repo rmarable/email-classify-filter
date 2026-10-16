@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.0.3 (2026-10-16)
 
 - Roadmap: the Gmail API milestone (M6) now covers personal Google accounts only; Google Workspace accounts get their own milestone, M7, built on it (OD-525).
 - The Slack security notice for a mailbox converted at v3.0.0 now describes it the same plain way as `ecf upgrade`, `ecf doctor` and `ecf resume`, and all four say the owner must agree to their mail and what ecf derives from it going to Anthropic (OD-524).
