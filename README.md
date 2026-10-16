@@ -8,6 +8,10 @@ ecf (short for email-classify-filter) is a program that reads your business emai
 those scams, and warns you before anyone pays. It also sorts the everyday mail (receipts,
 newsletters, customer questions) so the inbox stays manageable.
 
+**Before you rely on ecf, read the [disclaimer](DISCLAIMER.md).** ecf makes fraud harder to miss but
+can't catch everything, comes with no warranty, and leaves you responsible for what you approve and
+for the mailboxes you connect.
+
 ## Who it's for
 
 Anyone who looks after a shared business mailbox, such as `billing@`, `invoices@` or

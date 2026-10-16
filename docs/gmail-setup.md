@@ -4,6 +4,10 @@ ecf can watch a personal Gmail account (an address ending in `@gmail.com` or `@g
 Before you add it to ecf, a few things need setting up on Google's side. This guide walks through
 them. It takes about five minutes.
 
+**Before you rely on ecf, read the [disclaimer](../DISCLAIMER.md).** ecf makes fraud harder to miss
+but can't catch everything, comes with no warranty, and leaves you responsible for what you approve
+and for the mailboxes you connect.
+
 Once you're done, add the account to ecf as the [admin guide](admin-guide.md#gmail) describes.
 
 ## What you need
