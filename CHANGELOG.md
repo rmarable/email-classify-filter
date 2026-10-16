@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.0.5 (2026-10-16)
 
 - `ecf upgrade` run from a copy of ecf that wasn't installed with `uv tool` (for example a development checkout) no longer deletes earlier downloads, one of which may be the file another install needs to roll back; it was refused anyway.
 
