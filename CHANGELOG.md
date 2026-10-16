@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- CI no longer runs a second time when a release tag is pushed; the tag's release run checks that commit, and a release's version bump runs the full test suite, not only the version tests (OD-522).
+
 ## v3.0.0 (2026-10-16)
 
 - Claude Opus 5.5 now classifies (at both sensitivities) and proposes actions for every item; Claude Sonnet 5.5 is no longer used. The main session stays Claude Haiku 5.5. In step 6's evals Sonnet 5.5 was less reliable than Opus 5.5 on fraud risk and Haiku 5.5 fell short of Sonnet 5.5; whole eval runs cost about 1.7 times as much (OD-520). Every live address goes back to assist at the upgrade until its gate passes on the new models, and `ecf upgrade` names them.
