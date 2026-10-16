@@ -8,36 +8,12 @@ them. It takes about five minutes.
 but can't catch everything, comes with no warranty, and leaves you responsible for what you approve
 and for the mailboxes you connect.
 
-Once you're done, add the account to ecf as the [admin guide](admin-guide.md#gmail) describes.
-
 ## What you need
 
 - **A personal Google account.** Work and school accounts (Google Workspace) won't work yet.
   Google doesn't let them create the kind of password ecf needs.
 - **2-Step Verification** turned on for the account (step 1).
 - **An app password** for ecf (step 2).
-
-## What's an app password?
-
-ecf needs to log in to your mailbox to read and sort your mail, and later, if you turn it on, to
-send email for you. You don't give ecf your real Google password for that. Instead, Google lets
-you create an **app password**: a separate 16-character code that only works for reading and
-sending mail, and that you can cancel at any time without changing your real password.
-
-Treat it like your real password: anyone who has it can read and send your email. ecf stores it
-in your Mac's Keychain and nowhere else.
-
-Google says app passwords aren't recommended in most cases, because most apps can sign in to
-Google directly. ecf can't do that yet (support is planned), so for now it needs one.
-
-**Some accounts can't create app passwords:**
-
-- work, school or other organization accounts;
-- accounts using Google's Advanced Protection;
-- accounts where 2-Step Verification only uses security keys.
-
-**Changing your Google password cancels every app password.** If you do, ecf stops being able to
-log in until you give it a new one. See [After a password change](#after-a-password-change).
 
 ## Step 1: turn on 2-Step Verification
 
