@@ -138,11 +138,11 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Status
 
-`v3.0.2` (2026-10-16) is the current version: a change to the instructions ecf gives Claude for
-classifying mail now sends live mailboxes back for the go-live test, as a model change does. It
-runs on macOS, for one person. Support for Linux, for teams, for an always-on version that
-doesn't need your Mac, for connecting to Gmail directly through Google's own interface, and then for
-Google Workspace (company and school) accounts are planned. What changed in each version is in
+`v3.0.3` (2026-10-16) is the current version: every message about a mailbox that ecf moved to
+Claude when it stopped using local models now says the same thing, in plain words. It runs on
+macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
+your Mac, for connecting to Gmail directly through Google's own interface, and then for Google
+Workspace (company and school) accounts are planned. What changed in each version is in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## For developers
