@@ -1,7 +1,7 @@
 {
   "_comment": "What `ecf upgrade` checks before it stops anything (SPEC §11.10; OD-375). tests/test_release.py keeps each field equal to the code: version to ecf.__version__, schema_version to the newest migration, data_format to export_bundle.DATA_FORMAT, api_version to api.API_VERSION, classifier_schema to the shipped schema's version (a change is a new gate for every address, OD-475), prompt_digest to claude_review.prompt_digest of the shipped schema (Claude's from v3.0.0, which removed the local models, ADR 0031, R-D10; an upgrade from before 3.0 treats its change as expected, P4; it covers the classifier's instructions, classifier.md, from v3.0.2, OD-524; a new wording: update it), actor_prompt_digest to plugin_digest.actor_prompt_digest (the actor's instructions, in the gate key from v3.0.1, OD-523; an upgrade from before 3.0 treats its arrival as expected, P5). min_client is the oldest ecf whose `ecf upgrade` may start this upgrade.",
   "product": "email-classify-filter",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "api_version": 1,
   "data_format": 4,
   "schema_version": 41,
