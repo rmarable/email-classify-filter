@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- The Slack security notice for a mailbox converted at v3.0.0 now describes it the same plain way as `ecf upgrade`, `ecf doctor` and `ecf resume` (OD-524).
+
 ## v3.0.2 (2026-10-16)
 
 - A release that changes the instructions ecf gives Claude for classifying mail now sends live mailboxes back to assist until they pass the go-live test again, as a model change does. Upgrading to this release does it once, for every live mailbox (OD-524).

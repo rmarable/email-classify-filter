@@ -32,6 +32,7 @@ from typing import Any
 
 from ecf.errors import InvalidInputError, PolicyDeniedError
 from ecf.ids import StableId
+from ecf.upgrade_check import converted_notice
 from ecf_server import (
     addresses,
     claude_pins,
@@ -378,9 +379,9 @@ def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifie
     (audited, posted with `CONVERTED_REASON`); its pre-checked emails still at `new` (they waited
     for the local model, `ecf backfill --act` mail among them; a records-only backfill's are
     left) go to the Claude queue as `claude_queue.sweep` would move them, now (review R3); it
-    gets an `address.converted` audit row and its own Security Notice: converted to C and
-    paused; resume it only after the account owner agrees to its mail going to Anthropic
-    (OD-427), or remove it; its waiting emails wait for `/ecf-review` once it is resumed. Counts
+    gets an `address.converted` audit row and its own Security Notice, in the wording `ecf
+    upgrade`, `ecf doctor` and `ecf resume` use (`converted_notice`, v3.0.2 P3): resume it only
+    after the account owner agrees to its mail going to Anthropic (OD-427), or remove it. Counts
     only, no email content. Each id is marked announced in the audit row's transaction, so a
     failure later announces only the rest again (review R6); a restore replaces the settings, so
     restoring an older bundle announces again. Returns the ids announced."""
@@ -412,12 +413,9 @@ def announce_converted(conn: sqlite3.Connection, clock: Clock, notifier: Notifie
                           now))  # fmt: skip
         slack_admin.notice(
             conn, clock, notifier,
-            f"Address {aid} used preset {c['from']}, whose local model v3.0.0 removed: it is now"
-            f" preset C (Claude classifies its mail when you run /ecf-review) and paused. Resume"
-            f" it (ecf resume {aid}) only after the account's owner agrees to its mail, and what"
-            f" ecf derives from it, going to Anthropic (OD-427); otherwise remove it (ecf address"
-            f" remove {aid}). {n} email{'s' if n != 1 else ''} of it wait for /ecf-review once it"
-            " is resumed.",
+            f"Address {converted_notice(aid, n)}. Once they agree, resume it with ecf resume {aid}"
+            f" and its emails wait for /ecf-review; otherwise remove it with ecf address remove"
+            f" {aid}.",
             dms=[ident.member] if ident and ident.member else [])  # fmt: skip
     log.info("stages.converted_announced", addresses=len(todo))
     return [str(c["address_id"]) for c in todo]
