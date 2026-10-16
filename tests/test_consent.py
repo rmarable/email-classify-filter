@@ -117,7 +117,7 @@ def test_doctor_names_paused_converted_addresses_until_resumed() -> None:
     assert (check.name, check.level) == ("converted a1", Level.WARN)
     assert check.detail == converted_notice("a1", 3)
     assert check.detail.startswith("a1 was set up for a local model ecf no longer has; it now")
-    assert check.detail.endswith("their mail going to Anthropic; 3 emails waiting")
+    assert check.detail.endswith("from it, going to Anthropic; 3 emails waiting")
     assert check.fix.startswith("ecf resume a1 once the account's owner agrees,")
     assert "ecf address remove a1" in check.fix
     assert judge_converted([]) == []

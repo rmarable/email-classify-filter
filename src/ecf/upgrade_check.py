@@ -69,10 +69,12 @@ PROMPT_FAMILIES = ("classifier", "classifier_high")  # whose users' key holds th
 
 def converted_notice(address_id: str, waiting: int) -> str:
     """An address converted to C and paused (migration 0038 or an import; P3): the one wording
-    `ecf upgrade`, `ecf doctor` and `ecf resume` use."""
+    `ecf upgrade`, `ecf doctor`, `ecf resume` and the service's Security Notice use. "What ecf
+    derives from it" covers the derived signals Claude also gets (OD-483)."""
     return (f"{address_id} was set up for a local model ecf no longer has; it now uses Claude and"
-            " stays paused until the account's owner agrees to their mail going to Anthropic;"
-            f" {waiting} email{'s' if waiting != 1 else ''} waiting")  # fmt: skip
+            " stays paused until the account's owner agrees to their mail, and what ecf derives"
+            f" from it, going to Anthropic; {waiting} email{'s' if waiting != 1 else ''}"
+            " waiting")  # fmt: skip
 
 
 def version_key(v: str) -> tuple[int, int, int, int, int]:
