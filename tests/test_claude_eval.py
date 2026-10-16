@@ -23,7 +23,7 @@ from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, 
 from ecf.eval import labels
 from ecf.eval.builder import build_all
 from ecf.eval.results import ResultFile, load_result, spawn_figures
-from ecf.plugin_digest import plugin_digest
+from ecf.plugin_digest import actor_prompt_digest, plugin_digest
 from ecf.schema import load_schema, with_fixed
 from ecf_server import (
     claude_eval,
@@ -1120,6 +1120,7 @@ def test_a_run_asks_with_the_effective_schema_and_records_its_digest(
     assert m["read_bytes"] == read_bytes(schema) > read_bytes(load_schema())
     assert m["keywords_digest"] == triggers.keywords_digest()
     assert m["plugin_digest"] == plugin_digest()  # the skills and agent prompts
+    assert m["actor_prompt_digest"] == actor_prompt_digest()  # OD-523
 
 
 def test_a_cards_expected_facts_reach_the_hide_path_as_in_ecf_eval_run(
@@ -1394,6 +1395,7 @@ def test_a_rescore_keeps_or_replays_the_proposal_and_an_old_result_is_unchanged(
         new = load_result(Path(rescore(root, path, clock)["path"]))
         assert seen(new) == seen(live)
         assert (new.summary or {})["proposals"] == (live.summary or {})["proposals"]
+        assert (new.summary or {})["actor_prompt_digest"] == actor_prompt_digest()  # kept
     # a result from before step 6: no proposal fields, no figures, the same scores
     bare = {"proposal": None, "proposal_target": None, "proposal_safety": None}
     summary = {k: v for k, v in (live.summary or {}).items() if k != "proposals"}
@@ -1410,7 +1412,11 @@ def test_a_rescore_keeps_or_replays_the_proposal_and_an_old_result_is_unchanged(
 
 
 def test_a_frozen_run_asks_only_the_actor_and_never_counts_for_the_gate(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+    conn: sqlite3.Connection,
+    db_path: Path,
+    clock: FakeClock,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """P2, P3: the source's classifications, no classifier spawn, no determinism repeats; key
     `eval-...` over the source run's key; summarized without a classifier, not gate-eligible,
@@ -1435,6 +1441,7 @@ def test_a_frozen_run_asks_only_the_actor_and_never_counts_for_the_gate(
                                   (source,)).fetchone()[0])  # fmt: skip
     for k in claude_eval.C_SOURCE_KEYS:
         assert m[k] == src[k]
+    assert m["actor_prompt_digest"] == actor_prompt_digest()  # its own actor's (OD-523)
     got = {c.id: c.got for c in load_result(Path(row["path"])).cases}
     assert got["starter-control"]["category"] == REQUEST["category"]  # the source's answer
     check = gate.synthetic(conn, row["digest"], "C")
@@ -1448,6 +1455,10 @@ def test_a_frozen_run_asks_only_the_actor_and_never_counts_for_the_gate(
     assert r2["pinned"] is False and run2 is not None
     assert run2.key == run.key  # both sources ran on the same pins: the same source key
     assert claude_eval.models_for(conn, run2.opts, "other-key")[2] != run.key
+    # the actor's instructions are in the unpinned key too (OD-523)
+    assert claude_eval.models_for(conn, run2.opts, run2.source_key)[2] == run2.key
+    monkeypatch.setattr(claude_eval, "actor_prompt_digest", lambda: "e" * 64)
+    assert claude_eval.models_for(conn, run2.opts, run2.source_key)[2] != run2.key
 
 
 def test_a_frozen_run_refuses_a_source_that_doesnt_fit(

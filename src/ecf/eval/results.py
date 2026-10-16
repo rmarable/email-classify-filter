@@ -36,6 +36,7 @@ INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different in
               "excerpt_cap": "different inputs", "excerpt_prep": "different inputs",
               "keywords_digest": "different keywords",
               "rules_digest": "different rules",
+              "actor_prompt_digest": "different actor instructions",  # v3.0.1, OD-523
               # bytes of schema per Claude classify read (v3.0.0 S4, review R9; C runs)
               "read_bytes": "different inputs"}  # fmt: skip
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)

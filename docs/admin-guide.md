@@ -311,7 +311,9 @@ ecf's rules alone, as a quick wiring check that never counts for going live.
 
 **When ecf's Claude models change:** a release that changes which Claude model ecf uses drops every
 mailbox from `live` to `assist` until it passes the go-live test again. v3.0.0 did this when it
-moved every role to Claude Opus 5.5.
+moved every role to Claude Opus 5.5. A release that changes the instructions ecf gives Claude for
+proposing actions does the same: every `live` mailbox goes back to `assist` until it passes the
+test again.
 
 ## Models
 

@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- A release that changes the instructions ecf gives Claude for proposing actions now sends every live mailbox back to assist until it passes the go-live test again, as a model change does; `ecf upgrade` names them and eval comparisons warn about "different actor instructions". Upgrading to this release does it once, for every live mailbox (OD-523).
+- `ecf claude` from a version too old to identify itself to the service (before v2.2.0) is now always refused; before, it was allowed for `/ecf-review` when no eval was running (OD-523).
 - CI no longer runs a second time when a release tag is pushed; the tag's release run checks that commit, and a release's version bump runs the full test suite, not only the version tests (OD-522).
 
 ## v3.0.0 (2026-10-16)

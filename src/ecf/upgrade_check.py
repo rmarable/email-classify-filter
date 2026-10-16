@@ -25,6 +25,11 @@ it imports nothing from the service package.
   way; after an upgrade from before 3.0 its change is expected and affects no address
   (`after_upgrade`). A v2.2.x client's pre-check still says every address drops (it can't be
   patched; the release notes say so).
+- **Actor's instructions** (v3.0.1, OD-523): `release.json`'s `actor_prompt_digest`, the shipped
+  `agents/actor.md`'s digest, is in C's and D's gate key. Compared like the prompt, as
+  "actor_prompt": different, or missing on either side (a release before 3.0.1), affects every
+  address. After an upgrade from before 3.0 its arrival is expected and affects none, as for the
+  prompt (P5); from 3.0.0 it counts (a 3.0.0 CLI's pre-check doesn't see it; phase 2 names them).
 - **Converted addresses** (v3.0.0, P3): the new service's `converted` (A and B addresses made C
   and paused by migration 0038, with their waiting emails), printed after the upgrade.
 - **Rules with a fixed id** (v3.0.0 step 5, OD-508): after the upgrade, the new CLI names each
@@ -190,7 +195,8 @@ def _names(receipt: dict[str, Any]) -> list[str]:
 @dataclass
 class Report:
     problems: list[str] = field(default_factory=list[str])
-    pin_changes: list[str] = field(default_factory=list[str])  # families, "schema", "prompt"
+    # families, "schema", "prompt", "actor_prompt"
+    pin_changes: list[str] = field(default_factory=list[str])
     affected: list[str] = field(default_factory=list[str])  # addresses that drop to assist
     # C addresses your stored, not yet used fields move to assist at the first start (S4, P11)
     schema_pending: list[str] = field(default_factory=list[str])
@@ -220,7 +226,8 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
     r.pin_changes, r.affected = changes(
         now["pins"], int(now.get("classifier_schema", 1)), rel.pins,
         int(new.get("classifier_schema", 1)), now["pin_users"],
-        prompts=(now.get("prompt_digest"), new.get("prompt_digest")))  # fmt: skip
+        prompts=(now.get("prompt_digest"), new.get("prompt_digest")),
+        actor_prompts=(now.get("actor_prompt_digest"), new.get("actor_prompt_digest")))  # fmt: skip
     pending: list[str] = now.get("extension_pending") or []
     r.schema_pending = sorted(str(a) for a in pending)
     r.affected = sorted(set(r.affected) | set(r.schema_pending))
@@ -229,12 +236,14 @@ def compare(state: dict[str, Any], rel: Release, client_version: str) -> Report:
 
 def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str, str],
             new_schema: int | None, uses: dict[str, list[str]], *,
-            prompts: tuple[str | None, str | None] | None = None
+            prompts: tuple[str | None, str | None] | None = None,
+            actor_prompts: tuple[str | None, str | None] | None = None
             ) -> tuple[list[str], list[str]]:  # fmt: skip
-    """(families whose pin changes, plus "schema" and "prompt"; the addresses that drop to
-    assist). `uses` is family -> addresses. A new classifier schema asks every address
-    differently (OD-475); a schema of None is unknown and counts as unchanged. `prompts` is the
-    (old, new) prompt digest: different, or missing on either side, is "prompt" (Q6)."""
+    """(families whose pin changes, plus "schema", "prompt" and "actor_prompt"; the addresses
+    that drop to assist). `uses` is family -> addresses. A new classifier schema asks every
+    address differently (OD-475); a schema of None is unknown and counts as unchanged. `prompts`
+    is the (old, new) prompt digest: different, or missing on either side, is "prompt" (Q6);
+    `actor_prompts` the same for the actor's instructions, as "actor_prompt" (OD-523)."""
     fams = sorted(f for f, v in new_pins.items() if old_pins.get(f) != v)
     affected = sorted({a for f in fams for a in uses.get(f, [])})
     everyone = sorted({a for addrs in uses.values() for a in addrs})
@@ -243,6 +252,10 @@ def changes(old_pins: dict[str, str], old_schema: int | None, new_pins: dict[str
         affected = everyone
     if prompts is not None and (None in prompts or prompts[0] != prompts[1]):
         fams.append("prompt")
+        affected = everyone
+    if actor_prompts is not None and (None in actor_prompts
+                                      or actor_prompts[0] != actor_prompts[1]):  # fmt: skip
+        fams.append("actor_prompt")
         affected = everyone
     return fams, affected
 
@@ -265,22 +278,26 @@ def after_upgrade(old_version: str, old_wheel: Path, state: dict[str, Any]) -> R
     §11.10; operator decision 2026-10-09). If the old wheel can't be read, only the schema is
     compared: a 1.x release has no `classifier_schema`, so it was 1. From before 3.0 the prompt
     digest was the local model's, and v3.0.0's is Claude's (P4): the change is expected and isn't
-    compared. The addresses the new version converted to C (`converted`, P3) are listed."""
+    compared, nor is the actor's instructions' digest, which arrived in v3.0.1 (P5). The
+    addresses the new version converted to C (`converted`, P3) are listed."""
     try:
         old = read_wheel(old_wheel)
         old_pins = old.pins
         old_schema: int | None = int(old.info.get("classifier_schema", 1))
         old_prompt = old.info.get("prompt_digest")
+        old_actor = old.info.get("actor_prompt_digest")
     except InvalidInputError:
         old_pins = dict[str, str](state["pins"])
         old_schema = 1 if version_key(old_version)[0] < 2 else None
-        old_prompt = None  # unknown: counts as a new prompt
+        old_prompt = old_actor = None  # unknown: counts as a new prompt
     r = Report()
-    prompts = None if crosses_to_claude_prompt(old_version, state) else (
-        old_prompt, state.get("prompt_digest"))  # fmt: skip
+    crossing = crosses_to_claude_prompt(old_version, state)
+    prompts = None if crossing else (old_prompt, state.get("prompt_digest"))
+    actors = None if crossing else (old_actor, state.get("actor_prompt_digest"))
     r.pin_changes, r.affected = changes(old_pins, old_schema, state["pins"],
                                         int(state.get("classifier_schema", 1)),
-                                        state["pin_users"], prompts=prompts)  # fmt: skip
+                                        state["pin_users"], prompts=prompts,
+                                        actor_prompts=actors)  # fmt: skip
     listed: list[Any] = state.get("converted") or []
     r.converted = [cast("dict[str, Any]", c) for c in listed if isinstance(c, dict)]
     listed = state.get("rules_customised") or []  # a service before step 5 has none

@@ -11,6 +11,7 @@ import anyio
 import httpx
 import pytest
 
+from ecf.claude_wrapper import client_doc
 from ecf.errors import (
     InvalidInputError,
     RateLimitedError,
@@ -164,7 +165,7 @@ def test_routes_refuse_mcp_profile_tokens(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:
     st = _state(db_path, clock, FakeStepper())
-    work = _call(st, "POST", "/v1/sessions", "cli-token").json()["profile_token"]
+    work = _call(st, "POST", "/v1/sessions", "cli-token", client_doc()).json()["profile_token"]
     r = _call(st, "POST", "/v1/stepup/nonces", work, {"purpose": "test", "target": {}})
     assert r.status_code == 403 and r.json()["code"] == "forbidden_profile"
     r = _call(st, "POST", "/v1/stepup/nonces", "cli-token", {"purpose": "test", "target": {}})

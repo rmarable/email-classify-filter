@@ -261,9 +261,9 @@ SEEN: dict[str, tuple[Any, ...]] = {}  # address -> the gate inputs last compute
 
 
 def tick(conn: sqlite3.Connection, clock: Clock) -> None:
-    """Announce a newly met gate once; drop `live` to `assist` when a pinned model or the schema
-    changed (§9.3): the Ollama digest, a `models.lock` ID, a Claude model override or the
-    effective schema's digest."""
+    """Announce a newly met gate once; drop `live` to `assist` when a pinned model, the schema or
+    the actor's instructions changed (§9.3): the Ollama digest, a `models.lock` ID, a Claude
+    model override, the effective schema's digest or `agents/actor.md` (OD-523)."""
     gate.note_version(conn, to_ts(clock.now()))  # a new gate definition, on record (P30)
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
@@ -272,8 +272,9 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
         if a["stage"] == "live":
             if row is None or gate.stored_key(row) != digest:
                 set_stage(conn, clock, aid, "assist", nonce=None, actor="service",
-                          reason="a pinned model or the classification schema changed; back"
-                                 " to assist until its gate passes (§9.3)")  # fmt: skip
+                          reason="a pinned model or the classification schema changed, or the"
+                                 " actor's instructions; back to assist until its gate passes"
+                                 " (§9.3)")  # fmt: skip
             continue
         if row is not None and row["passed_at"] is not None and gate.stored_key(row) == digest:
             continue  # announced for this model already (`stage set live` computes afresh)

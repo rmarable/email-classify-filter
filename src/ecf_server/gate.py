@@ -248,8 +248,8 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
     again = (f"`ecf eval run --claude --preset {preset} --fraud-only`, then `/ecf-eval` in"
              " `ecf claude`")  # fmt: skip
     if run is None:
-        return Check("synthetic", False, f"no synthetic-set result for these models yet: run"
-                     f" {again} (or a full run)")  # fmt: skip
+        return Check("synthetic", False, f"no synthetic-set result for these models and the"
+                     f" actor's instructions yet: run {again} (or a full run)")  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
     try:
         version = evalrun.set_version(Path(root)) if root else None

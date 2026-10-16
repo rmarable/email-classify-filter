@@ -15,6 +15,7 @@ import anyio
 import httpx
 import pytest
 
+from ecf.claude_wrapper import client_doc
 from ecf.errors import ConflictError, ForbiddenProfileError, InvalidInputError, NotFoundError
 from ecf.ids import AddressId, StableId
 from ecf.schema import load_schema, with_fixed
@@ -1036,7 +1037,7 @@ def test_the_routes_take_only_a_session(conn: sqlite3.Connection, db_path: Path)
     sid = waiting_item(conn, clock, "c")
     state = ServiceState(install="t", token="cli-token", started_at=to_ts(clock.now()),
                          clock=clock, db_path=db_path)  # fmt: skip
-    made = call(state, "/v1/sessions", None, "cli-token").json()
+    made = call(state, "/v1/sessions", client_doc(), "cli-token").json()
     assert made["waiting"] == 1  # what `ecf claude` prints, and the pins its plugin uses
     assert made["models"] == claude_pins.effective(conn)
     work, agent = made["profile_token"], made["agent_token"]

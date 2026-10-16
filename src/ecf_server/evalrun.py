@@ -1359,8 +1359,8 @@ V1_TO_V2 = V1_VALUE_ALIASES
 KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
                     "confidence", "input_tokens", "output_tokens", "unsure", "below_bar",
                     "held")  # fmt: skip
-KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "input_format", "excerpt_cap",
-                     "determinism", "band", "extra")  # fmt: skip
+KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "actor_prompt_digest", "input_format",
+                     "excerpt_cap", "determinism", "band", "extra")  # fmt: skip
 
 
 def _kept(r: CaseResult) -> dict[str, Any]:
@@ -1687,7 +1687,8 @@ def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
         classifier=bool(o.get("classifier", True)), actor=bool(o.get("actor", True)),
         gate_eligible=False, schema=schema))  # fmt: skip
     for key in ("model", "backend", "redact", "classifier_digest", "actor_digest",
-                "classifier_latency_s", "power", "schema_digest"):  # fmt: skip
+                "actor_prompt_digest", "classifier_latency_s", "power",
+                "schema_digest"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     summary["set"] = "corpus"

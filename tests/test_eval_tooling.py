@@ -348,6 +348,12 @@ def test_compare_warns_when_the_runs_were_asked_differently() -> None:
     ra = a.model_copy(update={"summary": {"read_bytes": 12843}})  # S4 review R9: user fields
     rb = b.model_copy(update={"summary": {"read_bytes": 7663}})
     assert input_warnings(ra, rb) == ["warning: different inputs (read_bytes 12843 vs 7663)"]
+    aa = a.model_copy(update={"summary": {"actor_prompt_digest": "a" * 64}})  # OD-523
+    ab = b.model_copy(update={"summary": {"actor_prompt_digest": "b" * 64}})
+    assert input_warnings(aa, ab) == [
+        f"warning: different actor instructions (actor_prompt_digest {'a' * 16} vs {'b' * 16})"
+    ]
+    assert input_warnings(aa, b) == []  # a result from before v3.0.1 recorded none
     sa = a.model_copy(update={"summary": {"options": {"switches_off": ["message_signals"]}}})
     assert input_warnings(sa, b) == [  # pre-gate review G3: the prompt digest doesn't show it
         "warning: different switches (message_signals vs all on)"]  # fmt: skip

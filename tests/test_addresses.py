@@ -16,6 +16,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from ecf.claude_wrapper import client_doc
 from ecf.cli import app
 from ecf.client import LocalClient
 from ecf.errors import (
@@ -442,7 +443,7 @@ def test_api_rejects_bad_bodies_and_non_cli_callers(
     st = make_state(db_path, MemorySecretStore())
     assert call(st, "POST", "/v1/addresses", ["not", "an", "object"]).status_code == 400
     assert call(st, "POST", "/v1/addresses", {"email": 5}).status_code == 400
-    session = call(st, "POST", "/v1/sessions").json()["profile_token"]
+    session = call(st, "POST", "/v1/sessions", client_doc()).json()["profile_token"]
     r = call(st, "GET", "/v1/addresses", token=session)
     assert r.status_code == 403 and r.json()["code"] == "forbidden_profile"
 

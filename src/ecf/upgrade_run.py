@@ -203,8 +203,9 @@ def _recount(paths: Paths, state: dict[str, Any]) -> dict[str, Any]:
     affected = set(state.get("affected") or [])
     if upgrade_check.crosses_to_claude_prompt(str(state["from"]), now):
         # a pre-3.0 CLI counted the prompt digest (now Claude's) and the retired local pin as
-        # changes for every address (P4): this version's rules replace its lists
-        fams = [f for f in fams if f not in ("prompt", "local")]
+        # changes for every address (P4), and one that knows the actor's digest would count its
+        # arrival (P5): this version's rules replace its lists
+        fams = [f for f in fams if f not in ("prompt", "actor_prompt", "local")]
         affected = set[str]()
     fams += [f for f in r.pin_changes if f not in fams]
     return state | {"pin_changes": fams, "affected": sorted(affected | set(r.affected)),
