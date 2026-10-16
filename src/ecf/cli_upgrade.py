@@ -155,12 +155,17 @@ def _download(p: Paths, tag: str | None) -> tuple[Path, str] | None:
 
 
 def _prune(releases: Path, *, keep: str) -> None:
-    """Earlier downloads, except the one this ecf was installed from (kept for a rollback)."""
+    """Earlier downloads, except the one this ecf was installed from (kept for a rollback). Nothing
+    goes when this ecf isn't a `uv tool` install whose wheel is there: then it can't tell which
+    download another copy's receipt names (a development checkout's ecf deleted the global
+    install's wheel at the v3.0.4 release, SPEC §21.2); preflight refuses such an upgrade anyway."""
     if not releases.is_dir():
         return
     installed = upgrade_check.this_install().wheel
+    if installed is None:
+        return
     for d in releases.iterdir():
-        if d.name == keep or (installed is not None and installed.parent == d):
+        if d.name == keep or installed.parent == d:
             continue
         if d.is_dir():
             shutil.rmtree(d, ignore_errors=True)

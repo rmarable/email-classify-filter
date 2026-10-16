@@ -281,6 +281,27 @@ def test_cli_newest_stable_release(cli: FakeGh, conn: sqlite3.Connection, tmp_pa
     assert r.exit_code == 0 and "is the newest release" in r.output  # an rc only by name
 
 
+def test_cli_keeps_every_download_when_not_a_uv_tool_install(
+    cli: FakeGh, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run from a copy without a receipt (a development checkout), ecf can't tell which download
+    another copy's receipt names, so none goes; preflight still refuses the upgrade."""
+    del cli, conn
+    bare = tmp_path / "bare-env"
+    bare.mkdir()
+
+    def this_install(prefix: Path | None = None) -> upgrade_check.Install:
+        del prefix
+        return upgrade_check.Install(bare, None)
+
+    monkeypatch.setattr(upgrade_check, "this_install", this_install)
+    other = tmp_path / "home" / "t" / "releases" / "v0.9.0"
+    other.mkdir(parents=True)
+    r = _upgrade("--check")
+    assert r.exit_code == 1 and "no uv-receipt.toml" in r.output
+    assert other.is_dir()  # the global install's wheel may be in here
+
+
 def test_cli_to_a_release_candidate_and_prod(cli: FakeGh, conn: sqlite3.Connection,
                                              db_path: Path, tmp_path: Path) -> None:  # fmt: skip
     del cli, conn
