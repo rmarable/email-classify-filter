@@ -48,6 +48,8 @@ Re-check at M7's start.
 3. The per-address `max_sends_per_day` default for a Workspace address (personal Gmail starts at
    100, SPEC §18).
 4. User-facing docs: a Workspace setup guide, or a Workspace section in `docs/gmail-setup.md`.
+   When M7 is built, README is updated with its capabilities (operator request 2026-10-16),
+   in the user-facing docs style (CLAUDE.md).
 
 ## Tag
 
