@@ -1,7 +1,7 @@
 # Contributing
 
 How to work on ecf. `SPEC.md` owns the design; this file is how-to only. The documentation style
-rule and the commit rules are in `CLAUDE.md`.
+rule and the commit rules are in `AGENTS.md`, shared by Claude Code and Codex.
 
 ## Requirements
 
@@ -87,7 +87,8 @@ uv build                                        # wheel + sdist
    (`uv run pytest -n auto -rs`) and put the result in the merge commit message, e.g.
    `macOS tests: 212 passed (macOS 27.0, 2026-10-02)`.
 4. Commit messages end with exactly one trailer: `Co-Authored-By: Claude <noreply@anthropic.com>`
-   when Claude contributed (see `CLAUDE.md`).
+   when Claude contributed, `Co-Authored-By: Codex <noreply@openai.com>` when Codex did (see
+   `AGENTS.md`).
 5. A decision made while building goes in an ADR (`docs/adr/`), or, for a small one, in the relevant
    SPEC section marked with its date and "operator decision" and an `OD-nnn` number.
 
@@ -123,7 +124,7 @@ Details, rules and the card format: `planning-docs/GENERATE-FAKE-TESTING-EMAILS.
   is ready for anyone else. **Release tags** `vX.Y.Z` are the only published ones.
 - A tag is created and pushed only after the operator approves both.
 - `CHANGELOG.md` is kept as you go: each behavior-changing commit adds a line under the next
-  tag's heading; at tagging the heading gets the tag's date. The full rule is in `CLAUDE.md`.
+  tag's heading; at tagging the heading gets the tag's date. The full rule is in `AGENTS.md`.
 - Releases are published only as GitHub Releases on this repository (wheel, sdist, `SHA256SUMS`,
   `release-manifest.json`), built by `.github/workflows/release.yml` from a `vX.Y.Z[-rcN]` tag;
   there is no PyPI package for `v1.0.0`. The Claude Code plugin ships inside the wheel, and
