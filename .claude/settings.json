@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/codex-handoffs.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

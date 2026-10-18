@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- ecf's development rules now live in `AGENTS.md`, shared by Claude Code and OpenAI Codex. Codex works on its own `codex/` branches and hands them to Claude Code, which alone merges, tags and releases (OD-532, ADR 0033).
 - M6 (signing in to personal Gmail with Google instead of an app password) is planned for v3.1.0, ahead of the other roadmap milestones: each operator uses their own Google Cloud project, each address chooses IMAP or the Gmail API, and an address can move between them (OD-527 to OD-531; ADR 0032 proposed).
 
 ## v3.0.5 (2026-10-16)
