@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Planned, not built: a scheduled Claude review, so waiting mail is handled without typing `/ecf-review`. It waits until the Bedrock work on the always-on milestone is done; until then Claude runs only when you start a review.
 - New: `ecf eval generate`, `ecf eval grade`, `ecf eval expect` and `ecf eval report` rate ecf with models other than Claude. One model writes a test set from published categories, a model from another family labels it blind, and the report compares ecf's answers with your own blind labels. A generated set never counts for the go-live gate, and `ecf eval run --claude` now takes `--not-for-gate`. With `--dev`, Claude does all three jobs, to test the steps before paying for other models; the OpenAI and Mistral providers come next. Each run first checks that the provider's tool can't read files (OD-534 to OD-539, ADR 0034).
 - ecf's development rules now live in `AGENTS.md`, shared by Claude Code and OpenAI Codex. Codex works on its own `codex/` branches and hands them to Claude Code, which alone merges, tags and releases (OD-532, ADR 0033).
 - M6 (signing in to personal Gmail with Google instead of an app password) is planned as a minor release, numbered when it ships (OD-533), ahead of the other roadmap milestones: each operator uses their own Google Cloud project, each address chooses IMAP or the Gmail API, and an address can move between them (OD-527 to OD-531; ADR 0032 proposed).
