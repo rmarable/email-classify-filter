@@ -5,7 +5,8 @@ counts unless it ends in a reserved name or a known file extension; defanged and
 forms count);
 phone numbers other than 555-01xx (with or without area code, plain 10-digit, international);
 SSN-shaped numbers; Luhn-valid card numbers; IBANs and US routing numbers with valid checksums
-(except published examples); and key or token shapes. PDFs are generated only from card fields,
+(except published examples); cryptocurrency wallet shapes (Bitcoin, Ethereum, Monero; eval
+generate plan P15); and key or token shapes. PDFs are generated only from card fields,
 so scanning the cards also covers PDF text. Real names can't be detected automatically; review
 covers them. Known false positive: a missing space after a full stop ("report.Summary") reads as
 a domain; write the space.
@@ -83,6 +84,12 @@ _SSN = re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])")
 _DIGITS = re.compile(r"(?<!\d)(?:\d[ \-\u2013.]?){12,18}\d(?!\d)")
 _IBAN = re.compile(r"([A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30})", re.I)
 _ABA = re.compile(r"(?<!\d)(\d{9})(?!\d)")
+_WALLETS = [
+    re.compile(r"(?<![\w])[13][a-km-zA-HJ-NP-Z1-9]{25,34}(?![\w])"),  # Bitcoin base58
+    re.compile(r"(?<![\w])bc1[ac-hj-np-z02-9]{11,71}(?![\w])", re.I),  # Bitcoin bech32
+    re.compile(r"(?<![\w])0x[a-fA-F0-9]{40}(?![\w])"),  # Ethereum
+    re.compile(r"(?<![\w])[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}(?![\w])"),  # Monero
+]
 _SECRETS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"xox[abpr]-[A-Za-z0-9-]{10,}"),
@@ -197,7 +204,12 @@ def scan_text(text: str, where: str) -> list[Finding]:
         for pat in _SECRETS
         for m in pat.finditer(text)
     ]
-    return _addresses(text, where) + _numbers(text, where) + secrets
+    wallets = [
+        Finding(where, "crypto wallet address", m.group(0)[:12] + "…")
+        for pat in _WALLETS
+        for m in pat.finditer(text)
+    ]
+    return _addresses(text, where) + _numbers(text, where) + wallets + secrets
 
 
 def dedupe(findings: list[Finding]) -> list[Finding]:

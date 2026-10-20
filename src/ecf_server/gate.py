@@ -44,6 +44,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ecf.eval import genset
 from ecf.eval.metrics import wilson
 from ecf_server import (
     claude_pins,
@@ -242,7 +243,7 @@ def unsafe(plan: dict[str, Any]) -> bool:
     return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
-def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per refusal
+def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 - one per refusal
               preset: str = "C") -> Check:  # fmt: skip
     run = evalrun.latest(conn, digest)
     again = (f"`ecf eval run --claude --preset {preset} --fraud-only`, then `/ecf-eval` in"
@@ -256,6 +257,9 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911 - one per 
     except (OSError, ValueError):
         version = None
     when = str(run["created_at"])[:10]
+    if root and genset.is_generated(Path(root)):  # never the gate's evidence (eval plan P1)
+        return Check("synthetic", False, f"the gate's set ({root}) is a generated set, which"
+                     f" never counts for the gate: run {again} from the synthetic set")  # fmt: skip
     if version is None:
         return Check("synthetic", False, f"the synthetic set isn't where the last run found it"
                      f" ({root or 'unknown'}); run {again} from it")  # fmt: skip

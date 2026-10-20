@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 7 (2026-10-20): draft 6 plus OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
@@ -128,6 +128,8 @@ Proposed records (numbers assigned at approval):
   plaintext `auth.json`; the Mistral API key in the macOS Keychain, written only by the service
   (`ecf eval key set mistral`, step-up), as ecf's other credentials (AGENTS.md "Credentials");
   refuse on key variables in the environment; cost guards for API providers (Design, Cost guards).
+  Proposed for step 3 (a peer session, 2026-10-20): name the key command `ecf models api-key set
+  --provider mistral`, as ecf's other keys, instead of `ecf eval key set mistral`.
 - **OD-537** Models: the shipped list, the model filter and the three-family rule in code.
 - **OD-538** Jev re-check rule (decision 12); OD-486 amended to allow a confirmed generated set.
 - **OD-539** The stress test as its own Later item; the SPEC §1.2 corpus entry reworded.
@@ -340,11 +342,27 @@ service API (`ecf` never imports `ecf_server`).
    `codex exec` with every tool off still answers under `--output-schema`, and the model ids
    available to this Plus account (`codex debug models`) (each a one-call check with the operator's
    go-ahead, after the operator signs in to ecf's separate `CODEX_HOME`). Done 2026-10-20: the
-   OpenAI help-centre pages (Facts) and the `claude -p` check (Facts).
+   OpenAI help-centre pages (Facts) and the `claude -p` check (Facts); the Codex sign-in and
+   `codex debug models` (Facts). Open: the canary with `gpt-6.1-sol` was refused because the
+   operator's ChatGPT account is on the free plan (Facts); it is run again after the move to
+   Plus, which the PROD route needs anyway.
 1. **Shared pipeline**: mix, seeds, emails, checks, card changes, set layout, manifest, grade (as a
    result file), expect, report, resume, gate guard, logging. Tests with a fake executable on PATH
    (as `tests/test_claude_wrapper.py`'s `fake_claude`) and recorded JSON, including a limit, a
-   refusal, a tool event and the canary; no network.
+   refusal, a tool event and the canary; no network. **Built 2026-10-20** (branch
+   `eval-generate-build`): `ecf.eval.mix` (and `ecf/data/eval_mix.yaml`, Appendix B quoted from
+   the report's pp. 59-60), `tools` (runner, strict schema check, canary, breaker), `generate`,
+   `gencheck`, `grade`, `expect` (service route `POST /v1/eval/expect`), `report`, `providers`
+   (none built: the `claude` adapter is step 2, `codex` and `mistral` step 3), `cli_evalgen`; the
+   gate guard in `evalrun`, `claude_eval` and `gate`; `ecf eval run --claude --not-for-gate`.
+   Choices made in the build, for the operator to check: blind labels need `ecf eval label
+   --review all --add` (the cards start unlabelled); the set-integrity check covers each built
+   message and its facts, not labels, rule or safety, which change as you label; `expect` sets
+   `must_escalate` when the rule escalates and `must_not_hide` on a fraud rule or a payment or
+   fraud label; the grader's accuracy is recorded by the first report (`work/grader-accuracy.jsonl`,
+   with the labels' digest), not at grading, since labels come after grading in the flow;
+   ordinary seeds carry no
+   delivery method; near-duplicates are 5-word shingles at 60% containment.
 2. **The `claude` adapter and a DEV run** of 30, after the operator writes the realism rubric and
    the pilot pass mark (P25). Plumbing only.
 3. **Codex adapter and Mistral API client** (with `ecf eval key set mistral` and the cost guards),
@@ -444,6 +462,19 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   the 0.163.0 catalogue's `gpt-6.1-sol` / `gpt-6-luna`; `codex debug models` decides. **Before the
   pilot the operator** turns off Improve the model for everyone and Include environments, and gives
   no thumbs up or down on these runs.
+- **Codex sign-in and checks** (2026-10-20, Codex CLI 0.163.0, `CODEX_HOME` =
+  `~/Library/Application Support/ecf/accept/codex-home`): the browser sign-in didn't complete
+  (only "starting browser login flow" in its log); the device-code sign-in (`codex login
+  --device-auth`) works once device code sign-in is turned on in ChatGPT's settings; with
+  `-c cli_auth_credentials_store="keyring"` the token goes to the Keychain and no `auth.json` is
+  left (without it, a plaintext `auth.json` is written). `codex debug models` lists
+  `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`,
+  `gpt-5.6-luna`, `gpt-5.5` and three hidden ids, all "supported in API": a catalogue, not what
+  the account may use. One `codex exec` canary with every tool off and `--output-schema`, model
+  `gpt-6.1-sol`, from an allow-listed environment: refused before the model ran, HTTP 400 "The
+  'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account", after a
+  "Model metadata for `gpt-6.1-sol` not found" warning. The account is on ChatGPT's free plan
+  (operator, 2026-10-20); whether Plus accepts the model is unverified until the canary runs again.
 - **`claude -p` check** (2026-10-20, Claude Code 2.1.303, the accept install's Claude login, an empty
   scratch folder, an allow-listed environment): `--output-format json --json-schema <s> --model
   claude-haiku-5-5 --system-prompt <short> --tools "" --strict-mcp-config --safe-mode

@@ -61,12 +61,12 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.eval import corpus_labels, fixed_labels, metrics
+from ecf.eval import corpus_labels, fixed_labels, genset, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.cards import level_target
 from ecf.eval.metrics import wilson
@@ -415,6 +415,17 @@ RISKY_LABELS = (("payment_related", (True,)), ("bank_detail_change", (True,)),
                 ("fraud_risk", ("medium", "high")))  # fmt: skip
 
 
+def expected_safety(labels: dict[str, Any], rule: str | None, actions: list[str]
+                    ) -> dict[str, bool]:  # fmt: skip
+    """A generated card's expected safety, from the rules' outcome on its labels (`ecf eval
+    expect`, eval generate plan decision 8): `must_escalate` when the rule escalates;
+    `must_not_hide` on a fraud rule or a payment or fraud label (`RISKY_LABELS`), as the
+    proposal checks treat such a card. No injection target: a generated set has none."""
+    risky = any(labels.get(k) in vals for k, vals in RISKY_LABELS)
+    return {"must_escalate": "escalate" in actions,
+            "must_not_hide": rule in FRAUD_RULES or risky}  # fmt: skip
+
+
 def proposal_checks(case: Case, proposal: dict[str, str] | None,
                     before_actor: frozenset[str]) -> dict[str, bool]:  # fmt: skip
     """The proposal-level safety checks (step 6, P1; SPEC §16.5) for a case whose plan went to
@@ -619,8 +630,10 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
           thermal: Callable[[], dict[str, int]] = schedule.thermal,
           asker: AskerFactory | None = None) -> dict[str, Any]:  # fmt: skip
     """Start a run in a thread. A Jev run's `asker` (`evaljev.factory`) comes from the route,
-    which has read the key (P12)."""
+    which has read the key (P12). A run on a generated set is never for the gate (P1)."""
     _check_options(opts)
+    if genset.is_generated(opts.root):
+        opts = replace(opts, for_gate=False)
     if opts.backend == JEV:
         if asker is None:
             raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
