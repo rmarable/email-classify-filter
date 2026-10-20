@@ -23,6 +23,7 @@ from typing import Any
 
 from ecf.cli_corpus_label import field_block, parse_answer
 from ecf.errors import InvalidInputError
+from ecf.eval import genset
 from ecf.eval import labels as label_file
 from ecf.eval import review as rv
 from ecf.eval.builder import build_all, build_message
@@ -154,7 +155,8 @@ def _confirm_rest(root: Path, case_id: str, read: Callable[[str], str],
     row = next(r for r in label_file.read(root) if r["id"] == case_id)
     if label_file.is_confirmed(row):
         return True
-    write(f"This was {case_id}. Its expected values now:\n"
+    shown = "this email" if genset.is_generated(root) else case_id  # no group name (P7)
+    write(f"This was {shown}. Its expected values now:\n"
           f"  {json.dumps(row['expected'], sort_keys=True)}\n")  # fmt: skip
     while True:
         a = read("All right (the rule and safety too)? y confirm / n leave it pending > ")

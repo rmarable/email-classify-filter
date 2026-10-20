@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -242,8 +242,17 @@ One call per email: the raw email and all 13 schema v3 fields to answer (op; opt
 `phishing`, `claims_internal`, `private_individual`; the rules read `category` and `sender_type`
 as well as the fixed fields, so all 13 are needed to compute the expected rule; OD-486), with the
 shipped descriptions from `src/ecf/data/schema_v3.yaml`, returned as JSON. The operator labels the
-same 13. Blind: no ecf answer and no label. The grader's input is the raw
-email, not the classifier's excerpt and signals. Before grading, the blind labels are frozen (their
+same 13. Blind: no ecf answer and no label. The grader's input is the email as a mail client
+shows it, the same view the operator labels from (`cli_card_review.screen`; OD-544: the raw email
+carried the seed's `Authentication-Results`, which only scams failed, and neither the labeller
+nor the classifier sees it), not the classifier's excerpt and signals; each grade records its
+input. Every labelling and rating page shows the `phishing` definition in full (not folded) and
+a "signs to look for" box of general red flags, never tied to an email (OD-544; text below).
+Confirming a generated set's labels (`ecf eval label`) shows a counter, never the case id, title
+or test line, which name the assignment. The report gives **set detectability**: of the emails
+written as scams, how many each reader (your labels, each grader with its input, each ecf
+result) answered phishing, and the seeds' authentication results by kind; reported, never scored.
+Signs box text (Claude-written machinery, approved by the operator 2026-10-20): A charge, invoice, order or account problem you didn't expect; pressure (a short deadline, a threat, "cannot be reversed"); it wants a phone call, a reply with details or a payment instead of you checking your own account; the sender isn't the company it speaks for (a "help", "billing" or "support" domain), or Reply-To goes somewhere else; vague about who it is or what you bought, a generic greeting; new bank details, gift cards, crypto or secrecy; an attachment or link pushed as the next step. The address book (known contacts in the recipient configuration) is deferred until after the first PROD set: the reviewers found it would make the set a lookalike test of a few contacts. Before grading, the blind labels are frozen (their
 digest recorded); the grader's accuracy is computed once against that version and kept, and later
 relabels are logged with the digest they changed and reported separately.
 
@@ -377,7 +386,13 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
 2. **The `claude` adapter and a DEV run** of 30 (**run 2026-10-20**, OD-542: Haiku generated 52
    calls in 11 minutes and kept 19 of 30, 2 refused (Extortion) and 27 dropped, 20 of them for a
    shared first line (fixed, OD-543) and 7 for hygiene; Sonnet graded all 19 with no refusal or
-   misfit in 74 s). **DEV grader comparison** (operator, 2026-10-20; OD-543): Haiku, Sonnet and
+   misfit in 74 s). **Comparison run 2026-10-20** (57 emails labelled; 11 fields blind,
+   `phishing` and `fraud_risk` from a pass with the assignment shown, recorded as assignment-based
+   truth, DEV only, after the blind pass showed the operator had read `phishing` narrowly: 0 of 27
+   scams; graders then read the raw email with authentication results): all 13 fields, Haiku-made
+   set Opus 86.7% [82.9, 89.8], Sonnet 84.4% [80.3, 87.7]; Sonnet-made set Opus 84.9% [80.8, 88.2],
+   Haiku 83.8% [79.7, 87.2]; intervals overlap, no grader separates; category, sender_type and
+   priority are the weak fields for every grader (54-68%). **DEV grader comparison** (operator, 2026-10-20; OD-543): Haiku, Sonnet and
    Opus each grade, a model never grading its own set: a Haiku-made set graded by Sonnet and
    Opus, and a Sonnet-made set graded by Haiku and Opus, both labelled blind by the operator
    first; the DEV report shows each grader against those labels, marked a grader comparison, not
@@ -417,7 +432,9 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
 4. **PROD pilot** (real-service test, operator's go-ahead each time): the same 20 seeds through Sol
    and Luna; the operator rates realism blind; drops, refusals per group (ceiling in the pass mark),
    repeated openings, phrase overlap; time, tokens and plan messages per call (meter read before and
-   after); grader on those 40; operator seconds per card.
+   after); grader on those 40; operator seconds per card. The rating page shows the email (the
+   mail-client view), its intended group (RUBRIC.md), the `phishing` definition and the signs box
+   (OD-544; recorded in RUBRIC.md under its change rule).
 5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report.
 6. **SPEC and docs**: ADR 0034, the ODs, §1.2 (Later items incl. the stress test), §9.3, §12.2,
    §12.4, §16, §20, README, DISCLAIMER, SECURITY.md, user guides, CHANGELOG.

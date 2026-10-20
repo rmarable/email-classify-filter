@@ -128,8 +128,9 @@ def test_the_service_grades_one_case_of_a_generated_set(env: Env, fake: Mistral,
     fmt = body["response_format"]
     assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
     assert fmt["json_schema"]["schema"] == grading.grade_schema()
-    email = (root / row["file"]).read_bytes().decode()
-    assert body["messages"][1]["content"] == grading.grade_prompt(email)
+    view = grading.case_view(root, row["id"])
+    assert view is not None and "Authentication-Results" not in view  # the labeller's view
+    assert body["messages"][1]["content"] == grading.grade_prompt(view)
     assert body["messages"][0]["content"] == mistral.SYSTEM_PROMPT
 
 
