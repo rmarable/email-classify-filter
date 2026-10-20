@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded: the all-Claude DEV test run of `ecf eval generate` may use your own Claude plan sign-in, which Anthropic documents for scripted Claude Code use; before ecf offers it to other users it needs an API key or an operator-only mark (OD-542).
 - The realism rubric and pass mark for the generator pilot are fixed: you rate each generated email on four questions, and a generator model must meet seven rules over 20 emails to be used. The rubric was combined from three independent drafts by different model makers, with every part chosen by the operator (OD-541).
 - New: `ecf eval generate` can use OpenAI's Codex as the generator, and `ecf eval grade` can use Mistral as the grader. Store the Mistral key with `ecf models api-key set --provider mistral`; ecf's service makes every Mistral call, and `--max-cost` (default $15) stops a grading run before it overspends. Only models on ecf's shipped list are accepted, a PROD set's generator and grader must come from different labs, and a report marks a result whose classifier shares a lab with either (OD-540).
 - Planned, not built: a scheduled Claude review, so waiting mail is handled without typing `/ecf-review`. It waits until the Bedrock work on the always-on milestone is done; until then Claude runs only when you start a review.

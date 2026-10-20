@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -375,7 +375,9 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    (operator decision 2026-10-20: Codex, a Mistral model and Claude each draft one independently
    from the brief `planning-docs/RUBRIC-GENERATION.md`; the operator picks parts of each, blind to
    which model wrote which, and approves the combined `planning-docs/RUBRIC.md`; approved
-   2026-10-20, OD-541; the blind rating page is built from its YAML block next), then the DEV run of 30 (real-service test: `uv run ecf --install accept eval
+   2026-10-20, OD-541; the blind rating page is built from its YAML block next). The DEV run may
+   use the operator's own plan sign-in (OD-542; Facts: Anthropic terms); before ecf ships, the
+   `claude` adapter is marked operator-only or uses an API key for other users. Then the DEV run of 30 (real-service test: `uv run ecf --install accept eval
    generate --dev --root <folder> --yes`, then `grade`, `report`).
 3. **Codex adapter and Mistral API client** (with `ecf eval key set mistral` and the cost guards),
    the model list, the family check; Codex passes the canary. **Built 2026-10-20** (OD-540):
@@ -435,6 +437,18 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   Reading (not legal advice): the bans are on using the service to deceive people; synthetic test
   mail that is never sent isn't that, but enforcement may judge the output, so refusals and account
   risk remain (decision 10).
+- **Anthropic terms for `claude -p`** (fetched 2026-10-20): the Consumer Terms (anthropic.com/
+  legal/consumer-terms, effective 2025-10-08), §3 item 7, bar access "through automated or
+  non-human means, whether through a bot, script, or otherwise", "Except when you are accessing
+  our Services via an Anthropic API Key or where we otherwise explicitly permit it". The Claude
+  Code headless page (code.claude.com/docs/en/headless) documents `claude -p` for scripts and says
+  bare mode "doesn't use your subscription login", so plain `claude -p` does; it states no plan
+  restriction, and the Pro/Max help article (support.claude.com 11145838) says nothing on
+  scripting. The Agent SDK overview (code.claude.com/docs/en/agent-sdk/overview): "Unless
+  previously approved, Anthropic does not allow third party developers to offer claude.ai login or
+  rate limits for their products, including agents built on the Claude Agent SDK." Reading
+  (operator decision, OD-542): the operator's own DEV runs on their plan are explicitly permitted
+  use; offering ecf's `claude` adapter on other users' plan sign-ins would be the third-party case.
 - **Mistral usage policy** (legal.mistral.ai/terms/usage-policy, effective 2026-06-11, fetched
   2026-10-19): fraud and scams prohibited ("Phishing attempts", "Impersonation" listed); no
   generating content "intended to deceive others"; no rule on spam or simulated content; no testing
