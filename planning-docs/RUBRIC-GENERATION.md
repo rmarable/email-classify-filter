@@ -1,16 +1,19 @@
-# Realism rubric for generated test emails: brief for a non-Claude model
+# Realism rubric for generated test emails: brief for three independent drafts
 
-Draft 1 (2026-10-20). Written by Claude Code as a brief only: it states the job, the facts and the
-output format, and contains no rubric content. The rubric itself is to be drafted by a model that
-isn't Claude, then edited and approved by the operator, who owns it. Parent plan:
-`planning-docs/EVAL-GENERATE-GRADE.md` (draft 10; Phase R finding P25; build step 4).
+Draft 2 (2026-10-20): three models each draft a rubric independently, Codex (OpenAI), a Mistral
+model and Claude, and the operator builds the final rubric by choosing parts from each (operator
+decision 2026-10-20). Draft 1 (2026-10-20) had one non-Claude model draft it. Written by Claude
+Code as a brief only: it states the job, the facts and the output format, and contains no rubric
+content. The operator edits and approves the combined rubric and owns it. Parent plan:
+`planning-docs/EVAL-GENERATE-GRADE.md` (draft 13; Phase R finding P25; build step 4).
 
 ## Why this exists
 
 ecf (email-classify-filter) flags fraud in business mail. Its `ecf eval generate` command has a
 model other than Claude write synthetic test emails, so ecf can be measured on mail that Claude
 didn't write. The operator's rule is "no Claude bias": Claude writes the machinery, never email
-content, wording, grades, labels or the judgement of what counts as realistic.
+content, wording, grades or labels. The judgement of what counts as realistic is the operator's,
+chosen from three drafts (Why three drafts, below).
 
 Before generated sets are trusted, a pilot compares two OpenAI generator models on the same 20
 seeds: GPT-6.1 Sol (the default) and GPT-6 Luna (cheaper; used only if it passes). The operator
@@ -18,6 +21,11 @@ rates each of the 40 emails for realism, blind to which model wrote it. The rubr
 rate against; the pass mark decides whether a model is good enough. Both must be fixed before
 the operator sees any generated email, including the all-Claude DEV run, so that no model's
 output shapes the bar (P25).
+
+**Why three drafts.** Each candidate drafter has a stake: Claude is ecf's classifier, the family
+the generated sets measure; OpenAI makes both generators in the pilot; Mistral grades the sets.
+With three independent drafts and the operator choosing every part of the final version, no one
+family's view sets the bar, and each draft's blind spots show up against the other two.
 
 ## The job
 
@@ -83,20 +91,30 @@ Draft, for the operator to edit and approve:
 - **Use:** this brief; `planning-docs/EVAL-GENERATE-GRADE.md`; `src/ecf/data/eval_mix.yaml`;
   public descriptions of how phishing and business email compromise are recognised, for your own
   understanding.
-- **Don't use or read:** anything under `tests/eval/` (the existing test cards were written by
-  Claude), `src/ecf/eval/case_templates.py`, `src/ecf/eval/generate.py`'s prompt text, any
+- **Don't use or read:** `planning-docs/rubric-drafts/` and `planning-docs/RUBRIC.md` (the
+  other drafts and the combined version); anything under `tests/eval/` (the existing test cards
+  were written by Claude), `src/ecf/eval/case_templates.py`, `src/ecf/eval/generate.py`'s prompt text, any
   generated set, or any example rubric shown in a Claude Code session. The operator saw one such
   example in chat on 2026-10-20; it is not an input.
 - **Don't write** example emails, sample answers, or wording advice for the generator. The
   rubric judges emails; it doesn't describe how to write them.
 - **Don't** copy real phishing text, or name real companies, people or domains.
 
+## Three independent drafts
+
+- The drafters are Codex (OpenAI), a Mistral model and Claude. Each works alone from the same
+  inputs (What you may use, below) and never sees another's draft.
+- Each draft is saved unedited as `planning-docs/rubric-drafts/<drafter>.md` (`codex.md`,
+  `mistral.md`, `claude.md`).
+- Draft a complete rubric on your own terms. Don't aim for agreement with anyone; a clear,
+  argued choice is more useful to the operator than a cautious middle.
+
 ## Output
 
-One file, `planning-docs/RUBRIC.md`, with:
+One file, `planning-docs/rubric-drafts/<drafter>.md`, with:
 
-1. A short status line: draft, date, the model that drafted it, "for the operator to edit and
-   approve".
+1. A short status line: draft, date, the model that drafted it, "one of three independent drafts,
+   for the operator to choose from".
 2. The rubric, the pass mark, the refusal ceiling and any check limits, in plain words.
 3. The same in a fenced YAML block, so ecf can build the rating page from it without reworking
    the text:
@@ -123,7 +141,7 @@ One file, `planning-docs/RUBRIC.md`, with:
 ## If you are Codex working in this repository
 
 Follow `AGENTS.md`: work on a branch `codex/rubric` in your own worktree made from `origin/main`;
-add only `planning-docs/RUBRIC.md`; commit and push the branch only after the operator's OK; end
+add only `planning-docs/rubric-drafts/codex.md`; commit and push the branch only after the operator's OK; end
 the commit with the `Handoff: ready` block (Tests: "none (document only)"; CHANGELOG: "none";
 Numbers: "none"). Running evals, generating sets and editing `main` are reserved for Claude Code.
 
@@ -143,10 +161,20 @@ rules out. So the operator gives you only what you may use, and you work from th
    those three files, started from that folder, never from the checkout. Which Mistral model
    answers in Le Chat, and whether a conversation's files are kept, are unverified: check the
    model picker and the settings first.
-3. **You return** the full contents of `planning-docs/RUBRIC.md` as one Markdown document, in the
-   Output format above, with the status line naming the Mistral model that drafted it.
-4. **The operator** saves it as `planning-docs/RUBRIC.md` and asks Claude Code to check its YAML
-   block parses and to commit it on a branch (docs only), after the operator's OK.
+3. **You return** the full contents of `planning-docs/rubric-drafts/mistral.md` as one Markdown
+   document, in the Output format above, with the status line naming the Mistral model that
+   drafted it.
+4. **The operator** pastes it to Claude Code, which saves it unedited as
+   `planning-docs/rubric-drafts/mistral.md` and commits it on a branch (docs only), after the
+   operator's OK.
+
+## If you are Claude
+
+Claude Code runs the Claude draft in a fresh agent with none of its session's context: the agent
+gets the text of the three files you may use and these instructions, uses no tools (so it reads
+nothing else, including the other drafts), and returns the full contents of
+`planning-docs/rubric-drafts/claude.md`, with the status line naming the Claude model. Claude
+Code saves the answer unedited.
 
 ## If you are another model outside the repository
 
@@ -154,19 +182,26 @@ Work the same way as a Mistral model: the operator gives you only this brief,
 `planning-docs/EVAL-GENERATE-GRADE.md` and `src/ecf/data/eval_mix.yaml`, and you return the
 file's contents to them.
 
-## After the draft
+## After the drafts
 
-1. The operator edits and approves it; it is theirs.
-2. Claude Code checks only that the YAML block parses and matches the plain words (it doesn't
-   edit the rubric), then records it as the operator's decision (the parent plan's next draft, and an OD row
-   in SPEC), word for word, and builds the blind rating page from the YAML block.
-3. The rubric and pass mark are then fixed: changes after any generated email has been seen are
+1. **Blind comparison.** Claude Code checks that each draft's YAML block parses (and says where
+   one doesn't; it fixes nothing), then builds a comparison page: the three drafts as A, B and C
+   in a random order, side by side, part by part (questions, scale wording, pass mark, refusal
+   ceiling, check limits, the answer on showing the intended group). Model names stay hidden
+   until the operator has chosen.
+2. **The operator chooses** which parts to keep from each.
+3. **Combined word for word.** Claude Code assembles `planning-docs/RUBRIC.md` from the chosen
+   parts without rewording them; where parts don't fit together (a pass-mark row naming a
+   question that wasn't kept, two questions with one id), it names the clash and the operator
+   decides. The file records which draft each kept part came from.
+4. **The operator edits and approves it**; it is theirs. Claude Code checks only that the YAML
+   block parses and matches the plain words, records it as the operator's decision (the parent
+   plan's next draft, and an OD row in SPEC), word for word, and builds the blind rating page
+   from the YAML block.
+5. The rubric and pass mark are then fixed: changes after any generated email has been seen are
    recorded with a reason, and never made to rescue a pilot result.
 
 ## Open questions for the operator
 
-- **Which model drafts it.** The pilot judges two OpenAI models, so a draft by an OpenAI model
-  (Codex, ChatGPT) comes from the family under test; a Mistral model is the grader's family. A
-  rubric for a human rater is less exposed to this than a grader would be, but the choice is
-  yours.
-- **Whether the rater sees the intended group or category.**
+- **Whether the rater sees the intended group or category.** Each draft answers it with its
+  reasons; the operator decides when combining.
