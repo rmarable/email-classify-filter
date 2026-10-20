@@ -17,6 +17,12 @@ dropped one is replaced from the group's seed pool (topped up when it runs out) 
 is met or 3 times it has been tried. A refusal is recorded and never retried, reworded or
 replaced (decision 10a), so a group can come up short. `work/` keeps append-only logs of every
 seed, call and outcome, without tool output, so a stopped run resumes (`--resume`).
+
+Shared seeds (the PROD pilot; OD-545): a seed run (`--seeds-only`, state `seeded`) asks every group
+for seeds and writes no email; email runs then take its seeds (`--seeds-from`), copied into their
+own work log after checking the source's mix, count, mode and seed-file digest. A run with shared
+seeds makes no seed call and no top-up, so every model draws on the same pool in the same order;
+a group the seed run got no seeds for is unmeasured for every model, not a refusal of theirs.
 """
 
 from __future__ import annotations
@@ -359,6 +365,8 @@ class Run:
     adapter: Adapter
     mode: str  # prod or dev
     k: int = K_DEFAULT
+    seeds_only: bool = False  # a seed run: seeds for every group, no email
+    shared: dict[str, Any] | None = None  # `seeds_from` (OD-545): no seed call, no top-up
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     echo: Callable[[str], None] = field(default=lambda _s: None)
 
@@ -380,6 +388,7 @@ class Run:
         self.calls = 0
         self.seconds = 0.0
         self.case_no: Counter[str] = Counter()
+        self.unmeasured: set[str] = set()  # groups the shared seed run has no seeds for
 
     # Calls and logs
 
@@ -419,6 +428,8 @@ class Run:
         seeded: set[str] = set()
         for row in self.work.read("seeds"):
             seeded.add(row["group"])
+            if row.get("no_shared_seeds"):
+                self.unmeasured.add(row["group"])
             if row.get("refused"):
                 self.refused[row["group"]] += (
                     int(row["need"]) if "need" in row else
@@ -549,6 +560,8 @@ class Run:
                 if len(batch) == self.k:
                     break
             if not batch:
+                if self.shared is not None:
+                    return  # shared seeds: the pool is the same for every model (OD-545)
                 short = [b for b in self.buckets.values() if b.group == group
                          and self.tallies[b.key].kept < self.tallies[b.key].need
                          and self.tallies[b.key].tried < MAX_TRIES_FACTOR
@@ -611,9 +624,12 @@ class Run:
                 if group in seeded and not seeds.get(group):
                     continue  # refused, or no seed this group asked for
                 if group not in seeded:
+                    if self.shared is not None:
+                        self.unmeasured.add(group)  # never a seed call of this model's
+                        continue
                     self.echo(f"{group}: asking for seeds")
                     seeds[group] = self._seed(kind, group, buckets)
-                if seeds.get(group):
+                if seeds.get(group) and not self.seeds_only:
                     self.echo(f"{group}: writing emails")
                     self._emails(group, seeds[group], settled)
         except Stopped as exc:
@@ -621,7 +637,9 @@ class Run:
             detail = (f"stopped: {exc.reply.status} ({exc.reply.detail}); fix the cause, then"
                       " run the same command with --resume")  # fmt: skip
         kept = sum(t.kept for t in self.tallies.values())
-        if state == "complete" and kept < self.count:
+        if state == "complete" and self.seeds_only:
+            state = "seeded"
+        elif state == "complete" and kept < self.count:
             state = "short"
         report = build_all(self.root) if any((self.root / "cases").glob("*.md")) else None
         if report is not None and report.findings:  # every card was scanned as it was made
@@ -680,6 +698,10 @@ def write_manifest(run: Run, state: str) -> None:
         "groups": groups, "selected": selected,
         "dropped": _counts_by_group(run.dropped), "refused": dict(run.refused),
         "hygiene_kinds": dict(run.hygiene_kinds),
+        "seeds_sha256": seeds_digest(run.root), "seeds_only": run.seeds_only,
+        "seeds_from": run.shared, "no_shared_seeds": sorted(run.unmeasured),
+        "kept_seeds": sorted(o["seed"] for o in run.work.read("outcomes")
+                             if o.get("outcome") == "kept"),
         "retried_passed": {"count": run.retried_passed, "kinds": dict(run.retried_kinds)},
         "repeated_openings": run.dups.repeated_openings(),
         "prompts": PROMPT_DIGESTS | {"schema": load_schema().digest},
@@ -689,6 +711,45 @@ def write_manifest(run: Run, state: str) -> None:
     tmp = run.root / f".{genset.MANIFEST}.tmp"
     tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, run.root / genset.MANIFEST)
+
+
+def seeds_digest(root: Path) -> str:
+    """The sha256 of a set's seed log (`work/seeds.jsonl`), or of nothing when it has none."""
+    path = root / "work" / "seeds.jsonl"
+    return hashlib.sha256(path.read_bytes() if path.exists() else b"").hexdigest()
+
+
+def share_seeds(root: Path, source: Path, mode: str, count: int, mix: mixmod.Mix,
+                k: int) -> dict[str, Any]:  # fmt: skip
+    """Copy a seed run's seeds into a new run's work log (OD-545): refused unless the source is
+    a finished seed run of the same mode, count and mix whose seed log is as it recorded; a
+    group it has no seeds for gets a `no_shared_seeds` marker (unmeasured, never re-seeded).
+    Returns the manifest's `seeds_from`."""
+    doc = verify(source)
+    if doc.get("state") != "seeded":
+        raise InvalidInputError(f"{source}: not a finished seed run (`ecf eval generate"
+                                " --seeds-only`)")  # fmt: skip
+    mix_sha = _sha(json.dumps(mix.as_dict(), sort_keys=True))
+    for what, mine, theirs in (("mode", mode, doc.get("mode")),
+                               ("count", count, doc.get("count")),
+                               ("mix", mix_sha, doc.get("mix_sha256"))):  # fmt: skip
+        if mine != theirs:
+            raise InvalidInputError(f"{source}: its {what} differs from this run's; shared seeds"
+                                    " need the same mode, count and mix")  # fmt: skip
+    if int(doc.get("k") or k) != k:
+        raise InvalidInputError(f"{source}: made with --k {doc.get('k')}; use the same --k")
+    if seeds_digest(source) != doc.get("seeds_sha256"):
+        raise InvalidInputError(f"{source}: its seeds changed since the seed run; make a new"
+                                " seed run rather than edit one")  # fmt: skip
+    rows = [r | {"shared": True} for r in Work(source).read("seeds") if r.get("id")]
+    have = {r["group"] for r in rows}
+    groups = sorted({s.group for s in mixmod.plan(mix, count)})
+    markers = [{"group": g, "no_shared_seeds": True} for g in groups if g not in have]
+    Work(root).append("seeds", rows + markers)
+    g = cast(dict[str, Any], doc["generator"])
+    return {"set": source.name, "generator": f"{g.get('provider')}:{g.get('model')}",
+            "model": g.get("model"), "seeds_sha256": doc["seeds_sha256"],
+            "rows_sha256": _sha(json.dumps(rows, sort_keys=True))}  # fmt: skip
 
 
 def read_manifest(root: Path) -> dict[str, Any]:
