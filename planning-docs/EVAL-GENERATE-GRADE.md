@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 20 (2026-10-20): draft 19 after Phase R on the judges (four Fable agents, J1-J20, all accepted by the operator; OD-546, OD-547, ADR 0036 proposed). Draft 19 (2026-10-20): draft 18 plus the pilot's outcome (rating skipped, Sol adopted, Luna not) and **judges**: two or three non-Claude models of different families set the labels, the operator settles only their disagreements (operator decisions 2026-10-20; section Judges; Phase R pending). Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -256,6 +256,73 @@ Signs box text (Claude-written machinery, approved by the operator 2026-10-20): 
 digest recorded); the grader's accuracy is computed once against that version and kept, and later
 relabels are logged with the digest they changed and reported separately.
 
+### Judges (draft 20; operator decisions 2026-10-20, OD-547; Phase R J1-J20 accepted)
+
+The operator labels nothing blind, rates nothing and confirms nothing the judges agree on: the
+only human step is settling disagreements (`ecf eval settle`).
+
+**Roles and families**
+- Claude generates (`claude:claude-sonnet-5-5`, or Haiku) in a PROD mode that records a
+  **generator-family waiver** in the manifest (amends decision 4; operator decision): the report
+  says Claude wrote the emails Claude is scored on, and "NOT A MEASUREMENT" stays only for a judge
+  sharing the classifier's family (J1). Sol stays a listed generator.
+- The `claude` generator runs `claude -p` on the operator's own plan sign-in (OD-542) and is
+  marked **operator-only in code**; generation for other users goes through the service with
+  ecf's stored Anthropic key, built when ecf is offered to others (J2).
+- **Judges** are non-Claude, every pair of {generator, seed writer, judges} from different
+  families (`check_pair` over all pairs; J11), none grades itself. First run: **Mistral** and
+  **Gemini** (`gemini-3.8-flash`, ADR 0036, paid API key only); **Sol only as a tie-breaker** on
+  disputed fields (Plus message limits; J15).
+
+**Runs and agreement**
+- Each judge is an ordinary `ecf eval grade` run (`pair: grader:<model>`, the mail-client view,
+  13 fields); no new role flag or command (J16). API judges share one service route and provider
+  table and one client adapter with the cost cap and pacing (J17).
+- `ecf eval agree --root <set>` reads `grades/` and decides per case and field: **booleans and
+  `fraud_risk` need every judge to agree**; `category` and `sender_type` take a majority when
+  three judges answered; `priority` is report-only (J5, J20). A field counts only when every judge
+  gave a valid value; an email any judge refused or left blank goes to the operator whole (J10).
+  Agreed values go into the cards (written all at once, one rebuild, one atomic confirm), confirmed
+  `{by: "models", judges, on}`; `work/agreement.jsonl` records each judge file's digest, and the
+  report recomputes agreement from those files and refuses a mismatch or two files from one model
+  (J9, J19).
+- **Decision 8**: the expected rule and safety computed from agreed labels confirm `by: models`
+  too (J18). **Decision 7** (only operator-confirmed labels count) is amended: agreed and settled
+  labels count, every figure states the share of each (J20).
+
+**Settling**: a phone page first (the dispute list as a private claude.ai page with saved
+answers, then `ecf eval settle --from <answers>` imports), later the terminal; a seeded shuffle,
+a counter, the mail-client view, only the disputed fields, the phishing definition and signs box;
+agreed fields and the judges' answers shown only after the operator answers; `ecf eval label`
+refuses cases with open disputes (J14). The synthetic text goes to claude.ai hosting, as preset C.
+
+**Safeguards without operator labelling**
+- **Judges measured first** (J4): each PROD judge grades the 57 DEV emails the operator labelled
+  (step 2), giving its per-field accuracy and Cohen's kappa before it sets any label.
+- **Per-field kappa and base rate** between judges; a field below 0.6 is report-only for ecf
+  scoring; an agreed label contradicting the assignment (a scam seed labelled not phishing, or no
+  fraud risk) is flagged and left out of scoring (J7).
+- **No circular judge accuracy** (J6): the report gives pairwise judge agreement and each judge's
+  accuracy on operator-settled fields only; `report.confirmed` carries the `by` of every label.
+- **Three figures per field** (agreed, settled, combined) and **comparisons computed twice** (all
+  labels; settled only), the agreed share printed; the Jev re-check (OD-538) uses only operator
+  settled or labelled values (J12, J13).
+- **Gate**: a `by: models` confirmation never counts outside a generated set (`is_confirmed`,
+  `carry_over`, the service loader); `ecf eval build` strips it (J8).
+- The report counts disputed emails and fields, the operator's settling time, and emails refused
+  by any judge (J3, J20). Measured guide: two Claude graders on the 57 DEV emails disagreed on 11%
+  of fields (58% of emails had at least one); judges of different families will likely disagree
+  more; the first run sets the figure.
+
+**Performance** (J19): judges run in parallel with per-judge call logs; a `--pace` interval and a
+60 s read timeout for API judges; the service caches `verify` per set.
+
+**Gemini** (ADR 0036, proposed): no consumer subscription includes API access, and the Gemini CLI
+stopped serving subscription sign-ins on 2026-06-18 (Facts); the route is a paid API key,
+prepaid (US$5 minimum, the key stops at US$0, credits expire after 12 months), held by the
+service, sent in the `x-goog-api-key` header; the first-use notice says the paid tier is required
+(the free tier trains with human review) and ecf can't check the tier.
+
 ### Report
 
 For each ecf result: agreement with confirmed labels and with the grader, per field and per group,
@@ -434,7 +501,11 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    repeated openings, phrase overlap; time, tokens and plan messages per call (meter read before and
    after); grader on those 40; operator seconds per card. The rating page shows the email (the
    mail-client view), its intended group (RUBRIC.md), the `phishing` definition and the signs box
-   (OD-544; recorded in RUBRIC.md under its change rule). **Shared seeds** (OD-545): a seed
+   (OD-544; recorded in RUBRIC.md under its change rule). **Ran 2026-10-20**: seeds by Terra (35
+   seeds, 15 groups, no refusal); Sol 20/20 kept, 0 refused, 0 dropped, 2 passed the hygiene retry;
+   Luna 20/20, 1 refused (Extortion), 2 dropped; 17 of 20 kept seeds in common. The operator
+   skipped the rating (operator decision 2026-10-20): **Sol is adopted, Luna is not**, and the
+   rubric was not applied. **Shared seeds** (OD-545): a seed
    run by a model that is neither contestant writes the 20 seeds (`ecf eval generate
    --seeds-only --generator codex:gpt-5.6-terra --count 20 --root <seeds>`), then one email run
    per contestant from them (`--seeds-from <seeds> --generator codex:gpt-6.1-sol`, and
@@ -448,7 +519,14 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    recognisable, a stated limit. The fixed prompt words (PURPOSE, RECIPIENT, SAFETY_RULES in
    `src/ecf/eval/generate.py`) were approved as written by the operator on 2026-10-20 (decision
    10b); their digests are in every manifest.
-5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report.
+4b. **Judges** (OD-547; build order from Phase R): (1) this draft and ADR 0036; (2) `ecf eval
+   agree` built and tried offline on the DEV grade files; (3) the shared API-judge route with
+   Mistral, then Gemini (one key check and one grading call each as the canary, operator's
+   go-ahead); (4) the settle phone page and importer; (5) the judges measured on the 57 DEV emails
+   the operator labelled; then step 5 with judges.
+5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report. **As
+   amended (OD-547):** Claude generates 300 (waiver); Mistral and Gemini judge; `agree`; the
+   operator settles disputes; expect; two C runs; report.
 6. **SPEC and docs**: ADR 0034, the ODs, §1.2 (Later items incl. the stress test), §9.3, §12.2,
    §12.4, §16, §20, README, DISCLAIMER, SECURITY.md, user guides, CHANGELOG.
 7. **Release** (minor), only when the Codex adapter passes the canary (decision 11).
@@ -498,6 +576,25 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   rate limits for their products, including agents built on the Claude Agent SDK." Reading
   (operator decision, OD-542): the operator's own DEV runs on their plan are explicitly permitted
   use; offering ecf's `claude` adapter on other users' plan sign-ins would be the third-party case.
+- **Gemini subscriptions** (2026-10-20, research agent, Google's pages, (rv)): Google AI Plus
+  ($4.99 or $9.99 by two Google pages), AI Pro ($19.99) and AI Ultra include no API access or
+  credit; "Starting June 18, 2026" Gemini CLI and Code Assist stopped serving individual, Pro and
+  Ultra sign-ins (developers.google.com Gemini Code Assist privacy notice, updated 2026-10-09;
+  github.com/google-gemini/gemini-cli README); the Gemini API's paid services don't use prompts to
+  improve products, unpaid ones do with human review (ai.google.dev/gemini-api/terms); prepay
+  minimum US$5, credits expire after 12 months, keys stop at US$0 (ai.google.dev/gemini-api/docs/
+  billing).
+- **Judge vendors** (2026-10-20, a read-only research agent fetched the vendors' own pages,
+  (rv)): **Google Gemini** API: `gemini-3.8-flash` (stable; flagship `gemini-4-argon` unpriced on
+  the pricing page), strict JSON via `response_format` with a schema (length limits ignored;
+  "always validate"), US$0.75/$3.75 per 1M tokens to 2026-12-31 then $1.50/$7.50 (~US$1 per 400
+  calls); free tier trains on data with human review, paid tier (prepaid, min US$5) doesn't train
+  and keeps logs "for a limited period" (unstated); experimental project spend caps; usage policy
+  bars content facilitating phishing or fraud, labelling not addressed (ai.google.dev pages,
+  policies.google.com use policy). **Cohere** Command A: schema output, no published price for
+  current models, call caps possibly 1,000/month, training default unstated, no hard cap.
+  **Amazon Nova** (Bedrock): strongest schema output, needs AWS (deferred to M1), prices
+  unverified. **AI21 Jamba**: no schema mode. Recommendation: Gemini, paid tier only.
 - **Mistral usage policy** (legal.mistral.ai/terms/usage-policy, effective 2026-06-11, fetched
   2026-10-19): fraud and scams prohibited ("Phishing attempts", "Impersonation" listed); no
   generating content "intended to deceive others"; no rule on spam or simulated content; no testing
@@ -615,6 +712,11 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   `results.py:709` `REPORT_ONLY_BELOW = 20`.
 
 ## Plan review findings
+
+Phase R on draft 19, the judges (2026-10-20): four Fable reviewers (safety, measurement, cost and
+design, performance), merged to J1-J20, key claims spot-checked (the DEV grader pair's 11% field
+disagreement measured); all accepted by the operator 2026-10-20 (design above; full list in
+`state-archive/eval-judges/review-findings.md`).
 
 Phase R on draft 1 (2026-10-19): 6 Fable reviewers, about 85 findings merged to P1-P31, key claims
 spot-checked against the code; all decided by the operator 2026-10-19 (summary in Decisions, the
