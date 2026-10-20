@@ -25,6 +25,24 @@ NOTICE = {
 NEVER_REAL = "Never put real mail in a generated set."
 
 
+def _checked(adapter: object) -> None:
+    """A command-line provider's version and flags, then the tool-less canary (P3): one call,
+    from a throwaway folder, before the set's folder is touched."""
+    import tempfile  # noqa: PLC0415
+
+    from ecf.eval import tools  # noqa: PLC0415
+
+    if not isinstance(adapter, tools.CliAdapter):
+        return
+    with tempfile.TemporaryDirectory(prefix="ecf-canary-") as tmp:
+        adapter.preflight(Path(tmp))
+        ok, why = tools.canary(adapter, Path(tmp) / "canary")
+    if not ok:
+        raise InvalidInputError(f"{adapter.provider} failed the tool-less check: {why}; nothing"
+                                " was generated or graded")  # fmt: skip
+    typer.echo(f"{adapter.provider} {adapter.model}: tool-less check passed")
+
+
 def _notice(role: str, provider: str, yes: bool) -> None:
     typer.echo(NOTICE[role].format(provider=provider) + " " + NEVER_REAL)
     if not yes and not typer.confirm("Go ahead?", default=False):
@@ -81,8 +99,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         else:
             m = mixmod.load(mix_file) if mix_file else mixmod.default()
             n = count if count is not None else (30 if dev else 300)
-        adapter = providers.resolve(generator, "generator", mode)
+        adapter = providers.resolve(generator, "generator", mode, paths())
         _notice("generator", adapter.provider, yes)
+        _checked(adapter)
         gen.start(root.expanduser(), resume=resume)
         run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, echo=typer.echo)
         s = run.run(resume=resume)
@@ -109,8 +128,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import providers  # noqa: PLC0415
 
         mode = gen.mode_of(root)
-        adapter = providers.resolve(grader, "grader", mode)
+        adapter = providers.resolve(grader, "grader", mode, paths())
         _notice("grader", adapter.provider, yes)
+        _checked(adapter)
         path, counts, detail = grading.Grading(root, adapter, echo=typer.echo).run(resume=resume)
         typer.echo(", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing graded")
         typer.echo(detail if path is None else f"wrote {path}")
