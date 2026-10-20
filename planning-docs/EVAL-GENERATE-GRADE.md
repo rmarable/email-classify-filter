@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 6 (2026-10-19): draft 5 plus the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 7 (2026-10-20): draft 6 plus OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
@@ -336,11 +336,11 @@ service API (`ecf` never imports `ecf_server`).
 ## Steps
 
 0. **Facts**: done 2026-10-19 (Facts) except: whether paid Mistral API use is trained on by
-   default (opt out at account setup either way) and the exact `json_schema` fields; the
-   OpenAI help-centre pages read through search excerpts (re-read in a browser); whether
-   `codex exec` with every tool off still answers under `--output-schema`, the model ids available
-   to this Plus account (`codex debug models`) and whether `claude -p` structured output works with
-   `--tools ""` (each a one-call check with the operator's go-ahead).
+   default (opt out at account setup either way) and the exact `json_schema` fields; whether
+   `codex exec` with every tool off still answers under `--output-schema`, and the model ids
+   available to this Plus account (`codex debug models`) (each a one-call check with the operator's
+   go-ahead, after the operator signs in to ecf's separate `CODEX_HOME`). Done 2026-10-20: the
+   OpenAI help-centre pages (Facts) and the `claude -p` check (Facts).
 1. **Shared pipeline**: mix, seeds, emails, checks, card changes, set layout, manifest, grade (as a
    result file), expect, report, resume, gate guard, logging. Tests with a fake executable on PATH
    (as `tests/test_claude_wrapper.py`'s `fake_claude`) and recorded JSON, including a limit, a
@@ -427,14 +427,30 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   Training on paid API use: unverified (help article 404; third-party sources say not by default,
   a policy tracker reports that statement removed in May 2026); the Admin Console's Privacy panel
   has an opt-out.
-- **OpenAI data terms** (help.openai.com 5722486, 7730893, 11369540, 8809935, read through search
-  excerpts, unverified; learn.chatgpt.com/docs/auth fetched; 2026-10-19): Plus content, including
-  Codex tasks, may train models unless "Improve the model for everyone" is off (Settings → Data
-  Controls) or "Do not train on my content" is set in the privacy portal; Codex's separate "Include
-  environments" setting is unaffected by those; feedback may train on the whole conversation;
-  deleted chats are removed within 30 days, with safety and legal exceptions; no CLI-specific
-  retention published; requests go to chatgpt.com/backend-api/codex/responses with `store: false`
-  (source). The operator turns off both training settings and sends no feedback.
+- **OpenAI data terms** (2026-10-20, (rv): a claude.ai summary of the six full pages, paraphrased,
+  not re-read by Claude: help.openai.com articles 5722486, 7730893, 11369540, 8809935, 8983778,
+  20001333; the fetch tool and `curl` get 403 there): on Free, Plus and Pro, content may train
+  models unless the user turns off **Improve the model for everyone** (Settings > Data controls) or
+  chooses **Do not train on my content** in the Privacy Portal; either one covers ChatGPT and Codex
+  ("ChatGPT training data controls apply to content processed through Codex"; local workflows run
+  on the device). Codex's **Include environments** setting (chatgpt.com/codex/cloud/settings/general)
+  is separate and unaffected. A thumbs up or down can make the whole conversation trainable even
+  after opting out. Opting out deletes nothing; deleted chats are scheduled for permanent deletion
+  within 30 days, except de-identified content or content kept for security or legal reasons. Codex
+  usage from local clients, the CLI included, is reachable through the Compliance API (business
+  plans), so OpenAI keeps records of CLI use; no CLI retention period is published for Plus.
+  Requests go to chatgpt.com/backend-api/codex/responses with `store: false` (source). The Codex
+  page names "GPT-5.6 Terra and GPT-5.6 Luna" as replacements from 2026-08-31, which doesn't match
+  the 0.163.0 catalogue's `gpt-6.1-sol` / `gpt-6-luna`; `codex debug models` decides. **Before the
+  pilot the operator** turns off Improve the model for everyone and Include environments, and gives
+  no thumbs up or down on these runs.
+- **`claude -p` check** (2026-10-20, Claude Code 2.1.303, the accept install's Claude login, an empty
+  scratch folder, an allow-listed environment): `--output-format json --json-schema <s> --model
+  claude-haiku-5-5 --system-prompt <short> --tools "" --strict-mcp-config --safe-mode
+  --no-session-persistence` returned `subtype: success` with `structured_output`, `num_turns` 2
+  (structured output takes one internal turn; no turn cap is set), no `permission_denials`, model
+  `claude-haiku-5-5`, about 1.2k input and 178 output tokens, 1.6 s. A decoy file in the folder was
+  not read (the model answered "none"), so the tool-less canary passes for the DEV adapter.
 - **Mistral** (mistral.ai/pricing; docs.mistral.ai/getting-started/models/): Pro $14.99/month,
   "Full access to Vibe", $15/month API credit; "Mistral Large" $0.50/$1.50 per 1M tokens (version
   not named); Large 4 (26.10), Medium 3.5 (26.04), Small 4 (26.03); the page also lists Z.ai GLM 5.3.
