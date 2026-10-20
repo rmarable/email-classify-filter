@@ -187,6 +187,9 @@ class ServiceState:
     # TypeSafe's transport for the key check: None is the real one (`jev.default_transport`; a
     # fake in tests, v3.0.0 step 2a)
     jev_transport: httpx.BaseTransport | None = field(default=None, repr=False)
+    # Mistral's transport for the key check and grading calls: None is the real one (a fake in
+    # tests; eval generate plan step 3)
+    mistral_transport: httpx.BaseTransport | None = field(default=None, repr=False)
     # preset D's Jev drain and probe in memory (v3.0.0 step 4; `jev_dispatch`, P4)
     jev: jev_dispatch.Live = field(default_factory=jev_dispatch.Live, repr=False)
     # ecf's GitHub releases for the weekly watch; set only by `ecf-server local` (§7.6)
@@ -781,7 +784,7 @@ def _stage_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
+def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - one handler a route
     """SPEC §8.6, §9.7 (V1.2 step 10b): `ecf config apply` (step-up) and `ecf rules test`; from
     v2.0.0 `GET /v1/schema` (OD-478)."""
 
@@ -828,6 +831,33 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
              "safety": evalrun.expected_safety(r["labels"], r["rule"], r["actions"])}
             for r in rows]})  # fmt: skip
 
+    @allow(Caller.CLI)
+    def eval_mistral(request: Request) -> JSONResponse:
+        """`ecf eval grade --grader mistral:<model>`: one case of a generated PROD set graded by
+        the Mistral API (eval generate plan step 3). The service checks the set, reads the email
+        and builds the fixed grading prompt itself, so only a generated set's emails go."""
+        from ecf.eval import generate as gen  # noqa: PLC0415 - eval only
+        from ecf.eval import genset  # noqa: PLC0415
+        from ecf.eval import grade as grading  # noqa: PLC0415
+        from ecf.eval import models as eval_models  # noqa: PLC0415
+        from ecf_server import mistral  # noqa: PLC0415 - eval only, not a service import
+
+        body = _body(request)
+        root, case_id, model = Path(_str(body, "root")), _str(body, "case"), _str(body, "model")
+        if not root.is_absolute():
+            raise InvalidInputError("root must be an absolute path")
+        if not genset.is_generated(root):
+            raise InvalidInputError(f"{root} isn't a generated set: Mistral grades only those")
+        doc = gen.verify(root)
+        eval_models.check("mistral", model, "grader", str(doc.get("mode")))
+        data = grading.case_email(root, case_id)
+        if data is None:
+            return JSONResponse({"status": "too large", "detail": "too large", "usage": {}})
+        prompt = grading.grade_prompt(data.decode("utf-8", "replace"))
+        return JSONResponse(mistral.complete(state.store(), model, prompt,
+                                             grading.grade_schema(),
+                                             state.mistral_transport))  # fmt: skip
+
     @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def show_schema(_request: Request) -> JSONResponse:
         """The effective schema: version, the install's extension, digest (OD-478)."""
@@ -843,6 +873,7 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/config/apply", apply_config, methods=["POST"]),
         Route("/v1/rules/test", test_rules, methods=["POST"]),
         Route("/v1/eval/expect", eval_expect, methods=["POST"]),
+        Route("/v1/eval/mistral", eval_mistral, methods=["POST"]),
         Route("/v1/schema", show_schema, methods=["GET"]),
     ]
 
@@ -1193,6 +1224,24 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
         return JSONResponse(r)
 
     @allow(Caller.CLI)
+    def mistral_key(request: Request) -> JSONResponse:
+        """`ecf models api-key set|clear --provider mistral` (eval generate plan step 3; operator
+        decision 2026-10-20): the key `ecf eval grade` uses. Checked by one model-list call
+        within 5 s, then a Security Notice."""
+        from ecf_server import mistral  # noqa: PLC0415 - eval only, not a service import
+
+        key = _api_key(request, "mistral")
+        conn = state.connect()
+        try:
+            r = mistral.set_key(conn, state.clock, state.store(), key, state.mistral_transport)
+            had = bool(r.get("had") if key is None else r.get("replaced"))
+            _key_notice(state, conn, "mistral", key is not None, had)
+        finally:
+            conn.close()
+        log.info("models.mistral_key_cleared" if key is None else "models.mistral_key_set")
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
     def watch_now(_request: Request) -> JSONResponse:
         conn = state.connect()
         try:
@@ -1204,6 +1253,7 @@ def _watch_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/models/keys/anthropic", anthropic_key, methods=["POST"]),
         Route("/v1/models/keys/typesafe", typesafe_key, methods=["POST"]),
+        Route("/v1/models/keys/mistral", mistral_key, methods=["POST"]),
         Route("/v1/models/watch", watch_now, methods=["POST"]),
     ]
 
@@ -2392,7 +2442,8 @@ def _port(v: Any) -> int | None:
 
 
 KEY_CHECK_S = 5.0  # an API key's check, under the CLI's 10 s socket timeout (P12)
-_KEY_NAMES = {"anthropic": "Anthropic Models API key", "typesafe": "TypeSafe API key"}
+_KEY_NAMES = {"anthropic": "Anthropic Models API key", "typesafe": "TypeSafe API key",
+              "mistral": "Mistral API key"}  # fmt: skip
 
 
 def _api_key(request: Request, provider: str) -> str | None:
@@ -2410,7 +2461,10 @@ def _key_notice(state: ServiceState, conn: sqlite3.Connection, provider: str, st
     if not stored and not had:
         return
     verb = ("replaced" if had else "set") if stored else "removed"
-    if provider == "typesafe":
+    if provider == "mistral":
+        what = ("`ecf eval grade` with Mistral uses it" if stored
+                else "`ecf eval grade` with Mistral stops")  # fmt: skip
+    elif provider == "typesafe":
         what = ("a running Jev eval stops and preset D mail waits" if not stored
                 else "Jev evals and preset D addresses use it")  # fmt: skip
     else:

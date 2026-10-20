@@ -1,6 +1,6 @@
 """`ecf eval grade`, `expect` and `report` on a generated set (eval generate plan: Grading,
 Report, decision 8; P2, P8, P13, P22, P25), with the fake generator of test_eval_generate; and
-the commands' edges (providers not built yet, the shipped mix to edit)."""
+the commands' edges (the model list, the families, the shipped mix to edit)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from ecf.cli import app
 from ecf.errors import InvalidInputError
-from ecf.eval import expect, providers, review, tools
+from ecf.eval import expect, models, providers, review, tools
 from ecf.eval import generate as gen
 from ecf.eval import grade as grading
 from ecf.eval import labels as label_file
@@ -85,6 +85,20 @@ def test_a_stopped_grading_resumes_and_asks_only_the_rest(tmp_path: Path) -> Non
     assert path is not None and counts == {"graded": 20}
 
 
+FAMILIES = {"fake-model-1": "openai", "fake-grader-1": "mistral"}
+
+
+@pytest.fixture
+def fake_families(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake generator and grader as listed models of two families."""
+
+    def family(_provider: str, model: str) -> str:
+        return FAMILIES[model]
+
+    monkeypatch.setattr(models, "family", family)
+
+
+@pytest.mark.usefixtures("fake_families")
 def test_the_report_states_the_graders_accuracy_against_your_labels(tmp_path: Path) -> None:
     _summary, root = run(tmp_path, mode="prod")
     path, _c, _d = _grade(tmp_path, root)
@@ -162,14 +176,48 @@ def test_expect_leaves_an_unlabelled_card_alone(clock: FakeClock, conn: sqlite3.
                                          "errors": 0}  # fmt: skip
 
 
-def test_providers_not_built_yet_are_refused_with_their_step() -> None:
+@pytest.mark.usefixtures("fake_families")
+def test_a_result_whose_classifier_shares_a_family_is_no_measurement(tmp_path: Path) -> None:
+    _summary, root = run(tmp_path, mode="prod")
+    path, _c, _d = _grade(tmp_path, root)
+    assert path is not None
+    _label(root)
+    FAMILIES["fake-model-1"] = "anthropic"  # as if Claude had generated the set
+    try:
+        text = "\n".join(rep.report(root, [load_result(path), _result(root, LABELS)]))
+    finally:
+        FAMILIES["fake-model-1"] = "openai"
+    assert "NOT A MEASUREMENT: result rrrrrrrr's classifier is anthropic" in text
+    unknown = _result(root, LABELS).model_copy(update={"pair": "gemini/local"})
+    with pytest.raises(InvalidInputError, match="doesn't know its classifier's family"):
+        rep.report(root, [load_result(path), unknown])
+
+
+def test_providers_resolve_only_listed_models() -> None:
     paths = paths_for("ecf-test-providers")
-    with pytest.raises(InvalidInputError, match=r"codex generator isn't built yet \(build step 3"):
-        providers.resolve(None, "generator", "prod", paths)
-    with pytest.raises(InvalidInputError, match="build step 3"):
-        providers.resolve(None, "grader", "prod", paths)
+    gen_ = providers.resolve(None, "generator", "prod", paths)
+    assert (gen_.provider, gen_.model) == ("codex", "gpt-6.1-sol")
+    assert providers.resolve("codex:gpt-5.6-terra", "generator", "prod", paths).model == (
+        "gpt-5.6-terra"
+    )
+    grader = providers.resolve(None, "grader", "prod", paths)
+    assert (grader.provider, grader.model) == ("mistral", "mistral-large-4-0")
     with pytest.raises(InvalidInputError, match="no generator provider 'gemini'"):
         providers.resolve("gemini:x", "generator", "prod", paths)
+    with pytest.raises(InvalidInputError, match="isn't on ecf's model list"):
+        providers.resolve("codex:gpt-9", "generator", "prod", paths)
+    with pytest.raises(InvalidInputError, match=r"Z\.ai, a PRC-affiliated lab"):
+        providers.resolve("mistral:glm-5.3", "grader", "prod", paths)
+    with pytest.raises(InvalidInputError, match="isn't listed as a generator"):
+        providers.resolve("mistral:mistral-large-4-0", "generator", "prod", paths)
+    with pytest.raises(InvalidInputError, match="isn't listed as a grader"):
+        providers.resolve("codex:gpt-6.1-sol", "grader", "prod", paths)
+
+
+def test_prod_needs_the_generator_and_grader_from_two_families() -> None:
+    models.check_pair(("codex", "gpt-6.1-sol"), ("mistral", "mistral-large-4-0"))
+    with pytest.raises(InvalidInputError, match="both openai"):
+        models.check_pair(("codex", "gpt-6.1-sol"), ("codex", "gpt-6-luna"))
 
 
 def test_prod_refuses_claude_and_dev_defaults_to_it() -> None:
@@ -178,15 +226,20 @@ def test_prod_refuses_claude_and_dev_defaults_to_it() -> None:
         providers.resolve("claude:claude-haiku-5-5", "generator", "prod", paths)
     assert providers.resolve(None, "generator", "dev", paths).model == "claude-haiku-5-5"
     assert providers.resolve(None, "grader", "dev", paths).model == "claude-sonnet-5-5"
-    with pytest.raises(InvalidInputError, match="isn't a full Claude model id"):
+    with pytest.raises(InvalidInputError, match="isn't on ecf's model list"):
         providers.resolve("claude:haiku", "generator", "dev", paths)
 
 
-def test_write_mix_writes_the_shipped_mix_to_edit(tmp_path: Path) -> None:
+def test_write_mix_writes_the_shipped_mix_to_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     out = tmp_path / "mix.yaml"
     r = CliRunner().invoke(app, ["eval", "generate", "--write-mix", str(out)])
     assert r.exit_code == 0, r.output
     assert "phishing" in out.read_text() and "other-ic3" in out.read_text()
+    # no real codex: an empty PATH and a throwaway install folder
+    monkeypatch.setenv("PATH", str(tmp_path / "no-tools"))
+    monkeypatch.setenv("ECF_HOME", str(tmp_path / "home"))
     r = CliRunner().invoke(app, ["eval", "generate", "--root", str(tmp_path / "s"), "--yes"])
-    assert r.exit_code != 0 and "isn't built yet" in (r.output + str(r.exception))
+    assert r.exit_code != 0 and "codex isn't installed" in (r.output + str(r.exception))
     assert not (tmp_path / "s").exists()  # refused before the folder is made

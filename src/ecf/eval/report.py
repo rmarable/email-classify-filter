@@ -21,6 +21,7 @@ from ecf.errors import InvalidInputError
 from ecf.eval import generate as gen
 from ecf.eval import grade as grading
 from ecf.eval import labels as label_file
+from ecf.eval import models
 from ecf.eval.metrics import wilson
 from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile
 from ecf.schema import load_schema
@@ -117,6 +118,7 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
                                     " by case id)")  # fmt: skip
     for g in grades:
         grading.check_grade(g, doc)
+    shared = _families(doc, grades)
     graded: dict[str, dict[str, Any]] = {}
     for g in grades:  # measured first: every report states it (P8)
         got = {c.id: dict(c.got) for c in g.cases if c.got}
@@ -132,6 +134,13 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
         lines += _field_lines("generator's label hints against your labels:",
                               agreement(proposals, labels, fields))  # fmt: skip
     for r in runs:
+        fam = models.classifier_family(r.pair)
+        if fam is None:
+            raise InvalidInputError(f"result {r.run_id[:8]}: ecf doesn't know its classifier's"
+                                    f" family ({r.pair})")  # fmt: skip
+        if fam in shared:
+            lines.append(f"NOT A MEASUREMENT: result {r.run_id[:8]}'s classifier is {fam}, the"
+                         f" family of the {shared[fam]}")  # fmt: skip
         got = {c.id: dict(c.got) for c in r.cases}
         lines += _field_lines(f"ecf result {r.run_id[:8]} ({r.pair}) against your labels:",
                               agreement(got, labels, fields))  # fmt: skip
@@ -149,6 +158,19 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
 
 
 ACCURACY_LOG = "grader-accuracy"
+
+
+def _families(doc: dict[str, Any], grades: list[ResultFile]) -> dict[str, str]:
+    """Family -> the role(s) using it: the set's generator and each grade's grader (Model
+    switches: a classifier sharing one makes the result no measurement)."""
+    out: dict[str, str] = {}
+    g = doc["generator"]
+    out[models.family(str(g["provider"]), str(g["model"]))] = "generator"
+    for r in grades:
+        d = cast(dict[str, Any], (r.summary or {}).get("grader") or {})
+        fam = models.family(str(d.get("provider")), str(d.get("model")))
+        out[fam] = "generator and grader" if out.get(fam) == "generator" else "grader"
+    return out
 
 
 def _measured(root: Path, grade_id: str, labels: Mapping[str, Mapping[str, Any]],

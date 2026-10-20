@@ -7,22 +7,25 @@ service. They follow TypeSafe's SDK key rules (docs.typesafe.ai/sdk/python/usage
 the ends stripped; no space inside, no control or non-ASCII character. An Anthropic key starts
 `sk-ant-`, and a key with that prefix is refused for TypeSafe (a pasted key of the wrong kind
 never leaves this computer). TypeSafe documents no prefix of its own (/introduction/quickstart,
-read 2026-10-14), so none is required. No message ever quotes the key.
+read 2026-10-14), so none is required. Mistral's key (for `ecf eval grade`; eval generate plan
+step 3, operator decision 2026-10-20) has the same checks and no prefix either. No message ever
+quotes the key.
 """
 
 from __future__ import annotations
 
 from ecf.errors import InvalidInputError
 
-PROVIDERS = ("anthropic", "typesafe")
+PROVIDERS = ("anthropic", "typesafe", "mistral")
 ANTHROPIC_PREFIX = "sk-ant-"
 MAX_KEY_CHARS = 400
-NAME_PROVIDER = "name the provider: --provider anthropic or --provider typesafe"
-LABEL = {"anthropic": "Anthropic API key, sk-ant-...", "typesafe": "TypeSafe API key"}
+NAME_PROVIDER = "name the provider: --provider anthropic, typesafe or mistral"
+LABEL = {"anthropic": "Anthropic API key, sk-ant-...", "typesafe": "TypeSafe API key",
+         "mistral": "Mistral API key"}  # fmt: skip
 
 
 def check_provider(provider: str | None) -> str:
-    """`provider` when it is one ecf knows; otherwise refused, naming both."""
+    """`provider` when it is one ecf knows; otherwise refused, naming them."""
     if provider not in PROVIDERS:
         raise InvalidInputError(NAME_PROVIDER)
     return provider
@@ -42,6 +45,7 @@ def check_key(provider: str, key: str) -> str:
         raise InvalidInputError("that isn't an API key: it has a control or non-ASCII character")
     if provider == "anthropic" and not k.startswith(ANTHROPIC_PREFIX):
         raise InvalidInputError(f"an Anthropic API key starts {ANTHROPIC_PREFIX}")
-    if provider == "typesafe" and k.startswith(ANTHROPIC_PREFIX):
-        raise InvalidInputError("that is an Anthropic key (sk-ant-); TypeSafe's key is another")
+    if provider != "anthropic" and k.startswith(ANTHROPIC_PREFIX):
+        raise InvalidInputError(f"that is an Anthropic key (sk-ant-); the {LABEL[provider]} is"
+                                " another")  # fmt: skip
     return k
