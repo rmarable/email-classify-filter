@@ -60,6 +60,44 @@ def _estimate(root: Path, adapter: object, yes: bool) -> None:
         raise typer.Exit(1)
 
 
+def _settle_terminal(root: Path, today: Any) -> None:
+    """The disputes one by one: the email, each disputed field, then the judges' answers."""
+    from ecf.eval import settle as st  # noqa: PLC0415
+    from ecf.prompts import require_terminal  # noqa: PLC0415
+
+    require_terminal()
+    items = st.questions(root)
+    if not items:
+        typer.echo("nothing to settle: the judges agree on every open field")
+        return
+    typer.echo(f"Signs to look for (general, not about any one email): {st.SIGNS}.\n")
+    done: dict[str, dict[str, Any]] = {}
+    for n, it in enumerate(items, 1):
+        typer.echo(f"\n== email {n} of {len(items)}\n{it['view']}\n")
+        answer: dict[str, Any] = {}
+        for f in it["fields"]:
+            choices = ["yes", "no"] if f["kind"] == "boolean" else f["values"]
+            typer.echo(f"{f['id']}: {f['help']}")
+            while True:
+                a = typer.prompt(f"  {f['id']} [{' / '.join(choices)}, q quits]").strip()
+                if a == "q":
+                    break
+                if a in choices:
+                    answer[f["id"]] = (a == "yes") if f["kind"] == "boolean" else a
+                    break
+            if a == "q":
+                break
+        if len(answer) < len(it["fields"]):
+            break
+        for f in it["fields"]:
+            said = ", ".join(str(v) for v in it["judges"].get(f["id"], []))
+            typer.echo(f"  judges said for {f['id']}: {said}")
+        if typer.confirm("  Keep your answers?", default=True):
+            done[it["case"]] = answer
+    n_done = st.apply(root, done, today) if done else 0
+    typer.echo(f"settled {n_done} emails; {len(items) - n_done} still open")
+
+
 def _notice(role: str, provider: str, yes: bool) -> None:
     typer.echo(NOTICE[role].format(provider=provider) + " " + NEVER_REAL)
     if not yes and not typer.confirm("Go ahead?", default=False):
@@ -92,6 +130,14 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
             Path | None,
             typer.Option("--write-mix", help="Write the shipped mix to edit, and stop."),
         ] = None,
+        claude_generator: Annotated[
+            bool,
+            typer.Option(
+                "--claude-generator",
+                help="PROD: let Claude write the set (scored then"
+                " on Claude-written mail; your own Claude plan sign-in, your own use).",
+            ),
+        ] = False,
         seeds_only: Annotated[
             bool, typer.Option("--seeds-only", help="A seed run: seeds for every group, no email.")
         ] = False,
@@ -125,6 +171,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                                         " --seeds-only and --seeds-from")  # fmt: skip
             doc = gen.read_manifest(root)
             seeds_only, shared = bool(doc.get("seeds_only")), doc.get("seeds_from")
+            claude_generator = bool(doc.get("generator_family_waiver"))
             if doc["mode"] != mode:
                 raise InvalidInputError(f"{root} is a {doc['mode']} set: resume it the same way")
             m = mixmod.parse(doc["mix"], source="manifest")
@@ -133,7 +180,8 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         else:
             m = mixmod.load(mix_file) if mix_file else mixmod.default()
             n = count if count is not None else (30 if dev else 300)
-        adapter = providers.resolve(generator, "generator", mode, paths())
+        adapter = providers.resolve(generator, "generator", mode, paths(),
+                                    claude_waiver=claude_generator)  # fmt: skip
         _notice("generator", adapter.provider, yes)
         _checked(adapter)
         gen.start(root.expanduser(), resume=resume)
@@ -141,7 +189,8 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
             shared = gen.share_seeds(root.expanduser(), seeds_from.expanduser().resolve(), mode,
                                      n, m, k)  # fmt: skip
         run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, seeds_only=seeds_only,
-                      shared=shared, echo=typer.echo)  # fmt: skip
+                      shared=shared, claude_waiver=claude_generator and adapter.provider ==
+                      "claude", echo=typer.echo)  # fmt: skip
         s = run.run(resume=resume or shared is not None)
         typer.echo(f"{s.state}: kept {s.kept} of {s.target}; refused {sum(s.refused.values())};"
                    f" dropped {sum(s.dropped.values())}")  # fmt: skip
@@ -165,6 +214,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         max_cost: Annotated[
             float, typer.Option("--max-cost", help="US$ this run may spend (API graders).")
         ] = 15.0,
+        pace: Annotated[
+            float, typer.Option("--pace", help="Seconds between API calls (a rate limit).")
+        ] = 0.0,
     ) -> None:
         """Have a model from another family label the set blind; written as a result file."""
         from ecf.eval import generate as gen  # noqa: PLC0415
@@ -181,6 +233,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
             if max_cost <= 0:
                 raise InvalidInputError("--max-cost must be more than 0")
             adapter.max_cost = max_cost
+            adapter.pace = max(pace, 0.0)
             _estimate(root, adapter, yes)
         _checked(adapter)
         path, counts, detail = grading.Grading(root, adapter, echo=typer.echo).run(resume=resume)
@@ -202,6 +255,39 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if o.fields:
             typer.echo("disputed fields: " + ", ".join(f"{k} {v}" for k, v in
                                                        o.fields.most_common()))  # fmt: skip
+
+    @eval_app.command("settle")
+    def settle_cmd(
+        root: Annotated[Path, typer.Option("--root", help="A generated set.")],
+        export: Annotated[
+            Path | None, typer.Option("--export", help="Write a phone page's data to this folder.")
+        ] = None,
+        answers: Annotated[
+            Path | None, typer.Option("--from", help="A phone page's saved answers (JSON).")
+        ] = None,
+        tokens: Annotated[
+            Path | None, typer.Option("--tokens", help="The page's token map (with --from).")
+        ] = None,
+    ) -> None:
+        """Decide the fields the judges disagreed on, blind: in the terminal, or with a phone
+        page (--export, then --from with --tokens)."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        from ecf.eval import settle as st  # noqa: PLC0415
+
+        where = root.expanduser().resolve()
+        today = datetime.now(UTC).date()
+        if export is not None:
+            data, key = st.export(where, export.expanduser())
+            typer.echo(f"wrote {data} (no case ids) and {key} (keep it: --tokens)")
+            return
+        if answers is not None:
+            if tokens is None:
+                raise InvalidInputError("--from needs --tokens, the page's token map")
+            done, left = st.apply_page(where, answers.expanduser(), tokens.expanduser(), today)
+            typer.echo(f"settled {done} emails; {left} not fully answered yet")
+            return
+        _settle_terminal(where, today)
 
     @eval_app.command("expect")
     def expect(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:

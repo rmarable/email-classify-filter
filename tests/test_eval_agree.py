@@ -161,3 +161,83 @@ def test_kappa() -> None:
     assert ag.kappa([1, 1, 0, 0], [1, 1, 0, 0]) == 1.0
     assert ag.kappa([1, 0, 1, 0], [0, 1, 0, 1]) == -1.0
     assert ag.kappa([1, 1], [1, 1]) is None  # no variation: undefined
+
+
+def _one_dispute(tmp_path: Path) -> tuple[Path, str]:
+    _s, root = run(tmp_path, mode="dev")
+    a = _ids(root)[0]
+    _judge(tmp_path, root, "judge-a")
+    _judge(tmp_path, root, "judge-b", {a: {"phishing": True}})
+    ag.run(root, ON)
+    return root, a
+
+
+def test_the_phone_page_export_is_blind_and_its_answers_settle(tmp_path: Path) -> None:
+    from ecf.eval import settle as st  # noqa: PLC0415
+
+    root, a = _one_dispute(tmp_path)
+    data, key = st.export(root, tmp_path / "page")
+    page = data.read_text()
+    assert "dev-" not in page and "judge-a" not in page and "judge-b" not in page
+    tokens = json.loads(key.read_text())
+    (t,) = tokens
+    assert tokens[t] == a
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({t: {}}))
+    assert st.apply_page(root, answers, key, ON) == (0, 1)  # not answered yet: left for later
+    answers.write_text(json.dumps({t: {"phishing": False}}))
+    assert st.apply_page(root, answers, key, ON) == (1, 0)
+    assert label_file.by_source(root) == {"models": 19, "operator": 1}
+    assert ag.open_disputes(root) == []
+    card = next(c for c in load_cards(root / "cases") if c.id == a)
+    assert card.expected.labels["phishing"] is False
+    gen.verify(root)
+
+
+def test_settle_refuses_bad_answers(tmp_path: Path) -> None:
+    from ecf.eval import settle as st  # noqa: PLC0415
+
+    root, a = _one_dispute(tmp_path)
+    with pytest.raises(InvalidInputError, match="isn't a phishing value"):
+        st.apply(root, {a: {"phishing": "maybe"}}, ON)
+    with pytest.raises(InvalidInputError, match="isn't a disputed field"):
+        st.apply(root, {a: {"phishing": True, "category": "invoice"}}, ON)
+    with pytest.raises(InvalidInputError, match="no open dispute"):
+        st.apply(root, {_ids(root)[1]: {"phishing": True}}, ON)
+
+
+def test_settling_in_the_terminal_shows_the_judges_only_after_you_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _a = _one_dispute(tmp_path)
+    monkeypatch.setattr("ecf.prompts.require_terminal", lambda: None)
+    r = CliRunner().invoke(app, ["eval", "settle", "--root", str(root)], input="yes\ny\n")
+    assert r.exit_code == 0, r.output
+    assert r.output.index("judges said for phishing") > r.output.index("phishing [yes / no")
+    assert "dev-" not in r.output and "settled 1 emails" in r.output
+    assert label_file.by_source(root)["operator"] == 1
+
+
+def test_the_report_never_measures_judges_on_their_own_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, a = _one_dispute(tmp_path)
+    from ecf.eval import settle as st  # noqa: PLC0415
+
+    st.apply(root, {a: {"phishing": False}}, ON)
+    doc = json.loads((root / "manifest.json").read_text())
+    doc["mode"] = "prod"  # the judges' figures as PROD shows them
+    (root / "manifest.json").write_text(json.dumps(doc))
+    grades = [load_result(p) for p in sorted((root / "grades").glob("*.json"))]
+    from ecf.eval import models  # noqa: PLC0415
+
+    fams = {"fake-model-1": "openai", "judge-a": "mistral", "judge-b": "google"}
+
+    def family(_provider: str, model: str) -> str:
+        return fams[model]
+
+    monkeypatch.setattr(models, "family", family)
+    text = "\n".join(rep.report(root, grades))
+    assert "against the labels you settled (1 emails; never the labels the judges set)" in text
+    assert "report-only (judges' kappa under 0.6):" in text
+    assert "judges' labels contradicting the assignment" in text

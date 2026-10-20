@@ -848,7 +848,7 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: P
             raise InvalidInputError("root must be an absolute path")
         if not genset.is_generated(root):
             raise InvalidInputError(f"{root} isn't a generated set: Mistral grades only those")
-        doc = gen.verify(root)
+        doc = _verified(root, gen.verify)
         eval_models.check("mistral", model, "grader", str(doc.get("mode")))
         view = grading.case_view(root, case_id)  # the labeller's view (OD-544)
         if view is None:
@@ -2377,6 +2377,24 @@ def _planned_channel(state: ServiceState, address_id: str) -> str | None:
 
 
 MAX_BODY = 64 * 1024
+
+
+_VERIFIED: dict[tuple[str, int, int], dict[str, Any]] = {}
+
+
+def _verified(root: Path, verify: Callable[[Path], dict[str, Any]]) -> dict[str, Any]:
+    """A generated set's manifest after `verify`, checked once per set while its manifest and
+    labels index are unchanged (one grading run makes hundreds of calls; J19)."""
+
+    def mtime(p: Path) -> int:
+        return p.stat().st_mtime_ns if p.exists() else 0
+
+    key = (str(root), mtime(root / "manifest.json"), mtime(root / "labels.jsonl"))
+    if key not in _VERIFIED:
+        if len(_VERIFIED) > 16:
+            _VERIFIED.clear()
+        _VERIFIED[key] = verify(root)
+    return _VERIFIED[key]
 
 
 def _body(request: Request) -> dict[str, Any]:

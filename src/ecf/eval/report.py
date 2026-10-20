@@ -166,6 +166,52 @@ def _detectability(root: Path, labels: Mapping[str, Mapping[str, Any]],
     return lines
 
 
+KAPPA_FLOOR = 0.6  # a field the judges agree on less than this is report-only (J7)
+
+
+def weak_fields(grades: list[ResultFile]) -> set[str]:
+    """Fields where some pair of judges has Cohen's kappa under `KAPPA_FLOOR` (an undefined
+    kappa, no variation at all, is not weak)."""
+    from ecf.eval import agree as ag  # noqa: PLC0415
+
+    got = [{c.id: dict(c.got) for c in g.cases if c.got} for g in grades]
+    out: set[str] = set()
+    for f in load_schema().fields:
+        for a, b in combinations(got, 2):
+            ids = [c for c in a if c in b and f in a[c] and f in b[c]]
+            k = ag.kappa([a[c][f] for c in ids], [b[c][f] for c in ids])
+            if k is not None and k < KAPPA_FLOOR:
+                out.add(f)
+    return out
+
+
+def _scorable(root: Path, labels: dict[str, dict[str, Any]], sources: dict[str, str | None],
+              grades: list[ResultFile]) -> tuple[dict[str, dict[str, Any]], list[str]]:  # fmt: skip
+    """The labels ecf is scored on when judges set some (OD-547, J7): fields the judges agree
+    on only weakly are report-only, and a judges' label contradicting the email's assignment
+    (a scam not phishing, or ordinary mail phishing) is left out for phishing and fraud_risk."""
+    weak: set[str] = weak_fields(grades) if len(grades) > 1 else set()
+    given = assignments(root)
+    contradicted: list[str] = []
+    out: dict[str, dict[str, Any]] = {}
+    for c, lab in labels.items():
+        keep = {f: v for f, v in lab.items() if f not in weak}
+        kind = given.get(c, {}).get("kind")
+        if (
+            sources.get(c) == "models"
+            and "phishing" in lab
+            and ((kind == "scam") != bool(lab["phishing"]))
+        ):
+            contradicted.append(c)
+            keep = {f: v for f, v in keep.items() if f not in ("phishing", "fraud_risk")}
+        out[c] = keep
+    notes = [f"report-only (judges' kappa under {KAPPA_FLOOR}): "
+             + (", ".join(sorted(weak)) or "none"),
+             f"judges' labels contradicting the assignment (left out for phishing and"
+             f" fraud_risk): {len(contradicted)}"]  # fmt: skip
+    return out, notes
+
+
 def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
     """Who set the labels, and how the judges agree per field (pairwise agreement and Cohen's
     kappa; OD-547, J4, J6, J7): read with the base rates, never as accuracy."""
@@ -235,7 +281,7 @@ def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],
     return out + _detectability(root, labels, grades) + _judge_lines(root, grades)
 
 
-def report(root: Path, results: list[ResultFile]) -> list[str]:
+def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912, PLR0915 - one block a section
     doc = gen.verify(root)
     fields = tuple(load_schema().fields)
     lines = [f"Generated set {root} ({doc['mode']}, made with ecf {doc['ecf_version']})"]
@@ -260,15 +306,26 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
     for g in grades:
         grading.check_grade(g, doc)
     shared = _families(doc, grades)
+    sources = {r["id"]: label_file.source(r) for r in label_file.read(root) if r["id"] in labels}
+    judged = "models" in sources.values()
+    settled = {c: v for c, v in labels.items() if sources.get(c) == "operator"}
     graded: dict[str, dict[str, Any]] = {}
     for g in grades:  # measured first: every report states it (P8)
         got = {c.id: dict(c.got) for c in g.cases if c.got}
         graded = graded or got
-        title = (f"grader {g.pair.removeprefix('grader:')} against your labels (its measured"
-                 " accuracy):")  # fmt: skip
-        figures = agreement(got, labels, fields)
+        if judged:  # the judges' own labels can't measure them (OD-547, J6)
+            title = (f"grader {g.pair.removeprefix('grader:')} against the labels you settled"
+                     f" ({len(settled)} emails; never the labels the judges set):")  # fmt: skip
+            figures = agreement(got, settled, fields)
+        else:
+            title = (f"grader {g.pair.removeprefix('grader:')} against your labels (its"
+                     " measured accuracy):")  # fmt: skip
+            figures = agreement(got, labels, fields)
         lines += _field_lines(title, figures)
-        lines += _measured(root, g.run_id, labels, figures)
+        if not judged:
+            lines += _measured(root, g.run_id, labels, figures)
+    scored, notes = _scorable(root, labels, sources, grades) if judged else (labels, [])
+    lines += notes
     proposals = {p["id"]: cast(dict[str, Any], p["labels"])
                  for p in gen.Work(root).read("proposals")}  # fmt: skip
     if proposals:
@@ -279,13 +336,29 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
         if fam is None:
             raise InvalidInputError(f"result {r.run_id[:8]}: ecf doesn't know its classifier's"
                                     f" family ({r.pair})")  # fmt: skip
-        if fam in shared:
+        if fam in shared and shared[fam] == "generator" and doc.get("generator_family_waiver"):
+            lines.append(f"WAIVER: result {r.run_id[:8]}: Claude wrote these emails and Claude"
+                         " classifies them (operator decision, OD-547); read every figure with"
+                         " that in mind")  # fmt: skip
+        elif fam in shared:
             lines.append(f"NOT A MEASUREMENT: result {r.run_id[:8]}'s classifier is {fam}, the"
                          f" family of the {shared[fam]}")  # fmt: skip
         got = {c.id: dict(c.got) for c in r.cases}
-        lines += _field_lines(f"ecf result {r.run_id[:8]} ({r.pair}) against your labels:",
-                              agreement(got, labels, fields))  # fmt: skip
-        lines += _group_lines(got, labels, fields)
+        if judged:  # three figures: judges' labels, your settled ones, both (J13)
+            for part, which in (
+                ("labels the judges set", "models"),
+                ("labels you settled", "operator"),
+                ("all labels", None),
+            ):
+                sub = {c: v for c, v in scored.items() if which is None or sources[c] == which}
+                lines += _field_lines(
+                    f"ecf result {r.run_id[:8]} ({r.pair}) against {part} ({len(sub)} emails):",
+                    agreement(got, sub, fields),
+                )
+        else:
+            lines += _field_lines(f"ecf result {r.run_id[:8]} ({r.pair}) against your labels:",
+                                  agreement(got, labels, fields))  # fmt: skip
+        lines += _group_lines(got, scored, fields)
         if graded:
             lines += _field_lines(f"ecf result {r.run_id[:8]} against the grader:",
                                   agreement(got, graded, fields))  # fmt: skip

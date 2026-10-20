@@ -12,7 +12,7 @@ def test_the_claude_entries_match_the_pinned_models() -> None:
     lock = json.loads(resources.files("ecf_server.data").joinpath("models.lock").read_text())
     claude = {m.id for m in models.listed() if m.provider == "claude"}
     assert claude == set(lock["lifecycle"])
-    assert all(m.family == "anthropic" and m.modes == ("dev",)
+    assert all(m.family == "anthropic" and m.modes == ("dev", "prod")
                for m in models.listed() if m.provider == "claude")  # fmt: skip
 
 

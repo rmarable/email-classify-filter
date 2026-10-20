@@ -35,7 +35,11 @@ def parse(spec: str) -> tuple[str, str | None]:
     return provider, model or None
 
 
-def resolve(spec: str | None, role: str, mode: str, paths: Paths) -> Adapter:
+def resolve(spec: str | None, role: str, mode: str, paths: Paths, *,
+            claude_waiver: bool = False) -> Adapter:  # fmt: skip
+    """The adapter for a role. In PROD, Claude never judges (it is the classifier) and writes a
+    set only with `claude_waiver`: the operator's recorded choice that Claude is then scored on
+    Claude-written mail, on their own Claude plan sign-in (OD-547; operator-only, OD-542)."""
     provider, model = parse(spec or DEFAULTS[(role, mode)])
     default_provider, default_model = parse(DEFAULTS[(role, mode)])
     if model is None and provider == default_provider:
@@ -46,8 +50,12 @@ def resolve(spec: str | None, role: str, mode: str, paths: Paths) -> Adapter:
                                 f" {', '.join(sorted(BUILT))}")  # fmt: skip
     if model is None:
         raise InvalidInputError(f"--{role} {provider}: name the model ({provider}:<model id>)")
-    if mode == "prod" and provider == "claude":
-        raise InvalidInputError(f"a PROD {role} can't be Claude: the classifier is (use --dev"
-                                " for an all-Claude plumbing run)")  # fmt: skip
+    if mode == "prod" and provider == "claude" and (role != "generator" or not claude_waiver):
+        raise InvalidInputError(
+            f"a PROD {role} can't be Claude: the classifier is (use --dev for an all-Claude"
+            " plumbing run)" if role != "generator" else
+            "a PROD set written by Claude needs --claude-generator: you accept that Claude is"
+            " then scored on Claude-written mail, and it runs on your own Claude plan sign-in,"
+            " for your own use only")  # fmt: skip
     models.check(provider, model, role, mode)
     return factory(model, paths)

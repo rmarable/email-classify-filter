@@ -135,7 +135,8 @@ class Grading:
                 reply = self.adapter.ask_case(self.root, row["id"], schema)
             else:
                 reply = self.adapter.ask(grade_prompt(view), schema, self.root / "work" / "call")
-            work.append("calls", [{"stage": "grade", "case": row["id"],
+            # one call log per judge, so judges can run side by side (J19)
+            work.append(f"calls-{_slug(self.adapter.model)}", [{"stage": "grade", "case": row["id"],
                                    "at": self.now().isoformat()} | reply.record()])  # fmt: skip
             entry = _entry(row["id"], reply)
             work.append(log_name, [entry])

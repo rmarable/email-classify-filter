@@ -14,6 +14,7 @@ here logs the prompt or the answer.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any, cast
 
@@ -27,7 +28,7 @@ from ecf_server.secretstore import SecretStore
 KEY_SECRET = "mistral-api-key"  # noqa: S105 - the secret store's entry name, not a secret
 HOST = "api.mistral.ai"
 BASE_URL = f"https://{HOST}"
-TIMEOUT_S = 120.0  # one grading call
+TIMEOUT_S = 60.0  # one grading call (J19)
 KEY_CHECK_TIMEOUT_S = 5.0  # under the CLI's 10 s socket timeout, as Jev's
 CONNECT_S, WRITE_S, POOL_S = 5.0, 10.0, 5.0
 MAX_TOKENS = 2048  # the answer: labels for one email
@@ -110,6 +111,25 @@ def body(model: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
             "max_tokens": MAX_TOKENS}  # fmt: skip
 
 
+_KIND = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+
+
+def error_kind(r: httpx.Response) -> str:
+    """The provider's error type and code, as short fixed labels only (never its message text),
+    so a refusal explains itself without logging content."""
+    try:
+        doc: Any = json.loads(r.content)
+    except ValueError:
+        return ""
+    if not isinstance(doc, dict):
+        return ""
+    d = cast(dict[str, Any], doc)
+    err = d.get("error")
+    inner = cast(dict[str, Any], err) if isinstance(err, dict) else d
+    parts = [str(v) for k in ("type", "code") if (v := inner.get(k)) is not None]
+    return "/".join(p for p in parts if _KIND.fullmatch(p))
+
+
 def _wait(headers: httpx.Headers) -> float | None:
     try:
         v = float(headers.get("retry-after", ""))
@@ -140,12 +160,15 @@ def complete(store: SecretStore, model: str, prompt: str,  # noqa: PLR0911 - one
     if r.status_code == 429:
         return {"status": "rate_limit", "detail": "HTTP 429", "usage": {},
                 "retry_after": _wait(r.headers)}  # fmt: skip
-    if r.status_code in {401, 403}:
-        return {"status": "auth", "detail": f"key refused (HTTP {r.status_code})", "usage": {}}
+    kind = f", {k}" if (k := error_kind(r)) else ""
+    if r.status_code == 401:
+        return {"status": "auth", "detail": f"key refused (HTTP 401{kind})", "usage": {}}
+    if r.status_code == 403:  # the key works (it listed models); this call is forbidden
+        return {"status": "auth", "detail": f"call forbidden (HTTP 403{kind})", "usage": {}}
     if r.status_code >= 500:
-        return {"status": "provider", "detail": f"HTTP {r.status_code}", "usage": {}}
+        return {"status": "provider", "detail": f"HTTP {r.status_code}{kind}", "usage": {}}
     if r.status_code != 200:
-        return {"status": "failed", "detail": f"HTTP {r.status_code}", "usage": {}}
+        return {"status": "failed", "detail": f"HTTP {r.status_code}{kind}", "usage": {}}
     return _read(r.content)
 
 
