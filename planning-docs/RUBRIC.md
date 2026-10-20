@@ -132,3 +132,16 @@ checks: {dropped_at_most: 3}
 The YAML holds the kept questions and rules as their drafts wrote them. Seeing the group and the
 near-miss rule are plain words only (the format has no field for them). Each draft's reasons are in
 its own file.
+
+## Amendments
+
+Recorded under the rule above; no PROD email had been seen when either was made.
+
+- 2026-10-20 (OD-543, operator decision): the automatic checks the check-drop limit counts
+  changed: a shared opening line is no longer a near-duplicate drop (identical text or heavy
+  word overlap only). Reason: the DEV run lost 20 of 46 emails to shared greetings. The limit
+  itself (3 of 20) is unchanged.
+- 2026-10-20 (OD-544, operator decision): the rating page also shows the `phishing` definition
+  and a "signs to look for" box of general red flags (text in the parent plan, Grading). The
+  questions, pass mark, near-miss rule and limits are unchanged. Reason: the DEV labelling showed
+  the definition, folded away, was read narrowly.

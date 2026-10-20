@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed: `ecf eval grade` now shows the grader the email the way a mail client shows it, the same view you label from, and records that in the grade. `ecf eval report` adds how many of the emails written as scams each reader caught, and confirming labels on a generated set no longer shows anything that gives away what an email was written to be (OD-544).
 - Fixed: `ecf eval generate` no longer drops an email just because it opens with the same greeting as another, and asks for more seeds when a group runs short, so sets come out complete. Hygiene drops now say which rule fired, a model can't grade a set it generated, and a labelled DEV set shows each grader's accuracy as a grader comparison (OD-543).
 - Recorded: the all-Claude DEV test run of `ecf eval generate` may use your own Claude plan sign-in, which Anthropic documents for scripted Claude Code use; before ecf offers it to other users it needs an API key or an operator-only mark (OD-542).
 - The realism rubric and pass mark for the generator pilot are fixed: you rate each generated email on four questions, and a generator model must meet seven rules over 20 emails to be used. The rubric was combined from three independent drafts by different model makers, with every part chosen by the operator (OD-541).

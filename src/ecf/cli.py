@@ -1116,10 +1116,12 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
     if status_only:
         return
     require_terminal()
+    from ecf.eval import genset  # noqa: PLC0415
     from ecf.eval.results import differences, latest, load_result  # noqa: PLC0415
 
+    blind = genset.is_generated(root)  # a generated set: nothing that names the assignment
     run = load_result(results) if results else latest(_paths().data_dir / "evals")
-    got = {c.id: c.got for c in run.cases if c.got} if run else {}
+    got = {c.id: c.got for c in run.cases if c.got} if run and not blind else {}
     if got and run:
         typer.echo(f"model answers from eval {run.run_id[:8]} ({run.created_at[:10]})")
     todo = [r for r in (flagged if show_flags else labels.pending(root))
@@ -1127,17 +1129,21 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
     if case_id and not todo:
         typer.echo(f"{case_id}: nothing to confirm (unknown, or already confirmed)")
         return
-    for r in todo:
+    for n_done, r in enumerate(todo, 1):
         card = cards.get(r["id"])
         if card is None:
             continue
         typer.echo("")
-        typer.echo(f"== {card.id} ({card.author}): {card.title}")
+        if blind:
+            typer.echo(f"== email {n_done} of {len(todo)}")
+        else:
+            typer.echo(f"== {card.id} ({card.author}): {card.title}")
         if card.review:
             typer.echo(f"   FLAG, needs your judgement: {card.review}")
             typer.echo("   y = you agree with the expected values below as written;"
                        " n = you'd change them (it stays pending; say what to change)")  # fmt: skip
-        typer.echo(f"   tests: {card.threat}; control: {card.control}")
+        if not blind:
+            typer.echo(f"   tests: {card.threat}; control: {card.control}")
         typer.echo(f"   from: {card.from_}   subject: {card.subject}")
         body = " ".join(card.body.split())
         typer.echo(f"   body: {body[:400]}{'...' if len(body) > 400 else ''}")
@@ -1152,7 +1158,9 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
             labels.confirm(root, card.id, datetime.now(UTC).date())
             typer.echo("   confirmed")
         else:
-            typer.echo(f"   skipped: fix {card.id}.md, run `ecf eval build`, then label it again")
+            typer.echo("   skipped: label it again with `ecf eval label --review all`" if blind
+                       else f"   skipped: fix {card.id}.md, run `ecf eval build`, then label it"
+                       " again")  # fmt: skip
     n = labels.counts(root)
     typer.echo(
         f"{n['confirmed']} of {n['cases']} cases confirmed; commit labels.jsonl to keep them"

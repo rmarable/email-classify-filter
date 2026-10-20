@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -108,6 +109,51 @@ def _plumbing(doc: dict[str, Any]) -> list[str]:
     return lines
 
 
+def assignments(root: Path) -> dict[str, dict[str, str]]:
+    """Each kept case's assignment from the work logs: `kind` (scam or ordinary) and the seed's
+    `auth_result` (facts only, never text)."""
+    work = gen.Work(root)
+    seeds = {s["id"]: s for s in work.read("seeds") if s.get("id")}
+    out: dict[str, dict[str, str]] = {}
+    for o in work.read("outcomes"):
+        s = seeds.get(o.get("seed", ""))
+        if o.get("case") and s is not None:
+            out[o["case"]] = {"kind": str(s["bucket"]).split("/", 1)[0],
+                              "auth": str(s.get("auth_result") or "none")}  # fmt: skip
+    return out
+
+
+def _detectability(root: Path, labels: Mapping[str, Mapping[str, Any]],
+                   results: list[ResultFile]) -> list[str]:  # fmt: skip
+    """How many of the emails written as scams each reader called phishing, and how the seeds'
+    authentication results fall by kind (OD-544): reported, never scored."""
+    given = assignments(root)
+    scams = sorted(c for c, a in given.items() if a["kind"] == "scam")
+    if not scams:
+        return []
+
+    def called(answers: Mapping[str, Mapping[str, Any]]) -> str:
+        seen = [c for c in scams if c in answers and "phishing" in answers[c]]
+        return f"{sum(1 for c in seen if answers[c]['phishing'] is True)}/{len(seen)}"
+
+    lines = ["set detectability (emails written as scams answered phishing: yes; reported, not"
+             " scored):"]  # fmt: skip
+    if labels:
+        lines.append(f"  your labels          {called(labels)}")
+    for r in results:
+        got = {c.id: dict(c.got) for c in r.cases if c.got}
+        if grading.is_grade(r):
+            seen = cast(dict[str, Any], r.summary or {}).get("grader_input")
+            how = seen or "raw email, authentication results included"
+            lines.append(f"  {r.pair:<20} {called(got)} (input: {how})")
+        else:
+            lines.append(f"  ecf {r.run_id[:8]:<16} {called(got)}")
+    auth: Counter[tuple[str, str]] = Counter((a["kind"], a["auth"]) for a in given.values())
+    lines.append("seeds' authentication by kind: " + ", ".join(
+        f"{k} {v} {n}" for (k, v), n in sorted(auth.items())))  # fmt: skip
+    return lines
+
+
 def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
     """A grade file made by the set's own generator is refused (OD-543), even one written
     before that rule existed."""
@@ -144,7 +190,7 @@ def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],
         figures = agreement(got, labels, fields)
         out += _field_lines(title, figures)
         out += _measured(root, g.run_id, labels, figures)
-    return out
+    return out + _detectability(root, labels, grades)
 
 
 def report(root: Path, results: list[ResultFile]) -> list[str]:
@@ -202,6 +248,7 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
             lines += _field_lines(f"ecf result {r.run_id[:8]} against the grader:",
                                   agreement(got, graded, fields))  # fmt: skip
         lines += _rule_lines(r, exp)
+    lines += _detectability(root, labels, results)
     if not runs:
         lines.append(f"no ecf result given: run `ecf eval run --root {root} --claude`, then"
                      " pass its result file")  # fmt: skip

@@ -850,10 +850,10 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: P
             raise InvalidInputError(f"{root} isn't a generated set: Mistral grades only those")
         doc = gen.verify(root)
         eval_models.check("mistral", model, "grader", str(doc.get("mode")))
-        data = grading.case_email(root, case_id)
-        if data is None:
+        view = grading.case_view(root, case_id)  # the labeller's view (OD-544)
+        if view is None:
             return JSONResponse({"status": "too large", "detail": "too large", "usage": {}})
-        prompt = grading.grade_prompt(data.decode("utf-8", "replace"))
+        prompt = grading.grade_prompt(view)
         return JSONResponse(mistral.complete(state.store(), model, prompt,
                                              grading.grade_schema(),
                                              state.mistral_transport))  # fmt: skip

@@ -37,6 +37,7 @@ prompt = sys.stdin.read()
 sc = json.load(open(os.environ["FAKEGEN_SCENARIO"]))
 with open(os.environ["FAKEGEN_LOG"], "a") as log:
     log.write(json.dumps({{"seeds": "Propose" in prompt, "retry": "broke the rules" in prompt,
+                          "prompt_has_auth": "Authentication-Results" in prompt,
                           "cwd_files": sorted(os.listdir("."))}}) + "\n")
 def out(doc):
     print(json.dumps(doc)); sys.exit(0)

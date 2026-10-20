@@ -281,3 +281,46 @@ def test_a_labelled_dev_set_compares_graders_never_ecf(tmp_path: Path) -> None:
     assert "all fields           260/260 100.0%" in text
     assert "ecf results aren't scored on a DEV set" in text
     assert "ecf result rrrrrrrr" not in text
+
+
+def test_graders_get_the_labellers_view_and_say_so(tmp_path: Path) -> None:
+    """OD-544: the mail-client view, no authentication results; recorded in the grade."""
+    _summary, root = run(tmp_path, mode="dev")
+    path, _c, _d = _grade(tmp_path, root)
+    assert path is not None
+    summary: dict[str, Any] = load_result(path).summary or {}
+    assert summary["grader_input"] == grading.GRADER_INPUT
+    first = label_file.read(root)[0]["id"]
+    view = grading.case_view(root, first)
+    assert view is not None and view.lstrip().startswith("From:")
+    assert "Authentication-Results" not in view and "Received:" not in view
+    graded = [c for c in calls(tmp_path) if not c["seeds"]][-1]
+    assert graded["prompt_has_auth"] is False
+
+
+def test_the_report_states_how_many_scams_each_reader_caught(tmp_path: Path) -> None:
+    """OD-544: set detectability and the seeds' authentication by kind, reported only."""
+    _summary, root = run(tmp_path, mode="dev")
+    path, _c, _d = _grade(tmp_path, root)
+    assert path is not None
+    _label(root)
+    text = "\n".join(rep.report(root, [load_result(path)]))
+    assert "set detectability (emails written as scams answered phishing: yes" in text
+    assert "your labels" in text and "(input: mail-client view)" in text
+    assert "seeds' authentication by kind:" in text
+
+
+def test_confirming_a_generated_set_never_names_the_assignment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OD-544 (P7): a counter, no case id, title, test line or model answers."""
+    _summary, root = run(tmp_path, mode="dev")
+    for card in load_cards(root / "cases"):
+        review.set_labels(root / "cases" / f"{card.id}.md", LABELS)
+    assert not build_all(root).findings
+    monkeypatch.setattr("ecf.prompts.require_terminal", lambda: None)
+    monkeypatch.setenv("ECF_HOME", str(tmp_path / "home"))
+    r = CliRunner().invoke(app, ["eval", "label", "--root", str(root)], input="y\nq\n")
+    assert r.exit_code == 0, r.output
+    assert "== email 1 of 20" in r.output
+    assert "dev-" not in r.output and "Generated" not in r.output and "tests:" not in r.output
