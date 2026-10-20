@@ -145,3 +145,10 @@ Recorded under the rule above; no PROD email had been seen when either was made.
   and a "signs to look for" box of general red flags (text in the parent plan, Grading). The
   questions, pass mark, near-miss rule and limits are unchanged. Reason: the DEV labelling showed
   the definition, folded away, was read narrowly.
+- 2026-10-20 (OD-545, operator decision): how the rules count with the pilot's shared seeds (a
+  seed run by a third model; no top-ups): each model is judged out of its 20 seeds, and a seed
+  with no kept email (refused, dropped, or its pool used up) fails every "at least" rule; "lost
+  to the automatic checks" means the dropped emails in the manifest (at most 3); a group the seed
+  run got no seeds for is unmeasured for both models and reported. The near-miss rule's "both
+  models write 20 fresh seeds" means a new seed run by the same third model, then both models
+  again, judged on all 40 per model.

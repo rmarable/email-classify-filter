@@ -110,6 +110,9 @@ class Grading:
         doc = gen.verify(self.root)
         models.check_not_self(str(doc["generator"].get("model")), self.adapter.model,
                               str(doc.get("mode")))  # fmt: skip
+        if shared := doc.get("seeds_from"):  # nor the model that wrote its seeds (OD-545)
+            models.check_not_self(str(shared.get("model")), self.adapter.model,
+                                  str(doc.get("mode")))  # fmt: skip
         work = gen.Work(self.root)
         log_name = f"grade-{_slug(self.adapter.model)}"
         # a case's last entry; failed calls are asked again on resume

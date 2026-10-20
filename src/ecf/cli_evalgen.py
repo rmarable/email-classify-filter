@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -92,6 +92,15 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
             Path | None,
             typer.Option("--write-mix", help="Write the shipped mix to edit, and stop."),
         ] = None,
+        seeds_only: Annotated[
+            bool, typer.Option("--seeds-only", help="A seed run: seeds for every group, no email.")
+        ] = False,
+        seeds_from: Annotated[
+            Path | None,
+            typer.Option(
+                "--seeds-from", help="Write emails from a seed run's seeds (no seed call)."
+            ),
+        ] = None,
     ) -> None:
         """Generate a test set with another model: seeds, then emails, each checked as it's made;
         refusals are recorded, never retried."""
@@ -106,8 +115,16 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
         mode = "dev" if dev else "prod"
+        if seeds_only and seeds_from is not None:
+            raise InvalidInputError("--seeds-only makes seeds; --seeds-from uses them: one or the"
+                                    " other")  # fmt: skip
+        shared: dict[str, Any] | None = None
         if resume:
+            if seeds_only or seeds_from is not None:
+                raise InvalidInputError("--resume carries on as the run began: leave out"
+                                        " --seeds-only and --seeds-from")  # fmt: skip
             doc = gen.read_manifest(root)
+            seeds_only, shared = bool(doc.get("seeds_only")), doc.get("seeds_from")
             if doc["mode"] != mode:
                 raise InvalidInputError(f"{root} is a {doc['mode']} set: resume it the same way")
             m = mixmod.parse(doc["mix"], source="manifest")
@@ -120,13 +137,20 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         _notice("generator", adapter.provider, yes)
         _checked(adapter)
         gen.start(root.expanduser(), resume=resume)
-        run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, echo=typer.echo)
-        s = run.run(resume=resume)
+        if seeds_from is not None:
+            shared = gen.share_seeds(root.expanduser(), seeds_from.expanduser().resolve(), mode,
+                                     n, m, k)  # fmt: skip
+        run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, seeds_only=seeds_only,
+                      shared=shared, echo=typer.echo)  # fmt: skip
+        s = run.run(resume=resume or shared is not None)
         typer.echo(f"{s.state}: kept {s.kept} of {s.target}; refused {sum(s.refused.values())};"
                    f" dropped {sum(s.dropped.values())}")  # fmt: skip
         if s.detail:
             typer.echo(s.detail)
-        if s.state != "stopped":
+        if s.state == "seeded":
+            typer.echo(f"Next: an email run per model with `--seeds-from {root}` (the same"
+                       " --count, --mix and --k)")  # fmt: skip
+        elif s.state != "stopped":
             typer.echo(f"Next: `ecf eval grade --root {root}`, then label blind with `ecf eval"
                        f" label --root {root} --review all --add`")  # fmt: skip
 

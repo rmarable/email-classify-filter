@@ -102,6 +102,15 @@ def _plumbing(doc: dict[str, Any]) -> list[str]:
         lines.append(f"passed on the hygiene retry: {passed['count']} ("
                      + ", ".join(f"{k} {n}" for k, n in sorted(passed["kinds"].items()))
                      + ")")  # fmt: skip
+    if doc.get("seeds_only"):
+        lines.append("a seed run: seeds only, no emails (OD-545)")
+    if shared := cast(dict[str, Any] | None, doc.get("seeds_from")):
+        lines.append(f"seeds written by {shared['generator']} (seed run {shared['set']},"
+                     f" {str(shared['seeds_sha256'])[:12]}); {len(doc.get('kept_seeds') or [])}"
+                     " kept emails, each from a shared seed")  # fmt: skip
+    if doc.get("no_shared_seeds"):
+        lines.append("unmeasured (the seed run has no seeds for them): "
+                     + ", ".join(doc["no_shared_seeds"]))  # fmt: skip
     if "repeated_openings" in doc:
         lines.append(f"repeated opening lines among kept emails: {doc['repeated_openings']}")
     if doc.get("selected"):
