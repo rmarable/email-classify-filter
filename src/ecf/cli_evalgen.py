@@ -187,6 +187,22 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         typer.echo(", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing graded")
         typer.echo(detail if path is None else f"wrote {path}")
 
+    @eval_app.command("agree")
+    def agree(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:
+        """Set the labels from the judges' grades: where they agree, the label is theirs; where
+        they don't, the email waits for you (`ecf eval settle`)."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        from ecf.eval import agree as ag  # noqa: PLC0415
+
+        o = ag.run(root.expanduser().resolve(), datetime.now(UTC).date())
+        typer.echo(f"agreed: {o.agreed} emails confirmed by the judges; for you: {o.disputed}"
+                   f" ({o.whole} whole, a judge refused or skipped them); already confirmed:"
+                   f" {o.skipped}")  # fmt: skip
+        if o.fields:
+            typer.echo("disputed fields: " + ", ".join(f"{k} {v}" for k, v in
+                                                       o.fields.most_common()))  # fmt: skip
+
     @eval_app.command("expect")
     def expect(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:
         """Fill each labelled card's expected rule and safety from ecf's rules engine; confirm

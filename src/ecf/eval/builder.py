@@ -151,5 +151,8 @@ def build_all(root: Path) -> BuildReport:
             }
         )
     # your confirmations stay while the case is unchanged (ecf eval label; OD-241)
-    label_file.write(root, label_file.carry_over(label_file.read(root), labels))
+    label_file.write(
+        root,
+        label_file.carry_over(label_file.read(root), labels, models_ok=label_file.models_ok(root)),
+    )
     return BuildReport(built, large, [])

@@ -296,6 +296,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
     rows = label_file.read(root)
     fixed, _stale = fixed_labels.current(root, rows)  # a stale row's labels are left out
     out: list[Case] = []
+    ok = label_file.models_ok(root)  # judges' labels count only on a generated set (OD-547)
     for r in rows:
         path = (root / r["file"]).resolve()
         if not path.is_relative_to(root) or not path.is_file():
@@ -303,7 +304,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
         if path.stat().st_size > MAX_CASE_BYTES:
             continue
         on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
-        confirmed = label_file.is_confirmed(r) and on_disk == r["sha256"]
+        confirmed = label_file.is_confirmed(r, models_ok=ok) and on_disk == r["sha256"]
         # card-stated > hand-set (fixed_labels.jsonl) > derived (S2 review F4)
         hand = with_fixed_labels(r["expected"], fixed.get(r["id"]))
         exp, gone = label_mapped(hand)

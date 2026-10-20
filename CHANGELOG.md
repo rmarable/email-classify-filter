@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- New: `ecf eval agree` sets a generated set's labels from its judges' grades: where they agree, the label is theirs; where they don't, the email waits for you. Labels the judges set count only on a generated set, and `ecf eval report` shows who set each label and how well the judges agree (OD-547).
 - Planned: generated sets labelled by two or three non-Claude models instead of by you; you settle only where they disagree. Google Gemini is proposed as a second judge (OD-547, ADR 0036 proposed). The generator pilot is settled: Sol is used, Luna isn't (OD-546).
 - New: `ecf eval generate --seeds-only` writes just the seeds, and `--seeds-from <set>` has another model write emails from those same seeds, so two generators can be compared on identical briefs. The pilot's seeds come from a third model (OD-545).
 - Changed: `ecf eval grade` now shows the grader the email the way a mail client shows it, the same view you label from, and records that in the grade. `ecf eval report` adds how many of the emails written as scams each reader caught, and confirming labels on a generated set no longer shows anything that gives away what an email was written to be (OD-544).

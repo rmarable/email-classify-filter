@@ -523,7 +523,19 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    agree` built and tried offline on the DEV grade files; (3) the shared API-judge route with
    Mistral, then Gemini (one key check and one grading call each as the canary, operator's
    go-ahead); (4) the settle phone page and importer; (5) the judges measured on the 57 DEV emails
-   the operator labelled; then step 5 with judges.
+   the operator labelled; then step 5 with judges. **(2) built 2026-10-20**: `ecf eval agree`
+   (`ecf.eval.agree`), label provenance (`confirmed.by: models`, counted only on a generated set;
+   `labels.by_source`; atomic `labels.write`; `confirm_many`), the report's label-source and
+   pairwise judge agreement and kappa lines, `ecf eval label` refusing disputed emails. Offline
+   trial on cleared copies of the two DEV sets, their two Claude graders as judges, priority
+   report-only: 30 of 57 emails fully agreed, 27 had at least one disputed field (sender_type 12,
+   category 6, requires_reply 6, requires_action 4, fraud_risk 3, deadline_mentioned 2,
+   bank_detail_change 2); where the judges agreed they matched the operator's labels on 581 of 649
+   fields (89.5%): safety fields 95-100% (phishing 56/57, bank_detail_change 54/55, fraud_risk
+   52/54, regulator_claim and claims_internal 57/57), sender_type 28/45 and category 33/51: the
+   judges agree with each other and differ from the operator there, the case the kappa rule (J7)
+   is for. Both judges were Claude; the PROD judges are other families. Not yet built: the kappa
+   gate on scoring, three figures and two comparisons (J6, J7, J12, J13), the settle page (4).
 5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report. **As
    amended (OD-547):** Claude generates 300 (waiver); Mistral and Gemini judge; `agree`; the
    operator settles disputes; expect; two C runs; report.

@@ -15,6 +15,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Mapping
+from itertools import combinations
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,7 +37,9 @@ def group_of(case_id: str) -> str:
 
 def confirmed(root: Path) -> dict[str, dict[str, Any]]:
     """Each confirmed case's expected values (labels, rule, safety), by id."""
-    return {r["id"]: r["expected"] for r in label_file.read(root) if label_file.is_confirmed(r)}
+    ok = label_file.models_ok(root)
+    return {r["id"]: r["expected"] for r in label_file.read(root)
+            if label_file.is_confirmed(r, models_ok=ok)}  # fmt: skip
 
 
 def _figure(agree: int, n: int) -> str:
@@ -163,6 +166,36 @@ def _detectability(root: Path, labels: Mapping[str, Mapping[str, Any]],
     return lines
 
 
+def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
+    """Who set the labels, and how the judges agree per field (pairwise agreement and Cohen's
+    kappa; OD-547, J4, J6, J7): read with the base rates, never as accuracy."""
+    from ecf.eval import agree as ag  # noqa: PLC0415
+
+    n, by = label_file.counts(root), label_file.by_source(root)
+    lines = [f"labels: {by['models']} emails set by the judges, {by['operator']} by you,"
+             f" {n['cases'] - n['confirmed']} not confirmed"
+             f" ({len(ag.open_disputes(root))} waiting for you to settle)"]  # fmt: skip
+    if len(grades) < 2:
+        return lines
+    got = [{c.id: dict(c.got) for c in g.cases if c.got} for g in grades]
+    names = [g.pair.removeprefix("grader:") for g in grades]
+    lines.append("judge agreement per field (pairs; kappa; read with each field's base rate):")
+    for f in load_schema().fields:
+        parts: list[str] = []
+        for (i, a), (j, b) in combinations(enumerate(got), 2):
+            ids = [c for c in a if c in b and f in a[c] and f in b[c]]
+            if not ids:
+                continue
+            xs, ys = [a[c][f] for c in ids], [b[c][f] for c in ids]
+            k = ag.kappa(xs, ys)
+            same = sum(x == y for x, y in zip(xs, ys, strict=True))
+            parts.append(f"{names[i]}~{names[j]} {same}/{len(ids)}"
+                         + (f" k={k:.2f}" if k is not None else ""))  # fmt: skip
+        if parts:
+            lines.append(f"  {f:<20} " + "; ".join(parts))
+    return lines
+
+
 def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
     """A grade file made by the set's own generator is refused (OD-543), even one written
     before that rule existed."""
@@ -199,7 +232,7 @@ def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],
         figures = agreement(got, labels, fields)
         out += _field_lines(title, figures)
         out += _measured(root, g.run_id, labels, figures)
-    return out + _detectability(root, labels, grades)
+    return out + _detectability(root, labels, grades) + _judge_lines(root, grades)
 
 
 def report(root: Path, results: list[ResultFile]) -> list[str]:
@@ -258,6 +291,7 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
                                   agreement(got, graded, fields))  # fmt: skip
         lines += _rule_lines(r, exp)
     lines += _detectability(root, labels, results)
+    lines += _judge_lines(root, grades)
     if not runs:
         lines.append(f"no ecf result given: run `ecf eval run --root {root} --claude`, then"
                      " pass its result file")  # fmt: skip
