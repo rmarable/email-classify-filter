@@ -810,6 +810,24 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         return JSONResponse(ruletest.run(state.clock, current, text, root))
 
+    @allow(Caller.CLI)
+    def eval_expect(request: Request) -> JSONResponse:
+        """`ecf eval expect`: each case's rule and safety from the rules in force on its labels
+        and facts (eval generate plan decision 8); writes nothing."""
+        root = Path(_str(_body(request), "root"))
+        if not root.is_absolute():
+            raise InvalidInputError("root must be an absolute path")
+        conn = state.connect()
+        try:
+            current = config.current_rules(conn)
+        finally:
+            conn.close()
+        rows = ruletest.outcomes(state.clock, current, root)
+        return JSONResponse({"cases": [
+            {"id": r["id"], "rule": r["rule"], "error": r.get("error"),
+             "safety": evalrun.expected_safety(r["labels"], r["rule"], r["actions"])}
+            for r in rows]})  # fmt: skip
+
     @allow(Caller.CLI, Caller.WORK, Caller.OBSERVE)
     def show_schema(_request: Request) -> JSONResponse:
         """The effective schema: version, the install's extension, digest (OD-478)."""
@@ -824,6 +842,7 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:
     return [
         Route("/v1/config/apply", apply_config, methods=["POST"]),
         Route("/v1/rules/test", test_rules, methods=["POST"]),
+        Route("/v1/eval/expect", eval_expect, methods=["POST"]),
         Route("/v1/schema", show_schema, methods=["GET"]),
     ]
 
@@ -992,7 +1011,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             actor_model=_opt_str(body, "actor_model"),
             actor_high_model=_opt_str(body, "actor_high_model"),
             source_run=_opt_str(body, "source_run"), batch=batch,
-            copy_to=_copy_to(body))  # fmt: skip
+            copy_to=_copy_to(body), for_gate=body.get("for_gate") is not False)  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip
 

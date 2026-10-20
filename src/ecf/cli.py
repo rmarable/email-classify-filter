@@ -18,6 +18,7 @@ from ecf import __version__, api_keys, cli_history, service_unit, timerange, wat
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
+from ecf.cli_evalgen import make_commands as make_evalgen_commands
 from ecf.cli_export import make_commands as make_export_commands
 from ecf.cli_import import make_commands as make_import_commands
 from ecf.cli_init import make_commands as make_init_commands
@@ -93,6 +94,7 @@ make_destroy_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 app.add_typer(make_corpus_app(_paths), name="corpus")
 make_stats_command(app, _paths)
+make_evalgen_commands(eval_app, _paths)
 cli_history.make_reprocess_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
 app.add_typer(alerts_app, name="alerts")
@@ -1286,14 +1288,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     if claude:
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
-        if (classifier_backend != "null" or not redact or not_for_gate or not signals
+        if (classifier_backend != "null" or not redact or not signals
                 or jev_concurrency != 1):  # fmt: skip
-            raise InvalidInputError("--classifier-backend, --no-redact, --not-for-gate,"
-                                    " --no-signals and --jev-concurrency are for `ecf eval run`"
-                                    " without --claude")  # fmt: skip
+            raise InvalidInputError("--classifier-backend, --no-redact, --no-signals and"
+                                    " --jev-concurrency are for `ecf eval run` without"
+                                    " --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy, actor_high_model=actor_high_model,
-                     source_run=source_run)  # fmt: skip
+                     source_run=source_run, for_gate=not not_for_gate)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
@@ -1333,16 +1335,17 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
                  root: Path, preset: str, sensitivity: str, fraud_only: bool,
                  classifier_model: str | None, actor_model: str | None,
                  batch: int, copy: Path | None, *, actor_high_model: str | None = None,
-                 source_run: str | None = None) -> None:  # fmt: skip
+                 source_run: str | None = None, for_gate: bool = True) -> None:  # fmt: skip
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
             "fraud_only": fraud_only, "classifier_model": classifier_model,
             "actor_model": actor_model, "actor_high_model": actor_high_model,
             "source_run": source_run, "batch": batch,
-            "copy_to": str(copy) if copy else None})  # fmt: skip
+            "copy_to": str(copy) if copy else None, "for_gate": for_gate})  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
+           else NOT_FOR_GATE if r.get("for_gate") is False
            else PRESET_D_ONLY if r["preset"] == "D"
            else _frozen_only(r) or "other models: for comparison only")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
@@ -1674,6 +1677,8 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
 
 # a preset D run passes the gate only on the pinned actors with a source Jev run on D's current
 # gate key (v3.0.0 step 4, P8; J8)
+NOT_FOR_GATE = ("not for the gate (--not-for-gate, or a generated set): saved and reported,"
+                " never counts for the go-live gate")  # fmt: skip
 PRESET_D_ONLY = "comparison only (preset D: not the pinned actors, or a Jev run off D's key)"
 
 

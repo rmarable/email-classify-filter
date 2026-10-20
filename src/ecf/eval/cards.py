@@ -118,7 +118,10 @@ class Card(BaseModel):
     why: str = ""
     failure_looks_like: str = ""
     review: str = ""  # why the operator's judgement is needed; `ecf eval label` shows it
-    author: Literal["hand", "claude", "gemma"] = "hand"
+    author: Literal["hand", "claude", "gemma", "generated"] = "hand"
+    # the model that wrote a generated card (`ecf eval generate`); set exactly when author is
+    # `generated` (eval generate plan P12)
+    generator: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9:._-]{0,80}$")
     profile: Literal["org", "freemail"] = "org"
     from_: str = Field(alias="from")
     to: list[str] = Field(default_factory=list[str])  # default: the profile's address
@@ -137,6 +140,12 @@ class Card(BaseModel):
     expected: Expected = Field(default_factory=Expected)
     body: str = ""
     html: str | None = None
+
+    @model_validator(mode="after")
+    def _generator(self) -> Card:
+        if (self.author == "generated") != (self.generator is not None):
+            raise ValueError("a generated card names its generator, and only a generated card")
+        return self
 
     @model_validator(mode="before")
     @classmethod

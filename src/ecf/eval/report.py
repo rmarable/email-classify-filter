@@ -1,0 +1,183 @@
+"""`ecf eval report`: a generated set's figures (eval generate plan, Report; P8, P13, P22, P25).
+
+Against your confirmed labels only (OD-486): the grader's measured accuracy first, then each ecf
+result's agreement with your labels and with the grader, per field and per group (a group under
+`REPORT_ONLY_BELOW` cases is report-only), with Wilson intervals; and how often the generator's
+own label hints matched yours. Rule and safety figures appear only once `ecf eval expect` has
+filled them. A DEV set's report shows plumbing counts only, never accuracy. No email or card
+text is printed: ids, field names, closed values and counts.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, cast
+
+from ecf.errors import InvalidInputError
+from ecf.eval import generate as gen
+from ecf.eval import grade as grading
+from ecf.eval import labels as label_file
+from ecf.eval.metrics import wilson
+from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile
+from ecf.schema import load_schema
+
+DEV_BANNER = "DEV: plumbing test, not a measurement"
+
+
+def group_of(case_id: str) -> str:
+    return re.sub(r"-\d{3}$", "", case_id.removeprefix(gen.DEV_PREFIX))
+
+
+def confirmed(root: Path) -> dict[str, dict[str, Any]]:
+    """Each confirmed case's expected values (labels, rule, safety), by id."""
+    return {r["id"]: r["expected"] for r in label_file.read(root) if label_file.is_confirmed(r)}
+
+
+def _figure(agree: int, n: int) -> str:
+    if not n:
+        return "-"
+    lo, hi = wilson(agree, n)
+    return f"{agree}/{n} {100 * agree / n:.1f}% [{100 * lo:.1f}, {100 * hi:.1f}]"
+
+
+def agreement(a: Mapping[str, Mapping[str, Any]], b: Mapping[str, Mapping[str, Any]],
+              fields: tuple[str, ...]) -> dict[str, tuple[int, int]]:  # fmt: skip
+    """Per field, (agree, n) over the cases both answer."""
+    out: dict[str, tuple[int, int]] = {}
+    for f in fields:
+        pairs = [(a[c][f], b[c][f]) for c in a if c in b and f in a[c] and f in b[c]]
+        out[f] = (sum(x == y for x, y in pairs), len(pairs))
+    return out
+
+
+def _field_lines(title: str, figures: dict[str, tuple[int, int]]) -> list[str]:
+    lines = [title]
+    lines += [f"  {f:<20} {_figure(*v)}" for f, v in figures.items() if v[1]]
+    total = (sum(v[0] for v in figures.values()), sum(v[1] for v in figures.values()))
+    lines.append(f"  {'all fields':<20} {_figure(*total)}")
+    return lines
+
+
+def _group_lines(got: Mapping[str, Mapping[str, Any]], labels: Mapping[str, Mapping[str, Any]],
+                 fields: tuple[str, ...]) -> list[str]:  # fmt: skip
+    groups = sorted({group_of(c) for c in labels})
+    lines = ["  by group (fields agreeing):"]
+    for g in groups:
+        sub = {c: v for c, v in labels.items() if group_of(c) == g}
+        fig = agreement(got, sub, fields)
+        cases = sum(1 for c in sub if c in got)
+        agree, n = sum(v[0] for v in fig.values()), sum(v[1] for v in fig.values())
+        note = " (report-only)" if cases < REPORT_ONLY_BELOW else ""
+        lines.append(f"    {g:<20} {cases:>4} cases  {_figure(agree, n)}{note}")
+    return lines
+
+
+def _plumbing(doc: dict[str, Any]) -> list[str]:
+    drops = cast(dict[str, dict[str, int]], doc.get("dropped") or {})
+    refused = cast(dict[str, int], doc.get("refused") or {})
+    lines = [f"generator {doc['generator'].get('provider')}:{doc['generator'].get('model')}"
+             f" ({doc['generator'].get('version') or 'version not recorded'}); {doc['calls']}"
+             f" calls, {doc['seconds']} s; usage {doc.get('usage') or {}}",
+             f"kept {sum(g['kept'] for g in doc['groups'].values())} of {doc['count']};"
+             f" refused {sum(refused.values())}"
+             + (f" ({', '.join(f'{g} {n}' for g, n in refused.items())})" if refused
+                else "")]  # fmt: skip
+    for reason, by_group in drops.items():
+        lines.append(f"dropped, {reason}: {sum(by_group.values())}"
+                     f" ({', '.join(f'{g} {n}' for g, n in by_group.items())})")  # fmt: skip
+    if doc.get("selected"):
+        lines.append(f"selected (over a third dropped): {', '.join(doc['selected'])}")
+    return lines
+
+
+def report(root: Path, results: list[ResultFile]) -> list[str]:
+    doc = gen.verify(root)
+    fields = tuple(load_schema().fields)
+    lines = [f"Generated set {root} ({doc['mode']}, made with ecf {doc['ecf_version']})"]
+    lines += _plumbing(doc)
+    if doc["mode"] == "dev":
+        return [DEV_BANNER, *lines]
+    ids = set(doc["cases"])
+    exp = confirmed(root)
+    labels = {c: cast(dict[str, Any], e.get("labels") or {}) for c, e in exp.items()}
+    lines.append(f"confirmed labels: {len(labels)} of {len(ids)} cases")
+    if not labels:
+        lines.append(f"no confirmed labels yet: label blind with `ecf eval label --root {root}"
+                     " --review all --add`, then confirm (`ecf eval label`)")  # fmt: skip
+        return lines
+    grades = [r for r in results if grading.is_grade(r)]
+    runs = [r for r in results if not grading.is_grade(r)]
+    for r in results:
+        if not {c.id for c in r.cases} <= ids:
+            raise InvalidInputError(f"result {r.run_id[:8]} has cases this set doesn't (matched"
+                                    " by case id)")  # fmt: skip
+    for g in grades:
+        grading.check_grade(g, doc)
+    graded: dict[str, dict[str, Any]] = {}
+    for g in grades:  # measured first: every report states it (P8)
+        got = {c.id: dict(c.got) for c in g.cases if c.got}
+        graded = graded or got
+        title = (f"grader {g.pair.removeprefix('grader:')} against your labels (its measured"
+                 " accuracy):")  # fmt: skip
+        figures = agreement(got, labels, fields)
+        lines += _field_lines(title, figures)
+        lines += _measured(root, g.run_id, labels, figures)
+    proposals = {p["id"]: cast(dict[str, Any], p["labels"])
+                 for p in gen.Work(root).read("proposals")}  # fmt: skip
+    if proposals:
+        lines += _field_lines("generator's label hints against your labels:",
+                              agreement(proposals, labels, fields))  # fmt: skip
+    for r in runs:
+        got = {c.id: dict(c.got) for c in r.cases}
+        lines += _field_lines(f"ecf result {r.run_id[:8]} ({r.pair}) against your labels:",
+                              agreement(got, labels, fields))  # fmt: skip
+        lines += _group_lines(got, labels, fields)
+        if graded:
+            lines += _field_lines(f"ecf result {r.run_id[:8]} against the grader:",
+                                  agreement(got, graded, fields))  # fmt: skip
+        lines += _rule_lines(r, exp)
+    if not runs:
+        lines.append(f"no ecf result given: run `ecf eval run --root {root} --claude`, then"
+                     " pass its result file")  # fmt: skip
+    lines.append("noise: two runs of the same models on this set (`ecf eval compare`) give the"
+                 " run-to-run spread to read these figures against")  # fmt: skip
+    return lines
+
+
+ACCURACY_LOG = "grader-accuracy"
+
+
+def _measured(root: Path, grade_id: str, labels: Mapping[str, Mapping[str, Any]],
+              figures: dict[str, tuple[int, int]]) -> list[str]:  # fmt: skip
+    """The grader's accuracy is measured once, on your labels as they first stood (their digest
+    recorded); a later report on relabelled cases says so beside the first figure (P8)."""
+    digest = hashlib.sha256(json.dumps(labels, sort_keys=True).encode()).hexdigest()
+    work = gen.Work(root)
+    first = next((r for r in work.read(ACCURACY_LOG) if r["grade"] == grade_id), None)
+    if first is None:
+        kept = {f: list(v) for f, v in figures.items()}
+        work.append(ACCURACY_LOG, [{"grade": grade_id, "labels_sha256": digest,
+                                    "figures": kept}])  # fmt: skip
+        return []
+    if first["labels_sha256"] == digest:
+        return []
+    then = cast(dict[str, list[int]], first["figures"])
+    agree, n = sum(v[0] for v in then.values()), sum(v[1] for v in then.values())
+    return [f"  measured on your labels as first reported ({first['labels_sha256'][:8]}):"
+            f" all fields {_figure(agree, n)}; your labels changed since, so the figure above is"
+            " on the relabelled cases"]  # fmt: skip
+
+
+def _rule_lines(r: ResultFile, exp: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    with_rule = [c for c in r.cases if c.id in exp and exp[c.id].get("rule")]
+    if not with_rule:
+        return ["  rule and safety: not scored (no fraud-guard or injection cases; `ecf eval"
+                " expect` fills the expected rule and safety from your labels)"]  # fmt: skip
+    rule_ok = sum(c.fields.get("rule", False) for c in with_rule)
+    unsafe = [c.id for c in with_rule if not c.safety]
+    return [f"  rule {_figure(rule_ok, len(with_rule))}; unsafe {len(unsafe)}"
+            + (f" ({', '.join(unsafe[:5])})" if unsafe else "")]  # fmt: skip

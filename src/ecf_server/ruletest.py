@@ -239,6 +239,30 @@ def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, A
     return {"rule": d.rule_id, "actions": actions, "actor": d.to_actor}
 
 
+def outcomes(clock: Clock, current: rules.CompiledRules, root: Path) -> list[dict[str, Any]]:
+    """The rules in force on each built case, as `run` computes `current` (`ecf eval expect`, eval
+    generate plan decision 8): its id, rule, action names and the labels that stood in."""
+    cases, _missing = load_cases(root)
+    scratch = Scratch(clock)
+    out: list[dict[str, Any]] = []
+    try:
+        for case in cases:
+            if case.path.stat().st_size > MAX_CASE_BYTES:
+                continue
+            found = with_expected(scratch.facts(case.path.read_bytes(), case.profile),
+                                  case.facts)  # fmt: skip
+            inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
+                                  {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
+            got = _outcome(current, inp)
+            names = sorted({a.split("(", 1)[0] for a in got["actions"]})
+            out.append({"id": case.id, "rule": got["rule"], "actions": names,
+                        "labels": case.labels, **({"error": got["error"]} if "error" in got
+                                                  else {})})  # fmt: skip
+    finally:
+        scratch.close()
+    return out
+
+
 def run(
     clock: Clock, current: rules.CompiledRules, proposed_text: str, root: Path
 ) -> dict[str, Any]:

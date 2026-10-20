@@ -1,0 +1,205 @@
+# Published categories for `ecf eval generate` (planning-docs/EVAL-GENERATE-GRADE.md, decision 2).
+# Names, definitions and counts are quoted from their sources; nothing here is written by ecf's
+# authors except ids, the operator's keep rule, the operator's groups and shares, and the
+# reply-only delivery method (an operator addition, not from MITRE). Prompts take their text from
+# this file only; a user's mix file holds ids and shares (`ecf eval generate --write-mix`).
+
+version: 1
+
+sources:
+  ic3:
+    title: "FBI Internet Crime Complaint Center, 2025 Internet Crime Report"
+    url: "https://www.ic3.gov/AnnualReport/Reports/2025_IC3Report.pdf"
+    fetched: "2026-10-19"
+    used: "2025 Crime Types, By Complaint Count (p. 7); Appendix B: Definitions (pp. 59-60)"
+  mitre:
+    title: "MITRE ATT&CK T1566 Phishing, v2.8, modified 2026-09-18"
+    url: "https://attack.mitre.org/techniques/T1566/"
+    fetched: "2026-10-19"
+    used: "sub-technique names (.001, .002, .004; .003 is not email)"
+  gmail:
+    title: "Gmail Help: inbox categories"
+    url: "https://support.google.com/mail/answer/3094499"
+    fetched: "2026-10-19"
+    used: "the five category names"
+
+# Which IC3 types are kept (operator decision 2026-10-19).
+keep_rule: >-
+  A type whose Appendix B definition describes a message that deceives or pressures the
+  recipient into acting (pay, send data, click, call, reply) is kept; one that describes an
+  incident, an outcome, something not aimed at the recipient, or nothing, is left out.
+
+ic3_types:
+  - id: phishing-spoofing
+    name: "Phishing/Spoofing"
+    complaints: 191561
+    kept: true
+    definition: "The use of unsolicited email, text messages, and telephone calls purportedly from a legitimate company requesting personal, financial, and/or login credentials."
+  - id: extortion
+    name: "Extortion"
+    complaints: 89129
+    kept: true
+    definition: "Unlawful extraction of money or property through intimidation or undue exercise of authority. It may include threats of physical harm, criminal prosecution, or public exposure."
+  - id: investment
+    name: "Investment"
+    complaints: 72984
+    kept: true
+    definition: "Deceptive practice that induces investors to make purchases based on false information. These scams usually offer those targeted large returns with minimal risk. (Retirement, 401K, Ponzi, Pyramid, etc.)."
+  - id: personal-data-breach
+    name: "Personal Data Breach"
+    complaints: 67456
+    kept: false
+    definition: "A leak/spill of personal data which is released from a secure location to an untrusted environment. Also, a security incident in which an individual’s sensitive, protected, or confidential data is copied, transmitted, viewed, stolen, or used by an unauthorized individual."
+  - id: non-payment-non-delivery
+    name: "Non-Payment/Non-Delivery"
+    complaints: 56478
+    kept: true
+    definition: "Goods or services are shipped, and payment is never rendered (non-payment). Payment is sent, and goods or services are never received, or are of less quality (non-delivery)."
+  - id: tech-customer-support
+    name: "Tech/Customer Support"
+    complaints: 47794
+    kept: true
+    definition: "Subject posing as technical or customer support/service."
+  - id: government-impersonation
+    name: "Government Impersonation"
+    complaints: 32424
+    kept: true
+    definition: "A government official is impersonated to collect or extort money."
+  - id: identity-theft
+    name: "Identity Theft"
+    complaints: 31675
+    kept: false
+    definition: "Someone wrongfully obtains and uses personally identifiable information in some way that involves fraud or deception, typically for economic gain."
+  - id: business-email-compromise
+    name: "Business Email Compromise"
+    complaints: 24768
+    kept: true
+    definition: "BEC is a scam targeting businesses or individuals working with suppliers and/or businesses regularly performing wire transfer payments. These sophisticated scams are carried out by fraudsters by compromising email accounts and other forms of communication such as phone numbers and virtual meeting applications, through social engineering or computer intrusion techniques to conduct unauthorized transfer of funds."
+  - id: employment
+    name: "Employment"
+    complaints: 24688
+    kept: true
+    definition: "An individual believes they are legitimately employed and loses money, or launders money/items during their employment."
+  - id: confidence-romance
+    name: "Confidence/Romance"
+    complaints: 23159
+    kept: true
+    definition: "An individual believes they are in a relationship (family, friendly, or romantic) and are tricked into sending money, personal and financial information, or items of value to the perpetrator or to launder money or items to assist the perpetrator. This includes the Grandparent’s Scheme and any scheme in which the perpetrator preys on the targeted individual’s “heartstrings.”"
+  - id: harassment-stalking
+    name: "Harassment/Stalking"
+    complaints: 21557
+    kept: false
+    definition: "Repeated words, conduct, and/or action that serve no legitimate purpose and are directed at a specific person to annoy, alarm, or distress that person. Engaging in a course of conduct directed at a specific person that would cause a reasonable person to fear for his/her safety or the safety of others or suffer substantial emotional distress."
+  - id: other
+    name: "Other"
+    complaints: 20031
+    kept: false
+    definition: "Criminal or civil matters not currently designated as an IC3 crime type."
+  - id: credit-card-check-fraud
+    name: "Credit Card/Check Fraud"
+    complaints: 18774
+    kept: true
+    definition: "Credit card fraud is a wide-ranging term for theft and fraud committed using a credit card or any similar payment mechanism (ACH, EFT, recurring charge, etc.) as a fraudulent source of funds in a transaction."
+  - id: real-estate
+    name: "Real Estate"
+    complaints: 12368
+    kept: true
+    definition: "Loss of funds from a real estate investment or fraud involving rental or timeshare property."
+  - id: advanced-fee
+    name: "Advanced Fee"
+    complaints: 7762
+    kept: true
+    definition: "An individual pays money to someone in anticipation of receiving something of greater value in return but instead receives significantly less than expected or nothing."
+  - id: lottery-sweepstakes-inheritance
+    name: "Lottery/Sweepstakes/Inheritance"
+    complaints: 5623
+    kept: true
+    definition: "An individual is contacted about winning a lottery or sweepstakes they never entered, or to collect on an inheritance from an unknown relative."
+  - id: threats-of-violence
+    name: "Threats of Violence"
+    complaints: 4826
+    kept: false
+    definition: "An expression of an intention to inflict pain, injury, self-harm, or death not in the context of extortion."
+  - id: data-breach
+    name: "Data Breach"
+    complaints: 3963
+    kept: false
+    definition: "A data breach in cyber context is the use of a computer intrusion to acquire confidential or secure information. This does not include computer intrusions targeting personally owned computers, systems, devices, or personal accounts such as social media or financial accounts."
+  - id: ransomware
+    name: "Ransomware"
+    complaints: 3611
+    kept: true
+    definition: "A type of malicious software designed to block access to a computer system until money is paid."
+  - id: ipr-copyright-counterfeit
+    name: "IPR/Copyright and Counterfeit"
+    complaints: 2386
+    kept: true
+    definition: "The illegal theft and use of others’ ideas, inventions, and creative expressions – what’s called intellectual property – everything from trade secrets and proprietary products and parts to movies, music, and software."
+  - id: overpayment
+    name: "Overpayment"
+    complaints: 2194
+    kept: true
+    definition: "An individual is sent a payment/commission and is instructed to keep a portion of the payment and send the remainder to another individual or business."
+  - id: sim-swap
+    name: "SIM Swap"
+    complaints: 971
+    kept: false
+    definition: "The use of unsophisticated social engineering techniques against mobile service providers to transfer a victim’s phone service to a mobile device in the criminal’s possession."
+  - id: malware
+    name: "Malware"
+    complaints: 893
+    kept: true
+    definition: "Software or code intended to damage, disable, or capable of copying itself onto a computer and/or computer systems to have a detrimental effect or destroy data."
+  - id: botnet
+    name: "Botnet"
+    complaints: 715
+    kept: false
+    definition: "A botnet is a group of two or more computers controlled and updated remotely for an illegal purchase such as a Distributed Denial of Service or Telephony Denial of Service attack or other nefarious activity."
+  - id: charity
+    name: "Charity"
+    complaints: 662
+    kept: true
+    definition: "Using deception to get money from individuals believing they are making donations to legitimate charities and/or charities representing victims of natural disasters shortly after the incident occurs."
+
+delivery:
+  - id: attachment
+    name: "Spearphishing Attachment"
+    source: mitre
+    technique: "T1566.001"
+  - id: link
+    name: "Spearphishing Link"
+    source: mitre
+    technique: "T1566.002"
+  - id: callback
+    name: "Spearphishing Voice"
+    source: mitre
+    technique: "T1566.004"
+  - id: reply-only
+    name: "Reply only (no link, attachment or phone number)"
+    source: operator
+
+ordinary:
+  - {id: primary, name: "Primary", source: gmail}
+  - {id: social, name: "Social", source: gmail}
+  - {id: promotions, name: "Promotions", source: gmail}
+  - {id: updates, name: "Updates", source: gmail}
+  - {id: forums, name: "Forums", source: gmail}
+
+# The operator's mix (decisions 2026-10-19): method A groups, option C shares, option B delivery
+# (equal shares; within a group the extra emails rotate, giving 4/4/4/3 per group of 15).
+default_mix:
+  ordinary_share: 0.5
+  groups:
+    phishing: [phishing-spoofing]
+    extortion: [extortion]
+    investment: [investment]
+    non-payment: [non-payment-non-delivery]
+    tech-support: [tech-customer-support]
+    gov-impersonation: [government-impersonation]
+    bec: [business-email-compromise]
+    employment: [employment]
+    romance: [confidence-romance]
+    other-ic3: [credit-card-check-fraud, real-estate, advanced-fee, lottery-sweepstakes-inheritance, ransomware, ipr-copyright-counterfeit, overpayment, malware, charity]
+  scam: {phishing: 1, extortion: 1, investment: 1, non-payment: 1, tech-support: 1, gov-impersonation: 1, bec: 1, employment: 1, romance: 1, other-ic3: 1}
+  ordinary: {primary: 1, social: 1, promotions: 1, updates: 1, forums: 1}
+  delivery: {attachment: 1, link: 1, callback: 1, reply-only: 1}

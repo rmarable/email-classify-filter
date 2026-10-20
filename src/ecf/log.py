@@ -82,6 +82,12 @@ CONTENT_KEYS = frozenset(
         "probabilities",
         "legend",
         "choice",
+        # `ecf eval generate` and `grade` (eval plan P27): tool output, refusals, seeds, emails
+        "stdout",
+        "stderr",
+        "refusal",
+        "seed",
+        "email",
     }
 )
 # Any key containing one of these is redacted too ("bot_token", "client_secret", ...).

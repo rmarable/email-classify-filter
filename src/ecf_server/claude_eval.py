@@ -58,7 +58,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -69,6 +69,7 @@ from ecf.errors import (
     InvalidInputError,
     NotFoundError,
 )
+from ecf.eval import genset
 from ecf.eval.results import (
     CaseResult,
     ClaimOutcome,
@@ -136,6 +137,9 @@ class Options:
     # preset C on frozen classifications (step 6, P2): the `/ecf-eval` run (ID or a prefix of
     # 8 or more characters) whose classification of each case it takes, asking only the actor
     source_run: str | None = None
+    # False: an experiment (`--not-for-gate`), and always on a generated set (eval plan P1): run
+    # on the eval agents, never pinned, so the gate never reads it, and the gate's set stays put
+    for_gate: bool = True
 
 
 Outcome = ClaimOutcome
@@ -309,7 +313,7 @@ def models_for(conn: sqlite3.Connection, opts: Options,
         models |= dict.fromkeys(roles, model)
     used = used_roles(opts)
     frozen = opts.preset == "C" and opts.source_run is not None  # never a gate run (P2)
-    pinned = (opts.preset in claude_pins.PAIR and not frozen
+    pinned = (opts.preset in claude_pins.PAIR and not frozen and opts.for_gate
               and all(models[r] == eff[r] for r in used))  # fmt: skip
     if opts.preset == jev_keys.PRESET:  # Jev's side must be D's current one too (P8)
         pinned = pinned and source_key is not None and source_key == jev_keys.stored(conn).get(
@@ -444,8 +448,9 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
     return str(row["run_id"]), got, {k: m[k] for k in C_SOURCE_KEYS if k in m}
 
 
-def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
-          *, spawn: Callable[[Callable[[], None]], None] | None = None,
+def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
+          clock: Clock, data_dir: Path, opts: Options, *,
+          spawn: Callable[[Callable[[], None]], None] | None = None,
           ) -> dict[str, Any]:  # fmt: skip
     if opts.preset not in USED_ROLES:
         raise InvalidInputError("a Claude eval runs preset C or D (preset B was removed in"
@@ -462,6 +467,8 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
         raise InvalidInputError("sensitivity must be standard or high")
     if not 1 <= opts.batch <= BATCH_MAX:
         raise InvalidInputError(f"batch must be between 1 and {BATCH_MAX}")
+    if genset.is_generated(opts.root):
+        opts = replace(opts, for_gate=False)
     cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
@@ -493,7 +500,8 @@ def start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pat
                   starter, policy.labels(schema, starter), data_dir, schema, source_run,
                   source, source_key)  # fmt: skip
         _SLOT.run = run
-    evalrun.remember_root(connect, clock, opts.root)  # only here (P16)
+    if opts.for_gate:  # only here (P16); never an experiment's or a generated set's (eval P1)
+        evalrun.remember_root(connect, clock, opts.root)
     log.info("claude_eval.registered", run_id=run.run_id[:8], cases=len(works),
              preset=opts.preset, pinned=pinned)  # fmt: skip
 
@@ -656,6 +664,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary: dict[str, Any] = evalrun.summarize(results, run.diffs, complete=complete,
                                                 classifier=not frozen,
                                                 gate_eligible=run.pinned and not frozen,
+                                                for_gate=run.opts.for_gate,
                                                 schema=run.schema,
                                                 fraud_only=run.opts.fraud_only)  # fmt: skip
     if frozen:  # what the classifier was asked, and with: the source run's
@@ -1309,6 +1318,7 @@ def snapshot(run: Run) -> dict[str, Any]:
             "pinned": run.pinned, "batch": run.opts.batch,
             "models": {r: run.models[r] for r in used_roles(run.opts)},
             **({"source_run": run.source_run} if run.source_run is not None else {}),
+            **({} if run.opts.for_gate else {"for_gate": False}),
             "created_at": to_ts(run.created), "result": run.summary,
         }  # fmt: skip
 
