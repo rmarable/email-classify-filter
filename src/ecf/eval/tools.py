@@ -206,6 +206,9 @@ class CliTool:
     version_argv: tuple[str, ...] = ("--version",)
     help_argv: tuple[tuple[str, ...], ...] = (("--help",),)
     allowed_items: frozenset[str] | None = None  # None: the tool reports no item kinds
+    # run at the end of the preflight (the executable, the call's environment, a work folder);
+    # returns facts for the manifest
+    prepare: Callable[[str, Mapping[str, str], Path], dict[str, Any]] | None = None
 
 
 def version_of(text: str) -> tuple[int, ...] | None:
@@ -225,6 +228,7 @@ class CliAdapter:
         self.tool, self.provider, self.model = tool, tool.provider, model
         self._environ = environ
         self._version: str | None = None
+        self._facts: dict[str, Any] = {}
 
     def _exe(self) -> str:
         path = shutil.which(self.tool.executable, path=allowed_env({}, self._environ).get("PATH"))
@@ -255,11 +259,14 @@ class CliAdapter:
                                     f" doesn't list {', '.join(missing)}: ecf can't run it"
                                     " safely")  # fmt: skip
         self._version = ".".join(map(str, found))
+        if self.tool.prepare is not None:
+            self._facts = self.tool.prepare(exe, self.env(), workdir)
 
     def describe(self) -> dict[str, Any]:
         argv = self.tool.argv(self.model, Path("schema.json"), Path("out.json"))
         return {"provider": self.provider, "model": self.model, "version": self._version,
-                "argv_sha256": hashlib.sha256("\0".join(argv).encode()).hexdigest()}  # fmt: skip
+                "argv_sha256": hashlib.sha256("\0".join(argv).encode()).hexdigest()
+                } | self._facts  # fmt: skip
 
     def ask(self, prompt: str, schema: dict[str, Any], workdir: Path) -> Reply:
         """One call from `workdir` (made empty but for the call's files)."""

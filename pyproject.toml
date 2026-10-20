@@ -149,3 +149,9 @@ name = "Only the service and its API import Jev's dispatch (v3.0.0 step 4, P6)"
 type = "protected"
 protected_modules = ["ecf_server.jev_dispatch"]
 allowed_importers = ["ecf_server.service", "ecf_server.api"]
+
+[[tool.importlinter.contracts]]
+name = "Only the API imports the Mistral client (eval generate plan step 3): eval grading only"
+type = "protected"
+protected_modules = ["ecf_server.mistral"]
+allowed_importers = ["ecf_server.api"]

@@ -43,6 +43,23 @@ def _checked(adapter: object) -> None:
     typer.echo(f"{adapter.provider} {adapter.model}: tool-less check passed")
 
 
+def _estimate(root: Path, adapter: object, yes: bool) -> None:
+    """An API grader's cost before the run: at most about, with the cap (Cost guards)."""
+    from ecf.eval import grade as grading  # noqa: PLC0415
+    from ecf.eval import labels as label_file  # noqa: PLC0415
+    from ecf.eval import mistral_api  # noqa: PLC0415
+
+    assert isinstance(adapter, mistral_api.MistralAdapter)  # noqa: S101 - the caller checked
+    rows = label_file.read(root)
+    fixed = len(grading.grade_prompt(""))
+    chars = sum(fixed + (root / str(r["file"])).stat().st_size for r in rows)
+    cost = adapter.estimate(chars, len(rows))
+    typer.echo(f"{len(rows)} calls to {adapter.model}: at most about ${cost:.2f}; this run stops"
+               f" before passing ${adapter.max_cost:.2f} (--max-cost)")  # fmt: skip
+    if not yes and not typer.confirm("Go ahead?", default=False):
+        raise typer.Exit(1)
+
+
 def _notice(role: str, provider: str, yes: bool) -> None:
     typer.echo(NOTICE[role].format(provider=provider) + " " + NEVER_REAL)
     if not yes and not typer.confirm("Go ahead?", default=False):
@@ -121,15 +138,27 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         ] = None,
         resume: Annotated[bool, typer.Option("--resume", help="Finish a stopped grading.")] = False,
         yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation.")] = False,
+        max_cost: Annotated[
+            float, typer.Option("--max-cost", help="US$ this run may spend (API graders).")
+        ] = 15.0,
     ) -> None:
         """Have a model from another family label the set blind; written as a result file."""
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import grade as grading  # noqa: PLC0415
-        from ecf.eval import providers  # noqa: PLC0415
+        from ecf.eval import mistral_api, models, providers  # noqa: PLC0415
 
-        mode = gen.mode_of(root)
+        doc = gen.read_manifest(root)
+        mode = str(doc.get("mode"))
         adapter = providers.resolve(grader, "grader", mode, paths())
+        if mode == "prod":
+            g = doc["generator"]
+            models.check_pair((g["provider"], g["model"]), (adapter.provider, adapter.model))
         _notice("grader", adapter.provider, yes)
+        if isinstance(adapter, mistral_api.MistralAdapter):
+            if max_cost <= 0:
+                raise InvalidInputError("--max-cost must be more than 0")
+            adapter.max_cost = max_cost
+            _estimate(root, adapter, yes)
         _checked(adapter)
         path, counts, detail = grading.Grading(root, adapter, echo=typer.echo).run(resume=resume)
         typer.echo(", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing graded")

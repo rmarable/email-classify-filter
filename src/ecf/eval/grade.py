@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from ecf.errors import InvalidInputError
 from ecf.eval import generate as gen
@@ -48,6 +48,28 @@ def grade_prompt(raw: str) -> str:
         load_schema().prompt_block,
         "The email, as received (headers and body):\n<<<EMAIL\n" + raw + "\nEMAIL>>>",
     ])  # fmt: skip
+
+
+def case_email(root: Path, case_id: str) -> bytes | None:
+    """A case's raw email from the set's index, or None when it is over `MAX_EMAIL_BYTES`. The
+    file must sit inside the set."""
+    row = next((r for r in label_file.read(root) if r.get("id") == case_id), None)
+    if row is None:
+        raise InvalidInputError(f"{case_id}: no such case in {root}")
+    base = root.resolve()
+    path = (base / str(row["file"])).resolve()
+    if not path.is_relative_to(base) or not path.is_file():
+        raise InvalidInputError(f"{case_id}: its file isn't in the set")
+    data = path.read_bytes()
+    return None if len(data) > MAX_EMAIL_BYTES else data
+
+
+@runtime_checkable
+class CaseGrader(Protocol):
+    """A grader that is given the set and the case, not the prompt: the service builds the
+    prompt from the set itself (the Mistral API, whose key only the service holds)."""
+
+    def ask_case(self, root: Path, case_id: str, schema: dict[str, Any]) -> Reply: ...
 
 
 def set_version(root: Path) -> str:
@@ -85,8 +107,11 @@ class Grading:
             if len(data) > MAX_EMAIL_BYTES:
                 work.append(log_name, [{"id": row["id"], "outcome": "too large"}])
                 continue
-            reply = self.adapter.ask(grade_prompt(data.decode("utf-8", "replace")), schema,
-                                     self.root / "work" / "call")  # fmt: skip
+            if isinstance(self.adapter, CaseGrader):
+                reply = self.adapter.ask_case(self.root, row["id"], schema)
+            else:
+                reply = self.adapter.ask(grade_prompt(data.decode("utf-8", "replace")), schema,
+                                         self.root / "work" / "call")  # fmt: skip
             work.append("calls", [{"stage": "grade", "case": row["id"],
                                    "at": self.now().isoformat()} | reply.record()])  # fmt: skip
             entry = _entry(row["id"], reply)

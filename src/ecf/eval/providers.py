@@ -1,9 +1,10 @@
 """Generator and grader providers for `ecf eval generate` and `grade` (eval generate plan, Model
 switches; P24). `--generator` and `--grader` take `<provider>[:<model>]`.
 
-Only built adapters are listed: `claude` (DEV, build step 2). The `codex` adapter and the Mistral
-API client come in step 3 with the shipped model list, the model filter and the three-family
-check; until then a named provider is refused with the step it arrives in.
+The providers are the built adapters: `claude` (DEV, build step 2), `codex` (the generator) and
+`mistral` (the grader, through the service; build step 3). Every model is checked against the
+shipped list (`ecf.eval.models`): unknown models and labs the model filter bars are refused, and
+each model only in the roles and modes it is listed for.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ecf.errors import InvalidInputError
-from ecf.eval import claude_tool
+from ecf.eval import claude_tool, codex_tool, mistral_api, models
 from ecf.eval.tools import Adapter
 from ecf.paths import Paths
 
@@ -21,9 +22,10 @@ DEFAULTS = {
     ("grader", "dev"): "claude:claude-sonnet-5-5",
     ("grader", "prod"): "mistral:mistral-large-4-0",
 }
-PLANNED = {"codex": "build step 3", "mistral": "build step 3"}
-# provider -> a factory taking the model id and the install's paths; filled as each is built
-BUILT: dict[str, Callable[[str, Paths], Adapter]] = {"claude": claude_tool.adapter}
+# provider -> a factory taking the model id and the install's paths
+BUILT: dict[str, Callable[[str, Paths], Adapter]] = {
+    "claude": claude_tool.adapter, "codex": codex_tool.adapter, "mistral": mistral_api.adapter,
+}  # fmt: skip
 
 
 def parse(spec: str) -> tuple[str, str | None]:
@@ -40,13 +42,12 @@ def resolve(spec: str | None, role: str, mode: str, paths: Paths) -> Adapter:
         model = default_model
     factory = BUILT.get(provider)
     if factory is None:
-        when = PLANNED.get(provider)
-        raise InvalidInputError(f"the {provider} {role} isn't built yet ({when})" if when else
-                                f"no {role} provider {provider!r}: one of"
-                                f" {', '.join(sorted(PLANNED))}")  # fmt: skip
+        raise InvalidInputError(f"no {role} provider {provider!r}: one of"
+                                f" {', '.join(sorted(BUILT))}")  # fmt: skip
     if model is None:
         raise InvalidInputError(f"--{role} {provider}: name the model ({provider}:<model id>)")
     if mode == "prod" and provider == "claude":
         raise InvalidInputError(f"a PROD {role} can't be Claude: the classifier is (use --dev"
                                 " for an all-Claude plumbing run)")  # fmt: skip
+    models.check(provider, model, role, mode)
     return factory(model, paths)

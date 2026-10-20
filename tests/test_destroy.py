@@ -66,9 +66,9 @@ class Env:
         return rec
 
 
-# every secret ecf keeps, both API keys included (v3.0.0 step 2a)
+# every secret ecf keeps, the API keys included (v3.0.0 step 2a; Mistral's, eval step 3)
 SECRETS = ("mailbox/ap", "mailbox/ar", "slack/bot", "slack/app", "models-api-key", "jev-api-key",
-           "export-signing-seed")  # fmt: skip
+           "mistral-api-key", "export-signing-seed")  # fmt: skip
 
 
 @pytest.fixture

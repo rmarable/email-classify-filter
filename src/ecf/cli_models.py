@@ -99,7 +99,8 @@ def _release_lines(rel: dict[str, Any]) -> list[str]:
 
 
 OLDER_SERVICE = "the service is older than this ecf; restart it from this version first"
-PROVIDER_HELP = "anthropic (the model watch's Models API key) or typesafe (Jev); required."
+PROVIDER_HELP = ("anthropic (the model watch's Models API key), typesafe (Jev) or mistral"
+                 " (`ecf eval grade`); required.")  # fmt: skip
 PROVIDER = typer.Option("--provider", help=PROVIDER_HELP, show_default=False)
 
 
@@ -116,14 +117,16 @@ def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None
     """`ecf models api-key set|clear --provider ...` (v3.0.0 step 2a, OD-503) and `ecf models
     watch` (SPEC §7.6; V1.4 step 10)."""
     key_app = typer.Typer(
-        no_args_is_help=True, help="API keys: Anthropic's Models API (optional), TypeSafe (Jev)."
+        no_args_is_help=True,
+        help="API keys: Anthropic's Models API (optional), TypeSafe (Jev), Mistral (eval grade).",
     )
     models_app.add_typer(key_app, name="api-key")
 
     @key_app.command("set")
     def key_set(provider: Annotated[str | None, PROVIDER] = None) -> None:
         """Store an API key: anthropic lets the weekly watch read Anthropic's model list
-        (optional); typesafe lets ecf call Jev. Checked by one call; a Security Notice follows."""
+        (optional); typesafe lets ecf call Jev; mistral lets `ecf eval grade` call Mistral.
+        Checked by one call; a Security Notice follows."""
         name = api_keys.check_provider(provider)
         require_terminal()
         with LocalClient(paths()) as c:
@@ -134,8 +137,9 @@ def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None
             typer.echo(f"Stored; the Models API lists {r['listed']} models for it. The watch runs"
                        " within a minute, then weekly (ecf models status).")  # fmt: skip
         else:
-            typer.echo(f"{'Replaced' if r.get('replaced') else 'Stored'} the TypeSafe API key;"
-                       " TypeSafe accepted it.")  # fmt: skip
+            who = "TypeSafe" if name == "typesafe" else "Mistral"
+            typer.echo(f"{'Replaced' if r.get('replaced') else 'Stored'} the {who} API key;"
+                       f" {who} accepted it.")  # fmt: skip
 
     @key_app.command("clear")
     def key_clear(provider: Annotated[str | None, PROVIDER] = None) -> None:
@@ -145,8 +149,9 @@ def _watch_commands(models_app: typer.Typer, paths: Callable[[], Paths]) -> None
         with LocalClient(paths()) as c:
             check_service_version(c)
             c.request("POST", f"/v1/models/keys/{name}", {"clear": True})
-        typer.echo("Removed the Models API key." if name == "anthropic"
-                   else "Removed the TypeSafe API key.")  # fmt: skip
+        typer.echo({"anthropic": "Removed the Models API key.",
+                    "typesafe": "Removed the TypeSafe API key.",
+                    "mistral": "Removed the Mistral API key."}[name])  # fmt: skip
 
     @models_app.command("watch")
     def watch() -> None:

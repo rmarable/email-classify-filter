@@ -88,17 +88,18 @@ def env(conn: sqlite3.Connection, db_path: Path) -> Env:
 
 
 def test_providers_are_a_fixed_list() -> None:
-    assert api_keys.PROVIDERS == ("anthropic", "typesafe")
+    assert api_keys.PROVIDERS == ("anthropic", "typesafe", "mistral")
     for bad in (None, "", "openai", "Anthropic"):
         with pytest.raises(InvalidInputError) as err:
             api_keys.check_provider(bad)
         detail = err.value.detail
-        assert "--provider anthropic" in detail and "--provider typesafe" in detail
+        assert all(p in detail for p in api_keys.PROVIDERS)
 
 
 @pytest.mark.parametrize(("provider", "key", "problem"), [
     ("anthropic", "abc-123", "starts sk-ant-"),
     ("typesafe", "sk-ant-abc", "Anthropic key"),
+    ("mistral", "sk-ant-abc", "Anthropic key"),
     ("typesafe", "ab c", "no spaces"),
     ("typesafe", "abc\x07def", "control or non-ASCII"),
     ("typesafe", "abcdé", "control or non-ASCII"),

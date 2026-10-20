@@ -77,6 +77,7 @@ def test_contract(make: Callable[[Path], SecretStore], tmp_path: Path) -> None:
         "slack/app",
         "models-api-key",
         "jev-api-key",
+        "mistral-api-key",
         "export-signing-seed",
     ],
 )

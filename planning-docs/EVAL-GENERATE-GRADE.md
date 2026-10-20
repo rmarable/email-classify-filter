@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -257,8 +257,8 @@ that every flag ecf passes appears in `--help`, and records the argv digest and 
 | Provider | Call | Sign-in / key |
 |---|---|---|
 | `claude` (DEV) | `claude -p --output-format json --json-schema <s> --model <full id> --system-prompt <adapter text> --tools "" --strict-mcp-config --safe-mode --no-session-persistence`, prompt on stdin; success only when `subtype` is `success` and `structured_output` is present; whether structured output works with `--tools ""` is checked by one run (operator's go-ahead) | ecf's `CLAUDE_CONFIG_DIR` and login (`ecf claude --login`, `src/ecf/claude_wrapper.py:389`); transcripts purged after |
-| `codex` | `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --json --output-schema <s> -o <file> -m gpt-6.1-sol`, prompt on stdin, from an empty folder outside any git repo, plus: `--disable shell_tool --disable apps --disable plugins --disable remote_plugin --disable multi_agent --disable image_generation --disable browser_use --disable computer_use --disable goals --disable sleep_tool --disable tool_suggest --disable skill_search --disable view_image` and `-c web_search="disabled" -c tools.experimental_request_user_input.enabled=false -c include_environment_context=false -c include_environment_context_time=false -c analytics.enabled=false -c otel.metrics_exporter="none" -c feedback.enabled=false -c check_for_update_on_startup=false -c history.persistence="none" -c memories.generate_memories=false -c memories.use_memories=false -c model_reasoning_effort=<set after the pilot>` (all on the command line, since `--ignore-user-config` skips `config.toml`); `-o` deleted before each call | a separate `CODEX_HOME` under ecf's data folder, with no `AGENTS.md`, its own one-time `codex login`, and `cli_auth_credentials_store="keyring"` |
-| `mistral` | HTTPS POST to Mistral's chat completions endpoint from the client with a JSON-schema response format (strict mode as Mistral documents it), no tools field, `model: mistral-large-4-0`; one email per call | API key read from the macOS Keychain through the service (written by `ecf eval key set mistral`, step-up) |
+| `codex` | `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --json --output-schema <s> -o <file> -m gpt-6.1-sol`, prompt on stdin, from an empty folder outside any git repo, plus: `--disable shell_tool --disable apps --disable plugins --disable remote_plugin --disable multi_agent --disable image_generation --disable browser_use --disable computer_use --disable goals --disable sleep_tool --disable tool_suggest --disable skill_search --disable view_image` and `-c web_search="disabled" -c tools.experimental_request_user_input.enabled=false -c include_environment_context=false -c include_environment_context_time=false -c analytics.enabled=false -c otel.metrics_exporter="none" -c feedback.enabled=false -c check_for_update_on_startup=false -c history.persistence="none" -c memories.generate_memories=false -c memories.use_memories=false -c model_reasoning_effort=<set after the pilot>` (all on the command line, since `--ignore-user-config` skips `config.toml`); `-o` deleted before each call. Built (step 3): also `--disable unified_exec` and `-c model_catalog_json=<file>`, a one-model catalogue in direct tool mode that the preflight writes from `codex debug models --bundled` (Facts: code mode); `model_reasoning_effort` not passed until the pilot sets it | a separate `CODEX_HOME` under ecf's data folder, with no `AGENTS.md`, its own one-time `codex login`, and `cli_auth_credentials_store="keyring"` |
+| `mistral` | HTTPS POST to Mistral's chat completions endpoint **from the service** (operator decision 2026-10-20, OD-540: the key never reaches the client), with a JSON-schema response format (`json_schema` with `name`, `schema`, `strict: true`), no tools field, `model: mistral-large-4-0`; one email per call. The client sends `POST /v1/eval/mistral` with the set, the case id and the model; the service checks the set (`gen.verify`, PROD, listed model), reads the email and builds the grading prompt itself | API key in the secret store, written by the service (`ecf models api-key set --provider mistral`, OD-540; no step-up, as the other keys) |
 
 Every adapter:
 - runs (for a CLI) under an allow-listed environment built like `claude_wrapper.base_env`
@@ -321,8 +321,8 @@ entries equal to `ecf_server/data/models.lock`.
 
 ### Where it runs
 
-The client (`ecf`), except the gate guard and `expect`'s rules-engine call, which go through the
-service API (`ecf` never imports `ecf_server`).
+The client (`ecf`), except the gate guard, `expect`'s rules-engine call and the Mistral grader's
+calls, which go through the service API (`ecf` never imports `ecf_server`).
 
 ## Estimates (to be replaced by the pilot's figures; P18, P28)
 
@@ -376,7 +376,21 @@ service API (`ecf` never imports `ecf_server`).
    (operator), then the DEV run of 30 (real-service test: `uv run ecf --install accept eval
    generate --dev --root <folder> --yes`, then `grade`, `report`).
 3. **Codex adapter and Mistral API client** (with `ecf eval key set mistral` and the cost guards),
-   the model list, the family check; Codex passes the canary.
+   the model list, the family check; Codex passes the canary. **Built 2026-10-20** (OD-540):
+   `ecf.eval.codex_tool` (direct-mode catalogue, the item allow-list, "model not on this ChatGPT
+   plan" told apart from the usage limit), `ecf.eval.models` and `ecf/data/eval_models.json`
+   (Claude entries equal `models.lock`, a test checks; `gpt-5.6-terra` listed for the free plan,
+   not a default; excluded labs refused by name), `ecf.eval.mistral_api` (the answer checked, cost
+   from the returned token counts and the shipped price, `--max-cost` stops before the next call
+   could pass it, 429s paced up to 5 minutes, a refused key stops), `ecf_server.mistral` and the
+   routes `POST /v1/models/keys/mistral` and `POST /v1/eval/mistral`; `grade` checks the PROD
+   generator and grader families and prints an estimate; `report` names a result whose
+   classifier shares a family "NOT A MEASUREMENT" and refuses an unknown classifier. The key
+   command is `ecf models api-key set --provider mistral` (OD-540), not `ecf eval key`. The Codex
+   canary through the adapter passed on `gpt-5.6-terra` (2026-10-20, operator's go-ahead; one
+   call on ecf's accept sign-in, Codex 0.163.0, "answered with no tool access"). The operator's
+   ChatGPT account moved to Plus the same day; the `gpt-6.1-sol` canary is next (go-ahead).
+   Mistral's first real call waits for the operator's key and account setup.
 4. **PROD pilot** (real-service test, operator's go-ahead each time): the same 20 seeds through Sol
    and Luna; the operator rates realism blind; drops, refusals per group (ceiling in the pass mark),
    repeated openings, phrase overlap; time, tokens and plan messages per call (meter read before and
@@ -445,6 +459,25 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   available; `--output-schema` is sent as strict JSON schema, not checked by the CLI; `-o` written
   only on a completed turn; model ids `gpt-6.1-sol` (min 0.153.0) and `gpt-6-luna` (min 0.155.0);
   usage limit is the text "You’ve hit your usage limit" and exit 1.
+- **Codex code mode** (2026-10-20; Codex CLI 0.163.0, source at `rust-v0.163.0`): the catalogue
+  (`codex debug models`; the one bundled in the binary, `--bundled`, has the same entries for
+  `gpt-6.1-sol`, `gpt-6-luna` and `gpt-5.6-terra`) gives every model but `gpt-5.5` `tool_mode: code_mode_only`, which wins over feature
+  switches (`core/src/tools/mod.rs:63-73`); in that mode Codex adds `list_mcp_resources`,
+  `list_mcp_resource_templates` and `read_mcp_resource` with no MCP server configured
+  (`core/src/tools/spec_plan.rs:1289-1304`) and a JavaScript `exec` tool that calls them; the
+  event's `"server":"codex"` is a default label. A catalogue given with `-c model_catalog_json`
+  replaces the server's (`model-provider/src/provider.rs:393`). One canary (operator's go-ahead)
+  on the free plan, `gpt-5.6-terra`, that model's entry with `tool_mode: direct`, plus
+  `--disable unified_exec`: answered `{"word":"ok","decoy":"none"}`, events only
+  `agent_message`, 6,098 input tokens (about 15.6k in code mode, where it had called
+  `list_mcp_resources`).
+- **Mistral structured output** (docs.mistral.ai/studio/conversations/structured-output/custom,
+  fetched 2026-10-20): `POST https://api.mistral.ai/v1/chat/completions`, `Authorization: Bearer
+  <key>`, `response_format: {type: "json_schema", json_schema: {schema, name, strict: true}}`; the
+  answer is the JSON text in `choices[0].message.content`, with `finish_reason` and `usage`
+  (`prompt_tokens`, `completion_tokens`); Mistral prepends "Your output should be an instance of a
+  JSON object following this schema" to the system prompt. Whether `strict` is enforced: not
+  stated (ecf validates anyway).
 - **Mistral API** (2026-10-19): Large 4 (docs.mistral.ai/models/mistral-large-4-0.md): ids
   `mistral-large-4`, `mistral-large-4-0`; "Public Preview", released 2026-10-06; 1M context;
   structured outputs and function calling supported; $0.68/$2.09 per 1M tokens on sale, $1.36/$4.18
@@ -466,7 +499,8 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   chooses **Do not train on my content** in the Privacy Portal; either one covers ChatGPT and Codex
   ("ChatGPT training data controls apply to content processed through Codex"; local workflows run
   on the device). Codex's **Include environments** setting (chatgpt.com/codex/cloud/settings/general)
-  is separate and unaffected. A thumbs up or down can make the whole conversation trainable even
+  is separate and unaffected (the operator found no such setting on their Plus account,
+  2026-10-20: this (rv) summary point is unconfirmed, and there is nothing to turn off). A thumbs up or down can make the whole conversation trainable even
   after opting out. Opting out deletes nothing; deleted chats are scheduled for permanent deletion
   within 30 days, except de-identified content or content kept for security or legal reasons. Codex
   usage from local clients, the CLI included, is reachable through the Compliance API (business
@@ -474,8 +508,8 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   Requests go to chatgpt.com/backend-api/codex/responses with `store: false` (source). The Codex
   page names "GPT-5.6 Terra and GPT-5.6 Luna" as replacements from 2026-08-31, which doesn't match
   the 0.163.0 catalogue's `gpt-6.1-sol` / `gpt-6-luna`; `codex debug models` decides. **Before the
-  pilot the operator** turns off Improve the model for everyone and Include environments, and gives
-  no thumbs up or down on these runs.
+  pilot the operator** turns off Improve the model for everyone, and gives no thumbs up or down on
+  these runs.
 - **Codex sign-in and checks** (2026-10-20, Codex CLI 0.163.0, `CODEX_HOME` =
   `~/Library/Application Support/ecf/accept/codex-home`): the browser sign-in didn't complete
   (only "starting browser login flow" in its log); the device-code sign-in (`codex login
