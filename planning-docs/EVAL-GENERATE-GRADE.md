@@ -1,8 +1,8 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
-are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
+are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
 
 ## Context
@@ -285,7 +285,8 @@ Every adapter:
 - On the provider account: prepaid credit, and monthly spending limits on the organisation and
   the workspace (Mistral: "API access can be suspended until the next month begins" at the limit),
   so a run can never spend more than the operator set; training turned off in the Admin Console's
-  Privacy panel.
+  Privacy panel (where that panel sits now is unverified; check at account setup). API keys come
+  from Mistral AI Studio (console.mistral.ai), not from Vibe ((rv), unverified by Claude).
 - `--max-cost` (default US$15 per run): ecf adds each call's cost from the returned token counts and
   a shipped price table (with its date and source), and stops the run when the next call could pass
   the cap.
@@ -417,9 +418,13 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
 - **Vibe, not used** (source at mistral-vibe tag v3.0.0, commit a0c78d0a; docs.mistral.ai Vibe pages;
   2026-10-19): the core always offers `read_file`, `write_file`, `edit`, `bash`, `run_typescript` and
   `search_tool_functions` to the model; `--enabled-tools` only makes calls to them be refused; no
-  `--model` flag, and an unknown `active_model` silently falls back to Medium 3.5; no schema mode;
+  `--model` flag, but an exact id can be pinned through a `[[models]]` entry or `VIBE_ACTIVE_MODEL`,
+  and an unknown pin falls back to Medium 3.5 with a warning (corrected 2026-10-20, (rv): a peer
+  session's re-read at the same tag, `vibe/core/config/models.py:500-503`,
+  `vibe/core/config/layers/environment.py:15-17`, `vibe_schema.py:1178-1196`); no schema mode;
   the browser sign-in yields a Mistral API key stored in the Keychain (`.env` fallback); training on
-  by default for Vibe ("users are not opted out by default"); server-side experiments can change
+  by default for Vibe ("users are not opted out by default"; help.mistral.ai/en/articles/455207,
+  updated 2026-09-03, fetched 2026-10-20, (rv); Vibe and API training settings are separate); server-side experiments can change
   the system prompt and default model unless pinned. Hence the API route.
 - **Codex** (step 0 detail; source at `rust-v0.163.0`; learn.chatgpt.com config pages; 2026-10-19):
   tools switch off with `--disable <feature>` and `-c` keys except `apply_patch` (no switch); the
