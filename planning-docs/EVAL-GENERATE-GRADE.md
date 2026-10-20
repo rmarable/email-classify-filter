@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -344,9 +344,8 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    available to this Plus account (`codex debug models`) (each a one-call check with the operator's
    go-ahead, after the operator signs in to ecf's separate `CODEX_HOME`). Done 2026-10-20: the
    OpenAI help-centre pages (Facts) and the `claude -p` check (Facts); the Codex sign-in and
-   `codex debug models` (Facts). Open: the canary with `gpt-6.1-sol` was refused because the
-   operator's ChatGPT account is on the free plan (Facts); it is run again after the move to
-   Plus, which the PROD route needs anyway.
+   `codex debug models` (Facts). The canary with `gpt-6.1-sol`, refused on the free plan,
+   passed after the move to Plus (Facts).
 1. **Shared pipeline**: mix, seeds, emails, checks, card changes, set layout, manifest, grade (as a
    result file), expect, report, resume, gate guard, logging. Tests with a fake executable on PATH
    (as `tests/test_claude_wrapper.py`'s `fake_claude`) and recorded JSON, including a limit, a
@@ -389,7 +388,7 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    command is `ecf models api-key set --provider mistral` (OD-540), not `ecf eval key`. The Codex
    canary through the adapter passed on `gpt-5.6-terra` (2026-10-20, operator's go-ahead; one
    call on ecf's accept sign-in, Codex 0.163.0, "answered with no tool access"). The operator's
-   ChatGPT account moved to Plus the same day; the `gpt-6.1-sol` canary is next (go-ahead).
+   ChatGPT account moved to Plus the same day, and the `gpt-6.1-sol` canary passed (Facts).
    Mistral's first real call waits for the operator's key and account setup.
 4. **PROD pilot** (real-service test, operator's go-ahead each time): the same 20 seeds through Sol
    and Luna; the operator rates realism blind; drops, refusals per group (ceiling in the pass mark),
@@ -522,7 +521,13 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   `gpt-6.1-sol`, from an allow-listed environment: refused before the model ran, HTTP 400 "The
   'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account", after a
   "Model metadata for `gpt-6.1-sol` not found" warning. The account is on ChatGPT's free plan
-  (operator, 2026-10-20); whether Plus accepts the model is unverified until the canary runs again.
+  (operator, 2026-10-20). On Plus (operator, 2026-10-20; the operator's go-ahead), the same
+  canary passed: `gpt-6.1-sol`, its entry from `codex debug models` (now listed for the
+  account, `tool_mode: code_mode_only` like the others) given as a one-model catalogue with
+  `tool_mode: direct`, plus `--disable unified_exec`; answered `{"word":"ok","decoy":"none"}`,
+  events only `agent_message`, 7,277 input and 39 output tokens, exit 0. It ran from a scratch
+  script, not through the adapter, and used the server's catalogue entry rather than
+  `--bundled`; the adapter's own canary runs before the pilot's first `generate`.
 - **`claude -p` check** (2026-10-20, Claude Code 2.1.303, the accept install's Claude login, an empty
   scratch folder, an allow-listed environment): `--output-format json --json-schema <s> --model
   claude-haiku-5-5 --system-prompt <short> --tools "" --strict-mcp-config --safe-mode
