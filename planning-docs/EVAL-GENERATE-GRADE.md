@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 3 (2026-10-19): draft 2 plus the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 4 (2026-10-19): draft 3 plus the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
@@ -87,8 +87,14 @@ read on its own.
 9. **Never the gate's evidence** (op; P1): see Design, Gate guard.
 10. **Destinations** (op; P5, P6): ADR 0034 amends the one-destination rule for a closed list:
     OpenAI (through Codex) and Mistral AI (through Vibe), Anthropic already allowed. A new provider
-    needs its own ADR. SPEC §12.4 gets a paragraph per provider in the TypeSafe form. The operator
-    reads both providers' usage policies in full before the PROD pilot.
+    needs its own ADR. SPEC §12.4 gets a paragraph per provider in the TypeSafe form. Both usage
+    policies were read on 2026-10-19 (Facts); the operator accepted the PROD pilot on these
+    conditions (op): (a) a refused request is never retried, reworded or replaced, so a group can
+    come up short and the report gives refusals per group (OpenAI's policy bars "circumventing our
+    safeguards"); (b) every generator prompt states its purpose in fixed words the operator
+    approves: the emails test an email-security filter, stay on this machine and are never sent;
+    (c) the pilot stays at 20 seeds and the operator accepts the risk to the ChatGPT account;
+    (d) Extortion is in the pilot like the other groups.
 11. **Tools without tools** (op; P3, P20): no adapter is used until its tool is shown to run with no
     tool access and no MCP servers (Design, Adapters). The release waits for the Mistral adapter to
     pass that test.
@@ -181,11 +187,11 @@ manifest records both. Prompts take published text from the shipped file only.
   agencies refused in sender names.
 - HTML is not accepted; any `<script`, `<form`, `on…=` or `javascript:` in any field is refused.
 - A hygiene failure is retried once with the finding kinds quoted, then dropped; a schema misfit is
-  dropped; a refusal is recorded and dropped.
+  dropped; a refusal is recorded and dropped, never retried (decision 10a).
 - Near-duplicates across the whole set (same opening line, or high word-shingle overlap) are
   dropped (P30).
-- Drops are replaced from the seed pool until the group's count is met or 3 times its count is
-  reached; the report gives drops and refusals per group, and marks a group with over a third
+- Drops other than refusals are replaced from the seed pool until the group's count is met or 3
+  times its count is reached; a refused seed is never replaced or retried (decision 10a); the report gives drops and refusals per group, and marks a group with over a third
   dropped as "selected" (M6).
 - `generate` refuses a folder that isn't empty. The manifest holds the sha256 of every card,
   `labels.jsonl` and the mix; `grade`, `expect` and `report` refuse a set edited since. The manifest
@@ -322,8 +328,8 @@ service API (`ecf` never imports `ecf_server`).
 ## Open questions for the operator
 
 Decided 2026-10-19 (Decisions 2, Generation, Grading): the IC3 rule and groups, the shares, the
-delivery split, the 13 fields, the recipient profiles, the release number (OD-533). Still open:
-1. The usage policies (the operator reads OpenAI's and Mistral's before the pilot).
+delivery split, the 13 fields, the recipient profiles, the release number (OD-533), the usage
+policies and the pilot conditions (decision 10). None open.
 
 ## Facts
 
@@ -341,9 +347,21 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   also apply"; Pro from $100/month, "no five-hour limit".
 - **OpenAI API prices** (developers.openai.com/api/docs/pricing), per 1M tokens in/cached/out:
   Astra $10/$1/$50; 6.1 Sol $2/$0.10/$10; Luna $0.10/$0.01/$0.50.
-- **OpenAI usage policies**: openai.com/policies/usage-policies returned 403 to the fetch tool.
-  Secondary sources: outputs may not be used for fraud or scams (OpenAI threat report, February
-  2025; Model Spec 2025-12-18). The operator reads the page (decision 10).
+- **OpenAI usage policies** (openai.com/policies/usage-policies, changelog 2025-10-29 "a
+  universal set of policies across OpenAI products and services"; the page returns 403 to fetch
+  tools, so the operator pasted its text, read 2026-10-19): "we don't allow our services to be used
+  to manipulate or deceive people … including any use for … deceit, fraud, scams, spam, or
+  impersonation"; "you cannot use our services for: threats, intimidation, harassment …";
+  "circumventing our safeguards"; "unsolicited safety testing"; "breaking or circumventing our
+  rules and safeguards may mean you lose access". No exception for security testing or simulation.
+  Reading (not legal advice): the bans are on using the service to deceive people; synthetic test
+  mail that is never sent isn't that, but enforcement may judge the output, so refusals and account
+  risk remain (decision 10).
+- **Mistral usage policy** (legal.mistral.ai/terms/usage-policy, effective 2026-06-11, fetched
+  2026-10-19): fraud and scams prohibited ("Phishing attempts", "Impersonation" listed); no
+  generating content "intended to deceive others"; no rule on spam or simulated content; no testing
+  exception. Mistral only grades here, which these rules don't cover; Mistral as a generator would
+  be a grey area.
 - **Vibe** (docs.mistral.ai/vibe/code/cli/work-with-cli, /api-keys-profiles): `--prompt`,
   `--max-turns`, `--enabled-tools`, `--output text|json|streaming`, `--agent`; programmatic mode
   defaults to the `auto-approve` agent; browser sign-in by default for a Mistral provider;
