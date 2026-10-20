@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 2 (2026-10-19), after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 3 (2026-10-19): draft 2 plus the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ODs are proposed (OD-533 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
@@ -44,8 +44,30 @@ read on its own.
      Attachment, .002 Spearphishing Link, .004 Spearphishing Voice (.003 is not email).
    - Ordinary mail: Gmail's inbox categories (support.google.com/mail/answer/3094499): Primary,
      Social, Promotions, Updates, Forums.
-   At 300 emails, at most about 10 groups of at least 25 each; a group under 20 is report-only
-   (as `REPORT_ONLY_BELOW`, `src/ecf/eval/results.py:709`).
+   **Which IC3 types are kept** (op): a type whose Appendix B definition describes a message that
+   deceives or pressures the recipient into acting (pay, send data, click, call, reply) is kept;
+   one that describes an incident, an outcome, something not aimed at the recipient, or nothing,
+   is left out. Out: Personal Data Breach ("a leak/spill of personal data"), Identity Theft
+   ("wrongfully obtains and uses personally identifiable information"), Data Breach ("the use of a
+   computer intrusion"), SIM Swap ("against mobile service providers"), Botnet ("computers
+   controlled and updated remotely"), Other ("not currently designated as an IC3 crime type"),
+   Harassment/Stalking ("repeated words, conduct"), Threats of Violence ("an expression of an
+   intention to inflict pain"). Extortion ("unlawful extraction of money") is kept.
+   **Groups** (op; method A): the top 9 kept types by complaint count are a group each, the rest
+   one group: Phishing/Spoofing; Extortion; Investment; Non-Payment/Non-Delivery; Tech/Customer
+   Support; Government Impersonation; Business Email Compromise; Employment; Confidence/Romance;
+   Other IC3 types (Credit Card/Check Fraud, Real Estate, Advanced Fee, Lottery/Sweepstakes/
+   Inheritance, Ransomware, IPR/Copyright and Counterfeit, Overpayment, Malware, Charity). The rule
+   and the quoted definitions ship in the mix file.
+   **Shares** (op; option C): at 300, 150 scam (15 per group, equal) and 150 ordinary (30 per
+   Gmail category). Groups are report-only one by one (under 20, `REPORT_ONLY_BELOW`,
+   `src/ecf/eval/results.py:709`); the scam total (150) and ordinary total (150) are read. More
+   emails for one group can be generated later if it looks weak. Complaint-count weights were not
+   used: they follow mostly consumer complaints and would give BEC 6-10 emails.
+   **Delivery** (op; option B): MITRE .001 attachment, .002 link, .004 callback, plus reply-only
+   (no link, attachment or number; added by the operator, not from MITRE), 4/4/4/3 per scam group
+   with the 3 rotating, 38/38/37/37 in all. Attachments are plain text or ecf's invoice PDF, links
+   use reserved domains, callbacks 555-01xx numbers.
 3. **An `ecf` command for users** (op), under `ecf eval`; one release (op, P19), a minor (v3.x).
 4. **PROD and DEV** (op). PROD: generator, grader and classifier from three families. DEV: Claude
    for all three, to prove the pipeline before paying for other models.
@@ -133,11 +155,16 @@ manifest records both. Prompts take published text from the shipped file only.
 2. **Emails**: one call per 5-10 seeds of a group (K set in the plan after the pilot). The
    generator returns message fields only: sender display name and address, reply-to, subject,
    date, plain-text body, optional hidden text, attachments (plain text only, or a request for
-   ecf's deterministic invoice PDF), and label hints. ecf sets everything else from the seed and
+   ecf's deterministic invoice PDF), and label hints for all 13 schema v3 fields. ecf sets everything else from the seed and
    the recipient configuration: headers, authentication results, profile, `expected.facts`, title,
    threat and review notes, id (`<group>-<nnn>`), `author: generated`, `generator: <model id>`.
 3. **Prompt contents**: the published names and definitions, the delivery method's name, the
-   recipient configuration, the fixed safety rules (AGENTS.md "When you edit these paths":
+   recipient configuration (op; option A: the eval harness's own profiles,
+   `src/ecf_server/ruletest.py:58-59`, `src/ecf/eval/cards.py:29`: the organisation "Acme" at
+   `acme.example`, the accounts-payable mailbox `ap@acme.example`, one named colleague Dana Chief
+   `dana-chief@acme.example`, and the personal mailbox `pat-lee@freemail.example`; no industry,
+   size or location; these names were set when the harness was built and are configuration, not
+   content; per-set profiles are a possible later item), the fixed safety rules (AGENTS.md "When you edit these paths":
    reserved domains, regulators and brands by role in text only, phones 555-01xx, no real names,
    published or checksum-failing bank numbers, no URLs outside reserved names, no copied real
    phishing text), and the output schema. No style guidance or examples. No text aimed at automated
@@ -182,8 +209,13 @@ frozen set (`src/ecf_server/gate.py:245-261`). `ecf eval run --claude` accepts `
 
 ### Grading (P8)
 
-One call per email: the raw email and the decision-relevant fields to answer (named before
-generation, P30), returned as JSON. Blind: no ecf answer and no label. The grader's input is the raw
+One call per email: the raw email and all 13 schema v3 fields to answer (op; option A:
+`category`, `priority`, `requires_action`, `requires_reply`, `payment_related`,
+`deadline_mentioned`, `sender_type`, `fraud_risk`, `bank_detail_change`, `regulator_claim`,
+`phishing`, `claims_internal`, `private_individual`; the rules read `category` and `sender_type`
+as well as the fixed fields, so all 13 are needed to compute the expected rule; OD-486), with the
+shipped descriptions from `src/ecf/data/schema_v3.yaml`, returned as JSON. The operator labels the
+same 13. Blind: no ecf answer and no label. The grader's input is the raw
 email, not the classifier's excerpt and signals. Before grading, the blind labels are frozen (their
 digest recorded); the grader's accuracy is computed once against that version and kept, and later
 relabels are logged with the digest they changed and reported separately.
@@ -288,12 +320,10 @@ service API (`ecf` never imports `ecf_server`).
 
 ## Open questions for the operator
 
-1. The IC3 grouping (at most about 10 groups) and which types to leave out (on harm as well as on
-   "doesn't arrive as one email": SIM Swap, Botnet, Harassment/Stalking, Threats of Violence).
-2. Shares: by complaint count or by hand; the scam/ordinary split; the delivery mix.
-3. The decision-relevant fields the grader answers and labels cover.
-4. The fictitious recipient organisation (name, `.example` domain, mailbox role).
-5. Release number.
+Decided 2026-10-19 (Decisions 2, Generation, Grading): the IC3 rule and groups, the shares, the
+delivery split, the 13 fields, the recipient profiles. Still open:
+1. Release number.
+2. The usage policies (the operator reads OpenAI's and Mistral's before the pilot).
 
 ## Facts
 
