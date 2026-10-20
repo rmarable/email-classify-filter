@@ -1,9 +1,9 @@
 {
   "_comment": "The generator and grader models `ecf eval generate` and `grade` accept (eval generate plan, Model switches; P24; ADR 0034's closed provider list). Family is the lab that made the model, not who hosts it. Unknown ids are refused; `excluded` names hosted models from labs the model filter bars (PRC-, Meta- and X-affiliated labs; Qwen and Qwen-based models, OD-494), so the refusal says why. The Claude entries match ecf_server/data/models.lock (a test checks). Prices are US$ per 1M tokens, for --max-cost.",
   "models": [
-    {"provider": "claude", "id": "claude-haiku-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
-    {"provider": "claude", "id": "claude-sonnet-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
-    {"provider": "claude", "id": "claude-opus-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
+    {"provider": "claude", "id": "claude-haiku-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev", "prod"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
+    {"provider": "claude", "id": "claude-sonnet-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev", "prod"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
+    {"provider": "claude", "id": "claude-opus-5-5", "family": "anthropic", "roles": ["generator", "grader"], "modes": ["dev", "prod"], "checked": "2026-10-20 against ecf_server/data/models.lock"},
     {"provider": "codex", "id": "gpt-6.1-sol", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-19 against learn.chatgpt.com/docs/pricing and codex debug models (Codex 0.163.0)"},
     {"provider": "codex", "id": "gpt-6-luna", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-19 against learn.chatgpt.com/docs/pricing and codex debug models (Codex 0.163.0)"},
     {"provider": "codex", "id": "gpt-5.6-terra", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-20 against codex debug models (Codex 0.163.0); answers on ChatGPT's free plan"},

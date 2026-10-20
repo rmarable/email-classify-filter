@@ -91,9 +91,12 @@ def check_roles(doc: dict[str, Any], judge_ids: list[tuple[str, str]]) -> None:
     for j in judge_ids:
         for w in writers:
             models.check_not_self(w[1], j[1], mode)
-    if mode == "prod":
-        for a, b in combinations([*judge_ids, *writers[1:]], 2):
+    if mode == "prod":  # judges differ in family from each other and from every writer
+        for a, b in combinations(judge_ids, 2):
             models.check_pair(a, b)
+        for j in judge_ids:
+            for w in writers:
+                models.check_pair(w, j)
         for j in judge_ids:  # a judge never shares the classifier's family (Claude)
             if models.family(*j) == "anthropic":
                 raise InvalidInputError(f"{j[0]}:{j[1]} is Claude, the classifier's family: a"

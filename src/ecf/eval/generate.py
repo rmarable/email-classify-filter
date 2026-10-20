@@ -366,6 +366,7 @@ class Run:
     mode: str  # prod or dev
     k: int = K_DEFAULT
     seeds_only: bool = False  # a seed run: seeds for every group, no email
+    claude_waiver: bool = False  # PROD with a Claude generator (OD-547)
     shared: dict[str, Any] | None = None  # `seeds_from` (OD-545): no seed call, no top-up
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     echo: Callable[[str], None] = field(default=lambda _s: None)
@@ -699,6 +700,7 @@ def write_manifest(run: Run, state: str) -> None:
         "dropped": _counts_by_group(run.dropped), "refused": dict(run.refused),
         "hygiene_kinds": dict(run.hygiene_kinds),
         "seeds_sha256": seeds_digest(run.root), "seeds_only": run.seeds_only,
+        "generator_family_waiver": run.claude_waiver,
         "seeds_from": run.shared, "no_shared_seeds": sorted(run.unmeasured),
         "kept_seeds": sorted(o["seed"] for o in run.work.read("outcomes")
                              if o.get("outcome") == "kept"),

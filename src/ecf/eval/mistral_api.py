@@ -23,7 +23,7 @@ from ecf.paths import Paths
 MAX_COST = 15.0  # US$ per run (`--max-cost`)
 MAX_WAIT_S = 300.0  # 429s are paced for this long in all, then the run stops
 FIRST_WAIT_S = 5.0
-CALL_TIMEOUT_S = 180.0  # the service's call is 120 s
+CALL_TIMEOUT_S = 90.0  # the service's call is 60 s
 # before any call has been priced: a large email and a full answer
 FIRST_CALL_TOKENS = (20_000, 2_048)
 
@@ -32,7 +32,8 @@ class MistralAdapter:
     provider = "mistral"
 
     def __init__(self, model: str, paths: Paths, *, max_cost: float = MAX_COST,
-                 sleep: Callable[[float], None] = time.sleep) -> None:  # fmt: skip
+                 sleep: Callable[[float], None] = time.sleep,
+                 pace: float = 0.0) -> None:  # fmt: skip
         entry = next((m for m in models.listed() if m.provider == "mistral" and m.id == model),
                      None)  # fmt: skip
         if entry is None or entry.price is None:
@@ -40,6 +41,8 @@ class MistralAdapter:
         self.model, self.paths, self.max_cost, self._sleep = model, paths, max_cost, sleep
         self.price: dict[str, Any] = entry.price
         self.spent = 0.0
+        self.pace = pace  # seconds between calls, to stay under a known rate limit (J19)
+        self._last = 0.0
         self._largest = self.cost({"prompt_tokens": FIRST_CALL_TOKENS[0],
                                    "completion_tokens": FIRST_CALL_TOKENS[1]})  # fmt: skip
 
@@ -67,6 +70,9 @@ class MistralAdapter:
                  schema: dict[str, Any]) -> tools.Reply:  # fmt: skip
         if self.spent + self._largest > self.max_cost:
             return tools.Reply("limit", detail=f"--max-cost ${self.max_cost:.2f} reached")
+        if self.pace and (gap := self.pace - (time.monotonic() - self._last)) > 0:
+            self._sleep(gap)
+        self._last = time.monotonic()
         waited, wait = 0.0, FIRST_WAIT_S
         start = time.monotonic()
         while True:

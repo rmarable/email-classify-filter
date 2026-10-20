@@ -534,8 +534,22 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    fields (89.5%): safety fields 95-100% (phishing 56/57, bank_detail_change 54/55, fraud_risk
    52/54, regulator_claim and claims_internal 57/57), sender_type 28/45 and category 33/51: the
    judges agree with each other and differ from the operator there, the case the kappa rule (J7)
-   is for. Both judges were Claude; the PROD judges are other families. Not yet built: the kappa
-   gate on scoring, three figures and two comparisons (J6, J7, J12, J13), the settle page (4).
+   is for. Both judges were Claude; the PROD judges are other families. **Built next
+   (2026-10-20)**: Claude as a PROD generator with `--claude-generator` (the waiver recorded in the
+   manifest; the report says WAIVER, not NOT A MEASUREMENT, when only the generator shares the
+   classifier's family; a PROD Claude grader still refused); judges' family checks against each
+   other and every writer; the report's grader figures only against operator-settled labels when
+   judges set some, the kappa gate (fields under 0.6 report-only), judge labels contradicting the
+   assignment left out for phishing and fraud_risk, ecf's figures three ways; `ecf eval settle`
+   (terminal, `--export` for a phone page with no case ids or judge names, `--from` importing
+   only fully answered emails; one rebuild, one atomic confirm); per-judge call logs, `--pace`,
+   a 60 s Mistral call timeout, the service checking a set once per run; provider errors recorded
+   by type and code only. Still open: comparisons computed twice (J12, `ecf eval compare`), the
+   shared API-judge route and Gemini (3, needs the key), measuring the judges (5).
+   **Mistral on the 57 DEV emails (2026-10-20, operator's go-ahead)**: refused with HTTP 403 on
+   the first grading call of each set (the key's model-list check passes); cause unverified (the
+   free plan and the preview model, an account step, or data sharing); the operator checks the
+   Mistral console.
 5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report. **As
    amended (OD-547):** Claude generates 300 (waiver); Mistral and Gemini judge; `agree`; the
    operator settles disputes; expect; two C runs; report.

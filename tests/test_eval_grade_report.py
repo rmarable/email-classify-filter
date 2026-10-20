@@ -222,8 +222,14 @@ def test_prod_needs_the_generator_and_grader_from_two_families() -> None:
 
 def test_prod_refuses_claude_and_dev_defaults_to_it() -> None:
     paths = paths_for("ecf-test-providers")
-    with pytest.raises(InvalidInputError, match="can't be Claude"):
+    with pytest.raises(InvalidInputError, match="needs --claude-generator"):
         providers.resolve("claude:claude-haiku-5-5", "generator", "prod", paths)
+    waived = providers.resolve("claude:claude-haiku-5-5", "generator", "prod", paths,
+                               claude_waiver=True)  # fmt: skip
+    assert waived.model == "claude-haiku-5-5"  # OD-547: the operator's recorded waiver
+    with pytest.raises(InvalidInputError, match="can't be Claude"):
+        providers.resolve("claude:claude-sonnet-5-5", "grader", "prod", paths,
+                          claude_waiver=True)  # fmt: skip
     assert providers.resolve(None, "generator", "dev", paths).model == "claude-haiku-5-5"
     assert providers.resolve(None, "grader", "dev", paths).model == "claude-sonnet-5-5"
     with pytest.raises(InvalidInputError, match="isn't on ecf's model list"):

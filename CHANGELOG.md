@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- New: `ecf eval settle` asks you only the fields the judges disagreed on, blind, in the terminal or on a phone page (`--export`, then `--from`). Reports never measure a judge on labels it set itself, leave fields the judges barely agree on out of ecf's score, and show ecf's figures against the judges' labels, your settled ones and both. `ecf eval generate --claude-generator` lets Claude write a PROD set, with that recorded and stated in every report (OD-547).
 - New: `ecf eval agree` sets a generated set's labels from its judges' grades: where they agree, the label is theirs; where they don't, the email waits for you. Labels the judges set count only on a generated set, and `ecf eval report` shows who set each label and how well the judges agree (OD-547).
 - Planned: generated sets labelled by two or three non-Claude models instead of by you; you settle only where they disagree. Google Gemini is proposed as a second judge (OD-547, ADR 0036 proposed). The generator pilot is settled: Sol is used, Luna isn't (OD-546).
 - New: `ecf eval generate --seeds-only` writes just the seeds, and `--seeds-from <set>` has another model write emails from those same seeds, so two generators can be compared on identical briefs. The pilot's seeds come from a third model (OD-545).

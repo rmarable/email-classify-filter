@@ -275,3 +275,33 @@ def test_the_grade_command_estimates_caps_and_checks_the_families(
     assert r.exit_code == 0, r.output
     assert "20 calls to mistral-large-4-0: at most about $" in r.output
     assert "stops before passing $2.00 (--max-cost)" in r.output and "graded 20" in r.output
+
+
+def test_a_forbidden_call_names_the_providers_error_kind_never_its_text() -> None:
+    store = MemorySecretStore()
+    store.set(mistral.KEY_SECRET, KEY)
+    m = Mistral()
+    body = {
+        "object": "error",
+        "message": "your plan secret wording",
+        "type": "permission_error",
+        "code": "3505",
+    }
+    m.queue.append((403, body, {}))
+    got = mistral.complete(store, "mistral-large-4-0", "p", {}, httpx.MockTransport(m))
+    assert (got["status"], got["detail"]) == (
+        "auth",
+        "call forbidden (HTTP 403, permission_error/3505)",
+    )
+    assert "wording" not in json.dumps(got)
+
+
+@pytest.mark.usefixtures("client")
+def test_pace_spaces_the_calls(fake: Mistral, tmp_path: Path) -> None:
+    root = _prod_set(tmp_path)
+    row = json.loads((root / "labels.jsonl").read_text().splitlines()[0])
+    slept: list[float] = []
+    adapter = _adapter(sleep=slept.append, pace=30.0)
+    for _ in range(2):
+        assert adapter.ask_case(root, row["id"], grading.grade_schema()).status == "ok"
+    assert len(slept) == 1 and 25 < slept[0] <= 30
