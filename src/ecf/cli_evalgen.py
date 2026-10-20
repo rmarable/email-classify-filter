@@ -150,9 +150,8 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         doc = gen.read_manifest(root)
         mode = str(doc.get("mode"))
         adapter = providers.resolve(grader, "grader", mode, paths())
-        if mode == "prod":
-            g = doc["generator"]
-            models.check_pair((g["provider"], g["model"]), (adapter.provider, adapter.model))
+        g = doc["generator"]
+        models.check_roles((g["provider"], g["model"]), (adapter.provider, adapter.model), mode)
         _notice("grader", adapter.provider, yes)
         if isinstance(adapter, mistral_api.MistralAdapter):
             if max_cost <= 0:

@@ -17,6 +17,7 @@ from ecf.errors import InvalidInputError
 from ecf.eval import gencheck, genset, tools
 from ecf.eval import generate as gen
 from ecf.eval import mix as mixmod
+from ecf.eval import report as rep
 from ecf.eval.cards import load_cards
 from ecf.eval.hygiene import scan_text
 from ecf.log import CONTENT_KEYS
@@ -71,7 +72,7 @@ for s in seeds:
     h = hashlib.sha256((prompt[-200:] + json.dumps(s) + str(os.getpid())).encode()).hexdigest()
     letters = "".join(chr(97 + int(c, 16)) for c in h)  # no digits: no number shapes
     words = " ".join(letters[i:i + 6] for i in range(0, 60, 6))
-    bad = sc.get("hygiene_once") and "broke the rules" not in prompt
+    bad = sc.get("hygiene_always") or (sc.get("hygiene_once") and "broke the rules" not in prompt)
     body = f"Opening {{words}}.\nPlease reply about {{words[::-1]}}."
     if bad:
         body += " Call 212-555-1234."
@@ -290,13 +291,35 @@ def test_a_hygiene_failure_is_retried_once_with_the_kinds_named(tmp_path: Path) 
         assert not scan_text(card.body, card.id)
 
 
+def test_hygiene_kinds_are_logged_by_name_never_text(tmp_path: Path) -> None:
+    """P6, P7 (OD-543): a passed retry and a hygiene drop record the finding kinds only."""
+    for sub in ("once", "always"):
+        (tmp_path / sub).mkdir()
+    _summary, root = run(tmp_path / "once", {"hygiene_once": True})
+    m = gen.read_manifest(root)
+    assert m["retried_passed"]["count"] == 20 and m["retried_passed"]["kinds"]
+    rows = gen.Work(root).read("outcomes")
+    assert all(set(r) <= {"seed", "outcome", "reason", "case", "retried"} for r in rows)
+    summary, root = run(tmp_path / "always", {"hygiene_always": True})
+    assert summary.kept == 0 and summary.dropped == {"hygiene": 60}
+    m = gen.read_manifest(root)
+    assert m["hygiene_kinds"] and sum(m["hygiene_kinds"].values()) >= 60
+    rows = gen.Work(root).read("outcomes")
+    assert all(set(r["findings"]) == {"first", "retry"} for r in rows)
+    text = (root / "work" / "outcomes.jsonl").read_text()
+    assert "555" not in text and "Call" not in text  # kinds, never the email's text
+    lines = "\n".join(rep.report(root, []))
+    assert "hygiene drops by finding kind:" in lines
+
+
 def test_markup_is_dropped_and_replaced_from_the_seed_pool(tmp_path: Path) -> None:
     summary, root = run(tmp_path, {"html": True})
     assert summary.kept == 0 and summary.state == "short"
-    # every seed tried (1.5 x each bucket's count, rounded up: 10 x 2 scam + 5 x 3 ordinary),
-    # never a new seed call
-    assert summary.dropped == {"HTML markup": 35}
-    assert sum(1 for c in calls(tmp_path) if c["seeds"]) == 15
+    # each bucket tried 3 x its count (10 scam x 3 + 5 ordinary x 6): when a bucket's seeds run
+    # out while it is short, the group asks for more (OD-543)
+    assert summary.dropped == {"HTML markup": 60}
+    seed_calls = [c for c in calls(tmp_path) if c["seeds"]]
+    assert len(seed_calls) == 30  # one first call and one top-up per group
     assert gen.read_manifest(root)["selected"]  # groups with over a third dropped
 
 
@@ -338,8 +361,30 @@ def test_markup_brands_and_near_duplicates() -> None:
     d = gencheck.NearDuplicates()
     body = "Dear team,\n" + " ".join(f"word{i}" for i in range(40))
     assert d.seen(body) is None
-    assert d.seen("Dear team,\nsomething else entirely") == "same opening line"
     assert d.seen("Hello,\n" + " ".join(f"word{i}" for i in range(38))) == "overlapping text"
+    assert d.seen("Dear team,\n" + " ".join(f"word{i}" for i in range(40))) == "identical text"
+
+
+def test_a_shared_greeting_or_stock_sentence_is_not_a_duplicate() -> None:
+    """The DEV run of 2026-10-20 lost 20 of 46 emails to a shared first line (OD-543)."""
+    d = gencheck.NearDuplicates()
+    stock = "Dear Accounts Payable Team,\nI hope this message finds you well.\n"
+    one = stock + " ".join(f"alpha{i}" for i in range(40))
+    two = stock + " ".join(f"beta{i}" for i in range(40))
+    assert d.seen(one) is None and d.seen(two) is None
+    assert d.repeated_openings() == 1  # counted, not dropped
+
+
+def test_short_emails_sharing_a_sentence_are_not_overlap_drops() -> None:
+    d = gencheck.NearDuplicates()
+    footer = "please see the attached invoice for payment today"
+    assert d.seen(footer + " " + " ".join(f"long{i}" for i in range(30))) is None
+    assert d.seen("Thanks Pat. " + footer) is None  # under MIN_SHINGLES: identical text only
+    assert d.seen("Thanks Pat. " + footer) == "identical text"
+
+
+def test_words_keep_non_ascii_letters() -> None:
+    assert gencheck.opening("Señor García,\nhola") == "señor garcía"
 
 
 def test_crypto_wallet_shapes_fail_the_hygiene_scan() -> None:

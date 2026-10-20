@@ -86,6 +86,25 @@ def classifier_family(pair: str) -> str | None:
     return CLASSIFIER_FAMILY.get(pair.split("/", 1)[0])
 
 
+def check_not_self(generator_model: str, grader_model: str, mode: str) -> None:
+    """A model never grades the set it generated (operator rule 2026-10-20, OD-543), in DEV and
+    PROD; compared by model id alone, whoever hosts it."""
+    if generator_model == grader_model:
+        others = sorted(m.id for m in listed() if "grader" in m.roles and mode in m.modes
+                        and m.id != generator_model)  # fmt: skip
+        raise InvalidInputError(
+            f"{grader_model} generated this set, and a model never grades its"
+            f" own set: grade it with {', '.join(others) or 'another model'}"
+        )
+
+
+def check_roles(generator: tuple[str, str], grader: tuple[str, str], mode: str) -> None:
+    """Never the same model; in PROD, not the same family either."""
+    check_not_self(generator[1], grader[1], mode)
+    if mode == "prod":
+        check_pair(generator, grader)
+
+
 def check_pair(generator: tuple[str, str], grader: tuple[str, str]) -> None:
     """PROD: the generator and the grader from different families."""
     a, b = family(*generator), family(*grader)

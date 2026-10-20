@@ -5,13 +5,20 @@ P30). Nothing is edited: an email that fails is dropped, with the kind of failur
 - Brands and agencies: a sender display name naming a major brand or a government agency is
   refused (the safety rules allow them by role in the text only). The list below is a deny list
   of common names, not content; real names in general can't be detected and are a stated limit.
-- Near-duplicates: an email whose opening line matches an earlier one, or whose word 5-grams
-  overlap an earlier one's by `SHINGLE_LIMIT` or more, is dropped across the whole set.
+- Near-duplicates: an email whose words match an earlier one's exactly, or whose word 5-grams
+  overlap an earlier one's by `SHINGLE_LIMIT` or more, is dropped across the whole set. The
+  overlap test needs `MIN_SHINGLES` on both sides, so two short emails sharing a stock sentence
+  or footer aren't taken for copies. A shared opening line is not a drop: with a few fictitious
+  recipients, greetings and stock first sentences repeat in unrelated emails (DEV run
+  2026-10-20; OD-543). Repeated openings are counted and reported instead. A drop is counted
+  against the later email's group. Long footers shared by one sender can still reach the
+  overlap limit: a stated limit.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterable
 
 _TAG = re.compile(r"</?[a-z][a-z0-9]*(?:\s[^<>]*)?/?>", re.I)
@@ -32,6 +39,8 @@ AGENCIES = (
 _NAMES = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in (*BRANDS, *AGENCIES)) + r")\b", re.I)
 SHINGLE = 5
 SHINGLE_LIMIT = 0.6
+MIN_SHINGLES = 20  # both emails need this many 5-grams for the overlap test
+_WORD = re.compile(r"[\w']+")  # Unicode letters and digits
 
 
 def markup(texts: Iterable[str]) -> str | None:
@@ -49,7 +58,7 @@ def named_brand(display_name: str) -> bool:
 
 
 def _words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9']+", text.lower())
+    return [w for w in _WORD.findall(text.lower()) if w.strip("_'")]
 
 
 def opening(body: str) -> str:
@@ -69,18 +78,29 @@ class NearDuplicates:
     """The set's accepted emails so far, to drop a near-duplicate of any of them."""
 
     def __init__(self) -> None:
-        self._openings: set[str] = set()
+        self._texts: set[str] = set()
         self._shingles: list[frozenset[tuple[str, ...]]] = []
+        self.openings: Counter[str] = Counter()
 
     def seen(self, body: str) -> str | None:
         """Why `body` is a near-duplicate, or None (it is then remembered)."""
-        first, sh = opening(body), shingles(body)
-        if first and first in self._openings:
-            return "same opening line"
-        for other in self._shingles:
-            if sh and other and len(sh & other) / min(len(sh), len(other)) >= SHINGLE_LIMIT:
-                return "overlapping text"
-        if first:
-            self._openings.add(first)
+        words, sh = " ".join(_words(body)), shingles(body)
+        if words and words in self._texts:
+            return "identical text"
+        if len(sh) >= MIN_SHINGLES:
+            for other in self._shingles:
+                if (
+                    len(other) >= MIN_SHINGLES
+                    and len(sh & other) / min(len(sh), len(other)) >= SHINGLE_LIMIT
+                ):
+                    return "overlapping text"
+        if words:
+            self._texts.add(words)
         self._shingles.append(sh)
+        if first := opening(body):
+            self.openings[first] += 1
         return None
+
+    def repeated_openings(self) -> int:
+        """Kept emails whose opening line an earlier kept email already had."""
+        return sum(n - 1 for n in self.openings.values() if n > 1)
