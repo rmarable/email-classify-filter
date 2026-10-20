@@ -22,6 +22,7 @@ from ecf.eval import report as rep
 from ecf.eval.builder import build_all
 from ecf.eval.cards import load_cards
 from ecf.eval.results import CaseResult, ResultFile, load_result
+from ecf.paths import paths_for
 from ecf_server import config, evalrun, ruletest
 from ecf_server.clock import FakeClock
 from tests.test_eval_generate import LABELS, calls, fake_tool, run
@@ -162,27 +163,23 @@ def test_expect_leaves_an_unlabelled_card_alone(clock: FakeClock, conn: sqlite3.
 
 
 def test_providers_not_built_yet_are_refused_with_their_step() -> None:
-    with pytest.raises(InvalidInputError, match=r"claude generator isn't built yet \(build step 2"):
-        providers.resolve(None, "generator", "dev")
+    paths = paths_for("ecf-test-providers")
+    with pytest.raises(InvalidInputError, match=r"codex generator isn't built yet \(build step 3"):
+        providers.resolve(None, "generator", "prod", paths)
     with pytest.raises(InvalidInputError, match="build step 3"):
-        providers.resolve(None, "grader", "prod")
+        providers.resolve(None, "grader", "prod", paths)
     with pytest.raises(InvalidInputError, match="no generator provider 'gemini'"):
-        providers.resolve("gemini:x", "generator", "prod")
+        providers.resolve("gemini:x", "generator", "prod", paths)
 
 
-def test_prod_refuses_claude_as_generator_or_grader(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_argv(_model: str, _schema: Path, _out: Path) -> list[str]:
-        return []
-
-    def no_reply(_ran: tools.Ran, _out: Path) -> tools.Reply:
-        return tools.Reply("ok")
-
-    tool = tools.CliTool("claude", "claude", no_argv, no_reply)
-    monkeypatch.setitem(providers.BUILT, "claude", lambda m: tools.CliAdapter(tool, m))
+def test_prod_refuses_claude_and_dev_defaults_to_it() -> None:
+    paths = paths_for("ecf-test-providers")
     with pytest.raises(InvalidInputError, match="can't be Claude"):
-        providers.resolve("claude:claude-haiku-5-5", "generator", "prod")
-    adapter = providers.resolve(None, "generator", "dev")
-    assert adapter.model == "claude-haiku-5-5"
+        providers.resolve("claude:claude-haiku-5-5", "generator", "prod", paths)
+    assert providers.resolve(None, "generator", "dev", paths).model == "claude-haiku-5-5"
+    assert providers.resolve(None, "grader", "dev", paths).model == "claude-sonnet-5-5"
+    with pytest.raises(InvalidInputError, match="isn't a full Claude model id"):
+        providers.resolve("claude:haiku", "generator", "dev", paths)
 
 
 def test_write_mix_writes_the_shipped_mix_to_edit(tmp_path: Path) -> None:

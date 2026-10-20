@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -365,7 +365,16 @@ service API (`ecf` never imports `ecf_server`).
    ordinary seeds carry no
    delivery method; near-duplicates are 5-word shingles at 60% containment.
 2. **The `claude` adapter and a DEV run** of 30, after the operator writes the realism rubric and
-   the pilot pass mark (P25). Plumbing only.
+   the pilot pass mark (P25). Plumbing only. **Adapter built 2026-10-20** (`ecf.eval.claude_tool`):
+   the flags of the `claude -p` check, the schema passed inline (`--json-schema` takes the schema,
+   not a file), ecf's install's `CLAUDE_CONFIG_DIR` with telemetry off, Claude Code 2.1.303 or
+   later; a permission denial, an answer on another model, an error or no `structured_output`
+   fails the call, a `refusal` stop is a refusal. `generate` and `grade` check the tool's version
+   and flags and run the canary from a throwaway folder before touching the set. The config
+   folder isn't purged after a run (an `ecf claude` session may share it);
+   `--no-session-persistence` keeps the calls' transcripts out. Left: the rubric and pass mark
+   (operator), then the DEV run of 30 (real-service test: `uv run ecf --install accept eval
+   generate --dev --root <folder> --yes`, then `grade`, `report`).
 3. **Codex adapter and Mistral API client** (with `ecf eval key set mistral` and the cost guards),
    the model list, the family check; Codex passes the canary.
 4. **PROD pilot** (real-service test, operator's go-ahead each time): the same 20 seeds through Sol
