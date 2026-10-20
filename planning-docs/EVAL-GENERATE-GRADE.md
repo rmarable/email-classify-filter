@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 4 (2026-10-19): draft 3 plus the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 5 (2026-10-19): draft 4 plus the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
@@ -72,9 +72,17 @@ read on its own.
    when it ships (op; OD-533, which also covers M6).
 4. **PROD and DEV** (op). PROD: generator, grader and classifier from three families. DEV: Claude
    for all three, to prove the pipeline before paying for other models.
-5. **Defaults** (op): PROD generator OpenAI GPT-6.1 Sol through Codex (Luna only if it passes the
-   pilot); PROD grader Mistral Large 4 through Vibe; DEV `claude` with full model ids (Haiku 5.5
-   generates, Sonnet 5.5 grades).
+5. **Defaults** (op): PROD generator OpenAI `gpt-6.1-sol` through the Codex CLI on the operator's
+   ChatGPT Plus plan (`gpt-6-luna` only if it passes the pilot); PROD grader Mistral Large 4
+   (`mistral-large-4`) through **Mistral's API** (op, 2026-10-19: the mixed route; not Vibe, which
+   can't drop its tools, Facts); DEV `claude` with full model ids (Haiku 5.5 generates, Sonnet 5.5
+   grades).
+5a. **Plan or API, per provider** (op, 2026-10-19): for each provider and model added, compare its
+   subscription plan with its API before choosing: cost at the expected number of sets a month
+   (and whether the operator already pays for the plan), whether the route can run with no tools,
+   what extra data it sends, how credentials are stored, the data terms, and limits. Recorded with
+   the provider's ADR. For now: OpenAI by plan (Plus, already used for Codex on the repo; $0 extra,
+   it shares the coding quota), Mistral by API (about $1 a set against $14.99 a month for Pro).
 6. **Size** (op): `--count N`, default 300 in PROD and 30 in DEV; the target is N kept.
 7. **Labels** (op; P7, P8): only labels the operator (or user) gives blind count (OD-486): through
    `ecf eval label --review all` or the card review page, full email, no answer shown. The
@@ -86,7 +94,7 @@ read on its own.
    field agreement only and says "no fraud-guard or injection cases".
 9. **Never the gate's evidence** (op; P1): see Design, Gate guard.
 10. **Destinations** (op; P5, P6): ADR 0034 amends the one-destination rule for a closed list:
-    OpenAI (through Codex) and Mistral AI (through Vibe), Anthropic already allowed. A new provider
+    OpenAI (through the Codex CLI) and Mistral AI (through its API), Anthropic already allowed. A new provider
     needs its own ADR. SPEC §12.4 gets a paragraph per provider in the TypeSafe form. Both usage
     policies were read on 2026-10-19 (Facts); the operator accepted the PROD pilot on these
     conditions (op): (a) a refused request is never retried, reworded or replaced, so a group can
@@ -95,9 +103,9 @@ read on its own.
     approves: the emails test an email-security filter, stay on this machine and are never sent;
     (c) the pilot stays at 20 seeds and the operator accepts the risk to the ChatGPT account;
     (d) Extortion is in the pilot like the other groups.
-11. **Tools without tools** (op; P3, P20): no adapter is used until its tool is shown to run with no
-    tool access and no MCP servers (Design, Adapters). The release waits for the Mistral adapter to
-    pass that test.
+11. **Tools without tools** (op; P3, P20): no adapter is used until it is shown to run with no
+    tool access and no MCP servers (Design, Adapters). The Mistral API call has no tools by design;
+    the Codex adapter must pass the canary with every tool switched off.
 12. **The Jev re-check is later** (op; P26): D must pass at OD-516's −5 margin on both the frozen set
     and a confirmed generated set, two runs per arm compared as in step 3, with facts in the
     generated cards.
@@ -115,8 +123,11 @@ Proposed records (numbers assigned at approval):
 - **OD-534** Generated eval sets: commands, PROD/DEV, no Claude content, published categories and
   grouping, `--count`, blind labels, rules-engine expectations (decisions 1-8).
 - **OD-535** Privacy (§12.4) and the first-use notice (ADR 0034).
-- **OD-536** Credentials and isolation: provider tools' own sign-ins in ecf's own config folders;
-  refuse on key variables; no key held or set by ecf.
+- **OD-536** Credentials and isolation: Codex's sign-in in its own `CODEX_HOME` under ecf's data
+  folder, stored in the macOS Keychain (`cli_auth_credentials_store="keyring"`), never the
+  plaintext `auth.json`; the Mistral API key in the macOS Keychain, written only by the service
+  (`ecf eval key set mistral`, step-up), as ecf's other credentials (AGENTS.md "Credentials");
+  refuse on key variables in the environment; cost guards for API providers (Design, Cost guards).
 - **OD-537** Models: the shipped list, the model filter and the three-family rule in code.
 - **OD-538** Jev re-check rule (decision 12); OD-486 amended to allow a confirmed generated set.
 - **OD-539** The stress test as its own Later item; the SPEC §1.2 corpus entry reworded.
@@ -237,29 +248,45 @@ plumbing counts only (drops, misfits, resumes, times), no accuracy (P25).
 
 ### Adapters (P3, P4, P20, P21, P23)
 
-One table in `src/ecf/eval/tools.py`: argv template, schema mode, output source and parser, minimum
-version, sign-in check. At each run's start ecf checks the tool's version and that every flag it
-passes appears in `--help`, and records the argv digest and version.
+One table in `src/ecf/eval/tools.py` (argv template or API endpoint, schema mode, output parser,
+minimum version, sign-in or key check). For a CLI, each run's start checks the tool's version and
+that every flag ecf passes appears in `--help`, and records the argv digest and version.
 
-| Provider | Call (prompt on stdin, from an empty work folder under ecf's data folder) | Sign-in and config |
+| Provider | Call | Sign-in / key |
 |---|---|---|
-| `claude` (DEV) | `claude -p --output-format json --json-schema <s> --model <full id> --system-prompt <adapter text> --tools "" --strict-mcp-config --safe-mode --no-session-persistence` (turn limit verified by one run; `--max-turns` is not in 2.1.303's help) | ecf's `CLAUDE_CONFIG_DIR` and login (`ecf claude --login`, `src/ecf/claude_wrapper.py:389`); transcripts purged after |
-| `codex` | `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --json --output-schema <s> -o <file> -m <id>` | a separate `CODEX_HOME` under ecf's data folder with its own `codex login` |
-| `mistral` | `vibe --prompt ... --output json --max-turns 1` with tools emptied (method to verify) | Vibe's own sign-in; ecf reads `active_model` from Vibe's config and refuses on mismatch, printing the Vibe command; never writes it |
+| `claude` (DEV) | `claude -p --output-format json --json-schema <s> --model <full id> --system-prompt <adapter text> --tools "" --strict-mcp-config --safe-mode --no-session-persistence`, prompt on stdin; success only when `subtype` is `success` and `structured_output` is present; whether structured output works with `--tools ""` is checked by one run (operator's go-ahead) | ecf's `CLAUDE_CONFIG_DIR` and login (`ecf claude --login`, `src/ecf/claude_wrapper.py:389`); transcripts purged after |
+| `codex` | `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules --json --output-schema <s> -o <file> -m gpt-6.1-sol`, prompt on stdin, from an empty folder outside any git repo, plus: `--disable shell_tool --disable apps --disable plugins --disable remote_plugin --disable multi_agent --disable image_generation --disable browser_use --disable computer_use --disable goals --disable sleep_tool --disable tool_suggest --disable skill_search --disable view_image` and `-c web_search="disabled" -c tools.experimental_request_user_input.enabled=false -c include_environment_context=false -c include_environment_context_time=false -c analytics.enabled=false -c otel.metrics_exporter="none" -c feedback.enabled=false -c check_for_update_on_startup=false -c history.persistence="none" -c memories.generate_memories=false -c memories.use_memories=false -c model_reasoning_effort=<set after the pilot>` (all on the command line, since `--ignore-user-config` skips `config.toml`); `-o` deleted before each call | a separate `CODEX_HOME` under ecf's data folder, with no `AGENTS.md`, its own one-time `codex login`, and `cli_auth_credentials_store="keyring"` |
+| `mistral` | HTTPS POST to Mistral's chat completions endpoint from the client with a JSON-schema response format (strict mode as Mistral documents it), no tools field, `model: mistral-large-4`; one email per call | API key read from the macOS Keychain through the service (written by `ecf eval key set mistral`, step-up) |
 
 Every adapter:
-- runs under an allow-listed environment built like `claude_wrapper.base_env` (`ENV_ALLOW`,
-  telemetry off), and **refuses**, naming the variable, if `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  `CODEX_API_KEY`, `MISTRAL_API_KEY` or a provider base-URL variable is set (P4);
-- must pass a **tool-less canary** before use: a decoy file in the work folder and a prompt asking
-  for its contents; any tool or command event, or the decoy's contents in the answer, fails closed.
-  Codex runs with `--json`, and any command event drops the email (P3);
+- runs (for a CLI) under an allow-listed environment built like `claude_wrapper.base_env`
+  (`ENV_ALLOW`, telemetry off), and **refuses**, naming the variable, if `ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `CODEX_API_KEY`, `MISTRAL_API_KEY` or a provider base-URL variable is set (P4);
+- must pass a **tool-less canary** before use (CLIs): a decoy file in the work folder and a prompt
+  asking for its contents; with `--json`, Codex output may hold only `agent_message`, `reasoning`
+  and `error` items (an allow-list); any other item type, or the decoy's contents in the answer,
+  fails closed and drops the email (P3). `apply_patch` has no switch in Codex 0.163.0 but can't
+  write under the read-only sandbox, and reading needs the shell tool, which is off;
 - uses `subprocess.run(..., shell=False, capture_output=True, timeout=..., start_new_session=True)`
-  with the process group killed on timeout; parses one JSON object, size-capped, strictly;
-- stops the run after 3 consecutive failed calls of any kind, showing the last error line; a usage
-  limit is a stop, not a detected state; `--resume` continues from `work/`;
+  with the process group killed on timeout (CLIs), or a timeout per HTTPS request (API); parses
+  one JSON object, size-capped, strictly, and validates it against the schema itself (neither
+  provider's schema mode is trusted alone);
+- stops the run after 3 consecutive failed calls of any kind, showing the last error line; Codex's
+  usage limit shows only as the text "You’ve hit your usage limit" (curly apostrophe) and exit 1, a
+  stop, not a detected state; an API 429 is retried with backoff up to 5 minutes, then a stop;
+  `--resume` continues from `work/`;
 - logs exit codes, byte counts, times, refusal categories and digests only (P27; `stdout`,
   `stderr`, `refusal`, `seed`, `email` added to the redacted keys, `src/ecf/log.py`).
+
+### Cost guards (API providers)
+
+- Prepaid credit with auto-recharge off on the provider account, so a run can never spend more than
+  the balance the operator loaded (billing model to confirm in step 0).
+- `--max-cost` (default US$15 per run): ecf adds each call's cost from the returned token counts and
+  a shipped price table (with its date and source), and stops the run when the next call could pass
+  the cap.
+- An estimate before each run (calls and cost), confirmed with `--yes`; the 3-failure stop and the
+  no-retry-on-refusal rule (decision 10a) keep a fault from looping.
 
 ### Model switches (P24)
 
@@ -298,23 +325,28 @@ service API (`ecf` never imports `ecf_server`).
 |---|---|
 | Codex calls for 300 kept | about 30 seed calls + 30-60 email calls at K 5-10 (more with drops) |
 | Plus windows (Sol, 15-160 per 5 h) | 1 at the top of the range, up to about 6 at the bottom; unverified that one call is one message |
-| Grader | about 300 calls; about $0.50-1.20 at Mistral's listed Large price |
+| Grader (Mistral API) | about 300 calls; about $0.60 at Mistral's listed Large price ($0.50/$1.50 per 1M), up to about $2.50 if Large 4 costs more |
+| Generator (Codex on Plus) | $0 extra on the operator's existing Plus plan; shares the coding quota |
 | DEV (30) | about 10-15 `claude -p` calls on ecf's Claude login |
 | `ecf eval run --claude` on 300 | about 10-16 min dispatch plus facts prep (SPEC §20 figures for 304 cards); US$13-15 API-equivalent |
 | Operator labelling | about 5-10 h for 300, every card blind |
 
 ## Steps
 
-0. **Facts**: the vendor terms (usage policies read by the operator; retention and training; where
-   each sign-in is stored); each tool's tool-off method, MCP behaviour and what it sends besides
-   the prompt; Vibe's per-run model and JSON shape; Claude Code's turn limit with `--json-schema`.
+0. **Facts**: done 2026-10-19 (Facts) except: Mistral's API (structured-output mode, training default
+   and opt-out for API use, retention, billing and prepaid credit, Large 4's id and price); the
+   OpenAI help-centre pages read through search excerpts (re-read in a browser); whether
+   `codex exec` with every tool off still answers under `--output-schema`, the model ids available
+   to this Plus account (`codex debug models`) and whether `claude -p` structured output works with
+   `--tools ""` (each a one-call check with the operator's go-ahead).
 1. **Shared pipeline**: mix, seeds, emails, checks, card changes, set layout, manifest, grade (as a
    result file), expect, report, resume, gate guard, logging. Tests with a fake executable on PATH
    (as `tests/test_claude_wrapper.py`'s `fake_claude`) and recorded JSON, including a limit, a
    refusal, a tool event and the canary; no network.
 2. **The `claude` adapter and a DEV run** of 30, after the operator writes the realism rubric and
    the pilot pass mark (P25). Plumbing only.
-3. **Codex and Mistral adapters**, the model list, the family check; each passes the canary.
+3. **Codex adapter and Mistral API client** (with `ecf eval key set mistral` and the cost guards),
+   the model list, the family check; Codex passes the canary.
 4. **PROD pilot** (real-service test, operator's go-ahead each time): the same 20 seeds through Sol
    and Luna; the operator rates realism blind; drops, refusals per group (ceiling in the pass mark),
    repeated openings, phrase overlap; time, tokens and plan messages per call (meter read before and
@@ -322,7 +354,7 @@ service API (`ecf` never imports `ecf_server`).
 5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report.
 6. **SPEC and docs**: ADR 0034, the ODs, §1.2 (Later items incl. the stress test), §9.3, §12.2,
    §12.4, §16, §20, README, DISCLAIMER, SECURITY.md, user guides, CHANGELOG.
-7. **Release** (minor), only when the Mistral adapter passes the canary (decision 11).
+7. **Release** (minor), only when the Codex adapter passes the canary (decision 11).
 8. **Jev re-check** (later, when the operator names it), under decision 12.
 
 ## Open questions for the operator
@@ -362,12 +394,31 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   generating content "intended to deceive others"; no rule on spam or simulated content; no testing
   exception. Mistral only grades here, which these rules don't cover; Mistral as a generator would
   be a grey area.
-- **Vibe** (docs.mistral.ai/vibe/code/cli/work-with-cli, /api-keys-profiles): `--prompt`,
-  `--max-turns`, `--enabled-tools`, `--output text|json|streaming`, `--agent`; programmatic mode
-  defaults to the `auto-approve` agent; browser sign-in by default for a Mistral provider;
-  otherwise `MISTRAL_API_KEY` or `~/.vibe/.env`; the model is `active_model` in
-  `~/.vibe/config.toml`. Not installed on this Mac. Unverified: per-run model, emptying tools, JSON
-  shape, sign-in storage, Pro quota.
+- **Vibe, not used** (source at mistral-vibe tag v3.0.0, commit a0c78d0a; docs.mistral.ai Vibe pages;
+  2026-10-19): the core always offers `read_file`, `write_file`, `edit`, `bash`, `run_typescript` and
+  `search_tool_functions` to the model; `--enabled-tools` only makes calls to them be refused; no
+  `--model` flag, and an unknown `active_model` silently falls back to Medium 3.5; no schema mode;
+  the browser sign-in yields a Mistral API key stored in the Keychain (`.env` fallback); training on
+  by default for Vibe ("users are not opted out by default"); server-side experiments can change
+  the system prompt and default model unless pinned. Hence the API route.
+- **Codex** (step 0 detail; source at `rust-v0.163.0`; learn.chatgpt.com config pages; 2026-10-19):
+  tools switch off with `--disable <feature>` and `-c` keys except `apply_patch` (no switch); the
+  read-only sandbox lets reads anywhere and blocks writes and command network; `--json` items are
+  `agent_message`, `reasoning`, `command_execution`, `file_change`, `mcp_tool_call`,
+  `collab_tool_call`, `web_search`, `todo_list`, `error`; `$CODEX_HOME/AGENTS.md` is read despite
+  `--ignore-user-config`; environment context (cwd, shell, date, timezone) and analytics are on by
+  default; `cli_auth_credentials_store` is `file` by default (plaintext `auth.json`), `keyring`
+  available; `--output-schema` is sent as strict JSON schema, not checked by the CLI; `-o` written
+  only on a completed turn; model ids `gpt-6.1-sol` (min 0.153.0) and `gpt-6-luna` (min 0.155.0);
+  usage limit is the text "You’ve hit your usage limit" and exit 1.
+- **OpenAI data terms** (help.openai.com 5722486, 7730893, 11369540, 8809935, read through search
+  excerpts, unverified; learn.chatgpt.com/docs/auth fetched; 2026-10-19): Plus content, including
+  Codex tasks, may train models unless "Improve the model for everyone" is off (Settings → Data
+  Controls) or "Do not train on my content" is set in the privacy portal; Codex's separate "Include
+  environments" setting is unaffected by those; feedback may train on the whole conversation;
+  deleted chats are removed within 30 days, with safety and legal exceptions; no CLI-specific
+  retention published; requests go to chatgpt.com/backend-api/codex/responses with `store: false`
+  (source). The operator turns off both training settings and sends no feedback.
 - **Mistral** (mistral.ai/pricing; docs.mistral.ai/getting-started/models/): Pro $14.99/month,
   "Full access to Vibe", $15/month API credit; "Mistral Large" $0.50/$1.50 per 1M tokens (version
   not named); Large 4 (26.10), Medium 3.5 (26.04), Small 4 (26.03); the page also lists Z.ai GLM 5.3.
