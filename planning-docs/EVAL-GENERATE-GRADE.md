@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -168,8 +168,10 @@ manifest records both. Prompts take published text from the shipped file only.
 
 ### Generation (P11, P14, P18)
 
-1. **Seeds**: one call per group, asking for 1.5 times its count, so replacements never need a new
-   seed call. A seed is structured facts: sender role, what's asked, amount or none, urgency,
+1. **Seeds**: one call per group, asking for 1.5 times its count; when a bucket's seeds run out
+   while it is short and under 3 times its count in tries, the group asks again for 1.5 times
+   what it still needs, at most 3 times per group (OD-543: the DEV run showed the first call
+   alone can't reach the try limit). A seed is structured facts: sender role, what's asked, amount or none, urgency,
    delivery, ordinary or scam, mailbox profile (`org` or `freemail`), and facts chosen from fixed
    lists (`auth_result` pass/none/fail, `sender_seen_before` yes/no, bulk yes/no).
 2. **Emails**: one call per 5-10 seeds of a group (K set in the plan after the pilot). The
@@ -201,8 +203,13 @@ manifest records both. Prompts take published text from the shipped file only.
 - HTML is not accepted; any `<script`, `<form`, `on…=` or `javascript:` in any field is refused.
 - A hygiene failure is retried once with the finding kinds quoted, then dropped; a schema misfit is
   dropped; a refusal is recorded and dropped, never retried (decision 10a).
-- Near-duplicates across the whole set (same opening line, or high word-shingle overlap) are
-  dropped (P30).
+- Near-duplicates across the whole set are dropped (P30): identical text, or word 5-gram
+  containment of 60% or more when both emails have at least 20 5-grams. A shared opening line is
+  not a drop (OD-543: the DEV run lost 20 of 46 emails to shared greetings); repeated openings are
+  reported. A drop counts against the later email's group. Long footers shared by one sender can
+  still reach the limit (a stated limit). A hygiene failure's finding kinds (names, never text)
+  are logged for both passes, and retries that pass are counted (RUBRIC.md: reported, not
+  limited).
 - Drops other than refusals are replaced from the seed pool until the group's count is met or 3
   times its count is reached; a refused seed is never replaced or retried (decision 10a); the report gives drops and refusals per group, and marks a group with over a third
   dropped as "selected" (M6).
@@ -284,7 +291,11 @@ Every adapter:
 
 - On the provider account: prepaid credit, and monthly spending limits on the organisation and
   the workspace (Mistral: "API access can be suspended until the next month begins" at the limit),
-  so a run can never spend more than the operator set; training turned off in the Admin Console's
+  so a run can never spend more than the operator set. As set up (operator, 2026-10-20): Mistral's
+  free plan with its US$10 default credit stands in for prepaid credit, with no paid plan or
+  separate limit; the credit is below the `--max-cost` default, so it binds first. Unverified:
+  that calls are refused rather than billed once the credit is used up, and the free plan's rate
+  limits (the first grading run shows them); training turned off in the Admin Console's
   Privacy panel (where that panel sits now is unverified; check at account setup). API keys come
   from Mistral AI Studio (console.mistral.ai), not from Vibe ((rv), unverified by Claude).
 - `--max-cost` (default US$15 per run): ecf adds each call's cost from the returned token counts and
@@ -363,7 +374,15 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    with the labels' digest), not at grading, since labels come after grading in the flow;
    ordinary seeds carry no
    delivery method; near-duplicates are 5-word shingles at 60% containment.
-2. **The `claude` adapter and a DEV run** of 30, after the operator writes the realism rubric and
+2. **The `claude` adapter and a DEV run** of 30 (**run 2026-10-20**, OD-542: Haiku generated 52
+   calls in 11 minutes and kept 19 of 30, 2 refused (Extortion) and 27 dropped, 20 of them for a
+   shared first line (fixed, OD-543) and 7 for hygiene; Sonnet graded all 19 with no refusal or
+   misfit in 74 s). **DEV grader comparison** (operator, 2026-10-20; OD-543): Haiku, Sonnet and
+   Opus each grade, a model never grading its own set: a Haiku-made set graded by Sonnet and
+   Opus, and a Sonnet-made set graded by Haiku and Opus, both labelled blind by the operator
+   first; the DEV report shows each grader against those labels, marked a grader comparison, not
+   a measurement of ecf. Haiku and Sonnet never grade the same emails, so their figures are
+   indicative; Opus on both sets is the reference. after the operator writes the realism rubric and
    the pilot pass mark (P25). Plumbing only. **Adapter built 2026-10-20** (`ecf.eval.claude_tool`):
    the flags of the `claude -p` check, the schema passed inline (`--json-schema` takes the schema,
    not a file), ecf's install's `CLAUDE_CONFIG_DIR` with telemetry off, Claude Code 2.1.303 or

@@ -24,6 +24,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 from ecf.errors import InvalidInputError
 from ecf.eval import generate as gen
 from ecf.eval import labels as label_file
+from ecf.eval import models
 from ecf.eval.results import RESULT_FORMAT, CaseResult, ResultFile
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import load_schema
@@ -88,6 +89,8 @@ class Grading:
     def run(self, *, resume: bool) -> tuple[Path | None, dict[str, int], str]:
         """(the result file, counts by outcome, detail). No file while the run is stopped."""
         doc = gen.verify(self.root)
+        models.check_not_self(str(doc["generator"].get("model")), self.adapter.model,
+                              str(doc.get("mode")))  # fmt: skip
         work = gen.Work(self.root)
         log_name = f"grade-{_slug(self.adapter.model)}"
         # a case's last entry; failed calls are asked again on resume

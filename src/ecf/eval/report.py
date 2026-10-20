@@ -90,9 +90,61 @@ def _plumbing(doc: dict[str, Any]) -> list[str]:
     for reason, by_group in drops.items():
         lines.append(f"dropped, {reason}: {sum(by_group.values())}"
                      f" ({', '.join(f'{g} {n}' for g, n in by_group.items())})")  # fmt: skip
+    if drops:
+        lines.append("  (a near-duplicate drop counts against the later email's group)")
+    kinds = cast(dict[str, int], doc.get("hygiene_kinds") or {})
+    if kinds:
+        lines.append("hygiene drops by finding kind: "
+                     + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())))  # fmt: skip
+    passed = cast(dict[str, Any], doc.get("retried_passed") or {})
+    if passed.get("count"):
+        lines.append(f"passed on the hygiene retry: {passed['count']} ("
+                     + ", ".join(f"{k} {n}" for k, n in sorted(passed["kinds"].items()))
+                     + ")")  # fmt: skip
+    if "repeated_openings" in doc:
+        lines.append(f"repeated opening lines among kept emails: {doc['repeated_openings']}")
     if doc.get("selected"):
         lines.append(f"selected (over a third dropped): {', '.join(doc['selected'])}")
     return lines
+
+
+def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
+    """A grade file made by the set's own generator is refused (OD-543), even one written
+    before that rule existed."""
+    for g in grades:
+        d = cast(dict[str, Any], (g.summary or {}).get("grader") or {})
+        models.check_not_self(str(doc["generator"].get("model")), str(d.get("model")),
+                              str(doc.get("mode")))  # fmt: skip
+
+
+def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],
+         lines: list[str]) -> list[str]:  # fmt: skip
+    """A DEV set: plumbing, then each grader against your confirmed labels when you have labelled
+    the set (the DEV grader comparison, OD-543); never ecf's own figures."""
+    out = [DEV_BANNER, *lines]
+    grades = [r for r in results if grading.is_grade(r)]
+    if len(grades) < len(results):
+        out.append("ecf results aren't scored on a DEV set; pass only its grade files")
+    exp = confirmed(root)
+    labels = {c: cast(dict[str, Any], e.get("labels") or {}) for c, e in exp.items()}
+    if not grades:
+        return out
+    if not labels:
+        out.append("no confirmed labels: the grader comparison needs the set labelled blind"
+                   f" (`ecf eval label --root {root} --review all --add`, then"
+                   " confirm)")  # fmt: skip
+        return out
+    out.append(f"confirmed labels: {len(labels)} of {len(doc['cases'])} cases")
+    fields = tuple(load_schema().fields)
+    for g in grades:
+        grading.check_grade(g, doc)
+        got = {c.id: dict(c.got) for c in g.cases if c.got}
+        title = (f"grader {g.pair.removeprefix('grader:')} against your labels (DEV grader"
+                 " comparison, not a measurement of ecf):")  # fmt: skip
+        figures = agreement(got, labels, fields)
+        out += _field_lines(title, figures)
+        out += _measured(root, g.run_id, labels, figures)
+    return out
 
 
 def report(root: Path, results: list[ResultFile]) -> list[str]:
@@ -100,8 +152,9 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:
     fields = tuple(load_schema().fields)
     lines = [f"Generated set {root} ({doc['mode']}, made with ecf {doc['ecf_version']})"]
     lines += _plumbing(doc)
+    _no_self_grades(doc, [r for r in results if grading.is_grade(r)])
     if doc["mode"] == "dev":
-        return [DEV_BANNER, *lines]
+        return _dev(root, doc, results, lines)
     ids = set(doc["cases"])
     exp = confirmed(root)
     labels = {c: cast(dict[str, Any], e.get("labels") or {}) for c, e in exp.items()}

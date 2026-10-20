@@ -84,7 +84,7 @@ Draft, for the operator to edit and approve:
   edited): the hygiene scan (the safety rules above, plus no real domains, addresses, phone
   numbers, card or bank numbers, wallet addresses or key shapes), HTML or script markup, a brand
   or agency named as the sender, and near-duplicates (the same opening line, or heavy word
-  overlap with an earlier email). A hygiene failure gets one retry. Refusals are counted by group.
+  overlap with an earlier email; from 2026-10-20 identical text or heavy overlap only, OD-543). A hygiene failure gets one retry. Refusals are counted by group.
 
 ## What you may and may not use
 

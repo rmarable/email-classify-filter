@@ -2,17 +2,19 @@
 Generation and Checks; P10-P18, P23, P27, P30).
 
 Two stages, both answered by the generator: seeds (structured facts about each email to write,
-asked once per group, 1.5 times its count so a dropped email can be replaced without a new seed
-call), then emails (K seeds per call). The generator returns message fields and label hints only;
+asked per group at 1.5 times its count, and asked again for a bucket whose seeds run out while
+it is short and under its try limit, at most `MAX_TOPUPS` times per group; OD-543), then emails
+(K seeds per call). The generator returns message fields and label hints only;
 ecf sets the rest from the seed and the fixed recipient configuration: headers, authentication
 results, profile, expected facts, id, title, author and generator. ecf's own authors write no
 email content, seed, wording or label: the prompts carry the published lists, the recipient
 configuration, the safety rules and the output schema, with no style guidance or examples.
 
 Each email is checked as it is made (the card model, the hygiene scan, markup, brands in sender
-names, near-duplicates). A hygiene failure is retried once with the finding kinds named; any
-other failure drops the email, and a dropped one is replaced from the group's seed pool until the
-count is met or 3 times it has been tried. A refusal is recorded and never retried, reworded or
+names, near-duplicates). A hygiene failure is retried once with the finding kinds named, and
+the kinds of both passes are logged (names only); any other failure drops the email, and a
+dropped one is replaced from the group's seed pool (topped up when it runs out) until the count
+is met or 3 times it has been tried. A refusal is recorded and never retried, reworded or
 replaced (decision 10a), so a group can come up short. `work/` keeps append-only logs of every
 seed, call and outcome, without tool output, so a stopped run resumes (`--resume`).
 """
@@ -43,6 +45,7 @@ from ecf.schema import FieldKind, load_schema
 K_DEFAULT = 5  # seeds per email call; set from the pilot's figures
 SEED_FACTOR = 1.5
 MAX_TRIES_FACTOR = 3
+MAX_TOPUPS = 3  # further seed calls per group when a bucket's seeds run out (OD-543)
 FORMAT = 1
 DEV_PREFIX = "dev-"
 
@@ -370,6 +373,9 @@ class Run:
             self.buckets[b.key], self.tallies[b.key] = b, Tally(n)
         self.dropped: Counter[tuple[str, str]] = Counter()  # (reason, group)
         self.refused: Counter[str] = Counter()  # group
+        self.hygiene_kinds: Counter[str] = Counter()  # finding kinds of hygiene drops
+        self.retried_kinds: Counter[str] = Counter()  # first-pass kinds of retries that passed
+        self.retried_passed = 0
         self.usage: Counter[str] = Counter()
         self.calls = 0
         self.seconds = 0.0
@@ -391,9 +397,19 @@ class Run:
         return reply
 
     def _outcome(self, seed_id: str, outcome: str, reason: str = "",
-                 case_id: str | None = None) -> None:  # fmt: skip
+                 case_id: str | None = None,
+                 extra: dict[str, Any] | None = None) -> None:  # fmt: skip
+        """`extra` holds finding kind names only (P27): never email text."""
         self.work.append("outcomes", [{"seed": seed_id, "outcome": outcome, "reason": reason,
-                                       **({"case": case_id} if case_id else {})}])  # fmt: skip
+                                       **({"case": case_id} if case_id else {}),
+                                       **(extra or {})}])  # fmt: skip
+
+    def _note_kinds(self, outcome: str, extra: dict[str, Any]) -> None:
+        if outcome == "hygiene":
+            self.hygiene_kinds.update(extra.get("findings", {}).get("retry") or [])
+        if outcome == "kept" and "retried" in extra:
+            self.retried_passed += 1
+            self.retried_kinds.update(extra["retried"])
 
     # Resume: the logs rebuilt into the run's state
 
@@ -404,10 +420,10 @@ class Run:
         for row in self.work.read("seeds"):
             seeded.add(row["group"])
             if row.get("refused"):
-                self.refused[row["group"]] += sum(t.need for b, t in
-                                                  ((self.buckets[k], t) for k, t in
-                                                   self.tallies.items())
-                                                  if b.group == row["group"])  # fmt: skip
+                self.refused[row["group"]] += (
+                    int(row["need"]) if "need" in row else
+                    sum(t.need for b, t in ((self.buckets[k], t) for k, t in self.tallies.items())
+                        if b.group == row["group"]))  # fmt: skip
             if row.get("id"):
                 seeds.setdefault(row["group"], []).append(row)
         settled: set[str] = set()
@@ -427,6 +443,7 @@ class Run:
                 self.refused[s["group"]] += 1
             else:
                 self.dropped[(o["reason"], s["group"])] += 1
+            self._note_kinds(o["reason"] or o["outcome"], o)
         for path in sorted((self.root / "cases").glob("*.md")):
             self.dups.seen(parse_card(path.read_text(encoding="utf-8"), source=path.name).body)
         for c in self.work.read("calls"):
@@ -443,9 +460,11 @@ class Run:
             out.setdefault((b.kind, b.group), []).append(b)
         return out
 
-    def _seed(self, kind: str, group: str, buckets: list[Bucket]) -> list[dict[str, Any]]:
-        wanted = {b.delivery or "none": math.ceil(SEED_FACTOR * self.tallies[b.key].need)
-                  for b in buckets}  # fmt: skip
+    def _seed(self, kind: str, group: str, buckets: list[Bucket],
+              offset: int = 0) -> list[dict[str, Any]]:  # fmt: skip
+        """The group's seeds, or (`offset` > 0, a top-up) more for its short buckets."""
+        short = {b.key: self.tallies[b.key].need - self.tallies[b.key].kept for b in buckets}
+        wanted = {b.delivery or "none": math.ceil(SEED_FACTOR * short[b.key]) for b in buckets}
         types = list(self.mix.groups[group]) if kind == "scam" else []
         deliveries = [d for d in wanted if d != "none"]
         b0 = buckets[0]
@@ -456,14 +475,10 @@ class Run:
             if reply.status == "ok":
                 break
             if reply.status == "refused":
-                self.work.append("seeds", [{"group": group, "refused": True}])
-                self.refused[group] += sum(self.tallies[b.key].need for b in buckets)
-                return []
+                return self._seeds_refused(group, sum(short.values()))
         answer = cast(dict[str, Any], reply.answer)
         if answer["refused"]:
-            self.work.append("seeds", [{"group": group, "refused": True}])
-            self.refused[group] += sum(self.tallies[b.key].need for b in buckets)
-            return []
+            return self._seeds_refused(group, sum(short.values()))
         by_delivery = {(b.delivery or "none"): b for b in buckets}
         rows: list[dict[str, Any]] = []
         for i, s in enumerate(cast(list[dict[str, Any]], answer["seeds"])):
@@ -471,10 +486,15 @@ class Run:
             b = by_delivery.get(d)
             if b is None or (kind == "scam" and s["ic3_type"] not in types):
                 continue  # not a seed this group asked for
-            rows.append({"id": f"{group}-s{i:03d}", "group": group, "bucket": b.key,
+            rows.append({"id": f"{group}-s{offset + i:03d}", "group": group, "bucket": b.key,
                          **{k: s[k] for k in SEED_TEXT_KEYS}})  # fmt: skip
         self.work.append("seeds", rows or [{"group": group, "seeds": 0}])
         return rows
+
+    def _seeds_refused(self, group: str, need: int) -> list[dict[str, Any]]:
+        self.work.append("seeds", [{"group": group, "refused": True, "need": need}])
+        self.refused[group] += need
+        return []
 
     def _accept(self, b: Bucket, seed: dict[str, Any], email: dict[str, Any],
                 retried: bool) -> tuple[str, list[str]]:  # fmt: skip
@@ -490,7 +510,7 @@ class Run:
         if reason is not None:
             return reason, []
         if findings:
-            return ("hygiene", []) if retried else ("retry", findings)
+            return ("hygiene", findings) if retried else ("retry", findings)
         if (why := self.dups.seen(card.body)) is not None:
             return f"near-duplicate ({why})", []
         self.case_no[b.group] += 1
@@ -501,21 +521,24 @@ class Run:
         return "kept", [case_id]
 
     def _settle(self, b: Bucket, seed: dict[str, Any], outcome: str,
-                case_id: str | None = None) -> None:  # fmt: skip
+                case_id: str | None = None,
+                extra: dict[str, Any] | None = None) -> None:  # fmt: skip
         t = self.tallies[b.key]
         t.tried += 1
+        self._note_kinds(outcome, extra or {})
         if outcome == "kept":
             t.kept += 1
-            self._outcome(seed["id"], "kept", case_id=case_id)
+            self._outcome(seed["id"], "kept", case_id=case_id, extra=extra)
         elif outcome == "refused":
             self.refused[b.group] += 1
             self._outcome(seed["id"], "refused")
         else:
             self.dropped[(outcome, b.group)] += 1
-            self._outcome(seed["id"], "dropped", outcome)
+            self._outcome(seed["id"], "dropped", outcome, extra=extra)
 
     def _emails(self, group: str, seeds: list[dict[str, Any]], settled: set[str]) -> None:
         pool = [s for s in seeds if s["id"] not in settled]
+        topups = 0
         while True:
             batch: list[dict[str, Any]] = []
             for s in pool:
@@ -526,7 +549,20 @@ class Run:
                 if len(batch) == self.k:
                     break
             if not batch:
-                return
+                short = [b for b in self.buckets.values() if b.group == group
+                         and self.tallies[b.key].kept < self.tallies[b.key].need
+                         and self.tallies[b.key].tried < MAX_TRIES_FACTOR
+                         * self.tallies[b.key].need]  # fmt: skip
+                if not short or topups >= MAX_TOPUPS:
+                    return
+                topups += 1
+                self.echo(f"{group}: asking for more seeds")
+                more = self._seed(short[0].kind, group, short, offset=len(seeds))
+                if not more:
+                    return
+                seeds.extend(more)
+                pool.extend(more)
+                continue
             pool = [s for s in pool if s not in batch]
             self._email_call(group, batch)
 
@@ -558,7 +594,12 @@ class Run:
             if outcome == "retry":
                 self._email_call(group, [s], more)
                 continue
-            self._settle(b, s, outcome, more[0] if outcome == "kept" else None)
+            extra: dict[str, Any] = {}
+            if outcome == "hygiene":
+                extra = {"findings": {"first": findings or [], "retry": more}}
+            elif outcome == "kept" and findings is not None:
+                extra = {"retried": findings}
+            self._settle(b, s, outcome, more[0] if outcome == "kept" else None, extra)
 
     def run(self, *, resume: bool) -> Summary:
         empty: tuple[dict[str, list[dict[str, Any]]], set[str], set[str]] = ({}, set(), set())
@@ -604,7 +645,10 @@ def case_hashes(root: Path) -> dict[str, dict[str, str]]:
     """Each case's built message and expected facts, hashed: what must not change after
     generation (labels and expected rule and safety are added later, so they're left out)."""
     out: dict[str, dict[str, str]] = {}
-    for line in (root / "labels.jsonl").read_text(encoding="utf-8").splitlines():
+    index = root / "labels.jsonl"
+    if not index.exists():  # a run that kept no email
+        return out
+    for line in index.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         row: dict[str, Any] = json.loads(line)
@@ -635,6 +679,9 @@ def write_manifest(run: Run, state: str) -> None:
         "mix": mix_doc, "mix_sha256": _sha(json.dumps(mix_doc, sort_keys=True)),
         "groups": groups, "selected": selected,
         "dropped": _counts_by_group(run.dropped), "refused": dict(run.refused),
+        "hygiene_kinds": dict(run.hygiene_kinds),
+        "retried_passed": {"count": run.retried_passed, "kinds": dict(run.retried_kinds)},
+        "repeated_openings": run.dups.repeated_openings(),
         "prompts": PROMPT_DIGESTS | {"schema": load_schema().digest},
         "calls": run.calls, "seconds": round(run.seconds, 1), "usage": dict(run.usage),
         "cases": case_hashes(run.root) if has_cases else {},

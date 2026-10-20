@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -243,3 +243,41 @@ def test_write_mix_writes_the_shipped_mix_to_edit(
     r = CliRunner().invoke(app, ["eval", "generate", "--root", str(tmp_path / "s"), "--yes"])
     assert r.exit_code != 0 and "codex isn't installed" in (r.output + str(r.exception))
     assert not (tmp_path / "s").exists()  # refused before the folder is made
+
+
+def test_a_model_never_grades_its_own_set(tmp_path: Path) -> None:
+    """Operator rule 2026-10-20 (OD-543): refused at grading, resume included, and in the
+    report for a grade file made before the rule."""
+    _summary, root = run(tmp_path, mode="dev")
+    tool, environ = fake_tool(tmp_path, {})
+    self_grader = tools.CliAdapter(tool, "fake-model-1", environ)
+    with pytest.raises(InvalidInputError, match="never grades its own set"):
+        grading.Grading(root, self_grader).run(resume=False)
+    with pytest.raises(InvalidInputError, match="never grades its own set"):
+        grading.Grading(root, self_grader).run(resume=True)
+    path, _c, _d = _grade(tmp_path, root)
+    assert path is not None
+    g = load_result(path)
+    summary: dict[str, Any] = dict(g.summary or {})
+    summary["grader"] = cast(dict[str, Any], summary["grader"]) | {"model": "fake-model-1"}
+    forged = g.model_copy(update={"summary": summary})
+    with pytest.raises(InvalidInputError, match="never grades its own set"):
+        rep.report(root, [forged])
+    with pytest.raises(InvalidInputError, match="claude-sonnet-5-5"):
+        models.check_not_self("claude-haiku-5-5", "claude-haiku-5-5", "dev")
+
+
+def test_a_labelled_dev_set_compares_graders_never_ecf(tmp_path: Path) -> None:
+    """The DEV grader comparison (OD-543): each grader against your confirmed labels."""
+    _summary, root = run(tmp_path, mode="dev")
+    path, _c, _d = _grade(tmp_path, root)
+    assert path is not None
+    text = "\n".join(rep.report(root, [load_result(path)]))
+    assert "no confirmed labels" in text
+    _label(root)
+    text = "\n".join(rep.report(root, [load_result(path), _result(root, LABELS)]))
+    assert text.startswith(rep.DEV_BANNER)
+    assert "grader fake-grader-1 against your labels (DEV grader comparison" in text
+    assert "all fields           260/260 100.0%" in text
+    assert "ecf results aren't scored on a DEV set" in text
+    assert "ecf result rrrrrrrr" not in text
