@@ -2,7 +2,7 @@
 
 **Status: draft 2, 2026-10-16. Not started.** Phase R ran on draft 1 (four agents, findings P1-P29
 below); the operator accepted every recommendation (2026-10-16). Started ahead of M1-M5 (operator
-decision 2026-10-16, OD-527, amends OD-004). Released as `v3.1.0` (OD-531). Replaces the outline
+decision 2026-10-16, OD-527, amends OD-004). Released as a minor version, numbered when it ships (OD-531, OD-533). Replaces the outline
 `planning-docs/M6-GMAIL-API.md` (OD-426, OD-525). Google Workspace accounts are M7, a separate
 milestone, not planned here; M6 is built so M7 can reuse its adapter and sign-in without a rewrite
 (P5).
@@ -32,7 +32,7 @@ supported, for Gmail and for every other provider.
   found again by Message-ID, closed items and sender history stay (they belong to the address).
   The same command with the *current* access just signs in again (the fix after a password
   change) and keeps the epoch.
-- **Version (OD-531):** `v3.1.0`, a minor release under OD-480, checked path (it has a migration).
+- **Version (OD-531, OD-533):** the next minor release under OD-480, numbered when it ships; checked path (it has a migration).
   The export `data_format` stays 4 (P8).
 - **Scopes (P23):** `gmail.modify` only. It permits sending, so ecf's outbound gate (§8.4, §9.8)
   is the control, not the token; the outline's "no send scope while outbound is off" is dropped,
@@ -199,7 +199,7 @@ check when there are no items.
 of an API address finds no state and starts a new epoch (recovery as above). `addresses.access` is
 exported; an older ecf refuses a newer bundle by schema version (`bundle_reader.py:253-259`) before
 reading rows, and a newer ecf importing an older bundle gets the column default. So `data_format`
-stays 4 (`export_bundle.py:44-53`) and `v3.1.0` is a minor release. `downgrade.py` and SPEC §11.10
+stays 4 (`export_bundle.py:44-53`) and the release is a minor one. `downgrade.py` and SPEC §11.10
 note that an address moved to the API after the upgrade has no app password in the older version.
 
 ### Limits, dependencies, scope
@@ -276,7 +276,7 @@ note that an address moved to the API after the upgrade has no app password in t
     - stated whether live was reached by override.
     Wheel hash, times and figures in a SPEC §21.1 row.
 12. **Closing.** README checked against the build; full macOS suite, 0 skipped; request the tag
-    `ms-m6-gmail-api`; release `v3.1.0` by the checked path (`ecf-release` skill).
+    `ms-m6-gmail-api`; release the next minor version by the checked path (`ecf-release` skill).
 
 ## Plan review findings
 
