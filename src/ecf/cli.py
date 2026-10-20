@@ -1126,6 +1126,14 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         typer.echo(f"model answers from eval {run.run_id[:8]} ({run.created_at[:10]})")
     todo = [r for r in (flagged if show_flags else labels.pending(root))
             if case_id is None or r["id"] == case_id]  # fmt: skip
+    if blind:  # a disputed email is settled blind, never shown with the agreed fields (J14)
+        from ecf.eval import agree as ag  # noqa: PLC0415
+
+        disputed = {d["id"] for d in ag.open_disputes(root)}
+        if disputed & {r["id"] for r in todo}:
+            raise InvalidInputError(f"{len(disputed)} emails wait for you to settle the judges'"
+                                    " disagreements: use `ecf eval settle`, which asks only the"
+                                    " disputed fields, blind")  # fmt: skip
     if case_id and not todo:
         typer.echo(f"{case_id}: nothing to confirm (unknown, or already confirmed)")
         return
