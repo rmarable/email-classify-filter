@@ -2,7 +2,7 @@
 
 Draft 3 (2026-10-19): draft 2 plus the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
-are marked (op). ODs are proposed (OD-533 onward) and ADR 0034, recorded when the operator approves
+are marked (op). ODs are proposed (OD-534 onward) and ADR 0034, recorded when the operator approves
 the plan. Code references were checked against `e925b3c`.
 
 ## Context
@@ -68,7 +68,8 @@ read on its own.
    (no link, attachment or number; added by the operator, not from MITRE), 4/4/4/3 per scam group
    with the 3 rotating, 38/38/37/37 in all. Attachments are plain text or ecf's invoice PDF, links
    use reserved domains, callbacks 555-01xx numbers.
-3. **An `ecf` command for users** (op), under `ecf eval`; one release (op, P19), a minor (v3.x).
+3. **An `ecf` command for users** (op), under `ecf eval`; one release (op, P19), a minor numbered
+   when it ships (op; OD-533, which also covers M6).
 4. **PROD and DEV** (op). PROD: generator, grader and classifier from three families. DEV: Claude
    for all three, to prove the pipeline before paying for other models.
 5. **Defaults** (op): PROD generator OpenAI GPT-6.1 Sol through Codex (Luna only if it passes the
@@ -105,14 +106,14 @@ read on its own.
 Proposed records (numbers assigned at approval):
 - **ADR 0034** Generator and grader providers: the closed list, what each receives, the tool-less
   rule, the separate logins.
-- **OD-533** Generated eval sets: commands, PROD/DEV, no Claude content, published categories and
+- **OD-534** Generated eval sets: commands, PROD/DEV, no Claude content, published categories and
   grouping, `--count`, blind labels, rules-engine expectations (decisions 1-8).
-- **OD-534** Privacy (§12.4) and the first-use notice (ADR 0034).
-- **OD-535** Credentials and isolation: provider tools' own sign-ins in ecf's own config folders;
+- **OD-535** Privacy (§12.4) and the first-use notice (ADR 0034).
+- **OD-536** Credentials and isolation: provider tools' own sign-ins in ecf's own config folders;
   refuse on key variables; no key held or set by ecf.
-- **OD-536** Models: the shipped list, the model filter and the three-family rule in code.
-- **OD-537** Jev re-check rule (decision 12); OD-486 amended to allow a confirmed generated set.
-- **OD-538** The stress test as its own Later item; the SPEC §1.2 corpus entry reworded.
+- **OD-537** Models: the shipped list, the model filter and the three-family rule in code.
+- **OD-538** Jev re-check rule (decision 12); OD-486 amended to allow a confirmed generated set.
+- **OD-539** The stress test as its own Later item; the SPEC §1.2 corpus entry reworded.
 
 ## Design
 
@@ -321,9 +322,8 @@ service API (`ecf` never imports `ecf_server`).
 ## Open questions for the operator
 
 Decided 2026-10-19 (Decisions 2, Generation, Grading): the IC3 rule and groups, the shares, the
-delivery split, the 13 fields, the recipient profiles. Still open:
-1. Release number.
-2. The usage policies (the operator reads OpenAI's and Mistral's before the pilot).
+delivery split, the 13 fields, the recipient profiles, the release number (OD-533). Still open:
+1. The usage policies (the operator reads OpenAI's and Mistral's before the pilot).
 
 ## Facts
 
