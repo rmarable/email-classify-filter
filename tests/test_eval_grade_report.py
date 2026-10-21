@@ -173,7 +173,8 @@ def test_expect_leaves_an_unlabelled_card_alone(clock: FakeClock, conn: sqlite3.
                                                             "must_not_hide": False}}
              for r in rows]  # fmt: skip
     assert expect.apply(root, cases) == {"filled": 0, "unchanged": 0, "unlabelled": 20,
-                                         "errors": 0}  # fmt: skip
+                                         "errors": 0, "to_settle": 0, "undecided": 0, "edited": 0,
+                                         "waiting": 0}  # fmt: skip
 
 
 @pytest.mark.usefixtures("fake_families")

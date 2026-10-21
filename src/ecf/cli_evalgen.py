@@ -74,6 +74,8 @@ def _settle_terminal(root: Path, today: Any) -> None:
     done: dict[str, dict[str, Any]] = {}
     for n, it in enumerate(items, 1):
         typer.echo(f"\n== email {n} of {len(items)}\n{it['view']}\n")
+        if "note" in it:
+            typer.echo(f"({it['note']})")
         answer: dict[str, Any] = {}
         for f in it["fields"]:
             choices = ["yes", "no"] if f["kind"] == "boolean" else f["values"]
@@ -96,6 +98,8 @@ def _settle_terminal(root: Path, today: Any) -> None:
             done[it["case"]] = answer
     n_done = st.apply(root, done, today) if done else 0
     typer.echo(f"settled {n_done} emails; {len(items) - n_done} still open")
+    if n_done:
+        typer.echo(f"Next: ecf eval expect --root {root}")
 
 
 def _notice(role: str, provider: str, yes: bool) -> None:
@@ -251,10 +255,19 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         o = ag.run(root.expanduser().resolve(), datetime.now(UTC).date())
         typer.echo(f"agreed: {o.agreed} emails confirmed by the judges; for you: {o.disputed}"
                    f" ({o.whole} whole, a judge refused or skipped them); already confirmed:"
-                   f" {o.skipped}")  # fmt: skip
+                   f" {o.skipped - o.yours_edited - o.waiting}; still waiting for you:"
+                   f" {o.waiting}")  # fmt: skip
+        if o.yours_edited:
+            typer.echo(f"{o.yours_edited} of your confirmed emails were edited: confirm them"
+                       f" again with `ecf eval label --root {root}`, or the judges decide them"
+                       " next run")  # fmt: skip
+        if o.redecided:
+            typer.echo(f"{o.redecided} emails edited by hand were decided again (an edit to"
+                       " sender_type or priority doesn't stick: settle it)")  # fmt: skip
         if o.fields:
             typer.echo("disputed fields: " + ", ".join(f"{k} {v}" for k, v in
                                                        o.fields.most_common()))  # fmt: skip
+        typer.echo(f"Next: ecf eval expect --root {root}")
 
     @eval_app.command("settle")
     def settle_cmd(
@@ -286,23 +299,42 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                 raise InvalidInputError("--from needs --tokens, the page's token map")
             done, left = st.apply_page(where, answers.expanduser(), tokens.expanduser(), today)
             typer.echo(f"settled {done} emails; {left} not fully answered yet")
+            if done:
+                typer.echo(f"Next: ecf eval expect --root {root}")
             return
         _settle_terminal(where, today)
 
     @eval_app.command("expect")
     def expect(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:
-        """Fill each labelled card's expected rule and safety from ecf's rules engine; confirm
-        them with `ecf eval label`."""
+        """Fill each labelled card's expected rule and safety from ecf's rules engine. A card the
+        judges labelled is evaluated with each judge's sender_type and priority; when they
+        decide the rule, the email goes to `ecf eval settle` for them."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+
         from ecf.eval import expect as ex  # noqa: PLC0415
         from ecf.eval import generate as gen  # noqa: PLC0415
 
         where = root.expanduser().resolve()
         gen.verify(where)
+        p = ex.plan(where)
         with LocalClient(paths()) as c:
-            r = c.request("POST", "/v1/eval/expect", {"root": str(where)})
-        counts = ex.apply(where, list(r["cases"]))
+            r = c.request("POST", "/v1/eval/expect", {"root": str(where), "variants": p.options})
+        counts = ex.apply(where, list(r["cases"]), datetime.now(UTC).date(), plan=p,
+                          digest=r.get("rules_digest"))  # fmt: skip
         typer.echo(", ".join(f"{k} {v}" for k, v in counts.items()))
-        typer.echo(f"Confirm each with `ecf eval label --root {root}`.")
+        if p.edited:
+            typer.echo(f"{len(p.edited)} judged emails were edited by hand since their"
+                       f" confirmation: run `ecf eval agree --root {root}` first")  # fmt: skip
+        if counts["undecided"]:
+            typer.echo(f"{counts['undecided']} emails stay undecided (a rules error; see"
+                       " work/expect.jsonl): they count in the label figures only")  # fmt: skip
+        if waiting := counts["to_settle"] + counts["waiting"]:
+            typer.echo(f"Next: ecf eval settle --root {root} (or --export for the phone page):"
+                       f" {waiting} emails wait for you")  # fmt: skip
+        elif p.judged():
+            typer.echo(f"Next: ecf eval run --root {root}")
+        else:
+            typer.echo(f"Next: confirm each with `ecf eval label --root {root}`.")
 
     @eval_app.command("report")
     def report(

@@ -194,13 +194,13 @@ def weak_fields(grades: list[ResultFile]) -> set[str]:
     return out
 
 
-def _scorable(root: Path, labels: dict[str, dict[str, Any]], sources: dict[str, str | None],
+def _scorable(root: Path, labels: dict[str, dict[str, Any]], theirs: dict[str, dict[str, Any]],
               grades: list[ResultFile]) -> tuple[dict[str, dict[str, Any]], list[str]]:  # fmt: skip
     """The labels ecf is scored on when judges set some (OD-547, J7): fields the judges agree
     on only weakly are report-only, except the safety fields (the fixed items and fraud_risk,
     whose disputes you always settle; eval plan draft 21), and a judges' label contradicting the
     email's assignment (a scam not phishing, or ordinary mail phishing) is left out for phishing
-    and fraud_risk."""
+    and fraud_risk, unless you settled them (`theirs`: the fields the judges set, per case)."""
     weak: set[str] = weak_fields(grades) if len(grades) > 1 else set()
     weak -= {*FIXED_ITEMS, "fraud_risk"}
     given = assignments(root)
@@ -209,19 +209,62 @@ def _scorable(root: Path, labels: dict[str, dict[str, Any]], sources: dict[str, 
     for c, lab in labels.items():
         keep = {f: v for f, v in lab.items() if f not in weak}
         kind = given.get(c, {}).get("kind")
-        if (
-            sources.get(c) == "models"
-            and "phishing" in lab
-            and ((kind == "scam") != bool(lab["phishing"]))
-        ):
+        if "phishing" in theirs.get(c, {}) and ((kind == "scam") != bool(lab["phishing"])):
             contradicted.append(c)
-            keep = {f: v for f, v in keep.items() if f not in ("phishing", "fraud_risk")}
+            drop = {"phishing", "fraud_risk"} & set(theirs[c])
+            keep = {f: v for f, v in keep.items() if f not in drop}
         out[c] = keep
     notes = [f"report-only (judges' kappa under {KAPPA_FLOOR}; never the safety fields): "
              + (", ".join(sorted(weak)) or "none"),
              f"judges' labels contradicting the assignment (left out for phishing and"
              f" fraud_risk): {len(contradicted)}"]  # fmt: skip
     return out, notes
+
+
+def _split(labels: dict[str, dict[str, Any]], rows: list[dict[str, Any]],
+           sources: dict[str, str | None]) -> tuple[dict[str, dict[str, Any]],
+                                                    dict[str, dict[str, Any]]]:  # fmt: skip
+    """Per case and field, who set each confirmed label (OD-547 J6, J13; draft 21): on a judged
+    row only the fields you settled are yours; an older row confirmed by the judges is all
+    theirs; any other row is all yours. Returns (yours, theirs), empty cases left out."""
+    by_id = {r["id"]: r for r in rows}
+    yours: dict[str, dict[str, Any]] = {}
+    theirs: dict[str, dict[str, Any]] = {}
+    for c, lab in labels.items():
+        row = by_id.get(c) or {}
+        mine: set[str] = (set(label_file.settled(row)) if label_file.judged(row)
+                          else set() if sources.get(c) == label_file.MODELS
+                          else set(lab))  # fmt: skip
+        if y := {f: v for f, v in lab.items() if f in mine}:
+            yours[c] = y
+        if t := {f: v for f, v in lab.items() if f not in mine}:
+            theirs[c] = t
+    return yours, theirs
+
+
+def _expect_lines(root: Path, exp: Mapping[str, Mapping[str, Any]], rows: list[dict[str, Any]],
+                  runs: list[ResultFile]) -> list[str]:  # fmt: skip
+    """What `ecf eval expect` did on a judged set (draft 21): the cases sent to you because
+    sender_type or priority decided the rule, the cases with no expected rule, and the rules it
+    used beside each run's."""
+    from ecf.eval import expect as ex  # noqa: PLC0415 - expect reads the agreement this reports
+
+    work = gen.Work(root)
+    sent = {d["id"] for d in work.read("disputes") if d.get("reason") == ex.DECIDES}
+    judged = {r["id"] for r in rows if label_file.judged(r)}
+    undecided = sum(1 for c in judged if c in exp and exp[c].get("rule") is None)
+    log = work.read(ex.LOG)
+    errors = len(log[-1].get("errors") or []) if log else 0
+    digest = str(log[-1].get("rules_digest") or "") if log else ""
+    lines = [f"sender_type and priority: not scored on judged rows; {len(sent)} sent to you"
+             " because they decided the rule",
+             f"rule undecided: {undecided} (errors: {errors})"]  # fmt: skip
+    for r in runs:
+        theirs = str((r.summary or {}).get("rules_digest") or "")
+        flag = "" if theirs == digest else " MISMATCH: run `ecf eval expect` again, or the run"
+        lines.append(f"rules: expect {digest[:12] or 'not run'} (run {r.run_id[:8]}:"
+                     f" {theirs[:12] or 'none'}){flag}")  # fmt: skip
+    return lines
 
 
 def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
@@ -266,20 +309,22 @@ def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
 def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],
          lines: list[str]) -> list[str]:  # fmt: skip
     """A DEV set: plumbing, then each grader against your confirmed labels when you have labelled
-    the set (the DEV grader comparison, OD-543); never ecf's own figures."""
+    the set (the DEV grader comparison, OD-543; never rows the judges labelled, draft 21); never
+    ecf's own figures."""
     out = [DEV_BANNER, *lines]
     grades = [r for r in results if grading.is_grade(r)]
     if len(grades) < len(results):
         out.append("ecf results aren't scored on a DEV set; pass only its grade files")
-    exp = confirmed(root)
+    judged = {r["id"] for r in label_file.read(root) if label_file.judged(r)}
+    exp = {c: e for c, e in confirmed(root).items() if c not in judged}  # your labels only
     labels = {c: cast(dict[str, Any], e.get("labels") or {}) for c, e in exp.items()}
     if not grades:
         return out
     if not labels:
-        out.append("no confirmed labels: the grader comparison needs the set labelled blind"
-                   f" (`ecf eval label --root {root} --review all --add`, then"
+        out.append("no confirmed labels of yours: the grader comparison needs the set labelled"
+                   f" blind (`ecf eval label --root {root} --review all --add`, then"
                    " confirm)")  # fmt: skip
-        return out
+        return out + (_judge_lines(root, grades) if judged else [])
     out.append(f"confirmed labels: {len(labels)} of {len(doc['cases'])} cases")
     fields = tuple(load_schema().fields)
     for g in grades:
@@ -320,8 +365,8 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         grading.check_grade(g, doc)
     shared = _families(doc, grades)
     sources = {r["id"]: label_file.source(r) for r in rows if r["id"] in labels}
-    judged = "models" in sources.values()
-    settled = {c: v for c, v in labels.items() if sources.get(c) == "operator"}
+    settled, theirs = _split(labels, rows, sources)
+    judged = bool(theirs) or any(label_file.judged(r) for r in rows if r["id"] in labels)
     graded: dict[str, dict[str, Any]] = {}
     for g in grades:  # measured first: every report states it (P8)
         got = {c.id: dict(c.got) for c in g.cases if c.got}
@@ -337,8 +382,10 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         lines += _field_lines(title, figures)
         if not judged:
             lines += _measured(root, g.run_id, labels, figures)
-    scored, notes = _scorable(root, labels, sources, grades) if judged else (labels, [])
+    scored, notes = _scorable(root, labels, theirs, grades) if judged else (labels, [])
     lines += notes
+    if judged:
+        lines += _expect_lines(root, exp, rows, runs)
     proposals = {p["id"]: cast(dict[str, Any], p["labels"])
                  for p in gen.Work(root).read("proposals")}  # fmt: skip
     if proposals:
@@ -359,11 +406,13 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         got = {c.id: dict(c.got) for c in r.cases}
         if judged:  # three figures: judges' labels, your settled ones, both (J13)
             for part, which in (
-                ("labels the judges set", "models"),
-                ("labels you settled", "operator"),
+                ("labels the judges set", theirs),
+                ("labels you settled", settled),
                 ("all labels", None),
             ):
-                sub = {c: v for c, v in scored.items() if which is None or sources[c] == which}
+                sub = scored if which is None else {
+                    c: {f: v for f, v in lab.items() if f in which.get(c, {})}
+                    for c, lab in scored.items() if which.get(c)}  # fmt: skip
                 lines += _field_lines(
                     f"ecf result {r.run_id[:8]} ({r.pair}) against {part} ({len(sub)} emails):",
                     agreement(got, sub, fields),

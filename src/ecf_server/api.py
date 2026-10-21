@@ -50,6 +50,7 @@ from ecf.errors import (
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
+from ecf.schema import load_schema
 from ecf_server import (
     _slack,
     addresses,
@@ -95,6 +96,7 @@ from ecf_server import (
     restore,
     retention,
     routereport,
+    rules,
     ruletest,
     scans,
     schedule,
@@ -815,21 +817,28 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: P
 
     @allow(Caller.CLI)
     def eval_expect(request: Request) -> JSONResponse:
-        """`ecf eval expect`: each case's rule and safety from the rules in force on its labels
-        and facts (eval generate plan decision 8); writes nothing."""
-        root = Path(_str(_body(request), "root"))
+        """`ecf eval expect`: each case's rule and safety from the starter rules (as `ecf eval run`
+        uses them) on its labels and facts (eval generate plan decision 8), and for a judged
+        case each combination of sender_type and priority in `variants` (draft 21); writes
+        nothing."""
+        body = _body(request)
+        root = Path(_str(body, "root"))
         if not root.is_absolute():
             raise InvalidInputError("root must be an absolute path")
-        conn = state.connect()
-        try:
-            current = config.current_rules(conn)
-        finally:
-            conn.close()
-        rows = ruletest.outcomes(state.clock, current, root)
-        return JSONResponse({"cases": [
-            {"id": r["id"], "rule": r["rule"], "error": r.get("error"),
-             "safety": evalrun.expected_safety(r["labels"], r["rule"], r["actions"])}
-            for r in rows]})  # fmt: skip
+        schema = load_schema()  # the shipped schema, as eval runs use
+        rows = ruletest.outcomes(state.clock, rules.load_starter_rules(schema), root,
+                                 _variants(body.get("variants")))  # fmt: skip
+
+        def one(r: dict[str, Any]) -> dict[str, Any]:
+            safety = evalrun.expected_safety(r["labels"], r["rule"], r["actions"])
+            return {"rule": r["rule"], "error": r.get("error"), "safety": safety}
+
+        return JSONResponse({
+            "rules_digest": rules.composed_digest(schema, None),
+            "cases": [{"id": r["id"]} | one(r)
+                      | ({"variants": [{"labels": v["variant"]} | one(v) for v in r["variants"]]}
+                         if "variants" in r else {})
+                      for r in rows]})  # fmt: skip
 
     @allow(Caller.CLI)
     def eval_mistral(request: Request) -> JSONResponse:
@@ -2532,6 +2541,43 @@ def _copy_to(body: dict[str, Any]) -> Path | None:
     if not Path(v).is_absolute():
         raise InvalidInputError("copy_to: a folder for a copy of the result (an absolute path)")
     return Path(v)
+
+
+def _variants(v: Any) -> dict[str, list[dict[str, Any]]]:
+    """`ecf eval expect`'s values to combine (draft 21): per case id, a list of values for
+    sender_type and priority (no other field), each one the schema allows; at most
+    `MAX_VARIANTS` combinations, which are returned in field order."""
+    from itertools import product  # noqa: PLC0415
+
+    from ecf.eval import labels as label_file  # noqa: PLC0415 - eval only
+
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise InvalidInputError("variants must be an object of case id to field values")
+    spec = load_schema().fields
+    out: dict[str, list[dict[str, Any]]] = {}
+    for cid, given in cast(dict[str, Any], v).items():
+        if not isinstance(given, dict) or not given:
+            raise InvalidInputError(f"variants for {cid!r}: an object of field to values")
+        options = cast(dict[str, Any], given)
+        for f, vals in options.items():
+            if f not in label_file.UNASKED:
+                raise InvalidInputError(f"variants may set only {', '.join(label_file.UNASKED)}")
+            allowed = set(spec[f].values or ())  # both fields take named values
+            if not isinstance(vals, list) or not vals or any(
+                    not isinstance(x, str) or x not in allowed
+                    for x in cast(list[Any], vals)):  # fmt: skip
+                raise InvalidInputError(f"variants for {cid!r}: {f} takes a list of its values")
+            options[f] = list(dict.fromkeys(cast(list[str], vals)))
+        fields = list(options)
+        made = [dict(zip(fields, t, strict=True))
+                for t in product(*(cast(list[Any], options[f]) for f in fields))]  # fmt: skip
+        if len(made) > label_file.MAX_VARIANTS:
+            raise InvalidInputError(f"variants for {cid!r}: at most {label_file.MAX_VARIANTS}"
+                                    " combinations")  # fmt: skip
+        out[str(cid)] = made
+    return out
 
 
 def _str_list(v: Any) -> list[str]:
