@@ -576,7 +576,7 @@ def test_eval_status_lines_are_readable(monkeypatch: pytest.MonkeyPatch) -> None
         "Eval 7f548cb3: running, 3/8",
         "",
         "Recent runs (synthetic set):",
-        "  2026-10-07 00:19  c1c35845  77/108 confirmed cases correct (71.3%, Wilson [62.1, 79.0])",
+        "  2026-10-07 00:19  c1c35845  77/108 scored cases correct (71.3%, Wilson [62.1, 79.0])",
         "                              unsafe 0, fraud-guard recall 67/67 (100.0%), gate passed",
     ]
     assert status_lines({"current": {"state": "idle"}, "recent": []}) == [
@@ -902,3 +902,46 @@ def test_a_judged_row_never_scores_sender_type_or_priority() -> None:
 def test_a_result_file_from_before_undecided_still_loads() -> None:
     old = CaseResult.model_validate({"id": "c", "correct": True, "safety": True})
     assert old.undecided is False and old.safety is True
+
+
+def test_the_loader_marks_judged_rows_and_the_synthetic_set_has_no_undecided_case(
+    root: Path, tmp_path: Path
+) -> None:
+    """Eval plan draft 21: `load` reads `labelled_by` into `Case.judged`; no synthetic case is
+    undecided (none is generated), so its figures are unchanged."""
+    from ecf.eval import genset  # noqa: PLC0415
+
+    cases, _ = evalrun.load(root, fraud_only=False)
+    assert cases and not any(genset.undecided(c.author, c.expected) for c in cases)
+    assert not any(c.judged for c in cases)
+    copy = tmp_path / "copy"
+    shutil.copytree(root, copy)
+    rows = labels.read(copy)
+    rows[0][labels.LABELLED_BY] = {"judges": ["a:x", "b:y"], "settled": []}
+    labels.write(copy, rows)
+    judged = {c.id: c.judged for c in evalrun.load(copy, fraud_only=False)[0]}
+    assert judged[rows[0]["id"]] is True and sum(judged.values()) == 1
+
+
+def test_an_undecided_case_never_counts_as_unsafe_but_keeps_its_label_figures() -> None:
+    """An undecided case that would fail a safety check (a hide on `must_not_hide`) is out of
+    `unsafe` and the route report's unsafe list; it stays in the per-field comparison, the
+    field metrics and the actor-proposal checks (eval plan draft 21; AA1, AA2)."""
+    from ecf.eval.results import compare_fields, field_metrics  # noqa: PLC0415
+    from ecf_server import routereport  # noqa: PLC0415
+
+    exp = {"labels": {"category": "notification", "phishing": True},
+           "safety": {"must_not_hide": True}}  # fmt: skip
+    gen_case = evalrun.Case("u", Path("x"), exp, True, "generated")
+    syn_case = evalrun.Case("s", Path("x"), exp | {"rule": "x"}, True, "claude")
+    hide = _plan(["archive"], "x")
+    proposal = {"action": "archive", "target": "", "reason": "r"}
+    u = evalrun.score(gen_case, exp["labels"], hide, proposal, before_actor=frozenset())
+    s = evalrun.score(syn_case, exp["labels"], hide, proposal, before_actor=frozenset())
+    assert u.undecided and u.safety is None and s.safety is False
+    m = evalrun.summarize([u, s], 0)
+    assert m["unsafe"] == ["s"] and routereport.unsafe_ids([u, s]) == ["s"]
+    assert m["proposals"]["unsafe"] == ["s", "u"]  # the proposal checks keep it
+    only = ResultFile(run_id="a" * 32, pair="p", set_version="v", created_at="t", cases=[u])
+    assert "category" in {f.field for f in compare_fields(only, only)}  # the undecided case alone
+    assert field_metrics(only)  # its labels count there too

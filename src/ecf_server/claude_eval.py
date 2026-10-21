@@ -1371,7 +1371,8 @@ def results() -> dict[str, Any]:
     m: dict[str, Any] = s["result"] or {}
     out: dict[str, Any] = {k: s[k] for k in ("state", "done", "total")} | {"run_id": run.run_id[:8]}
     if m:
-        out["metrics"] = {k: m.get(k) for k in ("confirmed", "correct", "accuracy", "wilson95",
+        out["metrics"] = {k: m.get(k) for k in ("confirmed", "scored", "rule_undecided",
+                                                 "correct", "accuracy", "wilson95",
                                                  "per_field", "determinism_diffs", "complete",
                                                  "fraud_guard_cases", "fraud_guard_recall",
                                                  "gate_passed")} | {

@@ -477,7 +477,7 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
     labels_exp: dict[str, Any] = exp.get("labels") or {}
     # a generated case with no expected rule is undecided, and on a judge-labelled one
     # sender_type and priority aren't scored (eval plan draft 21, OD-549 proposed)
-    undecided = case.author == genset.AUTHOR and exp.get("rule") is None
+    undecided = genset.undecided(case.author, exp)
     for k, v in labels_exp.items():
         if case.judged and k in label_file.UNASKED:
             continue
@@ -590,7 +590,7 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
         {} if faulted is None else {"faulted": faulted}) | (
         # the actor's proposals judged on their own (step 6, P1): reported beside the checks
         # above, not part of `gate_passed`; only when the actor was asked with them recorded
-        {} if (proposals := proposal_figures(decided)) is None
+        {} if (proposals := proposal_figures(counted)) is None
         else {"proposals": proposals})  # fmt: skip
 
 

@@ -217,9 +217,9 @@ def compare(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None) 
     if a.set_version != b.set_version and subset is None:
         raise InvalidInputError(f"different sets: {a.set_version} vs {b.set_version};"
                                 " compare a shared subset with --subset")  # fmt: skip
-    bm = {c.id: c.correct for c in b.cases if _counts(c)}
+    bm = {c.id: c.correct for c in b.cases if _decided(c)}
     pairs = [(c.correct, bm[c.id]) for c in a.cases
-             if _counts(c) and c.id in bm and (subset is None or c.id in subset)]  # fmt: skip
+             if _decided(c) and c.id in bm and (subset is None or c.id in subset)]  # fmt: skip
     if not pairs:
         raise InvalidInputError("no cases in common")
     n = len(pairs)
@@ -421,8 +421,8 @@ def _show(v: object) -> str:
 
 
 def summary(r: ResultFile) -> str:
-    """The A/B headline: confirmed, scored cases only (R157)."""
-    counted = [c for c in r.cases if _counts(c)]
+    """The A/B headline: confirmed, scored and decided cases only (R157; draft 21)."""
+    counted = [c for c in r.cases if _decided(c)]
     k, n = sum(c.correct for c in counted), len(counted)
     if not n:
         return f"{r.pair}: no confirmed cases to score"
@@ -431,7 +431,14 @@ def summary(r: ResultFile) -> str:
 
 
 def _counts(c: CaseResult) -> bool:
-    return c.confirmed and c.scored and not c.undecided
+    """A case the label figures count: confirmed and scored (an undecided one included)."""
+    return c.confirmed and c.scored
+
+
+def _decided(c: CaseResult) -> bool:
+    """A case the end-to-end figures count: also not undecided (no expected rule on a generated
+    case; eval plan draft 21, OD-549)."""
+    return _counts(c) and not c.undecided
 
 
 # where a local model call's time goes (pre-classifier plan §11, perf-3), from each case's

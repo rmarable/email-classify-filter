@@ -239,6 +239,12 @@ def verdict(d: dict[str, list[str]], unsafe: list[str]) -> bool:
     return not (unsafe or d["scam_lost"] or d["scam_missed"] or d["genuine_newly_escalated"])
 
 
+def unsafe_ids(cases: list[CaseResult]) -> list[str]:
+    """Confirmed, scored cases that failed a safety check; an undecided one (safety None) has
+    none to fail (eval plan draft 21)."""
+    return sorted(c.id for c in cases if c.confirmed and c.scored and c.safety is False)
+
+
 def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
     """One recorded result planned again on today's facts, each changed case attributed; then
     each case against the routes-off baseline, as recorded and in a fresh mailbox (every
@@ -283,7 +289,7 @@ def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
                         "iban_bank": triggers.IBAN_HIT in (kw.get("bank") or [])})  # fmt: skip
     before = (old.summary or {}).get("model_only_fraud_cases")
     genuine = evalrun.genuine_metrics(out, cases, env.rules)
-    unsafe = sorted(c.id for c in out if c.confirmed and c.scored and c.safety is False)
+    unsafe = unsafe_ids(out)
     off = against_routes_off(pairs)
     fresh_off = against_routes_off(fresh)
     return {
