@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 20 (2026-10-20): draft 19 after Phase R on the judges (four Fable agents, J1-J20, all accepted by the operator; OD-546, OD-547, ADR 0036 proposed). Draft 19 (2026-10-20): draft 18 plus the pilot's outcome (rating skipped, Sol adopted, Luna not) and **judges**: two or three non-Claude models of different families set the labels, the operator settles only their disagreements (operator decisions 2026-10-20; section Judges; Phase R pending). Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 21 (2026-10-21): draft 20 plus **Settle only what decides something** (Judges): `sender_type` and `priority` asked only when they decide the expected rule, the expected rule and safety computed from the judges' values, durable per-field label provenance, undecided cases out of the figures, the same rules as the run, the safety fields kept in ecf's figures; after seven Fable reviews, all findings accepted by the operator 2026-10-21; OD-549 proposed, recorded in SPEC with step 4's measured counts. Draft 20 (2026-10-20): draft 19 after Phase R on the judges (four Fable agents, J1-J20, all accepted by the operator; OD-546, OD-547, ADR 0036 proposed). Draft 19 (2026-10-20): draft 18 plus the pilot's outcome (rating skipped, Sol adopted, Luna not) and **judges**: two or three non-Claude models of different families set the labels, the operator settles only their disagreements (operator decisions 2026-10-20; section Judges; Phase R pending). Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -87,11 +87,13 @@ read on its own.
 7. **Labels** (op; P7, P8): only labels the operator (or user) gives blind count (OD-486): through
    `ecf eval label --review all` or the card review page, full email, no answer shown. The
    generator's proposals are kept apart (`proposals.jsonl`), never written as `expected`. The
-   operator labels all 300 of the first PROD set, every card (no bulk confirmation, P28).
-8. **Expected rule and safety** (op; P2): after the labels, ecf's rules engine (the `ecf rules
-   test` path, `src/ecf_server/ruletest.py`) computes each card's expected rule and safety flags
-   from its confirmed labels and facts; the operator confirms them. A set without them reports
-   field agreement only and says "no fraud-guard or injection cases".
+   operator labels all 300 of the first PROD set, every card (no bulk confirmation, P28). (amended,
+   draft 21: on judged sets `sender_type` and `priority` are not scored.)
+8. **Expected rule and safety** (op; P2): after the labels, ecf's rules engine (the `ecf rules test`
+   path, `src/ecf_server/ruletest.py`) computes each card's expected rule and safety flags from its
+   confirmed labels and facts; the operator confirms them (amended, draft 21: on judged sets expect
+   keeps the labels' provenance and computes the rule from the judges' values). A set without them
+   reports field agreement only and says "no fraud-guard or injection cases".
 9. **Never the gate's evidence** (op; P1): see Design, Gate guard.
 10. **Destinations** (op; P5, P6): ADR 0034 amends the one-destination rule for a closed list:
     OpenAI (through the Codex CLI) and Mistral AI (through its API), Anthropic already allowed. A new provider
@@ -138,7 +140,8 @@ Proposed records (numbers assigned at approval):
 
 ### Flow and commands (P13, P22)
 
-generate → grade → label (blind) → run → report.
+generate → grade → label (blind) → run → report. Judged sets (amended, draft 21): generate → grade
+(judges) → agree → expect → settle → expect (→ settle → expect when expect says so) → run → report.
 
 ```sh
 ecf eval generate --root <new folder> [--mix <file>] [--count N] [--generator <p>[:<model>]] [--dev] [--parallel N] [--yes]
@@ -236,25 +239,33 @@ frozen set (`src/ecf_server/gate.py:245-261`). `ecf eval run --claude` accepts `
 
 ### Grading (P8)
 
-One call per email: the raw email and all 13 schema v3 fields to answer (op; option A:
-`category`, `priority`, `requires_action`, `requires_reply`, `payment_related`,
-`deadline_mentioned`, `sender_type`, `fraud_risk`, `bank_detail_change`, `regulator_claim`,
-`phishing`, `claims_internal`, `private_individual`; the rules read `category` and `sender_type`
-as well as the fixed fields, so all 13 are needed to compute the expected rule; OD-486), with the
-shipped descriptions from `src/ecf/data/schema_v3.yaml`, returned as JSON. The operator labels the
-same 13. Blind: no ecf answer and no label. The grader's input is the email as a mail client
-shows it, the same view the operator labels from (`cli_card_review.screen`; OD-544: the raw email
-carried the seed's `Authentication-Results`, which only scams failed, and neither the labeller
-nor the classifier sees it), not the classifier's excerpt and signals; each grade records its
-input. Every labelling and rating page shows the `phishing` definition in full (not folded) and
-a "signs to look for" box of general red flags, never tied to an email (OD-544; text below).
-Confirming a generated set's labels (`ecf eval label`) shows a counter, never the case id, title
-or test line, which name the assignment. The report gives **set detectability**: of the emails
-written as scams, how many each reader (your labels, each grader with its input, each ecf
-result) answered phishing, and the seeds' authentication results by kind; reported, never scored.
-Signs box text (Claude-written machinery, approved by the operator 2026-10-20): A charge, invoice, order or account problem you didn't expect; pressure (a short deadline, a threat, "cannot be reversed"); it wants a phone call, a reply with details or a payment instead of you checking your own account; the sender isn't the company it speaks for (a "help", "billing" or "support" domain), or Reply-To goes somewhere else; vague about who it is or what you bought, a generic greeting; new bank details, gift cards, crypto or secrecy; an attachment or link pushed as the next step. The address book (known contacts in the recipient configuration) is deferred until after the first PROD set: the reviewers found it would make the set a lookalike test of a few contacts. Before grading, the blind labels are frozen (their
-digest recorded); the grader's accuracy is computed once against that version and kept, and later
-relabels are logged with the digest they changed and reported separately.
+One call per email: the raw email and all 13 schema v3 fields to answer (op; option A: `category`,
+`priority`, `requires_action`, `requires_reply`, `payment_related`, `deadline_mentioned`,
+`sender_type`, `fraud_risk`, `bank_detail_change`, `regulator_claim`, `phishing`, `claims_internal`,
+`private_individual`; the rules read `category` and `sender_type` as well as the fixed fields, so
+all 13 are needed to compute the expected rule; OD-486; on judged sets 11 plus the judges'
+combinations, amended, draft 21), with the shipped descriptions from `src/ecf/data/schema_v3.yaml`,
+returned as JSON. The operator labels the same 13. Blind: no ecf answer and no label. The grader's
+input is the email as a mail client shows it, the same view the operator labels from
+(`cli_card_review.screen`; OD-544: the raw email carried the seed's `Authentication-Results`, which
+only scams failed, and neither the labeller nor the classifier sees it), not the classifier's
+excerpt and signals; each grade records its input. Every labelling and rating page shows the
+`phishing` definition in full (not folded) and a "signs to look for" box of general red flags, never
+tied to an email (OD-544; text below). Confirming a generated set's labels (`ecf eval label`) shows
+a counter, never the case id, title or test line, which name the assignment. The report gives **set
+detectability**: of the emails written as scams, how many each reader (your labels, each grader with
+its input, each ecf result) answered phishing, and the seeds' authentication results by kind;
+reported, never scored. Signs box text (Claude-written machinery, approved by the operator
+2026-10-20): A charge, invoice, order or account problem you didn't expect; pressure (a short
+deadline, a threat, "cannot be reversed"); it wants a phone call, a reply with details or a payment
+instead of you checking your own account; the sender isn't the company it speaks for (a "help",
+"billing" or "support" domain), or Reply-To goes somewhere else; vague about who it is or what you
+bought, a generic greeting; new bank details, gift cards, crypto or secrecy; an attachment or link
+pushed as the next step. The address book (known contacts in the recipient configuration) is
+deferred until after the first PROD set: the reviewers found it would make the set a lookalike test
+of a few contacts. Before grading, the blind labels are frozen (their digest recorded); the grader's
+accuracy is computed once against that version and kept, and later relabels are logged with the
+digest they changed and reported separately.
 
 ### Judges (draft 20; operator decisions 2026-10-20, OD-547; Phase R J1-J20 accepted)
 
@@ -279,36 +290,42 @@ only human step is settling disagreements (`ecf eval settle`).
   13 fields); no new role flag or command (J16). API judges share one service route and provider
   table and one client adapter with the cost cap and pacing (J17).
 - `ecf eval agree --root <set>` reads `grades/` and decides per case and field: **booleans and
-  `fraud_risk` need every judge to agree**; `category` and `sender_type` take a majority when
-  three judges answered; `priority` is report-only (J5, J20). A field counts only when every judge
-  gave a valid value; an email any judge refused or left blank goes to the operator whole (J10).
-  Agreed values go into the cards (written all at once, one rebuild, one atomic confirm), confirmed
-  `{by: "models", judges, on}`; `work/agreement.jsonl` records each judge file's digest, and the
-  report recomputes agreement from those files and refuses a mismatch or two files from one model
-  (J9, J19).
-- **Decision 8**: the expected rule and safety computed from agreed labels confirm `by: models`
-  too (J18). **Decision 7** (only operator-confirmed labels count) is amended: agreed and settled
-  labels count, every figure states the share of each (J20).
+  `fraud_risk` need every judge to agree**; `category` and `sender_type` take a majority when three
+  judges answered; `priority` is report-only (J5, J20; amended, draft 21: `category` majority only,
+  `sender_type` and `priority` unasked unless they decide the rule). A field counts only when every
+  judge gave a valid value; an email any judge refused or left blank goes to the operator whole
+  (J10). Agreed values go into the cards (written all at once, one rebuild, one atomic confirm),
+  confirmed `{by: "models", judges, on}` (now per-field `labelled_by`, amended, draft 21);
+  `work/agreement.jsonl` records each judge file's digest, and the report recomputes agreement from
+  those files and refuses a mismatch or two files from one model (J9, J19).
+- **Decision 8**: the expected rule and safety computed from agreed labels confirm `by: models` too
+  (J18). **Decision 7** (only operator-confirmed labels count) is amended: agreed and settled labels
+  count, every figure states the share of each (J20). (amended, draft 21: minus `sender_type` and
+  `priority` on judged rows, the share per field; expect keeps provenance.)
 
-**Settling**: a phone page first (the dispute list as a private claude.ai page with saved
-answers, then `ecf eval settle --from <answers>` imports), later the terminal; a seeded shuffle,
-a counter, the mail-client view, only the disputed fields, the phishing definition and signs box;
-agreed fields and the judges' answers shown only after the operator answers; `ecf eval label`
-refuses cases with open disputes (J14). The synthetic text goes to claude.ai hosting, as preset C.
+**Settling** (amended, draft 21; `ecf eval label` refuses any judged row): a phone page first (the
+dispute list as a private claude.ai page with saved answers, then `ecf eval settle --from <answers>`
+imports), later the terminal; a seeded shuffle, a counter, the mail-client view, only the disputed
+fields, the phishing definition and signs box; agreed fields and the judges' answers shown only
+after the operator answers; `ecf eval label` refuses cases with open disputes (J14). The synthetic
+text goes to claude.ai hosting, as preset C.
 
 **Safeguards without operator labelling**
 - **Judges measured first** (J4): each PROD judge grades the 57 DEV emails the operator labelled
   (step 2), giving its per-field accuracy and Cohen's kappa before it sets any label.
-- **Per-field kappa and base rate** between judges; a field below 0.6 is report-only for ecf
-  scoring; an agreed label contradicting the assignment (a scam seed labelled not phishing, or no
-  fraud risk) is flagged and left out of scoring (J7).
+- **Per-field kappa and base rate** between judges; a field below 0.6 is report-only for ecf scoring
+  (not the fixed items or `fraud_risk`, amended, draft 21); an agreed label contradicting the
+  assignment (a scam seed labelled not phishing, or no fraud risk) is flagged and left out of
+  scoring (J7).
 - **No circular judge accuracy** (J6): the report gives pairwise judge agreement and each judge's
-  accuracy on operator-settled fields only; `report.confirmed` carries the `by` of every label.
+  accuracy on operator-settled fields only; `report.confirmed` carries the `by` of every label (now
+  per-field `labelled_by`, amended, draft 21).
 - **Three figures per field** (agreed, settled, combined) and **comparisons computed twice** (all
   labels; settled only), the agreed share printed; the Jev re-check (OD-538) uses only operator
   settled or labelled values (J12, J13).
-- **Gate**: a `by: models` confirmation never counts outside a generated set (`is_confirmed`,
-  `carry_over`, the service loader); `ecf eval build` strips it (J8).
+- **Gate**: a `by: models` confirmation (now `labelled_by`, amended, draft 21) never counts outside
+  a generated set (`is_confirmed`, `carry_over`, the service loader); `ecf eval build` strips it
+  (J8).
 - The report counts disputed emails and fields, the operator's settling time, and emails refused
   by any judge (J3, J20). Measured guide: two Claude graders on the 57 DEV emails disagreed on 11%
   of fields (58% of emails had at least one); judges of different families will likely disagree
@@ -323,13 +340,269 @@ prepaid (US$5 minimum, the key stops at US$0, credits expire after 12 months), h
 service, sent in the `x-goog-api-key` header; the first-use notice says the paid tier is required
 (the free tier trains with human review) and ecf can't check the tier.
 
+
+### Settle only what decides something (draft 21; OD-549 proposed)
+
+Seven Fable reviews (draft 1 Phase R, two agents, P1-P8; drafts 2-7, two agents each, Q1-Q9,
+R1-R12, T1-T10, U1-U12, V1-V10, W1-W11; all accepted by the operator 2026-10-21; full text in
+`state-archive/eval-settle/review-findings.md`). Code checked against `8789d6b`; plan line numbers
+(`:139-157` and the like) refer to draft 20 at that commit. OD-549 goes into SPEC with step 4's
+measured counts; the table below holds estimates until then.
+
+#### Context and estimates (57 operator-labelled DEV emails; judges Mistral Large 4 + Sol)
+
+| | emails you settle | fields | rule undecided |
+|---|---|---|---|
+| today (OD-547) | 35 | 53 (sender_type 17, fraud_risk 12, category 9) | all (defect 1) |
+| sender_type, priority never asked | 25 | 36 | 6 |
+| this plan | 29 in the first sitting; 2 of them come back once for sender_type | 42 | 0 |
+
+Estimates, verified by two reviewers from the labels and card facts (the computed triggers on the 6
+notification cards need the engine); step 4 measures them. Labels the judges agree on match the
+operator 546/591 (92.4%) over the 11 asked fields (573/631 with the agreed sender_type values).
+sender_type: kappa 0.56/0.55 per copy, the judges match the operator 68/114 (60%); priority: kappa
+0.80 vs 0.54 on the two copies, 71/114 (62%). Neither is a usable ecf figure. The 6 cases whose rule
+depends on sender_type span both copies (haiku: dev-forums-001, dev-social-003; sonnet:
+dev-forums-002, dev-social-001, dev-forums-003, dev-social-002): all `category: notification`,
+`requires_action` false, no fixed rule fires, judges automated vs vendor/company, the operator said
+automated; the rule is `automated_notification` (`starter_rules.yaml:56-62`), the only default rule
+that hides ordinary mail. Four have no other dispute (asked in the first sitting, because expect
+runs before settle); two also have a first-round dispute (dev-forums-003 category and deadline;
+dev-social-002 fraud_risk) and come back once. No case depends on priority (it reaches the rules
+only in `bug_report`, `starter_rules.yaml:8-13`). No real set holds judge-confirmed rows (agree ran
+only on scratch copies), so nothing needs migrating. No user-facing doc mentions agree, settle or
+expect. "Rule undecided 0" is not "rules verified": the judges' agreed sender_type matches the
+operator 27/40; none of the 13 differences reaches a rule in these 57 (masked by fraud_guard,
+`marketing` or an agreed category), but an agreed wrong value on a notification card would set a
+wrong expected rule unseen (accepted: agreed values stand, OD-547). A computed trigger on one of the
+6 (not checkable without the engine) could only move it from "sent to settle" to "rule written".
+
+Existing defects in the judged flow (OD-547), verified at 8789d6b:
+1. **No expected rule on judge-labelled cards**: `expect.labelled` needs all 13 fields
+   (`expect.py:30-35`); agree and settle strip `priority` (`agree.py:153,164`, `settle.py:105`).
+2. **Missing expectations read as passes**: `score_parts` sets `fields["rule"]` true when no rule is
+   expected (`evalrun.py:479-480`), `safe = rule is not None` then passes safety (`:483`),
+   `end_to_end` reads absent rule/safety as passed (`:515-516`), and `results.compare` pairs every
+   case on `correct` (`results.py:216-227`).
+3. **Provenance flips**: expect rebuilds (`expect.py:70`); `carry_over` keeps the bare new row when
+   the expected hash changed (`labels.py:82-83`, `builder.py:153-156`); `labels.confirm` writes no
+   `by` (`labels.py:92-102`); settle confirms with `{}` (`settle.py:112`), so a whole case reads
+   "operator" (`labels.py:57-62`) and its judge-set fields count as the operator's (`report.py:311,
+   347-356`; J6, J13); the assignment-contradiction check and `judged` are case-level
+   (`report.py:199-206, 310`). An unchanged card keeps its confirmation through a rebuild (the
+   `Expected` defaults, `cards.py:77-100`, dump the same with `rule: null`).
+4. **Different rules**: `/v1/eval/expect` evaluates the applied rules (`api.py:826-828`); `ecf eval
+   run` the starter rules with the shipped schema (`evalrun.py:256,740,755,1606`; digest
+   `composed_digest(schema, None)`, `:829`).
+
+#### Decisions (OD-549)
+
+1. **sender_type and priority** (P1, Q2a, R3, T7, U5): on a generated set, for every row with
+   `labelled_by` (judge-labelled), they are never scored, in ecf's figures or in the judges' figures
+   (J6, J13), and not asked when the judges disagree, by decision, not per-set kappa. The one key is
+   the row's `labelled_by`: the service's loader reads it into `Case.judged` (`evalrun.py:295-310`),
+   which `score_parts` and `rescore` use; `author: generated` scopes only decision 4. They are asked
+   only when they decide the expected rule (decision 2). Every other field is asked when the judges
+   disagree; the safety fields always. Operator-labelled rows (the DEV sets: no `labelled_by`) keep
+   every field in the grader comparison (J4; OD-548's basis unchanged).
+2. **Expected outcome** (P2, P7, Q7, R2, T5, T8, U1, U7, U10): expect evaluates every combination of
+   the values of sender_type and priority, the other fields at their card values. A value on the
+   card (the operator's answer, or a DEV card's label) is used alone; otherwise each judge's value,
+   from the judges named in the row's `labelled_by.judges` (W9), read from the grade files the
+   latest `work/agreement.jsonl` entry names; every file must be present with its recorded sha256,
+   else expect refuses. At most 3 values per field (judges are at most 3, OD-547), 9 combinations. A
+   judge that refused, left a field out or gave a value outside the schema contributes no value
+   (W10); a field with no value at all goes to settle. Each combination is applied to the card's raw
+   labels before `stand_in` runs (`ruletest.py:163-167`, with the hand-set fixed labels). The case's
+   rule and both safety flags are written only when every combination gives the same rule and the
+   same flags; otherwise the rule is `null` and both flags are written `false` (the defaults), in
+   the same write, so no stale flag survives (the card format is unchanged: `Safety` flags stay
+   booleans, `cards.py:79-83`). The base reply (no variants) is evaluated with the unasked field
+   absent; expect reads only `variants` when it sent any. A field *decides* when two combinations
+   that differ only in it give a different rule or flag; every deciding field goes to settle in one
+   entry (`reason: "decides the rule"`, `fields`, and `judges: {field: {judge: value}}` so settle
+   can show them after the answer). A ruletest error in any combination makes the case undecided,
+   logged with the error text (`ruletest.py:233-237`), never sent to settle. Only the rule and the
+   two safety flags are compared (`flag`, `actor` aren't scored). Expect never uses a reply where
+   the field was absent (W5). sender_type reaches the rules directly (`fixed_rules.yaml:40`
+   regulator, `:55` person/friend/family; `starter_rules.yaml:60` automated), not through derivation
+   (`derive_labels` skips labelled items, `schema.py:182-190`).
+3. **Flow** (R6, T10, U8, U11): `agree`, `expect`, `settle` (the phone page: `settle --export`, then
+   `settle --from`), `expect`; when expect sends cases back after the first sitting (about 2 of 57),
+   `settle` in the terminal and `expect` once more. `agree`, `settle` and `expect` each print the
+   next command. Expect skips a case with an open dispute (R9) and decides it after settle. A whole
+   case asks the 11 asked fields, plus sender_type and priority when every judge refused, in one
+   sitting; the operator's answers to those two on a whole case are not scored either (the row has
+   `labelled_by`; accepted, the number is tiny; W11).
+4. **Nothing expected, nothing scored** (P3, Q3, R7, T4, U1, U9): on a generated set, a case whose
+   expected rule is `null` is *undecided*: `score_parts` writes no `rule` or `safety` entry in its
+   `fields` and sets `safety` to None (`CaseResult.safety: bool | None`); `summarize` leaves it out
+   of `correct`, `accuracy`, `wilson95`, `unsafe` (tests `safety is False`), `rule_scored`, the
+   per-field rule and safety figures and `gate_passed`, and `results.compare`'s pairs (OD-486's
+   comparison), and from `routereport`'s unsafe list (`routereport.py:286`, `safety is False`; W1);
+   it is counted as `rule_undecided`; it stays in the per-field label figures and in `confirmed`.
+   The summary gains `scored` (cases with an expected rule), the denominator of `accuracy` and
+   `wilson95` and the `bool(n)` of `gate_passed` (`evalrun.py:557,575`; W2). `CaseResult` gains
+   `undecided: bool = False` (the default reads older result files; `_counts`, `results.py:430`,
+   reads it); result files already made keep their `correct` until rescored. `correct_def` reads
+   "rule+safety+fixed_items; generated sets: cases with an expected rule". The frozen synthetic
+   set's figures are unchanged.
+5. **Provenance per field, durable** (P4, Q1, R1, R4, R5, T1, T2, T3, U2, U3, U4): each labels.jsonl
+   row of a generated set carries `labelled_by: {judges, settled: [fields], labels_sha256}`. agree
+   writes it with `settled: []`; settle adds the fields the operator answered. The case's source
+   (`labels.source`) is derived: operator when `settled` holds an asked field the judges disputed or
+   the case was whole; `confirmed.by` is dropped. `is_confirmed` returns False for a row with
+   `labelled_by` unless `models_ok` (the gate moves from `confirmed.by`; used by the run loader,
+   `report.confirmed`, `pending`, `carry_over`). `labels_sha256` is the hash of `expected.labels`,
+   written only when a case is confirmed (agree, settle). `labelled_by.judges` is agree's existing
+   `"provider:model"` list (`agree.py:180`). **Labels and rule move together** (V3): any write that
+   changes a card's labels (agree, settle) also writes `rule: null` and both flags `false`, in the
+   same card edit before the rebuild (`review.set_labels`, then `expect.write(path, None,
+   defaults)`; W8), so a card is never confirmed with a rule computed from other labels; expect sets
+   them again. In the normal flow it is a no-op (those cards have no rule yet); it matters after a
+   hand edit. `carry_over` keeps `labelled_by` when the set is generated (`models_ok`), regardless
+   of the hash; outside a generated set it drops it with the confirmation (J8 unchanged). One
+   re-confirm rule, for a normal run and a rerun after a crash alike: expect re-confirms a row with
+   `labelled_by` when its labels hash matches `labels_sha256`, it has no open dispute, and expect
+   isn't sending it to settle in this run. Expect removes `confirmed` from every row it sends to
+   settle, in the same atomic write. An `agree` rerun skips a row with `labelled_by` whose labels
+   hash matches (judged, merely unconfirmed); on a mismatch (a hand edit) it re-decides the row,
+   keeping the fields in `settled` at their card values and `settled` itself. A disputed row (no
+   `labels_sha256` yet) is re-decided, giving the same result on an unchanged card; the duplicate
+   `disputes.jsonl` entry is harmless (the latest wins; W6). A dispute entry whose fields are all in
+   `settled` isn't open (`open_disputes`). The report checks phishing and `fraud_risk` against the
+   assignment for every row where they aren't in `settled`; `judged` means any row has
+   `labelled_by`. `ecf eval label` (`labels.confirm`, and `--review`, `--add`, `--import-fixed`,
+   `cli.py:1038-1069`, which write labels; W4) refuses a row with `labelled_by` on a generated set,
+   naming `ecf eval settle`, and for a hand-edited card says to rerun `ecf eval agree` first (or
+   revert the edit). DEV sets' operator cards (no `labelled_by`) are unchanged: they lose their
+   confirmation at expect's rebuild, as today, and the operator confirms them again with `ecf eval
+   label` (expect re-confirms only rows with `labelled_by`). `report._dev`, the grader comparison on
+   a DEV set, uses only rows without `labelled_by` (the operator's labels) and says so. Copied cards
+   keep `author: generated`, so the target folder counts as a generated set (`genset.py:19-42`) and
+   keeps `labelled_by`; the gate refuses such a set anyway (J8).
+6. **Same rules as the run** (P5): expect and its combinations evaluate the starter rules with the
+   shipped schema; the digest goes in `work/expect.jsonl`; the report prints it beside each run's
+   `rules_digest` and flags a mismatch (no refusal).
+7. **Safety fields kept in ecf's figures** (Q8, R8): `_scorable`'s kappa exclusion (OD-547 J7) no
+   longer drops the fixed items or `fraud_risk`, for agreed and settled values alike; the
+   assignment-contradiction check stays; their kappa is still reported.
+8. **Amended** (T6, U12): OD-547's "`category` and `sender_type` a majority of three, `priority`
+   report-only" (now `category` majority; sender_type and priority per decision 1), J7's report-only
+   rule for the fixed items and `fraud_risk` (decision 7), "agreed and settled labels count, every
+   figure stating the share of each" (now: minus sender_type and priority on judged rows, the share
+   per field; rule and safety per decisions 2 and 4) and its "agreed labels confirm `by: models`"
+   (`SPEC.md:3579`, now `labelled_by`); SPEC's route table row for `/v1/eval/expect`
+   (`SPEC.md:2067`: starter rules, `variants`, the reply below, `rules_digest`); plan decision 7 and
+   decision 8 ("the operator confirms them": expect keeps provenance); the plan's Flow and commands
+   (`:139-157`), Grading (`:239-243`: "all 13 are needed to compute the expected rule", now 11 plus
+   decision 2's combinations on judged sets; W3), Judges bullet (`:280-291`, including `{by:
+   "models", judges, on}` at :285-287), Settling (`:292-296`: label refuses any generated row with
+   `labelled_by`), Safeguards J6/J7/J13 and J8 (`:302-311`: "`report.confirmed` carries the `by`" at
+   :306 and "a `by: models` confirmation" at :310-311, now `labelled_by`), Report (`:326-332`), step
+   4b's built list (`:527`: "`confirmed.by: models`", now `labelled_by`; its "priority report-only"
+   at :530-531 and "the kappa gate (fields under 0.6 report-only)" at :542 marked "as built then;
+   amended by OD-549") and step 5 (`:553-554`: agree, expect, settle, expect).
+
+#### Design
+
+- **agree** (`agree.py`): `UNASKED = ("sender_type", "priority")` replaces `REPORT_ONLY` (stripped
+  from the card here only; settle no longer strips); `MAJORITY_FIELDS = ("category",)`; unasked
+  fields never enter `disputes.jsonl` or the whole-agreement test; confirms with per-case
+  `labelled_by`; rerun rule per decision 5; prints "Next: ecf eval expect".
+- **expect** (`expect.py`, CLI): decision 2; skips cases with an open dispute; sends `variants` to
+  `/v1/eval/expect`; writes rule and flags (all or nothing per case); appends "decides the rule"
+  entries to `disputes.jsonl`; rebuilds once; one atomic labels write that re-confirms per decision
+  5 and removes `confirmed` from the rows sent to settle; `labelled` accepts a card with the 11
+  asked fields only when the judges' values are available (else all 13, as DEV cards). Logs
+  `work/expect.jsonl`, one entry per run: `{on, rules_digest, written, to_settle, undecided, errors:
+  [{id, error}]}`. Prints the next command (replacing "Confirm each with `ecf eval label`",
+  `cli_evalgen.py:305`).
+- **settle** (`settle.py`): asks the fields an open dispute names; a "decides the rule" entry shows
+  "your answer decides which rule applies" (terminal and phone page: `export` passes `reason`);
+  judges' answers only after answering; whole cases per decision 3; updates `settled` and
+  `labels_sha256`; prints "Next: ecf eval expect".
+- **service** (`api.py` `eval_expect`, `ruletest.outcomes`): request adds optional `variants: {case
+  id: [{field: value}, ...]}`, fields limited to `sender_type` and `priority` (others refused),
+  values checked against the schema, at most 9 per case, unknown ids ignored. `ruletest.Case` gains
+  the card's raw labels (`load_cases` applies `stand_in` at `ruletest.py:130-131`), and `outcomes`,
+  per variant, merges the variant and runs `stand_in` (with `_hand_set`) before the rules. Reply:
+  `{"rules_digest": ..., "cases": [{"id", "rule", "safety", "error"?, "variants": [{"labels":
+  {field: value}, "rule", "safety", "error"?}]?}]}`, each `safety` from `evalrun.expected_safety` on
+  that variant's labels and actions. Evaluates `load_starter_rules(schema)` with the shipped schema.
+  Writes nothing.
+- **results / run / report** (`results.py` `CaseResult`, `_counts`, `compare`; `evalrun.py`
+  `score_parts`, `end_to_end`, `summarize`; the loader, `evalrun.py:295-310`, adds `Case.judged`
+  from `labelled_by` (`Case.author` exists, `evalrun.py:231`); `score_parts` sets `undecided` from
+  `case.author == "generated"` and `exp["rule"] is None`; `rescore_synthetic` (`evalrun.py:1419`)
+  reloads from the root, so it sees the same `author` and `judged`; W7; `routereport.py:286`;
+  `report.py`): decisions 1, 4, 5 (contradiction check, `judged`, `_dev` on operator rows), 7;
+  per-field provenance for J6/J13; lines "sender_type and priority: not scored on judged rows; n
+  sent to you because they decided the rule", "rule undecided: n (errors: n)", "rules: <digest>
+  (run: <digest>)".
+- **labels** (`labels.py`): `labelled_by`; `source()` derived; `confirmed.by` dropped;
+  `is_confirmed` gate per decision 5; `carry_over` keeps `labelled_by` only when `models_ok`;
+  `confirm` refuses rows with it on a generated set; `confirm_many(root, {id: labelled_by}, on)`.
+- Docstrings and help: `expect.py:1-8`, `cli_evalgen.py:245-253, 294-305`, `agree.py:1-15`,
+  `labels.py:10-13`, `settle.py:1-10`.
+
+#### Steps
+
+1. Plan draft 21 in `planning-docs/EVAL-GENERATE-GRADE.md` (this section, the table marked
+   estimates, every place decision 8 names marked amended). CHANGELOG line. Docs only.
+2. Branch A, scoring (gated): decisions 1 (scoring part), 4 and 7 (`results.py`, `evalrun.py`,
+   `report.py`). It reads `labelled_by` from the row into `Case.judged` (nothing writes it until
+   branch B; its tests fabricate such rows); tests: a generated-set summary and compare with
+   undecided cases (`correct`, `scored` as accuracy's n, `correct_def`), `routereport`'s unsafe list
+   with an undecided case, an older result file without `undecided` loads, the synthetic set's
+   figures unchanged, an undecided case out of `unsafe`, `rule_scored`, per-field rule/safety and
+   `gate_passed`, the kappa exemption, sender_type/priority not scored on judged rows and still
+   compared on an operator-labelled DEV set. Without branch B, judged cards read `rule_undecided`
+   rather than 100%. CHANGELOG line, stating that the kappa exemption reverses the Unreleased OD-547
+   line for the safety fields.
+3. Branch B, labelling (gated): agree, expect, settle, labels, service route and
+   `ruletest.outcomes`, SPEC route row; tests: the automated-vs-vendor case (ruletest-backed: rule
+   differs, flags same, sent to settle and unconfirmed; after the answer, rule written, confirmed,
+   not sent again); the same after an `agree` rerun (settled answers kept, nothing re-asked); a hand
+   edit after a simulated crash stays unconfirmed and an agree rerun re-decides it keeping
+   `settled`; settling only sender_type keeps the source models, J6 counts only `settled` fields,
+   the contradiction check still runs on the case's phishing; a refused judge (whole case asks
+   unasked fields in one sitting); a field with no value; a regulator variant (reaches `regulatory`
+   through `fixed_rules.yaml:40`); a ruletest error (undecided, not sent); a case going undecided
+   after being decided gets both flags `false`; agree re-deciding or settle changing a card's labels
+   nulls its rule (never confirmed with the old rule); an entry whose fields are all settled isn't
+   reopened; a card whose base reply differs from every variant (expect uses the variants); `_dev`
+   ignoring judge rows on a DEV set agree ran on; the 9 bound and the route's field limit; expect
+   skipping an open dispute; a DEV set with 13-field cards (not re-confirmed by expect; `ecf eval
+   label` works as today); `ecf eval label` refusing a generated row with `labelled_by`, and
+   `--review`/`--add`/`--import-fixed` refusing it; an out-of-schema judge value treated as no
+   value; variants only from the row's judges; `is_confirmed` on a copied judged row outside a
+   generated set (`test_eval_agree.py:115-125` asserting on `labelled_by`); agreement file checks
+   (missing or changed judge file); a judged twin of `test_eval_grade_report.py:164-165` (expect
+   keeps provenance), the existing one unchanged; `test_eval_grade_report.py:150-156` for the new
+   reply. CHANGELOG line.
+4. Measure on the 57 DEV copies with a dev service (`ecf-server dev`), no model calls: fresh copies
+   with the cards' labels reset to `{}` (`review.set_labels`, then `build_all`, so agree starts from
+   empty cards), confirmations cleared, `work/` holding only the call and grade logs, `grades/` only
+   the Large 4 and Sol files; agree, expect, settle round 1 from the operator's saved labels (a
+   scratchpad script through `settle.apply`), expect, round 2 the same way, expect. Assert outcomes,
+   not only counts: after the first expect, rules for 28 and 4 sent to settle; after round 1 and
+   expect, 27 more and 2 sent back; after round 2, all 57 with a rule, 0 undecided, the 6 all
+   `automated_notification`. Then plan draft 22 and SPEC OD-549 with the measured counts (docs
+   commit).
+
+#### Open questions
+
+- None; all findings accepted 2026-10-21.
+
 ### Report
 
 For each ecf result: agreement with confirmed labels and with the grader, per field and per group,
 Wilson intervals, groups under 20 report-only; the grader's measured accuracy first; the generator's
 agreement with the operator (its label quality); rule and safety figures only when decision 8 is
-done; the noise reference (two C runs per set, or the S3b pair's figure stated). A DEV report shows
-plumbing counts only (drops, misfits, resumes, times), no accuracy (P25).
+done (judged sets: undecided cases left out, the rules digest printed; amended, draft 21); the noise
+reference (two C runs per set, or the S3b pair's figure stated). A DEV report shows plumbing counts
+only (drops, misfits, resumes, times), no accuracy (P25).
 
 ### Adapters (P3, P4, P20, P21, P23)
 
@@ -503,56 +776,56 @@ calls, which go through the service API (`ecf` never imports `ecf_server`).
    mail-client view), its intended group (RUBRIC.md), the `phishing` definition and the signs box
    (OD-544; recorded in RUBRIC.md under its change rule). **Ran 2026-10-20**: seeds by Terra (35
    seeds, 15 groups, no refusal); Sol 20/20 kept, 0 refused, 0 dropped, 2 passed the hygiene retry;
-   Luna 20/20, 1 refused (Extortion), 2 dropped; 17 of 20 kept seeds in common. The operator
-   skipped the rating (operator decision 2026-10-20): **Sol is adopted, Luna is not**, and the
-   rubric was not applied. **Shared seeds** (OD-545): a seed
-   run by a model that is neither contestant writes the 20 seeds (`ecf eval generate
-   --seeds-only --generator codex:gpt-5.6-terra --count 20 --root <seeds>`), then one email run
-   per contestant from them (`--seeds-from <seeds> --generator codex:gpt-6.1-sol`, and
-   `codex:gpt-6-luna`, the same `--count`, mix and `--k`): no seed call and no top-up, so both
-   draw on the same pool in the same order with the same tries; a group the seed run got no seeds
-   for is unmeasured for both and listed, never a contestant's refusal; the source's mode, count,
-   mix and seed-log digest are checked before copying; every manifest records its seed-log digest,
-   and an email run records its seed run (name, writer, digest) and the seeds it kept. The grader
-   is never the seed writer either. The rating page mixes both sets' 40 emails under random tokens
-   (the mail-client view, the group as text), pairs not adjacent; same-seed pairs may be
-   recognisable, a stated limit. The fixed prompt words (PURPOSE, RECIPIENT, SAFETY_RULES in
-   `src/ecf/eval/generate.py`) were approved as written by the operator on 2026-10-20 (decision
-   10b); their digests are in every manifest.
-4b. **Judges** (OD-547; build order from Phase R): (1) this draft and ADR 0036; (2) `ecf eval
-   agree` built and tried offline on the DEV grade files; (3) the shared API-judge route with
-   Mistral, then Gemini (one key check and one grading call each as the canary, operator's
-   go-ahead); (4) the settle phone page and importer; (5) the judges measured on the 57 DEV emails
-   the operator labelled; then step 5 with judges. **(2) built 2026-10-20**: `ecf eval agree`
-   (`ecf.eval.agree`), label provenance (`confirmed.by: models`, counted only on a generated set;
+   Luna 20/20, 1 refused (Extortion), 2 dropped; 17 of 20 kept seeds in common. The operator skipped
+   the rating (operator decision 2026-10-20): **Sol is adopted, Luna is not**, and the rubric was
+   not applied. **Shared seeds** (OD-545): a seed run by a model that is neither contestant writes
+   the 20 seeds (`ecf eval generate --seeds-only --generator codex:gpt-5.6-terra --count 20 --root
+   <seeds>`), then one email run per contestant from them (`--seeds-from <seeds> --generator
+   codex:gpt-6.1-sol`, and `codex:gpt-6-luna`, the same `--count`, mix and `--k`): no seed call and
+   no top-up, so both draw on the same pool in the same order with the same tries; a group the seed
+   run got no seeds for is unmeasured for both and listed, never a contestant's refusal; the
+   source's mode, count, mix and seed-log digest are checked before copying; every manifest records
+   its seed-log digest, and an email run records its seed run (name, writer, digest) and the seeds
+   it kept. The grader is never the seed writer either. The rating page mixes both sets' 40 emails
+   under random tokens (the mail-client view, the group as text), pairs not adjacent; same-seed
+   pairs may be recognisable, a stated limit. The fixed prompt words (PURPOSE, RECIPIENT,
+   SAFETY_RULES in `src/ecf/eval/generate.py`) were approved as written by the operator on
+   2026-10-20 (decision 10b); their digests are in every manifest. 4b. **Judges** (OD-547; build
+   order from Phase R): (1) this draft and ADR 0036; (2) `ecf eval agree` built and tried offline on
+   the DEV grade files; (3) the shared API-judge route with Mistral, then Gemini (one key check and
+   one grading call each as the canary, operator's go-ahead); (4) the settle phone page and
+   importer; (5) the judges measured on the 57 DEV emails the operator labelled; then step 5 with
+   judges. **(2) built 2026-10-20**: `ecf eval agree` (`ecf.eval.agree`), label provenance
+   (`confirmed.by: models`, as built then; amended, draft 21; counted only on a generated set;
    `labels.by_source`; atomic `labels.write`; `confirm_many`), the report's label-source and
    pairwise judge agreement and kappa lines, `ecf eval label` refusing disputed emails. Offline
    trial on cleared copies of the two DEV sets, their two Claude graders as judges, priority
-   report-only: 30 of 57 emails fully agreed, 27 had at least one disputed field (sender_type 12,
-   category 6, requires_reply 6, requires_action 4, fraud_risk 3, deadline_mentioned 2,
-   bank_detail_change 2); where the judges agreed they matched the operator's labels on 581 of 649
-   fields (89.5%): safety fields 95-100% (phishing 56/57, bank_detail_change 54/55, fraud_risk
-   52/54, regulator_claim and claims_internal 57/57), sender_type 28/45 and category 33/51: the
-   judges agree with each other and differ from the operator there, the case the kappa rule (J7)
-   is for. Both judges were Claude; the PROD judges are other families. **Built next
+   report-only (as built then; amended, draft 21): 30 of 57 emails fully agreed, 27 had at least one
+   disputed field (sender_type 12, category 6, requires_reply 6, requires_action 4, fraud_risk 3,
+   deadline_mentioned 2, bank_detail_change 2); where the judges agreed they matched the operator's
+   labels on 581 of 649 fields (89.5%): safety fields 95-100% (phishing 56/57, bank_detail_change
+   54/55, fraud_risk 52/54, regulator_claim and claims_internal 57/57), sender_type 28/45 and
+   category 33/51: the judges agree with each other and differ from the operator there, the case the
+   kappa rule (J7) is for. Both judges were Claude; the PROD judges are other families. **Built next
    (2026-10-20)**: Claude as a PROD generator with `--claude-generator` (the waiver recorded in the
    manifest; the report says WAIVER, not NOT A MEASUREMENT, when only the generator shares the
    classifier's family; a PROD Claude grader still refused); judges' family checks against each
    other and every writer; the report's grader figures only against operator-settled labels when
-   judges set some, the kappa gate (fields under 0.6 report-only), judge labels contradicting the
-   assignment left out for phishing and fraud_risk, ecf's figures three ways; `ecf eval settle`
-   (terminal, `--export` for a phone page with no case ids or judge names, `--from` importing
-   only fully answered emails; one rebuild, one atomic confirm); per-judge call logs, `--pace`,
-   a 60 s Mistral call timeout, the service checking a set once per run; provider errors recorded
-   by type and code only. Still open: comparisons computed twice (J12, `ecf eval compare`), the
-   shared API-judge route and Gemini (3, needs the key), measuring the judges (5).
-   **Mistral on the 57 DEV emails (2026-10-20, operator's go-ahead)**: refused with HTTP 403 on
+   judges set some, the kappa gate (fields under 0.6 report-only; as built then, amended, draft 21),
+   judge labels contradicting the assignment left out for phishing and fraud_risk, ecf's figures
+   three ways; `ecf eval settle` (terminal, `--export` for a phone page with no case ids or judge
+   names, `--from` importing only fully answered emails; one rebuild, one atomic confirm); per-judge
+   call logs, `--pace`, a 60 s Mistral call timeout, the service checking a set once per run;
+   provider errors recorded by type and code only. Still open: comparisons computed twice (J12, `ecf
+   eval compare`), the shared API-judge route and Gemini (3, needs the key), measuring the judges
+   (5). **Mistral on the 57 DEV emails (2026-10-20, operator's go-ahead)**: refused with HTTP 403 on
    the first grading call of each set (the key's model-list check passes); cause unverified (the
    free plan and the preview model, an account step, or data sharing); the operator checks the
    Mistral console.
 5. **The first PROD set**: 300 kept; grade; blind labels; expect; two C runs; report. **As
    amended (OD-547):** Claude generates 300 (waiver); Mistral and Gemini judge; `agree`; the
-   operator settles disputes; expect; two C runs; report.
+   operator settles disputes; expect; two C runs; report. **As amended (draft 21):** `agree`,
+   `expect`, settle, `expect` (settle and expect again when expect says so); two C runs; report.
 6. **SPEC and docs**: ADR 0034, the ODs, §1.2 (Later items incl. the stress test), §9.3, §12.2,
    §12.4, §16, §20, README, DISCLAIMER, SECURITY.md, user guides, CHANGELOG.
 7. **Release** (minor), only when the Codex adapter passes the canary (decision 11).
