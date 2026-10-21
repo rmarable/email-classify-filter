@@ -85,7 +85,8 @@ class MistralAdapter:
                 break
             pause = float(r.get("retry_after") or wait)
             if waited + pause > MAX_WAIT_S:
-                return tools.Reply("limit", detail="rate limited for 5 minutes",
+                why = r.get("detail") or "HTTP 429"
+                return tools.Reply("limit", detail=f"rate limited for 5 minutes ({why})",
                                    seconds=time.monotonic() - start)  # fmt: skip
             self._sleep(pause)
             waited, wait = waited + pause, wait * 2

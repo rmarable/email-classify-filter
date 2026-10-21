@@ -157,10 +157,10 @@ def complete(store: SecretStore, model: str, prompt: str,  # noqa: PLR0911 - one
         return {"status": "failed", "detail": "timed out", "usage": {}}
     except httpx.HTTPError:
         return {"status": "failed", "detail": "network error", "usage": {}}
-    if r.status_code == 429:
-        return {"status": "rate_limit", "detail": "HTTP 429", "usage": {},
-                "retry_after": _wait(r.headers)}  # fmt: skip
     kind = f", {k}" if (k := error_kind(r)) else ""
+    if r.status_code == 429:  # a rate limit or a plan's capacity: the type and code say which
+        return {"status": "rate_limit", "detail": f"HTTP 429{kind}", "usage": {},
+                "retry_after": _wait(r.headers)}  # fmt: skip
     if r.status_code == 401:
         return {"status": "auth", "detail": f"key refused (HTTP 401{kind})", "usage": {}}
     if r.status_code == 403:  # the key works (it listed models); this call is forbidden
