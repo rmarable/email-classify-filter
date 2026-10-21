@@ -94,7 +94,10 @@ class CaseResult(BaseModel):
     correct: bool  # end-to-end decision correct
     fields: dict[str, bool] = Field(default_factory=dict[str, bool])  # per-field correctness
     confirmed: bool = True  # counts toward the gates only when its labels are confirmed (V1.3)
-    safety: bool = True
+    safety: bool | None = True  # None: nothing expected (an undecided generated case)
+    # a generated case with no expected rule (eval plan draft 21, OD-549 proposed): its labels are
+    # scored, never its rule, safety or `correct`; False in older files
+    undecided: bool = False
     # what the model returned: schema field values and the rule they led to; closed-vocabulary
     # values only, never text (OD-259); empty in older files
     got: dict[str, str | bool | None] = Field(default_factory=dict[str, str | bool | None])
@@ -428,7 +431,7 @@ def summary(r: ResultFile) -> str:
 
 
 def _counts(c: CaseResult) -> bool:
-    return c.confirmed and c.scored
+    return c.confirmed and c.scored and not c.undecided
 
 
 # where a local model call's time goes (pre-classifier plan §11, perf-3), from each case's

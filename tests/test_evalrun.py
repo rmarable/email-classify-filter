@@ -853,3 +853,52 @@ def test_a_malformed_injection_target_fails_the_load_naming_its_card(
     labels.write(root, rows)
     with pytest.raises(InvalidInputError, match=f"starter-injection: .*{why}"):
         evalrun.load(root, fraud_only=False)
+
+
+def test_an_undecided_generated_case_counts_only_in_the_label_figures() -> None:
+    """Eval plan draft 21 (OD-549 proposed): a generated case with no expected rule is
+    undecided: out of `correct`, accuracy, unsafe, the rule and safety figures, the gate's n and
+    `compare`; its labels are still scored. A synthetic case with no rule is unchanged."""
+    lab = {"category": "notification", "phishing": False}
+
+    def case(cid: str, exp: dict[str, Any], author: str = "generated") -> evalrun.Case:
+        return evalrun.Case(cid, Path("x"), {"labels": lab} | exp, True, author)
+
+    undecided = evalrun.score(case("u", {}), lab, _plan(["archive"], "x"), None)
+    decided = evalrun.score(case("d", {"rule": "otherwise"}), lab, _plan([], "otherwise"), None)
+    synthetic = evalrun.score(case("s", {}, "claude"), lab, _plan([], "x"), None)
+    assert undecided.undecided and undecided.safety is None
+    assert "rule" not in undecided.fields and "safety" not in undecided.fields
+    assert undecided.fields["category"] and undecided.fields["phishing"]
+    assert not synthetic.undecided and synthetic.fields["rule"] and synthetic.safety is True
+    m = evalrun.summarize([undecided, decided], 0)
+    assert (m["confirmed"], m["scored"], m["rule_undecided"], m["correct"]) == (2, 1, 1, 1)
+    assert m["accuracy"] == 100.0 and m["unsafe"] == [] and m["rule_scored"] == 1
+    assert m["per_field"]["category"] == 100.0 and m["per_field"]["rule"] == 100.0
+    assert m["correct_def"].endswith("generated sets: cases with an expected rule")
+    m = evalrun.summarize([undecided], 0)
+    assert (m["scored"], m["accuracy"], m["gate_passed"]) == (0, None, False)
+    a = ResultFile(run_id="a" * 32, pair="p", set_version="v", created_at="t",
+                   cases=[undecided, decided])  # fmt: skip
+    b = ResultFile(run_id="b" * 32, pair="q", set_version="v", created_at="t",
+                   cases=[undecided.model_copy(update={"correct": False}), decided])  # fmt: skip
+    assert compare(a, b).n == 1  # the undecided case isn't a pair
+
+
+def test_a_judged_row_never_scores_sender_type_or_priority() -> None:
+    """On a judge-labelled row (`labelled_by`) sender_type and priority are never scored; an
+    operator-labelled row keeps them (eval plan draft 21)."""
+    lab = {"category": "notification", "sender_type": "automated", "priority": "low"}
+    got = {"category": "notification", "sender_type": "vendor", "priority": "high"}
+    exp = {"labels": lab, "rule": "otherwise"}
+    judged = evalrun.score(evalrun.Case("j", Path("x"), exp, True, "generated", judged=True),
+                           got, _plan([], "otherwise"), None)  # fmt: skip
+    operator = evalrun.score(evalrun.Case("o", Path("x"), exp, True, "generated"),
+                             got, _plan([], "otherwise"), None)  # fmt: skip
+    assert set(judged.fields) == {"category", "rule", "safety"}
+    assert operator.fields["sender_type"] is False and operator.fields["priority"] is False
+
+
+def test_a_result_file_from_before_undecided_still_loads() -> None:
+    old = CaseResult.model_validate({"id": "c", "correct": True, "safety": True})
+    assert old.undecided is False and old.safety is True
