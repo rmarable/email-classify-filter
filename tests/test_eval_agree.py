@@ -56,7 +56,8 @@ def test_agreed_fields_become_the_judges_labels(tmp_path: Path) -> None:
     assert (o.agreed, o.disputed, o.whole) == (20, 0, 0)
     assert label_file.by_source(root) == {"models": 20, "operator": 0}
     card = next(iter(load_cards(root / "cases")))
-    assert card.expected.labels == {k: v for k, v in LABELS.items() if k != "priority"}
+    assert card.expected.labels == {k: v for k, v in LABELS.items()
+                                    if k not in ("priority", "sender_type")}  # fmt: skip
     grades = [load_result(p) for p in sorted((root / "grades").glob("*.json"))]
     text = "\n".join(rep.report(root, grades))
     assert "labels: 20 emails set by the judges, 0 by you" in text

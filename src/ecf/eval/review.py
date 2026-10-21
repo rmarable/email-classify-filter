@@ -296,3 +296,39 @@ def _str(v: Any) -> str | None:
 
 def _row(root: Path, case_id: str) -> dict[str, Any]:
     return next(r for r in label_file.read(root) if r["id"] == case_id)
+
+
+# A generated card's expected rule and safety lines (`ecf eval expect`), and labels that move
+# together with them (eval plan draft 21): a card is never confirmed with a rule from other labels
+DEFAULT_SAFETY = {"must_escalate": False, "must_not_hide": False}
+_EXPECTED_LINE = re.compile(r"^  (?:rule|safety): .*\n", re.MULTILINE)
+_FACTS_LINE = re.compile(r"^(  facts: .*\n)", re.MULTILINE)
+
+
+def write_expected(path: Path, rule: str | None, safety: dict[str, bool]) -> bool:
+    """The card's `rule` and `safety` lines replaced; True when the card changed."""
+    text = path.read_text(encoding="utf-8")
+    head, sep, body = text[4:].partition("\n---\n")
+    if not text.startswith("---\n") or not sep or not _FACTS_LINE.search(head + "\n"):
+        raise InvalidInputError(f"{path.name}: not a generated card's layout")
+    lines = f"  rule: {json.dumps(rule)}\n  safety: {json.dumps(safety, sort_keys=True)}\n"
+    stripped = _EXPECTED_LINE.sub("", head + "\n")
+    new_head = _FACTS_LINE.sub(lambda m: m.group(1) + lines, stripped, count=1).rstrip("\n")
+    new = "---\n" + new_head + sep + body
+    if new == text:
+        return False
+    parse_card(new, source=path.name)  # still a valid card
+    path.write_text(new, encoding="utf-8")
+    return True
+
+
+def write_labels(path: Path, labels: dict[str, Any]) -> None:
+    """Rewrite a card's labels; when they change, its rule and safety go back to nothing
+    expected in the same edit, so a card is never confirmed with a rule from other labels."""
+    card = parse_card(path.read_text(encoding="utf-8"), source=path.name)
+    if card.expected.labels == labels:
+        return
+    set_labels(path, labels)
+    e = card.expected
+    if e.rule is not None or e.safety.must_escalate or e.safety.must_not_hide:
+        write_expected(path, None, DEFAULT_SAFETY)

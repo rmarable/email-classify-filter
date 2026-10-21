@@ -107,6 +107,8 @@ class Case:
     facts: dict[str, Any]
     expected_rule: str | None
     profile: str = "org"
+    raw: dict[str, Any] | None = None  # the card's own labels, before `stand_in`
+    hand: dict[str, bool] | None = None  # its hand-set fixed labels
 
 
 def load_cases(root: Path) -> tuple[list[Case], list[str]]:
@@ -127,10 +129,11 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             row = json.loads(line)
             path = (root / row["file"]).resolve()
             expected = row["expected"]
-            case = Case(str(row["id"]), path, stand_in(dict(expected.get("labels") or {}),
-                                                        hand.get(str(row["id"]))),
+            raw = dict(expected.get("labels") or {})
+            own = hand.get(str(row["id"]))
+            case = Case(str(row["id"]), path, stand_in(raw, own),
                         dict(expected.get("facts") or {}), expected.get("rule"),
-                        str(row.get("profile") or "org"))  # fmt: skip
+                        str(row.get("profile") or "org"), raw, own)  # fmt: skip
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise InvalidInputError(f"labels.jsonl line {n}: {exc}") from None
         if case.profile not in PROFILES:
@@ -239,9 +242,21 @@ def _outcome(compiled: rules.CompiledRules, inp: rules.RuleInput) -> dict[str, A
     return {"rule": d.rule_id, "actions": actions, "actor": d.to_actor}
 
 
-def outcomes(clock: Clock, current: rules.CompiledRules, root: Path) -> list[dict[str, Any]]:
-    """The rules in force on each built case, as `run` computes `current` (`ecf eval expect`, eval
-    generate plan decision 8): its id, rule, action names and the labels that stood in."""
+def _row(current: rules.CompiledRules, inp: rules.RuleInput,
+         labels: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+    got = _outcome(current, inp)
+    names = sorted({a.split("(", 1)[0] for a in got["actions"]})
+    return {"rule": got["rule"], "actions": names, "labels": labels,
+            **({"error": got["error"]} if "error" in got else {})}  # fmt: skip
+
+
+def outcomes(clock: Clock, current: rules.CompiledRules, root: Path,
+             variants: dict[str, list[dict[str, Any]]] | None = None,
+             ) -> list[dict[str, Any]]:  # fmt: skip
+    """The rules on each built case, as `run` computes `current` (`ecf eval expect`, eval
+    generate plan decision 8): its id, rule, action names and the labels that stood in; and for a
+    case in `variants`, the same for each combination of labels, merged into the card's own
+    labels before they stand in (draft 21)."""
     cases, _missing = load_cases(root)
     scratch = Scratch(clock)
     out: list[dict[str, Any]] = []
@@ -253,11 +268,14 @@ def outcomes(clock: Clock, current: rules.CompiledRules, root: Path) -> list[dic
                                   case.facts)  # fmt: skip
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
-            got = _outcome(current, inp)
-            names = sorted({a.split("(", 1)[0] for a in got["actions"]})
-            out.append({"id": case.id, "rule": got["rule"], "actions": names,
-                        "labels": case.labels, **({"error": got["error"]} if "error" in got
-                                                  else {})})  # fmt: skip
+            row = _row(current, inp, case.labels) | {"id": case.id}
+            if case.id in (variants or {}):
+                row["variants"] = [
+                    _row(current, rules.RuleInput(labels, inp.facts, inp.triggers, inp.address),
+                         labels) | {"variant": v}
+                    for v in (variants or {})[case.id]
+                    for labels in [stand_in((case.raw or {}) | v, case.hand)]]  # fmt: skip
+            out.append(row)
     finally:
         scratch.close()
     return out

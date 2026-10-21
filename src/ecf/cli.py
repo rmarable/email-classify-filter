@@ -934,12 +934,29 @@ def _review_cards(root: Path, fields: str | None, *, add: bool, cases: str | Non
     if recheck < 0:
         raise InvalidInputError("--recheck takes a positive number")
     globs = tuple(g.strip() for g in (cases or "").split(",") if g.strip())
+    _refuse_judged(root, _matching(root, globs) if globs else None)
     require_terminal()
     lines = cli_card_review.review(root, fields, read=input, write=_out, today=date.today(),
                                    add=add, globs=globs, redo=redo, recheck=recheck)  # fmt: skip
     for line in lines:
         typer.echo(line)
     typer.echo("commit reviews.jsonl, labels.jsonl and any changed cards to keep them")
+
+
+def _matching(root: Path, globs: tuple[str, ...]) -> set[str]:
+    import fnmatch  # noqa: PLC0415
+
+    from ecf.eval import labels  # noqa: PLC0415
+
+    return {r["id"] for r in labels.read(root) if any(fnmatch.fnmatch(r["id"], g) for g in globs)}
+
+
+def _refuse_judged(root: Path, ids: set[str] | None = None) -> None:
+    """The review and import paths never rewrite a row the judges labelled (eval plan draft 21):
+    on a generated set those go through `ecf eval settle`."""
+    from ecf.eval import labels  # noqa: PLC0415
+
+    labels.refuse_judged(root, [r for r in labels.read(root) if ids is None or r["id"] in ids])
 
 
 def _import_fixed(root: Path, path: Path) -> None:
@@ -955,6 +972,7 @@ def _import_fixed(root: Path, path: Path) -> None:
         raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
     if not isinstance(answers, dict):
         raise InvalidInputError(f"{path}: answers must map case ids to answers")
+    _refuse_judged(root, set(cast(dict[str, Any], answers)))
     given = cast(dict[str, Any], answers)
     bad = [k for k, a in given.items() if not isinstance(a, dict)]
     if bad:
@@ -1126,6 +1144,8 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         typer.echo(f"model answers from eval {run.run_id[:8]} ({run.created_at[:10]})")
     todo = [r for r in (flagged if show_flags else labels.pending(root))
             if case_id is None or r["id"] == case_id]  # fmt: skip
+    if blind:  # the judges' rows go through settle and expect (eval plan draft 21)
+        labels.refuse_judged(root, todo)
     if blind:  # a disputed email is settled blind, never shown with the agreed fields (J14)
         from ecf.eval import agree as ag  # noqa: PLC0415
 
