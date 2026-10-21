@@ -101,8 +101,10 @@ def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str
     return {"provider": "mistral", "stored": True, "replaced": had}
 
 
-def body(model: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-    return {"model": model,
+def body(model: str, prompt: str, schema: dict[str, Any],
+         reasoning_effort: str | None = None) -> dict[str, Any]:  # fmt: skip
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+    return {"model": model, **extra,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                          {"role": "user", "content": prompt}],
             "response_format": {"type": "json_schema",
@@ -139,8 +141,8 @@ def _wait(headers: httpx.Headers) -> float | None:
 
 
 def complete(store: SecretStore, model: str, prompt: str,  # noqa: PLR0911 - one return a status
-             schema: dict[str, Any],
-             transport: httpx.BaseTransport | None = None) -> dict[str, Any]:  # fmt: skip
+             schema: dict[str, Any], transport: httpx.BaseTransport | None = None, *,
+             reasoning_effort: str | None = None) -> dict[str, Any]:  # fmt: skip
     """One call. Returns `{status, answer?, usage, detail, retry_after?}`: status `ok`,
     `rate_limit`, `auth`, `provider` (5xx), `failed`; `detail` is a kind, never Mistral's text."""
     if len(prompt) > MAX_PROMPT_CHARS:
@@ -151,7 +153,8 @@ def complete(store: SecretStore, model: str, prompt: str,  # noqa: PLR0911 - one
                                 " --provider mistral`")  # fmt: skip
     try:
         with http_client(transport) as client:
-            r = client.post("/v1/chat/completions", json=body(model, prompt, schema),
+            r = client.post("/v1/chat/completions",
+                            json=body(model, prompt, schema, reasoning_effort),
                             headers=_headers(key))  # fmt: skip
     except httpx.TimeoutException:
         return {"status": "failed", "detail": "timed out", "usage": {}}

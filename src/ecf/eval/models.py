@@ -31,6 +31,9 @@ class Model:
     roles: tuple[str, ...]
     modes: tuple[str, ...]
     price: dict[str, Any] | None = None  # US$ per 1M tokens: input, output, source, fetched
+    reasoning_effort: str | None = (
+        None  # sent to the provider when set (Mistral's default unstated)
+    )
 
 
 @cache
@@ -41,7 +44,8 @@ def _doc() -> dict[str, Any]:
 
 def listed() -> list[Model]:
     return [Model(m["provider"], m["id"], m["family"], tuple(m["roles"]), tuple(m["modes"]),
-                  m.get("price")) for m in _doc()["models"]]  # fmt: skip
+                  m.get("price"), m.get("reasoning_effort"))
+            for m in _doc()["models"]]  # fmt: skip
 
 
 def excluded(provider: str, model: str) -> dict[str, str] | None:
