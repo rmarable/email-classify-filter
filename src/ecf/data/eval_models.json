@@ -7,6 +7,7 @@
     {"provider": "codex", "id": "gpt-6.1-sol", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-19 against learn.chatgpt.com/docs/pricing and codex debug models (Codex 0.163.0)"},
     {"provider": "codex", "id": "gpt-6-luna", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-19 against learn.chatgpt.com/docs/pricing and codex debug models (Codex 0.163.0)"},
     {"provider": "codex", "id": "gpt-5.6-terra", "family": "openai", "roles": ["generator"], "modes": ["prod"], "checked": "2026-10-20 against codex debug models (Codex 0.163.0); answers on ChatGPT's free plan"},
+    {"provider": "mistral", "id": "mistral-medium-3-5", "family": "mistral", "roles": ["grader"], "modes": ["prod"], "checked": "2026-10-20 against docs.mistral.ai/models/mistral-medium-3-5-26-04.md (GA; Mistral's free plan refuses mistral-large-4-0 with tier_not_allowed)", "price": {"input": 1.5, "output": 7.5, "source": "docs.mistral.ai/models/mistral-medium-3-5-26-04.md", "fetched": "2026-10-20"}},
     {"provider": "mistral", "id": "mistral-large-4-0", "family": "mistral", "roles": ["grader"], "modes": ["prod"], "checked": "2026-10-19 against docs.mistral.ai/models/mistral-large-4-0.md", "price": {"input": 1.36, "output": 4.18, "source": "docs.mistral.ai/models/mistral-large-4-0.md (regular price)", "fetched": "2026-10-19"}}
   ],
   "excluded": [
