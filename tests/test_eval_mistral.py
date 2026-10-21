@@ -132,6 +132,13 @@ def test_the_service_grades_one_case_of_a_generated_set(env: Env, fake: Mistral,
     assert view is not None and "Authentication-Results" not in view  # the labeller's view
     assert body["messages"][1]["content"] == grading.grade_prompt(view)
     assert body["messages"][0]["content"] == mistral.SYSTEM_PROMPT
+    assert body["reasoning_effort"] == "none"  # pinned per model: Mistral's default is unstated
+
+
+def test_reasoning_effort_is_sent_only_for_models_listed_with_it() -> None:
+    assert "reasoning_effort" not in mistral.body("mistral-large-2512", "p", {})
+    assert mistral.body("m", "p", {}, "none")["reasoning_effort"] == "none"
+    assert models.check("mistral", "mistral-large-2512", "grader", "prod").reasoning_effort is None
 
 
 def test_the_service_refuses_what_isnt_a_generated_prod_set(env: Env, fake: Mistral,

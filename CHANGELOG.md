@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `ecf eval grade` accepts Mistral Large 3 (`mistral:mistral-large-2512`) as a grader, and asks Mistral Large 4 and Medium 3.5 not to reason before answering: Large 4 ran past its answer limit when left to reason.
 - When Mistral rate-limits an `ecf eval grade` run, the stop message now names Mistral's error type and code, so a plan's capacity limit can be told from a short rate limit.
 - `ecf eval grade` accepts Mistral Medium 3.5 (`mistral:mistral-medium-3-5`) as a grader: Mistral's free plan doesn't allow Mistral Large 4.
 - New: `ecf eval settle` asks you only the fields the judges disagreed on, blind, in the terminal or on a phone page (`--export`, then `--from`). Reports never measure a judge on labels it set itself, leave fields the judges barely agree on out of ecf's score, and show ecf's figures against the judges' labels, your settled ones and both. `ecf eval generate --claude-generator` lets Claude write a PROD set, with that recorded and stated in every report (OD-547).
