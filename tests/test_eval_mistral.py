@@ -161,6 +161,8 @@ def test_the_service_needs_the_key(env: Env, fake: Mistral, tmp_path: Path) -> N
 
 @pytest.mark.parametrize(("status", "doc", "want"), [
     (429, {}, ("rate_limit", "HTTP 429")),
+    (429, {"type": "service_tier_capacity_exceeded", "code": "3505", "message": "busy"},
+     ("rate_limit", "HTTP 429, service_tier_capacity_exceeded/3505")),
     (401, {}, ("auth", "key refused (HTTP 401)")),
     (503, {}, ("provider", "HTTP 503")),
     (422, {}, ("failed", "HTTP 422")),
@@ -235,7 +237,7 @@ def test_429s_are_paced_then_stop_after_five_minutes(fake: Mistral, tmp_path: Pa
     assert slept == [5.0, 30.0]
     fake.queue += [(429, {}, {"retry-after": "200"})] * 3
     reply = adapter.ask_case(root, row["id"], grading.grade_schema())
-    assert (reply.status, reply.detail) == ("limit", "rate limited for 5 minutes")
+    assert (reply.status, reply.detail) == ("limit", "rate limited for 5 minutes (HTTP 429)")
     assert slept[2:] == [200.0]
 
 
