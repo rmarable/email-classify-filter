@@ -476,7 +476,7 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
     fields: dict[str, bool] = {}
     labels_exp: dict[str, Any] = exp.get("labels") or {}
     # a generated case with no expected rule is undecided, and on a judge-labelled one
-    # sender_type and priority aren't scored (eval plan draft 21, OD-549 proposed)
+    # sender_type and priority aren't scored (eval plan draft 21, OD-549)
     undecided = case.author == genset.AUTHOR and exp.get("rule") is None
     for k, v in labels_exp.items():
         if case.judged and k in label_file.UNASKED:

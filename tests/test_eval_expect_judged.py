@@ -1,4 +1,4 @@
-"""`ecf eval expect` on a judge-labelled set (eval plan draft 21, OD-549 proposed): sender_type and
+"""`ecf eval expect` on a judge-labelled set (eval plan draft 21, OD-549): sender_type and
 priority are asked only when they decide the expected rule; the rule and flags come from every
 combination of the judges' values, through the service's route on the starter rules; provenance
 stays the judges' unless you settle an asked field. With the fake generator and judges of

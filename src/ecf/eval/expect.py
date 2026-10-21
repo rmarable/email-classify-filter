@@ -1,5 +1,5 @@
 """`ecf eval expect`: a generated card's expected rule and safety, from ecf's rules engine on its
-labels (eval generate plan decision 8; P2; draft 21, OD-549 proposed).
+labels (eval generate plan decision 8; P2; draft 21, OD-549).
 
 The service runs the starter rules (as `ecf eval run` does) on each built card, as `ecf rules
 test` does, with the card's labels standing in for the classifier and its facts over the
