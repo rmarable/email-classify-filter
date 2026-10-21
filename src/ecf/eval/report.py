@@ -45,7 +45,7 @@ def confirmed(root: Path) -> dict[str, dict[str, Any]]:
 def _asked(exp: Mapping[str, Mapping[str, Any]],
            judged: set[str]) -> dict[str, dict[str, Any]]:  # fmt: skip
     """Each case's labels, without sender_type and priority on a judge-labelled row: those are
-    never scored there (eval plan draft 21, OD-549 proposed)."""
+    never scored there (eval plan draft 21, OD-549)."""
     return {c: {k: v for k, v in cast(dict[str, Any], e.get("labels") or {}).items()
                 if not (c in judged and k in label_file.UNASKED)}
             for c, e in exp.items()}  # fmt: skip

@@ -856,7 +856,7 @@ def test_a_malformed_injection_target_fails_the_load_naming_its_card(
 
 
 def test_an_undecided_generated_case_counts_only_in_the_label_figures() -> None:
-    """Eval plan draft 21 (OD-549 proposed): a generated case with no expected rule is
+    """Eval plan draft 21 (OD-549): a generated case with no expected rule is
     undecided: out of `correct`, accuracy, unsafe, the rule and safety figures, the gate's n and
     `compare`; its labels are still scored. A synthetic case with no rule is unchanged."""
     lab = {"category": "notification", "phishing": False}

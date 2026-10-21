@@ -247,7 +247,7 @@ def test_the_report_never_measures_judges_on_their_own_labels(
 def test_the_safety_fields_stay_in_ecfs_figures_whatever_the_judges_kappa(
     tmp_path: Path,
 ) -> None:
-    """Eval plan draft 21 (OD-549 proposed): a low judges' kappa makes a field report-only, but
+    """Eval plan draft 21 (OD-549): a low judges' kappa makes a field report-only, but
     never a fixed item or fraud_risk, whose disputes you always settle."""
     _s, root = run(tmp_path, mode="dev")
     ids = _ids(root)

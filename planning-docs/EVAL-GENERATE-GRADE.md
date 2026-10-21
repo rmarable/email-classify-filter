@@ -1,6 +1,6 @@
 # `ecf eval generate` and `ecf eval grade`: rate ecf with other models
 
-Draft 21 (2026-10-21): draft 20 plus **Settle only what decides something** (Judges): `sender_type` and `priority` asked only when they decide the expected rule, the expected rule and safety computed from the judges' values, durable per-field label provenance, undecided cases out of the figures, the same rules as the run, the safety fields kept in ecf's figures; after seven Fable reviews, all findings accepted by the operator 2026-10-21; OD-549 proposed, recorded in SPEC with step 4's measured counts. Draft 20 (2026-10-20): draft 19 after Phase R on the judges (four Fable agents, J1-J20, all accepted by the operator; OD-546, OD-547, ADR 0036 proposed). Draft 19 (2026-10-20): draft 18 plus the pilot's outcome (rating skipped, Sol adopted, Luna not) and **judges**: two or three non-Claude models of different families set the labels, the operator settles only their disagreements (operator decisions 2026-10-20; section Judges; Phase R pending). Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
+Draft 22 (2026-10-21): draft 21 plus step 4's measurement on the 57 DEV emails (every predicted count reproduced; the expected rule matches the operator's own labels on 50 of 57) and OD-549 recorded in SPEC; step 1 done (6c2af38), steps 2-3 built (branch A 5badfa3 with the full gate only, no Fable diff review before its merge; reviewed after it (AA1-AA8, all accepted), fixes on branch eval-scoring-fixes; branch B 6d6a42e after a Fable diff review and six re-checks of its fixes). Draft 21 (2026-10-21): draft 20 plus **Settle only what decides something** (Judges): `sender_type` and `priority` asked only when they decide the expected rule, the expected rule and safety computed from the judges' values, durable per-field label provenance, undecided cases out of the figures, the same rules as the run, the safety fields kept in ecf's figures; after seven Fable reviews, all findings accepted by the operator 2026-10-21; OD-549 proposed, recorded in SPEC with step 4's measured counts (draft 22). Draft 20 (2026-10-20): draft 19 after Phase R on the judges (four Fable agents, J1-J20, all accepted by the operator; OD-546, OD-547, ADR 0036 proposed). Draft 19 (2026-10-20): draft 18 plus the pilot's outcome (rating skipped, Sol adopted, Luna not) and **judges**: two or three non-Claude models of different families set the labels, the operator settles only their disagreements (operator decisions 2026-10-20; section Judges; Phase R pending). Draft 18 (2026-10-20): draft 17 plus the operator's approval of the fixed prompt words (decision 10b) and the pilot's shared seeds (Phase R, two Fable agents, S1-S8, operator accepted all; OD-545). Draft 17 (2026-10-20): draft 16 plus the DEV grader comparison's results and what the labelling showed (Phase R, two Fable agents, P1-P8, operator accepted; OD-544): graders read the labeller's mail-client view, the report gives set detectability, confirming a generated set never names the assignment, and every labelling and rating page shows the phishing definition and a signs box; the address book is deferred. Draft 16 (2026-10-20): draft 15 plus the DEV run's results and the fixes they led to (Phase R, two Fable agents, P1-P12, all recommendations accepted by the operator; OD-543): no opening-line drop, seed top-ups, hygiene kinds logged, no self-grading, and the labelled DEV grader comparison; the Mistral free plan's credit as the cap (Cost guards). Draft 15 (2026-10-20): draft 14 plus the operator's decision that the DEV run may use `claude -p` on the operator's own Claude plan sign-in (OD-542; Facts: Anthropic terms). Draft 14 (2026-10-20): draft 13 plus the approved realism rubric and pass mark, `planning-docs/RUBRIC.md` (OD-541): four questions (three 1-4 scales, one yes/no), seven pass rules, a near-miss rule (20 fresh seeds for both models), refusals at most 2 overall and 1 per group, at most 3 check drops; the intended group shown as context. Draft 13 (2026-10-20): draft 12 plus how the realism rubric is made: three independent drafts (Codex, a Mistral model, Claude), the operator combining parts of each (operator decision 2026-10-20; `planning-docs/RUBRIC-GENERATION.md` draft 2). Draft 12 (2026-10-20): draft 11 plus the `gpt-6.1-sol` canary on Plus, which passed (Facts). Draft 11 (2026-10-20): draft 10 plus step 3 built (the `codex` adapter, the Mistral grader through the service, the model list and family checks) and the operator's three decisions on it (OD-540), and the Codex code-mode fact (Facts). Draft 10 (2026-10-20): draft 9 plus the `claude` adapter (step 2, built; the DEV run waits for the rubric). Draft 9 (2026-10-20): draft 8 plus two corrections to the Vibe facts and where Mistral API keys come from (a peer session's re-read of Vibe's source, (rv)). Draft 8 (2026-10-20): draft 7 plus the Codex sign-in and the two Codex checks (Facts), step 1 built, and ADR 0034 and OD-534 to OD-539 recorded in SPEC (build approved by the operator, 2026-10-20). Draft 7 added OpenAI's data-control pages and the `claude -p` check. Draft 6 added the Mistral API facts. Draft 5 added the step 0 findings and the mixed route (Codex CLI generates, Mistral's API grades). Draft 4 added the usage-policy reading and the pilot conditions. Draft 3 added the mix, fields and recipient decisions. Draft 2 came after Phase R (six Fable reviewers, P1-P31; full findings in
 `state-archive/eval-generate/review-findings.md`, gitignored). Operator decisions of 2026-10-19
 are marked (op). ADR 0034 and OD-534 to OD-539 were recorded in SPEC when the operator approved
 the plan. Code references were checked against `e925b3c`.
@@ -147,7 +147,7 @@ generate → grade → label (blind) → run → report. Judged sets (amended, d
 ecf eval generate --root <new folder> [--mix <file>] [--count N] [--generator <p>[:<model>]] [--dev] [--parallel N] [--yes]
 ecf eval grade    --root <set> [--grader <p>[:<model>]] [--yes]
 ecf eval label    --root <set> --review all        # existing blind path
-ecf eval expect   --root <set>                     # rules engine fills rule and safety; you confirm
+ecf eval expect   --root <set>                     # rules engine fills rule and safety; you confirm (judged sets: expect confirms; draft 21)
 ecf eval run      --root <set> --claude ...        # existing; never for the gate on a generated set
 ecf eval report   --root <set> <result>...         # grader and labels against each result
 ecf eval generate --write-mix <file>               # copy the shipped mix to edit
@@ -341,15 +341,15 @@ service, sent in the `x-goog-api-key` header; the first-use notice says the paid
 (the free tier trains with human review) and ecf can't check the tier.
 
 
-### Settle only what decides something (draft 21; OD-549 proposed)
+### Settle only what decides something (draft 21, measured in draft 22; OD-549)
 
 Seven Fable reviews (draft 1 Phase R, two agents, P1-P8; drafts 2-7, two agents each, Q1-Q9,
 R1-R12, T1-T10, U1-U12, V1-V10, W1-W11; all accepted by the operator 2026-10-21; full text in
 `state-archive/eval-settle/review-findings.md`). Code checked against `8789d6b`; plan line numbers
-(`:139-157` and the like) refer to draft 20 at that commit. OD-549 goes into SPEC with step 4's
-measured counts; the table below holds estimates until then.
+(`:139-157` and the like) refer to draft 20 at that commit. Step 4 measured the table on
+2026-10-21 (main `6d6a42e`); OD-549 records it in SPEC.
 
-#### Context and estimates (57 operator-labelled DEV emails; judges Mistral Large 4 + Sol)
+#### Context and measurements (57 operator-labelled DEV emails; judges Mistral Large 4 + Sol)
 
 | | emails you settle | fields | rule undecided |
 |---|---|---|---|
@@ -357,16 +357,16 @@ measured counts; the table below holds estimates until then.
 | sender_type, priority never asked | 25 | 36 | 6 |
 | this plan | 29 in the first sitting; 2 of them come back once for sender_type | 42 | 0 |
 
-Estimates, verified by two reviewers from the labels and card facts (the computed triggers on the 6
-notification cards need the engine); step 4 measures them. Labels the judges agree on match the
+Estimated before the build by two reviewers from the labels and card facts; measured by step 4 on
+2026-10-21 (below), every figure as estimated. Labels the judges agree on match the
 operator 546/591 (92.4%) over the 11 asked fields (573/631 with the agreed sender_type values).
 sender_type: kappa 0.56/0.55 per copy, the judges match the operator 68/114 (60%); priority: kappa
 0.80 vs 0.54 on the two copies, 71/114 (62%). Neither is a usable ecf figure. The 6 cases whose rule
 depends on sender_type span both copies (haiku: dev-forums-001, dev-social-003; sonnet:
 dev-forums-002, dev-social-001, dev-forums-003, dev-social-002): all `category: notification`,
 `requires_action` false, no fixed rule fires, judges automated vs vendor/company, the operator said
-automated; the rule is `automated_notification` (`starter_rules.yaml:56-62`), the only default rule
-that hides ordinary mail. Four have no other dispute (asked in the first sitting, because expect
+automated; the rule is `automated_notification` (`starter_rules.yaml:56-62`), one of the two default
+rules that hide ordinary mail (the other is `marketing`, which archives; corrected in draft 22). Four have no other dispute (asked in the first sitting, because expect
 runs before settle); two also have a first-round dispute (dev-forums-003 category and deadline;
 dev-social-002 fraud_risk) and come back once. No case depends on priority (it reaches the rules
 only in `bug_report`, `starter_rules.yaml:8-13`). No real set holds judge-confirmed rows (agree ran
@@ -523,8 +523,9 @@ Existing defects in the judged flow (OD-547), verified at 8789d6b:
   judges' answers only after answering; whole cases per decision 3; updates `settled` and
   `labels_sha256`; prints "Next: ecf eval expect".
 - **service** (`api.py` `eval_expect`, `ruletest.outcomes`): request adds optional `variants: {case
-  id: [{field: value}, ...]}`, fields limited to `sender_type` and `priority` (others refused),
-  values checked against the schema, at most 9 per case, unknown ids ignored. `ruletest.Case` gains
+  id: {field: [values]}}` (built: per-field value lists, the service takes every combination; X1,
+  the 64 KB body cap), fields limited to `sender_type` and `priority` (others refused), values
+  checked against the schema, at most 9 combinations per case, unknown ids ignored. `ruletest.Case` gains
   the card's raw labels (`load_cases` applies `stand_in` at `ruletest.py:130-131`), and `outcomes`,
   per variant, merges the variant and runs `stand_in` (with `_hand_set`) before the rules. Reply:
   `{"rules_digest": ..., "cases": [{"id", "rule", "safety", "error"?, "variants": [{"labels":
@@ -549,7 +550,8 @@ Existing defects in the judged flow (OD-547), verified at 8789d6b:
 #### Steps
 
 1. Plan draft 21 in `planning-docs/EVAL-GENERATE-GRADE.md` (this section, the table marked
-   estimates, every place decision 8 names marked amended). CHANGELOG line. Docs only.
+   estimates, every place decision 8 names marked amended). CHANGELOG line. Docs only. **Done**
+   (6c2af38).
 2. Branch A, scoring (gated): decisions 1 (scoring part), 4 and 7 (`results.py`, `evalrun.py`,
    `report.py`). It reads `labelled_by` from the row into `Case.judged` (nothing writes it until
    branch B; its tests fabricate such rows); tests: a generated-set summary and compare with
@@ -559,7 +561,8 @@ Existing defects in the judged flow (OD-547), verified at 8789d6b:
    `gate_passed`, the kappa exemption, sender_type/priority not scored on judged rows and still
    compared on an operator-labelled DEV set. Without branch B, judged cards read `rule_undecided`
    rather than 100%. CHANGELOG line, stating that the kappa exemption reverses the Unreleased OD-547
-   line for the safety fields.
+   line for the safety fields. **Built** (5badfa3; no Fable diff review before the merge, one after
+   it: AA1-AA8, all accepted, fixed on branch eval-scoring-fixes).
 3. Branch B, labelling (gated): agree, expect, settle, labels, service route and
    `ruletest.outcomes`, SPEC route row; tests: the automated-vs-vendor case (ruletest-backed: rule
    differs, flags same, sent to settle and unconfirmed; after the answer, rule written, confirmed,
@@ -580,7 +583,9 @@ Existing defects in the judged flow (OD-547), verified at 8789d6b:
    generated set (`test_eval_agree.py:115-125` asserting on `labelled_by`); agreement file checks
    (missing or changed judge file); a judged twin of `test_eval_grade_report.py:164-165` (expect
    keeps provenance), the existing one unchanged; `test_eval_grade_report.py:150-156` for the new
-   reply. CHANGELOG line.
+   reply. CHANGELOG line. **Built** (6d6a42e) after a Fable diff review and six Fable re-checks
+   of the fixes (X1-X13, Y1-Y10, Z1-Z5, ZR1-ZR5, L1-L4); the request format changed to per-field
+   value lists (X1, the service's 64 KB body cap).
 4. Measure on the 57 DEV copies with a dev service (`ecf-server dev`), no model calls: fresh copies
    with the cards' labels reset to `{}` (`review.set_labels`, then `build_all`, so agree starts from
    empty cards), confirmations cleared, `work/` holding only the call and grade logs, `grades/` only
@@ -589,7 +594,46 @@ Existing defects in the judged flow (OD-547), verified at 8789d6b:
    not only counts: after the first expect, rules for 28 and 4 sent to settle; after round 1 and
    expect, 27 more and 2 sent back; after round 2, all 57 with a rule, 0 undecided, the 6 all
    `automated_notification`. Then plan draft 22 and SPEC OD-549 with the measured counts (docs
-   commit).
+   commit). **Done** (above): every outcome as asserted; round 1 is 40 fields and round 2 is 2 (42
+   in all, as the table says).
+
+#### Measured (step 4, 2026-10-21, main `6d6a42e`)
+
+On the 57 DEV emails (Claude Haiku 29, Sonnet 28; scratch copies of the DEV sets marked prod so
+Mistral could grade them), judges `codex:gpt-6.1-sol` and `mistral:mistral-large-4-0`, a
+throwaway dev service, no model calls; every settle question answered with the operator's saved
+label, so the sittings are a replay of the operator's earlier answers, not fresh ones. The script
+was reviewed by Fable twice before it ran and its results once after (recorded in
+`state-archive/eval-settle/review-findings.md`); script, log and `result.json` in the session
+scratchpad.
+
+- agree: 32 confirmed by the judges, 25 disputed on 36 asked fields, no whole case.
+- First expect: rules for 28; 4 sent to settle for sender_type alone (dev-haiku forums-001,
+  social-003; dev-sonnet forums-002, social-001); 25 waiting.
+- First sitting: 29 emails, 40 fields. Second expect: 55 with a rule; 2 sent back (dev-sonnet
+  forums-003, social-002). Second sitting: 2 emails, 2 fields; 42 fields in all (OD-547's flow,
+  computed from the same grade files, not run: 35 emails, 53 fields).
+- Last expect: all 57 with a rule, all confirmed, 0 undecided, 0 rules errors; the 6 sender_type
+  cases `automated_notification`.
+- Derived from the grade files and the operator's labels after the run (not output by it):
+  agreed asked fields match the operator 546/591 (92.4%); agreed sender_type 27/40; and the
+  expected rule equals the one the operator's own 13 labels give on 50 of 57 (87.7%). The 7
+  differences all come from a `category` both judges agreed on, so no one was asked: 6
+  `marketing` where the operator said `notification` (4) or `travel` (1) or `notification` with
+  `sender_type: company` (1), and 1 `account_security` where the operator said `notification`
+  (the judges also agreed `requires_action` and `deadline_mentioned` true where the operator said
+  false; the `account_security` rule reads category alone). Four of the six `marketing` cases hide mail either way (archive vs
+  mark read and archive); 2 archive mail the operator's labels would leave; the
+  `account_security` one flags mail the operator's labels would hide. Safety flags
+  (`must_escalate`, `must_not_hide`) are identical on all 57. Accepted under OD-547 (agreed values
+  stand); category disputes resolved by majority need a third judge.
+
+Caveats: phishing and `fraud_risk` labels on these sets are assignment-based (labelled with each
+email's assignment shown, `LABELS-NOTE.txt`), so the 15 settle answers for them (12 fraud_risk,
+3 phishing, on 12 emails) aren't blind; 57
+Claude-generated DEV emails, not the frozen set, never for scoring ecf; one judge pair, so no
+majority on category; sender_type and priority are unscored by decision, their quality measured
+only as 27/40 agreed sender_type; "rule undecided 0" is not "rules verified" (the 7 above).
 
 #### Open questions
 

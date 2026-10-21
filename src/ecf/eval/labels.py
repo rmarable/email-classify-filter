@@ -8,7 +8,7 @@ its expected labels undoes it, and `ecf eval build` keeps a confirmation only wh
 match. The service checks the same hashes when an eval run starts.
 
 On a generated set, a row whose labels the judges set carries `labelled_by` (eval plan draft 21,
-OD-549 proposed): the judges, the fields the operator settled, and a SHA-256 of the labels at its
+OD-549): the judges, the fields the operator settled, and a SHA-256 of the labels at its
 last confirmation. Such rows count only on a generated set (`models_ok`), never on the synthetic
 set or anything built from copied cards (J8), and only `ecf eval agree`, `settle` and `expect`
 confirm them. A row without it is the operator's.
@@ -38,7 +38,7 @@ def read(root: Path) -> list[dict[str, Any]]:
 
 
 MODELS = "models"  # `confirmed.by` of a label the judges agreed on (OD-547)
-# A judge-labelled row's provenance key (eval plan draft 21, OD-549 proposed): on such a row
+# A judge-labelled row's provenance key (eval plan draft 21, OD-549): on such a row
 # `sender_type` and `priority` are never scored, in ecf's figures or the judges'
 LABELLED_BY = "labelled_by"
 UNASKED = ("sender_type", "priority")

@@ -5,7 +5,7 @@ The judges are the set's grade files (`grades/*.json`), one per model, every jud
 model and, in PROD, every pair of generator, seed writer and judges a different family. Per case
 and field: a boolean or `fraud_risk` counts only when every judge gave the same valid value;
 `category` takes a majority when three or more judges answered. `sender_type` and `priority`
-are never asked here and never set on the card (eval plan draft 21, OD-549 proposed): `ecf eval
+are never asked here and never set on the card (eval plan draft 21, OD-549): `ecf eval
 expect` evaluates the rules with each judge's value and sends them to the operator only when they
 decide the expected rule. A case any judge refused, left out or answered with a missing asked
 field goes to the operator whole (with sender_type and priority too when every judge refused).

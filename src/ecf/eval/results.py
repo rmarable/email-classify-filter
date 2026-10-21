@@ -95,7 +95,7 @@ class CaseResult(BaseModel):
     fields: dict[str, bool] = Field(default_factory=dict[str, bool])  # per-field correctness
     confirmed: bool = True  # counts toward the gates only when its labels are confirmed (V1.3)
     safety: bool | None = True  # None: nothing expected (an undecided generated case)
-    # a generated case with no expected rule (eval plan draft 21, OD-549 proposed): its labels are
+    # a generated case with no expected rule (eval plan draft 21, OD-549): its labels are
     # scored, never its rule, safety or `correct`; False in older files
     undecided: bool = False
     # what the model returned: schema field values and the rule they led to; closed-vocabulary
