@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- `ecf eval run` and `ecf eval report` leave a generated email with no expected rule out of the rule, safety and accuracy figures and the model comparison (counted as `rule_undecided`; `scored` is the new count of emails with a rule), never score `sender_type` or `priority` on emails the judges labelled, and keep the safety fields in ecf's figures even when the judges agree on them only weakly; this reverses the OD-547 line below for the safety fields (eval plan draft 21).
 - Planned: on judge-labelled eval sets you are asked about `sender_type` and `priority` only when your answer decides the expected rule, rules errors and undecided emails no longer count as passes, and the safety fields stay in ecf's figures (eval plan draft 21; OD-549 proposed, recorded when measured).
 - Mistral Large 4 is the Mistral judge for generated sets, chosen after measuring three Mistral models on the 57 labelled DEV emails (OD-548); Sol can now be run as a grader with `ecf eval grade --grader codex:gpt-6.1-sol`, to measure it as a judge.
 - `ecf eval grade` accepts Mistral Large 3 (`mistral:mistral-large-2512`) as a grader, and asks Mistral Large 4 and Medium 3.5 not to reason before answering: Large 4 ran past its answer limit when left to reason.

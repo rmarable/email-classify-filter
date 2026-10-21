@@ -239,5 +239,29 @@ def test_the_report_never_measures_judges_on_their_own_labels(
     monkeypatch.setattr(models, "family", family)
     text = "\n".join(rep.report(root, grades))
     assert "against the labels you settled (1 emails; never the labels the judges set)" in text
-    assert "report-only (judges' kappa under 0.6):" in text
+    assert "report-only (judges' kappa under 0.6; never the safety fields):" in text
     assert "judges' labels contradicting the assignment" in text
+
+
+def test_the_safety_fields_stay_in_ecfs_figures_whatever_the_judges_kappa(
+    tmp_path: Path,
+) -> None:
+    """Eval plan draft 21 (OD-549 proposed): a low judges' kappa makes a field report-only, but
+    never a fixed item or fraud_risk, whose disputes you always settle."""
+    _s, root = run(tmp_path, mode="dev")
+    ids = _ids(root)
+    grades = [load_result(_judge(tmp_path, root, "judge-a")),
+              load_result(_judge(tmp_path, root, "judge-b", {
+                  i: {"phishing": n % 2 == 0, "requires_reply": n % 2 == 0}
+                  for n, i in enumerate(ids)}))]  # fmt: skip
+    assert {"phishing", "requires_reply"} <= rep.weak_fields(grades)
+    labels = {i: {"phishing": False, "requires_reply": False} for i in ids}
+    kept, notes = rep._scorable(root, labels, {}, grades)  # pyright: ignore[reportPrivateUsage]
+    assert all("phishing" in v and "requires_reply" not in v for v in kept.values())
+    assert notes[0].startswith("report-only (judges' kappa under 0.6; never the safety fields)")
+
+
+def test_the_report_drops_sender_type_and_priority_only_on_judged_rows() -> None:
+    lab = {"labels": {"sender_type": "vendor", "priority": "low", "phishing": True}}
+    got = rep._asked({"j": lab, "o": lab}, {"j"})  # pyright: ignore[reportPrivateUsage]
+    assert got == {"j": {"phishing": True}, "o": lab["labels"]}

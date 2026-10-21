@@ -283,7 +283,7 @@ def result_report(env: _Env, root: Path, path: Path) -> dict[str, Any]:
                         "iban_bank": triggers.IBAN_HIT in (kw.get("bank") or [])})  # fmt: skip
     before = (old.summary or {}).get("model_only_fraud_cases")
     genuine = evalrun.genuine_metrics(out, cases, env.rules)
-    unsafe = sorted(c.id for c in out if c.confirmed and c.scored and not c.safety)
+    unsafe = sorted(c.id for c in out if c.confirmed and c.scored and c.safety is False)
     off = against_routes_off(pairs)
     fresh_off = against_routes_off(fresh)
     return {

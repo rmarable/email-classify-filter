@@ -26,7 +26,7 @@ from ecf.eval import labels as label_file
 from ecf.eval import models
 from ecf.eval.metrics import wilson
 from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile
-from ecf.schema import load_schema
+from ecf.schema import FIXED_ITEMS, load_schema
 
 DEV_BANNER = "DEV: plumbing test, not a measurement"
 
@@ -40,6 +40,15 @@ def confirmed(root: Path) -> dict[str, dict[str, Any]]:
     ok = label_file.models_ok(root)
     return {r["id"]: r["expected"] for r in label_file.read(root)
             if label_file.is_confirmed(r, models_ok=ok)}  # fmt: skip
+
+
+def _asked(exp: Mapping[str, Mapping[str, Any]],
+           judged: set[str]) -> dict[str, dict[str, Any]]:  # fmt: skip
+    """Each case's labels, without sender_type and priority on a judge-labelled row: those are
+    never scored there (eval plan draft 21, OD-549 proposed)."""
+    return {c: {k: v for k, v in cast(dict[str, Any], e.get("labels") or {}).items()
+                if not (c in judged and k in label_file.UNASKED)}
+            for c, e in exp.items()}  # fmt: skip
 
 
 def _figure(agree: int, n: int) -> str:
@@ -188,9 +197,12 @@ def weak_fields(grades: list[ResultFile]) -> set[str]:
 def _scorable(root: Path, labels: dict[str, dict[str, Any]], sources: dict[str, str | None],
               grades: list[ResultFile]) -> tuple[dict[str, dict[str, Any]], list[str]]:  # fmt: skip
     """The labels ecf is scored on when judges set some (OD-547, J7): fields the judges agree
-    on only weakly are report-only, and a judges' label contradicting the email's assignment
-    (a scam not phishing, or ordinary mail phishing) is left out for phishing and fraud_risk."""
+    on only weakly are report-only, except the safety fields (the fixed items and fraud_risk,
+    whose disputes you always settle; eval plan draft 21), and a judges' label contradicting the
+    email's assignment (a scam not phishing, or ordinary mail phishing) is left out for phishing
+    and fraud_risk."""
     weak: set[str] = weak_fields(grades) if len(grades) > 1 else set()
+    weak -= {*FIXED_ITEMS, "fraud_risk"}
     given = assignments(root)
     contradicted: list[str] = []
     out: dict[str, dict[str, Any]] = {}
@@ -205,7 +217,7 @@ def _scorable(root: Path, labels: dict[str, dict[str, Any]], sources: dict[str, 
             contradicted.append(c)
             keep = {f: v for f, v in keep.items() if f not in ("phishing", "fraud_risk")}
         out[c] = keep
-    notes = [f"report-only (judges' kappa under {KAPPA_FLOOR}): "
+    notes = [f"report-only (judges' kappa under {KAPPA_FLOOR}; never the safety fields): "
              + (", ".join(sorted(weak)) or "none"),
              f"judges' labels contradicting the assignment (left out for phishing and"
              f" fraud_risk): {len(contradicted)}"]  # fmt: skip
@@ -291,7 +303,8 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         return _dev(root, doc, results, lines)
     ids = set(doc["cases"])
     exp = confirmed(root)
-    labels = {c: cast(dict[str, Any], e.get("labels") or {}) for c, e in exp.items()}
+    rows = label_file.read(root)
+    labels = _asked(exp, {r["id"] for r in rows if label_file.judged(r)})
     lines.append(f"confirmed labels: {len(labels)} of {len(ids)} cases")
     if not labels:
         lines.append(f"no confirmed labels yet: label blind with `ecf eval label --root {root}"
@@ -306,7 +319,7 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
     for g in grades:
         grading.check_grade(g, doc)
     shared = _families(doc, grades)
-    sources = {r["id"]: label_file.source(r) for r in label_file.read(root) if r["id"] in labels}
+    sources = {r["id"]: label_file.source(r) for r in rows if r["id"] in labels}
     judged = "models" in sources.values()
     settled = {c: v for c, v in labels.items() if sources.get(c) == "operator"}
     graded: dict[str, dict[str, Any]] = {}
@@ -416,6 +429,6 @@ def _rule_lines(r: ResultFile, exp: Mapping[str, Mapping[str, Any]]) -> list[str
         return ["  rule and safety: not scored (no fraud-guard or injection cases; `ecf eval"
                 " expect` fills the expected rule and safety from your labels)"]  # fmt: skip
     rule_ok = sum(c.fields.get("rule", False) for c in with_rule)
-    unsafe = [c.id for c in with_rule if not c.safety]
+    unsafe = [c.id for c in with_rule if c.safety is False]
     return [f"  rule {_figure(rule_ok, len(with_rule))}; unsafe {len(unsafe)}"
             + (f" ({', '.join(unsafe[:5])})" if unsafe else "")]  # fmt: skip

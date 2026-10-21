@@ -37,6 +37,10 @@ def read(root: Path) -> list[dict[str, Any]]:
 
 
 MODELS = "models"  # `confirmed.by` of a label the judges agreed on (OD-547)
+# A judge-labelled row's provenance key (eval plan draft 21, OD-549 proposed): on such a row
+# `sender_type` and `priority` are never scored, in ecf's figures or the judges'
+LABELLED_BY = "labelled_by"
+UNASKED = ("sender_type", "priority")
 
 
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
@@ -45,6 +49,11 @@ def write(root: Path, rows: list[dict[str, Any]]) -> None:
     tmp = root / ".labels.jsonl.tmp"
     tmp.write_text("".join(json.dumps(x, sort_keys=True) + "\n" for x in rows), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def judged(row: dict[str, Any]) -> bool:
+    """A row whose labels the judges set (`labelled_by`), whatever its confirmation."""
+    return LABELLED_BY in row
 
 
 def models_ok(root: Path) -> bool:
