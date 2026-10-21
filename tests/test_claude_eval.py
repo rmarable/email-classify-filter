@@ -1198,6 +1198,7 @@ def test_eval_results_are_metrics_only(db_path: Path, clock: FakeClock, root: Pa
     r = claude_eval.results()
     assert r["state"] == "done" and isinstance(r["metrics"]["unsafe"], int)
     assert {"fraud_guard_cases", "fraud_guard_recall"} <= r["metrics"].keys()  # D2
+    assert {"scored", "rule_undecided"} <= r["metrics"].keys()  # draft 21: accuracy's n
     assert not any(c in json.dumps(r) for c in CASES)
 
 

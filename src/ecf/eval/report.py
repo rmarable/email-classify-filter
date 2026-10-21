@@ -21,9 +21,9 @@ from typing import Any, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import generate as gen
+from ecf.eval import genset, models
 from ecf.eval import grade as grading
 from ecf.eval import labels as label_file
-from ecf.eval import models
 from ecf.eval.metrics import wilson
 from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile
 from ecf.schema import FIXED_ITEMS, load_schema
@@ -251,8 +251,8 @@ def _expect_lines(root: Path, exp: Mapping[str, Mapping[str, Any]], rows: list[d
 
     work = gen.Work(root)
     sent = {d["id"] for d in work.read("disputes") if d.get("reason") == ex.DECIDES}
-    judged = {r["id"] for r in rows if label_file.judged(r)}
-    undecided = sum(1 for c in judged if c in exp and exp[c].get("rule") is None)
+    authors = {r["id"]: str(r.get("author", "")) for r in rows}
+    undecided = sum(1 for c, e in exp.items() if genset.undecided(authors.get(c, ""), dict(e)))
     log = work.read(ex.LOG)
     errors = len(log[-1].get("errors") or []) if log else 0
     digest = str(log[-1].get("rules_digest") or "") if log else ""
@@ -473,7 +473,10 @@ def _measured(root: Path, grade_id: str, labels: Mapping[str, Mapping[str, Any]]
 
 
 def _rule_lines(r: ResultFile, exp: Mapping[str, Mapping[str, Any]]) -> list[str]:
-    with_rule = [c for c in r.cases if c.id in exp and exp[c.id].get("rule")]
+    # the result file is the record: a case undecided when it ran stays out, whatever expect
+    # wrote since (eval plan draft 21)
+    with_rule = [c for c in r.cases if c.id in exp and exp[c.id].get("rule")
+                 and not c.undecided and "rule" in c.fields]  # fmt: skip
     if not with_rule:
         return ["  rule and safety: not scored (no fraud-guard or injection cases; `ecf eval"
                 " expect` fills the expected rule and safety from your labels)"]  # fmt: skip

@@ -40,3 +40,9 @@ def is_generated(root: Path) -> bool:
         if isinstance(row, dict) and cast(dict[str, Any], row).get("author") == AUTHOR:
             return True
     return False
+
+
+def undecided(author: str, expected: dict[str, Any]) -> bool:
+    """A generated case with no expected rule (eval plan draft 21, OD-549): its labels are
+    scored, never its rule, safety or `correct`. The one definition the run and the report use."""
+    return author == AUTHOR and expected.get("rule") is None

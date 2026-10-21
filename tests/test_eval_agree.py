@@ -266,3 +266,18 @@ def test_the_report_drops_sender_type_and_priority_only_on_judged_rows() -> None
     lab = {"labels": {"sender_type": "vendor", "priority": "low", "phishing": True}}
     got = rep._asked({"j": lab, "o": lab}, {"j"})  # pyright: ignore[reportPrivateUsage]
     assert got == {"j": {"phishing": True}, "o": lab["labels"]}
+
+
+def test_the_rule_figure_reads_the_result_not_later_labels() -> None:
+    """A case undecided when it ran stays out of the report's rule figure even after `ecf eval
+    expect` gave it a rule (eval plan draft 21; AA4)."""
+    from ecf.eval.results import CaseResult, ResultFile  # noqa: PLC0415
+
+    undecided = CaseResult(id="u", correct=True, fields={"category": True}, safety=None,
+                           undecided=True)  # fmt: skip
+    decided = CaseResult(id="d", correct=True, fields={"rule": True, "safety": True})
+    r = ResultFile(run_id="r" * 32, pair="p", set_version="v", created_at="t",
+                   cases=[undecided, decided])  # fmt: skip
+    exp = {"u": {"rule": "marketing"}, "d": {"rule": "otherwise"}}
+    lines = rep._rule_lines(r, exp)  # pyright: ignore[reportPrivateUsage]
+    assert lines[0].startswith("  rule 1/1 ")

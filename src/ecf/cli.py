@@ -1685,7 +1685,7 @@ def status_lines(st: dict[str, Any]) -> list[str]:
             f" gate {'passed' if r['gate_passed'] else 'NOT passed'}{_run_caveat(m)}"
         )
         out += [f"  {r['created_at'][:10]} {r['created_at'][11:16]}  {r['run_id'][:8]}"
-                f"  {m.get('correct')}/{m.get('confirmed')} confirmed cases correct"
+                f"  {m.get('correct')}/{m.get('scored', m.get('confirmed'))} scored cases correct"
                 f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
                 f"{'':30}{safety}"]  # fmt: skip
     if not out:
