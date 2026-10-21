@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Mistral Large 4 is the Mistral judge for generated sets, chosen after measuring three Mistral models on the 57 labelled DEV emails (OD-548); Sol can now be run as a grader with `ecf eval grade --grader codex:gpt-6.1-sol`, to measure it as a judge.
 - `ecf eval grade` accepts Mistral Large 3 (`mistral:mistral-large-2512`) as a grader, and asks Mistral Large 4 and Medium 3.5 not to reason before answering: Large 4 ran past its answer limit when left to reason.
 - When Mistral rate-limits an `ecf eval grade` run, the stop message now names Mistral's error type and code, so a plan's capacity limit can be told from a short rate limit.
 - `ecf eval grade` accepts Mistral Medium 3.5 (`mistral:mistral-medium-3-5`) as a grader: Mistral's free plan doesn't allow Mistral Large 4.

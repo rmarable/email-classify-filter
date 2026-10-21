@@ -211,7 +211,7 @@ def test_providers_resolve_only_listed_models() -> None:
     with pytest.raises(InvalidInputError, match="isn't listed as a generator"):
         providers.resolve("mistral:mistral-large-4-0", "generator", "prod", paths)
     with pytest.raises(InvalidInputError, match="isn't listed as a grader"):
-        providers.resolve("codex:gpt-6.1-sol", "grader", "prod", paths)
+        providers.resolve("codex:gpt-6-luna", "grader", "prod", paths)
 
 
 def test_prod_needs_the_generator_and_grader_from_two_families() -> None:
