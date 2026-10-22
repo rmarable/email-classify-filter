@@ -298,12 +298,12 @@ def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
 
 
 def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
-    """A grade file made by the set's own generator is refused (OD-543), even one written
-    before that rule existed."""
+    """A grade file made by one of the set's writers (its generator, or its seed writer) is
+    refused (OD-543, OD-545), even one written before that rule existed."""
     for g in grades:
         d = cast(dict[str, Any], (g.summary or {}).get("grader") or {})
-        models.check_not_self(str(doc["generator"].get("model")), str(d.get("model")),
-                              str(doc.get("mode")))  # fmt: skip
+        for w in models.writers(doc):
+            models.check_not_self(w[1], str(d.get("model")), str(doc.get("mode")))
 
 
 def _dev(root: Path, doc: dict[str, Any], results: list[ResultFile],

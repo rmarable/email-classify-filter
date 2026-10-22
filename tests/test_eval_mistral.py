@@ -206,7 +206,14 @@ def _adapter(**kw: Any) -> mistral_api.MistralAdapter:
 
 
 @pytest.mark.usefixtures("client")
-def test_grading_a_set_through_the_service(fake: Mistral, tmp_path: Path) -> None:
+def test_grading_a_set_through_the_service(fake: Mistral, tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    real = models.family
+
+    def family(provider: str, model: str) -> str:  # the fake generator as an OpenAI model
+        return "openai" if model == "fake-model-1" else real(provider, model)
+
+    monkeypatch.setattr(models, "family", family)
     root = _prod_set(tmp_path)
     adapter = _adapter()
     path, counts, _detail = grading.Grading(root, adapter).run(resume=False)

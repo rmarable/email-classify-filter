@@ -3,9 +3,10 @@ Model switches; P24) and the family check.
 
 A model is accepted only when it is listed for its provider, role and mode; a model from a lab
 the model filter bars is refused with the reason, and any other unlisted id is refused as
-unknown. Family is the lab that made the model. In PROD the generator, the grader and ecf's
-classifier come from three different families; the classifier's family is read from each eval
-result, never assumed.
+unknown. Family is the lab that made the model. In PROD a judge never shares a family with the
+set's generator, its seed writer or ecf's classifier (Claude), and two judges differ in family
+(`check_judge`, `check_pair`). The classifier's family is read from each eval result, never
+assumed, except that in PROD a judge is never Claude, ecf's classifier (OD-547).
 """
 
 from __future__ import annotations
@@ -90,29 +91,54 @@ def classifier_family(pair: str) -> str | None:
     return CLASSIFIER_FAMILY.get(pair.split("/", 1)[0])
 
 
-def check_not_self(generator_model: str, grader_model: str, mode: str) -> None:
-    """A model never grades the set it generated (operator rule 2026-10-20, OD-543), in DEV and
-    PROD; compared by model id alone, whoever hosts it."""
-    if generator_model == grader_model:
+def check_not_self(writer_model: str, grader_model: str, mode: str) -> None:
+    """A model never grades a set it wrote, the emails or their seeds (operator rule 2026-10-20,
+    OD-543, OD-545), in DEV and PROD; compared by model id alone, whoever hosts it. The
+    suggestions leave out Claude in PROD, where it can't judge (OD-547)."""
+    if writer_model == grader_model:
         others = sorted(m.id for m in listed() if "grader" in m.roles and mode in m.modes
-                        and m.id != generator_model)  # fmt: skip
+                        and m.id != writer_model
+                        and not (mode == "prod" and m.family == "anthropic"))  # fmt: skip
         raise InvalidInputError(
-            f"{grader_model} generated this set, and a model never grades its"
+            f"{grader_model} wrote this set or its seeds, and a model never grades its"
             f" own set: grade it with {', '.join(others) or 'another model'}"
         )
 
 
-def check_roles(generator: tuple[str, str], grader: tuple[str, str], mode: str) -> None:
-    """Never the same model; in PROD, not the same family either."""
-    check_not_self(generator[1], grader[1], mode)
-    if mode == "prod":
-        check_pair(generator, grader)
-
-
-def check_pair(generator: tuple[str, str], grader: tuple[str, str]) -> None:
-    """PROD: the generator and the grader from different families."""
-    a, b = family(*generator), family(*grader)
+def check_pair(one: tuple[str, str], other: tuple[str, str]) -> None:
+    """PROD: two judges from different families (`check_judge` covers each judge against the
+    set's writers)."""
+    a, b = family(*one), family(*other)
     if a == b:
-        raise InvalidInputError(f"the generator ({':'.join(generator)}) and the grader"
-                                f" ({':'.join(grader)}) are both {a}: a PROD set needs them from"
-                                " different families")  # fmt: skip
+        raise InvalidInputError(f"{':'.join(one)} and {':'.join(other)} are both {a}: a PROD set"
+                                " needs its judges from different families")  # fmt: skip
+
+
+def writers(doc: dict[str, Any]) -> list[tuple[str, str]]:
+    """A generated set's writers from its manifest: the generator, and the model that wrote its
+    seeds when they came from a seed run (`seeds_from.generator`, "provider:model"; OD-545)."""
+    g = cast(dict[str, Any], doc["generator"])
+    out = [(str(g.get("provider")), str(g.get("model")))]
+    if shared := cast(dict[str, Any] | None, doc.get("seeds_from")):
+        provider, _, model = str(shared.get("generator")).partition(":")
+        out.append((provider, model))
+    return out
+
+
+def check_judge(doc: dict[str, Any], judge: tuple[str, str]) -> None:
+    """A grader or judge of this set: never one of its writers; in PROD never a writer's family
+    and never Claude, the classifier's (OD-543, OD-547). The one check the CLI, grading and
+    `ecf eval agree` all make (eval plan draft 24, G2)."""
+    mode = str(doc.get("mode"))
+    for w in writers(doc):
+        check_not_self(w[1], judge[1], mode)
+    if mode == "prod":
+        mine = family(*judge)
+        for role, w in zip(("generator", "seed writer"), writers(doc), strict=False):
+            if family(*w) == mine:
+                raise InvalidInputError(f"the {role} ({':'.join(w)}) and the judge"
+                                        f" ({':'.join(judge)}) are both {mine}: a PROD set needs"
+                                        " them from different families")  # fmt: skip
+        if mine == "anthropic":
+            raise InvalidInputError(f"{judge[0]}:{judge[1]} is Claude, the classifier's family: a"
+                                    " judge can't be")  # fmt: skip
