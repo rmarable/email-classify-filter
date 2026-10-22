@@ -1,7 +1,7 @@
 # ADR 0036: Google Gemini as a judge provider for generated eval sets
 
-- **Status:** proposed (operator decisions 2026-10-20, OD-547; accepted when its build step is
-  approved)
+- **Status:** rejected (operator decision 2026-10-22, OD-550: no new platform; the judges are
+  Mistral Large 4 and Sol). Was proposed (operator decisions 2026-10-20, OD-547).
 - **Context source:** `planning-docs/EVAL-GENERATE-GRADE.md` (draft 20, Judges; Phase R J1-J20)
 - **Amends:** ADR 0034 (the closed provider list)
 
