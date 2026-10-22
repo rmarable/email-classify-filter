@@ -16,6 +16,7 @@ from ecf.eval import grade as grading
 from ecf.eval import mix as mixmod
 from ecf.eval import report as rep
 from ecf.eval import tools
+from ecf.eval.results import load_result
 from tests.test_eval_generate import calls, fake_tool
 
 
@@ -125,3 +126,63 @@ def test_the_seed_writer_never_grades_the_set(tmp_path: Path) -> None:
     seeder = tools.CliAdapter(tool, "fake-seeder-1", environ)
     with pytest.raises(InvalidInputError, match="never grades its own set"):
         grading.Grading(root, seeder).run(resume=False)
+    # nor does the report take a grade file the seed writer made (draft 24)
+    tool2, environ2 = fake_tool(tmp_path / "s", {})
+    path, _c, _d = grading.Grading(root, tools.CliAdapter(tool2, "fake-judge-2", environ2)).run(
+        resume=False
+    )
+    assert path is not None
+    g = load_result(path)
+    summary: dict[str, Any] = dict(g.summary or {})
+    grader: dict[str, Any] = dict(summary["grader"]) | {"model": "fake-seeder-1"}
+    forged = g.model_copy(update={"summary": summary | {"grader": grader}})
+    with pytest.raises(InvalidInputError, match="wrote this set or its seeds"):
+        rep.report(root, [forged])
+
+
+def test_grading_refuses_a_judge_of_the_seed_writers_family_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eval plan draft 24 (G2): on a PROD set whose seeds an OpenAI model wrote, an OpenAI judge
+    is refused before its first call, though the generator's family differs; the shared check
+    (`models.check_judge`) names the seed writer."""
+    from ecf.eval import models  # noqa: PLC0415
+
+    fams = {
+        "fake-seeder-1": "openai",
+        "fake-one-1": "anthropic",
+        "fake-judge-1": "openai",
+        "gpt-6.1-sol": "openai",
+        "claude-sonnet-5-5": "anthropic",
+    }
+
+    def family(_provider: str, model: str) -> str:
+        return fams[model]
+
+    monkeypatch.setattr(models, "family", family)
+    (tmp_path / "s").mkdir()
+    tool, environ = fake_tool(tmp_path / "s", {})
+    source = tmp_path / "seeds"
+    gen.start(source, resume=False)
+    gen.Run(source, mixmod.default(), 20, tools.CliAdapter(tool, "fake-seeder-1", environ),
+            "prod", seeds_only=True).run(resume=False)  # fmt: skip
+    (tmp_path / "one").mkdir()
+    tool, environ = fake_tool(tmp_path / "one", {})
+    root = tmp_path / "one-set"
+    gen.start(root, resume=False)
+    shared = gen.share_seeds(root, source, "prod", 20, mixmod.default(), gen.K_DEFAULT)
+    gen.Run(root, mixmod.default(), 20, tools.CliAdapter(tool, "fake-one-1", environ), "prod",
+            shared=shared).run(resume=True)  # fmt: skip
+    (tmp_path / "judge").mkdir()
+    tool, environ = fake_tool(tmp_path / "judge", {})
+    judge = tools.CliAdapter(tool, "fake-judge-1", environ)
+    with pytest.raises(
+        InvalidInputError, match=r"the seed writer \(fake:fake-seeder-1\) and the judge"
+    ):
+        grading.Grading(root, judge).run(resume=False)
+    log = tmp_path / "judge" / "calls.log"
+    assert not log.exists() or not log.read_text()  # never called
+    claude = {"mode": "prod", "generator": {"provider": "codex", "model": "gpt-6.1-sol"}}
+    with pytest.raises(InvalidInputError, match="is Claude, the classifier's family"):
+        models.check_judge(claude, ("claude", "claude-sonnet-5-5"))
+    models.check_judge(claude | {"mode": "dev"}, ("claude", "claude-sonnet-5-5"))  # DEV allows

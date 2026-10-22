@@ -1,22 +1,21 @@
 """`ecf eval agree`: the judges set a generated set's labels; the operator settles only where they
 disagree (eval generate plan, Judges; OD-547, Phase R J1-J20).
 
-The judges are the set's grade files (`grades/*.json`), one per model, every judge a different
-model and, in PROD, every pair of generator, seed writer and judges a different family. Per case
-and field: a boolean or `fraud_risk` counts only when every judge gave the same valid value;
-`category` takes a majority when three or more judges answered. `sender_type` and `priority`
-are never asked here and never set on the card (eval plan draft 21, OD-549): `ecf eval
-expect` evaluates the rules with each judge's value and sends them to the operator only when they
-decide the expected rule. A case any judge refused, left out or answered with a missing asked
-field goes to the operator whole (with sender_type and priority too when every judge refused).
-Agreed values are written into the cards at once, the set rebuilt once, and fully agreed cases
-confirmed in one atomic write with their `labelled_by` (`labels.confirm_many`); the rest go to
-`work/disputes.jsonl` with the judges' closed values, for `ecf eval settle`.
-`work/agreement.jsonl` records each judge file's digest so the report and expect can recompute
-from them. A rerun skips a judged row whose labels are unchanged since it was confirmed, and an
+The judges are the set's grade files (`grades/*.json`), one per model, every judge a different model
+and, in PROD, a different family from the generator, the seed writer, Claude and each other
+(`models.check_judge`, `check_pair`). Per case and field: a boolean or `fraud_risk` counts only when
+every judge gave the same valid value; `category` takes a majority when three or more judges
+answered. `sender_type` and `priority` are never asked here and never set on the card (eval plan
+draft 21, OD-549): `ecf eval expect` evaluates the rules with each judge's value and sends them to
+the operator only when they decide the expected rule. A case any judge refused, left out or answered
+with a missing asked field goes to the operator whole (with sender_type and priority too when every
+judge refused). Agreed values are written into the cards at once, the set rebuilt once, and fully
+agreed cases confirmed in one atomic write with their `labelled_by` (`labels.confirm_many`); the
+rest go to `work/disputes.jsonl` with the judges' closed values, for `ecf eval settle`.
+`work/agreement.jsonl` records each judge file's digest so the report and expect can recompute from
+them. A rerun skips a judged row whose labels are unchanged since it was confirmed, and an
 operator-confirmed row; a judged row edited by hand is decided again, keeping the fields the
-operator settled.
-"""
+operator settled."""
 
 from __future__ import annotations
 
@@ -91,27 +90,13 @@ def _judge(r: ResultFile) -> tuple[str, str]:
 
 
 def check_roles(doc: dict[str, Any], judge_ids: list[tuple[str, str]]) -> None:
-    """No judge is the generator or the seed writer; in PROD every pair of generator, seed
-    writer and judges comes from a different family (J11)."""
-    mode = str(doc.get("mode"))
-    g = cast(dict[str, Any], doc["generator"])
-    writers = [(str(g.get("provider")), str(g.get("model")))]
-    if shared := cast(dict[str, Any] | None, doc.get("seeds_from")):
-        provider, _, model = str(shared.get("generator")).partition(":")
-        writers.append((provider, model))
+    """Each judge passes `models.check_judge` (never a writer; in PROD never a writer's family
+    nor Claude); in PROD the judges also differ in family from each other (J11)."""
     for j in judge_ids:
-        for w in writers:
-            models.check_not_self(w[1], j[1], mode)
-    if mode == "prod":  # judges differ in family from each other and from every writer
+        models.check_judge(doc, j)
+    if str(doc.get("mode")) == "prod":
         for a, b in combinations(judge_ids, 2):
             models.check_pair(a, b)
-        for j in judge_ids:
-            for w in writers:
-                models.check_pair(w, j)
-        for j in judge_ids:  # a judge never shares the classifier's family (Claude)
-            if models.family(*j) == "anthropic":
-                raise InvalidInputError(f"{j[0]}:{j[1]} is Claude, the classifier's family: a"
-                                        " judge can't be")  # fmt: skip
 
 
 def decide(values: list[Any], name: str, unanimous: tuple[str, ...],

@@ -54,6 +54,7 @@ def _result(root: Path, got: dict[str, Any]) -> ResultFile:
                       cases=cases)  # fmt: skip
 
 
+@pytest.mark.usefixtures("fake_families")  # PROD sets: grading checks families
 def test_a_grade_is_a_result_file_with_the_graders_answers_and_nothing_scored(
     tmp_path: Path,
 ) -> None:
@@ -70,6 +71,7 @@ def test_a_grade_is_a_result_file_with_the_graders_answers_and_nothing_scored(
         _grade(tmp_path, root)
 
 
+@pytest.mark.usefixtures("fake_families")  # PROD sets: grading checks families
 def test_a_refused_grade_is_recorded_and_left_out(tmp_path: Path) -> None:
     _summary, root = run(tmp_path, mode="prod")
     path, counts, _detail = _grade(tmp_path, root, {"grade_refuse": True})
@@ -77,6 +79,7 @@ def test_a_refused_grade_is_recorded_and_left_out(tmp_path: Path) -> None:
     assert load_result(path).cases[0].got == {}
 
 
+@pytest.mark.usefixtures("fake_families")  # PROD sets: grading checks families
 def test_a_stopped_grading_resumes_and_asks_only_the_rest(tmp_path: Path) -> None:
     _summary, root = run(tmp_path, mode="prod")
     path, _counts, detail = _grade(tmp_path, root, {"limit": True})
@@ -131,6 +134,7 @@ def test_a_dev_report_shows_plumbing_only(tmp_path: Path) -> None:
     assert not any("against your labels" in x for x in lines)
 
 
+@pytest.mark.usefixtures("fake_families")  # PROD sets: grading checks families
 def test_a_grade_from_another_set_is_refused(tmp_path: Path) -> None:
     _summary, root = run(tmp_path, mode="prod")
     path, _c, _d = _grade(tmp_path, root)
@@ -215,7 +219,7 @@ def test_providers_resolve_only_listed_models() -> None:
         providers.resolve("codex:gpt-6-luna", "grader", "prod", paths)
 
 
-def test_prod_needs_the_generator_and_grader_from_two_families() -> None:
+def test_prod_needs_its_two_judges_from_two_families() -> None:
     models.check_pair(("codex", "gpt-6.1-sol"), ("mistral", "mistral-large-4-0"))
     with pytest.raises(InvalidInputError, match="both openai"):
         models.check_pair(("codex", "gpt-6.1-sol"), ("codex", "gpt-6-luna"))
@@ -331,3 +335,23 @@ def test_confirming_a_generated_set_never_names_the_assignment(
     assert r.exit_code == 0, r.output
     assert "== email 1 of 20" in r.output
     assert "dev-" not in r.output and "Generated" not in r.output and "tests:" not in r.output
+
+
+def test_grading_refuses_a_judge_of_a_writers_family_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eval plan draft 24 (G2): in PROD a judge sharing the generator's family, or the seed
+    writer's, is refused before its first call, not later at `ecf eval agree`."""
+    _summary, root = run(tmp_path, mode="prod")
+
+    def openai(_provider: str, _model: str) -> str:
+        return "openai"  # the generator and the judge alike
+
+    monkeypatch.setattr(models, "family", openai)
+    (tmp_path / "judge").mkdir()
+    tool, environ = fake_tool(tmp_path / "judge", {})
+    with pytest.raises(InvalidInputError, match="both openai"):
+        grading.Grading(root, tools.CliAdapter(tool, "fake-grader-1", environ)).run(resume=False)
+    log = tmp_path / "judge" / "calls.log"
+    assert not log.exists() or not log.read_text()  # the fake judge was never called
+    assert not gen.Work(root).read("grade-fake-grader-1")  # nothing asked, nothing logged
