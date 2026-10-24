@@ -110,7 +110,7 @@ class AddressConfig:
 class PageResult:
     first_run: bool = False
     reset_detected: bool = False
-    created: list[str] = field(default_factory=list[str])
+    created: list[str] = field(default_factory=list[str])  # quarantined items too (OD-552)
     duplicates: int = 0
     quarantined: list[int] = field(default_factory=list[int])
     relocated: int = 0  # known messages re-pointed after a mailbox reset
@@ -531,11 +531,10 @@ def _within_budget(pg: _Page, uid: int, meta: MessageMeta) -> bool:
 
 
 def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
-    conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
+    conn, clock, cfg, uv = pg.conn, pg.clock, pg.cfg, pg.uidvalidity
     attempts = _mark(conn, clock, cfg.address_id, uv, uid)
     if attempts > QUARANTINE_AFTER:
-        _quarantine(conn, clock, lease, uv, uid)
-        pg.result.quarantined.append(uid)
+        _quarantine_on_page(pg, uid)
         return
     try:
         t0 = clock.monotonic()
@@ -586,10 +585,9 @@ def _process_large(pg: _Page, uid: int, internaldate: datetime | None = None) ->
 def _process_partial(pg: _Page, uid: int, size: int, internaldate: datetime | None = None) -> None:
     """A message over the address's limit: headers and the start of each text part only;
     unscanned beyond that, and never a DKIM pass (§5.1, §7.2)."""
-    conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
+    conn, clock, cfg, uv = pg.conn, pg.clock, pg.cfg, pg.uidvalidity
     if _mark(conn, clock, cfg.address_id, uv, uid) > QUARANTINE_AFTER:
-        _quarantine(conn, clock, lease, uv, uid)
-        pg.result.quarantined.append(uid)
+        _quarantine_on_page(pg, uid)
         return
     try:
         parts = pg.src.structure(uid)
@@ -1014,10 +1012,20 @@ def _fence(conn: sqlite3.Connection, clock: Clock, lease: leases.Lease) -> None:
         raise LeaseLostError(f"lease on {lease.address_id} lost; nothing written")
 
 
+def _quarantine_on_page(pg: _Page, uid: int) -> None:
+    """The third check of a message that crashed twice: quarantine it and add its item to the
+    page's new items, so the check pre-checks and escalates it (OD-552)."""
+    sid = _quarantine(pg.conn, pg.clock, pg.lease, pg.uidvalidity, uid, scan=pg.scan)
+    pg.result.quarantined.append(uid)
+    pg.result.created.append(sid)
+
+
 def _quarantine(
-    conn: sqlite3.Connection, clock: Clock, lease: leases.Lease, uv: int, uid: int
-) -> None:
-    """Two crashes on this message: record it for a person without reading it again."""
+    conn: sqlite3.Connection, clock: Clock, lease: leases.Lease, uv: int, uid: int, *,
+    scan: str = "",
+) -> str:  # fmt: skip
+    """Two crashes on this message: record it for a person without reading it again (old mail a
+    scan found is marked as such, OD-507 §2). Returns the item's stable_id."""
     address_id = lease.address_id
 
     def also(c: sqlite3.Connection) -> None:
@@ -1025,15 +1033,22 @@ def _quarantine(
         _unmark_in(c, address_id, uv, uid)
 
     marker = hashlib.sha256(f"quarantined|{address_id}|{uv}|{uid}".encode()).hexdigest()
+    facts: dict[str, Any] = {"quarantined": True, "content_unscanned": True}
+    if scan:  # old mail a scan found (OD-507 §2)
+        facts["backfill"] = 1
+        if scan != "-":
+            facts["scan_run"] = scan
+    sid = stable_id(address_id, None, marker, uv, uid)
     items.create_item(
         conn,
         clock,
-        stable_id=StableId(stable_id(address_id, None, marker, uv, uid)),
+        stable_id=StableId(sid),
         address_id=AddressId(address_id),
         content_hash=marker,
         uid=uid,
         uidvalidity=uv,
-        facts=json.dumps({"quarantined": True, "content_unscanned": True}),
+        facts=json.dumps(facts),
         locator=json.dumps({"uid": uid, "uidvalidity": uv}),
         also=also,
     )
+    return sid

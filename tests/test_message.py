@@ -269,10 +269,37 @@ def test_data_uris_dont_count_toward_the_limit() -> None:
     assert not p.texts[1].truncated and "Invoice" in p.texts[1].visible
 
 
+@pytest.mark.parametrize(
+    "text", ["漢" * 5000, "see https://x.example/" + "a" * 5000], ids=["cjk", "long-link"]
+)
+def test_an_excerpt_with_no_space_near_the_cut_stays_within_its_limit(text: str) -> None:
+    """No space in the last fifth: cut there, ellipsis included (the actor's CHECK is 4,000)."""
+    p = parse(build(text=text))
+    for limit in (CLASSIFIER_CHARS, ACTOR_CHARS):
+        ex = p.excerpt(limit)
+        assert len(ex) == limit and ex.endswith("…")
+    for pair in p.excerpts(str), *p.excerpt_sets(str):
+        assert len(pair[0]) <= CLASSIFIER_CHARS and len(pair[1]) <= ACTOR_CHARS
+
+
+def test_an_excerpt_at_its_limit_is_not_cut() -> None:
+    assert parse(build(text="a" * CLASSIFIER_CHARS)).excerpt(CLASSIFIER_CHARS) == "a" * 1500
+    one_over = parse(build(text="a" * (CLASSIFIER_CHARS + 1))).excerpt(CLASSIFIER_CHARS)
+    assert len(one_over) == CLASSIFIER_CHARS and one_over.endswith("…")
+
+
+@settings(max_examples=200)
+@given(st.text(min_size=0, max_size=300), st.integers(min_value=1, max_value=200))
+def test_a_cut_is_never_longer_than_its_limit(text: str, limit: int) -> None:
+    from ecf_server.message import _cut  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    assert len(_cut(text, limit)) <= limit
+
+
 def test_excerpt_prefers_plain_and_cuts_on_a_word() -> None:
     p = parse(build(text="word " * 1000, html="<p>html body</p>"))
     ex = p.excerpt(CLASSIFIER_CHARS)
-    assert ex.startswith("word word") and ex.endswith("…") and len(ex) <= CLASSIFIER_CHARS + 1
+    assert ex.startswith("word word") and ex.endswith("…") and len(ex) <= CLASSIFIER_CHARS
     assert not ex[:-1].endswith(" ")
     html_only = EmailMessage()
     html_only["From"] = "x@y.example"

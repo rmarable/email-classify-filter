@@ -189,7 +189,8 @@ def _cut(text: str, limit: int) -> str:
         return text
     cut = text[:limit]
     space = cut.rfind(" ")
-    return (cut[:space] if space > limit * 0.8 else cut).rstrip() + "…"
+    # no space in the last fifth: cut one short, so the ellipsis fits the limit (OD-552)
+    return (cut[:space] if space > limit * 0.8 else cut[: limit - 1]).rstrip() + "…"
 
 
 def normalize_message_id(value: str | None) -> str | None:

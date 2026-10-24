@@ -51,7 +51,9 @@ jobs:
       - name: import-linter
         run: uv run lint-imports
       - name: tests (excluding macos)
-        run: uv run pytest -n auto -m "not macos"
+        # worksteal: an idle worker takes queued tests from a busy one, so a few long property
+        # and perf tests don't leave the others waiting at the end.
+        run: uv run pytest -n auto --dist worksteal -m "not macos"
 
   licenses-and-build:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

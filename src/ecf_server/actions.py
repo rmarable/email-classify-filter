@@ -66,11 +66,15 @@ def action_hash(stable_id: str, content_hash: str, actions: list[Planned]) -> st
 
 
 class MessageChangedError(ConflictError):
-    """The message is gone, renumbered or no longer the content the item was made from."""
+    """The message is gone, renumbered or no longer the content the item was made from, or it is
+    quarantined and never read again (OD-552)."""
 
 
 def verify(src: MailSource, item: sqlite3.Row, max_scan_bytes: int) -> int:
-    """The message's UID, after checking it is still the item's message (§6.4)."""
+    """The message's UID, after checking it is still the item's message (§6.4). A quarantined
+    message is never read again (it crashed the parser twice; §5.1, OD-552): nothing acts on it."""
+    if json.loads(item["facts"] or "{}").get("quarantined"):
+        raise MessageChangedError("quarantined: not read again")
     loc: dict[str, Any] = json.loads(item["locator"])
     uid = int(loc["uid"])
     if src.inbox().uidvalidity != loc["uidvalidity"]:

@@ -49,6 +49,7 @@ from ecf_server.mail.imap import MailLoginRejectedError
 from ecf_server.secretstore import SecretStore
 
 DNS_CAP_S = 600  # DNS answers are cached for at most the check interval (§7.3)
+NOT_PRECHECKED_MAX = 100  # items recovered per check (OD-552)
 
 
 @dataclass
@@ -211,7 +212,7 @@ def _locked_check(  # noqa: PLR0915 - one check, start to finish
                 clock,
                 src,
                 address_id,
-                page.created,
+                page.created + not_prechecked(conn, address_id, page.created),
                 install=install,
                 max_scan_bytes=cfg.max_scan_bytes,
             )
@@ -228,7 +229,9 @@ def _locked_check(  # noqa: PLR0915 - one check, start to finish
                      renewer.lost.is_set)  # fmt: skip
             report.timings = _timings(src.timings(), backfill_fetch, child)
         report.status = _page_status(page)
-        report.created, report.duplicates = len(page.created), page.duplicates
+        # quarantined items are in `created` (so they are pre-checked) but reported apart
+        report.created = len(page.created) - len(page.quarantined)
+        report.duplicates = page.duplicates
         report.relocated = page.relocated
         report.own_skipped, report.second_install = page.own_skipped, page.second_install
         report.restored_keywords = page.restored_keywords
@@ -250,6 +253,19 @@ def _locked_check(  # noqa: PLR0915 - one check, start to finish
         if src is not None:
             src.close()
         leases.release(conn, lease)
+
+
+def not_prechecked(conn: sqlite3.Connection, address_id: str, created: list[str]) -> list[str]:
+    """New mail of this address left at `new` without a pre-check (OD-552): created by a check that
+    then failed, or quarantined by an earlier version, which never pre-checked quarantined items.
+    Backfill's own items are left to backfill; this page's items are already in `created`."""
+    rows = conn.execute(
+        "SELECT stable_id FROM items WHERE address_id = ? AND status = 'new' AND prechecked = 0"
+        " AND json_extract(facts, '$.backfill') IS NULL ORDER BY created_at, stable_id LIMIT ?",
+        (address_id, NOT_PRECHECKED_MAX + len(created)),
+    ).fetchall()
+    seen = set(created)
+    return [str(r[0]) for r in rows if r[0] not in seen][:NOT_PRECHECKED_MAX]
 
 
 def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
@@ -284,7 +300,8 @@ def _backfill(  # noqa: PLR0913 - the check's collaborators, passed through
     outcomes = backfill.decide(conn, clock, src, cfg.address_id, todo, bf,
                                install=install, max_scan_bytes=cfg.max_scan_bytes)  # fmt: skip
     backfill.save(conn, clock, cfg.address_id, bf)
-    report.backfill_created, report.backfill_remaining = len(page.created), page.remaining
+    report.backfill_created = len(page.created) - len(page.quarantined)  # as in _locked_check
+    report.backfill_remaining = page.remaining
     report.download_budget |= page.stopped == "download_budget"
     if page.remaining == 0 and page.stopped == "done":
         backfill.finish(conn, clock, cfg.address_id, bf, "done")

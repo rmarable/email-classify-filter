@@ -104,6 +104,169 @@ def test_first_run_then_a_fraud_mail(
     assert conn.execute("SELECT count(*) FROM leases").fetchone()[0] == 0  # released
 
 
+def test_an_email_with_no_space_near_the_cut_is_stored(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock
+) -> None:
+    """Its excerpts fit the table (OD-552): the check doesn't fail on it, and it is pre-checked."""
+    from tests.test_message import build  # noqa: PLC0415
+
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    box.fake.deliver(build(text="漢" * 5000))
+    r = run(env, clock, box)
+    assert (r.status, r.created) == ("ok", 1)
+    row = conn.execute(
+        "SELECT length(classifier_text), length(actor_text) FROM excerpts"
+    ).fetchone()
+    assert tuple(row) == (1500, 4000)
+    assert conn.execute("SELECT count(*) FROM processing").fetchone()[0] == 0
+    assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 1
+
+
+def test_a_quarantined_email_is_escalated(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two crashes set it aside unread; it still reaches you (SPEC 5.1, OD-552)."""
+    from ecf_server.analysis import MessageAnalyzer  # noqa: PLC0415
+
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    box.fake.deliver(BEC)
+
+    def boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise RuntimeError("crafted message crashes the parser")
+
+    monkeypatch.setattr(MessageAnalyzer, "analyze", boom)
+    for _ in range(2):
+        assert run(env, clock, box).status == "internal_error"
+    r = run(env, clock, box)
+    row = conn.execute("SELECT facts, prechecked FROM items").fetchone()
+    assert json.loads(row["facts"])["quarantined"] and row["prechecked"] == 1
+    assert r.escalations == 1
+    assert conn.execute("SELECT count(*) FROM escalations").fetchone()[0] == 1
+
+
+def test_a_quarantined_email_outside_shadow_is_escalated_not_read_again(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No label or flag: that would fetch and parse it again in the check (R1, OD-552)."""
+    from ecf_server import actions  # noqa: PLC0415
+    from ecf_server.analysis import MessageAnalyzer  # noqa: PLC0415
+
+    conn, _ = env
+    conn.execute("UPDATE addresses SET stage = 'assist'")
+    box = Box()
+    run(env, clock, box)
+    box.fake.deliver(BEC)
+
+    def boom(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("crafted message crashes the parser")
+
+    monkeypatch.setattr(MessageAnalyzer, "analyze", boom)
+    for _ in range(2):
+        assert run(env, clock, box).status == "internal_error"
+    monkeypatch.setattr(actions, "execute", boom)  # never called for a quarantined item
+    r = run(env, clock, box)
+    assert r.status == "ok" and r.escalations == 1 and r.created == 0 and r.quarantined == 1
+    facts = json.loads(conn.execute("SELECT facts FROM items").fetchone()[0])
+    assert facts["precheck"]["skipped"] == "quarantined: not read again"
+
+
+def test_an_email_quarantined_before_the_upgrade_is_escalated(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier version quarantined it and never pre-checked it: the next check does (OD-552).
+    (The fake mailbox doesn't hold the marker's UID, so closing gone mail is set aside here.)"""
+    from ecf_server import fetch  # noqa: PLC0415
+
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    lease = leases.acquire(conn, clock, "ap", "w1")
+    assert lease is not None
+    fetch._quarantine(conn, clock, lease, 1, 99)  # pyright: ignore[reportPrivateUsage]
+    leases.release(conn, lease)
+    assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 0
+
+    def keep(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(checks, "close_gone", keep)
+    r = run(env, clock, box)
+    assert r.escalations == 1
+    assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 1
+
+
+def test_nothing_reads_a_quarantined_message_again(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock
+) -> None:
+    """Every action path verifies first; for a quarantined item that refuses before any fetch
+    (S1, OD-552): the pre-check, approved actions and reprocess alike."""
+    from ecf_server import actions, fetch  # noqa: PLC0415
+
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    lease = leases.acquire(conn, clock, "ap", "w1")
+    assert lease is not None
+    sid = fetch._quarantine(conn, clock, lease, 1, 99)  # pyright: ignore[reportPrivateUsage]
+    leases.release(conn, lease)
+    item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
+
+    class Untouchable(FakeMailSource):
+        def inbox(self) -> Any:
+            raise AssertionError("the mailbox was read for a quarantined item")
+
+    with pytest.raises(actions.MessageChangedError, match="quarantined"):
+        actions.verify(Untouchable(), item, 1024)
+
+
+def test_a_quarantined_email_from_a_scan_is_old_mail(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock
+) -> None:
+    """Marked like the scan's other items, so backfill handles it, not the new-mail pre-check."""
+    from ecf_server import fetch  # noqa: PLC0415
+
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    lease = leases.acquire(conn, clock, "ap", "w1")
+    assert lease is not None
+    sid = fetch._quarantine(conn, clock, lease, 1, 98, scan="run1")  # pyright: ignore[reportPrivateUsage]
+    leases.release(conn, lease)
+    facts = json.loads(conn.execute("SELECT facts FROM items").fetchone()[0])
+    assert facts == {"quarantined": True, "content_unscanned": True, "backfill": 1,
+                     "scan_run": "run1"}  # fmt: skip
+    assert sid not in checks.not_prechecked(conn, "ap", [])
+
+
+def test_an_email_a_failed_check_left_unchecked_is_checked_next_time(
+    env: tuple[sqlite3.Connection, Path], clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Created, then the check failed before its pre-check: the next check recovers it (OD-552)."""
+    conn, _ = env
+    box = Box()
+    run(env, clock, box)
+    box.fake.deliver(BEC)
+    real = checks.close_gone
+    calls = {"n": 0}
+
+    def flaky(*a: Any, **k: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("a failure after the fetch")
+        return real(*a, **k)
+
+    monkeypatch.setattr(checks, "close_gone", flaky)
+    assert run(env, clock, box).status == "internal_error"
+    assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 0
+    r = run(env, clock, box)
+    assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 1
+    assert r.escalations == 1
+
+
 def test_busy_lease_is_skipped(env: tuple[sqlite3.Connection, Path], clock: FakeClock) -> None:
     conn, _ = env
     assert leases.acquire(conn, clock, "ap", "someone-else") is not None

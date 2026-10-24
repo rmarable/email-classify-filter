@@ -94,7 +94,8 @@ PACE_BYTES_PER_TOKEN = 4.0
 NAME_CHARS = 300  # display name, and each attachment's name
 SUBJECT_CHARS = 300
 MAX_ATTACHMENTS = 10
-# the stored excerpt with its cut's ellipsis, in characters; never a byte cut (P10)
+# one over the stored excerpt's limit, in characters; never a byte cut (P10). Since OD-552 the
+# excerpt is at most CLASSIFIER_CHARS; the +1 is kept so Jev's gate key and prompt digest don't move
 EXCERPT_CHARS = CLASSIFIER_CHARS + 1
 UNKNOWN_DATE = "unknown"
 
