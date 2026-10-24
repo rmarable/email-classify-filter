@@ -140,3 +140,40 @@ def test_uncorroborated_hides_offer_a_category_confirmation_via_the_computer(
     _click(conn, morning, digest_actions.CONFIRM, button.ref)
     [post] = [json.loads(r[0]) for r in conn.execute(last)]
     assert "ecf sender confirm" not in post["text"] and "gone_value" in post["text"]
+
+
+def test_a_draft_without_a_card_is_listed_to_read(
+    conn: sqlite3.Connection, morning: FakeClock
+) -> None:
+    """Held back in a backlog, a draft is still announced, never offered in "Approve all" (P6)."""
+    from ecf.ids import StableId  # noqa: PLC0415
+    from ecf_server import approvals, items  # noqa: PLC0415
+    from ecf_server.actions import Planned  # noqa: PLC0415
+    from ecf_server.state_machine import Status, TransitionContext  # noqa: PLC0415
+
+    slack_setup(conn, morning)
+    _stage(conn, "live")
+    other = _waiting(conn, morning)  # eligible: it alone is in "Approve all"
+    sid = make_classified(conn, morning, MARKETING, KNOWN_BULK, sid="d")
+    items.transition(conn, morning, StableId(sid), Status.PROPOSED, TransitionContext(),
+                     actor="test")  # fmt: skip
+    approvals.request(conn, morning, sid, [Planned("draft_reply", None,
+                      {"to": "x@vendor-a.example", "text": "Hi"})], card=False)  # fmt: skip
+    card = _digest(conn, morning)
+    assert "Drafts waiting for you to read (1;" in card.text and sid[:8] in card.text
+    [button] = [b for b in card.buttons if b.action == digest_actions.APPROVE_ALL]
+    assert button.label == "Approve all 1 reversible" and other[:8] in card.text
+
+
+def test_a_card_slack_gave_up_on_isnt_counted_as_posted(
+    conn: sqlite3.Connection, morning: FakeClock
+) -> None:
+    """Its draft is listed, and the card posted again after a backlog (X3)."""
+    from ecf_server import approvals, slack_out  # noqa: PLC0415
+    from ecf_server.chat import Card, RouteRef  # noqa: PLC0415
+
+    slack_out.enqueue_post(conn, morning, key="item:x", route=RouteRef("CAP"), card=Card("t"))
+    assert approvals.has_card(conn, "item:x")
+    with write_tx(conn):
+        conn.execute("UPDATE jobs SET state = 'dead' WHERE queue = 'slack_out'")
+    assert not approvals.has_card(conn, "item:x")

@@ -4,8 +4,8 @@ A proposed `draft_reply`, `reply_template` or `forward_internal` becomes a *payl
 exactly what would be written and to whom, and the grant's action hash covers it (actions.Planned):
 
 - `draft_reply`: the recipient (the email's From address, never a Reply-To) and the draft's text
-  (written by the actor: at most 4,000 characters, control and format characters removed, line
-  breaks kept);
+  (written by the actor: at most 4,000 characters, refused rather than cut when longer, control
+  and format characters removed, line breaks kept);
 - `reply_template`: the recipient, the template's id and a hash of its rendered subject and body;
 - `forward_internal`: the forward allow-list entry's id and its address.
 
@@ -28,7 +28,7 @@ from ecf.errors import InvalidInputError
 from ecf_server import config, templates
 from ecf_server.outbound_msg import addr_spec
 
-DRAFT_MAX = 4000  # both actors; the local prompt asks for at most 1,500 (actor.py), within this
+DRAFT_MAX = 4000  # in propose_action's description and its refusal (actor.problem); never cut
 SENDS = frozenset({"forward_internal", "reply_template"})
 OUTBOUND = SENDS | {"draft_reply"}
 
@@ -39,13 +39,18 @@ class Unresolved(InvalidInputError):
 
 def clean_draft(text: str) -> str:
     """The actor's draft text: control and format characters removed (line breaks and tabs kept),
-    trailing spaces trimmed, at most DRAFT_MAX characters."""
+    trailing spaces trimmed. Never cut: `resolve` refuses one longer than DRAFT_MAX."""
     kept = "".join(
         c if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf") else ""
         for c in text.replace("\r\n", "\n").replace("\r", "\n")
     )
     lines = [ln.rstrip() for ln in kept.split("\n")]
-    return "\n".join(lines).strip()[:DRAFT_MAX]
+    return "\n".join(lines).strip()
+
+
+def too_long(body: str) -> str:
+    """Why a draft is refused: its length and the limit (no model text)."""
+    return f"text is {len(body):,} characters; the limit is {DRAFT_MAX:,}"
 
 
 def enabled_templates(conn: sqlite3.Connection) -> dict[str, templates.Template]:
@@ -73,6 +78,8 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
         body = clean_draft(text or "")
         if not body:
             raise Unresolved("the draft has no text")
+        if len(body) > DRAFT_MAX:
+            raise Unresolved(too_long(body))
         return {"to": sender, "text": body}
     if name == "reply_template":
         t = enabled_templates(conn).get(target or "")

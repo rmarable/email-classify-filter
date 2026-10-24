@@ -13,7 +13,8 @@ so everything is rendered as plain text:
   client might link bare URLs in plain text (unverified; security review of the V1.2 plan).
 - Slack's size limits are applied: 150 characters for a header, 2,000 per field, 3,000 per text
   block, 75 per button label, 10 fields per section, 25 buttons per message (Block Kit reference;
-  unverified here beyond the test's own messages).
+  unverified here beyond the test's own messages). Card text longer than one block goes on in the
+  next, so a draft's whole text is on its card (§8.4); `fits` says whether all of it is there.
 """
 
 from __future__ import annotations
@@ -31,20 +32,32 @@ LABEL_MAX = 75
 FIELDS_PER_SECTION = 10
 BUTTONS_MAX = 25
 FALLBACK_MAX = 3000
-TEXT_LINES_MAX = 30  # text sections per message; Slack caps a message's blocks (50, unverified)
+TEXT_LINES_MAX = 30  # lines with a section of their own; the lines after share the last one
+# text sections per card: with the header, mention, fields, buttons and note a card stays under
+# Slack's 50 blocks per message (unverified)
+TEXT_BLOCKS_MAX = 40
 _SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}):(//)")
 _MEMBER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
 
-def clean(text: str, limit: int) -> str:
-    """Plain, safe, bounded text for Slack."""
+def _scrub(text: str) -> str:
     kept = [
         ch
         for ch in text
         if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf", "Co", "Cs")
     ]
-    out = _SCHEME.sub(r"\1[:]\2", "".join(kept))
+    return _SCHEME.sub(r"\1[:]\2", "".join(kept))
+
+
+def clean(text: str, limit: int) -> str:
+    """Plain, safe, bounded text for Slack."""
+    out = _scrub(text)
     return out if len(out) <= limit else out[: limit - 1] + "…"
+
+
+def fits(text: str) -> bool:
+    """Whether a card shows all of this text: what an approval of a draft relies on (§8.4)."""
+    return _pieces(text)[1]
 
 
 def fallback(text: str) -> str:
@@ -86,10 +99,34 @@ def blocks(card: Card) -> list[dict[str, Any]]:
 def _text_sections(text: str) -> list[dict[str, Any]]:
     """One section per non-empty line: Slack runs the lines of one plain_text section together
     (seen in the V1.2 shadow run, 2026-09-30). Lines past the cap share the last section."""
+    return [{"type": "section", "text": _plain(p, TEXT_MAX)} for p in _pieces(text)[0]]
+
+
+def _pieces(text: str) -> tuple[list[str], bool]:
+    """The card text as sections of at most TEXT_MAX characters, and whether all of it is there.
+    A line too long for one section goes on in the next, split at a space where there is one;
+    only past TEXT_BLOCKS_MAX sections is the end cut."""
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
     if len(lines) > TEXT_LINES_MAX:
         lines = [*lines[: TEXT_LINES_MAX - 1], " · ".join(lines[TEXT_LINES_MAX - 1 :])]
-    return [{"type": "section", "text": _plain(ln, TEXT_MAX)} for ln in lines]
+    out: list[str] = []
+    for ln in lines:
+        rest = _scrub(ln)
+        while len(rest) > TEXT_MAX:
+            cut = rest.rfind(" ", TEXT_MAX // 2, TEXT_MAX)
+            cut = cut if cut > 0 else TEXT_MAX
+            # a cut can start a new word that reads as a URL scheme: scrub each side again, and
+            # cut earlier while defanging makes the head too long, so no section is shortened
+            while len(head := _scrub(rest[:cut])) > TEXT_MAX and cut > 1:
+                cut -= 1
+            out.append(head)
+            rest = _scrub(rest[cut:].lstrip())
+        if rest:
+            out.append(rest)
+    if len(out) <= TEXT_BLOCKS_MAX:
+        return out, True
+    tail = clean(" ".join(out[TEXT_BLOCKS_MAX - 1 :]), TEXT_MAX)
+    return [*out[: TEXT_BLOCKS_MAX - 1], tail], False
 
 
 def action_name(action_id: str) -> str:

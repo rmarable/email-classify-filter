@@ -291,6 +291,45 @@ def test_each_text_line_is_its_own_section() -> None:
     assert sections[-1].startswith("line 29 · line 30") and sections[-1].endswith("line 39")
 
 
+def _shown(b: list[dict[str, Any]]) -> str:
+    return "".join(s["text"]["text"] for s in b if s["type"] == "section" and "text" in s)
+
+
+def test_a_long_line_is_split_across_sections_not_cut() -> None:
+    """A draft is shown in full before approval (§8.4): a line past TEXT_MAX gets more sections."""
+    words = " ".join(f"word{i}" for i in range(1200))  # about 10,000 characters, one line
+    b = blocks(Card("t", text=words))
+    sections = [s["text"]["text"] for s in b if s["type"] == "section"]
+    assert len(sections) > 1 and all(len(s) <= slack_render.TEXT_MAX for s in sections)
+    assert "…" not in _shown(b) and _shown(b).replace(" ", "") == words.replace(" ", "")
+    assert slack_render.fits(words)
+
+
+def test_a_long_joined_tail_is_split_too() -> None:
+    lines = [f"line {i} " + "x" * 150 for i in range(60)]  # the tail join passes 3,000
+    b = blocks(Card("t", text="\n".join(lines)))
+    assert "…" not in _shown(b) and "line 59" in _shown(b)
+    assert slack_render.fits("\n".join(lines))
+
+
+def test_a_split_never_cuts_a_section() -> None:
+    """A cut inside a long word can start a new word that reads as a URL scheme (X2)."""
+    line = "x" * 3000 + "abcdefghij://" + "y" * 2987
+    b = blocks(Card("t", text=line))
+    assert "…" not in _shown(b) and slack_render.fits(line)
+    assert "://" not in _shown(b)
+    one = blocks(Card("t", text="z" * slack_render.TEXT_MAX))
+    assert [len(s["text"]["text"]) for s in one if s["type"] == "section"] == [3000]
+
+
+def test_text_past_the_block_budget_doesnt_fit() -> None:
+    huge = "y" * (slack_render.TEXT_MAX * (slack_render.TEXT_BLOCKS_MAX + 1))
+    assert not slack_render.fits(huge)
+    b = blocks(Card("t", text=huge))
+    assert len([s for s in b if s["type"] == "section"]) == slack_render.TEXT_BLOCKS_MAX
+    assert _shown(b).endswith("…")
+
+
 def test_needs_you_is_pinned_again_when_it_was_deleted(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

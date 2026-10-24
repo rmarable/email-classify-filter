@@ -243,10 +243,11 @@ def _show_proposal(c: LocalClient, item: str, yes: bool) -> None:
 def _approve_pending(c: LocalClient) -> None:
     p = c.request("POST", "/v1/approvals/pending", {})
     for s in p["sends"]:
-        typer.echo(plain(f"send (approve on its own): ecf approve {s['short_id']}: {s['action']}"))
+        typer.echo(plain(f"approve on its own: ecf approve {s['short_id']}: {s['action']}"))
     batch: list[dict[str, Any]] = p["batch"]
     if not batch:
-        typer.echo("no approvals waiting for step-up" + (" besides sends" if p["sends"] else ""))
+        typer.echo("no approvals waiting for step-up"
+                   + (" besides those listed above" if p["sends"] else ""))  # fmt: skip
         return
     typer.echo(f"{len(batch)} approval(s) waiting for step-up:")
     for b in batch:
@@ -269,10 +270,11 @@ def _approve_scan(c: LocalClient, run_id: str) -> None:
     path = f"/v1/approvals/scan/{run_id}"
     p = c.request("POST", path, {})
     for s in p["sends"]:
-        typer.echo(plain(f"send (approve on its own): ecf approve {s['short_id']}: {s['action']}"))
+        typer.echo(plain(f"approve on its own: ecf approve {s['short_id']}: {s['action']}"))
     batch: list[dict[str, Any]] = p["batch"]
     if not batch:
-        typer.echo(f"no approvals of run {p['run_id']} waiting")
+        typer.echo(f"no approvals of run {p['run_id']} waiting"
+                   + (" besides those listed above" if p["sends"] else ""))  # fmt: skip
         return
     typer.echo(f"{len(batch)} approval(s) of old mail of {p['address']} (run {p['run_id']}):")
     for b in batch:
@@ -303,13 +305,16 @@ def _action_line(a: dict[str, Any]) -> str:
 
 def proposal_lines(d: dict[str, Any]) -> list[str]:
     """What ecf proposes for the item, with a draft's whole text: what `ecf approve` approves
-    (§8.4: a draft is shown in full before approval)."""
+    (§8.4: a draft is shown in full before approval); and each action left out, with why (a
+    refused draft also flags its item, OD-551)."""
     p: dict[str, Any] = d.get("proposal") or {}
     plan: dict[str, Any] = p.get("plan") or {}
     actions: list[dict[str, Any]] = plan.get("actions") or p.get("actions") or []
+    gone: list[dict[str, Any]] = plan.get("dropped") or []
+    dropped = [f"not proposed: {g.get('name')}: {g.get('why')}" for g in gone]
     if not actions or p.get("done") is not None:
-        return []
-    lines = ["proposed:"]
+        return dropped
+    lines = [*dropped, "proposed:"]
     for a in actions:
         lines.append(f"  {_action_line(a)}")
         payload: dict[str, Any] = a.get("payload") or {}

@@ -271,6 +271,20 @@ def test_approve_scan_shows_the_set_and_binds_one_step_up_to_it(
     assert status[0] == "awaiting_approval"  # another run's or new mail's: untouched
 
 
+def test_approve_scan_lists_a_draft_apart(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Old mail gets no card: a draft is approved on its own, where its text is shown (P3)."""
+    _setup(conn, clock)
+    run = _run(conn, clock)
+    plain = _approval(conn, clock, "c1", {"backfill": 1, "scan_run": run}, card=False)
+    draft = _item(conn, clock, "c2", {"backfill": 1, "scan_run": run})
+    for to in (Status.CLASSIFIED, Status.PROPOSED):
+        transition(conn, clock, StableId(draft), to, TransitionContext(), actor="test")
+    approvals.request(conn, clock, draft, [Planned("draft_reply", None,
+                      {"to": "x@vendor-a.example", "text": "Hi"})], card=False)  # fmt: skip
+    p = approvals.scan_pending(conn, run)
+    assert [b["id"] for b in p["batch"]] == [plain] and [s["id"] for s in p["sends"]] == [draft]
+
+
 def test_the_head_is_queued_before_its_first_replies(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:

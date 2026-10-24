@@ -315,6 +315,7 @@ class Service:
                 claude_review.escalate(conn, self.clock, self.state.notifier, later)  # 48 h
                 send_limits.sweep(conn, self.clock, self.state.notifier)  # OD-059 (V1.5)
                 outbound_remind.remind(conn, self.clock, self.state.notifier)  # §9.8
+                approvals.refresh_draft_cards(conn, self.clock)  # once (OD-551)
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 reprocess.tick(conn, self.clock)  # a batch of `ecf reprocess` (OD-507, P8)
                 config.schema_tick(conn, self.clock, self.state.notifier)  # OD-478

@@ -933,7 +933,7 @@ def _apply_proposal(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, h
     if isinstance(proposal["question"], str):
         got["question"] = proposal["question"]  # cleaned and capped by answers.ask
     if action == "draft_reply" and isinstance(proposal.get("text"), str):
-        got["text"] = proposal["text"]  # cleaned and capped by outbound_plan.resolve
+        got["text"] = proposal["text"]  # cleaned (and checked) by outbound_plan.resolve
     actor.decide_one(conn, clock, item, ctx, p, got, labels)
 
 

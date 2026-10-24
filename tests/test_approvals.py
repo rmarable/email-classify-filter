@@ -318,6 +318,21 @@ def test_pending_batches_non_sends_under_one_step_up(
     assert _nonces(conn, hide) == [nonce] and _nonces(conn, send) == [None]
 
 
+def test_pending_lists_a_draft_apart(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """A draft is approved on its own, where its text is shown (P3)."""
+    _setup(conn, clock)
+    approvals.refresh_draft_cards(conn, clock)  # done: Slack may approve drafts (OD-551)
+    sid = _proposed(conn, clock, "c" * 64, FRAUD)
+    draft = Planned("draft_reply", None, {"to": "x@vendor-a.example", "text": "Hi"})
+    _click(db_path, clock, conn, "approve", approvals.request(conn, clock, sid, [*ARCHIVE, draft]))
+    p = approvals.pending(conn)
+    assert p["batch"] == [] and [s["id"] for s in p["sends"]] == [sid]
+    with pytest.raises(InvalidInputError, match="on its own"):
+        approvals.approve_pending(conn, clock, FakeNotifier(), [sid], nonce=None)
+
+
 # Running approved actions: retries then failure and requeue, an outcome-unknown send is never
 # retried unchecked, and the decision routes and `ecf approve` on top of them.
 
