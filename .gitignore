@@ -22,6 +22,7 @@
 *.swn
 TODO
 __pycache__/
+creds.yml
 
 # Claude Code local working state (never committed)
 CLAUDE.local.md
