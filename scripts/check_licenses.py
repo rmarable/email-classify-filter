@@ -40,6 +40,13 @@ NO_TEXT: dict[str, tuple[str, str]] = {  # name -> (locked version, note)
         "license text, from the same repository, is in pyobjc-framework-cocoa's wheel, below."
     )),
     "pyobjc-framework-security": ("12.2.2", _PYOBJC),
+    # 2.9.0 moved to the uv_build backend and its wheel has no license file (read 2026-10-24);
+    # METADATA says License-Expression: ISC. The repository's LICENSE at tag v2.9.0 is identical to
+    # the one in the 2.8.0 wheel (compared 2026-10-24). Kept at 2.9.0 for GHSA-45c3-73f7-pv4m.
+    "dnspython": ("2.9.0", (
+        "https://github.com/rthalley/dnspython/blob/v2.9.0/LICENSE (the repository's LICENSE at\n"
+        "the release tag; the wheel ships none)."
+    )),
 }  # fmt: skip
 # Third-party data files inside ecf's own wheel: (what, license file, provenance file).
 BUNDLED = (
