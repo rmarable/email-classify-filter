@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- CI keeps testing on Python 3.12.6, the oldest release ecf supports, even though that run is slower than on newer Python releases; nothing changes for you.
 - `ecf corpus fetch` now records how long each email's text is before ecf cuts its excerpt, and the new `scripts/corpus_lengths.py` prints how many of a corpus's emails fall in each length band (counts only, no message text); corpora fetched earlier show the length as unknown (OD-553).
 - Fixed: an email whose text has no space near where ecf cuts its excerpt (Chinese or Japanese text, a long link) couldn't be stored: the check failed on it twice, holding up that mailbox's later mail, and the third check set it aside as quarantined without telling you. Excerpts now always fit, quarantined emails are escalated to you as they should be, and an email a failed check left unchecked is checked at the next one; emails already affected are reported to you at the next successful check after the upgrade, up to 100 at a time (OD-552).
 - New for eval sets: `ecf eval generate --dev --show-findings` prints, in your Terminal only, the text of each hygiene finding as it happens (which field, which kind, the value), so you can see what the scan trips on; nothing is written, and it refuses to run without `--dev` or outside a terminal (eval plan draft 25).
