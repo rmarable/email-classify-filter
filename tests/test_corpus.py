@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from ecf.errors import InvalidInputError, StepupRequiredError
-from ecf_server import corpus, download_budget, isolate, stepup
+from ecf_server import corpus, corpus_session, download_budget, isolate, stepup, triggers
 from ecf_server.clock import FakeClock
 from ecf_server.isolate import Isolated, IsolationError
 from ecf_server.mail.corpus_reader import CorpusReader
@@ -98,6 +98,10 @@ def test_fetch_writes_an_encrypted_corpus_newest_first(
     assert [r["uid"] for r in c.rows] == [5, 4, 3]  # most recent first
     assert c.message(1) == s.folders["INBOX"][5].raw
     assert c.rows[0]["excerpts"]["classifier"].startswith("Invoice 5")
+    prepared = parse(c.message(1)).prepared()  # the length the excerpts are cut from (OD-553)
+    assert c.rows[0]["prepared_chars"] == len(triggers.redact_injection(prepared))
+    shown = corpus_session.item(corpus_session.Session("s", path, c, 0.0), c.rows[0]["index"])
+    assert shown["prepared_chars"] == c.rows[0]["prepared_chars"]  # the count script reads it
     assert c.rows[0]["display"]["subject"] == "Invoice 5" and "auth_result" in c.rows[0]["facts"]
     assert c.profile["source"] == "one_off" and c.first["install_id"]
     assert download_budget.used_email(conn, clock, "ap@acme.example") == sum(

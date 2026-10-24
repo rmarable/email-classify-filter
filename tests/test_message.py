@@ -278,7 +278,7 @@ def test_an_excerpt_with_no_space_near_the_cut_stays_within_its_limit(text: str)
     for limit in (CLASSIFIER_CHARS, ACTOR_CHARS):
         ex = p.excerpt(limit)
         assert len(ex) == limit and ex.endswith("…")
-    for pair in p.excerpts(str), *p.excerpt_sets(str):
+    for pair in p.excerpts(str), *p.excerpt_sets_and_length(str)[:2]:
         assert len(pair[0]) <= CLASSIFIER_CHARS and len(pair[1]) <= ACTOR_CHARS
 
 

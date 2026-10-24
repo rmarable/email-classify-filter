@@ -157,4 +157,5 @@ def item(s: Session, index: int) -> dict[str, Any]:
         "keywords": facts.get("keywords") or {},
         "triggers": {k: v for k, v in triggers.items() if v},
         "folder": row.get("folder"),
+        "prepared_chars": row.get("prepared_chars"),  # None in a corpus from before OD-553
     }  # fmt: skip

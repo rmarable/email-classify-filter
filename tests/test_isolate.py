@@ -78,6 +78,16 @@ def test_result_round_trip_keeps_signatures(conn: sqlite3.Connection, clock: Fak
     assert auth.result == "pass" and auth.signatures
     result = isolate.isolated(parsed, auth)
     assert isolate.decode(isolate.encode(result)) == result
+    assert result.prepared_chars == len(triggers.redact_injection(parsed.prepared()))
+
+
+def test_an_older_result_has_no_prepared_length(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """A child result without the length (an earlier version) reads as unknown, never 0."""
+    parsed = parse(mail())
+    data = isolate.encode(isolate.isolated(parsed, evaluate(mail(), parsed, DnsCache(conn, clock,
+                          lookup=FakeDns()))))  # fmt: skip
+    del data["prepared_chars"]
+    assert isolate.decode(data).prepared_chars is None
 
 
 def test_checks_use_an_isolator_only_with_a_database_file(db_path: Path) -> None:

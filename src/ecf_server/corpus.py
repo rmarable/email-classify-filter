@@ -575,6 +575,7 @@ def _row(  # noqa: PLR0913, PLR0917 - one manifest row from what the loop holds
         "gmail_labels": sorted(meta.labels), "fetched_at": to_ts(clock.now()), "facts": facts,
         "excerpts": {"classifier": got.excerpts[0], "actor": got.excerpts[1]},
         "unredacted": {"classifier": got.plain[0], "actor": got.plain[1]},
+        "prepared_chars": got.prepared_chars,  # before the cut; counts only (OD-553)
         "display": {"from": p.from_name + (f" <{p.from_addr}>" if p.from_addr else ""),
                     "reply_to": list(p.reply_to), "to": list(p.to), "subject": p.subject,
                     "date": (p.headers.get("date") or ("",))[0],
