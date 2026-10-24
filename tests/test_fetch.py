@@ -448,7 +448,7 @@ def test_two_crashes_quarantine_the_message(setup: sqlite3.Connection, clock: Fa
             run(setup, clock, src, analyzer=Fn(boom))
         assert setup.execute("SELECT count(*) FROM items").fetchone()[0] == 0
     r = run(setup, clock, src, analyzer=Fn(boom))
-    assert r.quarantined == [1] and r.created == []
+    assert r.quarantined == [1] and len(r.created) == 1  # created, so it is pre-checked (OD-552)
     row = setup.execute("SELECT * FROM items").fetchone()
     assert json.loads(row["facts"]) == {"quarantined": True, "content_unscanned": True}
     assert (

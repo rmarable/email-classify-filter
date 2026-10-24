@@ -152,8 +152,12 @@ def _failed(
     if complete:
         jobs.complete(conn, job.job_id, WORKER)
     short = item["stable_id"][:8]
-    approvals.edit_card(conn, clock, item["stable_id"],
-                        f"Failed: {why[:100]}. Retry: ecf item requeue {short}")  # fmt: skip
+    retry = (
+        ""
+        if json.loads(item["facts"] or "{}").get("quarantined")
+        else (f". Retry: ecf item requeue {short}")
+    )  # a quarantined item fails the same way (OD-552)
+    approvals.edit_card(conn, clock, item["stable_id"], f"Failed: {why[:100]}{retry}")
 
 
 def _audit(

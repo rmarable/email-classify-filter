@@ -147,6 +147,8 @@ def run(
         o = Outcome(sid, d)
         if not d.actions:
             o.skipped = "nothing fired"
+        elif facts.get("quarantined"):  # escalated only: reading it again could crash it (OD-552)
+            o.skipped = "quarantined: not read again"
         elif stage == "shadow":
             o.skipped = "shadow: decided, not done"
         else:
