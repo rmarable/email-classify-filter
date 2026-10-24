@@ -6,11 +6,11 @@ client shows it (`grade.case_view`) under a counter, never its case id, title or
 names; only its disputed fields, with the shipped definitions, the phishing definition and the
 signs box. The judges' answers are shown only after the operator answers. Answers are applied
 together: every card written, the set rebuilt once, and the settled cases confirmed in one
-atomic write as the operator's. A phone page uses the same export (`export`) and import
-(`apply`); the terminal (`ecf eval settle`) asks the same questions. A dispute `ecf eval expect`
-raised (sender_type or priority deciding the expected rule; eval plan draft 21) carries a note
-saying so. Settling records the answered fields in the row's `labelled_by`; then run `ecf eval
-expect` again.
+atomic write as the operator's. A phone page uses the same export (`export`; the page is built by
+`scripts/build_settle_page.py`) and import (`apply`); the terminal (`ecf eval settle`) asks the
+same questions. A dispute `ecf eval expect` raised (sender_type or priority deciding the
+expected rule; eval plan draft 21) carries a note saying so. Settling records the answered
+fields in the row's `labelled_by`; then run `ecf eval expect` again.
 """
 
 from __future__ import annotations
