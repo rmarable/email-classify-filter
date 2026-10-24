@@ -190,7 +190,10 @@ def run(root: Path, on: date) -> Outcome:  # noqa: PLR0912, PLR0915 - one pass o
     for cid in reset:  # whatever path the row took (Y6)
         review.write_expected(root / "cases" / f"{cid}.md", None, review.DEFAULT_SAFETY)
     if (writes or reset or drift) and (report := build_all(root)).findings:
-        raise InvalidInputError(f"hygiene scan failed after writing labels: {report.findings[0]}")
+        first = report.findings[0]
+        raise InvalidInputError(
+            f"hygiene scan failed after writing labels: {first.where}: {first.kind}"
+        )
     gen.verify(root)  # messages and facts unchanged: only the labels line moved
     open_ids = {d["id"] for d in disputes}
     agreed = {c: p for c, p in provenance.items() if c not in open_ids}

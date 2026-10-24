@@ -9,7 +9,8 @@ SSN-shaped numbers; Luhn-valid card numbers; IBANs and US routing numbers with v
 generate plan P15); and key or token shapes. PDFs are generated only from card fields,
 so scanning the cards also covers PDF text. Real names can't be detected automatically; review
 covers them. Known false positive: a missing space after a full stop ("report.Summary") reads as
-a domain; write the space.
+a domain; write the space. A card is scanned field by field (`builder.scan_card`): each header
+field on its own, so a pattern anchored at a line start works in hidden text and attachment text.
 """
 
 from __future__ import annotations

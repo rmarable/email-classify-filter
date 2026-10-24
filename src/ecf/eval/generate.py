@@ -12,7 +12,8 @@ configuration, the safety rules and the output schema, with no style guidance or
 
 Each email is checked as it is made (the card model, the hygiene scan, markup, brands in sender
 names, near-duplicates). A hygiene failure is retried once with the finding kinds named, and
-the kinds of both passes are logged (names only); any other failure drops the email, and a
+the kinds of both passes are logged (names only; `--show-findings`, DEV and a terminal only,
+prints the values and writes nothing); any other failure drops the email, and a
 dropped one is replaced from the group's seed pool (topped up when it runs out) until the count
 is met or 3 times it has been tried. A refusal is recorded and never retried, reworded or
 replaced (decision 10a), so a group can come up short. `work/` keeps append-only logs of every
@@ -45,8 +46,10 @@ from ecf.eval import gencheck, genset
 from ecf.eval import mix as mixmod
 from ecf.eval.builder import build_all, scan_card
 from ecf.eval.cards import PROFILE_TO, Card, parse_card
+from ecf.eval.hygiene import Finding
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import FieldKind, load_schema
+from ecf.text import escaped
 
 K_DEFAULT = 5  # seeds per email call; set from the pilot's figures
 SEED_FACTOR = 1.5
@@ -338,8 +341,9 @@ def card_text(case_id: str, b: Bucket, seed: dict[str, Any], email: dict[str, An
     return "\n".join(lines) + "\n" + str(email["body"]).strip("\n") + "\n"
 
 
-def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[str]]:
-    """(a drop reason, hygiene finding kinds): markup and brand checks drop; findings retry."""
+def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[Finding]]:
+    """(a drop reason, hygiene findings): markup and brand checks drop; findings retry. Only
+    `--show-findings` ever sees a finding's value; everything logged takes the kinds."""
     texts = [str(email.get(k) or "") for k in ("from_name", "subject", "body", "hidden_text")]
     texts += [
         str(a.get("text") or "") + str(a.get("name") or "")
@@ -353,8 +357,7 @@ def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[str]]:
         return "brand or agency as sender", []
     if not parseaddr(str(email.get("from_address") or ""))[1]:
         return "schema misfit", []
-    findings = scan_card(card, card.id)
-    return None, sorted({f.kind for f in findings})
+    return None, scan_card(card, card.id)
 
 
 @dataclass
@@ -370,6 +373,8 @@ class Run:
     shared: dict[str, Any] | None = None  # `seeds_from` (OD-545): no seed call, no top-up
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     echo: Callable[[str], None] = field(default=lambda _s: None)
+    # `--show-findings` (DEV, a terminal only): each hygiene finding's value, printed, never written
+    show: Callable[[str], None] | None = None
 
     def __post_init__(self) -> None:
         self.work = Work(self.root)
@@ -518,9 +523,15 @@ class Run:
             card = parse_card(text, source=case_id)
         except (ValueError, InvalidInputError) as exc:
             return ("bad date" if str(exc) == "date" else "schema misfit"), []
-        reason, findings = problems(card, email)
+        reason, found = problems(card, email)
         if reason is not None:
             return reason, []
+        if self.show is not None:
+            stage = "retry" if retried else "first"
+            for f in found:
+                self.show(escaped(f"{seed['id']} {b.group} {b.delivery or '-'} {stage}"
+                                  f" {f.where} {f.kind}: {f.value}"))  # fmt: skip
+        findings = sorted({f.kind for f in found})
         if findings:
             return ("hygiene", findings) if retried else ("retry", findings)
         if (why := self.dups.seen(card.body)) is not None:

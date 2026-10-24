@@ -130,7 +130,10 @@ def apply(root: Path, answers: dict[str, dict[str, Any]], on: date) -> int:
     for path, labels in writes.items():
         review.write_labels(path, labels)
     if writes and (rep := build_all(root)).findings:
-        raise InvalidInputError(f"hygiene scan failed after writing labels: {rep.findings[0]}")
+        first = rep.findings[0]
+        raise InvalidInputError(
+            f"hygiene scan failed after writing labels: {first.where}: {first.kind}"
+        )
     gen.verify(root)
     rows = {r["id"]: r for r in label_file.read(root)}  # after the rebuild
     provenance: dict[str, dict[str, Any]] = {}
