@@ -1,6 +1,7 @@
 # Classifier window tuning (before M8)
 
-- **Status:** draft 5 (2026-10-24). Not built.
+- **Status:** draft 5 (2026-10-24). Step 1 done (OD-553, f7ab110; personal-mailbox count
+  below); the business-mailbox count is not done. Steps 2-8 not built.
 - **Reviews:**
   - Draft 1: Phase R, four Fable agents, P0-P20.
   - Draft 2: two Fable agents, G1-G9 and H1-H11, merged as J1-J10.
@@ -25,20 +26,31 @@
 :39). The 1,500 came from the local model's context window, and the local model is gone (ADR
 0031). The limit has never been measured for accuracy.
 
-**What we know about real mail (2026-10-23), and its limits:**
-- Source: 300 recent messages from the operator's personal Gmail, counted from the corpus's
-  stored excerpts by an ad hoc script. The corpus file was then deleted, so the figures can't
-  be reproduced.
-- About 73% are longer than 1,500 characters. This figure holds.
-- How many pass 4,000 is unknown. The stored excerpt is cut at 4,000 at a word boundary
-  within the last fifth (`_cut`, message.py:186-193), so "4,000 or more: 13%" is only a floor.
-  The deciles bunched under 4,000 suggest it could be 30-40%.
-- Personal mail likely runs longer than business mail.
+**Real-mail lengths, measured (step 1, 2026-10-24):**
+- Source: 300 recent messages from the operator's personal Gmail, fetched read-only with
+  `ecf corpus fetch` on the accept install (f7ab110) and counted with
+  `scripts/corpus_lengths.py`, which reads each message's `prepared_chars`: the true length of
+  the redacted, prepared text, before any cut. The corpus file was deleted after counting.
+
+| Length | Share | Classifier at 1,500 | Actor at 4,000 |
+|---|---|---|---|
+| up to 1,500 | 27% (80) | sees all | sees all |
+| 1,501 to 4,000 | 34% (103) | cut | sees all |
+| 4,001 to 8,000 | 18% (55) | cut | cut |
+| over 8,000 | 21% (62) | cut | cut |
+
+- Median 2,985. Deciles: 645, 1,183, 1,676, 2,240, 2,985, 3,906, 5,232, 8,264, 11,700.
+- So a 4,000 window would see all of 61% of this mail, and 8,000 about 79%.
+- The first count (2026-10-23, from the stored 4,000-character excerpt) put "4,000 or more" at
+  13%. That was a floor; the true share is 39%.
+- **Caveats:**
+  - This is personal mail. Whether business mail runs shorter is still unmeasured; the operator
+    chose this mailbox for the test (2026-10-24), and a business count stays open.
+  - Quoted reply threads are marked, not removed, so they count in full.
 
 **The eval can't show any of this today:**
 - 0 of the 304 synthetic card bodies exceed 1,500 characters (the longest is 1,340 in prepared
-  text; the median
-  is about 200).
+  text; the median is about 200).
 - So every window gives the same input on the current set. The 1,500 window's accuracy on
   long mail has never been measured.
 - The current set has 104 `fraud_guard` cards and 25 cards with `injection_target`, all short.
