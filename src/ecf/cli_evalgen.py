@@ -4,6 +4,7 @@ report. Generation and grading run in the client; `expect` asks the service's ru
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
@@ -23,6 +24,23 @@ NOTICE = {
                " own sign-in to {provider}; never ecf's answers or your labels."),
 }  # fmt: skip
 NEVER_REAL = "Never put real mail in a generated set."
+
+
+def _terminals() -> bool:
+    """Both standard input and output are a terminal (one seam, so tests can stand in for it)."""
+    stdin, stdout = sys.stdin, sys.stdout
+    return bool(stdin and stdin.isatty() and stdout and stdout.isatty())
+
+
+def _may_show(dev: bool) -> None:
+    """`--show-findings` needs a DEV run and a terminal. The terminal check guards against a
+    mistake (a pipe, a file, a tool that captures output), not a determined user: the generated
+    text it prints belongs in the operator's own Terminal only."""
+    if not dev:
+        raise InvalidInputError("--show-findings is for a DEV run only: add --dev")
+    if not _terminals():
+        raise InvalidInputError("--show-findings prints generated text: run it in Terminal, not"
+                                " through a pipe or a tool that captures output")  # fmt: skip
 
 
 def _checked(adapter: object) -> None:
@@ -151,6 +169,15 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                 "--seeds-from", help="Write emails from a seed run's seeds (no seed call)."
             ),
         ] = None,
+        show_findings: Annotated[
+            bool,
+            typer.Option(
+                "--show-findings",
+                help="DEV: print each hygiene finding's text as it happens, to find what the"
+                " scan trips on; nothing is written. Run it yourself in Terminal (Claude never"
+                " runs it); with --resume, pass it again.",
+            ),
+        ] = False,
     ) -> None:
         """Generate a test set with another model: seeds, then emails, each checked as it's made;
         refusals are recorded, never retried."""
@@ -165,6 +192,8 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
         mode = "dev" if dev else "prod"
+        if show_findings:
+            _may_show(dev)
         if seeds_only and seeds_from is not None:
             raise InvalidInputError("--seeds-only makes seeds; --seeds-from uses them: one or the"
                                     " other")  # fmt: skip
@@ -194,7 +223,8 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                                      n, m, k)  # fmt: skip
         run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, seeds_only=seeds_only,
                       shared=shared, claude_waiver=claude_generator and adapter.provider ==
-                      "claude", echo=typer.echo)  # fmt: skip
+                      "claude", echo=typer.echo,
+                      show=typer.echo if show_findings else None)  # fmt: skip
         s = run.run(resume=resume or shared is not None)
         typer.echo(f"{s.state}: kept {s.kept} of {s.target}; refused {sum(s.refused.values())};"
                    f" dropped {sum(s.dropped.values())}")  # fmt: skip

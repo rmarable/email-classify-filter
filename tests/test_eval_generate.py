@@ -77,11 +77,16 @@ for s in seeds:
     body = f"Opening {{words}}.\nPlease reply about {{words[::-1]}}."
     if bad:
         body += " Call 212-555-1234."
+    if bad and sc.get("escape"):
+        body += " See https://evil\x1b[31m.com now."
+    subject = "Account " + letters[:8]
+    if bad and sc.get("subject"):
+        subject += " at billing-desk.ch"
     if sc.get("html"):
         body = "<p>" + body + "</p>"
     emails.append({{"seed": s["seed"], "refused": False, "from_name": "Billing Desk",
                     "from_address": "billing@vendor-a.example", "reply_to": None,
-                    "subject": "Account " + letters[:8], "date": "2026-10-05T09:00:00Z",
+                    "subject": subject, "date": "2026-10-05T09:00:00Z",
                     "body": body,
                     "hidden_text": None, "attachments": [], "labels": labels}})
 out({{"status": "ok", "items": items, "usage": usage, "answer": {{"emails": emails}}}})

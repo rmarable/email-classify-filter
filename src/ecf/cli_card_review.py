@@ -173,7 +173,9 @@ def _confirm_rest(root: Path, case_id: str, read: Callable[[str], str],
 def rebuild(root: Path) -> None:
     """Rebuild the set after a label change; a hygiene finding stops it."""
     if findings := build_all(root).findings:
-        raise InvalidInputError(f"hygiene scan failed after a label change: {findings[0]}")
+        raise InvalidInputError(
+            f"hygiene scan failed after a label change: {findings[0].where}: {findings[0].kind}"
+        )
 
 
 def _paths(root: Path) -> dict[str, Path]:

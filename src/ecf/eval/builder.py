@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import html
-import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from email import policy
 from email.message import EmailMessage, Message
 from email.utils import format_datetime, parseaddr
 from pathlib import Path
+from typing import cast
 
 from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, load_cards
@@ -101,16 +102,27 @@ def build_bytes(card: Card) -> bytes:
     return build_message(card).as_bytes(policy=policy.SMTP)
 
 
+def _header_texts(value: object, path: str) -> Iterator[tuple[str, str]]:
+    """Every string in the card's header with its field path, dict keys included (header names,
+    label and fact names), so each is scanned on its own (eval generate plan, Checks)."""
+    if isinstance(value, dict):
+        for k, v in cast(dict[str, object], value).items():
+            # the top-level names are the fixed Card fields; nested keys can be the author's
+            if path:
+                yield path, k
+            yield from _header_texts(v, f"{path}.{k}" if path else k)
+    elif isinstance(value, list):
+        for i, v in enumerate(cast(list[object], value)):
+            yield from _header_texts(v, f"{path}[{i}]")
+    elif value is not None and not isinstance(value, bool):
+        yield path, str(value)
+
+
 def scan_card(card: Card, source: str) -> list[Finding]:
-    texts = {
-        "header": json.dumps(
-            card.model_dump(mode="json", by_alias=True, exclude={"body", "html"}),
-            ensure_ascii=False,
-        ),
-        "body": card.body,
-        "html": card.html or "",
-    }
-    return dedupe([f for part, text in texts.items() for f in scan_text(text, f"{source}:{part}")])
+    """Findings named by field: `<source>:<field path>`, `<source>:body`, `<source>:html`."""
+    header = card.model_dump(mode="json", by_alias=True, exclude={"body", "html"})
+    texts = [*_header_texts(header, ""), ("body", card.body), ("html", card.html or "")]
+    return dedupe([f for part, text in texts for f in scan_text(text, f"{source}:{part}")])
 
 
 @dataclass(frozen=True)
