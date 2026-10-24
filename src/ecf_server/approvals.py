@@ -26,7 +26,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from ecf.errors import (
     ConflictError,
@@ -45,10 +45,12 @@ from ecf_server import (
     items,
     jobs,
     marked,
+    outbound_plan,
     pause,
     scans,
     slack_in,
     slack_out,
+    slack_render,
     slack_routes,
     stepup,
 )
@@ -124,6 +126,12 @@ def is_send(actions: list[Planned]) -> bool:
     return any(a.name in SENDS for a in actions)
 
 
+def on_its_own(actions: list[Planned]) -> bool:
+    """A send or a draft: approved one at a time, where a draft's text is shown (§8.4, §9.5),
+    never in a batch. `pending` and `scan_pending` list them under "sends" (the CLI's key)."""
+    return any(a.name in outbound_plan.OUTBOUND for a in actions)
+
+
 def _actions(item: sqlite3.Row) -> list[Planned]:
     p: dict[str, Any] = json.loads(item["proposal"] or "{}")
     return [Planned.from_json(a) for a in p.get("actions", [])]
@@ -182,17 +190,24 @@ def request(
 def _issue(
     conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actions: list[Planned]
 ) -> str:
+    with write_tx(conn):
+        return _insert_grant(conn, clock, item, actions)
+
+
+def _insert_grant(
+    conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actions: list[Planned]
+) -> str:
+    """Inside the caller's write transaction."""
     grant_id = new_grant_id()
     ttl = _ttl(conn, item["address_id"], send=is_send(actions))
-    with write_tx(conn):
-        conn.execute(
-            "INSERT INTO grants (grant_id, stable_id, action_hash, content_hash, principal, status,"
-            " expires_at) VALUES (?, ?, ?, ?, 'os_user', 'issued', ?)",
-            (grant_id, item["stable_id"], action_hash(item["stable_id"], item["content_hash"],
-             actions), item["content_hash"], to_ts(clock.now() + ttl)),
-        )  # fmt: skip
-        _audit(conn, clock, item, "approval.requested", "service",
-               {"grant_id": grant_id, "actions": [a.to_json() for a in actions]})  # fmt: skip
+    conn.execute(
+        "INSERT INTO grants (grant_id, stable_id, action_hash, content_hash, principal, status,"
+        " expires_at) VALUES (?, ?, ?, ?, 'os_user', 'issued', ?)",
+        (grant_id, item["stable_id"], action_hash(item["stable_id"], item["content_hash"],
+         actions), item["content_hash"], to_ts(clock.now() + ttl)),
+    )  # fmt: skip
+    _audit(conn, clock, item, "approval.requested", "service",
+           {"grant_id": grant_id, "actions": [a.to_json() for a in actions]})  # fmt: skip
     return grant_id
 
 
@@ -216,7 +231,7 @@ def _describe_batch(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
     ids = sorted(str(g) for g in target.get("grant_ids", []))
     grants = [_grant(conn, g) for g in ids]
     state = [(g.grant_id, g.action_hash, _item(conn, g.stable_id)["status"]) for g in grants]
-    prompt = f"ecf: approve {len(ids)} waiting action(s), none of them a send"
+    prompt = f"ecf: approve {len(ids)} waiting action(s), none of them a send or a draft"
     return stepup.Bound(stepup.digest("approve_batch", state), prompt)
 
 
@@ -242,6 +257,18 @@ def approve(
     g = _open_grant(conn, clock, item, grant_id)
     actions = _actions(item)
     sid = StableId(item["stable_id"])
+    short, draft = sid[: cards.SHORT_ID], _draft_text(actions)
+    if actor.startswith("slack:") and draft:  # a draft is approved where it is shown whole
+        if not _drafts_refreshed(conn):  # until then a card an earlier version cut may be live
+            raise InvalidInputError(
+                f"this card is being updated: click again in a minute, or"
+                f" approve it at your computer: ecf approve {short}"
+            )
+        if _refresh_skipped(conn, sid) or not slack_render.fits(draft):
+            raise InvalidInputError(
+                f"the card may not show the whole draft. Approve it at your"
+                f" computer: ecf approve {short}"
+            )
     # anything waiting at awaiting_stepup goes through step-up, however it got there
     risky = needs_stepup(_facts(item), actions) or status is Status.AWAITING_STEPUP
     if risky and not batch_verified:
@@ -379,8 +406,8 @@ def cancel(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> d
 
 
 def pending(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Waiting step-up approvals: up to PENDING_MAX non-sends for one batch step-up, and the sends,
-    which are never batched (each needs `ecf approve <id>`)."""
+    """Waiting step-up approvals: up to PENDING_MAX for one batch step-up, and the sends and drafts,
+    which are never batched (each needs `ecf approve <id>`, which shows a draft's text)."""
     rows = conn.execute(  # old mail has its own: `ecf approve --scan` (OD-507 §2, §3.5)
         f"SELECT * FROM items WHERE status = 'awaiting_stepup' AND NOT {marked.sql()}"  # noqa: S608
         " ORDER BY updated_at, stable_id"
@@ -391,7 +418,7 @@ def pending(conn: sqlite3.Connection) -> dict[str, Any]:
         if queued_answer(r) or not _actions(r):
             continue  # an answer waiting for step-up (answers.py), not an approval
         entry = inbox.summary(r) | {"action": describe(_actions(r))}
-        (sends if is_send(_actions(r)) else batch).append(entry)
+        (sends if on_its_own(_actions(r)) else batch).append(entry)
     return {"batch": batch[:PENDING_MAX], "more": max(0, len(batch) - PENDING_MAX),
             "sends": sends}  # fmt: skip
 
@@ -404,7 +431,8 @@ def approve_pending(
     *,
     nonce: str | None,
 ) -> list[dict[str, Any]]:
-    """Approve the confirmed list with one step-up (`approve --pending`); sends are refused."""
+    """Approve the confirmed list with one step-up (`approve --pending`); sends and drafts are
+    refused."""
     if not ids or len(ids) > PENDING_MAX:
         raise InvalidInputError(f"confirm 1 to {PENDING_MAX} items")
     rows = [inbox.find(conn, i) for i in ids]
@@ -412,8 +440,9 @@ def approve_pending(
     for r in rows:
         if r["status"] != Status.AWAITING_STEPUP or not _actions(r):
             raise ConflictError(f"{r['stable_id'][:8]} isn't waiting for step-up")
-        if is_send(_actions(r)):
-            raise InvalidInputError(f"{r['stable_id'][:8]} is a send: approve it on its own")
+        if on_its_own(_actions(r)):
+            raise InvalidInputError(f"{r['stable_id'][:8]} is a send or a draft:"
+                                    " approve it on its own")  # fmt: skip
         grants.append(_open_grant(conn, clock, r, None))
     stepup.consume(conn, clock, "approve_batch",
                    {"grant_ids": sorted(g.grant_id for g in grants)}, nonce)  # fmt: skip
@@ -423,13 +452,15 @@ def approve_pending(
 
 
 # Approving a scan's or reprocess's waiting approvals (`ecf approve --scan`, OD-507 §3.5, P9):
-# old mail gets no card, so the run's list is shown and approved with one step-up; sends apart.
+# old mail gets no card, so the run's list is shown and approved with one step-up; sends and
+# drafts apart.
 
 
 def scan_pending(conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
     """A scan's or reprocess's waiting approvals (old mail gets no card; `ecf approve --scan`):
     each with its sender, subject and actions; an expired one too, re-offered when approved (as
-    `ecf approve <id>` does; review M4). Sends are listed apart: each needs `ecf approve <id>`.
+    `ecf approve <id>` does; review M4). Sends and drafts are listed apart: each needs
+    `ecf approve <id>`, which shows a draft's text.
     Not part of "Approve all"."""
     doc = scans.find(conn, run_id)
     if doc is None:
@@ -444,7 +475,7 @@ def scan_pending(conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
         if queued_answer(r) or not _actions(r):
             continue
         entry = inbox.summary(r) | {"action": describe(_actions(r))}
-        (sends if is_send(_actions(r)) else batch).append(entry)
+        (sends if on_its_own(_actions(r)) else batch).append(entry)
     return {"run_id": doc["run_id"], "address": doc["email"], "batch": batch, "sends": sends}
 
 
@@ -462,7 +493,7 @@ def _describe_scan(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.B
 def approve_scan(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, run_id: str,
                  ids: list[str], *, nonce: str | None) -> list[dict[str, Any]]:  # fmt: skip
     """Approve the confirmed list of one run with one step-up; each must still be the run's,
-    waiting, and not a send."""
+    waiting, and not a send or a draft."""
     listed = {e["id"] for e in scan_pending(conn, run_id)["batch"]}
     if not ids or any(i not in listed for i in ids):
         raise ConflictError("the run's waiting approvals changed: run ecf approve --scan again")
@@ -696,8 +727,8 @@ def _void(conn: sqlite3.Connection, sid: str) -> None:
                      " AND status IN ('issued', 'approved')", (sid,))  # fmt: skip
 
 
-# Cards: posting and editing an item's approval card, and posting cards held back while
-# the backlog was high.
+# Cards: posting and editing an item's approval card, posting cards held back while the
+# backlog was high, and, once after the upgrade to OD-551, new grants and cards for waiting drafts.
 
 
 def _card(
@@ -711,12 +742,19 @@ def _card(
     base = cards.item_card(item, mention=member)
     verb = describe(actions)
     fields = (("Action", verb), *base.fields)
-    card = Card(title or f"Approve? {verb}", fields=fields, text=_draft_text(actions),
-                buttons=(Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),
-                         Button(REJECT, "Reject", grant_id),
+    text = _draft_text(actions)
+    whole = slack_render.fits(text)  # a draft is approved only where all of it is shown (§8.4)
+    approve = (Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),) if whole else ()
+    short = item["stable_id"][: cards.SHORT_ID]
+    computer_note = (
+        f"The draft is too long to show here. Approve it at your computer: ecf approve {short}"
+    )
+    payment = cards.PAYMENT_NOTE if item_payment_or_fraud(item) else ""
+    notes = [payment, "" if whole else computer_note]
+    card = Card(title or f"Approve? {verb}", fields=fields, text=text,
+                buttons=(*approve, Button(REJECT, "Reject", grant_id),
                          Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])),
-                note=cards.PAYMENT_NOTE if item_payment_or_fraud(item) else "",
-                mention=member)  # fmt: skip
+                note=" ".join(n for n in notes if n), mention=member)  # fmt: skip
     slack_out.enqueue_post(conn, clock, key=f"item:{item['stable_id']}", route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
 
@@ -735,9 +773,9 @@ CARDS_PER_TICK = 20
 
 def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_PER_TICK) -> int:
     """Once the backlog is back under `BACKLOG_BATCH`, post the cards that approvals requested
-    during it didn't get (§5.3): the digest's "Approve all" lists only the reversible ones, so
-    the rest would otherwise reach Slack only when they expire. Each tick, a few at a time;
-    returns how many were posted."""
+    during it didn't get (§5.3): the digest's "Approve all" lists only the reversible ones that
+    aren't drafts (drafts it only names), so the rest would otherwise reach Slack only when they
+    expire. Each tick, a few at a time; returns how many were posted."""
     if claude_queue.backlog(conn) > claude_queue.BACKLOG_BATCH:
         return 0
     rows = conn.execute(  # old mail never gets a card (OD-507 §2)
@@ -776,12 +814,83 @@ def edit_card(conn: sqlite3.Connection, clock: Clock, sid: str, title: str) -> N
 
 
 def has_card(conn: sqlite3.Connection, key: str) -> bool:
-    """Posted, or queued to be posted (an edit queued behind it edits it)."""
+    """Posted, or queued to be posted (an edit queued behind it edits it); a post Slack gave up
+    on doesn't count, so it is posted again."""
     if slack_out.message_ref(conn, key):
         return True
     return bool(conn.execute(
-        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND json_extract(payload, '$.key') = ?",
-        (key,)).fetchone())  # fmt: skip
+        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND state != 'dead'"
+        " AND json_extract(payload, '$.key') = ?", (key,)).fetchone())  # fmt: skip
+
+
+DRAFT_CARDS_KEY = "cards.drafts_whole"  # set once waiting drafts have new grants (OD-551)
+
+
+def _drafts_refreshed(conn: sqlite3.Connection) -> bool:
+    return bool(conn.execute("SELECT 1 FROM settings WHERE key = ?", (DRAFT_CARDS_KEY,)).fetchone())
+
+
+def _refresh_skipped(conn: sqlite3.Connection, sid: str) -> bool:
+    """Whether the refresh failed for this item (its earlier card may be live); a marker that isn't
+    a list counts every item as failed, so drafts are then approved only at the computer until the
+    row is fixed."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (DRAFT_CARDS_KEY,)).fetchone()
+    try:
+        value: Any = json.loads(row[0]) if row else []
+    except ValueError:
+        return True
+    if not isinstance(value, list):
+        return True
+    return sid in {str(s) for s in cast("list[Any]", value)}
+
+
+def refresh_draft_cards(conn: sqlite3.Connection, clock: Clock) -> int:
+    """Once, on the first tick of a version with OD-551: each waiting draft gets a new grant, so
+    the Approve button of a card an earlier version posted (which could cut a long draft) stops
+    working, and a card that was posted is posted again, in place, with the whole draft. The new
+    grant starts a new expiry period. An item with bad data is logged and skipped, and the marker
+    is written regardless, listing the items whose refresh failed, whose drafts are then approved
+    only at the computer; a database error stops the tick, so the refresh runs again. Returns how
+    many cards were posted."""
+    if _drafts_refreshed(conn):
+        return 0
+    posted = 0
+    skipped: list[str] = []
+    rows = conn.execute("SELECT stable_id FROM items WHERE status = 'awaiting_approval'").fetchall()
+    for row in rows:
+        try:
+            posted += _refresh_one(conn, clock, str(row["stable_id"]))
+        except (EcfError, ValueError, KeyError) as exc:  # a bad item; database errors stop the tick
+            # and the refresh runs again next tick (as in expire)
+            log.warning("approval.refresh_skipped", stable_id=str(row["stable_id"])[:8],
+                        error_type=type(exc).__name__)  # fmt: skip
+            skipped.append(str(row["stable_id"]))
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                     " VALUES (?, ?, ?, 'service')",
+                     (DRAFT_CARDS_KEY, json.dumps(skipped), to_ts(clock.now())))  # fmt: skip
+    return posted
+
+
+def _refresh_one(conn: sqlite3.Connection, clock: Clock, sid: str) -> int:
+    """One waiting item, if it is a draft: in one transaction, a new grant first, then the item's
+    other open grants voided, so a failure leaves the old grant in place; nothing is done if a
+    decision got there first or the item isn't a draft."""
+    with write_tx(conn):
+        item = _item(conn, sid)
+        actions = _actions(item)
+        if item["status"] != Status.AWAITING_APPROVAL or not _draft_text(actions):
+            return 0
+        carded = has_card(conn, f"item:{sid}")
+        why = "draft card refreshed (OD-551)" if carded else "draft grant re-issued (OD-551)"
+        grant = _insert_grant(conn, clock, item, actions)
+        conn.execute("UPDATE grants SET status = 'voided' WHERE stable_id = ? AND status ="
+                     " 'issued' AND grant_id != ?", (sid, grant))  # fmt: skip
+        _audit(conn, clock, item, "approval.reoffered", "service", {"grant_id": grant, "why": why})
+    if not carded:
+        return 0
+    _card(conn, clock, _item(conn, sid), grant)
+    return 1
 
 
 # Helpers shared by the sections above: an address's approval TTL, the item, its stage and

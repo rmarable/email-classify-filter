@@ -93,14 +93,61 @@ def test_forward_payload_names_the_allow_list_address(conn: sqlite3.Connection, 
     assert outbound_plan.check(conn, item, "forward_internal", "ap_lead", a["payload"])
 
 
-def test_draft_text_is_cleaned_and_capped(conn: sqlite3.Connection, clock: FakeClock,
-                                          live: str) -> None:  # fmt: skip
-    text = "Hello Pat,\r\n\nThanks\u202e\x00 for the invoice.   \n" + "x" * 5000
+def test_draft_text_is_cleaned(conn: sqlite3.Connection, clock: FakeClock, live: str) -> None:
+    text = "Hello Pat,\r\n\nThanks\u202e\x00 for the invoice.   \n" + "x" * 3900
     doc = _propose(conn, clock, live, "draft_reply", text=text)
     [a] = [a for a in doc["actions"] if a["name"] == "draft_reply"]
     body = a["payload"]["text"]
-    assert body.startswith("Hello Pat,\n\nThanks for the invoice.\n") and len(body) == 4000
+    assert body.startswith("Hello Pat,\n\nThanks for the invoice.\n") and body.endswith("x" * 3900)
     assert a["payload"]["to"] == "news@vendor-a.example"
+
+
+def test_an_over_long_draft_goes_back_to_the_model() -> None:
+    """Claude is told the limit and writes a shorter draft, never silently cut (P4)."""
+    long = "x" * (outbound_plan.DRAFT_MAX + 1)
+    why = actor.problem("draft_reply", "", "r", frozenset(), frozenset(), ("draft_reply",),
+                        text=long)  # fmt: skip
+    assert why is not None and "4,000" in why
+    ok = actor.problem("draft_reply", "", "r", frozenset(), frozenset(), ("draft_reply",),
+                       text="x" * outbound_plan.DRAFT_MAX)  # fmt: skip
+    assert ok is None
+
+
+def test_an_over_long_draft_that_gets_through_is_refused_flagged_and_shown(
+    conn: sqlite3.Connection, clock: FakeClock, live: str
+) -> None:
+    """The backstop: never cut silently, never dropped unseen (P4)."""
+    from ecf.cli_items import proposal_lines  # noqa: PLC0415
+
+    doc = _propose(conn, clock, live, "draft_reply", text="x" * 5000)
+    assert not any(a["name"] == "draft_reply" for a in doc["actions"])
+    assert any(a["name"] == "flag" for a in doc["actions"])
+    [d] = [d for d in doc["plan"]["dropped"] if d["name"] == "draft_reply"]
+    assert "4,000" in d["why"]
+    assert any("not proposed: draft_reply" in ln and "4,000" in ln
+               for ln in proposal_lines({"proposal": doc}))  # fmt: skip
+
+
+def test_a_draft_at_the_limit_still_matches_at_execution(
+    conn: sqlite3.Connection, clock: FakeClock, live: str
+) -> None:
+    """The limit didn't change, so a 4,000-character draft (the most an earlier version bound)
+    still matches at execution (P5)."""
+    doc = _propose(conn, clock, live, "draft_reply", text="y" * outbound_plan.DRAFT_MAX)
+    [a] = [a for a in doc["actions"] if a["name"] == "draft_reply"]
+    item = item_row(conn, live)
+    assert outbound_plan.check(conn, item, "draft_reply", None, a["payload"]) is None
+
+
+def test_drafts_never_join_approve_all(conn: sqlite3.Connection, clock: FakeClock,
+                                       live: str) -> None:  # fmt: skip
+    """A digest's one click must not approve a draft nobody read (P3)."""
+    from ecf_server import digest_actions  # noqa: PLC0415
+
+    _propose(conn, clock, live, "draft_reply", text="Thanks, Pat.")
+    row = item_row(conn, live)
+    assert row["status"] == "awaiting_approval"
+    assert not digest_actions.eligible(conn, row)
 
 
 def test_an_empty_draft_is_dropped(conn: sqlite3.Connection, clock: FakeClock, live: str) -> None:

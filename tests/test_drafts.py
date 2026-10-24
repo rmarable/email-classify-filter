@@ -90,6 +90,269 @@ def test_the_card_shows_the_draft_in_full_without_live_links(
     assert "ar[at]acme[.]example" in card["text"] and "https://" not in card["text"]
 
 
+def test_a_draft_at_the_limit_is_shown_whole_on_the_card(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """One paragraph of 4,000 characters with links: more than one section, all of it shown."""
+    from ecf_server import cards, outbound_plan, slack_admin, slack_render  # noqa: PLC0415
+    from ecf_server.chat import Card  # noqa: PLC0415
+
+    _address(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
+                     " VALUES ('ap', 'slack', 'CAP', 'ecf-t-ap')")  # fmt: skip
+    slack_admin.put_setting(conn, "slack_member_id", "U1", "t", actor="test")
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    unit = "see https://acme.example/a.b.c or ar@acme.example; "
+    text = (unit * 200)[: outbound_plan.DRAFT_MAX].strip()
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": text},
+                     frozenset())  # fmt: skip
+    [card] = [c for c in (json.loads(r[0])["card"] for r in conn.execute(
+        "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid"))
+        if c["title"].startswith("Approve?")]  # fmt: skip
+    shown = "".join(s["text"]["text"] for s in slack_render.blocks(Card("t", text=card["text"]))
+                    if s["type"] == "section")  # fmt: skip
+    assert "…" not in shown
+    assert shown.replace(" ", "").endswith(cards.defang(text).replace(" ", ""))
+    assert any(b["action"] == approvals.APPROVE for b in card["buttons"])
+
+
+def test_a_card_that_cant_show_the_whole_draft_has_no_approve(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth (P2): approve such a draft at the computer, where it is shown whole."""
+    from ecf_server import slack_admin, slack_render  # noqa: PLC0415
+
+    monkeypatch.setattr(slack_render, "TEXT_BLOCKS_MAX", 1)
+    _address(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
+                     " VALUES ('ap', 'slack', 'CAP', 'ecf-t-ap')")  # fmt: skip
+    slack_admin.put_setting(conn, "slack_member_id", "U1", "t", actor="test")
+    _approved_draft(conn, clock, FakeMailSource(), address=False)
+    [card] = [c for c in (json.loads(r[0])["card"] for r in conn.execute(
+        "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid"))
+        if c["title"].startswith("Approve?")]  # fmt: skip
+    assert not any(b["action"] == approvals.APPROVE for b in card["buttons"])
+    assert "Approve it at your computer: ecf approve" in card["note"]
+
+
+def test_a_slack_approval_of_a_draft_its_card_cant_show_is_refused(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old cards and buttons too (X1): the check runs at approval, not only on the card."""
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+    from ecf_server import slack_render  # noqa: PLC0415
+
+    _address(conn, clock)
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    with pytest.raises(InvalidInputError, match="being updated"):  # before the one-off refresh
+        approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1")
+    approvals.refresh_draft_cards(conn, clock)
+    monkeypatch.setattr(slack_render, "TEXT_BLOCKS_MAX", 1)
+    with pytest.raises(InvalidInputError, match="may not show the whole draft"):
+        approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1")
+    assert item_row(conn, sid)["status"] == "awaiting_approval"
+    approvals.approve(conn, clock, FakeNotifier(), sid, actor="os_user")  # shown in full there
+
+
+def test_waiting_draft_cards_are_posted_again_once(conn: sqlite3.Connection,
+                                                   clock: FakeClock) -> None:  # fmt: skip
+    """A card an earlier version cut gets a new grant, so its Approve stops working, and is
+    replaced by one that shows the whole draft (W1)."""
+    from ecf.errors import GrantInvalidError  # noqa: PLC0415
+    from ecf_server import slack_admin  # noqa: PLC0415
+
+    _address(conn, clock)
+    with write_tx(conn):
+        conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
+                     " VALUES ('ap', 'slack', 'CAP', 'ecf-t-ap')")  # fmt: skip
+    slack_admin.put_setting(conn, "slack_member_id", "U1", "t", actor="test")
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    [old] = [r[0] for r in conn.execute(
+        "SELECT grant_id FROM grants WHERE stable_id = ? AND status = 'issued'",
+        (sid,))]  # fmt: skip
+    assert approvals.refresh_draft_cards(conn, clock) == 1
+    assert approvals.refresh_draft_cards(conn, clock) == 0  # once
+    posts = [json.loads(r[0]) for r in conn.execute(
+        "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid")]  # fmt: skip
+    mine = [q["card"] for q in posts if q["key"] == f"item:{sid}"]
+    assert len(mine) == 2
+    [approve] = [b for b in mine[-1]["buttons"] if b["action"] == approvals.APPROVE]
+    assert approve["ref"] != old and "Thanks for your note" in mine[-1]["text"]
+    with pytest.raises(GrantInvalidError):  # the earlier card's button
+        approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1", grant_id=old)
+    approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1",
+                      grant_id=approve["ref"])  # fmt: skip
+    assert item_row(conn, sid)["status"] == "executing"
+
+
+def test_one_failing_draft_doesnt_hold_up_the_refresh(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draft whose new grant fails keeps its old grant; the next is still refreshed; the marker
+    is written (T1, K1, K5)."""
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+
+    _address(conn, clock)
+    src = FakeMailSource()
+    sids = [_mail_item(conn, clock, src, n, REPLY, FACTS, src.deliver) for n in range(2)]
+    for sid in sids:
+        item = item_row(conn, sid)
+        ctx, p = decide.plan_for(conn, item)
+        actor.decide_one(conn, clock, item, ctx, p,
+                         {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                         frozenset())  # fmt: skip
+
+    def issued(sid: str) -> set[str]:
+        return {r[0] for r in conn.execute(
+            "SELECT grant_id FROM grants WHERE stable_id = ? AND status = 'issued'",
+            (sid,))}  # fmt: skip
+
+    before = {sid: issued(sid) for sid in sids}
+    real = approvals._insert_grant  # pyright: ignore[reportPrivateUsage]
+    first = sorted(sids)[0]
+
+    def failing(c: sqlite3.Connection, k: FakeClock, item: sqlite3.Row, a: Any) -> str:
+        if item["stable_id"] == first:
+            raise InvalidInputError("x")
+        return real(c, k, item, a)
+
+    monkeypatch.setattr(approvals, "_insert_grant", failing)
+    approvals.refresh_draft_cards(conn, clock)
+    other = next(s for s in sids if s != first)
+    assert issued(first) == before[first]  # nothing voided: its old grant still works
+    assert len(issued(other)) == 1 and issued(other) != before[other]
+    assert approvals._drafts_refreshed(conn)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(InvalidInputError, match="ecf approve"):  # skipped: computer only (L2)
+        approvals.approve(conn, clock, FakeNotifier(), first, actor="slack:U1")
+    approvals.approve(conn, clock, FakeNotifier(), first, actor="os_user")
+
+
+def test_an_unreadable_marker_refuses_slack_draft_approvals(conn: sqlite3.Connection,
+                                                            clock: FakeClock) -> None:  # fmt: skip
+    """Fails closed (M5, N1): unreadable or not a list, approve at the computer."""
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+
+    _address(conn, clock)
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    for bad in ("{not json", "true"):
+        with write_tx(conn):
+            conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                         " VALUES (?, ?, 't', 'test') ON CONFLICT (key) DO UPDATE"
+                         " SET value = excluded.value",
+                         (approvals.DRAFT_CARDS_KEY, bad))  # fmt: skip
+        with pytest.raises(InvalidInputError, match="may not show the whole draft"):
+            approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1")
+    with write_tx(conn):  # the control: a readable list without this item
+        conn.execute("UPDATE settings SET value = '[]' WHERE key = ?",
+                     (approvals.DRAFT_CARDS_KEY,))  # fmt: skip
+    approvals.approve(conn, clock, FakeNotifier(), sid, actor="slack:U1")
+    assert item_row(conn, sid)["status"] == "executing"  # approved, not queued for the computer
+
+
+def test_a_failure_after_the_void_rolls_back(conn: sqlite3.Connection, clock: FakeClock,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """The new grant and the void are one transaction (K1, L4)."""
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+
+    _address(conn, clock)
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    before = conn.execute("SELECT grant_id, status FROM grants").fetchall()
+    real = approvals._audit  # pyright: ignore[reportPrivateUsage]
+
+    def audit(c: sqlite3.Connection, k: FakeClock, row: sqlite3.Row, event: str,
+              *a: Any, **kw: Any) -> None:  # fmt: skip
+        if event == "approval.reoffered":  # after the void
+            raise InvalidInputError("x")
+        real(c, k, row, event, *a, **kw)
+
+    monkeypatch.setattr(approvals, "_audit", audit)
+    approvals.refresh_draft_cards(conn, clock)
+    assert conn.execute("SELECT grant_id, status FROM grants").fetchall() == before
+
+
+def test_a_decision_inside_the_refresh_window_is_respected(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Status is read again after the refresh listed the item (K2, L4): decided meanwhile, it gets
+    no new grant."""
+    _address(conn, clock)
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    real = approvals._refresh_one  # pyright: ignore[reportPrivateUsage]
+
+    def decided(c: sqlite3.Connection, k: FakeClock, s: str) -> int:
+        approvals.reject(c, k, s, actor="os_user")  # after the refresh listed it
+        return real(c, k, s)
+
+    monkeypatch.setattr(approvals, "_refresh_one", decided)
+    before = conn.execute("SELECT grant_id, status FROM grants").fetchall()
+    assert approvals.refresh_draft_cards(conn, clock) == 0
+    after = conn.execute("SELECT grant_id, status FROM grants").fetchall()
+    assert [g[0] for g in after] == [g[0] for g in before]  # no new grant
+    assert {g[1] for g in after} == {"voided"}  # voided by the reject, nothing issued
+
+
+def test_the_refresh_leaves_a_decided_draft_alone(conn: sqlite3.Connection,
+                                                  clock: FakeClock) -> None:  # fmt: skip
+    """Approved at the computer first: its grant isn't voided and no new one is issued (K2)."""
+    sid = _approved_draft(conn, clock, FakeMailSource())
+    assert approvals.refresh_draft_cards(conn, clock) == 0
+    rows = conn.execute("SELECT status FROM grants WHERE stable_id = ?", (sid,)).fetchall()
+    assert [r[0] for r in rows] == ["approved"]
+
+
+def test_a_draft_with_no_card_gets_a_new_grant_and_no_card(conn: sqlite3.Connection,
+                                                            clock: FakeClock) -> None:  # fmt: skip
+    """No Slack route: still a new grant, so no earlier button can approve it (W1)."""
+    _address(conn, clock)
+    src = FakeMailSource()
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    item = item_row(conn, sid)
+    ctx, p = decide.plan_for(conn, item)
+    actor.decide_one(conn, clock, item, ctx, p,
+                     {"action": "draft_reply", "target": "", "reason": "r", "text": TEXT},
+                     frozenset())  # fmt: skip
+    before = {r[0] for r in conn.execute("SELECT grant_id FROM grants WHERE status = 'issued'")}
+    assert approvals.refresh_draft_cards(conn, clock) == 0
+    after = {r[0] for r in conn.execute("SELECT grant_id FROM grants WHERE status = 'issued'")}
+    assert len(after) == 1 and not before & after
+
+
 def test_a_draft_whose_payload_changed_is_refused(conn: sqlite3.Connection,
                                                   clock: FakeClock) -> None:  # fmt: skip
     src = FakeMailSource()

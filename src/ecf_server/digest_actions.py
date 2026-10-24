@@ -3,12 +3,15 @@
 - **Done automatically:** a count of the model-driven actions that ran since the last digest, by
   action. (Undo for hide actions arrives with the executor, V1.3 step 5.)
 - **Approve all N reversible** (§9.5): the approvals waiting for this address whose actions are all
-  reversible and which aren't excluded: outbound, the fraud guard, an unverified sender, any
-  high-risk item (§8.2), regulator, `content_unscanned`, or a `high` address. The
+  reversible and which aren't excluded: outbound (sends and drafts), the fraud guard, an
+  unverified sender, any high-risk item (§8.2), regulator, `content_unscanned`, or a `high`
+  address. The
   button binds the fixed set of grant IDs shown when the digest was posted; a click approves each
   one that is still waiting and still eligible, re-checked at the click (a grant that changed,
   expired or became ineligible is skipped and counted), one click each, never with step-up
   (none of these needs it: they are reversible and exclude every payment, fraud and regulator item).
+- **Drafts waiting for you to read:** a draft is never in "Approve all"; one whose card is held
+  back (a backlog) is listed, for `ecf approve <id>`, which shows its text.
 - **Confirm sender category** (OD-210): items whose hide wasn't corroborated offer it. A
   confirmation counts toward the bank-detail trigger, so it always needs step-up at your computer
   (§9.6): the button answers only you, with the exact `ecf sender confirm` command to run there.
@@ -29,6 +32,7 @@ from ecf_server import (
     config,
     mailbox_actions,
     marked,
+    outbound_plan,
     slack_admin,
     slack_in,
     slack_out,
@@ -63,7 +67,7 @@ def eligible(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
         actions
         and not marked.is_marked(facts)  # old mail: ecf approve --scan (OD-507 §2)
         and all(a in approvals.REVERSIBLE for a in actions)
-        and not any(a in approvals.SENDS for a in actions)
+        and not any(a in outbound_plan.OUTBOUND for a in actions)  # a draft is read on its card
         and plan.get("rule") != "fraud_guard"
         and not plan.get("high_risk", True)
         and not plan.get("payment_or_fraud", True)
@@ -98,9 +102,10 @@ def lines(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.
         ]
         buttons += [Button(UNDO, f"Undo {r['stable_id'][: cards.SHORT_ID]}", r["stable_id"])
                     for r in rows if mailbox_actions.undoable(r)][:UNDO_MAX]  # fmt: skip
-    waiting = [r for r in conn.execute(
+    rows_waiting = conn.execute(
         "SELECT * FROM items WHERE address_id = ? AND status = 'awaiting_approval'"
-        " ORDER BY created_at, stable_id", (aid,)) if eligible(conn, r)][:BATCH_MAX]  # fmt: skip
+        " ORDER BY created_at, stable_id", (aid,)).fetchall()  # fmt: skip
+    waiting = [r for r in rows_waiting if eligible(conn, r)][:BATCH_MAX]
     grants = [g for g in (_grant_for(conn, r["stable_id"]) for r in waiting) if g]
     if grants:
         text += ["", f"Waiting for your approval, all reversible ({len(grants)}):",
@@ -109,12 +114,26 @@ def lines(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.
             slack_admin.put_setting(conn, BATCH_KEY + key, json.dumps(grants), to_ts(now),
                                     actor="service")  # fmt: skip
         buttons.append(Button(APPROVE_ALL, f"Approve all {len(grants)} reversible", key))
+    # a draft held back in a backlog has no card yet, and is never in "Approve all"
+    unread = [r for r in rows_waiting if _draft_without_card(conn, r)]
+    if unread:
+        heading = f"Drafts waiting for you to read ({len(unread)}; ecf approve <id> shows one):"
+        more = ["(ecf inbox shows all)"] if len(unread) > BATCH_MAX else []
+        text += ["", heading, *(_line(r) for r in unread[:BATCH_MAX]), *more]
     if offers:
         text += ["", "Not hidden because the sender's category isn't confirmed:",
                  *(_line(r) for r in offers[:CONFIRM_MAX])]  # fmt: skip
         buttons += [Button(CONFIRM, f"Confirm category {r['stable_id'][: cards.SHORT_ID]}",
                            r["stable_id"]) for r in offers[:CONFIRM_MAX]]  # fmt: skip
     return text, buttons
+
+
+def _draft_without_card(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
+    """A draft waiting for approval whose card hasn't been posted (old mail has `--scan`)."""
+    doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
+    return (any(a.get("name") == "draft_reply" for a in doc.get("actions", []))
+            and not marked.is_marked(json.loads(item["facts"] or "{}"))
+            and not approvals.has_card(conn, f"item:{item['stable_id']}"))  # fmt: skip
 
 
 def _grant_for(conn: sqlite3.Connection, sid: str) -> str | None:

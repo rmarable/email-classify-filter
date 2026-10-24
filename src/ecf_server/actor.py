@@ -86,6 +86,7 @@ def problem(action: Any, target: Any, reason: Any, labels: frozenset[str],  # no
                    if not set(HIDE_ACTIONS) <= set(actions) else ""))  # fmt: skip
     if target and target not in _targets(labels, folders, actions, templates, forwards):
         return "target isn't a known label, move folder, template or forward entry"
+    draft = outbound_plan.clean_draft(text) if action == "draft_reply" else ""
     checks = [
         (action == "label" and target not in labels, "label needs a known label name as target"),
         (action == "move" and target not in folders,
@@ -95,6 +96,8 @@ def problem(action: Any, target: Any, reason: Any, labels: frozenset[str],  # no
         (action == "forward_internal" and target not in forwards,
          "forward_internal needs a forward allow-list id as target"),
         (action == "draft_reply" and not text.strip(), "draft_reply needs the reply in text"),
+        (len(draft) > outbound_plan.DRAFT_MAX,
+         f"draft_reply {outbound_plan.too_long(draft)}: write a shorter reply"),
     ]  # fmt: skip
     return next((why for applies, why in checks if applies), None)
 
@@ -124,6 +127,8 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
             payload = outbound_plan.resolve(conn, item, one.name, one.target, got.get("text"))
             one = Planned(one.name, one.target, one.mode, payload)
         except outbound_plan.Unresolved as exc:
+            if one.name == "draft_reply":  # the draft the actor wrote isn't lost unseen (OD-551)
+                _add(p, Planned("flag", None, "auto"))
             one = Dropped(one.name, one.target, str(exc.detail))
     if isinstance(one, Dropped):
         p.dropped.append(one)

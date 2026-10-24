@@ -14,6 +14,8 @@ Every command has `--help`. Commands that need step-up (see below) say so there.
 
 - **Item:** one email that ecf is tracking.
 - **Card:** a Slack message about one item, with buttons.
+- **Draft:** a reply ecf's model writes and, once you approve it, saves in your Drafts folder. ecf
+  never sends it; you read it, edit it if you like, and send it yourself.
 - **Step-up:** a second check at the computer itself (Touch ID or your Mac password) before ecf
   does something risky. A Slack click alone isn't enough for those.
 - **Stage:** how much ecf may do on its own for a mailbox. Every mailbox starts in `shadow`
@@ -69,8 +71,12 @@ verified) and what ecf did about each, with Undo and Pause buttons. After a gap 
 hours it opens with "Caught up: N messages since <time>". `ecf digest <address>` posts one
 straight away.
 
-**Approve all N reversible** approves exactly the list shown. It never includes sends, fraud,
-regulator, unverified-sender or not-fully-scanned items, or anything on a `high` mailbox.
+**Approve all N reversible** approves exactly the list shown. It never includes sends, drafts,
+fraud, regulator, unverified-sender or not-fully-scanned items, or anything on a `high` mailbox.
+You approve each draft on its own card, which shows the whole draft, or with `ecf approve <id>`
+at your computer. If a draft is ever too long for Slack, its card says so and you approve it at
+your computer. A digest also lists drafts that are still waiting for you to read when a busy
+spell held their cards back.
 
 ### Review posts
 
@@ -109,16 +115,16 @@ Approvals expire after 4 days for sends and 14 days for everything else; an expi
 nothing.
 
 - **Reversible actions** (mark as read, archive, move, mark as junk, save a draft) take one click
-  in Slack.
+  in Slack (a draft on its own card, as above).
 - **Risky actions need you at the computer:** every send, anything that can't be undone, and
   hiding a fraud or regulator email. When you click one in Slack, the card says "Queued for your
   computer (N waiting)" and keeps only Reject, and your desktop shows a notification with the
   command to run:
 
   ```sh
-  ecf approve --pending     # list what's waiting and approve it (each send separately)
+  ecf approve --pending     # list what's waiting and approve it (each send or draft separately)
   ecf approve <id>          # one item: shows exactly what it does (a draft in full), then asks
-  ecf approve --scan <id>   # everything waiting from one backfill or reprocess run
+  ecf approve --scan <id>   # one backfill or reprocess run's waiting items (sends, drafts apart)
   ecf reject <id>
   ```
 
