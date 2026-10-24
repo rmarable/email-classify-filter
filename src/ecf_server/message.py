@@ -150,13 +150,15 @@ class ParsedMessage:
         text = self.prepared() if prep else self._body_text()
         return _cut(text if redact is None else redact(text), limit)
 
-    def excerpt_sets(self, redact: Callable[[str], str]) -> tuple[tuple[str, str], tuple[str, str]]:
+    def excerpt_sets_and_length(
+        self, redact: Callable[[str], str]
+    ) -> tuple[tuple[str, str], tuple[str, str], int]:
         """The classifier and actor excerpts redacted and unredacted, from one preparation
-        (pre-gate review G8)."""
+        (pre-gate review G8), and the length of the redacted text they are cut from (OD-553)."""
         text = self.prepared()
         red = redact(text)
         return ((_cut(red, CLASSIFIER_CHARS), _cut(red, ACTOR_CHARS)),
-                (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)))  # fmt: skip
+                (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)), len(red))  # fmt: skip
 
     def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
         """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off:
