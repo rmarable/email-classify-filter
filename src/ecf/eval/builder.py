@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import html
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email import policy
 from email.message import EmailMessage, Message
 from email.utils import format_datetime, parseaddr
@@ -22,6 +22,7 @@ from ecf.eval.cards import Card, load_cards
 from ecf.eval.hygiene import Finding, dedupe, scan_text
 
 COMMIT_LIMIT = 1024 * 1024
+LONG_FIELDS = ("signature", "quoted_thread", "footer")  # a long card's text besides its body
 MX = "mx.example.net"
 
 
@@ -74,13 +75,13 @@ def build_message(card: Card) -> EmailMessage:
         del msg[name]
         msg[name] = value
 
-    body = card.body
+    body = card.plain_text()
     if card.pad_to_mb:
         body += _filler(int(card.pad_to_mb * 1024 * 1024))
     msg.set_content(body, cte=card.encoding)
     html_body = card.html
     if card.hidden_text is not None:
-        base = html_body or f"<p>{html.escape(card.body)}</p>"
+        base = html_body or f"<p>{html.escape(card.plain_text())}</p>"
         html_body = base + f'<span style="display:none">{html.escape(card.hidden_text)}</span>'
     if html_body is not None:
         msg.add_alternative(html_body, subtype="html", cte=card.encoding)
@@ -121,8 +122,12 @@ def _header_texts(value: object, path: str) -> Iterator[tuple[str, str]]:
 def scan_card(card: Card, source: str) -> list[Finding]:
     """Findings named by field: `<source>:<field path>`, `<source>:body`, `<source>:html`."""
     header = card.model_dump(mode="json", by_alias=True, exclude={"body", "html"})
-    texts = [*_header_texts(header, ""), ("body", card.body), ("html", card.html or "")]
-    return dedupe([f for part, text in texts for f in scan_text(text, f"{source}:{part}")])
+    # the body as built: a long card's padding and quote headers are scanned too
+    texts = [*_header_texts(header, ""), ("body", card.plain_text()), ("html", card.html or "")]
+    found = dedupe([f for part, text in texts for f in scan_text(text, f"{source}:{part}")])
+    # a long field's value is in the built body too: reported once, under its field
+    named = {f.value for f in found if f.where.split(":", 1)[1].startswith(LONG_FIELDS)}
+    return [f for f in found if not (f.where == f"{source}:body" and f.value in named)]
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,11 @@ class BuildReport:
     built: list[str]
     large: list[str]
     findings: list[Finding]
+    # (card id, phrase name, where it starts in the plain body, moved below the mark): so an
+    # author sees each long card's band before labelling it (window tuning B3)
+    placed: list[tuple[str, str, int, bool]] = field(
+        default_factory=list[tuple[str, str, int, bool]]
+    )
 
 
 def build_all(root: Path) -> BuildReport:
@@ -170,4 +180,5 @@ def build_all(root: Path) -> BuildReport:
         root,
         label_file.carry_over(label_file.read(root), labels, models_ok=label_file.models_ok(root)),
     )
-    return BuildReport(built, large, [])
+    placed = [(c.id, *p) for c in cards for p in c.phrase_offsets()]
+    return BuildReport(built, large, [], placed)
