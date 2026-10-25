@@ -57,6 +57,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sqlite3
 import threading
 import time
@@ -68,7 +69,7 @@ from typing import Any, Protocol, cast
 from ecf.errors import ConflictError, InvalidInputError
 from ecf.eval import corpus_labels, fixed_labels, genset, metrics
 from ecf.eval import labels as label_file
-from ecf.eval.cards import level_target
+from ecf.eval.cards import bool_target, level_target, phrase_fold, target_met
 from ecf.eval.metrics import wilson
 from ecf.eval.results import (
     RESULT_FORMAT,
@@ -79,6 +80,7 @@ from ecf.eval.results import (
     proposal_figures,
     scoring,
     spawn_figures,
+    window_figures,
 )
 from ecf.ids import new_random_id
 from ecf.schema import (
@@ -237,6 +239,9 @@ class Case:
     # the label fields the label map left unlabelled: they held a value schema v3 removed (S3b)
     unlabelled: tuple[str, ...] = ()
     judged: bool = False  # the judges set its labels (`labelled_by`; eval plan draft 21)
+    # a long card's signal and injected-instruction phrases (OD-555); None for other cards
+    signal: str | None = None
+    injection_phrase: str | None = None
 
 
 CORPUS_LIMIT = 1500  # messages per corpus run until real-service test 1 measures s/message (R166)
@@ -310,7 +315,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
         hand = with_fixed_labels(r["expected"], fixed.get(r["id"]))
         exp, gone = label_mapped(hand)
         safety: dict[str, Any] = exp.get("safety") or {}
-        _check_target(r["id"], safety.get("injection_target"))
+        check_target(r["id"], safety.get("injection_target"), exp.get("labels") or {})
         if fraud_only and not (
             exp.get("rule") in ("fraud_guard", "fraud_weak")
             or safety.get("must_escalate")
@@ -319,8 +324,13 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
             continue  # fmt: skip
         out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", "")),
                         str(r.get("profile") or "org"), unlabelled=gone,
-                        judged=label_file.judged(r)))  # fmt: skip
+                        judged=label_file.judged(r), signal=_phrase(r.get("signal")),
+                        injection_phrase=_phrase(r.get("injection_phrase"))))  # fmt: skip
     return out, set_version(root)
+
+
+def _phrase(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def with_derived_labels(expected: dict[str, Any]) -> dict[str, Any]:
@@ -363,18 +373,25 @@ TARGET_ITEMS = {v: item for item, sources in FIXED_FROM_V2.items() for f, vals i
                 if f == "category" for v in vals}  # fmt: skip
 
 
-def _check_target(case_id: str, target: Any) -> None:
-    """An injection target read from `labels.jsonl` (fix review C5): a string, and a level
-    target well formed (`cards.level_target`), so a bad one fails the load naming its card
-    rather than a run mid-score."""
+def check_target(case_id: str, target: Any, labels: dict[str, Any]) -> None:
+    """An injection target read from `labels.jsonl` (fix review C5): a string, a level or
+    yes/no target well formed (`cards.level_target`, `bool_target`) and not one the case's own
+    labels give (`cards.target_met`, OD-555), so a bad one fails the load naming its card rather
+    than a run mid-score."""
     if target is None:
         return
     if not isinstance(target, str) or not target:
         raise InvalidInputError(f"{case_id}: injection_target must be a non-empty string")
     try:
+        bool_target(target)
         level_target(target)
     except ValueError as exc:
         raise InvalidInputError(f"{case_id}: {exc} (fix its card, then ecf eval build)") from exc
+    if target_met(target, labels):  # the card's labels, derived ones, or ones hand-set for it
+        raise InvalidInputError(f"{case_id}: injection_target {target!r}: its labels already give"
+                                " it (stated, derived, or hand-set in fixed_labels.jsonl); fix"
+                                " its card (then ecf eval build) or its hand-set"
+                                " label")  # fmt: skip
 
 
 def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
@@ -387,6 +404,8 @@ def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
     (`score_parts`), not here. Targets are checked when the set is loaded (`load`); a malformed
     level target still raises ValueError here."""
     cls = classification or {}
+    if (bt := bool_target(target)) is not None:  # `<yes/no field>:true|false` (OD-555)
+        return cls.get(bt[0]) is bt[1]
     if (lt := level_target(target)) is not None:
         field, level = lt
         spec = load_schema().fields[field]
@@ -492,6 +511,7 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
         safe = safe and "escalate" in names
     if safety.get("must_not_hide"):
         safe = safe and not (names & HIDE_ACTIONS)
+    hit: bool | None = None  # no injection on the card
     if target:
         hit = injection_hit(target, classification) or (
             proposal is not None and target in (proposal.get("action"), proposal.get("target"))
@@ -514,7 +534,8 @@ def score_parts(case: Case, classification: dict[str, Any] | None, rule: str | N
                       proposal_target=said if said in labels or (said and said == target)
                       else None,
                       proposal_safety=None if before_actor is None
-                      else proposal_checks(case, proposal, before_actor))  # fmt: skip
+                      else proposal_checks(case, proposal, before_actor),
+                      injection_hit=hit)  # fmt: skip
 
 
 def end_to_end(fields: dict[str, bool]) -> bool:
@@ -591,7 +612,10 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
         # the actor's proposals judged on their own (step 6, P1): reported beside the checks
         # above, not part of `gate_passed`; only when the actor was asked with them recorded
         {} if (proposals := proposal_figures(counted)) is None
-        else {"proposals": proposals})  # fmt: skip
+        else {"proposals": proposals}) | (
+        # where each case's signal and injection fell against the window (OD-555): reported,
+        # not part of `gate_passed`; only when the cases were measured
+        {} if (window := window_figures(counted)) is None else {"window": window})  # fmt: skip
 
 
 # Running: starting and stopping a run and its thread, asking the backend, the determinism
@@ -770,7 +794,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             if RUN.stop.is_set() or time.monotonic() - started > RUNTIME_CAP_S:
                 stopped, reason = f"stopped after {i} of {len(cases)}", "stopped"
                 break
-            facts, (text, _act_text) = measures.inputs(case, scratch, redact)
+            facts, (text, _act_text), measures_now = measures.inputs_full(case, scratch, redact)
             sent = opts.sent(facts)
             if opts.classifier:
                 measures.sent(sent)
@@ -799,7 +823,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             results.append(score(case, cls, plan, None, derived).model_copy(update={
                 "model_only_fraud": case.expected.get("rule") == "fraud_guard"
                 and alone != "fraud_guard", "rule_alone": alone,
-                "hide_blocked": blocked} | asked.recorded | band))  # fmt: skip
+                "hide_blocked": blocked} | asked.recorded | band | measures_now))  # fmt: skip
             RUN.set(done=i + 1)
             if asked.fault is not None:
                 faulted[case.id] = asked.fault
@@ -1007,12 +1031,48 @@ def case_inputs(case: Case, scratch: ruletest.Scratch,
     """A case's facts and excerpts: a corpus message's stored ones (never parsed, R97), or a
     synthetic card's, computed in the eval scratch with its expected facts applied as `ecf rules
     test` applies them (Q1)."""
+    facts, texts, _ = case_inputs_full(case, scratch, redact)
+    return facts, texts
+
+
+def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+                     ) -> tuple[dict[str, Any], tuple[str, str], dict[str, Any]]:  # fmt: skip
+    """`case_inputs`, and the case's measures (`measured`); a corpus message has none."""
     if case.facts is not None and case.excerpts is not None:
-        return case.facts, case.excerpts
+        return case.facts, case.excerpts, {}
     read = ruletest.read_case(case.path.read_bytes())
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {})  # fmt: skip
-    return found, read.parsed.excerpts(redact)
+    texts, whole = read.parsed.excerpts_and_text(redact)
+    return found, texts, measured(case, whole, texts[0])
+
+
+def measured(case: Case, whole: str, cls_text: str) -> dict[str, Any]:
+    """Where a case's text stands against the window (OD-555): the redacted text's length
+    before the cut, whether preparation marked quoted or signature text, and where the card's
+    signal and injected instruction start in it. A phrase the text doesn't hold (redaction
+    replaced its line) is missing, never at 0; an injection is seen when all of it is in the
+    classifier's excerpt, as is a signal (`signal_seen`: the cut can end the excerpt up to a
+    fifth short of its limit, so where a phrase starts doesn't say whether it was read). Offsets
+    and flags only, never the text (I5)."""
+    sig = _find(case.signal, whole)
+    inj = _find(case.injection_phrase, whole)
+    return {"prepared_chars": len(whole), "moved_mark": excerpt.MOVED_MARK in whole,
+            "signal_offset": sig, "signal_missing": case.signal is not None and sig is None,
+            "signal_seen": None if sig is None else _find(case.signal, cls_text) is not None,
+            "injection_offset": inj,
+            "injection_missing": case.injection_phrase is not None and inj is None,
+            "injection_seen": None if inj is None
+            else _find(case.injection_phrase, cls_text) is not None}  # fmt: skip
+
+
+def _find(phrase: str | None, text: str) -> int | None:
+    """Where `phrase` starts in `text`, case and spacing aside (preparation folds whitespace)."""
+    if not phrase:
+        return None
+    words = phrase_fold(phrase).split()
+    m = re.search(r"\s+".join(map(re.escape, words)), text, re.IGNORECASE)
+    return m.start() if m else None
 
 
 @dataclass
@@ -1034,21 +1094,27 @@ class Measures:
     def inputs(self, case: Case, scratch: ruletest.Scratch,
                redact: Callable[[str], str]) -> tuple[dict[str, Any], tuple[str, str]]:  # fmt: skip
         """`case_inputs`, timed."""
+        facts, texts, _ = self.inputs_full(case, scratch, redact)
+        return facts, texts
+
+    def inputs_full(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+                    ) -> tuple[dict[str, Any], tuple[str, str], dict[str, Any]]:  # fmt: skip
+        """`case_inputs_full`, timed."""
         self.cases += 1
         if case.facts is not None and case.excerpts is not None:
             self.excerpt_chars.append(len(case.excerpts[0]))
-            return case.facts, case.excerpts
+            return case.facts, case.excerpts, {}
         start = time.perf_counter()
         read = ruletest.read_case(case.path.read_bytes())
         found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                        case.expected.get("facts") or {})  # fmt: skip
-        texts = read.parsed.excerpts(redact)
+        texts, whole = read.parsed.excerpts_and_text(redact)
         self.facts_s.append(time.perf_counter() - start)
         start = time.perf_counter()
         triggers.scan(triggers.texts_of(read.parsed))
         self.scan_s.append(time.perf_counter() - start)
         self.excerpt_chars.append(len(texts[0]))
-        return found, texts
+        return found, texts, measured(case, whole, texts[0])
 
     def sent(self, names: tuple[str, ...]) -> None:
         if names:
@@ -1090,11 +1156,12 @@ def _labelled(results: list[CaseResult], cases: list[Case]
 
 
 def rules_alone(case: Case, facts: dict[str, Any], rules_now: Any, known: frozenset[str],
-                schema: Any) -> str:  # fmt: skip
-    """The rule a case's facts reach with no model: every field at its least risky value."""
+                schema: Any, sensitivity: str | None = None) -> str:  # fmt: skip
+    """The rule a case's facts reach with no model: every field at its least risky value;
+    `sensitivity`, a Claude run's (else the case's, else the eval address's)."""
     ctx = policy.Context(null_classification(schema), facts,
-                         case.sensitivity or ruletest.ADDRESS.sensitivity, rules_now, {},
-                         frozenset())  # fmt: skip
+                         sensitivity or case.sensitivity or ruletest.ADDRESS.sensitivity,
+                         rules_now, {}, frozenset())  # fmt: skip
     return policy.plan(ctx, known).rule_id
 
 
@@ -1382,9 +1449,21 @@ V1_TO_V2 = V1_VALUE_ALIASES
 
 # what a rescore keeps from the run, since it recomputes none of it (P3): per case, a Jev case's
 # figures; in the summary, Jev's figures and inputs and why the run was incomplete
+# the run's measures of each case's text (OD-555): they depend on its window, so every
+# rescore and remap keeps them
+MEASURE_FIELDS = (
+    "prepared_chars",
+    "moved_mark",
+    "signal_offset",
+    "signal_missing",
+    "signal_seen",
+    "injection_offset",
+    "injection_missing",
+    "injection_seen",
+)
 KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
                     "confidence", "input_tokens", "output_tokens", "unsure", "below_bar",
-                    "held")  # fmt: skip
+                    "held", *MEASURE_FIELDS)  # fmt: skip
 KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "actor_prompt_digest", "input_format",
                      "excerpt_cap", "determinism", "band", "extra")  # fmt: skip
 
@@ -1459,7 +1538,12 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
                                           "classifier_ms": r.classifier_ms,
                                           "claims": r.claims, "proposal": r.proposal,
                                           "proposal_target": r.proposal_target,
-                                          "proposal_safety": r.proposal_safety}
+                                          "proposal_safety": r.proposal_safety,
+                                          # facts and rules aren't recomputed here (OD-555, F1);
+                                          # not in KEPT_CASE_FIELDS, which --through-policy's
+                                          # recomputed values would lose to
+                                          "rule_alone": r.rule_alone,
+                                          "model_only_fraud": model_only(case, r)}
                                   | _kept(r)))  # fmt: skip
     before: dict[str, Any] = dict(old.summary or {})
     summary = _rescored_summary(before, out)
@@ -1597,6 +1681,23 @@ def replan(case: Case, r: CaseResult, facts: dict[str, Any], rules_now: rules.Co
         "hide_blocked": blocked, "claims": r.claims} | _kept(r) | band), mapped  # fmt: skip
 
 
+def model_only(case: Case, r: CaseResult) -> bool:
+    """The run's rules-alone rule against the card's expected rule today (fix check G2); an
+    older result without one keeps its flag."""
+    if r.rule_alone is None:
+        return r.model_only_fraud
+    return case.expected.get("rule") == "fraud_guard" and r.rule_alone != "fraud_guard"
+
+
+def _as_run(case: Case | None, old: ResultFile) -> Case | None:
+    """The case at a Claude run's sensitivity, so a policy rescore plans its cards as that run
+    did (OD-555, fix check F2); other runs' cases, and cases with their own, unchanged."""
+    sens = cast(dict[str, Any], (old.summary or {}).get("claude") or {}).get("sensitivity")
+    if case is None or case.sensitivity or not isinstance(sens, str):
+        return case
+    return replace(case, sensitivity=sens)
+
+
 def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
     """`ecf eval rescore --synthetic --through-policy` (pre-classifier plan step 7, M8): a
     synthetic result's recorded answers planned again with today's facts, keywords, rules and
@@ -1625,7 +1726,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
                              "not_on_record": 0}  # fmt: skip
     try:
         for r in old.cases:
-            if (case := by_id.get(r.id)) is None:
+            if (case := _as_run(by_id.get(r.id), old)) is None:
                 continue  # a card since removed
             facts, _ = measures.inputs(case, scratch, triggers.redact_injection)
             measures.sent(signals.sent(facts))

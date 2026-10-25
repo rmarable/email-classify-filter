@@ -108,7 +108,6 @@ from ecf_server.telemetry import Hold, Seen, Telemetry
 
 EXPIRY = timedelta(hours=24)
 BATCH_MAX = 5
-ACTOR_CHARS = 4000  # as `ecf eval run` and the stored actor excerpt
 ROLES = ("classifier", "classifier_high", "actor", "actor_high")
 # the Claude roles each preset's eval uses: its gate pins (D's classifier is Jev)
 USED_ROLES = {"C": claude_pins.GATE_ROLES["C"], "D": claude_pins.GATE_ROLES["D"]}
@@ -179,6 +178,8 @@ class Work:
     email: dict[str, Any] = field(default_factory=dict[str, Any])
     cls_text: str = ""
     act_text: str = ""
+    # where the case's text stands against the window (`evalrun.measured`, OD-555)
+    measured: dict[str, Any] = field(default_factory=dict[str, Any])
     classification: dict[str, Any] | None = None
     derived: jev_mapping.Derived = jev_mapping.NO_BAND  # preset D: its source case's (step 3)
     plan: policy.Plan | None = None
@@ -543,8 +544,9 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 return
             raw = w.case.path.read_bytes()
             # as `ecf eval run`: the card's expected facts applied (Q1), so runs score alike
-            facts, (cls_text, act_text) = evalrun.case_inputs(w.case, scratch,
-                                                             triggers.redact_injection)  # fmt: skip
+            facts, (cls_text, act_text), measured = evalrun.case_inputs_full(
+                w.case, scratch, triggers.redact_injection
+            )
             msg = ruletest.read_case(raw).parsed
             email = {
                 "from": f"{msg.from_name} <{msg.from_addr}>" if msg.from_name and msg.from_addr
@@ -558,6 +560,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 if not run.open:
                     return
                 w.facts, w.email, w.cls_text, w.act_text = facts, email, cls_text, act_text
+                w.measured = measured
                 if run.source_run is not None:  # an empty answer (a faulted case) fails (P1)
                     w.classification = (got or {}).get(w.case.id) or None
                     w.derived = (derived or {}).get(w.case.id, jev_mapping.NO_BAND)
@@ -625,8 +628,14 @@ def _score(run: Run, w: Work) -> None:
         w.plan, band = evalrun.held(_context(run, w), w.plan, w.derived, run.known, run.rules)
     w.result = evalrun.score(w.case, w.classification, w.plan, w.proposal, w.derived,
                              before_actor=w.before_actor, labels=run.known)  # fmt: skip
-    if band:
-        w.result = w.result.model_copy(update=band)
+    # the rules-alone route, as `ecf eval run` records it, so the window figures can count the
+    # fraud cases only the model could route (OD-555, fix review E1)
+    alone = evalrun.rules_alone(w.case, w.facts, run.rules, run.known, run.schema,
+                                run.opts.sensitivity)  # fmt: skip
+    w.result = w.result.model_copy(update=band | w.measured | {
+        "rule_alone": alone,
+        "model_only_fraud": w.case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
+    })  # fmt: skip
     w.stage = "done"
 
 

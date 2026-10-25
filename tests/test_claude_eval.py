@@ -180,7 +180,13 @@ def test_a_c_run_scores_like_ecf_eval_run_and_counts_for_the_gate(
     assert row["digest"] == key and row["pair"] == "claude/claude"
     result = load_result(Path(row["path"]))
     assert {c.id for c in result.cases} == set(CASES)
+    # each case's text measures and the rules-alone route, as `ecf eval run` (OD-555, E1, E3)
+    assert all(c.prepared_chars and c.rule_alone for c in result.cases)
+    assert {c.id for c in result.cases if c.model_only_fraud} == {
+        c.id for c in result.cases if c.fraud_guard and c.rule_alone != "fraud_guard"
+    }
     m = json.loads(row["metrics"])
+    assert "window" in m
     assert m["confirmed"] == 2 and m["complete"] is True and m["determinism_diffs"] == 0
     assert m["claude"]["pinned"] is True and m["claude"]["sessions"] == 1
     assert m["schema_digest"] == load_schema().digest  # the schema it was asked with
@@ -945,7 +951,7 @@ def test_an_act_claim_records_why_it_went_to_the_high_risk_actor(
 def test_a_round_while_cases_are_still_being_prepared_says_so(
     db_path: Path, clock: FakeClock, root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = evalrun.case_inputs
+    real = evalrun.case_inputs_full
     seen: list[dict[str, Any]] = []
 
     def inputs(case: Any, *args: Any) -> Any:
@@ -955,7 +961,7 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
             seen.append(nxt(db_path, clock, S1))
         return real(case, *args)
 
-    monkeypatch.setattr(evalrun, "case_inputs", inputs)
+    monkeypatch.setattr(evalrun, "case_inputs_full", inputs)
     start(db_path, clock, root)
     (q,) = seen
     assert q["preparing"] is True and len(q["items"]) == 1
@@ -1022,9 +1028,12 @@ def test_both_synthetic_rescores_keep_the_claims_and_the_claude_figures(
     live = load_result(path)
     claims = {c.id: c.claims for c in live.cases}
     assert all(claims.values())
+    alone = {c.id: (c.rule_alone, c.model_only_fraud) for c in live.cases}
     for rescore in (evalrun.rescore_synthetic, evalrun.rescore_through_policy):
         new = load_result(Path(rescore(root, path, clock)["path"]))
         assert {c.id: c.claims for c in new.cases} == claims
+        # the rules-alone route is the run's, or recomputed alike (OD-555, F1)
+        assert {c.id: (c.rule_alone, c.model_only_fraud) for c in new.cases} == alone
         assert (new.summary or {})["claude"] == (live.summary or {})["claude"]
     spawns = cast(dict[str, Any], (live.summary or {})["claude"])["spawns"]  # plan item 4
     assert spawns == spawn_figures(live.cases) and spawns["act"]["claims"] >= 1

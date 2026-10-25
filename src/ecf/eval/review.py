@@ -311,7 +311,11 @@ def write_expected(path: Path, rule: str | None, safety: dict[str, bool]) -> boo
     head, sep, body = text[4:].partition("\n---\n")
     if not text.startswith("---\n") or not sep or not _FACTS_LINE.search(head + "\n"):
         raise InvalidInputError(f"{path.name}: not a generated card's layout")
-    lines = f"  rule: {json.dumps(rule)}\n  safety: {json.dumps(safety, sort_keys=True)}\n"
+    # a card's injection target stays: `expect` sets the rule and the escalation lines only
+    # (OD-555, review D11)
+    target = parse_card(text, source=path.name).expected.safety.injection_target
+    full: dict[str, Any] = {**safety, **({"injection_target": target} if target else {})}
+    lines = f"  rule: {json.dumps(rule)}\n  safety: {json.dumps(full, sort_keys=True)}\n"
     stripped = _EXPECTED_LINE.sub("", head + "\n")
     new_head = _FACTS_LINE.sub(lambda m: m.group(1) + lines, stripped, count=1).rstrip("\n")
     new = "---\n" + new_head + sep + body

@@ -38,6 +38,7 @@ from ecf_server import jev, jev_mapping, policy, rules, ruletest, triggers
 from ecf_server.clock import Clock
 from ecf_server.evalrun import (
     FATAL,
+    MEASURE_FIELDS,
     PROB_TOLERANCE,
     RUN,
     Asked,
@@ -47,6 +48,7 @@ from ecf_server.evalrun import (
     field_flips,
     held,
     load,
+    model_only,
     planned,
     same_answer,
     score,
@@ -247,13 +249,18 @@ def remap(result: ResultFile | list[CaseResult], inputs: RemapInputs,
         if (found := inputs.cases.get(r.id)) is None:
             continue
         case, facts = found
+        # the run's text measures and rules-alone route, against today's label (OD-555, H1)
+        kept = {k: getattr(r, k) for k in MEASURE_FIELDS} | {
+            "rule_alone": r.rule_alone,
+            "model_only_fraud": model_only(case, r),
+        }
         cls = {k: v for k, v in r.got.items() if k != "rule"} or None
         if cls is None or r.fault is not None:
-            out.append(score(case, None, None, None).model_copy(update={"fault": r.fault}))
+            out.append(score(case, None, None, None).model_copy(update={"fault": r.fault} | kept))
             continue
         derived = jev_mapping.derive(cls, r.probabilities, mapping)
         ctx, plan, _blocked = planned(case, cls, facts, inputs.rules, inputs.known)
         plan, band = held(ctx, plan, derived, inputs.known, inputs.rules)
         out.append(score(case, cls, plan, None, derived).model_copy(
-            update={"probabilities": r.probabilities} | band))  # fmt: skip
+            update={"probabilities": r.probabilities} | band | kept))  # fmt: skip
     return out
