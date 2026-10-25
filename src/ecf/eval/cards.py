@@ -11,15 +11,21 @@ Plain-text body
 
 from __future__ import annotations
 
+import hashlib
+import itertools
+import math
 import re
 import unicodedata
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from email.utils import format_datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ecf.errors import InvalidInputError
+from ecf.eval import padbank
 from ecf.schema import FieldKind, derive_labels, load_schema, unlabel_removed
 from ecf.yamlio import load_yaml
 
@@ -33,6 +39,26 @@ PROFILE_TO = {"org": "ap@acme.example", "freemail": "pat-lee@freemail.example"}
 INTERNAL_FACTS = frozenset({"sender_origin", "from_org_address", "impersonates_internal"})
 # computed from the message and the other facts; a card sets facts, never these (pre-gate G8)
 DERIVED_FACTS = frozenset({"keywords", "triggers", "routes"})
+# Long cards (window tuning step 2, branch 3): `{{pad}}` in a card's body is where padding to its
+# `target_chars` goes, drawn from its voice's paragraphs (`padbank`) in an order fixed by the
+# card's id (`pad_order`)
+PAD = "{{pad}}"
+
+
+class QuotedMessage(BaseModel):
+    """An earlier message a long card quotes (window tuning step 2, branch 3); its date is
+    required, so it can't default to the reply's own."""
+
+    model_config = _STRICT
+    from_: str = Field(alias="from")
+    date: datetime
+    body: str
+
+    @field_validator("date")
+    @classmethod
+    def _utc(cls, when: datetime) -> datetime:
+        """A date written without a zone is UTC, so a thread's dates always compare (E1)."""
+        return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
 class InvoiceSpec(BaseModel):
@@ -199,12 +225,126 @@ class Card(BaseModel):
     # adding them changes no other card's confirmation
     signal: str | None = None
     injection_phrase: str | None = None
+    # a long card (window tuning step 2, branch 3): the plain body padded to `target_chars` at
+    # `{{pad}}` (else after the text) in `pad_voice` (default vendor), then a signature, earlier
+    # messages quoted newest first, and a footer, all written by the builder (`plain_text`)
+    target_chars: int | None = Field(default=None, ge=1, le=100_000)
+    pad_voice: Literal["vendor", "internal", "personal"] | None = None
+    signature: str | None = None
+    quoted_thread: list[QuotedMessage] = Field(default_factory=list[QuotedMessage])
+    footer: str | None = None
+
+    def plain_text(self) -> str:
+        """The plain body the builder writes: the card's body, or for a long card its body
+        padded and followed by its signature, quoted thread and footer."""
+        if not self._long():
+            return self.body
+        return self._joined(self._padding())
+
+    def phrase_offsets(self) -> list[tuple[str, int, bool]]:
+        """Where each phrase starts in the plain body, and whether it is in the signature,
+        quoted thread or footer, which preparation moves below a mark, so the eval finds it
+        later than this (window tuning B3); a footer alone is moved only when preparation
+        recognises it, so it isn't flagged. Spacing and case aside, as the run searches."""
+        text, head = self.plain_text(), self._parts(self._padding())[0]
+        out: list[tuple[str, int, bool]] = []
+        for name, phrase in (("signal", self.signal), ("injection_phrase", self.injection_phrase)):
+            words = phrase_fold(phrase or "").split()
+            m = (
+                re.search(r"\s+".join(map(re.escape, words)), text, re.IGNORECASE)
+                if words
+                else None
+            )
+            if m is not None:
+                moved = m.start() >= len(head) and bool(self.signature is not None
+                                                        or self.quoted_thread)  # fmt: skip
+                out.append((name, m.start(), moved))
+        return out
+
+    def _long(self) -> bool:
+        return (self.target_chars is not None or self.signature is not None
+                or bool(self.quoted_thread) or self.footer is not None)  # fmt: skip
+
+    def _bank(self) -> tuple[str, ...]:
+        return padbank.VOICES[self.pad_voice or "vendor"]
+
+    def _padding(self) -> str:
+        """Whole paragraphs, the fewest that bring the plain body to `target_chars` or past it
+        (so at most one paragraph past); none when the text is already that long."""
+        if self.target_chars is None:
+            return ""
+        bank, paras = self._bank(), list[str]()
+        order = pad_order(self.id, len(bank))
+        while len(self._joined("\n\n".join(paras))) < self.target_chars:
+            paras.append(bank[next(order)])
+        return "\n\n".join(paras)
+
+    def _joined(self, pad: str) -> str:
+        head, tail = self._parts(pad)
+        return "\n\n".join(p for p in (head, tail) if p) + "\n"
+
+    def _parts(self, pad: str) -> tuple[str, str]:
+        """The new text (body with its padding) and what follows it (signature, quoted thread,
+        footer), line ends as LF."""
+        body = self.body.replace("\r\n", "\n")
+        if PAD in body:
+            head = body.replace(PAD, pad).strip("\n")
+        else:
+            head = body.strip("\n") + (f"\n\n{pad}" if pad else "")
+        tail: list[str] = []
+        if self.signature is not None:
+            tail.append("-- \n" + _lf(self.signature))
+        if self.quoted_thread:
+            tail.append(_quoted(self.quoted_thread))
+        if self.footer is not None:
+            tail.append(_lf(self.footer))
+        return head, "\n\n".join(tail)
+
+    @model_validator(mode="after")
+    def _long_fields(self) -> Card:
+        if (n := self.body.count(PAD)) > 1:
+            raise ValueError(f"{PAD} may appear at most once in the body ({n} times)")
+        if n and any(PAD in ln and ln != PAD for ln in self.body.splitlines()):
+            raise ValueError(f"{PAD} must be a line of its own")
+        if n and self.target_chars is None:
+            raise ValueError(f"{PAD} in the body needs target_chars")
+        if self.pad_voice is not None and self.target_chars is None:
+            raise ValueError("pad_voice needs target_chars")
+        others = [self.signature or "", self.footer or "", *(m.body for m in self.quoted_thread)]
+        if any(PAD in t for t in others):
+            raise ValueError(f"{PAD} goes in the body only")
+        if not self._long():
+            return self
+        if self.pad_to_mb:
+            raise ValueError("pad_to_mb doesn't go with target_chars, signature, quoted_thread or"
+                             " footer")  # fmt: skip
+        if self.html is not None or self.hidden_text is not None:
+            raise ValueError("target_chars, signature, quoted_thread and footer are for"
+                             " plain-body cards (no html or hidden_text)")  # fmt: skip
+        if self.author == "generated":
+            raise ValueError("a generated card can't be a long card (its padding would make"
+                             " generated cards near-duplicates)")  # fmt: skip
+        if any(not m.body.strip() for m in self.quoted_thread):
+            raise ValueError("each quoted_thread message needs a body")
+        dates = [m.date for m in self.quoted_thread]
+        if any(a <= b for a, b in itertools.pairwise(dates)):
+            raise ValueError("quoted_thread runs newest first (each message older than the one"
+                             " before it)")  # fmt: skip
+        if self.target_chars is not None and (n := len(self._joined(""))) >= self.target_chars:
+            raise ValueError(f"target_chars {self.target_chars} is shorter than the card's text"
+                             f" ({n} characters)")  # fmt: skip
+        return self
 
     @model_validator(mode="after")
     def _generator(self) -> Card:
         if (self.author == "generated") != (self.generator is not None):
             raise ValueError("a generated card names its generator, and only a generated card")
         return self
+
+    def _authored(self) -> str:
+        """The card's own words in a long card: body, signature, quoted bodies, footer."""
+        return "\n".join([self.body.replace(PAD, " "), self.signature or "",
+                          *(m.body for m in self.quoted_thread), self.footer or ""])  # fmt: skip
 
     @model_validator(mode="after")
     def _phrases(self) -> Card:
@@ -214,17 +354,27 @@ class Card(BaseModel):
         phrases = (("signal", self.signal), ("injection_phrase", self.injection_phrase))
         if all(p is None for _, p in phrases):
             return self
-        plain = self.body if self.body.strip() else re.sub(r"<[^>]*>", " ", self.html or "")
+        plain = (self.plain_text() if self.body.strip() or self._long()
+                 else re.sub(r"<[^>]*>", " ", self.html or ""))  # fmt: skip
         text = phrase_fold(plain)
+        # a long card's phrase is the author's words, never the builder's (padding, quote
+        # headers), so the check can't depend on which paragraphs the padding draws (B9)
+        bank = [phrase_fold(x) for x in self._bank()] if self.target_chars is not None else []
         for name, phrase in phrases:
             if phrase is None:
                 continue
             if not (p := phrase_fold(phrase)):
                 raise ValueError(f"{name} is empty")
+            if any(p in para for para in bank):
+                raise ValueError(f"{name} {phrase!r} is in the padding paragraphs; use the"
+                                 " card's own words")  # fmt: skip
             if (n := text.count(p)) != 1:
                 raise ValueError(f"{name} {phrase!r} isn't in the card's plain body" if not n
                                  else f"{name} {phrase!r} is in the body {n} times; it must"
                                  " appear once")  # fmt: skip
+            if self._long() and p not in phrase_fold(self._authored()):
+                raise ValueError(f"{name} {phrase!r} is only in text the builder writes (a quote"
+                                 " header); use the card's own words")  # fmt: skip
         if self.injection_phrase is not None and self.expected.safety.injection_target is None:
             raise ValueError("an injection_phrase needs expected.safety.injection_target")
         return self
@@ -238,6 +388,34 @@ class Card(BaseModel):
         if fields.get("to"):
             return fields
         return {**fields, "to": [PROFILE_TO.get(str(fields.get("profile") or "org"), "")]}
+
+
+def pad_order(card_id: str, n: int) -> Iterator[int]:
+    """The order a card's padding draws its bank's `n` paragraphs: a start and a step coprime to
+    `n`, both from the SHA-256 of its id, so every paragraph comes once before any repeats, no
+    paragraph follows itself, and the order is the same on every Python version (B2)."""
+    h = int.from_bytes(hashlib.sha256(card_id.encode()).digest())
+    steps = [k for k in range(1, n) if math.gcd(k, n) == 1] or [1]
+    start, step = h % n, steps[(h >> 64) % len(steps)]
+    i = 0
+    while True:
+        yield (start + i * step) % n
+        i += 1
+
+
+def _lf(text: str) -> str:
+    return text.replace("\r\n", "\n").strip("\n")
+
+
+def _quoted(thread: list[QuotedMessage]) -> str:
+    """Earlier messages as a mail client quotes them: each under its "On <date>, <sender>
+    wrote:" line with "> " before every line, the older ones nested inside the newer."""
+    block = ""
+    for m in reversed(thread):
+        inner = _lf(m.body) + (f"\n\n{block}" if block else "")
+        quoted = "\n".join(f"> {ln}" if ln else ">" for ln in inner.split("\n"))
+        block = f"On {format_datetime(m.date)}, {m.from_} wrote:\n{quoted}"
+    return block
 
 
 def parse_card(text: str, *, source: str = "card") -> Card:

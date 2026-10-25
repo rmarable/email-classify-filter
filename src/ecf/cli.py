@@ -915,6 +915,12 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
         )
         raise typer.Exit(1)
     typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
+    if report.placed:
+        from ecf.eval.results import placement_line  # noqa: PLC0415
+
+        typer.echo("where the cards' phrases start (window tuning):")
+        for placed in report.placed:
+            typer.echo("  " + placement_line(*placed))
 
 
 def _out(text: str) -> None:
@@ -1173,8 +1179,8 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         if not blind:
             typer.echo(f"   tests: {card.threat}; control: {card.control}")
         typer.echo(f"   from: {card.from_}   subject: {card.subject}")
-        body = " ".join(card.body.split())
-        typer.echo(f"   body: {body[:400]}{'...' if len(body) > 400 else ''}")
+        for line in _label_body(card):
+            typer.echo(line)
         typer.echo(f"   expected: {json.dumps(r['expected'], sort_keys=True)}")
         if card.id in got:
             diff = differences(r["expected"], got[card.id])
@@ -1195,6 +1201,17 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
     )
 
 
+def _label_body(card: Any) -> list[str]:
+    """`ecf eval label`'s view of a card's text: its first 400 characters on one line, or a long
+    card's whole built text (window tuning: its signal can sit past 4,000)."""
+    text = card.plain_text()
+    if text == card.body:
+        body = " ".join(text.split())
+        return [f"   body: {body[:400]}{'...' if len(body) > 400 else ''}"]
+    return [f"   body (a long card, {len(text):,} characters):",
+            *(f"   | {ln}" for ln in text.rstrip().splitlines())]  # fmt: skip
+
+
 @eval_app.command("show")
 def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
     """Show a case the way a mail client would: headers, text, attachments."""
@@ -1208,7 +1225,8 @@ def eval_show(case_id: str, root: RootOpt = EVAL_ROOT) -> None:
         if msg[name]:
             typer.echo(f"{name}: {msg[name]}")
     typer.echo("")
-    typer.echo(card.body.rstrip()[:4000])
+    text = card.plain_text().rstrip()
+    typer.echo(text if card.plain_text() != card.body else text[:4000])  # a long card: all of it
     for att in card.attachments:
         typer.echo(f"[attachment] {att.name}" + (" (generated PDF)" if att.generate else ""))
 

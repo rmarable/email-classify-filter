@@ -95,13 +95,14 @@ def screen(card: Card) -> list[str]:
              if msg[h]]  # fmt: skip
     names = [a.name for a in card.attachments]
     lines.append(f"Attachments: {', '.join(names) or '-'}")
-    text = card.body
+    text = card.plain_text()  # a long card's padding, signature, quote and footer included
+    long = text != card.body
     if card.html and card.html.strip():
         text = ("[HTML part, as displayed; [link: ...] is where each link really goes]\n"
                 + html_shown(card.html))  # fmt: skip
         if card.body.strip():
             text += "\n\n[plain-text part]\n" + card.body
-    if len(text) > SHOWN_CHARS:
+    if len(text) > SHOWN_CHARS and not long:  # a long card is shown whole (B1)
         text = text[:SHOWN_CHARS] + "\n[cut at 4,000 characters]"
     return [plain(x) for x in ("", *lines, "", *text.rstrip().splitlines(), "")]
 

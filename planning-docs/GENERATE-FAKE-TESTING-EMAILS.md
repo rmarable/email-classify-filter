@@ -93,7 +93,8 @@ Evasions are builder options, never hand-encoded:
 | `pad_to_mb` | pads the plain-text part with filler lines to about this size (e.g. 11, past the 10 MB scan limit) |
 | `auth_results` | a list of forged `Authentication-Results` headers to add |
 | `bulk` | adds `List-Id` and `List-Unsubscribe` |
-| `headers` | any other headers, added or overriding the defaults |
+| `target_chars`, `pad_voice` | pads the plain body to at least this many characters (at most one paragraph more) with whole routine paragraphs in the card's voice (`vendor`, the default, `internal` or `personal`; `ecf/eval/padbank.py`), in an order fixed by the card's id, at a `{{pad}}` line in the body (a line of its own, best with a blank line on each side), else after the text; not with `pad_to_mb` (window tuning, OD-555) |
+| `signature`, `quoted_thread`, `footer` | a long reply: the body, then `-- ` and the signature, then the earlier messages (`from`, `date`, `body`, all required; newest first, each under "On <date>, <sender> wrote:" with `> ` lines, older ones nested), then the footer. Plain-body cards only (no `html` or `hidden_text`), never on generated cards; a long card's `signal` and `injection_phrase` are its own words, never padding or a quote header. `ecf eval build` prints where each phrase lands |
 
 ### Attachments
 

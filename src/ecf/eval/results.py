@@ -715,6 +715,24 @@ LENGTH_BANDS = (("up_to_1500", 1500), ("1501_4000", 4000), ("4001_8000", 8000), 
 YES_NO_SAFETY = ("phishing", "payment_related")  # the safety fields counted per band
 
 
+SIGNAL_BAND_NAMES = {"before_1500": "before 1,500", "1500_4000": "1,500-4,000",
+                     "past_4000": "past 4,000"}  # fmt: skip
+NEAR_EDGE = 200  # a phrase this close to a band edge may land in the next one
+
+
+def placement_line(case_id: str, name: str, at: int, moved: bool) -> str:
+    """Where a long card's phrase starts in its built text, and its band (`ecf eval build`,
+    window tuning B3). Text after the card's new text is moved below a mark when the eval
+    prepares it, so it lands later than built."""
+    band = SIGNAL_BAND_NAMES[_band(at, SIGNAL_BANDS, inclusive=False)]
+    if moved:
+        return (f"{case_id}: {name} at {at:,} in the signature, quote or footer (moved below the"
+                f" mark, so later at run time: {band} or later)")  # fmt: skip
+    edge = next((e for _, e in SIGNAL_BANDS if e is not None and abs(at - e) <= NEAR_EDGE), None)
+    near = f"; within {NEAR_EDGE} of {edge:,}: check its band" if edge else ""
+    return f"{case_id}: {name} at {at:,} ({band}{near})"
+
+
 def _band(n: int, bands: tuple[tuple[str, int | None], ...], *, inclusive: bool) -> str:
     return next(name for name, top in bands
                 if top is None or (n <= top if inclusive else n < top))  # fmt: skip
