@@ -954,12 +954,12 @@ def test_a_round_while_cases_are_still_being_prepared_says_so(
     real = evalrun.case_inputs_full
     seen: list[dict[str, Any]] = []
 
-    def inputs(case: Any, *args: Any) -> Any:
+    def inputs(case: Any, *args: Any, **kw: Any) -> Any:
         """Claim a round as soon as the first case is ready, while the rest are prepared."""
         run = claude_eval.current()
         if not seen and run is not None and any(w.stage == "classify" for w in run.works):
             seen.append(nxt(db_path, clock, S1))
-        return real(case, *args)
+        return real(case, *args, **kw)
 
     monkeypatch.setattr(evalrun, "case_inputs_full", inputs)
     start(db_path, clock, root)

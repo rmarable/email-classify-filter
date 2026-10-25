@@ -501,10 +501,13 @@ def test_jev_vs_c_prints_different_inputs(
     run_jev(db_path, clock, root, Fake())
     a = load_result(Path(_path(db_path)))
     c_run = a.model_copy(update={"summary": dict(a.summary or {}) | {
-        "prompt_digest": "c" * 64, "input_format": claude_eval.CLAUDE_INPUT_FORMAT}})  # fmt: skip
+        "prompt_digest": "c" * 64, "input_format": claude_eval.CLAUDE_INPUT_FORMAT,
+        "excerpt_cap": {"classifier_chars": 1500, "actor_chars": 4000}}})  # fmt: skip
     warnings = input_warnings(a, c_run)
     assert any("different prompt" in w for w in warnings)
     assert any("different inputs (input_format" in w for w in warnings)
+    # caps of another kind (Jev's and Claude's share no key): said so, not listed key by key
+    assert "warning: different inputs (excerpt_cap different caps)" in warnings
 
 
 def _jev_result(monkeypatch: pytest.MonkeyPatch, db_path: Path, clock: FakeClock, root: Path,
@@ -752,7 +755,8 @@ def test_a_c_run_records_its_input_format(
     claude_eval.stop(lambda: db.connect(db_path), clock)
     m = json.loads(_row(conn)["metrics"])
     assert m["input_format"] == claude_eval.CLAUDE_INPUT_FORMAT == "claude-v1"
-    assert "excerpt_cap" not in m and m["claude"]["preset"] == "C"
+    assert m["claude"]["preset"] == "C"  # and how much each model read (window tuning)
+    assert m["excerpt_cap"] == {"classifier_chars": 1500, "actor_chars": 4000}
     claude_eval.reset()
     with pytest.raises(InvalidInputError, match="preset C or D"):
         claude_eval.start(lambda: db.connect(db_path), clock, db_path.parent,

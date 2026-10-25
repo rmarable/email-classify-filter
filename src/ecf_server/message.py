@@ -166,12 +166,12 @@ class ParsedMessage:
         return self.excerpts_and_text(redact, prep=prep)[0]
 
     def excerpts_and_text(
-        self, redact: Callable[[str], str], *, prep: bool = True
+        self, redact: Callable[[str], str], *, prep: bool = True, limit: int = CLASSIFIER_CHARS
     ) -> tuple[tuple[str, str], str]:
         """`excerpts`, and the whole redacted text they are cut from (the eval measures it,
-        OD-555)."""
+        OD-555); `limit`: the classifier's window, which only an eval changes (window tuning)."""
         text = redact(self.prepared() if prep else self._body_text())
-        return (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)), text
+        return (_cut(text, limit), _cut(text, ACTOR_CHARS)), text
 
     def prepared(self) -> str:
         """The body for the excerpts (pre-classifier plan step 10): every plain body part, else
