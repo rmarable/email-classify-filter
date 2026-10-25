@@ -103,6 +103,14 @@ uv build                                        # wheel + sdist
   test mailbox that receives only synthetic mail (from V1.2).
 - **Prod:** your real install; it only ever receives tagged releases.
 
+**Running a service from a checkout** (e.g. `uv run ecf-server local --install accept`, outside
+launchd): stop it with SIGTERM or SIGINT sent to the `ecf-server` Python process or to `uv run`
+(uv passes the signal on). A shell wrapped around it doesn't: SIGTERM to `zsh -c '...'` ends the
+shell and leaves the service running. A script or background task that starts the service should
+`exec uv run ecf-server ...`, so the pid it holds is uv's; otherwise find the Python process with
+`pgrep -P <uv pid>`. launchd runs `ecf-server` directly, so its SIGTERM always arrives
+(checked 2026-10-25).
+
 Real-service tests (Keychain, mail, Slack, step-up) run only with the operator's go-ahead; their
 code is throwaway and stays out of the repo, and anything they create is removed afterwards.
 Results are recorded in SPEC §21.1.
