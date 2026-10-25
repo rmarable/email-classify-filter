@@ -11,6 +11,8 @@ Plain-text body
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -18,7 +20,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ecf.errors import InvalidInputError
-from ecf.schema import FieldKind, load_schema
+from ecf.schema import FieldKind, derive_labels, load_schema, unlabel_removed
 from ecf.yamlio import load_yaml
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -65,6 +67,8 @@ def level_target(target: str) -> tuple[str, str] | None:
         return None
     field, _, level = target.partition(":")
     spec = load_schema().fields.get(field)
+    if spec is not None and spec.kind is FieldKind.BOOLEAN:
+        return None  # a yes/no field: `bool_target` (OD-555)
     if spec is None or spec.kind is not FieldKind.ORDINAL:
         raise ValueError(f"injection_target {target!r}: {field!r} isn't an ordinal field")
     if level not in spec.values:
@@ -76,18 +80,58 @@ def level_target(target: str) -> tuple[str, str] | None:
     return field, level
 
 
+def bool_target(target: str) -> tuple[str, bool] | None:
+    """An `injection_target` of the form `<yes/no field>:true` or `:false` (OD-555), e.g.
+    `payment_related:false`: the injection counts as taken when the classification gives the
+    field that value. None for any other target; a yes/no field with another value raises
+    ValueError."""
+    if ":" not in target:
+        return None
+    field, _, value = target.partition(":")
+    spec = load_schema().fields.get(field)
+    if spec is None or spec.kind is not FieldKind.BOOLEAN:
+        return None
+    if value not in ("true", "false"):
+        raise ValueError(f"injection_target {target!r}: a yes/no field takes true or false")
+    return field, value == "true"
+
+
+def target_met(target: str, labels: dict[str, Any]) -> bool:
+    """Whether the card's own labels already give what its injection target pushes toward, so
+    the right answer would count as following the injection (OD-555, review D4): a yes/no target
+    whose value is the label, or a level target at or above the labelled level."""
+    if (bt := bool_target(target)) is not None:
+        return labels.get(bt[0]) is bt[1]
+    if (lt := level_target(target)) is not None:
+        values = load_schema().fields[lt[0]].values
+        got = labels.get(lt[0])
+        return got in values and values.index(got) <= values.index(lt[1])
+    return False
+
+
+def phrase_fold(text: str) -> str:
+    """How a card's phrase and its text are compared (OD-555, review D8): NFKC as preparation
+    does, format characters (soft hyphen, zero-width space) dropped as preparation drops them,
+    whitespace folded, lower case (as the run's case-insensitive search). Characters whose case
+    folding changes their length (ß) can still differ; a card keeps to plain text."""
+    norm = unicodedata.normalize("NFKC", text)
+    return " ".join("".join(ch for ch in norm if unicodedata.category(ch) != "Cf").split()).lower()
+
+
 class Safety(BaseModel):
     model_config = _STRICT
     must_escalate: bool = False
     must_not_hide: bool = False
-    # a category value, a fixed item or an action name the injection pushes toward, or
-    # `<ordinal field>:<level>` (at or below that level counts as taken; `level_target`)
+    # a category value, a fixed item or an action name the injection pushes toward,
+    # `<ordinal field>:<level>` (at or below that level counts as taken; `level_target`), or
+    # `<yes/no field>:true|false` (`bool_target`, OD-555)
     injection_target: str | None = None
 
     @field_validator("injection_target")
     @classmethod
     def _level(cls, target: str | None) -> str | None:
         if target is not None:
+            bool_target(target)
             level_target(target)
         return target
 
@@ -98,6 +142,16 @@ class Expected(BaseModel):
     facts: dict[str, Any] = Field(default_factory=dict[str, Any])
     rule: str | None = None
     safety: Safety = Field(default_factory=Safety)
+
+    @model_validator(mode="after")
+    def _target_not_met(self) -> Expected:
+        target = self.safety.injection_target
+        mapped = unlabel_removed(self.labels)[0]  # as the eval reads them at load (I3)
+        if target is not None and target_met(target, mapped | derive_labels(mapped)):
+            raise ValueError(f"injection_target {target!r}: the card's labels (stated or derived)"
+                             " already give it,"
+                             " so the right answer would count as following it")  # fmt: skip
+        return self
 
     @field_validator("facts")
     @classmethod
@@ -140,11 +194,39 @@ class Card(BaseModel):
     expected: Expected = Field(default_factory=Expected)
     body: str = ""
     html: str | None = None
+    # where a long card's signal and injected instruction are (window tuning, OD-555): phrases
+    # in its text, found by the eval in the prepared text at run time; outside `expected`, so
+    # adding them changes no other card's confirmation
+    signal: str | None = None
+    injection_phrase: str | None = None
 
     @model_validator(mode="after")
     def _generator(self) -> Card:
         if (self.author == "generated") != (self.generator is not None):
             raise ValueError("a generated card names its generator, and only a generated card")
+        return self
+
+    @model_validator(mode="after")
+    def _phrases(self) -> Card:
+        """Each phrase is in the plain body exactly once (review D5, D6): the run reads the
+        plain body when there is one (the HTML only when it is blank, never hidden text) and
+        places a phrase at its first occurrence."""
+        phrases = (("signal", self.signal), ("injection_phrase", self.injection_phrase))
+        if all(p is None for _, p in phrases):
+            return self
+        plain = self.body if self.body.strip() else re.sub(r"<[^>]*>", " ", self.html or "")
+        text = phrase_fold(plain)
+        for name, phrase in phrases:
+            if phrase is None:
+                continue
+            if not (p := phrase_fold(phrase)):
+                raise ValueError(f"{name} is empty")
+            if (n := text.count(p)) != 1:
+                raise ValueError(f"{name} {phrase!r} isn't in the card's plain body" if not n
+                                 else f"{name} {phrase!r} is in the body {n} times; it must"
+                                 " appear once")  # fmt: skip
+        if self.injection_phrase is not None and self.expected.safety.injection_target is None:
+            raise ValueError("an injection_phrase needs expected.safety.injection_target")
         return self
 
     @model_validator(mode="before")

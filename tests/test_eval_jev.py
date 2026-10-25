@@ -193,7 +193,7 @@ def test_a_jev_run_end_to_end_on_the_fake(
     assert KEY not in text and "req_" not in text.lower() and "request_id" not in text
     assert "Updated remittance" not in text  # no message text (I5)
     result = load_result(Path(row["path"]))
-    assert result.format == RESULT_FORMAT == 4
+    assert result.format == RESULT_FORMAT == 5
     assert all(c.tries == 1 and c.fault is None and c.confidence for c in result.cases)
     assert len(fake.cases) == 10 and evalrun.RUN.snapshot()["state"] == "done"
 
@@ -532,7 +532,7 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     old = load_result(path)
     rescore = evalrun.rescore_synthetic if how == "synthetic" else evalrun.rescore_through_policy
     new = load_result(Path(rescore(root, path, clock)["path"]))
-    assert new.format == 4
+    assert new.format == RESULT_FORMAT
     for a, b in zip(old.cases, new.cases, strict=True):
         for k in (*evalrun.KEPT_CASE_FIELDS, "probabilities", "classifier_ms"):
             assert getattr(a, k) == getattr(b, k), (a.id, k)
@@ -545,16 +545,16 @@ def test_a_rescore_keeps_every_jev_field_and_scores_the_same(
     assert s1.get("incomplete_reason") == ("faulted_safety_card" if incomplete else None)
 
 
-def test_format_4_and_the_old_client_message(
+def test_format_5_and_the_old_client_message(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
     root: Path, tmp_path: Path,
 ) -> None:  # fmt: skip
-    """P16: files without `format` read as 1; this ecf writes 4 (step 6's proposal checks); an ecf
+    """P16: files without `format` read as 1; this ecf writes 5 (OD-555's text measures); an ecf
     from step 2 on refuses a file of a later format with a reason, not a validation dump (an ecf
     from before format 2 can't read a format-2 file at all, J9)."""
     del conn
     path = _jev_result(monkeypatch, db_path, clock, root, incomplete=False)
-    assert json.loads(path.read_text())["format"] == 4
+    assert json.loads(path.read_text())["format"] == 5
     raw = json.loads(path.read_text())
     del raw["format"]
     for c in raw["cases"]:
@@ -565,8 +565,8 @@ def test_format_4_and_the_old_client_message(
     assert load_result(older).format == 1
     from ecf.eval import results  # noqa: PLC0415
 
-    monkeypatch.setattr(results, "RESULT_FORMAT", 3)  # a step-3 client
-    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 4\); run `uv"):
+    monkeypatch.setattr(results, "RESULT_FORMAT", 4)  # a client from before OD-555
+    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 5\); run `uv"):
         load_result(path)
 
 
@@ -845,6 +845,11 @@ def test_a_band_holds_the_unsure_cases_live_and_a_remap_agrees(
         r = again[c.id]
         assert (r.actions, r.safety, r.correct, r.held, r.unsure) == (
             c.actions, c.safety, c.correct, c.held, c.unsure), c.id  # fmt: skip
+        # the run's text measures and rules-alone route (OD-555, H1)
+        assert c.prepared_chars is not None
+        for f in evalrun.MEASURE_FIELDS:
+            assert getattr(r, f) == getattr(c, f), (c.id, f)
+        assert (r.rule_alone, r.model_only_fraud) == (c.rule_alone, c.model_only_fraud)
     _clear()
     monkeypatch.setattr(jev_mapping, "load", jev_mapping.JevMapping)
     run_jev(db_path, clock, root, Fake(**_unsure_phishing()))

@@ -1664,6 +1664,8 @@ def status_lines(st: dict[str, Any]) -> list[str]:
     """`ecf eval status`: the running evals, then each recent synthetic run on two lines (its
     score, then its safety checks and gate). Corpus runs (before v3.0.0) were never listed as
     recent (§16.7)."""
+    from ecf.eval.results import window_signal_line  # noqa: PLC0415
+
     cur, cl = st["current"], st.get("claude")
     out: list[str] = []
     if cl is not None:
@@ -1688,6 +1690,8 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                 f"  {m.get('correct')}/{m.get('scored', m.get('confirmed'))} scored cases correct"
                 f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
                 f"{'':30}{safety}"]  # fmt: skip
+        if window := window_signal_line(m):  # window tuning runs (OD-555)
+            out.append(f"{'':30}{window}")
     if not out:
         out.append(f"No eval has run yet: {_ecf('eval run')}")
     return out
@@ -1849,7 +1853,7 @@ def eval_compare(
 
 def _run_lines(run: ResultFile) -> list[str]:
     """One run's figures for `ecf eval compare`, each line indented after the run's letter."""
-    from ecf.eval.results import field_lines  # noqa: PLC0415
+    from ecf.eval.results import field_lines, window_lines  # noqa: PLC0415
 
     out: list[str] = []
     if recall := _recall(dict(run.summary or {})):
@@ -1862,6 +1866,7 @@ def _run_lines(run: ResultFile) -> list[str]:
     out += [f"  {line}" for line in _jev_figures(run.summary)]
     out += [f"  {line}" for line in _decision_figures(run.summary)]
     out += [f"  {line}" for line in field_lines(run)]
+    out += [f"  {line}" for line in window_lines(run.summary)]
     return out
 
 

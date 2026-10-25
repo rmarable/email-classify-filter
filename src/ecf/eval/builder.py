@@ -159,6 +159,9 @@ def build_all(root: Path) -> BuildReport:
                 **({"generator": card.generator} if card.generator else {}),
                 # only when not the default, so older sets keep their version (OD-443)
                 **({"profile": card.profile} if card.profile != "org" else {}),
+                # only when set, so other cards' rows stay as they were (OD-555)
+                **({"signal": card.signal} if card.signal else {}),
+                **({"injection_phrase": card.injection_phrase} if card.injection_phrase else {}),
                 "expected": card.expected.model_dump(mode="json"),
             }
         )

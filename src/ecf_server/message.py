@@ -163,8 +163,15 @@ class ParsedMessage:
     def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
         """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off:
         the body as cut before step 10 (tests compare the two)."""
+        return self.excerpts_and_text(redact, prep=prep)[0]
+
+    def excerpts_and_text(
+        self, redact: Callable[[str], str], *, prep: bool = True
+    ) -> tuple[tuple[str, str], str]:
+        """`excerpts`, and the whole redacted text they are cut from (the eval measures it,
+        OD-555)."""
         text = redact(self.prepared() if prep else self._body_text())
-        return _cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)
+        return (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)), text
 
     def prepared(self) -> str:
         """The body for the excerpts (pre-classifier plan step 10): every plain body part, else
