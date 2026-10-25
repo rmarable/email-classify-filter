@@ -1052,7 +1052,8 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             actor_model=_opt_str(body, "actor_model"),
             actor_high_model=_opt_str(body, "actor_high_model"),
             source_run=_opt_str(body, "source_run"), batch=batch,
-            copy_to=_copy_to(body), for_gate=body.get("for_gate") is not False)  # fmt: skip
+            copy_to=_copy_to(body), for_gate=body.get("for_gate") is not False,
+            **_window_tuning(body))  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip
 
@@ -1062,6 +1063,22 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
     ]
+
+
+def _window_tuning(body: dict[str, Any]) -> dict[str, Any]:
+    """`ecf eval run --claude`'s `classifier_window` and `cases` (window tuning step 2), as
+    `claude_eval.Options` fields; absent or null: the defaults."""
+    out: dict[str, Any] = {}
+    if (window := body.get("classifier_window")) is not None:
+        if isinstance(window, bool) or not isinstance(window, int):
+            raise InvalidInputError("classifier_window must be a whole number")
+        out["classifier_window"] = window
+    if (globs := body.get("cases")) is not None:
+        items = cast(list[Any], globs) if isinstance(globs, list) else None
+        if items is None or not all(isinstance(g, str) for g in items):
+            raise InvalidInputError("cases must be a list of text")
+        out["cases"] = tuple(str(g) for g in items)
+    return out
 
 
 def _statusline(state: ServiceState, session_id: str, body: dict[str, Any]) -> dict[str, Any]:

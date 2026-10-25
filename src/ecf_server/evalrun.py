@@ -119,6 +119,7 @@ from ecf_server.cards import Card
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
+from ecf_server.message import CLASSIFIER_CHARS
 from ecf_server.rules import HIDE_ACTIONS
 
 RUNTIME_CAP_S = 8 * 3600
@@ -1035,15 +1036,21 @@ def case_inputs(case: Case, scratch: ruletest.Scratch,
     return facts, texts
 
 
-def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str], *,
+                     limit: int = CLASSIFIER_CHARS,
                      ) -> tuple[dict[str, Any], tuple[str, str], dict[str, Any]]:  # fmt: skip
-    """`case_inputs`, and the case's measures (`measured`); a corpus message has none."""
+    """`case_inputs`, and the case's measures (`measured`); a corpus message has none. `limit`:
+    the classifier's window (`--classifier-window`); a stored excerpt was cut at the default and
+    refuses another."""
     if case.facts is not None and case.excerpts is not None:
+        if limit != CLASSIFIER_CHARS:
+            raise InvalidInputError(f"case {case.id} has a stored excerpt, cut at"
+                                    f" {CLASSIFIER_CHARS}: no other classifier window")  # fmt: skip
         return case.facts, case.excerpts, {}
     read = ruletest.read_case(case.path.read_bytes())
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {})  # fmt: skip
-    texts, whole = read.parsed.excerpts_and_text(redact)
+    texts, whole = read.parsed.excerpts_and_text(redact, limit=limit)
     return found, texts, measured(case, whole, texts[0])
 
 
@@ -1490,7 +1497,7 @@ def _rescored_summary(before: dict[str, Any], out: list[CaseResult], *,
         else None, fraud_only=o.get("fraud_only") is True))  # fmt: skip
     if o.get("for_gate") is False:  # an experiment stays one
         cast(dict[str, Any], summary["options"])["for_gate"] = False
-    for key in ("switches_off", "measuring"):
+    for key in ("switches_off", "measuring", "classifier_window", "cases"):
         if key in o:
             cast(dict[str, Any], summary["options"])[key] = o[key]
     for key in KEPT_SUMMARY_KEYS:

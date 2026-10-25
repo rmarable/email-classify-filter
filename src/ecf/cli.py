@@ -1261,6 +1261,22 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     batch: Annotated[
         int, typer.Option("--batch", help="With --claude: items per classifier-high spawn (1-5).")
     ] = 1,
+    classifier_window: Annotated[
+        int | None,
+        typer.Option(
+            "--classifier-window",
+            help="With --claude, preset C: the characters of each email the classifier reads"
+            " (500-8000; default 1500); another value is an experiment, never for the gate.",
+        ),
+    ] = None,
+    cases: Annotated[
+        str | None,
+        typer.Option(
+            "--cases",
+            help="With --claude: only cards whose id matches (globs, comma-separated); an"
+            " experiment, never for the gate.",
+        ),
+    ] = None,
     classifier_backend: Annotated[
         str,
         typer.Option(
@@ -1321,6 +1337,11 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                                 " --corpus` and `ecf eval rescore --corpus` still read a"
                                 " corpus")  # fmt: skip
     copy = _copy_folder(copy_to)
+    globs = [g.strip() for g in cases.split(",") if g.strip()] if cases is not None else []
+    if not claude and (classifier_window is not None or cases is not None):
+        raise InvalidInputError("--classifier-window and --cases work only with --claude")
+    if cases is not None and not globs:  # else a mistyped filter would run the whole set
+        raise InvalidInputError("--cases needs at least one pattern")
     if claude:
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
@@ -1331,7 +1352,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                                     " --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy, actor_high_model=actor_high_model,
-                     source_run=source_run, for_gate=not not_for_gate)  # fmt: skip
+                     source_run=source_run, for_gate=not not_for_gate,
+                     classifier_window=classifier_window, cases=globs)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
@@ -1371,21 +1393,36 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
                  root: Path, preset: str, sensitivity: str, fraud_only: bool,
                  classifier_model: str | None, actor_model: str | None,
                  batch: int, copy: Path | None, *, actor_high_model: str | None = None,
-                 source_run: str | None = None, for_gate: bool = True) -> None:  # fmt: skip
+                 source_run: str | None = None, for_gate: bool = True,
+                 classifier_window: int | None = None, cases: list[str] | None = None,
+                 ) -> None:  # fmt: skip
+    # another window or a few cards is an experiment: sent as one, so a service on an older
+    # version, which ignores these options, never pins the run or re-points the gate (W2)
+    tuned = classifier_window not in (None, CLASSIFIER_WINDOW) or bool(cases)
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
             "fraud_only": fraud_only, "classifier_model": classifier_model,
             "actor_model": actor_model, "actor_high_model": actor_high_model,
             "source_run": source_run, "batch": batch,
-            "copy_to": str(copy) if copy else None, "for_gate": for_gate})  # fmt: skip
+            "copy_to": str(copy) if copy else None, "for_gate": for_gate and not tuned,
+            "classifier_window": classifier_window, "cases": cases or None})  # fmt: skip
+        # such a service runs the defaults and its reply doesn't echo the options
+        if tuned and (r.get("classifier_window", CLASSIFIER_WINDOW)
+                      != (classifier_window or CLASSIFIER_WINDOW)
+                      or r.get("cases", []) != (cases or [])):  # fmt: skip
+            raise InvalidInputError("the service didn't take --classifier-window or --cases"
+                                    " (it runs an older version): " + _stop_unwanted(c)
+                                    + ". Restart the service, then run this again")  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
     use = ("the pinned models: counts for the go-live gate" if r["pinned"]
            else NOT_FOR_GATE if r.get("for_gate") is False
            else PRESET_D_ONLY if r["preset"] == "D"
            else _frozen_only(r) or "other models: for comparison only")  # fmt: skip
+    tuning = (f"; classifier window {classifier_window}" if classifier_window is not None
+              else "") + (f"; cases {','.join(cases)}" if cases else "")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
-               f" {r['preset']}, {r['sensitivity']}; {use} ({models}).")  # fmt: skip
+               f" {r['preset']}, {r['sensitivity']}{tuning}; {use} ({models}).")  # fmt: skip
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
                " type /ecf-eval; it uses your Claude plan. The run expires in 24 hours;"
                " `ecf eval stop` ends it.")  # fmt: skip
@@ -1393,6 +1430,24 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
         typer.echo(f"The result is also written to {copy}/ when the run ends.")
     if not fraud_only:
         typer.echo("For a first run, `--fraud-only` uses less of the plan.")
+
+
+def _stop_unwanted(c: Any) -> str:
+    """Stop the run an older service registered without the options. Its stop route ends a
+    running local `ecf eval run` too, so then nothing is stopped (W1)."""
+    try:
+        if c.get("/v1/eval/runs")["current"]["state"] == "running":
+            return (
+                f"the run it registered was left, since stopping it would also stop the"
+                f" local eval running now; once that ends, {_ecf('eval stop')}"
+            )
+        c.request("POST", "/v1/eval/runs/stop", {})
+    except Exception as exc:  # the explanation matters more than the stop
+        return (
+            f"the run it registered couldn't be stopped ({type(exc).__name__}: {exc}); it"
+            f" expires in 24 hours, or {_ecf('eval stop')}"
+        )
+    return "the run it registered was stopped"
 
 
 @eval_app.command("rescore")
@@ -1673,7 +1728,9 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                     if cl["state"] == "preparing" else "")  # fmt: skip
         out += [f"Claude eval {cl['run_id'][:8]}: {cl['state']}, {cl['done']}/{cl['total']}"
                 f" cases scored{prepared}" + (f" ({cl['detail']})" if cl["detail"] else ""),
-                f"  preset {cl['preset']}, {cl['sensitivity']}, {_pin_kind(cl)}"]  # fmt: skip
+                f"  preset {cl['preset']}, {cl['sensitivity']}, {_pin_kind(cl)}"
+                + (f", {t}" if (t := _tuning(cl.get("classifier_window"), cl.get("cases")))
+                   else "")]  # fmt: skip
     if cur["state"] != "idle":
         out.append(f"Eval {cur['run_id'][:8]}: {cur['state']}, {cur['done']}/{cur['total']}"
                    + (f" ({cur['detail']})" if cur["detail"] else ""))  # fmt: skip
@@ -1690,6 +1747,9 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                 f"  {m.get('correct')}/{m.get('scored', m.get('confirmed'))} scored cases correct"
                 f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
                 f"{'':30}{safety}"]  # fmt: skip
+        o: dict[str, Any] = m.get("options") or {}
+        if tuning := _tuning(o.get("classifier_window"), o.get("cases")):
+            out.append(f"{'':30}{tuning}")
         if window := window_signal_line(m):  # window tuning runs (OD-555)
             out.append(f"{'':30}{window}")
     if not out:
@@ -1713,6 +1773,23 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
     "faulted_safety_card": "incomplete: a fraud, escalation or injection card faulted",
     "budget": "stopped after {n} cases: the waiting budget was spent",
 }
+
+
+# the classifier's default window: the service's `message.CLASSIFIER_CHARS` (a test checks)
+CLASSIFIER_WINDOW = 1500
+
+
+def _tuning(window: Any, cases: Any, actor: Any = None) -> str:
+    """A window-tuning run's classifier window (when not the default) and case globs, for
+    `ecf eval status` and `compare` (W3); empty for any other run."""
+    parts = (
+        []
+        if window in (None, CLASSIFIER_WINDOW)
+        else [f"classifier window {window}" + (f" (actor {actor})" if actor else "")]
+    )
+    if isinstance(cases, list) and cases:
+        parts.append("cases " + ",".join(str(g) for g in cast(list[Any], cases)))
+    return ", ".join(parts)
 
 
 # a preset D run passes the gate only on the pinned actors with a source Jev run on D's current
@@ -2061,10 +2138,15 @@ def _claude_figures(run: ResultFile, cases: int) -> list[str]:
     kind = ("pinned" if f.get("pinned") else
             PRESET_D_ONLY if f.get("preset") == "D" else "comparison")  # fmt: skip
     batch = f.get("batch", "unknown")
+    s: dict[str, Any] = dict(run.summary or {})
+    cap: dict[str, Any] = s.get("excerpt_cap") or {}
+    o: dict[str, Any] = s.get("options") or {}
+    tuning = _tuning(cap.get("classifier_chars"), o.get("cases"), cap.get("actor_chars"))
     out = [f"Claude: preset {f.get('preset', '?')}, {f.get('sensitivity', '?')}, {kind}"
            f" ({models}), batch {batch}" + (f", classifications from run"
                                             f" {str(f['source_run'])[:8]}"
-                                            if f.get("source_run") else "")]  # fmt: skip
+                                            if f.get("source_run") else "")
+           + (f", {tuning}" if tuning else "")]  # fmt: skip
     a = f.get("all")
     if isinstance(a, dict):
         al = cast(dict[str, Any], a)

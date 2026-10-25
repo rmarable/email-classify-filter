@@ -50,6 +50,7 @@ decisions 2026-10-02, OD-287 to OD-292).
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import hmac
 import json
@@ -98,11 +99,13 @@ from ecf_server import (
     rules,
     ruletest,
     signals,
+    slack_admin,
     telemetry,
     triggers,
 )
 from ecf_server.clock import Clock, to_ts
 from ecf_server.log_bridge import log
+from ecf_server.message import ACTOR_CHARS, CLASSIFIER_CHARS
 from ecf_server.notify import Notifier
 from ecf_server.telemetry import Hold, Seen, Telemetry
 
@@ -116,7 +119,10 @@ CLAUDE_INPUT_FORMAT = "claude-v1"  # a C run's `input_format`, so Jev vs C print
 # the inputs a D run takes from its source Jev run (P13)
 SOURCE_KEYS = ("schema_digest", "prompt_digest", "input_format", "excerpt_cap")
 # and those a C run on frozen classifications takes from its source C run (step 6, P2)
-C_SOURCE_KEYS = ("schema_digest", "prompt_digest", "read_bytes", "input_format")
+C_SOURCE_KEYS = ("schema_digest", "prompt_digest", "read_bytes", "input_format", "excerpt_cap")
+# `--classifier-window` (window tuning step 2): the characters the classifier may read
+# (8,000 is the widest the plan compares; a wider one waits for a plan that needs it)
+WINDOW_MIN, WINDOW_MAX = 500, 8000
 ACTOR_ROLES = ("actor", "actor_high")
 NO_RUN = ("no Claude eval is waiting: register one with `ecf eval run --claude`, then open"
           " `ecf claude`")  # fmt: skip
@@ -139,6 +145,10 @@ class Options:
     # False: an experiment (`--not-for-gate`), and always on a generated set (eval plan P1): run
     # on the eval agents, never pinned, so the gate never reads it, and the gate's set stays put
     for_gate: bool = True
+    # window tuning (step 2): the classifier's excerpt cut at this many characters instead of
+    # the default, and only the cards whose ids match these globs; either makes an experiment
+    classifier_window: int = CLASSIFIER_CHARS
+    cases: tuple[str, ...] = ()
 
 
 Outcome = ClaimOutcome
@@ -326,6 +336,10 @@ def models_for(conn: sqlite3.Connection, opts: Options,
     keyed["actor_prompt"] = actor_prompt_digest()[:16]  # likewise (OD-523)
     if source_key is not None:
         keyed["jev" if opts.preset == jev_keys.PRESET else "source"] = source_key
+    if opts.classifier_window != CLASSIFIER_CHARS:  # experiments at other windows or on a few
+        keyed["classifier_window"] = str(opts.classifier_window)  # cards keep apart (W6)
+    if opts.cases:
+        keyed["cases"] = ",".join(opts.cases)
     return models, False, "eval-" + claude_pins.key(keyed)
 
 
@@ -468,9 +482,25 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
         raise InvalidInputError("sensitivity must be standard or high")
     if not 1 <= opts.batch <= BATCH_MAX:
         raise InvalidInputError(f"batch must be between 1 and {BATCH_MAX}")
-    if genset.is_generated(opts.root):
+    if not WINDOW_MIN <= opts.classifier_window <= WINDOW_MAX:
+        raise InvalidInputError(f"the classifier window must be between {WINDOW_MIN} and"
+                                f" {WINDOW_MAX} characters")  # fmt: skip
+    window = opts.classifier_window != CLASSIFIER_CHARS
+    if window and (opts.preset != "C" or opts.source_run is not None):
+        raise InvalidInputError("--classifier-window is for preset C asking its own classifier"
+                                " (preset D's classifications are Jev's, and a source run's"
+                                " are already made)")  # fmt: skip
+    # a generated set, another window or a few cards is never the gate's evidence (eval plan
+    # P1; window tuning: a for-gate run counts whatever its size)
+    if genset.is_generated(opts.root) or window or opts.cases:
         opts = replace(opts, for_gate=False)
     cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
+    if opts.cases:  # the set's version stays the whole set's
+        if unmatched := [g for g in opts.cases
+                         if not any(fnmatch.fnmatchcase(c.id, g) for c in cases)]:  # fmt: skip
+            among = " among the fraud cards (--fraud-only)" if opts.fraud_only else ""
+            raise InvalidInputError(f"no case matches --cases {', '.join(unmatched)}{among}")
+        cases = [c for c in cases if any(fnmatch.fnmatchcase(c.id, g) for g in opts.cases)]
     if not cases:
         raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
     conn = connect()
@@ -479,6 +509,8 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
     source: dict[str, Any] = {}
     derived: dict[str, jev_mapping.Derived] = {}
     try:
+        if opts.for_gate:
+            _check_root(conn, opts.root)
         schema = config.current_schema(conn)
         if opts.preset == "D":
             source_run, got, source, derived = _jev_run(conn, version, schema,
@@ -523,6 +555,18 @@ def _thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name="ecf-claude-eval", daemon=True).start()
 
 
+def _check_root(conn: sqlite3.Connection, root: Path) -> None:
+    """A for-gate run re-points the go-live gate at its set (`remember_root`), whatever the
+    set's size: refused on another folder while the gate's set is still there (window tuning
+    L1), so a pilot or partial set can't become the gate's evidence by a missed flag."""
+    stored = slack_admin.setting(conn, evalrun.EVAL_ROOT)
+    if stored and Path(stored) != root.resolve() and (Path(stored) / "labels.jsonl").is_file():
+        raise InvalidInputError(f"the go-live gate's set is at {stored}: a run for the gate on"
+                                f" {root} would point the gate there. Pass --not-for-gate for an"
+                                " experiment; if the set has moved, remove the old folder's"
+                                " labels.jsonl first")  # fmt: skip
+
+
 def _source_key(conn: sqlite3.Connection, source_run: str | None) -> str | None:
     """A source run's `eval_runs.digest`: a D run's Jev gate key, a frozen C run's pin key."""
     if source_run is None:
@@ -545,7 +589,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             raw = w.case.path.read_bytes()
             # as `ecf eval run`: the card's expected facts applied (Q1), so runs score alike
             facts, (cls_text, act_text), measured = evalrun.case_inputs_full(
-                w.case, scratch, triggers.redact_injection
+                w.case, scratch, triggers.redact_injection, limit=run.opts.classifier_window
             )
             msg = ruletest.read_case(raw).parsed
             email = {
@@ -694,6 +738,10 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         summary["prompt_digest"] = claude_review.prompt_digest(run.schema)  # and with (Q4)
         summary["read_bytes"] = read_bytes(run.schema)  # per classify read, user fields (R9)
         summary["input_format"] = CLAUDE_INPUT_FORMAT  # Jev vs C prints "different inputs"
+        # how much of each email the models read: compare prints a difference (window tuning)
+        summary["excerpt_cap"] = {"classifier_chars": run.opts.classifier_window,
+                                  "actor_chars": ACTOR_CHARS}  # fmt: skip
+    summary["options"] |= _window_options(run.opts)
     summary["rules_digest"] = rules.composed_digest(run.schema, None)  # as items (OD-507, P14)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
@@ -714,6 +762,13 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         conn.close()
     run.summary = summary
     log.info("claude_eval.saved", run_id=run.run_id[:8], state=state, cases=len(results))
+
+
+def _window_options(opts: Options) -> dict[str, Any]:
+    """A window-tuning run's options, written only when used (step 2)."""
+    return ({} if opts.classifier_window == CLASSIFIER_CHARS
+            else {"classifier_window": opts.classifier_window}) | (
+        {"cases": list(opts.cases)} if opts.cases else {})  # fmt: skip
 
 
 def _claim_records(run: Run, w: Work) -> list[ClaimRecord]:
@@ -1328,6 +1383,8 @@ def snapshot(run: Run) -> dict[str, Any]:
             "models": {r: run.models[r] for r in used_roles(run.opts)},
             **({"source_run": run.source_run} if run.source_run is not None else {}),
             **({} if run.opts.for_gate else {"for_gate": False}),
+            # echoed so the CLI can tell a service that ignored them (window tuning step 2)
+            "classifier_window": run.opts.classifier_window, "cases": list(run.opts.cases),
             "created_at": to_ts(run.created), "result": run.summary,
         }  # fmt: skip
 

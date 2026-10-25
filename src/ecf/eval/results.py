@@ -382,7 +382,7 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     for key, what in INPUT_KEYS.items():
         va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
         if va is not None and vb is not None and va != vb:
-            line = f"warning: {what} ({key} {str(va)[:16]} vs {str(vb)[:16]})"
+            line = f"warning: {what} ({key} {_differ(va, vb)})"
             if line not in out:
                 out.append(line)
     if (ca := claude_block(a)) is not None and (cb := claude_block(b)) is not None:
@@ -398,6 +398,19 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
             roles = ", ".join(f"{r} {ma.get(r, '-')} vs {mb.get(r, '-')}" for r in differ)
             out.append(f"warning: different models ({roles})")
     return out
+
+
+def _differ(va: object, vb: object) -> str:
+    """Two values of an input key, short: a digest's first 16 characters, or the keys of two
+    caps that differ (`excerpt_cap`: an 8,000 run's from a 1,500 one's, window tuning)."""
+    short = f"{str(va)[:16]} vs {str(vb)[:16]}"
+    if isinstance(va, dict) and isinstance(vb, dict):
+        da, db = cast(dict[str, Any], va), cast(dict[str, Any], vb)
+        if not da.keys() & db.keys():  # another kind of cap (Jev's and Claude's)
+            return "different caps"
+        keys = sorted(str(k) for k in da.keys() | db.keys() if da.get(k) != db.get(k))
+        return ", ".join(f"{k} {da.get(k, '-')} vs {db.get(k, '-')}" for k in keys)
+    return short
 
 
 def claude_block(r: ResultFile) -> dict[str, Any] | None:
