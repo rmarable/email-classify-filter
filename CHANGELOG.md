@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: a Slack post that ecf kept failing to finish (for example when its database was busy) no longer gives up silently; you get the same notice as for any post that didn't reach Slack (OD-557).
 - Fixed: `ecf eval build` no longer prints a generated set's text when a test email fails the hygiene check (it names the field and the kind of finding; `ecf eval generate --dev --show-findings` shows the text), and it escapes control characters in what it prints.
 - Fixed: `ecf eval generate` and `ecf eval grade` no longer leave a command-line model's raw answer on disk after a call, even one you stop with Ctrl-C.
 - Fixed: when `ecf eval generate` or `ecf eval expect` stops because a test email fails the hygiene check, it now says which field and which kind of finding.
