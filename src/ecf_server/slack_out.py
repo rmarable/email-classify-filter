@@ -315,22 +315,51 @@ def _forget(conn: sqlite3.Connection, key: str) -> None:
         conn.execute("DELETE FROM slack_messages WHERE key = ?", (key,))
 
 
-def repost_all(conn: sqlite3.Connection, clock: Clock) -> int:
-    """Queue the posts that still matter again: "Needs you" and the cards of open items. Each
-    edits its card, or re-posts it if the message is gone (`ecf slack reauthorize`). Old alerts,
-    digests and closed items are left alone: re-posting them brought back what you'd deleted
-    (V1.2 review, 2026-09-30)."""
+def repost_all(
+    conn: sqlite3.Connection, clock: Clock, exclude: frozenset[str] = frozenset()
+) -> int:
+    """Queue the posts that still matter again, as last sent: "Needs you" and the cards of open
+    items, except the keys in `exclude` (cards `approvals.repost_cards` renders afresh). Each
+    edits its card, or re-posts it if the message is gone. Old alerts, digests and closed items
+    are left alone: re-posting them brought back what you'd deleted (V1.2 review, 2026-09-30).
+    A card recorded in a channel ecf no longer uses is skipped, so the edit can't fail there and
+    forget the channel in use (OD-557); plain SQL, since `slack_routes` imports this module."""
     rows = conn.execute(
         "SELECT m.post FROM slack_messages m LEFT JOIN items i ON m.key = 'item:' || i.stable_id"
-        " WHERE m.post != '{}' AND (m.key = 'needs-you' OR (i.stable_id IS NOT NULL"
-        " AND i.status IN (SELECT value FROM json_each(?)))) ORDER BY m.created_at, m.key",
-        (json.dumps(sorted(OPEN)),),
+        " WHERE m.post != '{}' AND m.key NOT IN (SELECT value FROM json_each(?))"
+        " AND ((m.key = 'needs-you' AND m.channel = json_extract((SELECT value FROM settings"
+        "  WHERE key = 'slack_summary_channel'), '$'))"
+        " OR (i.stable_id IS NOT NULL AND i.status IN (SELECT value FROM json_each(?))"
+        "  AND EXISTS (SELECT 1 FROM routes r WHERE r.address_id = i.address_id"
+        "   AND r.surface = 'slack' AND r.route_ref = m.channel)))"
+        " ORDER BY m.created_at, m.key",
+        (json.dumps(sorted(exclude)), json.dumps(sorted(OPEN))),
     ).fetchall()
     for r in rows:
         p: dict[str, Any] = json.loads(r["post"])
         jobs.enqueue(conn, clock, jobs.Queue.SLACK_OUT, AddressId(str(p["channel"])),
                      {**p, "op": "post", "pin": False}, timeout_s=TIMEOUT_S)  # fmt: skip
     return len(rows)
+
+
+# Dead posts no later post of the same card has superseded (OD-557). A job row doesn't record which
+# call it made, so any finished post job counts as the card's latest success: a post, an edit, a
+# completion on a gone channel, or a dead job `ecf slack repost` marked done.
+_LIVE_DEAD = (
+    "d.queue = 'slack_out' AND d.state = 'dead' AND json_extract(d.payload, '$.key') IS NOT NULL"
+    " AND NOT EXISTS (SELECT 1 FROM jobs o WHERE o.queue = 'slack_out' AND o.state = 'done'"
+    "  AND json_extract(o.payload, '$.op') = 'post'"
+    "  AND json_extract(o.payload, '$.key') = json_extract(d.payload, '$.key')"
+    "  AND (o.created_at > d.created_at OR (o.created_at = d.created_at AND o.rowid > d.rowid)))"
+)
+
+
+def lost_keys(conn: sqlite3.Connection) -> set[str]:
+    """The keys with a dead post that no later post of the same card has superseded."""
+    rows = conn.execute(
+        f"SELECT DISTINCT json_extract(d.payload, '$.key') FROM jobs d WHERE {_LIVE_DEAD}"  # noqa: S608
+    ).fetchall()
+    return {str(r[0]) for r in rows}
 
 
 def dead_posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:

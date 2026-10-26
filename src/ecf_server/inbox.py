@@ -22,7 +22,7 @@ from typing import Any
 from ecf.errors import ConflictError, InvalidInputError, NotFoundError
 from ecf.ids import StableId
 from ecf.status import OPEN, Status
-from ecf_server import cards, escalations, items, marked, stepup
+from ecf_server import cards, escalations, items, marked, slack_out, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.precheck import item_payment_or_fraud
@@ -105,6 +105,26 @@ def inbox(
     if old:
         return [summary(r) | {"run": marked.run_of(json.loads(r["facts"] or "{}"))} for r in rows]
     return [summary(r) for r in rows]
+
+
+def waiting_lost(conn: sqlite3.Connection) -> int:
+    """How many cards of emails waiting for you didn't reach Slack (`ecf doctor`, `ecf slack
+    repost`; OD-557): the distinct dead posts no later post superseded, of items `inbox` lists
+    (open, not old mail, waiting on you or escalated), plus escalation bursts and roll-ups."""
+    keys = slack_out.lost_keys(conn)
+    sids = [k.removeprefix("item:") for k in keys if k.startswith("item:")]
+    groups = sum(1 for k in keys if k.startswith(("burst:", "rollup:")))
+    if not sids:
+        return groups
+    row = conn.execute(
+        "SELECT count(*) FROM items i WHERE i.stable_id IN (SELECT value FROM json_each(?))"  # noqa: S608
+        " AND i.status IN (SELECT value FROM json_each(?))"
+        " AND (i.status IN (SELECT value FROM json_each(?))"
+        "  OR EXISTS (SELECT 1 FROM escalations e WHERE e.stable_id = i.stable_id))"
+        f" AND NOT {marked.sql('i.')}",
+        (json.dumps(sids), json.dumps(sorted(OPEN)), json.dumps(sorted(PERSON))),
+    ).fetchone()
+    return groups + int(row[0])
 
 
 def summary(r: sqlite3.Row) -> dict[str, Any]:

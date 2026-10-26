@@ -73,10 +73,18 @@ def make_app(paths: Callable[[], Paths]) -> typer.Typer:
 
     @app.command("reauthorize")
     def reauthorize() -> None:
-        """Update the app's permissions, then edit (or re-post) every card ecf posted."""
+        """Update the app's permissions, then put ecf's cards back as `ecf slack repost` does."""
         require_terminal()
         with LocalClient(paths()) as c:
             _reauthorize(c)
+
+    @app.command("repost")
+    def repost() -> None:
+        """Put ecf's cards back in Slack: edits the ones already there; ecf then posts missing
+        approval cards again over the next minutes."""
+        with LocalClient(paths()) as c:
+            for line in repost_lines(c.request("POST", "/v1/slack/refresh")):
+                typer.echo(line)
 
     @app.command("remove")
     def remove(
@@ -194,8 +202,21 @@ def _reauthorize(c: LocalClient) -> None:
             "`ecf slack set-tokens` afterwards."
         )
         typer.prompt("Press Enter when done", default="", show_default=False)
-    n = c.request("POST", "/v1/slack/refresh")["queued"]
-    typer.echo(f"Queued {n} card(s) to edit or re-post.")
+    for line in repost_lines(c.request("POST", "/v1/slack/refresh")):
+        typer.echo(line)
+
+
+def repost_lines(r: dict[str, Any]) -> list[str]:
+    """What putting the cards back did (`ecf slack repost` and `reauthorize`; OD-557)."""
+    lines = [f"Queued {r['queued']} card(s) to edit or re-post."]
+    if r["reposting"]:
+        held = " (once 100 or fewer emails wait for Claude review)" if r["backlog_held"] else ""
+        lines.append(f"{r['reposting']} approval card(s) that aren't in Slack now will be posted"
+                     f" again shortly{held}.")  # fmt: skip
+    if r["not_recovered"]:
+        lines.append(f"{r['not_recovered']} card(s) of emails waiting for you can't be put back in"
+                     " Slack; ecf inbox lists them.")  # fmt: skip
+    return lines
 
 
 def describe(s: dict[str, Any]) -> list[str]:

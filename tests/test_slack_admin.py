@@ -370,12 +370,15 @@ def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
     sender = SlackSender(SlackChat(slack.web(BOT)), clock, FakeNotifier(),
                          sleep=lambda _s: None)  # fmt: skip
     from ecf.ids import AddressId, StableId  # noqa: PLC0415
-    from ecf_server import items  # noqa: PLC0415
+    from ecf_server import approvals, items  # noqa: PLC0415
     from ecf_server.db import write_tx  # noqa: PLC0415
 
     with write_tx(conn):
         conn.execute("INSERT INTO addresses (address_id, email, sensitivity, preset, created_at)"
                      " VALUES ('ap', 'ap@acme.example', 'high', 'C', 'now')")  # fmt: skip
+        # the address's current channel, as the fake Slack records it (it answers C1 with D1)
+        conn.execute("INSERT INTO routes (address_id, surface, route_ref, name)"
+                     " VALUES ('ap', 'slack', 'D1', 'ecf-default-ap')")  # fmt: skip
     one, two = "1" * 64, "2" * 64
     for sid in (one, two):
         items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
@@ -386,7 +389,8 @@ def test_reauthorize_updates_the_manifest_then_edits_or_reposts_every_card(
         pass
     slack.calls.clear()
     slack.fail["chat.update"] = SlackError("chat.update", "message_not_found")
-    assert slack_admin.refresh(conn, clock) == 2  # the open items' cards, not the old digest
+    # the open items' cards, not the old digest
+    assert approvals.repost_cards(conn, clock)["queued"] == 2
     sender.run_once(conn)  # the first was deleted in Slack: posted again
     del slack.fail["chat.update"]
     sender.run_once(conn)  # the second still exists: edited in place

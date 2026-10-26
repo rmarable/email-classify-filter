@@ -361,7 +361,10 @@ testing only: in v3.0.0 none of your mail goes to TypeSafe, and mailboxes can't 
 - `ecf slack set-member <id>` (step-up) moves approvals to a different Slack account. The old one
   keeps working until the new one clicks Confirm.
 - `ecf slack set-tokens` (step-up) replaces both tokens.
-- `ecf slack reauthorize` uses a new configuration token to update the app's permissions.
+- `ecf slack reauthorize` uses a new configuration token to update the app's permissions, then
+  puts ecf's cards back in Slack (as `ecf slack repost` does).
+- `ecf slack repost` puts ecf's cards back in Slack: it updates the cards already there, and cards
+  of emails waiting for your approval that aren't in Slack come back over the next minutes.
 
 If your workspace doesn't let apps create channels, `ecf slack status` says which private channel
 to create and add ecf to.
@@ -548,7 +551,8 @@ an action that failed, may or may not have happened (`failed_unknown`), or seems
 - To close many old items at once: `ecf item resolve --older-than <days> [--address <a>] --reason
   <text>`.
 
-**Slack token revoked:** `ecf slack set-tokens`, then `ecf slack reauthorize`.
+**Slack token revoked:** `ecf slack set-tokens`; then `ecf slack repost` if cards are missing.
+(`ecf slack reauthorize` is only for when Slack says the app is missing a permission.)
 
 **"Mailbox Login Rejected"** (the app password changed or was cancelled): create a new one at your
 provider, then `ecf address set <address> --app-password`. Checks resume and a "Resolved" notice
