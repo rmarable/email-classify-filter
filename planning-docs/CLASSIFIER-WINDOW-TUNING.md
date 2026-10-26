@@ -1,9 +1,11 @@
 # Classifier window tuning (before M8)
 
-- **Status:** draft 8 (2026-10-25; dates are local, US Eastern). Step 1 done (OD-553, f7ab110;
+- **Status:** draft 9 (2026-10-25; dates are local, US Eastern). Step 1 done (OD-553, f7ab110;
   personal-mailbox count below); the business-mailbox count is not done. Step 2 built (OD-555,
-  OD-556; main 3bab1b6). Step 3 (pilot) done: the window matters (below). Steps 4-8 not
-  started.
+  OD-556; main 3bab1b6). Step 3 (pilot) done: the window matters (below). Step 4 built: the
+  long set, 90 operator-confirmed cards in `tests/eval/long/`. Steps 5-8 not started.
+- **Draft 9 changes** (operator, 2026-10-25): the blind check's two checkers run on Opus,
+  not Fable (code and plan reviews stay Fable); a note on the long set's lengths (step 4).
 - **Draft 8 changes** (operator, 2026-10-25): review fixes T1-T10 (the long root's repo
   edits, confirmations at adoption, placement wording, neutral card ids for the blind check).
 - **Draft 7 changes** (operator, 2026-10-25):
@@ -242,15 +244,21 @@ adoption.
 - **Scam cards with the signal at 1,501 to 4,000:** about 30. With fewer than 20 the band is
   report-only (K7; P3's 60 is superseded).
 - **Controls:** about 10 of the scam cards again with the ask before 1,500, as in the pilot.
-- **Benign long mail:** about 30 (newsletters, long threads, quoted replies, a colleague
-  forwarding a phish to report it). None may be flagged; 0 of 30 puts the false-alarm rate's
-  upper 95% bound at 11.4%.
+- **Benign long mail:** about 30 (newsletters, long threads, quoted replies, someone forwarding
+  a phish to report it). None may be flagged; 0 of 30 puts the false-alarm rate's upper 95%
+  bound at 11.4%. As built, the forwarder is a supplier, not a colleague: in the eval (no DNS)
+  mail from the org's own domain always trips the internal-spoofing trigger, which a card's
+  stated `auth_result` can't clear.
 - **At least 20 long injection cards,** honest-scored as in Rules: the scam signal before 1,500,
   the injected instruction after 1,500 in quoted, forwarded, signature or footer text (K7),
   ending by 2,850 as built (the bound for moved text, below), so 4,000 sees it and 1,500
   doesn't. Adoption needs 0 followed of seen.
 - **Lengths:** at least a third of the scam and benign cards run longer than 4,000 in prepared
-  text, so the 4,000 window cuts them as it would cut 39% of the measured mail.
+  text, so the 4,000 window cuts them as it would cut 39% of the measured mail. As built
+  (draft 9 note), lengths fall in two groups, about 1,700-2,300 and 4,400-4,600, with nothing
+  past 4,600 (21% of measured mail runs past 8,000), and the scored asks start at 1,661-2,007,
+  near the bottom of the band. That is enough for 1,500 against 4,000; a later plan for windows
+  above 4,000 needs longer cards and asks spread through the band.
 
 **Placement bounds where a phrase ends at run time** (S3). The eval counts a phrase as seen only
 when all of it is inside the classifier's excerpt (`signal_seen`, src/ecf_server/evalrun.py,
@@ -280,11 +288,14 @@ phrase's length).
   be); every field of the schema labelled. `requires_action` yes on business scams differs from
   the main set's older phishing cards (S10); those aren't relabelled, and the field is
   report-only, outside `correct` and the rule.
-- **Padding voice matches the sender** (`vendor`, `internal`, `personal`), and the ask's position
-  varies: after routine news, mid-thread, in a quoted message, in the signature.
+- **Padding voice matches the sender** (`vendor`, `internal`, `personal`; as built, vendor and
+  personal only, since no card has an internal sender), and the ask's position varies: after
+  routine news, mid-thread, in a quoted message, in the signature.
 
 **Blind check before the operator sees a card** (S5):
-- **Who:** two read-only Fable agents, each on its own.
+- **Who:** two read-only agents, each on its own, on Opus (draft 9, operator 2026-10-25: the
+  question is whether a reader can tell, Opus answers it well, and it is the model the
+  classifier runs on in these evals; code and plan reviews stay Fable, OD-532).
 - **What they see:** only the built email, as `ecf eval show` prints it, pasted into their
   prompt; they get no access to the set's files, since each card sits beside its email. Never
   the card's header: its title, threat, signal and labels give the answer away. Card ids are

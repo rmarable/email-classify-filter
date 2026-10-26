@@ -28,4 +28,4 @@ The rules shared with Codex are in `AGENTS.md` (OD-532, ADR 0033):
 
 ## Path-scoped rules
 
-`.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files. Now: `eval-synthetic.md` (`tests/eval/synthetic/**`) and `roadmap.md` (`docs/roadmap/**`); their text is in `AGENTS.md`, "When you edit these paths", so Codex sees it too, and the rule files point there. An `infra/**` rule arrives with M1.
+`.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files. Now: `eval-synthetic.md` (`tests/eval/synthetic/**` and `tests/eval/long/**`) and `roadmap.md` (`docs/roadmap/**`); their text is in `AGENTS.md`, "When you edit these paths", so Codex sees it too, and the rule files point there. An `infra/**` rule arrives with M1.
