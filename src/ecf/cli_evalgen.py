@@ -202,6 +202,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
             return
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
+        root = root.expanduser().resolve()  # a CLI tool's answer file is named from it
         mode = "dev" if dev else "prod"
         if show_findings:
             _may_show(dev)
@@ -228,11 +229,11 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                                     claude_waiver=claude_generator)  # fmt: skip
         _notice("generator", adapter.provider, yes)
         _checked(adapter)
-        gen.start(root.expanduser(), resume=resume)
+        gen.start(root, resume=resume)
         if seeds_from is not None:
-            shared = gen.share_seeds(root.expanduser(), seeds_from.expanduser().resolve(), mode,
+            shared = gen.share_seeds(root, seeds_from.expanduser().resolve(), mode,
                                      n, m, k)  # fmt: skip
-        run = gen.Run(root.expanduser(), m, n, adapter, mode, k=k, seeds_only=seeds_only,
+        run = gen.Run(root, m, n, adapter, mode, k=k, seeds_only=seeds_only,
                       shared=shared, claude_waiver=claude_generator and adapter.provider ==
                       "claude", echo=typer.echo,
                       show=typer.echo if show_findings else None)  # fmt: skip

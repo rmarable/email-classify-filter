@@ -22,8 +22,9 @@ from ecf.eval import expect as ex
 from ecf.eval import labels as label_file
 from ecf.eval import review
 from ecf.eval import settle as st
-from ecf.eval.builder import build_all
+from ecf.eval.builder import BuildReport, build_all
 from ecf.eval.cards import load_cards
+from ecf.eval.hygiene import Finding
 from tests.test_api_keys import Env
 from tests.test_eval_agree import _ids, _judge  # pyright: ignore[reportPrivateUsage]
 from tests.test_eval_generate import run
@@ -574,3 +575,26 @@ def test_agree_prints_what_it_left_and_why(make: Make, monkeypatch: pytest.Monke
     assert "already confirmed: 18; still waiting for you: 1" in r.output
     assert "for you: 0 (0 whole" in r.output  # the waiting email isn't raised again
     assert "1 of your confirmed emails were edited" in r.output
+
+
+def test_the_expect_gate_names_field_and_kind_but_no_value(
+    make: Make, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, ids = make({}, {})
+    p = ex.plan(root)
+    one = ex.Plan(options={ids[0]: p.options[ids[0]]}, values=p.values)
+    each = ex.combos(one.options[ids[0]])
+    rows = [{"id": ids[0], "variants": [{"labels": v, "rule": None, "safety": ex.DEFAULT_SAFETY,
+                                         "error": "boom"} for v in each]}]  # fmt: skip
+    bad = BuildReport([], [], [Finding(f"{ids[0]}:body", "domain", "realsite.com")])
+
+    def failed(root: Path) -> BuildReport:
+        del root
+        return bad
+
+    monkeypatch.setattr(ex, "build_all", failed)
+    with pytest.raises(
+        InvalidInputError, match=f"after writing the expected outcomes: {ids[0]}:body: domain;"
+    ) as e:
+        ex.apply(root, rows, ON, plan=one)
+    assert "realsite" not in str(e.value)

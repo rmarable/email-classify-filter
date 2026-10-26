@@ -903,13 +903,23 @@ def eval_new_case(
 
 @eval_app.command("build")
 def eval_build(root: RootOpt = EVAL_ROOT) -> None:
-    """Hygiene-scan every card, then build the .eml files and labels.jsonl."""
+    """Hygiene-scan every card, then build the .eml files and labels.jsonl. On a generated set
+    a finding prints its field and kind only: its value is generated text (`ecf eval generate
+    --dev --show-findings` shows values)."""
     from ecf.eval.builder import build_all  # noqa: PLC0415
+    from ecf.eval.cards import load_cards  # noqa: PLC0415
+    from ecf.eval.genset import AUTHOR, is_generated  # noqa: PLC0415
+    from ecf.text import escaped  # noqa: PLC0415
 
     report = build_all(root)
     if report.findings:
+        # a generated set, or its cards copied elsewhere
+        generated = is_generated(root) or any(
+            c.author == AUTHOR for c in load_cards(root / "cases")
+        )
         for f in report.findings:
-            typer.echo(f"FAIL  {f.where}: {f.kind}: {f.value}", err=True)
+            value = "" if generated else f": {escaped(f.value)}"
+            typer.echo(f"FAIL  {f.where}: {f.kind}{value}", err=True)
         typer.echo(
             f"hygiene scan failed: {len(report.findings)} finding(s); nothing built", err=True
         )

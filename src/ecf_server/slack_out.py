@@ -158,6 +158,11 @@ class SlackSender:
 
     def run_once(self, conn: sqlite3.Connection) -> bool:
         self._flush_window(conn)
+        for dead in jobs.expire_claims(conn, self._clock, jobs.Queue.SLACK_OUT):
+            try:
+                self._expired(conn, dead)
+            except Exception as e:  # the job is dead already: never stop the pass or the others
+                log.error("slack.notice_failed", error_type=type(e).__name__)
         job = jobs.claim(conn, self._clock, jobs.Queue.SLACK_OUT, WORKER)
         if job is None:
             return False
@@ -286,6 +291,23 @@ class SlackSender:
         except Exception as e:  # never stops the pass: the dead row and audit are written
             log.error("slack.notice_failed", error_type=type(e).__name__)
 
+    def _expired(self, conn: sqlite3.Connection, job: jobs.Job) -> None:
+        """A job whose claim kept expiring (each pass that claimed it failed before finishing it,
+        say on a busy database) until it dead-lettered: a lost post like any other. Its method
+        isn't known: an update when the card is recorded in Slack, else a post (also when that
+        read fails). A short reply or an archive sends nothing (OD-557)."""
+        p = job.payload
+        if p.get("op") != "post":
+            log.info("slack.dropped", op=str(p.get("op")), code="claim_expired")
+            return
+        try:
+            recorded = message_ref(conn, str(p["key"])) is not None
+        except sqlite3.Error:
+            recorded = False
+        method = "chat.update" if recorded else "chat.postMessage"
+        log.warning("slack.post_failed", code="claim_expired", method=method, state="dead")
+        self._lost(conn, job, p, SlackError(method, "claim_expired"), "unknown")
+
     def _notify(self, conn: sqlite3.Connection, kind: str, detail: str) -> None:
         """Send the notice unless this window has had its share; then count it for the summary."""
         now = self._clock.now()
@@ -344,6 +366,12 @@ class SlackSender:
         existing = message_ref(conn, key)
         ref: ThreadRef | None = None
         pin = bool(p.get("pin"))
+        if existing is not None and _moved(conn, existing.route.channel, route.channel):
+            # recorded in a channel ecf has since replaced: post in the job's channel instead
+            # (editing the old one fails, and the failure would forget the job's channel)
+            _forget(conn, key)
+            existing = None
+            pin = pin or key in PINNED
         if existing is not None:  # a retry or a later edit: never a second post
             try:
                 self._chat.update(existing, card)
@@ -353,12 +381,14 @@ class SlackSender:
                     raise
                 _forget(conn, key)  # deleted in Slack: post it again below
                 pin = pin or key in PINNED  # and pin it again (V1.2 review, 2026-09-30)
+        thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
+        if thread is not None and _moved(conn, thread.route.channel, route.channel):
+            thread = None  # its parent is in a channel ecf replaced: post top-level
         if ref is None:
-            thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
             ident = p.get("identity")
             identity = Identity(str(ident["name"]), str(ident["icon_emoji"])) if ident else None
             ref = self._chat.post(route, card, thread=thread, identity=identity)
-        _remember(conn, self._clock, key, ref, message_ref(conn, str(p.get("thread_key") or "")),
+        _remember(conn, self._clock, key, ref, thread,
                   {k: v for k, v in p.items() if k != "op"})  # fmt: skip
         if pin:
             self._chat.pin(ref)
@@ -482,6 +512,22 @@ def _remember(
             (key, ref.route.channel, ref.ts, thread.ts if thread else None, now, now,
              json.dumps(post)),
         )  # fmt: skip
+
+
+def _moved(conn: sqlite3.Connection, recorded: str, channel: str) -> bool:
+    """A card recorded in a channel ecf no longer posts to, while the job's channel is one it
+    does. A DM is recorded under its D channel, never a route, and posted to the person, so it
+    never counts as moved."""
+    return recorded != channel and _in_use(conn, channel) and not _in_use(conn, recorded)
+
+
+def _in_use(conn: sqlite3.Connection, channel: str) -> bool:
+    """A channel ecf posts to now: an address's or the summary channel (plain SQL, since
+    `slack_routes` imports this module)."""
+    return bool(conn.execute(
+        "SELECT 1 FROM routes WHERE surface = 'slack' AND route_ref = ? UNION ALL"
+        " SELECT 1 FROM settings WHERE key = 'slack_summary_channel' AND value = ?",
+        (channel, json.dumps(channel))).fetchone())  # fmt: skip
 
 
 def _forget(conn: sqlite3.Connection, key: str) -> None:
