@@ -109,6 +109,11 @@ def _plumbing(doc: dict[str, Any]) -> list[str]:
     if kinds:
         lines.append("hygiene drops by finding kind: "
                      + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())))  # fmt: skip
+    on_retry = cast(dict[str, Any], doc.get("refused_on_retry") or {})
+    if on_retry.get("count"):  # within the hygiene drops; their kinds are first-pass kinds
+        lines.append(f"refused on the hygiene retry (counted as hygiene drops): {on_retry['count']}"
+                     " (" + ", ".join(f"{k} {n}" for k, n in sorted(on_retry["kinds"].items()))
+                     + ")")  # fmt: skip
     passed = cast(dict[str, Any], doc.get("retried_passed") or {})
     if passed.get("count"):
         lines.append(f"passed on the hygiene retry: {passed['count']} ("

@@ -45,8 +45,8 @@ def test_a_value_at_a_line_start_is_found(value: str, kind: str, field: str) -> 
 
 
 def test_a_value_after_a_newline_is_read_without_the_n() -> None:
-    assert _found(_card(hidden_text="See below\nsetup.exe")) == [
-        ("t-1:hidden_text", "domain", "setup.exe")]  # fmt: skip
+    assert _found(_card(hidden_text="See below\nsetup.vendorx")) == [
+        ("t-1:hidden_text", "domain", "setup.vendorx")]  # fmt: skip
 
 
 def test_a_reserved_url_ending_a_header_field_is_no_finding() -> None:

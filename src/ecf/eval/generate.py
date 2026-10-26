@@ -11,9 +11,11 @@ email content, seed, wording or label: the prompts carry the published lists, th
 configuration, the safety rules and the output schema, with no style guidance or examples.
 
 Each email is checked as it is made (the card model, the hygiene scan, markup, brands in sender
-names, near-duplicates). A hygiene failure is retried once with the finding kinds named, and
-the kinds of both passes are logged (names only; `--show-findings`, DEV and a terminal only,
-prints the values and writes nothing); any other failure drops the email, and a
+names and sender addresses, near-duplicates). A hygiene failure is retried once with the finding
+kinds named, advice by kind and, for checksum numbers, the values (OD-554: the values reach the
+prompt only), and the kinds of both passes are logged (names only; `--show-findings`, DEV and a
+terminal only, prints the values and writes nothing); a refusal of the retry is a hygiene drop
+(the retry prompt is ecf's, not the seed's); any other failure drops the email, and a
 dropped one is replaced from the group's seed pool (topped up when it runs out) until the count
 is met or 3 times it has been tried. A refusal is recorded and never retried, reworded or
 replaced (decision 10a), so a group can come up short. `work/` keeps append-only logs of every
@@ -76,10 +78,23 @@ SAFETY_RULES = (
     "Rules for every email: use only reserved domain names (names ending in .example or .test,"
     " such as vendor-a.example); name regulators, government agencies and companies by role"
     " in the text only, never as a sender name or domain; phone numbers only 555-0100 to"
-    " 555-0199; no real people's names; bank and card numbers only published examples or"
-    " numbers whose checksum fails; no web addresses outside reserved names; no copied real"
-    " phishing text; plain text only, no HTML."
+    " 555-0199; no real people's names; IBANs, card numbers and routing numbers must fail their"
+    " checksum; no Social Security numbers, crypto wallet addresses, API keys or tokens; no web"
+    " addresses outside reserved names; no copied real phishing text; plain text only, no HTML."
 )
+# The retry's fixed words (OD-554, approved 2026-10-24): the lead sentence, then advice by kind.
+RETRY = ("Your previous answer for this seed broke the rules above: {kinds}. Write it again"
+         " within the rules.")  # fmt: skip
+RETRY_NUMBERS = ("These numbers pass their checksum: {values}. Change the last character of each"
+                 " so it fails.")  # fmt: skip
+RETRY_SSN = ("Don't write a Social Security number; write that it is on file, or show only its"
+             " last four digits as ***-**-1234.")  # fmt: skip
+RETRY_LOCAL = "Use a person's or a role's name before the @, not a domain name."
+NUMBER_KINDS = ("routing number (valid checksum)", "IBAN (valid checksum)",
+                "card number (Luhn-valid)")  # fmt: skip
+SSN_KIND = "SSN-like number"
+LOCAL_KIND = "address local part looks like a domain"
+MAX_QUOTED = 5
 FACT_VALUES = {"auth_result": ("pass", "none", "fail")}
 STAGES = ("seed", "email", "retry")
 
@@ -135,6 +150,7 @@ class Summary:
     dropped: dict[str, int]
     refused: dict[str, int]
     detail: str = ""
+    refused_on_retry: int = 0  # hygiene drops whose retry was refused (OD-554), within `dropped`
 
 
 class Stopped(Exception):
@@ -253,7 +269,8 @@ def seed_prompt(b: Bucket, m: mixmod.Mix, wanted: dict[str, int]) -> str:
 
 
 def email_prompt(b: Bucket, m: mixmod.Mix, seeds: list[dict[str, Any]],
-                 findings: list[str] | None = None) -> str:  # fmt: skip
+                 kinds: list[str] | None = None,
+                 numbers: list[str] | None = None) -> str:  # fmt: skip
     schema_text = load_schema().prompt_block
     numbered = json.dumps([{"seed": i} | {k: s[k] for k in SEED_TEXT_KEYS}
                            for i, s in enumerate(seeds)], ensure_ascii=False)  # fmt: skip
@@ -270,16 +287,35 @@ def email_prompt(b: Bucket, m: mixmod.Mix, seeds: list[dict[str, Any]],
         f"Seeds: {numbered}",
         schema_text,
     ]  # fmt: skip
-    if findings:
-        parts.append("Your previous answer for this seed broke the rules above: "
-                     + ", ".join(findings) + ". Write it again within the rules.")  # fmt: skip
+    if kinds:
+        retry = [RETRY.format(kinds=", ".join(kinds))]
+        if numbers:
+            retry.append(RETRY_NUMBERS.format(values=", ".join(numbers)))
+        if SSN_KIND in kinds:
+            retry.append(RETRY_SSN)
+        if LOCAL_KIND in kinds:
+            retry.append(RETRY_LOCAL)
+        parts.append(" ".join(retry))
     return "\n\n".join(parts)
+
+
+def quoted_numbers(found: list[Finding]) -> list[str]:
+    """The checksum numbers a retry quotes: deduplicated by value, then the first five."""
+    values = [f.value for f in found if f.kind in NUMBER_KINDS]
+    return list(dict.fromkeys(values))[:MAX_QUOTED]
+
+
+def _retry_note(kinds: list[str] | None, flag: str) -> dict[str, Any] | None:
+    """A retry that ended without an answer to check: its first-pass kinds and why."""
+    return None if kinds is None else {"findings": {"first": kinds}, flag: True}
 
 
 SEED_TEXT_KEYS = ("sender_role", "asks", "amount", "urgency", "profile", "auth_result",
                   "sender_seen_before", "bulk", "delivery", "ic3_type")  # fmt: skip
 PROMPT_DIGESTS = {"purpose": _sha(PURPOSE), "recipient": _sha(RECIPIENT),
-                  "safety_rules": _sha(SAFETY_RULES)}  # fmt: skip
+                  "safety_rules": _sha(SAFETY_RULES), "retry": _sha(RETRY),
+                  "retry_numbers": _sha(RETRY_NUMBERS), "retry_ssn": _sha(RETRY_SSN),
+                  "retry_local": _sha(RETRY_LOCAL)}  # fmt: skip
 
 
 def _auth_results(domain: str, result: str) -> list[str]:
@@ -353,7 +389,9 @@ def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[Findin
         return "HTML markup", []
     if (kind := gencheck.markup(texts)) is not None:
         return kind, []
-    if gencheck.named_brand(str(email.get("from_name") or "")):
+    if gencheck.named_brand(str(email.get("from_name") or "")) or any(
+        gencheck.named_brand_address(str(email.get(k) or "")) for k in ("from_address", "reply_to")
+    ):
         return "brand or agency as sender", []
     if not parseaddr(str(email.get("from_address") or ""))[1]:
         return "schema misfit", []
@@ -390,6 +428,9 @@ class Run:
         self.hygiene_kinds: Counter[str] = Counter()  # finding kinds of hygiene drops
         self.retried_kinds: Counter[str] = Counter()  # first-pass kinds of retries that passed
         self.retried_passed = 0
+        # retries the generator refused: hygiene drops, with their first-pass kinds (OD-554)
+        self.refused_on_retry = 0
+        self.refused_on_retry_kinds: Counter[str] = Counter()
         self.usage: Counter[str] = Counter()
         self.calls = 0
         self.seconds = 0.0
@@ -425,6 +466,9 @@ class Run:
         if outcome == "kept" and "retried" in extra:
             self.retried_passed += 1
             self.retried_kinds.update(extra["retried"])
+        if extra.get("refused_on_retry"):
+            self.refused_on_retry += 1
+            self.refused_on_retry_kinds.update(extra.get("findings", {}).get("first") or [])
 
     # Resume: the logs rebuilt into the run's state
 
@@ -514,34 +558,34 @@ class Run:
         return []
 
     def _accept(self, b: Bucket, seed: dict[str, Any], email: dict[str, Any],
-                retried: bool) -> tuple[str, list[str]]:  # fmt: skip
-        """`kept` (with the case id), `retry` (with finding kinds) or a drop reason."""
+                retried: bool) -> tuple[str, list[Finding] | None, str | None]:  # fmt: skip
+        """(outcome, findings, case id): `kept` with the case id, `retry` or `hygiene` with the
+        scan's findings (values for the retry prompt only), or another drop reason."""
         prefix = DEV_PREFIX if self.mode == "dev" else ""
         case_id = f"{prefix}{b.group}-{self.case_no[b.group] + 1:03d}"
         try:
             text = card_text(case_id, b, seed, email, self.adapter.model)
             card = parse_card(text, source=case_id)
         except (ValueError, InvalidInputError) as exc:
-            return ("bad date" if str(exc) == "date" else "schema misfit"), []
+            return ("bad date" if str(exc) == "date" else "schema misfit"), None, None
         reason, found = problems(card, email)
         if reason is not None:
-            return reason, []
+            return reason, None, None
         if self.show is not None:
             stage = "retry" if retried else "first"
             for f in found:
                 self.show(escaped(f"{seed['id']} {b.group} {b.delivery or '-'} {stage}"
                                   f" {f.where} {f.kind}: {f.value}"))  # fmt: skip
-        findings = sorted({f.kind for f in found})
-        if findings:
-            return ("hygiene", findings) if retried else ("retry", findings)
+        if found:
+            return ("hygiene" if retried else "retry"), found, None
         if (why := self.dups.seen(card.body)) is not None:
-            return f"near-duplicate ({why})", []
+            return f"near-duplicate ({why})", None, None
         self.case_no[b.group] += 1
         (self.root / "cases").mkdir(exist_ok=True)
         (self.root / "cases" / f"{case_id}.md").write_text(text, encoding="utf-8")
         self.work.append("proposals", [{"id": case_id, "seed": seed["id"],
                                         "labels": email["labels"]}])  # fmt: skip
-        return "kept", [case_id]
+        return "kept", None, case_id
 
     def _settle(self, b: Bucket, seed: dict[str, Any], outcome: str,
                 case_id: str | None = None,
@@ -592,39 +636,54 @@ class Run:
             self._email_call(group, batch)
 
     def _email_call(self, group: str, batch: list[dict[str, Any]],
-                    findings: list[str] | None = None) -> None:  # fmt: skip
+                    findings: list[Finding] | None = None) -> None:  # fmt: skip
+        """`findings` (a retry): the first pass's findings; their kinds go to the logs, their
+        checksum values to the retry prompt only (OD-554)."""
+        kinds = sorted({f.kind for f in findings}) if findings is not None else None
         b0 = self.buckets[batch[0]["bucket"]]
-        prompt = email_prompt(b0, self.mix, batch, findings)
-        reply = self._ask("retry" if findings else "email", group, prompt,
+        prompt = email_prompt(b0, self.mix, batch, kinds, quoted_numbers(findings or []))
+        reply = self._ask("retry" if kinds else "email", group, prompt,
                           email_schema(len(batch)), [s["id"] for s in batch])  # fmt: skip
-        if reply.status == "refused":
-            for s in batch:
-                self._settle(self.buckets[s["bucket"]], s, "refused")
-            return
         if reply.status != "ok":
             for s in batch:
-                self._settle(self.buckets[s["bucket"]], s, f"call {reply.detail}")
+                if reply.status == "refused":
+                    self._refused(s, kinds)
+                else:
+                    self._settle(self.buckets[s["bucket"]], s, f"call {reply.detail}",
+                                 extra=_retry_note(kinds, "call_failed_on_retry"))  # fmt: skip
             return
         got = {int(e["seed"]): e for e in cast(dict[str, Any], reply.answer)["emails"]}
         for i, s in enumerate(batch):
             b = self.buckets[s["bucket"]]
             email = got.get(i)
             if email is None:
-                self._settle(b, s, "missing from the answer")
+                self._settle(b, s, "missing from the answer",
+                             extra=_retry_note(kinds, "missing_on_retry"))  # fmt: skip
                 continue
             if email["refused"]:
-                self._settle(b, s, "refused")
+                self._refused(s, kinds)
                 continue
-            outcome, more = self._accept(b, s, email, retried=findings is not None)
+            outcome, found, case_id = self._accept(b, s, email, retried=kinds is not None)
             if outcome == "retry":
-                self._email_call(group, [s], more)
+                self._email_call(group, [s], found)
                 continue
             extra: dict[str, Any] = {}
             if outcome == "hygiene":
-                extra = {"findings": {"first": findings or [], "retry": more}}
-            elif outcome == "kept" and findings is not None:
-                extra = {"retried": findings}
-            self._settle(b, s, outcome, more[0] if outcome == "kept" else None, extra)
+                extra = {"findings": {"first": kinds or [],
+                                      "retry": sorted({f.kind for f in found or []})}}  # fmt: skip
+            elif kinds is not None:
+                extra = {"retried": kinds}
+            self._settle(b, s, outcome, case_id, extra)
+
+    def _refused(self, seed: dict[str, Any], kinds: list[str] | None) -> None:
+        """A refusal (decision 10a), or on the retry a hygiene drop with its first-pass kinds:
+        the retry prompt is ecf's, not the seed's (OD-554)."""
+        b = self.buckets[seed["bucket"]]
+        if kinds is None:
+            self._settle(b, seed, "refused")
+        else:
+            self._settle(b, seed, "hygiene", extra={"findings": {"first": kinds, "retry": []},
+                                                    "refused_on_retry": True})  # fmt: skip
 
     def run(self, *, resume: bool) -> Summary:
         empty: tuple[dict[str, list[dict[str, Any]]], set[str], set[str]] = ({}, set(), set())
@@ -661,7 +720,15 @@ class Run:
         dropped: Counter[str] = Counter()
         for (reason, _g), n in self.dropped.items():
             dropped[reason] += n
-        return Summary(state, kept, self.count, dict(dropped), dict(self.refused), detail)
+        return Summary(
+            state,
+            kept,
+            self.count,
+            dict(dropped),
+            dict(self.refused),
+            detail,
+            refused_on_retry=self.refused_on_retry,
+        )
 
 
 def _counts_by_group(c: Counter[tuple[str, str]]) -> dict[str, dict[str, int]]:
@@ -716,6 +783,8 @@ def write_manifest(run: Run, state: str) -> None:
         "kept_seeds": sorted(o["seed"] for o in run.work.read("outcomes")
                              if o.get("outcome") == "kept"),
         "retried_passed": {"count": run.retried_passed, "kinds": dict(run.retried_kinds)},
+        "refused_on_retry": {"count": run.refused_on_retry,
+                             "kinds": dict(run.refused_on_retry_kinds)},
         "repeated_openings": run.dups.repeated_openings(),
         "prompts": PROMPT_DIGESTS | {"schema": load_schema().digest},
         "calls": run.calls, "seconds": round(run.seconds, 1), "usage": dict(run.usage),

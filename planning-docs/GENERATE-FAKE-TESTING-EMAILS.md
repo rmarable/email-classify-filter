@@ -78,7 +78,7 @@ Hello, please note our bank has changed...
 | `review` | optional: why the operator's judgement is needed on this card (a judgement call, or a safety expectation to confirm). `ecf eval label` shows it as a flag and `--show-flags` goes through only flagged cases. Not part of the expected values, so changing it never undoes a confirmation |
 | `author` | `hand` (written or signed off by the operator), `claude` or `gemma` (drafted by a model). Accuracy is reported per author to expose same-model bias |
 | `profile` | who receives the case (OD-443): `org` (default), ACME's AP mailbox `ap@acme.example`, with `acme.example` as org domain and Dana Chief (`dana-chief@acme.example`) in `org_addresses`; or `freemail`, a personal account `pat-lee@freemail.example` with no org domains and Pat Lee and Sam Rivera (`sam-rivera@freemail.example`) in `org_addresses`. Only the eval treats `freemail.example` as a public provider (a stand-in for gmail.com); real gmail.com cases are unit tests only |
-| `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to the profile's address; `date` to 2026-10-01 09:00 UTC). Write addresses without dots in the local part (`pat-lee`, not `pat.lee`): the hygiene scan reads `pat.lee` as a domain |
+| `from`, `to`, `cc`, `reply_to`, `subject`, `date` | the message headers (`to` defaults to the profile's address; `date` to 2026-10-01 09:00 UTC). A dotted local part (`pat.lee`) passes the hygiene scan since OD-554; one that imitates a domain (`paypal.com@…`) fails |
 | `message_id` | optional override; default `<id.hash@synthetic.acme.example>` |
 | `expected` | `labels` (schema fields), `facts` (computed facts), `rule` (the rule that should decide), `safety` (`must_escalate`, `must_not_hide`, `injection_target`: a category value, a fixed item or an action name the injection pushes toward, or `<ordinal field>:<level>` such as `"fraud_risk:low"`, taken when the answer is at or below that level; v3.0.0 S3b, 2026-10-13). `facts` can't set `sender_origin`, `from_org_address` or `impersonates_internal`: those come from the profile |
 
@@ -129,18 +129,23 @@ on:
 - email addresses, URLs and dotted names outside the reserved names. A dotted name counts as a real
   domain unless it ends in a reserved name or a known file extension, so `invoice.pdf` passes and
   `ubs.ch` doesn't. Defanged forms (`paypal[.]com`, `paypal (dot) com`) and non-ASCII hostnames
-  (homoglyphs, IDN TLDs) count too. Authentication-Results property names (`header.from`,
-  `smtp.mailfrom`, …) are not domains;
+  (homoglyphs, IDN TLDs) count too, read after NFKC normalisation (fullwidth and look-alike dots
+  count as ASCII). Authentication-Results property names (`header.from`, `smtp.mailfrom`, …) are
+  not domains. The part of an address before the `@` is never a domain, but one that imitates a
+  domain fails (`paypal.com@…`), as do a lookalike handle (`@paypal.com`), a second address glued
+  to a reserved one and a URL with a dotted name before the `@` of its host part; a file name with
+  a domain word in a middle label (`paypal.com.exe`) fails too (OD-554);
 - phone numbers other than 555-01xx, with or without an area code, plain 10-digit or international;
 - SSN-shaped numbers;
-- card numbers that pass the Luhn check, with spaces, dashes, en dashes or dots between groups;
+- card numbers that pass the Luhn check, with spaces, dashes, en dashes or dots between groups
+  (all zeros pass: a placeholder);
 - IBANs with a valid checksum in any case, even glued to other text, except published examples;
-- 9-digit numbers with a valid US routing-number checksum;
+- 9-digit numbers with a valid US routing-number checksum (`000000000` passes: a placeholder);
 - key and token shapes (AWS keys, Slack tokens, private keys, GitHub tokens, Stripe keys, JWTs,
   Google API keys, GitLab tokens).
 
-Known false positive: a missing space after a full stop (`report.Summary`) reads as a domain; write
-the space.
+Known false positive: a missing space after a full stop (`report.Summary`, also with a look-alike
+dot) reads as a domain; write the space.
 
 Generated PDFs contain only card fields, so scanning the cards covers PDF text. Real names can't be
 detected automatically; review catches them.
