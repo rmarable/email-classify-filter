@@ -612,3 +612,67 @@ def test_the_notice_never_goes_through_slack(
 
     alerts.event(conn, clock, FakeNotifier(), slack_out.ALERT, "x", condition=slack_out.LOST)
     assert conn.execute("SELECT count(*) FROM jobs WHERE queue = 'slack_out'").fetchone()[0] == 0
+
+
+# Commit D: a short reply or a channel's closing to a channel that's gone completes at once.
+
+
+def _ops(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    rows = conn.execute("SELECT kind, outcome FROM slack_calls ORDER BY id").fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def _archive(conn: sqlite3.Connection, clock: FakeClock, channel: str) -> None:
+    jobs.enqueue(
+        conn,
+        clock,
+        jobs.Queue.SLACK_OUT,
+        AddressId(channel),
+        {"op": "archive", "channel": channel},
+        timeout_s=slack_out.TIMEOUT_S,
+    )
+
+
+def test_an_ephemeral_or_archive_to_a_gone_channel_completes_at_once(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    slack_out.enqueue_ephemeral(conn, clock, route=CAP, user=ME, text="the excerpt")
+    _archive(conn, clock, "COLD")
+    web.fail["chat.postEphemeral"] = [SlackError("chat.postEphemeral", "channel_not_found")]
+    web.fail["conversations.archive"] = [SlackError("conversations.archive", "channel_not_found")]
+    assert s.run_once(conn) and s.run_once(conn)
+    assert conn.execute("SELECT count(*) FROM jobs WHERE state != 'done'").fetchone()[0] == 0
+    assert _ops(conn) == [("ephemeral", "channel_gone"), ("archive", "channel_gone")]
+    assert conn.execute("SELECT route_ref FROM routes").fetchone()[0] == "CAP"  # left alone
+    assert not notes.sent
+
+
+def test_an_ephemeral_slack_refuses_is_dropped_without_a_notice(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    slack_out.enqueue_ephemeral(conn, clock, route=CAP, user=ME, text="x" * 5000)
+    web.fail["chat.postEphemeral"] = [SlackError("chat.postEphemeral", "msg_too_long")]
+    s.run_once(conn)
+    [state] = conn.execute("SELECT state FROM jobs").fetchall()
+    assert state[0] == "done" and _ops(conn) == [("ephemeral", "dead")] and not notes.sent
+
+
+def test_an_ephemeral_dropped_on_an_outage_doesnt_count_as_slack_working(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = ChannelWeb(), Notices()
+    web.down["CAP"] = "internal_error"
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "d1" * 32)
+    s.run_once(conn)
+    slack_out.enqueue_ephemeral(conn, clock, route=C2, user=ME, text="hi")
+    web.fail["chat.postEphemeral"] = [SlackError("chat.postEphemeral", "internal_error")]
+    s.run_once(conn)  # dropped, best effort: not a success
+    for _ in range(slack_out.OUTAGE_CAP_HOLDS + 2):
+        clock.advance(slack_out.OUTAGE_HOLD_S)
+        s.run_once(conn)
+    assert _states(conn, f"item:{sid}") == ["queued"] and not notes.sent

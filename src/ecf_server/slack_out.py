@@ -215,6 +215,12 @@ class SlackSender:
         elif exc.code in RATE_LIMITED:
             self._tally.setdefault(job.job_id, _Tally()).rate_hold_s += RATE_HOLD_S
             jobs.hold(conn, self._clock, job.job_id, WORKER, RATE_HOLD_S, exc.code)
+        elif p.get("op") == "ephemeral" or (p.get("op") == "archive" and exc.code in CHANNEL_GONE):
+            # a short reply is best effort, and a gone channel's closing is done already: neither
+            # holds up its channel, nor sends a notice, nor counts as Slack working (OD-557)
+            jobs.complete(conn, job.job_id, WORKER)
+            self._record(conn, job, p, "channel_gone" if exc.code in CHANNEL_GONE else "dead")
+            log.info("slack.dropped", op=str(p.get("op")), code=exc.code)
         elif exc.code in OUTAGE:
             self._outage(conn, job, p, exc)
         elif exc.code in CHANNEL_GONE and p.get("op") == "post":
