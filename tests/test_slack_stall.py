@@ -812,3 +812,88 @@ def test_an_ephemeral_dropped_on_an_outage_doesnt_count_as_slack_working(
         clock.advance(slack_out.OUTAGE_HOLD_S)
         s.run_once(conn)
     assert _states(conn, f"item:{sid}") == ["queued"] and not notes.sent
+
+
+# E15: a post whose claim kept expiring until it dead-lettered is a lost post like any other.
+
+
+def _expire_until_dead(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Each claim taken and never finished (the pass failed after claiming), until the limit."""
+    for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):
+        assert jobs.claim(conn, clock, jobs.Queue.SLACK_OUT, slack_out.WORKER) is not None
+        clock.advance(slack_out.TIMEOUT_S * jobs.CLAIM_FACTOR + 1)
+
+
+def test_a_post_whose_claim_kept_expiring_gives_the_notice_and_one_more_try(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "e1" * 32)
+    _expire_until_dead(conn, clock)
+    assert not s.run_once(conn)  # nothing else to send; the expired claim is reported
+    assert _states(conn, f"item:{sid}") == ["dead"]
+    assert notes.sent == [
+        f"Email {sid[:8]}: its card didn't reach Slack; ecf posts it once more when it can."
+        f" If that fails too, decide it with ecf approve {sid[:8]} or ecf reject {sid[:8]}."
+    ]
+    [row] = _audit(conn)
+    assert json.loads(row["data"])["code"] == "claim_expired"
+    assert approvals.post_held_cards(conn, clock) == 1
+
+
+def test_an_edit_whose_claim_kept_expiring_says_the_card_wasnt_updated(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "e2" * 32)
+    s.run_once(conn)  # posted
+    slack_out.enqueue_post(conn, clock, key=f"item:{sid}", route=CAP, card=Card("an edit"))
+    _expire_until_dead(conn, clock)
+    s.run_once(conn)
+    assert "Its card in Slack wasn't updated" in notes.sent[0]
+
+
+def test_a_short_reply_whose_claim_kept_expiring_sends_nothing(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    slack_out.enqueue_ephemeral(conn, clock, route=CAP, user=ME, text="Approved")
+    _expire_until_dead(conn, clock)
+    s.run_once(conn)
+    assert not notes.sent and not _audit(conn)
+
+
+def test_a_failing_report_of_an_expired_claim_doesnt_stop_the_pass(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A busy database while reporting: logged; the pass goes on to the next job."""
+
+    def busy(*_a: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "e3" * 32)
+    _expire_until_dead(conn, clock)
+    slack_out.enqueue_post(conn, clock, key="daily:x", route=CAP, card=Card("next"))
+    monkeypatch.setattr(SlackSender, "_lost", busy)
+    assert s.run_once(conn)  # the next job is sent
+    assert _states(conn, f"item:{sid}") == ["dead"] and _states(conn, "daily:x") == ["done"]
+
+
+def test_an_expired_claim_whose_record_cant_be_read_is_reported_as_a_post(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy(*_a: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "e4" * 32)
+    _expire_until_dead(conn, clock)
+    monkeypatch.setattr(slack_out, "message_ref", busy)
+    s.run_once(conn)
+    assert notes.sent[0].startswith(f"Email {sid[:8]}: its card didn't reach Slack")

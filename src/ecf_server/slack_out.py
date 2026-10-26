@@ -158,6 +158,11 @@ class SlackSender:
 
     def run_once(self, conn: sqlite3.Connection) -> bool:
         self._flush_window(conn)
+        for dead in jobs.expire_claims(conn, self._clock, jobs.Queue.SLACK_OUT):
+            try:
+                self._expired(conn, dead)
+            except Exception as e:  # the job is dead already: never stop the pass or the others
+                log.error("slack.notice_failed", error_type=type(e).__name__)
         job = jobs.claim(conn, self._clock, jobs.Queue.SLACK_OUT, WORKER)
         if job is None:
             return False
@@ -285,6 +290,23 @@ class SlackSender:
             self._notify(conn, kind, notice_text(kind, short, exc.method, reason, flavour, deaths))
         except Exception as e:  # never stops the pass: the dead row and audit are written
             log.error("slack.notice_failed", error_type=type(e).__name__)
+
+    def _expired(self, conn: sqlite3.Connection, job: jobs.Job) -> None:
+        """A job whose claim kept expiring (each pass that claimed it failed before finishing it,
+        say on a busy database) until it dead-lettered: a lost post like any other. Its method
+        isn't known: an update when the card is recorded in Slack, else a post (also when that
+        read fails). A short reply or an archive sends nothing (OD-557)."""
+        p = job.payload
+        if p.get("op") != "post":
+            log.info("slack.dropped", op=str(p.get("op")), code="claim_expired")
+            return
+        try:
+            recorded = message_ref(conn, str(p["key"])) is not None
+        except sqlite3.Error:
+            recorded = False
+        method = "chat.update" if recorded else "chat.postMessage"
+        log.warning("slack.post_failed", code="claim_expired", method=method, state="dead")
+        self._lost(conn, job, p, SlackError(method, "claim_expired"), "unknown")
 
     def _notify(self, conn: sqlite3.Connection, kind: str, detail: str) -> None:
         """Send the notice unless this window has had its share; then count it for the summary."""

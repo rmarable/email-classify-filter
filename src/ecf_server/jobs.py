@@ -99,20 +99,14 @@ def claim(
     address_id: str | None = None,
 ) -> Job | None:
     """Claim the next ready job (for one address when given), or None. Expired claims are first
-    returned to the queue.
+    returned to the queue (`expire_claims`, which a worker can call first to see what died).
 
     Runs inside one BEGIN IMMEDIATE transaction, so the pick and the claim are atomic.
     """
     now_dt = clock.now()
     now = to_ts(now_dt)
     with write_tx(conn):
-        conn.execute(
-            "UPDATE jobs SET claimed_by = NULL, claim_expires = NULL, "
-            "last_error = 'claim expired', "
-            "state = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END "
-            "WHERE queue = ? AND state = 'claimed' AND claim_expires < ?",
-            (queue.value, now),
-        )
+        _expire(conn, queue, now)
         pick = conn.execute(_NEXT, {"queue": queue.value, "now": now,
                                     "address": address_id}).fetchone()  # fmt: skip
         if pick is None:
@@ -128,6 +122,35 @@ def claim(
         row["max_attempts"],
         row["timeout_s"],
     )
+
+
+def expire_claims(conn: sqlite3.Connection, clock: Clock, queue: Queue) -> list[Job]:
+    """Return the queue's expired claims to it, as `claim` does; the jobs this dead-lettered (at
+    their attempt limit), so a worker can report them (Slack posts, OD-557). A read first, so a
+    pass with nothing expired takes no write lock."""
+    now = to_ts(clock.now())
+    expired = conn.execute(
+        "SELECT 1 FROM jobs WHERE queue = ? AND state = 'claimed' AND claim_expires < ? LIMIT 1",
+        (queue.value, now),
+    ).fetchone()
+    if expired is None:
+        return []
+    with write_tx(conn):
+        rows = _expire(conn, queue, now)
+    return [Job(JobId(r["job_id"]), Queue(r["queue"]), AddressId(r["address_id"]),
+                json.loads(r["payload"]), r["attempts"], r["max_attempts"], r["timeout_s"])
+            for r in rows if r["state"] == "dead"]  # fmt: skip
+
+
+def _expire(conn: sqlite3.Connection, queue: Queue, now: str) -> list[sqlite3.Row]:
+    """Inside the caller's transaction: an expired claim counts as an attempt (taken at claim)."""
+    return conn.execute(
+        "UPDATE jobs SET claimed_by = NULL, claim_expires = NULL, last_error = 'claim expired',"
+        " state = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END"
+        " WHERE queue = ? AND state = 'claimed' AND claim_expires < ?"
+        " RETURNING job_id, queue, address_id, payload, attempts, max_attempts, timeout_s, state",
+        (queue.value, now),
+    ).fetchall()
 
 
 def release_claims(conn: sqlite3.Connection) -> int:
