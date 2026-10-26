@@ -189,7 +189,7 @@ def test_a_give_up_is_one_event_never_resolved_by_a_later_post(
 ) -> None:
     web, n = FakeWeb(), FakeNotifier()
     s = _sender(web, clock, None, n)  # the default notice: the desktop, same title as alerts.event
-    slack_out.enqueue_post(conn, clock, key="digest:ap:1", route=CAP, card=Card("d"))
+    slack_out.enqueue_post(conn, clock, key="daily:2026-10-25", route=CAP, card=Card("d"))
     web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "msg_too_long")]
     s.run_once(conn)
     slack_out.enqueue_post(conn, clock, key="digest:ap:2", route=CAP, card=Card("ok"))
@@ -335,6 +335,11 @@ def test_the_summary_counts_an_escalation_but_not_a_decided_items_card(
         slack_out.enqueue_post(conn, clock, key=f"digest:ap:{i}", route=CAP, card=Card("d"))
         web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
         s.run_once(conn)
+    for i in range(slack_out.ITEM_NOTICES_PER_WINDOW):  # escalations share the 20 (N8)
+        slack_out.enqueue_post(conn, clock, key=f"burst:ap:{i}", route=CAP, card=Card("burst"))
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+        s.run_once(conn)
+    assert len(notes.sent) == slack_out.NOTICES_PER_WINDOW + slack_out.ITEM_NOTICES_PER_WINDOW
     slack_out.enqueue_post(conn, clock, key="burst:ap:x", route=CAP, card=Card("burst"))
     decided = _waiting(conn, clock, "2" * 64)
     approvals.reject(conn, clock, decided, actor="test")
@@ -378,6 +383,8 @@ def test_a_notice_after_a_quiet_window_opens_a_fresh_one(
         ("delayed", "chat.update", "unknown", "", 0, "Email abcd1234 is sending in a few"),
         ("escalation", "chat.postMessage", "refused", "", 1, "An escalation card didn't"),
         ("other_item", "chat.update", "refused", "", 0, "Email abcd1234: its card in Slack"),
+        ("digest", "chat.postMessage", "unknown", "", 1, "A digest for abcd1234 didn't reach"),
+        ("needs_you", "chat.postMessage", "refused", "", 1, "The Needs you list didn't reach"),
         ("none", "chat.postMessage", "refused", "", 1, "A post didn't reach Slack; nothing"),
     ],
 )
@@ -392,7 +399,12 @@ def test_each_notice_leads_with_what_to_do(
         "ecf posts it once more"
         if (reason, deaths) == ("unknown", 1) and kind == "approval"
         else next(
-            (c for c in ("ecf approve", "ecf answer", "ecf cancel", "ecf inbox") if c in text), ""
+            (
+                c
+                for c in ("ecf approve", "ecf answer", "ecf cancel", "ecf digest", "ecf inbox")
+                if c in text
+            ),
+            "",
         )
     )
     assert kind == "none" or text.index(first) < 90
@@ -413,7 +425,9 @@ def test_what_a_lost_post_was(conn: sqlite3.Connection, clock: FakeClock, setup:
     assert kind(conn, "item:" + "5" * 64) == ("none", "")  # no longer kept
     assert kind(conn, "burst:ap:x") == ("escalation", "")
     assert kind(conn, "rollup:ap:2026-10-25T10") == ("escalation", "")
-    assert kind(conn, "needs-you") == ("none", "")
+    assert kind(conn, "needs-you") == ("needs_you", "")
+    assert kind(conn, "digest:ap:2026-10-25T10:00:00.000000Z") == ("digest", "ap")
+    assert kind(conn, "daily:2026-10-25") == ("none", "")
     assert kind(conn, "archive") == ("none", "")
 
 
@@ -530,6 +544,7 @@ def test_dead_post_bookkeeping(conn: sqlite3.Connection, clock: FakeClock, setup
         ("item:new-unknown", "slack:chat.postMessage:some_new_error", False),
         ("item:new-edit", "slack:chat.update:block_mismatch", True),
         ("item:old-form", "slack:invalid_blocks", False),
+        ("item:old-unknown", "slack:some_new_error", False),
         ("item:expired-claim", "claim expired", False),
         ("item:null", None, False),
         ("item:null-with-message", None, True),
@@ -554,11 +569,12 @@ def test_dead_post_bookkeeping(conn: sqlite3.Connection, clock: FakeClock, setup
         "item:new-refused": (1, True),
         "item:new-outage": (1, True),
         "item:new-unknown": (1, False),
-        "item:old-form": (1, False),
+        "item:old-form": (1, True),
+        "item:old-unknown": (1, False),
         "item:expired-claim": (1, False),
         "item:null": (1, False),
     }
-    assert slack_out.refused_keys(conn) == {"item:new-refused", "item:new-outage"}
+    assert slack_out.refused_keys(conn) == {"item:new-refused", "item:new-outage", "item:old-form"}
     assert slack_out.post_deaths(conn, "item:new-edit") == 0
 
 
@@ -612,6 +628,126 @@ def test_the_notice_never_goes_through_slack(
 
     alerts.event(conn, clock, FakeNotifier(), slack_out.ALERT, "x", condition=slack_out.LOST)
     assert conn.execute("SELECT count(*) FROM jobs WHERE queue = 'slack_out'").fetchone()[0] == 0
+
+
+# Diff review fixes (N1-N8).
+
+
+class TickingWeb(FakeWeb):
+    """Moves the clock on by `step` seconds during each post, as a slow Slack call would."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__()
+        self.clock, self.step = clock, 0
+
+    def call(self, method: str, **params: Any) -> dict[str, Any]:
+        self.clock.advance(self.step)
+        return super().call(method, **params)
+
+
+def test_a_notice_decided_after_the_window_ends_mid_pass_is_sent_and_the_summary_too(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """N1: the window ends between the top-of-pass flush and the notice."""
+    web, notes = TickingWeb(clock), Notices()
+    s = _sender(web, clock, notes)
+    for i in range(slack_out.NOTICES_PER_WINDOW + 1):  # five sent, one held for the summary
+        slack_out.enqueue_post(conn, clock, key=f"daily:{i}", route=CAP, card=Card("d"))
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+        s.run_once(conn)
+    clock.advance(int(slack_out.NOTICE_WINDOW.total_seconds()) - 1)
+    web.step = 2  # the hour ends during the call
+    slack_out.enqueue_post(conn, clock, key="daily:late", route=CAP, card=Card("d"))
+    web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+    s.run_once(conn)
+    assert notes.sent[-2].startswith("1 more posts didn't reach Slack")
+    assert notes.sent[-1] == "A post didn't reach Slack; nothing to do unless it repeats."
+
+
+def test_a_failing_slack_calls_row_still_gives_the_audit_row_and_notice(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N2: `_record` raising (a busy database) after the job died."""
+
+    def broken(*_a: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(SlackSender, "_record", broken)
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "a2" * 32)
+    web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+    s.run_once(conn)
+    assert _states(conn, f"item:{sid}") == ["dead"]
+    assert [r["stable_id"] for r in _audit(conn)] == [sid] and len(notes.sent) == 1
+
+
+def test_a_failing_outage_alert_still_gives_the_notice(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N2: the alert write after an outage give-up raising doesn't lose the notice."""
+
+    def broken(*_a: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(SlackSender, "_outage_failed", broken)
+    web, notes = ChannelWeb(), Notices()
+    web.down["CAP"] = "internal_error"
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "a3" * 32)
+    for _ in range(slack_out.OUTAGE_MAX_HOLDS + 1):
+        with pytest.raises(sqlite3.OperationalError):
+            s.run_once(conn)
+        clock.advance(slack_out.OUTAGE_HOLD_S)
+    assert _states(conn, f"item:{sid}") == ["dead"]
+    assert len(notes.sent) == 1 and "Slack didn't take its card for 2 hours" in notes.sent[0]
+
+
+def test_a_short_reply_that_goes_through_doesnt_count_as_slack_working(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """N4: only posts count, so a click's reply can't make an outage look like this card's."""
+    web, notes = ChannelWeb(), Notices()
+    web.down["CAP"] = "internal_error"
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "a4" * 32)
+    s.run_once(conn)
+    slack_out.enqueue_ephemeral(conn, clock, route=C2, user=ME, text="Approved")
+    s.run_once(conn)
+    assert _states(conn, f"item:{sid}") == ["queued"]
+    for _ in range(slack_out.OUTAGE_CAP_HOLDS + 2):
+        clock.advance(slack_out.OUTAGE_HOLD_S)
+        s.run_once(conn)
+    assert _states(conn, f"item:{sid}") == ["queued"] and not notes.sent
+
+
+def test_held_cards_read_the_dead_posts_only_when_a_card_is_missing(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N5: every waiting card has one, so the dead-post scan never runs."""
+
+    def boom(_c: sqlite3.Connection) -> set[str]:
+        raise AssertionError("scanned")
+
+    _waiting(conn, clock, "a5" * 32)  # its card is queued
+    monkeypatch.setattr(slack_out, "refused_keys", boom)
+    assert approvals.post_held_cards(conn, clock) == 0
+
+
+def test_a_sender_being_dropped_sends_the_summary_it_owes(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """N6: a Slack reload or `ecf slack remove` mid-window."""
+    web, notes = FakeWeb(), Notices()
+    s = _sender(web, clock, notes)
+    for i in range(slack_out.NOTICES_PER_WINDOW + 1):
+        slack_out.enqueue_post(conn, clock, key=f"daily:{i}", route=CAP, card=Card("d"))
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+        s.run_once(conn)
+    s.flush_notices(conn)
+    assert notes.sent[-1].startswith("1 more posts didn't reach Slack")
+    s.flush_notices(conn)
+    assert len(notes.sent) == slack_out.NOTICES_PER_WINDOW + 1  # owed once
 
 
 # Commit D: a short reply or a channel's closing to a channel that's gone completes at once.

@@ -294,6 +294,75 @@ def _runtime(
                         make_socket=make_socket)  # fmt: skip
 
 
+def test_ecf_slack_remove_lets_the_sender_send_the_summary_it_owes(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The notice window lives in the sender, which `held` drops (OD-557, N6)."""
+    from ecf_server.slack_out import SlackSender  # noqa: PLC0415
+
+    flushed: list[SlackSender] = []
+
+    def flush(self: SlackSender, _c: sqlite3.Connection) -> None:
+        flushed.append(self)
+
+    monkeypatch.setattr(SlackSender, "flush_notices", flush)
+    store = MemorySecretStore()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, FakeWeb())
+    assert rt.start()
+    with rt.held():
+        assert len(flushed) == 1
+    with rt.held():  # no sender left: nothing owed
+        assert len(flushed) == 1
+
+
+def test_a_failed_connect_keeps_the_sender_for_the_retry(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+) -> None:
+    """Its notice window and outage counts outlast connect retries (OD-557, F1)."""
+    store = MemorySecretStore()
+    _install(conn, clock, store)
+    rt = _runtime(db_path, clock, store, FakeWeb(), fail=True)
+    assert not rt.start()
+    sender = rt._sender  # pyright: ignore[reportPrivateUsage]
+    assert sender is not None
+    assert not rt.start()
+    assert rt._sender is sender  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_reload_gets_a_new_sender_on_the_new_tokens(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ecf slack set-tokens` reloads: the kept sender is dropped, so posts use the new web
+    (OD-557, G1)."""
+    from ecf_server.chat import Card, RouteRef  # noqa: PLC0415
+    from ecf_server.slack_out import enqueue_post  # noqa: PLC0415
+
+    store, webs = MemorySecretStore(), [FakeWeb(), FakeWeb()]
+    _install(conn, clock, store)
+    made = iter(webs)
+    rt = SlackRuntime(clock, FakeNotifier(), lambda: db.connect(db_path), lambda: store,
+                      make_web=lambda _token: next(made),
+                      make_socket=FakeSocket)  # fmt: skip
+    assert rt.start()
+    old = rt._sender  # pyright: ignore[reportPrivateUsage]
+    stop = threading.Event()
+
+    def one_pass() -> bool:
+        stop.set()
+        return False
+
+    monkeypatch.setattr(rt, "run_once", one_pass)
+    rt.reload()
+    rt.run(stop)
+    assert rt._sender is not None and rt._sender is not old  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.undo()
+    enqueue_post(conn, clock, key="k", route=RouteRef("C1"), card=Card("hi"))
+    assert rt.run_once()
+    assert "chat.postMessage" in webs[1].methods()
+    assert "chat.postMessage" not in webs[0].methods()
+
+
 def test_not_installed_stays_idle(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:

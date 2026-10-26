@@ -109,11 +109,12 @@ def inbox(
 
 def waiting_lost(conn: sqlite3.Connection) -> int:
     """How many cards of emails waiting for you didn't reach Slack (`ecf doctor`, `ecf slack
-    repost`; OD-557): the distinct dead posts no later post superseded, of items `inbox` lists
-    (open, not old mail, waiting on you or escalated), plus escalation bursts and roll-ups."""
-    keys = slack_out.lost_keys(conn)
-    sids = [k.removeprefix("item:") for k in keys if k.startswith("item:")]
-    groups = sum(1 for k in keys if k.startswith(("burst:", "rollup:")))
+    repost`; OD-557): the cards that failed to post and weren't posted since, of items `inbox`
+    lists (open, not old mail, waiting on you or escalated), plus escalation bursts and roll-ups
+    with any dead post no later post superseded."""
+    sids = [k.removeprefix("item:") for k in slack_out.failed_post_keys(conn)
+            if k.startswith("item:")]  # fmt: skip
+    groups = sum(1 for k in slack_out.lost_keys(conn) if k.startswith(("burst:", "rollup:")))
     if not sids:
         return groups
     row = conn.execute(

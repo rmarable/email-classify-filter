@@ -99,7 +99,7 @@ you'll see most:
 | `Operator Input Needed: <what> (<address>)` | It says what's needed: approvals waiting at the computer, items going stale, sending is off, the send limit was reached, Claude review is overdue, a send goes out in 10 minutes, a possible second copy of ecf, or a Gmail download limit (new mail just waits; nothing to do). |
 | `Possible Fraud Attempt`, `Regulatory Mail Notice` | Open the card. Check by phone or another channel you trust before acting on the email. |
 | `Mail Provider Unreachable`, `Mailbox Login Rejected` | See [Recovery](admin-guide.md#recovery) in the admin guide. |
-| `Slack Delivery Failed: a post wasn't sent` | The notice says what didn't reach Slack. If it names an email, decide it at your computer with the command it gives (`ecf approve <id>`, `ecf reject <id>`, `ecf answer <id>`, or `ecf cancel <id>` to stop a send that's counting down); `ecf slack repost` puts approval cards back in Slack. Otherwise there's nothing to do unless it repeats. |
+| `Slack Delivery Failed: a post wasn't sent` | The notice says what didn't reach Slack. If it names an email, decide it at your computer with the command it gives (`ecf approve <id>`, `ecf reject <id>`, `ecf answer <id>`, or `ecf cancel <id>` to stop a send that's counting down); `ecf slack repost` puts approval cards back in Slack. If it names a digest, `ecf digest <address>` posts a new one. Otherwise there's nothing to do unless it repeats. |
 | `System Error`, other `Slack Delivery Failed` alerts | Run `ecf doctor`, then see the admin guide. |
 | `Security Notice` | A security setting changed. If it wasn't you, see the admin guide. |
 

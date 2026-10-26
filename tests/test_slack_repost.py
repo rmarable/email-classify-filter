@@ -14,7 +14,7 @@ from ecf.cli_slack import repost_lines
 from ecf.errors import NotFoundError
 from ecf.ids import AddressId, StableId
 from ecf.status import Status
-from ecf_server import answers, approvals, items, slack_admin, slack_doctor, slack_out
+from ecf_server import answers, approvals, inbox, items, slack_admin, slack_doctor, slack_out
 from ecf_server.actions import Planned
 from ecf_server.chat import Card, RouteRef
 from ecf_server.clock import FakeClock, to_ts
@@ -374,6 +374,30 @@ def test_doctor_counts_an_escalation_and_a_question_but_not_old_mail_or_supersed
     slack_out.enqueue_post(conn, clock, key=f"item:{ok}", route=RouteRef("CAP"), card=Card("later"))
     _sent(conn, f"item:{ok}")  # a later post went through: supersedes the dead one
     assert "for 2 card(s)" in _doctor(conn)["detail"]
+
+
+def test_a_card_whose_only_failure_was_an_edit_isnt_counted_as_lost(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """N7: the card is in Slack; only its update failed."""
+    sid = _waiting(conn, clock, "7" * 64)
+    key = f"item:{sid}"
+    _sent(conn, key)
+    slack_out.enqueue_post(conn, clock, key=key, route=RouteRef("CAP"), card=Card("an edit"))
+    _died(conn, key, "slack:chat.update:block_mismatch")
+    assert inbox.waiting_lost(conn) == 0
+
+
+def test_a_card_with_no_channel_yet_isnt_counted_as_coming_back(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """N9: it is posted once the address has a channel, not "shortly"; doctor counts it."""
+    sid = _waiting(conn, clock, "8" * 64)
+    _died(conn, f"item:{sid}")
+    with write_tx(conn):
+        conn.execute("DELETE FROM routes")
+    assert inbox.waiting_lost(conn) == 1
+    assert approvals.repost_cards(conn, clock)["reposting"] == 0
 
 
 def test_doctor_with_only_one_off_posts(
