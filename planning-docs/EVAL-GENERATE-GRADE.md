@@ -1008,7 +1008,7 @@ Fetched 2026-10-19 unless stated. "Unverified" items are checked in step 0.
   previously approved, Anthropic does not allow third party developers to offer claude.ai login or
   rate limits for their products, including agents built on the Claude Agent SDK." Reading
   (operator decision, OD-542): the operator's own DEV runs on their plan are explicitly permitted
-  use; offering ecf's `claude` adapter on other users' plan sign-ins would be the third-party case.
+  use; offering ecf's `claude` adapter on other users' plan sign-ins would be the third-party case. Amended by OD-559 (2026-10-26): ecf never handles the sign-in (it runs each user's own `claude`), so any user may use it on their own plan.
 - **Gemini subscriptions** (not pursued, OD-550; 2026-10-20, research agent, Google's pages, (rv)): Google AI Plus
   ($4.99 or $9.99 by two Google pages), AI Pro ($19.99) and AI Ultra include no API access or
   credit; "Starting June 18, 2026" Gemini CLI and Code Assist stopped serving individual, Pro and
