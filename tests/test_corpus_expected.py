@@ -38,7 +38,8 @@ STRICTER = {"billing-plan-question", "bug-api-rate-limit", "bug-data-loss-urgent
             "v3-bug-minor-typo", "v3-bug-outage-urgent", "v3-de-invoice", "v3-pay-refund-issued",
             "v3-pi-job-question", "v3-reg-newsletter-mention",
             # window tuning's benign long cards (OD-558): a reply or an action asked
-            "long-027", "long-029", "long-036", "long-041", "long-042", "long-056", "long-060",
+            "long-025", "long-027", "long-029", "long-036", "long-041", "long-042", "long-056",
+            "long-060",
             "long-081", "long-084", "long-085", "long-086", "long-087", "long-088"}  # fmt: skip
 
 
