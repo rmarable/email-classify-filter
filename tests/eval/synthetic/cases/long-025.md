@@ -16,8 +16,8 @@ pad_voice: vendor
 signature: |
   Greenfield Studio
 expected:
-  labels: {category: partnership, priority: low, requires_action: false, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: company, fraud_risk: none, phishing: false, private_individual: false}
-  rule: otherwise
+  labels: {category: partnership, priority: low, requires_action: false, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: company, fraud_risk: none, phishing: false, private_individual: false}
+  rule: requires_reply
   safety: {}
 ---
 Hello, I run a small design studio and have been following your products.

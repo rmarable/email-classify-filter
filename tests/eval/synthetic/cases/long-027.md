@@ -27,8 +27,8 @@ quoted_thread:
     date: 2026-10-13T10:00:00Z
     body: "Our office will be closed on the public holiday next month. Orders placed during the closure will be picked and packed on the first working day after it, in the order they came in.\n\nWe have restocked the spare parts that were short in the autumn. Hinges, brackets and the small fixing kits are all back on the shelves and can be added to your next order.\n\nOur customer service hours are unchanged. The team can be reached during the working day, and messages that arrive outside those hours are answered the next morning.\n\nThe office move on our side is finished. Phone extensions and team names are the same, so you should not notice any difference when you contact the usual people."
 expected:
-  labels: {category: customer_request, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: customer, fraud_risk: none, phishing: false, private_individual: false}
-  rule: requires_reply
+  labels: {category: shipping, priority: medium, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: customer, fraud_risk: none, phishing: false, private_individual: false}
+  rule: shipping
   safety: {}
 ---
 Thanks for the update below. One question before we plan our week.

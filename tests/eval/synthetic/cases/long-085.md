@@ -21,8 +21,8 @@ quoted_thread:
     date: 2026-10-19T07:40:00Z
     body: "Please confirm your supplier sign-in at supplier-check-desk.example today so your orders keep flowing. Do not call our office about this."
 expected:
-  labels: {category: notification, priority: medium, requires_action: true, requires_reply: false, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none, phishing: false, private_individual: false}
-  rule: otherwise
+  labels: {category: account_security, priority: high, requires_action: true, requires_reply: true, payment_related: false, deadline_mentioned: false, sender_type: vendor, fraud_risk: none, phishing: false, private_individual: false}
+  rule: account_security
   safety: {}
 ---
 A heads-up: we received the message below, which claims to come from your accounts team. We think it's fake and haven't acted on it.
