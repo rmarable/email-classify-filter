@@ -19,8 +19,10 @@ ordered per channel and sent one at a time, at most one per second per channel.
 - A post that gives up is one notice, `Slack Delivery Failed: a post wasn't sent`, on the desktop
   and by email if routed, never in Slack; worded by what was lost and what to do; at most 5 an
   hour (20 for cards of emails waiting for you), then one summary. An email's card also gets an
-  audit row. A refused card isn't posted again by itself (`refused_keys`); `ecf slack repost`
-  brings it back; `ecf doctor` counts them (OD-557).
+  audit row. A refused card isn't posted again by itself (`refused_keys`), nor one given up while
+  other posts got through; one given up after 2 hours of Slack's silence is, once, like any other
+  (operator decision 2026-10-26). `ecf slack repost` brings them back; `ecf doctor` counts them
+  (OD-557).
 - Each job that completes (posted, given up, or its channel gone) leaves one `slack_calls` row:
   queued and done times, tries, seconds in Slack calls, rate-limit holds and pacing, the key's
   kind only (OD-507). `ecf stats` reads it; pruned with the logs, not in the bundle.
@@ -78,6 +80,7 @@ OUTAGE = frozenset({"internal_error", "service_unavailable", "fatal_error", "req
 OUTAGE_HOLD_S = 60
 OUTAGE_CAP_HOLDS = 15  # about 15 minutes, when other posts get through meanwhile
 OUTAGE_MAX_HOLDS = 120  # about 2 hours, whatever else happens
+QUIET = ":quiet"  # ends a give-up's `last_error` after 2 hours of silence: not this card's fault
 POST_BACKOFF_S = (30, 60, 120, 300)  # unknown codes: about 8.5 minutes, then dead
 
 # A post that gives up is one notice (desktop, and email if routed; never Slack, so a refused
@@ -263,7 +266,8 @@ class SlackSender:
             jobs.hold(conn, self._clock, job.job_id, WORKER, OUTAGE_HOLD_S, exc.code)
             self._outage_failed(conn, exc.code)
             return
-        jobs.fail(conn, self._clock, job.job_id, WORKER, _error(exc), final=True)
+        error = _error(exc) + (QUIET if flavour == "quiet" else "")
+        jobs.fail(conn, self._clock, job.job_id, WORKER, error, final=True)
         log.warning("slack.post_failed", code=exc.code, method=exc.method, state="dead")
         self._lost(conn, job, p, exc, "outage", flavour)
         self._outage_failed(conn, exc.code)
@@ -590,9 +594,10 @@ def lost_keys(conn: sqlite3.Connection) -> set[str]:
 def _dead_posts(conn: sqlite3.Connection, key: str | None = None) -> dict[str, tuple[int, bool]]:
     """Per key, its unsuperseded dead posts as (how many, refused). Only `chat.postMessage`
     deaths count (a failed edit doesn't stop the card being posted later); refused means Slack
-    refused the post or an outage gave it up. A death that names no method (a claim that
-    expired, or written before OD-557) counts as a post when the key has no message (it can
-    only have been a post), and as refused when its older `slack:<code>` is one of those."""
+    refused the post or an outage gave it up while other posts got through (one given up after 2
+    hours of silence wasn't this card's trouble, so it isn't). A death that names no method (a
+    claim that expired, or written before OD-557) counts as a post when the key has no message
+    (it can only have been a post), and as refused when its older `slack:<code>` is one of those."""
     sql = (f"SELECT json_extract(d.payload, '$.key') AS k, d.last_error,"  # noqa: S608
            " EXISTS (SELECT 1 FROM slack_messages m WHERE m.key = json_extract(d.payload, '$.key'))"
            f" AS has_message FROM jobs d WHERE {_LIVE_DEAD}")  # fmt: skip
@@ -602,25 +607,27 @@ def _dead_posts(conn: sqlite3.Connection, key: str | None = None) -> dict[str, t
         args = (key,)
     out: dict[str, tuple[int, bool]] = {}
     for r in conn.execute(sql, args):
-        method, code = _parse_error(r["last_error"])
+        method, code, quiet = _parse_error(r["last_error"])
         if method != "chat.postMessage" and (method is not None or r["has_message"]):
             continue
         n, was = out.get(str(r["k"]), (0, False))
-        out[str(r["k"])] = (n + 1, was or code in REFUSED | OUTAGE)
+        out[str(r["k"])] = (n + 1, was or (code in REFUSED | OUTAGE and not quiet))
     return out
 
 
-def _parse_error(error: str | None) -> tuple[str | None, str | None]:
-    """`slack:<method>:<code>` (OD-557), or the older `slack:<code>`, or anything else."""
+def _parse_error(error: str | None) -> tuple[str | None, str | None, bool]:
+    """`slack:<method>:<code>` (OD-557), with `QUIET` after an outage's 2 hours of silence, or the
+    older `slack:<code>`, or anything else; as (method, code, quiet)."""
     if not error or not error.startswith("slack:"):
-        return None, None
-    method, _, code = error.removeprefix("slack:").rpartition(":")
-    return (method or None), code
+        return None, None, False
+    quiet = error.endswith(QUIET)
+    method, _, code = error.removeprefix("slack:").removesuffix(QUIET).rpartition(":")
+    return (method or None), code, quiet
 
 
 def refused_keys(conn: sqlite3.Connection) -> set[str]:
-    """The cards `post_held_cards` leaves alone: refused (or given up in an outage), or failed
-    twice; one automatic re-post after any other give-up (OD-557)."""
+    """The cards `post_held_cards` leaves alone: refused (or given up in an outage while other
+    posts got through), or failed twice; one automatic re-post after any other give-up (OD-557)."""
     return {k for k, (n, refused) in _dead_posts(conn).items() if refused or n >= 2}
 
 
@@ -669,8 +676,7 @@ _NOTICES = {  # the other kinds' notices; {e} is "Email <id>", {s} the id (a dig
 }
 _NO_NOTICE = "A post didn't reach Slack; nothing to do unless it repeats."
 _CAUSES = {"refused": "Slack refused its card",
-           "cap": "Slack couldn't take its card while other posts went through",
-           "quiet": "Slack didn't take its card for 2 hours"}  # fmt: skip
+           "cap": "Slack couldn't take its card while other posts went through"}  # fmt: skip
 
 
 def notice_text(kind: str, short: str, method: str, reason: str, flavour: str,
@@ -689,7 +695,9 @@ def notice_text(kind: str, short: str, method: str, reason: str, flavour: str,
 
 def _approval_notice(email: str, short: str, method: str, reason: str, flavour: str,
                      deaths: int) -> str:  # fmt: skip
-    """In this order: an edit; refused, then an outage give-up; a second failure; else once more."""
+    """In this order: an edit; refused, then an outage give-up while other posts got through; a
+    second failure, whatever caused it; else once more (after 2 hours of Slack's silence, saying
+    so)."""
     decide = f"decide it with ecf approve {short} or ecf reject {short}"
     if method == "chat.update":
         return (f"{email}: {decide}. Its card in Slack wasn't updated and its buttons may not"
@@ -702,8 +710,10 @@ def _approval_notice(email: str, short: str, method: str, reason: str, flavour: 
         return (
             f"{email}: {decide}. Its card didn't reach Slack twice; ecf slack repost tries again."
         )
-    return (f"{email}: its card didn't reach Slack; ecf posts it once more when it can. If that"
-            f" fails too, {decide}.")  # fmt: skip
+    lost = ("Slack didn't take its card for 2 hours" if flavour == "quiet"
+            else "its card didn't reach Slack")  # fmt: skip
+    return (f"{email}: {lost}; ecf posts it once more when it can. If that fails too,"
+            f" {decide}.")  # fmt: skip
 
 
 def dead_posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
