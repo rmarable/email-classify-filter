@@ -5,6 +5,10 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: `ecf eval build` no longer prints a generated set's text when a test email fails the hygiene check (it names the field and the kind of finding; `ecf eval generate --dev --show-findings` shows the text), and it escapes control characters in what it prints.
+- Fixed: `ecf eval generate` and `ecf eval grade` no longer leave a command-line model's raw answer on disk after a call, even one you stop with Ctrl-C.
+- Fixed: when `ecf eval generate` or `ecf eval expect` stops because a test email fails the hygiene check, it now says which field and which kind of finding.
+- Fixed: a generated email whose sender or reply-to address isn't a plain address (a name in front, quotes, no domain) is dropped as malformed; before, a name in front was saved twice.
 - Fixed: when a Slack channel is gone, ecf no longer retries a short reply there, or the closing of a removed mailbox's channel, for 42 minutes (OD-557).
 - When Slack reports an outage (it answers posts with a server error), ecf holds the posts and sends them when Slack recovers, instead of giving up after 42 minutes; a post that keeps failing while others get through is given up after 15 minutes, and any post after 2 hours, each with a notice (OD-557).
 - Fixed: a card that Slack refuses no longer blocks that mailbox's Slack channel for 42 minutes or keeps coming back. You get a desktop notice (and an email, if you send Slack alerts there) naming the command to decide the email at your computer, and `ecf slack repost` brings the card back (OD-557).

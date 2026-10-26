@@ -248,7 +248,9 @@ def apply(root: Path, cases: list[dict[str, Any]], on: date | None = None, *,
         write(root / "cases" / f"{cid}.md", None, DEFAULT_SAFETY)
     report = build_all(root)
     if report.findings:
-        raise InvalidInputError("the rebuilt set failed the hygiene scan; nothing more written")
+        first = report.findings[0]
+        raise InvalidInputError(f"hygiene scan failed after writing the expected outcomes:"
+                                f" {first.where}: {first.kind}; nothing more written")  # fmt: skip
     if p.judged():
         _finish(root, to_settle, today, digest, counts, p.edited, errors)
     return counts

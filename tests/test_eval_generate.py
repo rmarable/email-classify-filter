@@ -5,11 +5,15 @@ PATH (as `tests/test_claude_wrapper.py`'s `fake_claude`). No network."""
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
+import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -236,6 +240,33 @@ def test_a_hung_tool_is_killed_with_its_process_group(tmp_path: Path) -> None:
     ran = tools.run_cli([sys.executable, "-c", "import time; time.sleep(30)"], "", {},
                         tmp_path, timeout=0.5)  # fmt: skip
     assert ran.code is None and ran.seconds < 10
+
+
+def test_an_interrupted_call_kills_the_tool_before_it_can_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C reaches ecf, not the tool (its own session): the tool is killed, so no answer
+    file appears after the caller's clean-up."""
+    script = ("import os, pathlib, time; pathlib.Path('pid').write_text(str(os.getpid()));"
+              " time.sleep(1.5); pathlib.Path('out.json').write_text('{}')")  # fmt: skip
+    real = cast(Callable[..., tuple[bytes, bytes]], subprocess.Popen.communicate)  # pyright: ignore[reportUnknownMemberType]
+
+    def interrupted(
+        self: subprocess.Popen[bytes], *args: Any, **kwargs: Any
+    ) -> tuple[bytes, bytes]:
+        if "timeout" not in kwargs:  # the clean-up's wait
+            return real(self, *args, **kwargs)
+        while not (tmp_path / "pid").exists():
+            time.sleep(0.01)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        tools.run_cli([sys.executable, "-c", script], "", {}, tmp_path)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int((tmp_path / "pid").read_text()), 0)
+    time.sleep(1.5)
+    assert not (tmp_path / "out.json").exists()
 
 
 def test_tool_output_is_never_logged() -> None:

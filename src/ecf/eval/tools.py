@@ -177,19 +177,30 @@ class Ran:
 
 def run_cli(argv: Sequence[str], stdin: str, env: Mapping[str, str], cwd: Path,
             timeout: float = TIMEOUT_S) -> Ran:  # fmt: skip
-    """The command with no shell, in its own process group, killed whole on timeout."""
+    """The command with no shell, in its own process group, killed whole on timeout, and on
+    Ctrl-C or any other interruption: its own session never sees the terminal's signal, and it
+    mustn't write its answer file after the caller has cleaned up."""
     start = time.monotonic()
-    proc = subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,  # noqa: S603 - fixed argv from the tool table, no shell
-                            stderr=subprocess.PIPE, cwd=cwd, env=dict(env),
-                            start_new_session=True)  # fmt: skip
+    proc: subprocess.Popen[bytes] | None = None
     try:
+        proc = subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,  # noqa: S603 - fixed argv from the tool table, no shell
+                                stderr=subprocess.PIPE, cwd=cwd, env=dict(env),
+                                start_new_session=True)  # fmt: skip
         out, err = proc.communicate(stdin.encode("utf-8"), timeout=timeout)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        return Ran(None, b"", b"", time.monotonic() - start)
+    except BaseException as e:
+        if proc is not None:
+            _kill(proc)
+        if isinstance(e, subprocess.TimeoutExpired):
+            return Ran(None, b"", b"", time.monotonic() - start)
+        raise
     return Ran(proc.returncode, out, err, time.monotonic() - start)
+
+
+def _kill(proc: subprocess.Popen[bytes]) -> None:
+    """The whole process group, then wait for it."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.communicate()
 
 
 @dataclass(frozen=True)
@@ -269,19 +280,23 @@ class CliAdapter:
                 } | self._facts  # fmt: skip
 
     def ask(self, prompt: str, schema: dict[str, Any], workdir: Path) -> Reply:
-        """One call from `workdir` (made empty but for the call's files)."""
+        """One call from `workdir` (made empty but for the call's files). The answer file holds
+        the generator's raw text: it is deleted once read, whatever the outcome."""
         refuse_key_env(self._environ)
         workdir.mkdir(parents=True, exist_ok=True)
         schema_path, out_path = workdir / "schema.json", workdir / "out.json"
         out_path.unlink(missing_ok=True)
         schema_path.write_text(json.dumps(schema), encoding="utf-8")
         argv = [self._exe(), *self.tool.argv(self.model, schema_path, out_path)]
-        ran = run_cli(argv, prompt, self.env(), workdir)
-        if ran.code is None:
-            return Reply("failed", detail="timed out", seconds=ran.seconds)
-        if USAGE_LIMIT_TEXT.encode() in ran.stdout + ran.stderr:
-            return Reply("limit", detail="usage limit", seconds=ran.seconds)
-        reply = self.tool.read(ran, out_path)
+        try:
+            ran = run_cli(argv, prompt, self.env(), workdir)
+            if ran.code is None:
+                return Reply("failed", detail="timed out", seconds=ran.seconds)
+            if USAGE_LIMIT_TEXT.encode() in ran.stdout + ran.stderr:
+                return Reply("limit", detail="usage limit", seconds=ran.seconds)
+            reply = self.tool.read(ran, out_path)
+        finally:
+            out_path.unlink(missing_ok=True)
         reply = Reply(reply.status, reply.answer, reply.detail, reply.usage, ran.seconds,
                       reply.items)  # fmt: skip
         if self.tool.allowed_items is not None and (

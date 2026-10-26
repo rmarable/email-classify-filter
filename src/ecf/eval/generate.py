@@ -34,11 +34,11 @@ import hashlib
 import json
 import math
 import os
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, cast
 
@@ -365,7 +365,7 @@ def card_text(case_id: str, b: Bucket, seed: dict[str, Any], email: dict[str, An
         f"threat: {j(b.group if b.kind == 'scam' else 'none (ordinary mail)')}",
         "author: generated", f"generator: {j(generator)}", f"profile: {seed['profile']}",
         f"from: {j(f'{name} <{address}>' if name else address)}",
-        *([f"reply_to: {j(email['reply_to'])}"] if email.get("reply_to") else []),
+        *([f"reply_to: {j(str(email['reply_to']).strip())}"] if email.get("reply_to") else []),
         f"subject: {j(email['subject'])}", f"date: {date.strftime('%Y-%m-%dT%H:%M:%SZ')}",
         f"auth_results: {j(_auth_results(domain, seed['auth_result']))}",
         f"bulk: {'true' if seed['bulk'] else 'false'}",
@@ -375,6 +375,10 @@ def card_text(case_id: str, b: Bucket, seed: dict[str, Any], email: dict[str, An
         "---",
     ]  # fmt: skip
     return "\n".join(lines) + "\n" + str(email["body"]).strip("\n") + "\n"
+
+
+# what from_address and reply_to must be: a bare address, no display name, comment or quotes
+_BARE_ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
 def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[Finding]]:
@@ -393,7 +397,10 @@ def problems(card: Card, email: dict[str, Any]) -> tuple[str | None, list[Findin
         gencheck.named_brand_address(str(email.get(k) or "")) for k in ("from_address", "reply_to")
     ):
         return "brand or agency as sender", []
-    if not parseaddr(str(email.get("from_address") or ""))[1]:
+    reply_to = email.get("reply_to")
+    if not _BARE_ADDRESS.fullmatch(str(email.get("from_address") or "").strip()) or (
+        reply_to and not _BARE_ADDRESS.fullmatch(str(reply_to).strip())
+    ):
         return "schema misfit", []
     return None, scan_card(card, card.id)
 
@@ -714,8 +721,9 @@ class Run:
             state = "short"
         report = build_all(self.root) if any((self.root / "cases").glob("*.md")) else None
         if report is not None and report.findings:  # every card was scanned as it was made
-            raise InvalidInputError("a card failed the hygiene scan at build time; nothing more"
-                                    " is written")  # fmt: skip
+            first = report.findings[0]
+            raise InvalidInputError(f"hygiene scan failed after building the set: {first.where}:"
+                                    f" {first.kind}; nothing more written")  # fmt: skip
         write_manifest(self, state)
         dropped: Counter[str] = Counter()
         for (reason, _g), n in self.dropped.items():
