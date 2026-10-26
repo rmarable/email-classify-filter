@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
@@ -24,6 +24,17 @@ NOTICE = {
                " own sign-in to {provider}; never ecf's answers or your labels."),
 }  # fmt: skip
 NEVER_REAL = "Never put real mail in a generated set."
+
+
+if TYPE_CHECKING:
+    from ecf.eval.generate import Summary
+
+
+def closing_line(s: Summary) -> str:
+    """A generation run's last line; refusals on the retry are within the drops (OD-554)."""
+    on_retry = f" ({s.refused_on_retry} refused on the retry)" if s.refused_on_retry else ""
+    return (f"{s.state}: kept {s.kept} of {s.target}; refused {sum(s.refused.values())};"
+            f" dropped {sum(s.dropped.values())}{on_retry}")  # fmt: skip
 
 
 def _terminals() -> bool:
@@ -226,8 +237,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                       "claude", echo=typer.echo,
                       show=typer.echo if show_findings else None)  # fmt: skip
         s = run.run(resume=resume or shared is not None)
-        typer.echo(f"{s.state}: kept {s.kept} of {s.target}; refused {sum(s.refused.values())};"
-                   f" dropped {sum(s.dropped.values())}")  # fmt: skip
+        typer.echo(closing_line(s))
         if s.detail:
             typer.echo(s.detail)
         if s.state == "seeded":

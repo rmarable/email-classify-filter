@@ -3,7 +3,10 @@ P30). Nothing is edited: an email that fails is dropped, with the kind of failur
 
 - Markup: HTML isn't accepted; any tag, `javascript:` or `on…=` handler in any field is refused.
 - Brands and agencies: a sender display name naming a major brand or a government agency is
-  refused (the safety rules allow them by role in the text only). The list below is a deny list
+  refused (the safety rules allow them by role in the text only), and so is one in the sender or
+  reply-to address: in a domain (its labels split on `.`, `_` and `-`, or joined, so
+  `wells-fargo.example`, `pay-pal.example` and `wellsfargo.example` count) or anywhere in the
+  value outside its addresses (a display-name form; OD-554). The list below is a deny list
   of common names, not content; real names in general can't be detected and are a stated limit.
 - Near-duplicates: an email whose words match an earlier one's exactly, or whose word 5-grams
   overlap an earlier one's by `SHINGLE_LIMIT` or more, is dropped across the whole set. The
@@ -18,8 +21,11 @@ P30). Nothing is edited: an email that fails is dropped, with the kind of failur
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable
+
+from ecf.eval.hygiene import blank_addresses
 
 _TAG = re.compile(r"</?[a-z][a-z0-9]*(?:\s[^<>]*)?/?>", re.I)
 _SCRIPTISH = re.compile(r"<\s*(?:script|form|iframe|object|embed|style)\b|javascript\s*:"
@@ -37,6 +43,11 @@ AGENCIES = (
     "medicare", "sec", "social security", "ssa", "treasury", "us marshals", "u.s. marshals",
 )  # fmt: skip
 _NAMES = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in (*BRANDS, *AGENCIES)) + r")\b", re.I)
+# Each name with its spaces removed, for domains whose labels join into one (`pay-pal`).
+_SPACELESS = {n.replace(" ", "").casefold() for n in (*BRANDS, *AGENCIES)}
+_LONGEST = max(len(n) for n in _SPACELESS)
+_DOMAIN = re.compile(r"@([\w.-]+)")
+_LABEL_SPLIT = re.compile(r"[._-]+")
 SHINGLE = 5
 SHINGLE_LIMIT = 0.6
 MIN_SHINGLES = 20  # both emails need this many 5-grams for the overlap test
@@ -55,6 +66,26 @@ def markup(texts: Iterable[str]) -> str | None:
 
 def named_brand(display_name: str) -> bool:
     return _NAMES.search(display_name) is not None
+
+
+def named_brand_address(value: str) -> bool:
+    """A brand or agency in a sender or reply-to value: in a domain's labels, split or joined,
+    or in the value with its addresses blanked (a display name in any form). The local part is
+    not checked (the hygiene scan tests it)."""
+    value = unicodedata.normalize("NFKC", value)
+    for domain in _DOMAIN.findall(value):
+        labels = [x for x in _LABEL_SPLIT.split(domain) if x]
+        if named_brand(" ".join(labels)):
+            return True
+        for i in range(len(labels)):
+            joined = ""
+            for j in range(i, len(labels)):  # not `labels[i:]`: a copy per start is quadratic
+                joined += labels[j].casefold()
+                if len(joined) > _LONGEST:
+                    break  # a run longer than every name can't match one: linear
+                if joined in _SPACELESS:
+                    return True
+    return named_brand(blank_addresses(value))
 
 
 def _words(text: str) -> list[str]:

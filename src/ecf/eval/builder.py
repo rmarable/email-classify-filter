@@ -19,7 +19,7 @@ from typing import cast
 
 from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, load_cards
-from ecf.eval.hygiene import Finding, dedupe, scan_text
+from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
 
 COMMIT_LIMIT = 1024 * 1024
 LONG_FIELDS = ("signature", "quoted_thread", "footer")  # a long card's text besides its body
@@ -124,7 +124,7 @@ def scan_card(card: Card, source: str) -> list[Finding]:
     header = card.model_dump(mode="json", by_alias=True, exclude={"body", "html"})
     # the body as built: a long card's padding and quote headers are scanned too
     texts = [*_header_texts(header, ""), ("body", card.plain_text()), ("html", card.html or "")]
-    found = dedupe([f for part, text in texts for f in scan_text(text, f"{source}:{part}")])
+    found = cut(dedupe([f for part, text in texts for f in scan_text(text, f"{source}:{part}")]))
     # a long field's value is in the built body too: reported once, under its field
     named = {f.value for f in found if f.where.split(":", 1)[1].startswith(LONG_FIELDS)}
     return [f for f in found if not (f.where == f"{source}:body" and f.value in named)]

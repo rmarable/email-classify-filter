@@ -137,6 +137,10 @@ its own file.
 
 Recorded under the rule above; no PROD email had been seen when either was made.
 
+- 2026-10-25 (OD-554, operator decision): a refusal of the hygiene retry counts as a hygiene
+  drop, not as a refusal: the retry prompt is ecf's, not the seed's, so it isn't decision 10a's
+  refusal; the report still shows it (`refused on the hygiene retry`). With the scan's Stage B
+  fix, expect fewer hygiene drops and more passed retries; both are reported, not limited.
 - 2026-10-20 (OD-543, operator decision): the automatic checks the check-drop limit counts
   changed: a shared opening line is no longer a near-duplicate drop (identical text or heavy
   word overlap only). Reason: the DEV run lost 20 of 46 emails to shared greetings. The limit
