@@ -81,7 +81,7 @@ only-include = [
     "build-constraints.txt",
     ".python-version", "THIRD_PARTY_NOTICES",
 ]
-exclude = ["tests/eval/synthetic/.build/*"]  # built on demand, up to 66 MB each
+exclude = ["tests/eval/synthetic/.build/*", "tests/eval/long/.build/*"]  # built on demand, up to 66 MB each
 
 [tool.ruff]
 line-length = 100

@@ -159,9 +159,11 @@ sessions or subagents of each.
 Claude Code also loads these from `.claude/rules/` when it touches the paths; they live here so
 Codex sees them too.
 
-### `tests/eval/synthetic/**`
+### `tests/eval/synthetic/**` and `tests/eval/long/**`
 
 Full spec: `planning-docs/GENERATE-FAKE-TESTING-EMAILS.md`. Build with `uv run ecf eval build` (it runs the hygiene scan first).
+The long-card set (`tests/eval/long/`, classifier window tuning) follows the same rules; build it
+with `uv run ecf eval build --root tests/eval/long`.
 
 - Domains: only RFC 2606 / reserved TLDs (`acme.example`, `vendor-a.example`, `*.test`); never a registrable lookalike.
 - Regulators are named in text only, never as real sender domains.
