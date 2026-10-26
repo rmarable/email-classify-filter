@@ -283,7 +283,8 @@ def test_an_excerpt_with_no_space_near_the_cut_stays_within_its_limit(text: str)
 
 
 def test_an_excerpt_at_its_limit_is_not_cut() -> None:
-    assert parse(build(text="a" * CLASSIFIER_CHARS)).excerpt(CLASSIFIER_CHARS) == "a" * 1500
+    at = "a" * CLASSIFIER_CHARS
+    assert parse(build(text=at)).excerpt(CLASSIFIER_CHARS) == at
     one_over = parse(build(text="a" * (CLASSIFIER_CHARS + 1))).excerpt(CLASSIFIER_CHARS)
     assert len(one_over) == CLASSIFIER_CHARS and one_over.endswith("…")
 
@@ -291,9 +292,9 @@ def test_an_excerpt_at_its_limit_is_not_cut() -> None:
 @settings(max_examples=200)
 @given(st.text(min_size=0, max_size=300), st.integers(min_value=1, max_value=200))
 def test_a_cut_is_never_longer_than_its_limit(text: str, limit: int) -> None:
-    from ecf_server.message import _cut  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+    from ecf_server.message import cut  # noqa: PLC0415
 
-    assert len(_cut(text, limit)) <= limit
+    assert len(cut(text, limit)) <= limit
 
 
 def test_excerpt_prefers_plain_and_cuts_on_a_word() -> None:

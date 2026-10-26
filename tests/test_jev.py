@@ -221,7 +221,7 @@ def test_the_excerpt_is_cut_by_characters_only() -> None:
     st = jev.state(dataclasses.replace(EMAIL, text=cjk), (), "T", redact=True)
     assert cjk in st
     long = jev.state(dataclasses.replace(EMAIL, text="x" * 5000), (), "T", redact=True)
-    assert "x" * jev.EXCERPT_CHARS in long and "x" * (jev.EXCERPT_CHARS + 1) not in long
+    assert "x" * (jev.WINDOW - 1) + "…" in long and "x" * jev.WINDOW not in long  # OD-558
 
 
 def _worst(attachment_name: str = "invoice-2026-10-final.pdf") -> jev.Email:
@@ -255,7 +255,7 @@ def test_the_state_holds_each_part_once() -> None:
     e, sent = _worst(), tuple(signals.WORDING)
     st = jev.state(e, sent, "0123456789abcdef", redact=True)
     parts = [systemone.PREAMBLE, signals.block(sent, "0123456789abcdef"),
-             "\n".join(jev.header_lines(e, redact=True)), e.text[: jev.EXCERPT_CHARS]]  # fmt: skip
+             "\n".join(jev.header_lines(e, redact=True)), jev.excerpt_text(e.text)]  # fmt: skip
     expected = sum(len(p.encode()) for p in parts)
     slack = 100  # the email delimiters and line breaks
     assert expected <= len(st.encode()) <= expected + slack

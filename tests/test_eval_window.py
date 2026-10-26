@@ -144,7 +144,7 @@ def test_a_case_records_its_length_and_where_its_phrases_fall(root: Path) -> Non
     scratch = ruletest.Scratch(FakeClock())
     try:
         _, texts, m = evalrun.case_inputs_full(by_id["long-signal"], scratch,
-                                               triggers.redact_injection)  # fmt: skip
+                                               triggers.redact_injection, limit=1500)  # fmt: skip
         _, _, plain = evalrun.case_inputs_full(by_id["starter-control"], scratch,
                                                triggers.redact_injection)  # fmt: skip
     finally:

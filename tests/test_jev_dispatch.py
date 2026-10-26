@@ -38,9 +38,10 @@ from tests.test_jev import body as jev_body
 KEY = "ts-test-key-CANARY-91c2"  # invented
 PIN = jev.load_pin()
 # Jev's digests for the shipped schema and starter rules, pinned byte for byte (step 4, P5);
-# re-pinned to step 3's settings (OD-512)
-SHIPPED_GATE_KEY = "jev:jev-1.13.0+65e64c628ce580a0+jev-s1-state-591085348159+0fd82c418986dfe7"
-SHIPPED_PROMPT_DIGEST = "d5b1400d354e2171f42b20539e9466c8dd82a7e166f8546c4bac498a72534eb2"
+# re-pinned to step 3's settings (OD-512), then to excerpt version 3 (OD-558: the state format
+# names it, though Jev's own 1,500 cut gives it the same text)
+SHIPPED_GATE_KEY = "jev:jev-1.13.0+65e64c628ce580a0+jev-s1-state-c6cce13dbe44+0fd82c418986dfe7"
+SHIPPED_PROMPT_DIGEST = "00f8114379b9a67408addea97618f719087dc870f30a49187b7d9965dbb7c039"
 
 
 def ok(**over: Any) -> Any:

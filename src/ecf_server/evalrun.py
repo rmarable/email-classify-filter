@@ -795,7 +795,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             if RUN.stop.is_set() or time.monotonic() - started > RUNTIME_CAP_S:
                 stopped, reason = f"stopped after {i} of {len(cases)}", "stopped"
                 break
-            facts, (text, _act_text), measures_now = measures.inputs_full(case, scratch, redact)
+            # measured against what the model reads: Jev's own window, not the stored one (OD-558)
+            limit = asker.window if asker is not None else CLASSIFIER_CHARS
+            facts, (text, _act_text), measures_now = measures.inputs_full(case, scratch, redact,
+                                                                          limit=limit)  # fmt: skip
             sent = opts.sent(facts)
             if opts.classifier:
                 measures.sent(sent)
@@ -954,6 +957,7 @@ class Asker(Protocol):
     passes in, so neither this module nor what imports it imports `jev`; P9)."""
 
     pin: str
+    window: int  # the characters of the excerpt the backend reads (Jev: 1,500; OD-558)
 
     def ask(self, schema: CompiledSchema, case: Case, text: str,
             sent: tuple[str, ...]) -> Asked: ...  # fmt: skip
@@ -1040,12 +1044,12 @@ def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[st
                      limit: int = CLASSIFIER_CHARS,
                      ) -> tuple[dict[str, Any], tuple[str, str], dict[str, Any]]:  # fmt: skip
     """`case_inputs`, and the case's measures (`measured`); a corpus message has none. `limit`:
-    the classifier's window (`--classifier-window`); a stored excerpt was cut at the default and
-    refuses another."""
+    the classifier's window (`--classifier-window`); a stored excerpt was cut when its corpus was
+    fetched (1,500 before OD-558, 4,000 since) and refuses a window other than the default."""
     if case.facts is not None and case.excerpts is not None:
         if limit != CLASSIFIER_CHARS:
-            raise InvalidInputError(f"case {case.id} has a stored excerpt, cut at"
-                                    f" {CLASSIFIER_CHARS}: no other classifier window")  # fmt: skip
+            raise InvalidInputError(f"case {case.id} has a stored excerpt, cut when its corpus"
+                                    " was fetched: no other classifier window")  # fmt: skip
         return case.facts, case.excerpts, {}
     read = ruletest.read_case(case.path.read_bytes())
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
@@ -1104,9 +1108,10 @@ class Measures:
         facts, texts, _ = self.inputs_full(case, scratch, redact)
         return facts, texts
 
-    def inputs_full(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str]
+    def inputs_full(self, case: Case, scratch: ruletest.Scratch, redact: Callable[[str], str],
+                    limit: int = CLASSIFIER_CHARS,
                     ) -> tuple[dict[str, Any], tuple[str, str], dict[str, Any]]:  # fmt: skip
-        """`case_inputs_full`, timed."""
+        """`case_inputs_full`, timed; `limit`: the classifier excerpt's window."""
         self.cases += 1
         if case.facts is not None and case.excerpts is not None:
             self.excerpt_chars.append(len(case.excerpts[0]))
@@ -1115,7 +1120,7 @@ class Measures:
         read = ruletest.read_case(case.path.read_bytes())
         found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                        case.expected.get("facts") or {})  # fmt: skip
-        texts, whole = read.parsed.excerpts_and_text(redact)
+        texts, whole = read.parsed.excerpts_and_text(redact, limit=limit)
         self.facts_s.append(time.perf_counter() - start)
         start = time.perf_counter()
         triggers.scan(triggers.texts_of(read.parsed))

@@ -187,7 +187,8 @@ Gmail address. Notes you send to yourself on Gmail are the exception.
 
 ```sh
 ecf inbox [--address <a>] [--stale]     # everything waiting on you, oldest first
-ecf item show <id>                      # everything ecf knows about one email, with its excerpt
+ecf item show <id> [--full]             # everything ecf knows about one email, with the start
+                                        # of its excerpt (--full: all of it)
 ecf item resolve <id>… --reason <text>  # close without acting (also --ids, --older-than N)
 ecf item requeue <id>                   # retry a failed or stuck action, or send back to Claude
 ```

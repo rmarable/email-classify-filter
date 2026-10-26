@@ -39,6 +39,7 @@ from ecf_server.isolate import Isolated, Isolator
 from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource, MessageMeta
 from ecf_server.message import (
+    CLASSIFIER_CHARS,
     ParsedMessage,
     identity_digest,
     parse,
@@ -678,8 +679,9 @@ def _store(
     def also(c: sqlite3.Connection) -> None:
         _fence(c, clock, lease)
         c.execute(
-            "INSERT INTO excerpts (stable_id, classifier_text, actor_text) VALUES (?, ?, ?)",
-            (sid, *(excerpts or parsed.excerpts(triggers.redact_injection))),
+            "INSERT INTO excerpts (stable_id, classifier_text, actor_text, classifier_chars)"
+            " VALUES (?, ?, ?, ?)",
+            (sid, *(excerpts or parsed.excerpts(triggers.redact_injection)), CLASSIFIER_CHARS),
         )
         if pg.analyzer is not None:
             pg.analyzer.record(c, parsed, facts)

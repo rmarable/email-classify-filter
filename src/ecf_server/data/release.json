@@ -4,9 +4,9 @@
   "version": "3.0.5",
   "api_version": 1,
   "data_format": 4,
-  "schema_version": 41,
+  "schema_version": 42,
   "classifier_schema": 3,
-  "prompt_digest": "90d9e8812f1bcedbca1dc95f70d419ea77f14e8c5637043e93d06425155ab704",
+  "prompt_digest": "fb22fd651a19014779cc6385bf1a840cbf3b09ae4f99140d7fff7facc46f4a50",
   "actor_prompt_digest": "491c05cf95a5906a44250f13b7754e074a70be38170981f3893768b0efdabbb8",
   "min_client": "0.1.0.dev0"
 }

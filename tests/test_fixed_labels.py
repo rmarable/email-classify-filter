@@ -151,7 +151,11 @@ def test_import_from_a_review_page_file(root: Path, tmp_path: Path) -> None:
 
 
 def test_the_committed_set_has_every_card_labelled_for_phishing() -> None:
+    """Hand-set in fixed_labels.jsonl, or stated on the card (the long cards, which joined the set
+    with their phishing label confirmed; OD-558): a card-stated label wins (`with_fixed_labels`)."""
     good, stale = fixed_labels.current(SYNTHETIC)
     assert stale == []
-    cases = {json.loads(x)["id"] for x in (SYNTHETIC / "labels.jsonl").read_text().splitlines()}
-    assert set(good) == cases and all(isinstance(v["phishing"], bool) for v in good.values())
+    rows = [json.loads(x) for x in (SYNTHETIC / "labels.jsonl").read_text().splitlines()]
+    stated = {r["id"] for r in rows if isinstance(r["expected"]["labels"].get("phishing"), bool)}
+    assert set(good) | stated == {r["id"] for r in rows}
+    assert all(isinstance(v["phishing"], bool) for v in good.values())

@@ -37,8 +37,6 @@ from ecf.eval.results import (
 from ecf.schema import load_schema, load_schema_v2
 
 ROOT = Path(__file__).resolve().parent / "eval" / "synthetic"
-# every committed set a rebuild must reproduce (the long-card set: classifier window tuning)
-COMMITTED_SETS = [ROOT, ROOT.parent / "long"]
 CARD = """---
 id: t-1
 title: test
@@ -244,26 +242,24 @@ def test_failed_hygiene_writes_nothing(tmp_path: Path) -> None:
     assert report.findings and not (tmp_path / "eml").exists()
 
 
-@pytest.mark.parametrize("root", COMMITTED_SETS, ids=lambda r: r.name)
-def test_committed_set_is_current(tmp_path: Path, root: Path) -> None:
-    """Rebuild each committed set's cards and compare with its committed .eml files and
-    labels: the synthetic set, and the long-card set once it has cards (window tuning)."""
-    shutil.copytree(root / "cases", tmp_path / "cases")
+def test_committed_set_is_current(tmp_path: Path) -> None:
+    """Rebuild the committed cards and compare with the committed .eml files and labels."""
+    shutil.copytree(ROOT / "cases", tmp_path / "cases")
     report = build_all(tmp_path)
     assert not report.findings
-    labels = [json.loads(x) for x in (root / "labels.jsonl").read_text().splitlines()]
+    labels = [json.loads(x) for x in (ROOT / "labels.jsonl").read_text().splitlines()]
     fresh = {
         x["id"]: x
         for x in (json.loads(y) for y in (tmp_path / "labels.jsonl").read_text().splitlines())
     }
     assert {x["id"] for x in labels} == set(fresh)
-    committed = {p.stem for p in (root / "eml").glob("*.eml")}
+    committed = {p.stem for p in (ROOT / "eml").glob("*.eml")}
     small = {x["id"] for x in labels if x["bytes"] <= COMMIT_LIMIT}
     assert committed == small, f"orphaned or missing .eml files: {committed ^ small}"
     for entry in labels:
         assert entry["sha256"] == fresh[entry["id"]]["sha256"], entry["id"]
         if entry["bytes"] <= COMMIT_LIMIT:
-            assert (root / entry["file"]).read_bytes() == (tmp_path / entry["file"]).read_bytes()
+            assert (ROOT / entry["file"]).read_bytes() == (tmp_path / entry["file"]).read_bytes()
 
 
 # Metrics and results: known metric values, and what `compare` warns about when two runs differ.

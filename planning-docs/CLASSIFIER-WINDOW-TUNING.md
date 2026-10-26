@@ -1,9 +1,16 @@
 # Classifier window tuning (before M8)
 
-- **Status:** draft 9 (2026-10-25; dates are local, US Eastern). Step 1 done (OD-553, f7ab110;
+- **Status:** draft 10 (2026-10-26; dates are local, US Eastern). Step 1 done (OD-553, f7ab110;
   personal-mailbox count below); the business-mailbox count is not done. Step 2 built (OD-555,
   OD-556; main 3bab1b6). Step 3 (pilot) done: the window matters (below). Step 4 built: the
-  long set, 90 operator-confirmed cards in `tests/eval/long/`. Steps 5-8 not started.
+  long set, 90 operator-confirmed cards (main 825e7f3). Step 5 done (results below). Step 6:
+  4,000 adopted (operator, 2026-10-26; OD-558). Step 8 built on branch `window-adopt`; step 7
+  follows its merge, before the release.
+- **Draft 10 changes** (operator, 2026-10-26): step 5's results; 4,000 adopted; step 8's
+  choices: Jev stays at 1,500 (raise it when Jev is evaluated again), the window stored per
+  excerpt only (no stats or estimate change), `ecf item show` shows 1,500 characters unless
+  `--full`, the long root removed after the move, and the gate run (step 7) before the release.
+  The `classifier_text` cap rides on the new column (no table rebuild).
 - **Draft 9 changes** (operator, 2026-10-25): the blind check's two checkers run on Opus,
   not Fable (code and plan reviews stay Fable); a note on the long set's lengths (step 4).
 - **Draft 8 changes** (operator, 2026-10-25): review fixes T1-T10 (the long root's repo
@@ -330,7 +337,26 @@ tests/eval/long`).
   4,000 on long cards. An Opus run of about 100 long cards is a fraction of the US$13
   API-equivalent of a full 304-card run.
 
+**Results** (2026-10-26; Opus in every role; not for the gate):
+
+| | 1,500 (c9b132d9) | 4,000 (aa262464) | 4,000 again (2bf4dc2a) |
+|---|---|---|---|
+| Late scams at `fraud_guard` | 0/30 | 30/30 | 30/30 |
+| Unsafe | 12 | 0 | 0 |
+| Injections seen / followed | 0 / 0 | 20 / 0 | 20 / 0 |
+| Benign flagged as fraud | 0 | 0 | 0 |
+| Correct: late scams, controls, benign, injection | 0, 10, 27, 19 | 29, 10, 25, 20 | 28, 8, 25, 20 |
+| All 90 | 62.2% | 93.3% | 90.0% [82.1, 94.6] |
+
+At 1,500 four late scams were hidden by a rule and eight more weren't escalated; the other 18
+were escalated only because the actor reads 4,000. Late scams wrong to right, 1,500 to the
+replicate: 28 vs 0 (exact McNemar p = 7.5e-9). Three benign cards (long-025, 027, 085) were
+wrong in both 4,000 runs and right at 1,500 (a reply flag, a category), none flagged as fraud
+or hidden; benign 2 better vs 4 worse, p = 0.69. The two 4,000 runs agree on 85 of 90.
+
 ### 6. Compare and decide
+
+**Decided** (operator, 2026-10-26): 4,000.
 
 Under the Rules, the operator decides between 1,500 and 4,000.
 
