@@ -276,7 +276,8 @@ def test_with_nothing_going_through_the_post_is_held_then_given_up_after_2_hours
     assert _states(conn, key) == ["queued"] and not notes.sent
     s.run_once(conn)  # the 121st
     assert _states(conn, key) == ["dead"]
-    assert "Slack didn't take its card for 2 hours" in notes.sent[0]
+    assert "Slack didn't take its card for 2 hours; ecf posts it once more" in notes.sent[0]
+    assert key not in slack_out.refused_keys(conn)  # Slack's silence wasn't this card's trouble
     web.down.clear()
     slack_out.enqueue_post(conn, clock, key="digest:ap:3", route=CAP, card=Card("ok"))
     s.run_once(conn)
@@ -373,7 +374,8 @@ def test_a_notice_after_a_quiet_window_opens_a_fresh_one(
     [
         ("approval", "chat.postMessage", "refused", "", 1, "Email abcd1234: decide it with"),
         ("approval", "chat.postMessage", "outage", "cap", 1, "Email abcd1234: decide it with"),
-        ("approval", "chat.postMessage", "outage", "quiet", 1, "Email abcd1234: decide it with"),
+        ("approval", "chat.postMessage", "outage", "quiet", 1, "Email abcd1234: Slack didn't"),
+        ("approval", "chat.postMessage", "outage", "quiet", 2, "Email abcd1234: decide it with"),
         ("approval", "chat.postMessage", "unknown", "", 1, "Email abcd1234: its card didn't"),
         ("approval", "chat.postMessage", "unknown", "", 2, "Email abcd1234: decide it with"),
         ("approval", "chat.update", "refused", "", 0, "Email abcd1234: decide it with"),
@@ -397,7 +399,7 @@ def test_each_notice_leads_with_what_to_do(
     # notification shows
     first = (
         "ecf posts it once more"
-        if (reason, deaths) == ("unknown", 1) and kind == "approval"
+        if kind == "approval" and deaths == 1 and (reason == "unknown" or flavour == "quiet")
         else next(
             (
                 c
@@ -541,6 +543,7 @@ def test_dead_post_bookkeeping(conn: sqlite3.Connection, clock: FakeClock, setup
     rows = [
         ("item:new-refused", "slack:chat.postMessage:invalid_blocks", False),
         ("item:new-outage", "slack:chat.postMessage:internal_error", False),
+        ("item:quiet-outage", "slack:chat.postMessage:internal_error:quiet", False),
         ("item:new-unknown", "slack:chat.postMessage:some_new_error", False),
         ("item:new-edit", "slack:chat.update:block_mismatch", True),
         ("item:old-form", "slack:invalid_blocks", False),
@@ -568,6 +571,7 @@ def test_dead_post_bookkeeping(conn: sqlite3.Connection, clock: FakeClock, setup
     assert got == {
         "item:new-refused": (1, True),
         "item:new-outage": (1, True),
+        "item:quiet-outage": (1, False),
         "item:new-unknown": (1, False),
         "item:old-form": (1, True),
         "item:old-unknown": (1, False),
@@ -576,6 +580,30 @@ def test_dead_post_bookkeeping(conn: sqlite3.Connection, clock: FakeClock, setup
     }
     assert slack_out.refused_keys(conn) == {"item:new-refused", "item:new-outage", "item:old-form"}
     assert slack_out.post_deaths(conn, "item:new-edit") == 0
+    assert slack_out.post_deaths(conn, "item:quiet-outage") == 1
+
+
+def test_after_2_hours_of_silence_the_card_is_posted_once_more_then_left(
+    conn: sqlite3.Connection, clock: FakeClock, setup: None
+) -> None:
+    """P1 (2026-10-26): a give-up after Slack's 2-hour silence isn't a refusal; it gets the one
+    automatic re-post any other give-up gets, and a second failure leaves it to ecf slack repost."""
+    web, notes = ChannelWeb(), Notices()
+    web.down["CAP"] = "service_unavailable"
+    s = _sender(web, clock, notes)
+    sid = _waiting(conn, clock, "c7" * 32)
+    key = f"item:{sid}"
+    for _ in range(2):
+        for _ in range(slack_out.OUTAGE_MAX_HOLDS + 1):
+            s.run_once(conn)
+            clock.advance(slack_out.OUTAGE_HOLD_S)
+        assert _states(conn, key)[-1] == "dead"
+        if len(_states(conn, key)) == 1:
+            assert approvals.post_held_cards(conn, clock) == 1  # the one automatic re-post
+    assert _states(conn, key) == ["dead", "dead"]
+    assert key in slack_out.refused_keys(conn)  # the second death, not some other drift, stops it
+    assert approvals.post_held_cards(conn, clock) == 0  # failed twice: left to ecf slack repost
+    assert "didn't reach Slack twice; ecf slack repost tries again" in notes.sent[1]
 
 
 def test_after_a_channel_gone_a_refused_card_gets_one_more_try_then_is_held(

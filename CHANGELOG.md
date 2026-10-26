@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: when Slack stops answering for 2 hours and ecf gives up on a card of an email waiting for your approval, ecf now posts that card once more by itself, as it does after other failures (if that fails too, `ecf slack repost` brings it back); before, it left it for `ecf slack repost` as if Slack had refused the card (OD-557).
 - Changed: the classifier now reads the first 4,000 characters of each email instead of 1,500, so a scam whose request comes late in a long email is caught (on the long test emails: 30 of 30 late scams caught, against none at 1,500). Because what the classifier reads has changed, every live mailbox on Claude goes back to assist until a new go-live gate run passes. Email fetched before the upgrade keeps its 1,500-character excerpt (OD-558).
 - `ecf item show` prints the first 1,500 characters of the stored excerpt and says how many more there are; `--full` prints all of it (OD-558).
 - Fixed: a Slack post that ecf kept failing to finish (for example when its database was busy) no longer gives up silently; you get the same notice as for any post that didn't reach Slack (OD-557).
