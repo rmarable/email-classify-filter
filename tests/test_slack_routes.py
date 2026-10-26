@@ -9,12 +9,15 @@ import sqlite3
 import pytest
 
 from ecf_server import slack_admin, slack_routes
-from ecf_server.chat import FakeChat, RouteRef
+from ecf_server.chat import Card, FakeChat, RouteRef
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
-from ecf_server.slack_out import SlackSender
+from ecf_server.slack_chat import SlackChat
+from ecf_server.slack_out import SlackSender, enqueue_post, message_ref
 from ecf_server.slack_routes import ChannelProblemError, channel_name, ensure
+from tests.test_slack_out import Timer
+from tests.test_slack_stall import ChannelWeb
 
 
 def _identity(conn: sqlite3.Connection, clock: FakeClock, member: str = "U0ME1") -> None:
@@ -167,3 +170,123 @@ def test_adopting_a_channel_with_someone_else_in_it_sends_a_security_notice(
     [(title, text)] = n.sent
     assert title == "[ecf-alert] Security Notice"
     assert "ecf-default-ap" in text and "U0EVE" in text
+
+
+# A gone channel's card records are forgotten, so an edit can't fail there and forget the new one.
+
+
+def _message(conn: sqlite3.Connection, key: str, channel: str) -> None:
+    now = "2026-10-26T00:00:00.000000Z"
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO slack_messages (key, channel, ts, created_at, updated_at, post)"
+            " VALUES (?, ?, '1.0001', ?, ?, '{}')",
+            (key, channel, now, now),
+        )
+
+
+def _keys(conn: sqlite3.Connection) -> set[str]:
+    return {r[0] for r in conn.execute("SELECT key FROM slack_messages")}
+
+
+def test_a_gone_channels_cards_are_forgotten_with_it(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _identity(conn, clock)
+    for aid in ("ap", "billing"):
+        _address(conn, clock, aid)
+    chat = FakeChat()
+    ensure(conn, clock, chat, "default")
+    gone, kept = slack_routes.route_for(conn, "ap"), slack_routes.route_for(conn, "billing")
+    assert gone is not None and kept is not None
+    _message(conn, "item:a", gone.channel)
+    _message(conn, "item:b", kept.channel)
+    chat.archive(gone)
+    ensure(conn, clock, chat, "default", recheck=True)
+    assert _keys(conn) == {"item:b"}
+
+
+def test_a_gone_summary_channels_cards_are_forgotten_with_it(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _identity(conn, clock)
+    chat = FakeChat()
+    ensure(conn, clock, chat, "default")
+    summary = slack_routes.summary_route(conn)
+    assert summary is not None
+    _message(conn, "needs-you", summary.channel)
+    chat.archive(summary)
+    assert "summary channel gone" in ensure(conn, clock, chat, "default", recheck=True)
+    assert _keys(conn) == set()
+
+
+def _stale(conn: sqlite3.Connection, clock: FakeClock) -> tuple[SlackSender, ChannelWeb]:
+    """`ap` now posts to CNEW; a card is still recorded in COLD, which Slack says is gone (the
+    state `_forget` left before this fix)."""
+    _identity(conn, clock)
+    _address(conn, clock, "ap")
+    with write_tx(conn):
+        conn.execute(
+            "INSERT INTO routes (address_id, surface, route_ref, name)"
+            " VALUES ('ap', 'slack', 'CNEW', 'ecf-default-ap-2')"
+        )
+    _message(conn, "item:a", "COLD")
+    web = ChannelWeb()
+    web.down["COLD"] = "channel_not_found"
+    t = Timer()
+    sender = SlackSender(SlackChat(web), clock, FakeNotifier(), sleep=t.sleep, monotonic=t.mono)
+    return sender, web
+
+
+def test_an_edit_of_a_card_left_in_a_replaced_channel_posts_in_the_new_one(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    sender, web = _stale(conn, clock)
+    enqueue_post(conn, clock, key="item:a", route=RouteRef("CNEW"), card=Card("an edit"))
+    sender.run_once(conn)
+    assert slack_routes.route_for(conn, "ap") == RouteRef("CNEW")  # not forgotten
+    assert web.methods() == ["chat.postMessage"]
+    ref = message_ref(conn, "item:a")
+    assert ref is not None and ref.route == RouteRef("CNEW")
+
+
+def test_a_dm_is_edited_where_slack_recorded_it(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """A DM is posted to the person and recorded under its D channel: never "moved"."""
+    sender, web = _stale(conn, clock)
+    _message(conn, "notice:x:U0ME1", "D0ME1")
+    enqueue_post(conn, clock, key="notice:x:U0ME1", route=RouteRef("U0ME1"), card=Card("again"))
+    sender.run_once(conn)
+    assert web.methods() == ["chat.update"]
+
+
+def test_needs_you_left_in_a_replaced_summary_channel_is_posted_and_pinned_in_the_new_one(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    sender, web = _stale(conn, clock)
+    slack_admin.put_setting(conn, "slack_summary_channel", "CSUM", "now", actor="test")
+    _message(conn, "needs-you", "COLD")
+    enqueue_post(conn, clock, key="needs-you", route=RouteRef("CSUM"), card=Card("Needs you"))
+    sender.run_once(conn)
+    assert web.methods() == ["chat.postMessage", "pins.add"]
+
+
+def test_a_reply_under_a_card_left_in_a_replaced_channel_posts_top_level(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    sender, web = _stale(conn, clock)
+    enqueue_post(conn, clock, key="answer:a:1", route=RouteRef("CNEW"), card=Card("an answer"),
+                 thread_key="item:a")  # fmt: skip
+    sender.run_once(conn)
+    [(method, params)] = web.calls
+    assert method == "chat.postMessage" and "thread_ts" not in params
+
+
+def test_with_both_channels_gone_the_edit_goes_where_the_card_is(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    """A stale job for a channel no longer in use: no move, the old path (channel gone)."""
+    sender, web = _stale(conn, clock)
+    enqueue_post(conn, clock, key="item:a", route=RouteRef("COLD"), card=Card("an edit"))
+    sender.run_once(conn)
+    assert web.methods() == ["chat.update"]
+    assert slack_routes.route_for(conn, "ap") == RouteRef("CNEW")

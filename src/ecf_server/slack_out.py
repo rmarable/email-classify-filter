@@ -344,6 +344,12 @@ class SlackSender:
         existing = message_ref(conn, key)
         ref: ThreadRef | None = None
         pin = bool(p.get("pin"))
+        if existing is not None and _moved(conn, existing.route.channel, route.channel):
+            # recorded in a channel ecf has since replaced: post in the job's channel instead
+            # (editing the old one fails, and the failure would forget the job's channel)
+            _forget(conn, key)
+            existing = None
+            pin = pin or key in PINNED
         if existing is not None:  # a retry or a later edit: never a second post
             try:
                 self._chat.update(existing, card)
@@ -353,12 +359,14 @@ class SlackSender:
                     raise
                 _forget(conn, key)  # deleted in Slack: post it again below
                 pin = pin or key in PINNED  # and pin it again (V1.2 review, 2026-09-30)
+        thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
+        if thread is not None and _moved(conn, thread.route.channel, route.channel):
+            thread = None  # its parent is in a channel ecf replaced: post top-level
         if ref is None:
-            thread = message_ref(conn, str(p["thread_key"])) if p.get("thread_key") else None
             ident = p.get("identity")
             identity = Identity(str(ident["name"]), str(ident["icon_emoji"])) if ident else None
             ref = self._chat.post(route, card, thread=thread, identity=identity)
-        _remember(conn, self._clock, key, ref, message_ref(conn, str(p.get("thread_key") or "")),
+        _remember(conn, self._clock, key, ref, thread,
                   {k: v for k, v in p.items() if k != "op"})  # fmt: skip
         if pin:
             self._chat.pin(ref)
@@ -482,6 +490,22 @@ def _remember(
             (key, ref.route.channel, ref.ts, thread.ts if thread else None, now, now,
              json.dumps(post)),
         )  # fmt: skip
+
+
+def _moved(conn: sqlite3.Connection, recorded: str, channel: str) -> bool:
+    """A card recorded in a channel ecf no longer posts to, while the job's channel is one it
+    does. A DM is recorded under its D channel, never a route, and posted to the person, so it
+    never counts as moved."""
+    return recorded != channel and _in_use(conn, channel) and not _in_use(conn, recorded)
+
+
+def _in_use(conn: sqlite3.Connection, channel: str) -> bool:
+    """A channel ecf posts to now: an address's or the summary channel (plain SQL, since
+    `slack_routes` imports this module)."""
+    return bool(conn.execute(
+        "SELECT 1 FROM routes WHERE surface = 'slack' AND route_ref = ? UNION ALL"
+        " SELECT 1 FROM settings WHERE key = 'slack_summary_channel' AND value = ?",
+        (channel, json.dumps(channel))).fetchone())  # fmt: skip
 
 
 def _forget(conn: sqlite3.Connection, key: str) -> None:

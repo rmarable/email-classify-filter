@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: after a Slack channel was archived or deleted and ecf made a new one, editing a card left in the old channel no longer makes ecf drop the new channel and create yet another; the card is posted in the new channel instead.
 - Fixed: when a Slack channel is gone, ecf no longer retries a short reply there, or the closing of a removed mailbox's channel, for 42 minutes (OD-557).
 - When Slack reports an outage (it answers posts with a server error), ecf holds the posts and sends them when Slack recovers, instead of giving up after 42 minutes; a post that keeps failing while others get through is given up after 15 minutes, and any post after 2 hours, each with a notice (OD-557).
 - Fixed: a card that Slack refuses no longer blocks that mailbox's Slack channel for 42 minutes or keeps coming back. You get a desktop notice (and an email, if you send Slack alerts there) naming the command to decide the email at your computer, and `ecf slack repost` brings the card back (OD-557).
