@@ -17,11 +17,12 @@ from typing import Any
 import pytest
 
 from ecf import cli_evalgen
+from ecf.errors import InvalidInputError
 from ecf.eval import gencheck, tools
 from ecf.eval import generate as gen
 from ecf.eval import mix as mixmod
 from ecf.eval import report as rep
-from ecf.eval.builder import scan_card
+from ecf.eval.builder import BuildReport, scan_card
 from ecf.eval.cards import parse_card
 from ecf.eval.hygiene import Finding, dedupe, scan_text
 
@@ -575,6 +576,50 @@ def _rows(root: Path) -> list[dict[str, Any]]:
 def _all_text(root: Path) -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in root.rglob("*") if p.is_file()
                      and p.suffix in {".json", ".jsonl", ".md"})  # fmt: skip
+
+
+@pytest.mark.parametrize("field", ["from_address", "reply_to"])
+@pytest.mark.parametrize("value", [
+    "Billing Desk <billing@vendor-a.example>", "<billing@vendor-a.example>", "billing",
+    "billing@vendor-a", '"x" billing@vendor-a.example', "billing@vendor-a.example (Desk)",
+    "=?utf-8?q?x?= billing@vendor-a.example", "call me",
+])  # fmt: skip
+def test_an_address_that_isnt_bare_is_a_schema_misfit(tmp_path: Path, field: str,
+                                                      value: str) -> None:  # fmt: skip
+    summary, _root, _fake = _gen(tmp_path, {field: value}, "bad")
+    assert summary.kept == 0 and set(summary.dropped) == {"schema misfit"}
+
+
+@pytest.mark.parametrize(
+    "value", ["billing.desk+q4@vendor-a.example", "A_B%c@mail.vendor-a.example"]
+)
+def test_a_bare_reply_to_is_kept(tmp_path: Path, value: str) -> None:
+    summary, _root, _fake = _gen(tmp_path, {"reply_to": value}, "bad")
+    assert summary.kept == 20 and not summary.dropped
+
+
+def test_a_reply_to_is_written_stripped(tmp_path: Path) -> None:
+    summary, root, _fake = _gen(tmp_path, {"reply_to": " billing@vendor-a.example\n"}, "bad")
+    assert summary.kept == 20
+    assert all('reply_to: "billing@vendor-a.example"' in p.read_text()
+               for p in (root / "cases").glob("*.md"))  # fmt: skip
+
+
+def test_the_generate_gate_names_field_and_kind_but_no_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = BuildReport([], [], [Finding("dev-x-001:body", "domain", "realsite.com")])
+
+    def failed(root: Path) -> BuildReport:
+        del root
+        return bad
+
+    monkeypatch.setattr(gen, "build_all", failed)
+    with pytest.raises(
+        InvalidInputError, match="after building the set: dev-x-001:body: domain;"
+    ) as e:
+        _gen(tmp_path, {}, "ok")
+    assert "realsite" not in str(e.value)
 
 
 def test_safety_rules_and_retry_texts_are_digested() -> None:

@@ -170,3 +170,17 @@ def test_an_openai_key_in_the_environment_is_refused(
     with pytest.raises(InvalidInputError, match="OPENAI_API_KEY is set"):
         a.preflight(tmp_path / "w0")
     assert not (tmp_path / "codex.log").exists()
+
+
+@pytest.mark.parametrize("scenario, status", [
+    ({"answer": {"word": "ok", "decoy": "none"}}, "ok"), ({"answer": {}}, "failed"),
+    ({"tool_event": True}, "failed"),
+])  # fmt: skip
+def test_the_answer_file_is_deleted_once_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: dict[str, Any], status: str
+) -> None:
+    a = _adapter(tmp_path, monkeypatch, scenario)
+    a.preflight(tmp_path / "w0")
+    reply = a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call")
+    assert reply.status == status
+    assert not (tmp_path / "call" / "out.json").exists()  # the generator's raw text

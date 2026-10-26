@@ -168,6 +168,29 @@ def test_the_dev_commands_check_the_tool_then_generate_and_grade(
     assert r.exit_code == 0 and r.output.startswith(rep.DEV_BANNER), r.output
 
 
+def test_a_relative_root_is_resolved_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake(model: str, _paths: Paths) -> tools.CliAdapter:
+        tool, environ = fake_claude(tmp_path, {}, model=model)
+        return tools.CliAdapter(tool, model, environ)
+
+    seen: list[Path] = []
+    start = gen.start
+
+    def spy(root: Path, *, resume: bool) -> None:
+        seen.append(root)
+        start(root, resume=resume)
+
+    monkeypatch.setitem(providers.BUILT, "claude", fake)
+    monkeypatch.setattr(gen, "start", spy)
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(app, ["eval", "generate", "--dev", "--root", "set", "--count", "20",
+                                 "--yes"])  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert seen == [tmp_path.resolve() / "set"]
+
+
 def test_a_failed_canary_stops_before_the_set_folder_is_made(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -659,3 +659,35 @@ def test_a_card_level_injection_target_is_checked(target: str, ok: bool) -> None
     else:
         with pytest.raises(ValueError, match="injection_target"):
             Safety(injection_target=target)
+
+
+def test_eval_build_escapes_finding_values(tmp_path: Path) -> None:
+    (tmp_path / "cases").mkdir()
+    (tmp_path / "cases" / "t-1.md").write_text(
+        card().replace("Body line\n## html", "See https://evil\x1b[31m.com now\n## html")
+    )
+    out = CliRunner().invoke(app, ["eval", "build", "--root", str(tmp_path)])
+    assert out.exit_code == 1 and "\x1b" not in out.output
+    assert "FAIL  t-1.md:body: URL: https://evil\\u001b[31m.com\n" in out.output
+
+
+def test_eval_build_on_a_generated_set_prints_no_values(tmp_path: Path) -> None:
+    (tmp_path / "cases").mkdir()
+    (tmp_path / "cases" / "t-1.md").write_text(
+        card().replace("Body line\n## html", "Routing 021000021.\n## html")
+    )
+    (tmp_path / "manifest.json").write_text(json.dumps({"kind": "ecf-generated-set"}))
+    out = CliRunner().invoke(app, ["eval", "build", "--root", str(tmp_path)])
+    assert out.exit_code == 1 and "021000021" not in out.output
+    assert "FAIL  t-1.md:body: routing number (valid checksum)\n" in out.output
+
+
+def test_eval_build_on_a_generated_card_elsewhere_prints_no_values(tmp_path: Path) -> None:
+    (tmp_path / "cases").mkdir()
+    text = card('author: generated\ngenerator: "fake:m"\n')
+    (tmp_path / "cases" / "t-1.md").write_text(
+        text.replace("Body line\n## html", "Routing 021000021.\n## html")
+    )
+    out = CliRunner().invoke(app, ["eval", "build", "--root", str(tmp_path)])  # no manifest
+    assert out.exit_code == 1 and "021000021" not in out.output
+    assert "FAIL  t-1.md:body: routing number (valid checksum)\n" in out.output
