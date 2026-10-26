@@ -783,14 +783,138 @@ def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_P
         f" WHERE i.status = 'awaiting_approval' AND g.status = 'issued' AND NOT {marked.sql('i.')}"
         " ORDER BY i.updated_at, i.stable_id").fetchall()  # fmt: skip
     posted = 0
+    refused: set[str] | None = None  # read only when a card is missing: it scans the dead posts
     for row in rows:
         if posted >= limit:
             break
-        if has_card(conn, f"item:{row['stable_id']}"):
+        key = f"item:{row['stable_id']}"
+        if has_card(conn, key):
+            continue
+        if refused is None:
+            refused = slack_out.refused_keys(conn)
+        if key in refused:  # left for `ecf slack repost` (OD-557)
             continue
         _card(conn, clock, _item(conn, row["stable_id"]), row["grant_id"])
         posted += 1
     return posted
+
+
+def repost_cards(conn: sqlite3.Connection, clock: Clock) -> dict[str, Any]:
+    """`ecf slack repost` (OD-557): put ecf's cards back in Slack.
+
+    In order: (a0) a waiting approval card recorded in a channel the item no longer uses (or with
+    no channel yet) loses that record, so `post_held_cards` posts it in the current channel; (a)
+    the waiting approval cards still in Slack are drawn again with their current grant, so a card
+    left showing an old grant's buttons is fixed; (b) the other cards and "Needs you" are sent
+    again as last posted; (c) the dead posts of waiting approval cards are marked done, so
+    `post_held_cards` posts them again over the next ticks with today's card. Question and
+    escalation cards aren't put back (`ecf inbox` lists them)."""
+    rows = conn.execute(
+        "SELECT i.stable_id, i.address_id, m.channel FROM items i"  # noqa: S608
+        " JOIN slack_messages m ON m.key = 'item:' || i.stable_id"
+        f" WHERE i.status = 'awaiting_approval' AND NOT {marked.sql('i.')}"
+        " AND EXISTS (SELECT 1 FROM grants g WHERE g.stable_id = i.stable_id"
+        "  AND g.status = 'issued')"
+        " ORDER BY i.updated_at, i.stable_id").fetchall()  # fmt: skip
+    # Every path that deletes a route either deletes the item's message record too
+    # (`slack_out._channel_gone`, `ecf slack remove`, restore, import) or leaves one in a channel
+    # Slack said is gone (`slack_routes._forget`); `remove_address` resolves every open item
+    # before `slack_routes.archive`. So a record outside the current route is unreachable, and
+    # `_card` posts nothing until a route exists. An edit of the same card in flight at this
+    # moment re-records the old channel when it lands; the next repost clears it again.
+    moved: list[str] = []
+    live: list[str] = []
+    for r in rows:
+        route = slack_routes.route_for(conn, r["address_id"])
+        if route is None or route.channel != r["channel"]:
+            moved.append(f"item:{r['stable_id']}")
+        else:
+            live.append(str(r["stable_id"]))
+    if moved:
+        with write_tx(conn):
+            conn.execute("DELETE FROM slack_messages WHERE key IN (SELECT value FROM json_each(?))",
+                         (json.dumps(moved),))  # fmt: skip
+    drawn: set[str] = set()
+    for sid in live:
+        item = _item(conn, sid)  # read again: a decision may have landed since the select
+        grant = _latest_grant(conn, sid)
+        if item["status"] != Status.AWAITING_APPROVAL or grant is None:
+            continue
+        title = ("Offered again" if item["expiry_count"] >= 2
+                 else "Expired, decide again" if item["expiry_count"] == 1 else "")  # fmt: skip
+        _card(conn, clock, item, grant, title=title)
+        drawn.add(f"item:{sid}")
+    resent = slack_out.repost_all(conn, clock, exclude=frozenset(drawn))
+    with write_tx(conn):
+        cleared = conn.execute(
+            "UPDATE jobs SET state = 'done' WHERE queue = 'slack_out' AND state = 'dead'"  # noqa: S608
+            " AND json_extract(payload, '$.key') IN (SELECT 'item:' || i.stable_id FROM items i"
+            f"  WHERE i.status = 'awaiting_approval' AND NOT {marked.sql('i.')}"
+            "  AND EXISTS (SELECT 1 FROM grants g WHERE g.stable_id = i.stable_id"
+            "   AND g.status = 'issued'))"
+            " RETURNING json_extract(payload, '$.key')").fetchall()  # fmt: skip
+    reposting = set(moved) | {str(c[0]) for c in cleared
+                              if not slack_out.message_ref(conn, str(c[0]))}  # fmt: skip
+    reposting -= _unrouted(conn, reposting)  # posted once the address has a channel
+    return {"queued": len(drawn) + resent, "reposting": len(reposting),
+            "not_recovered": inbox.waiting_lost(conn),
+            "backlog_held": claude_queue.backlog(conn) > claude_queue.BACKLOG_BATCH}  # fmt: skip
+
+
+def _unrouted(conn: sqlite3.Connection, keys: set[str]) -> set[str]:
+    """The item cards among `keys` whose address has no Slack channel yet."""
+    rows = conn.execute(
+        "SELECT 'item:' || i.stable_id FROM items i WHERE i.stable_id IN"
+        " (SELECT substr(value, 6) FROM json_each(?) WHERE value LIKE 'item:%')"
+        " AND NOT EXISTS (SELECT 1 FROM routes r"
+        "  WHERE r.address_id = i.address_id AND r.surface = 'slack')",
+        (json.dumps(sorted(keys)),)).fetchall()  # fmt: skip
+    return {str(r[0]) for r in rows}
+
+
+def lost_post_kind(conn: sqlite3.Connection, key: str) -> tuple[str, str]:
+    """What a Slack post that gave up was, for its notice (OD-557): the kind and the email's short
+    ID, or a digest's address ("none" for anything but an email's card, an escalation, a digest
+    or "Needs you")."""
+    kind, _, rest = key.partition(":")
+    if kind in ("burst", "rollup"):
+        return ("escalation", "")
+    if kind == "digest":  # its "Approve all" list is gone for good: the digest clock moved on
+        return ("digest", rest.split(":", 1)[0])
+    if key == "needs-you":
+        return ("needs_you", "")
+    row = conn.execute("SELECT * FROM items WHERE stable_id = ?", (rest,)).fetchone()
+    if kind != "item" or row is None:
+        return ("none", "")
+    return (_item_kind(conn, row), rest[: cards.SHORT_ID])
+
+
+def _item_kind(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """A question first (an item at `needs_clarification` can still hold an issued grant, and
+    only `ecf answer` works then), then an approval, a send counting down, an escalation."""
+    status, granted = row["status"], _latest_grant(conn, row["stable_id"]) is not None
+    if status == Status.NEEDS_CLARIFICATION or queued_answer(row):
+        kind = "question"
+    elif status == Status.AWAITING_APPROVAL and granted:
+        kind = "approval"
+    elif status == Status.AWAITING_STEPUP and granted:
+        kind = "approval_stepup"
+    elif status == Status.DELAYED:
+        kind = "delayed"
+    elif conn.execute("SELECT 1 FROM escalations WHERE stable_id = ?",
+                      (row["stable_id"],)).fetchone():  # fmt: skip
+        kind = "escalation"
+    else:
+        kind = "other_item"
+    return kind
+
+
+def _latest_grant(conn: sqlite3.Connection, sid: str) -> str | None:
+    """The item's issued grant (the one expiring last), as `digest_actions._grant_for` reads it;
+    a copy, since that module imports this one."""
+    row = conn.execute("SELECT grant_id FROM grants WHERE stable_id = ? AND status = 'issued'"
+                       " ORDER BY expires_at DESC LIMIT 1", (sid,)).fetchone()  # fmt: skip
+    return str(row[0]) if row else None
 
 
 def _edit(
@@ -814,12 +938,14 @@ def edit_card(conn: sqlite3.Connection, clock: Clock, sid: str, title: str) -> N
 
 
 def has_card(conn: sqlite3.Connection, key: str) -> bool:
-    """Posted, or queued to be posted (an edit queued behind it edits it); a post Slack gave up
-    on doesn't count, so it is posted again."""
+    """Posted, or queued or in flight to be posted (an edit queued behind it edits it). A post
+    Slack gave up on doesn't count, so it is posted again; nor does a finished job without a
+    message record (its channel went, or Slack was removed or the data imported), since a post
+    that went through is recorded before its job finishes (OD-557)."""
     if slack_out.message_ref(conn, key):
         return True
     return bool(conn.execute(
-        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND state != 'dead'"
+        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND state IN ('queued', 'claimed')"
         " AND json_extract(payload, '$.key') = ?", (key,)).fetchone())  # fmt: skip
 
 

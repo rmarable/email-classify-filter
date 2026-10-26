@@ -149,16 +149,21 @@ def complete(conn: sqlite3.Connection, job_id: JobId, worker: str) -> None:
         )
 
 
-def fail(conn: sqlite3.Connection, clock: Clock, job_id: JobId, worker: str, error: str) -> str:
-    """Record a failure. Returns the new state: 'queued' (retry after backoff) or 'dead'."""
+def fail(
+    conn: sqlite3.Connection, clock: Clock, job_id: JobId, worker: str, error: str, *,
+    final: bool = False, backoff_s: tuple[int, ...] = BACKOFF_S,
+) -> str:  # fmt: skip
+    """Record a failure. Returns the new state: 'queued' (retry after backoff) or 'dead'.
+    `final`: dead now, whatever attempts are left (a retry can't succeed); `backoff_s`: the
+    queue's own waits, where it has them (`slack_out`, OD-557)."""
     now = clock.now()
     with write_tx(conn):
         row = _owned(conn, job_id, worker)
         attempts, max_attempts = int(row["attempts"]), int(row["max_attempts"])
-        if attempts >= max_attempts:
+        if final or attempts >= max_attempts:
             state, visible = "dead", to_ts(now)
         else:
-            delay = BACKOFF_S[min(attempts, len(BACKOFF_S)) - 1]
+            delay = backoff_s[min(attempts, len(backoff_s)) - 1]
             state, visible = "queued", to_ts(now + timedelta(seconds=delay))
         conn.execute(
             "UPDATE jobs SET state = ?, visible_at = ?, claimed_by = NULL, claim_expires = NULL, "

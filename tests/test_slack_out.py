@@ -231,15 +231,16 @@ def test_other_errors_retry_then_dead_letter_and_say_what_was_lost(
     s = _sender(web, clock, n)
     slack_out.enqueue_post(conn, clock, key="item:9abcdef0", route=C1,
                            card=Card("Invoice 42 subject"))  # fmt: skip
-    for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):
-        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+    for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):  # a code ecf doesn't know: retried, then dead
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "some_new_error")]
         s.run_once(conn)
         clock.advance(3600)
     dead = slack_out.dead_posts(conn)
     assert [d["key"] for d in dead] == ["item:9abcdef0"] and "Invoice" not in str(dead)
-    # a lost post is no longer silent (V1.2 review, 2026-09-30); never the card's text
+    # a lost post is no longer silent (V1.2 review, 2026-09-30): one notice, never the card's
+    # text (what it was comes from the runtime's lookup, OD-557; none here)
     [(title, text)] = n.sent
-    assert title == "[ecf-alert] Slack Delivery Failed" and "item 9abcdef0" in text
+    assert title == "[ecf-alert] Slack Delivery Failed: a post wasn't sent"
     assert "Invoice" not in text
 
 
@@ -378,7 +379,7 @@ def test_a_dead_post_and_a_gone_channel_are_recorded(
     s = _sender(web, clock, n)
     slack_out.enqueue_post(conn, clock, key="digest:1", route=C1, card=Card("d"))
     for _ in range(jobs.DEFAULT_MAX_ATTEMPTS):
-        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "invalid_blocks")]
+        web.fail["chat.postMessage"] = [SlackError("chat.postMessage", "some_new_error")]
         s.run_once(conn)
         clock.advance(3600)
     slack_out.enqueue_post(conn, clock, key="needs-you", route=RouteRef("C9"), card=Card("n"))

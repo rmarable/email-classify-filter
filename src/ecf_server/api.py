@@ -2169,7 +2169,11 @@ def _slack_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
     @allow(Caller.CLI)
     def refresh(_request: Request) -> JSONResponse:
-        return _with_conn(lambda c: {"queued": slack_admin.refresh(c, state.clock)})
+        def run(c: sqlite3.Connection) -> dict[str, Any]:
+            slack_admin.require_installed(c)
+            return approvals.repost_cards(c, state.clock)
+
+        return _with_conn(run)
 
     @allow(Caller.CLI)
     def remove(request: Request) -> JSONResponse:

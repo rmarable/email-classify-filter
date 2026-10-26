@@ -114,7 +114,17 @@ class SlackRuntime:
         self.status["installed"] = True
         self._web = self._make_web(bot)
         self._remember_bot_user()
-        self._sender = SlackSender(SlackChat(self._web), self._clock, self._notifier)
+        clock, notifier = self._clock, self._notifier
+
+        def on_lost(conn: sqlite3.Connection, detail: str) -> None:
+            """A post that gave up: one Slack Delivery Failed event, never through Slack."""
+            alerts.event(conn, clock, notifier, slack_out.ALERT, detail, condition=slack_out.LOST)
+
+        if self._sender is None:  # kept across connect retries: its notice window and outage
+            # counts must outlast them; a reload or `ecf slack remove` drops it first (OD-557).
+            # It keeps the first `self._web`, which a retry rebuilds on the same token
+            self._sender = SlackSender(SlackChat(self._web), clock, notifier, on_lost=on_lost,
+                                       lost_kind=approvals.lost_post_kind)  # fmt: skip
         inbound = Inbound(slack_admin.identity, self._clock, self._connect, self._ack,
                           self._open_view)  # fmt: skip
         self._socket = self._make_socket(app, self._web, inbound.on_envelope)
@@ -172,7 +182,7 @@ class SlackRuntime:
                     if self._reload.is_set():
                         self._reload.clear()
                         self.close()
-                        self._sender = None
+                        self._drop_sender()
                         last_try = waited - RETRY_S  # connect now
                     if self._socket is None and waited - last_try >= RETRY_S:
                         last_try = waited
@@ -305,7 +315,8 @@ class SlackRuntime:
         which connects only if Slack is still installed (a removal that stopped partway)."""
         with self._pass:
             self.close()
-            self._sender, self._web = None, None
+            self._drop_sender()
+            self._web = None
             self._was_connected, self._lost_at, self._down_since = False, None, None
             self._problem = ""
             self.status.update(installed=False, last_connected_at=None, channels=None,
@@ -314,6 +325,20 @@ class SlackRuntime:
                 yield
             finally:
                 self._reload.set()
+
+    def _drop_sender(self) -> None:
+        """Let the sender send the notice summary it owes before it goes (OD-557)."""
+        sender, self._sender = self._sender, None
+        if sender is None:
+            return
+        try:
+            conn = self._connect()
+            try:
+                sender.flush_notices(conn)
+            finally:
+                conn.close()
+        except Exception as e:  # never blocks a reload or `ecf slack remove`
+            log.error("slack.notice_failed", error_type=type(e).__name__)
 
     def close(self, *, clean_stop: bool = False) -> None:
         """`clean_stop` (the service stopping on purpose) also deletes the dead-man's message."""

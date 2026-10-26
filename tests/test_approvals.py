@@ -466,3 +466,34 @@ def test_closing_a_delayed_send_clears_its_countdown_and_grant(
     assert conn.execute("SELECT count(*) FROM delays").fetchone()[0] == 0
     assert _grants(conn, sid) == ["voided"]
     assert approvals.advance_delays(conn, clock, approvals.SEND_DELAY_S, woke=False) == 0
+
+
+# Whether an item has a card (OD-557): a queued or in-flight job counts, a finished one without a
+# message record doesn't (its channel went, or Slack was removed), nor does a dead one.
+
+
+def _set_card_job(conn: sqlite3.Connection, state: str) -> None:
+    with write_tx(conn):
+        conn.execute("UPDATE jobs SET state = ? WHERE queue = 'slack_out'", (state,))
+
+
+def test_has_card_counts_live_jobs_only(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "a" * 64)
+    approvals.request(conn, clock, sid, ARCHIVE, member=ME)
+    key = f"item:{sid}"
+    for state, carded in (("queued", True), ("claimed", True), ("done", False), ("dead", False)):
+        _set_card_job(conn, state)
+        assert approvals.has_card(conn, key) is carded, state
+
+
+def test_an_edit_after_the_channel_went_queues_nothing(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    _setup(conn, clock)
+    sid = _proposed(conn, clock, "b" * 64)
+    approvals.request(conn, clock, sid, ARCHIVE, member=ME)
+    _set_card_job(conn, "done")  # posted, then its channel went: no message record left
+    before = len(_posts(conn))
+    approvals.edit_card(conn, clock, sid, "Archived")
+    assert len(_posts(conn)) == before

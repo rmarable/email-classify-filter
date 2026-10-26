@@ -11,8 +11,8 @@
 - Your member ID is accepted only after a click on a Confirm button that ecf DMs to that ID; until
   then no click is accepted. A member-ID change (`set_member`) and replacing the tokens
   (`set_tokens`) need step-up and send a Security Notice; the new member ID needs its own click.
-- `reauthorize`: `apps.manifest.update` with a fresh configuration token, then `refresh` edits
-  every card ecf posted, re-posting any whose message is gone.
+- `reauthorize`: `apps.manifest.update` with a fresh configuration token; the CLI then puts ecf's
+  cards back as `ecf slack repost` does (`approvals.repost_cards`, OD-557).
 
 Slack API shapes (verified 2026-09-29, docs.slack.dev): `apps.manifest.create` returns `app_id`,
 `credentials` and `oauth_authorize_url`; `auth.test` with a bot token returns `team_id`, `user_id`
@@ -266,7 +266,7 @@ def set_member(
     member: str,
     nonce: str | None,
 ) -> dict[str, Any]:
-    ident = _installed(conn)
+    ident = require_installed(conn)
     _check_member(member)
     if member == ident.member:
         raise InvalidInputError(f"{member} is already your member ID")
@@ -308,7 +308,7 @@ def set_tokens(
     app_token: str,
     nonce: str | None,
 ) -> dict[str, Any]:
-    ident = _installed(conn)
+    ident = require_installed(conn)
     team_id, app_id, bot_user = check_tokens(make_web, bot_token, app_token)
     if (team_id, app_id) != (ident.team_id, ident.app_id):
         raise InvalidInputError(
@@ -342,7 +342,7 @@ def set_tokens(
 def reauthorize(
     conn: sqlite3.Connection, clock: Clock, make_web: WebFactory, config_token: str, install: str
 ) -> dict[str, Any]:
-    ident = _installed(conn)
+    ident = require_installed(conn)
     r = _call(make_web(config_token), "apps.manifest.update", app_id=ident.app_id,
               manifest=json.dumps(manifest(install)))  # fmt: skip
     updated = bool(r.get("permissions_updated"))
@@ -350,12 +350,6 @@ def reauthorize(
     with write_tx(conn):
         _audit(conn, now, "slack.reauthorized", {"permissions_updated": updated})
     return {"permissions_updated": updated, "settings_url": settings_url(ident.app_id)}
-
-
-def refresh(conn: sqlite3.Connection, clock: Clock) -> int:
-    """Queue an edit of every card ecf posted (re-posted where the message is gone)."""
-    _installed(conn)
-    return slack_out.repost_all(conn, clock)
 
 
 # Security Notice (§13.3): sent to the desktop and to each member named.
@@ -385,7 +379,8 @@ def notice(
 # Helpers: the installed identity, member checks, Slack calls, and the Slack settings rows.
 
 
-def _installed(conn: sqlite3.Connection) -> SlackIdentity:
+def require_installed(conn: sqlite3.Connection) -> SlackIdentity:
+    """The installed identity; refused when Slack isn't installed."""
     ident = identity(conn)
     if ident is None:
         raise NotFoundError("Slack isn't installed; run `ecf slack install`")

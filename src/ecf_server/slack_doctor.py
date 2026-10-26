@@ -15,7 +15,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from ecf_server import _slack, alert_mail, alerts, slack_admin, slack_out, slack_routes
+from ecf_server import _slack, alert_mail, alerts, inbox, slack_admin, slack_out, slack_routes
 from ecf_server.chat import RouteRef
 from ecf_server.secretstore import SecretStore
 from ecf_server.slack_chat import SlackChat
@@ -157,6 +157,12 @@ def _delivery(conn: sqlite3.Connection) -> list[dict[str, str]]:
         out.append(_c("slack delivery", FAIL, f"since {row['opened_at']}: {row['detail']}", fix))
     dead = slack_out.dead_posts(conn)
     if dead:
-        out.append(_c("slack posts", WARN, f"{len(dead)} post(s) gave up; their emails are still"
-                      " listed", "ecf inbox"))  # fmt: skip
+        waiting = inbox.waiting_lost(conn)  # cards, where `dead` counts posts (OD-557)
+        if waiting:
+            fix = "ecf inbox lists them; ecf slack repost puts approval cards back"
+            out.append(_c("slack posts", WARN, f"{len(dead)} Slack post(s) gave up, for {waiting}"
+                          " card(s) of emails waiting for you", fix))  # fmt: skip
+        else:
+            out.append(_c("slack posts", WARN, f"{len(dead)} Slack post(s) gave up: one-off posts;"
+                          " nothing to do unless it repeats"))  # fmt: skip
     return out
