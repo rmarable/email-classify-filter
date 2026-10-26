@@ -118,6 +118,7 @@ def ensure(
             chat.invite(RouteRef(ch), member)
         except RouteGoneError:  # archived or deleted in Slack: a new one next time
             _set(conn, clock, {SUMMARY: "", SUMMARY_INVITED: ""})
+            _forget_messages(conn, ch)
             return [*done, "summary channel gone"]
         _set(conn, clock, {SUMMARY_INVITED: member})
     for row in conn.execute(
@@ -224,11 +225,20 @@ def _forget(conn: sqlite3.Connection, clock: Clock, address_id: str, channel: st
         conn.execute(
             "DELETE FROM routes WHERE address_id = ? AND surface = ?", (address_id, SURFACE)
         )
+        conn.execute("DELETE FROM slack_messages WHERE channel = ?", (channel,))
         conn.execute(
             "INSERT INTO audit (ts, address_id, event, actor, outcome, data)"
             " VALUES (?, ?, 'slack.channel_gone', 'service', 'ok', ?)",
             (to_ts(clock.now()), address_id, json.dumps({"channel": channel})),
         )
+
+
+def _forget_messages(conn: sqlite3.Connection, channel: str) -> None:
+    """A gone channel's cards can't be edited: forget them, so the next post of each goes to the
+    new channel instead of failing in the old one and forgetting the new one (as
+    `slack_out._channel_gone` does)."""
+    with write_tx(conn):
+        conn.execute("DELETE FROM slack_messages WHERE channel = ?", (channel,))
 
 
 def _recorded(conn: sqlite3.Connection) -> set[str]:
