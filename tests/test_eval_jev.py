@@ -756,7 +756,7 @@ def test_a_c_run_records_its_input_format(
     m = json.loads(_row(conn)["metrics"])
     assert m["input_format"] == claude_eval.CLAUDE_INPUT_FORMAT == "claude-v1"
     assert m["claude"]["preset"] == "C"  # and how much each model read (window tuning)
-    assert m["excerpt_cap"] == {"classifier_chars": 1500, "actor_chars": 4000}
+    assert m["excerpt_cap"] == {"classifier_chars": 4000, "actor_chars": 4000}
     claude_eval.reset()
     with pytest.raises(InvalidInputError, match="preset C or D"):
         claude_eval.start(lambda: db.connect(db_path), clock, db_path.parent,

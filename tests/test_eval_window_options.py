@@ -71,9 +71,9 @@ def test_the_classifier_excerpt_takes_a_limit() -> None:
            b"Content-Type: text/plain\r\n\r\n" + text.encode())  # fmt: skip
     parsed = ruletest.read_case(raw).parsed
     (cls, act), whole = parsed.excerpts_and_text(triggers.redact_injection)
-    (cls4, act4), whole4 = parsed.excerpts_and_text(triggers.redact_injection, limit=4000)
-    assert len(cls) <= message.CLASSIFIER_CHARS < len(cls4) <= 4000
-    assert act == act4 and whole == whole4
+    (cls15, act15), whole15 = parsed.excerpts_and_text(triggers.redact_injection, limit=1500)
+    assert len(cls15) <= 1500 < len(cls) <= message.CLASSIFIER_CHARS
+    assert act == act15 and whole == whole15
     (cls8, act8), _ = parsed.excerpts_and_text(triggers.redact_injection, limit=8000)
     assert len(cls8) > 4000 and act8 == act  # the actor keeps ACTOR_CHARS
 
@@ -98,7 +98,7 @@ def test_a_stored_excerpt_refuses_another_window(root: Path) -> None:
     try:
         assert evalrun.case_inputs_full(stored, scratch, triggers.redact_injection)[1] == ("a", "b")
         with pytest.raises(InvalidInputError, match="stored excerpt"):
-            evalrun.case_inputs_full(stored, scratch, triggers.redact_injection, limit=4000)
+            evalrun.case_inputs_full(stored, scratch, triggers.redact_injection, limit=1500)
     finally:
         scratch.close()
 
@@ -142,8 +142,8 @@ def test_a_default_run_echoes_the_window_and_records_the_cap(
 @pytest.mark.parametrize(("kw", "match"), [
     ({"classifier_window": 499}, "between 500 and 8000"),
     ({"classifier_window": 8001}, "between 500 and 8000"),
-    ({"classifier_window": 4000, "preset": "D"}, "preset C"),
-    ({"classifier_window": 4000, "source_run": "abcdefgh"}, "source run"),
+    ({"classifier_window": 1500, "preset": "D"}, "preset C"),
+    ({"classifier_window": 1500, "source_run": "abcdefgh"}, "source run"),
     ({"cases": ("nothing-*",)}, "no case matches"),
     ({"cases": ("long-*", "typo-*")}, "no case matches --cases typo-\\*$"),
 ])  # fmt: skip
@@ -171,14 +171,14 @@ def test_cases_runs_only_the_matching_cards_and_never_for_the_gate(
 def test_a_rescore_keeps_the_window_and_the_cases(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
 ) -> None:
-    ce.start(db_path, clock, root, classifier_window=4000, cases=("long-*",))
+    ce.start(db_path, clock, root, classifier_window=1500, cases=("long-*",))
     ce.drain(db_path, clock, _by_case)
     path = Path(conn.execute("SELECT path FROM eval_runs").fetchone()["path"])
     out = evalrun.rescore_synthetic(root, path, clock)
     again: dict[str, Any] = dict(load_result(Path(out["path"])).summary or {})
-    assert again["options"]["classifier_window"] == 4000
+    assert again["options"]["classifier_window"] == 1500
     assert again["options"]["cases"] == ["long-*"] and again["options"]["for_gate"] is False
-    assert again["excerpt_cap"]["classifier_chars"] == 4000
+    assert again["excerpt_cap"]["classifier_chars"] == 1500
 
 
 # The root guard: a for-gate run never re-points the gate while its set is still there.
@@ -219,13 +219,13 @@ def test_the_route_takes_the_window_and_the_cases(db_path: Path, clock: FakeCloc
             cli_h = {"Authorization": "Bearer cli-token"}
             body = {"root": str(root), "preset": "C", "sensitivity": "standard"}
             out = [await h.post("/v1/eval/claude", headers=cli_h, json=body | extra)
-                   for extra in ({"classifier_window": "4000"}, {"classifier_window": True},
+                   for extra in ({"classifier_window": "1500"}, {"classifier_window": True},
                                  {"cases": "long-*"}, {"cases": [3]})]  # fmt: skip
             out.append(
                 await h.post(
                     "/v1/eval/claude",
                     headers=cli_h,
-                    json=body | {"classifier_window": 4000, "cases": ["long-*"]},
+                    json=body | {"classifier_window": 1500, "cases": ["long-*"]},
                 )
             )
             return out
@@ -235,7 +235,7 @@ def test_the_route_takes_the_window_and_the_cases(db_path: Path, clock: FakeCloc
     assert "classifier_window must be a whole number" in bad[0].text
     assert "cases must be a list of text" in bad[2].text
     started = ok.json()
-    assert started["classifier_window"] == 4000 and started["cases"] == ["long-*"]
+    assert started["classifier_window"] == 1500 and started["cases"] == ["long-*"]
     assert started["total"] == 1 and started["for_gate"] is False
 
 
@@ -283,23 +283,23 @@ def _invoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reply: dict[str, An
 
 def test_the_cli_sends_the_options_and_checks_the_echo(monkeypatch: pytest.MonkeyPatch,
                                                        tmp_path: Path) -> None:  # fmt: skip
-    echoed = REPLY | {"classifier_window": 4000, "cases": ["long-*"]}
+    echoed = REPLY | {"classifier_window": 1500, "cases": ["long-*"]}
     r, client = _invoke(monkeypatch, tmp_path, echoed, "--claude", "--classifier-window",
-                        "4000", "--cases", "long-*")  # fmt: skip
+                        "1500", "--cases", "long-*")  # fmt: skip
     assert r.exit_code == 0, r.output
     body = client.calls[0][1] or {}
-    assert body["classifier_window"] == 4000 and body["cases"] == ["long-*"]
+    assert body["classifier_window"] == 1500 and body["cases"] == ["long-*"]
     # sent as an experiment, so a service that ignores the options never pins it or moves the
     # gate's set before it is stopped (W2)
     assert body["for_gate"] is False
-    assert "classifier window 4000" in r.output
+    assert "classifier window 1500" in r.output
     # a service on older code ignores the options: the CLI stops the run it registered
-    r, client = _invoke(monkeypatch, tmp_path, REPLY, "--claude", "--classifier-window", "4000")
+    r, client = _invoke(monkeypatch, tmp_path, REPLY, "--claude", "--classifier-window", "1500")
     assert isinstance(r.exception, InvalidInputError) and "didn't take" in str(r.exception)
     assert "was stopped" in str(r.exception)
     assert [p for p, _ in client.calls] == ["/v1/eval/claude", "/v1/eval/runs",
                                             "/v1/eval/runs/stop"]  # fmt: skip
-    r, client = _invoke(monkeypatch, tmp_path, REPLY | {"classifier_window": 1500},
+    r, client = _invoke(monkeypatch, tmp_path, REPLY | {"classifier_window": 4000},
                         "--claude", "--cases", "long-*")  # fmt: skip
     assert isinstance(r.exception, InvalidInputError) and "didn't take" in str(r.exception)
     # a local eval running: the stop would end it too, so the CLI leaves both (W1)
@@ -314,7 +314,7 @@ def test_the_cli_sends_the_options_and_checks_the_echo(monkeypatch: pytest.Monke
     assert "couldn't be stopped" in str(r.exception)
     assert "no eval is running" in str(r.exception)  # the stop's own message kept (X6)
     # without either option, or with the default window, an older service is fine (W11)
-    for args in ((), ("--classifier-window", "1500")):
+    for args in ((), ("--classifier-window", "4000")):
         r, client = _invoke(monkeypatch, tmp_path, REPLY, "--claude", *args)
         assert r.exit_code == 0, r.output
         assert len(client.calls) == 1 and (client.calls[0][1] or {})["for_gate"] is True
@@ -329,7 +329,7 @@ def test_an_empty_cases_option_is_refused(monkeypatch: pytest.MonkeyPatch,
 
 
 def test_the_options_need_claude(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for args in (("--classifier-window", "4000"), ("--cases", "long-*")):
+    for args in (("--classifier-window", "1500"), ("--cases", "long-*")):
         r, client = _invoke(monkeypatch, tmp_path, REPLY, *args)
         assert isinstance(r.exception, InvalidInputError) and client.calls == []
         assert "with --claude" in str(r.exception)
@@ -359,7 +359,7 @@ def test_an_experiments_key_binds_its_window_and_cases(conn: sqlite3.Connection,
     def key(**kw: Any) -> str:
         return claude_eval.models_for(conn, claude_eval.Options(root, for_gate=False, **kw))[2]
 
-    keys = {key(), key(classifier_window=4000), key(classifier_window=8000), key(cases=("long-*",))}
+    keys = {key(), key(classifier_window=1500), key(classifier_window=8000), key(cases=("long-*",))}
     assert len(keys) == 4 and all(k.startswith("eval-") for k in keys)
     pinned = claude_eval.models_for(conn, claude_eval.Options(root))
     assert pinned[1] is True and not pinned[2].startswith("eval-")  # the pin key unchanged
@@ -367,7 +367,7 @@ def test_an_experiments_key_binds_its_window_and_cases(conn: sqlite3.Connection,
 
 def test_an_experiment_is_never_a_source_run(conn: sqlite3.Connection, db_path: Path,
                                              clock: FakeClock, root: Path) -> None:  # fmt: skip
-    ce.start(db_path, clock, root, classifier_window=4000)
+    ce.start(db_path, clock, root, classifier_window=1500)
     ce.drain(db_path, clock, _by_case)
     rid = str(conn.execute("SELECT run_id FROM eval_runs").fetchone()["run_id"])
     claude_eval.reset()
@@ -409,9 +409,9 @@ def test_compare_and_status_tell_windows_apart(conn: sqlite3.Connection, db_path
         "created_at": "2026-10-24T10:00:00Z", "run_id": "abcdef12", "gate_passed": False,
         "metrics": summary}]}  # fmt: skip
     assert any("classifier window 8000, cases long-*" in line for line in cli.status_lines(st))
-    snap = ce.start(db_path, clock, root, classifier_window=4000)
+    snap = ce.start(db_path, clock, root, classifier_window=1500)
     claude_st: dict[str, Any] = {"current": {"state": "idle"}, "recent": [], "claude": snap}
-    assert any("classifier window 4000" in line for line in cli.status_lines(claude_st))
+    assert any("classifier window 1500" in line for line in cli.status_lines(claude_st))
 
 
 def test_the_cli_window_default_is_the_services() -> None:

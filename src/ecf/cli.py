@@ -1294,7 +1294,7 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         typer.Option(
             "--classifier-window",
             help="With --claude, preset C: the characters of each email the classifier reads"
-            " (500-8000; default 1500); another value is an experiment, never for the gate.",
+            " (500-8000; default 4000); another value is an experiment, never for the gate.",
         ),
     ] = None,
     cases: Annotated[
@@ -1776,7 +1776,10 @@ def status_lines(st: dict[str, Any]) -> list[str]:
                 f" ({m.get('accuracy')}%, Wilson {m.get('wilson95')})",
                 f"{'':30}{safety}"]  # fmt: skip
         o: dict[str, Any] = m.get("options") or {}
-        if tuning := _tuning(o.get("classifier_window"), o.get("cases")):
+        # a run saved before OD-558 at 1,500 has no window option but records its excerpt_cap
+        cap: dict[str, Any] = m.get("excerpt_cap") or {}
+        window = o.get("classifier_window") or cap.get("classifier_chars")
+        if tuning := _tuning(window, o.get("cases")):
             out.append(f"{'':30}{tuning}")
         if window := window_signal_line(m):  # window tuning runs (OD-555)
             out.append(f"{'':30}{window}")
@@ -1804,7 +1807,7 @@ INCOMPLETE = {  # `incomplete_reason` (v3.0.0 step 2, P22)
 
 
 # the classifier's default window: the service's `message.CLASSIFIER_CHARS` (a test checks)
-CLASSIFIER_WINDOW = 1500
+CLASSIFIER_WINDOW = 4000
 
 
 def _tuning(window: Any, cases: Any, actor: Any = None) -> str:

@@ -32,12 +32,10 @@ state-archive/
 # Evaluation data: private cases and on-demand build output
 eval/private/
 tests/eval/synthetic/.build/
-tests/eval/long/.build/
 
-# Raw email files anywhere except the synthetic, long-card and held-out eval sets
+# Raw email files anywhere except the synthetic and held-out eval sets
 *.eml
 !tests/eval/synthetic/**/*.eml
-!tests/eval/long/**/*.eml
 !tests/eval/heldout/**/*.eml
 !tests/eval/heldout2/**/*.eml
 

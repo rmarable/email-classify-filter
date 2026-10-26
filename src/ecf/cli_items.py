@@ -19,6 +19,9 @@ from ecf.upgrade_check import converted_notice
 PREVIEW = 20
 
 
+SHOWN_CHARS = 1500  # of the stored excerpt, unless --full (OD-558)
+
+
 def item_line(i: dict[str, Any]) -> str:
     stale = " STALE" if i["stale"] else ""
     flag = " [payment/fraud]" if i["payment_or_fraud"] else ""
@@ -50,11 +53,20 @@ def make_commands(  # noqa: PLR0915 - one group of commands
         typer.echo(f"{len(found)} waiting" + ("; details: ecf item show <id>" if found else ""))
 
     @item_app.command("show")
-    def show(item: Annotated[str, typer.Argument(help="Item ID (8 or more characters).")]) -> None:
+    def show(
+        item: Annotated[str, typer.Argument(help="Item ID (8 or more characters).")],
+        full: Annotated[
+            bool,
+            typer.Option(
+                "--full",
+                help=f"The whole stored excerpt (else its first {SHOWN_CHARS:,} characters).",
+            ),
+        ] = False,
+    ) -> None:
         """Everything ecf keeps about one email, including its stored excerpt."""
         with LocalClient(paths()) as c:
             d = c.get(f"/v1/items/{item}")
-        for line in describe(d):
+        for line in describe(d, full=full):
             typer.echo(plain(line))
 
     @item_app.command("undo")
@@ -328,7 +340,25 @@ def proposal_lines(d: dict[str, Any]) -> list[str]:
     return lines
 
 
-def describe(d: dict[str, Any]) -> list[str]:
+def _excerpt_lines(d: dict[str, Any], full: bool) -> list[str]:
+    """The stored excerpt, or its first `SHOWN_CHARS` up to the last line break in their last
+    fifth (else the last space there, else all of them), and how much more there is: the
+    classifier's excerpt is up to 4,000 characters (OD-558)."""
+    text: str = d["excerpt"] or "(none kept)"
+    if full or len(text) <= SHOWN_CHARS:
+        return [f"  {x}" for x in text.splitlines()]
+    head = text[:SHOWN_CHARS]
+    for sep in ("\n", " "):
+        at = head.rfind(sep)
+        if at > SHOWN_CHARS * 0.8:
+            head = head[:at]
+            break
+    return [f"  {x}" for x in head.splitlines()] + [
+        f"  [{len(text) - len(head):,} more characters: ecf item show {d['id'][:8]} --full]"
+    ]
+
+
+def describe(d: dict[str, Any], *, full: bool = False) -> list[str]:
     lines = [
         f"id:           {d['id']}",
         f"address:      {d['address_id']}   status: {d['status']}"
@@ -357,7 +387,7 @@ def describe(d: dict[str, Any]) -> list[str]:
         f"  {h['ts']}  {h['event']:<28} {h['actor']:<14} {h['outcome']}" for h in d["history"]
     ]
     lines.append("excerpt (stored text, shown only here):")
-    lines += [f"  {x}" for x in (d["excerpt"] or "(none kept)").splitlines()]
+    lines += _excerpt_lines(d, full)
     return lines
 
 

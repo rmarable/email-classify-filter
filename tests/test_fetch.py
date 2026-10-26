@@ -24,7 +24,7 @@ from ecf_server.fetch import (
 from ecf_server.isolate import Isolated, IsolationError
 from ecf_server.mail import MailSource
 from ecf_server.mail.fake import FakeMailSource, GmailFakeSource
-from ecf_server.message import ParsedMessage, parse
+from ecf_server.message import CLASSIFIER_CHARS, ParsedMessage, parse
 from ecf_server.senderauth import AuthOutcome
 from tests.mail_contract import message
 
@@ -146,6 +146,7 @@ def test_page_creates_items_with_excerpts(setup: sqlite3.Connection, clock: Fake
     assert facts["attachments"][0]["name"] == "inv.pdf" and facts["from_count"] == 1
     ex = setup.execute("SELECT * FROM excerpts WHERE stable_id = ?", (r.created[0],)).fetchone()
     assert ex["classifier_text"].startswith("Plain body 0")
+    assert ex["classifier_chars"] == CLASSIFIER_CHARS  # the window it was cut at (0042)
     assert setup.execute("SELECT count(*) FROM processing").fetchone()[0] == 0
     cur = load_cursor(setup, ADDR)
     assert cur is not None and cur.last_uid == 3

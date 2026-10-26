@@ -108,6 +108,7 @@ class JevAsker:
                                  budget_s=setup.budget_s,
                                  concurrency=opts.jev_concurrency)  # fmt: skip
         self.pin = self.client.pin
+        self.window = jev.WINDOW
         # until a request gets a reply classed ok or request error (not a provider fault): a 404
         # or 422 then stops the run (§5.3, J11)
         self.first = True

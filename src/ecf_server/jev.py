@@ -52,7 +52,7 @@ from ecf_server import excerpt, jev_mapping, signals, systemone, triggers
 from ecf_server.clock import Clock, SystemClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
-from ecf_server.message import CLASSIFIER_CHARS
+from ecf_server.message import cut
 from ecf_server.rules import (
     CompiledRules,
 )
@@ -94,9 +94,14 @@ PACE_BYTES_PER_TOKEN = 4.0
 NAME_CHARS = 300  # display name, and each attachment's name
 SUBJECT_CHARS = 300
 MAX_ATTACHMENTS = 10
-# one over the stored excerpt's limit, in characters; never a byte cut (P10). Since OD-552 the
-# excerpt is at most CLASSIFIER_CHARS; the +1 is kept so Jev's gate key and prompt digest don't move
-EXCERPT_CHARS = CLASSIFIER_CHARS + 1
+# Jev reads the first 1,500 characters, cut as the service cuts (never a byte cut, P10), when
+# Claude's classifier reads 4,000 (OD-558; operator 2026-10-26: raise it when Jev is evaluated
+# again). Cutting the stored excerpt again at 1,500 gives what the 1,500 excerpt was, so Jev's
+# input doesn't change for any excerpt cut since OD-552 (an older one could be 1,501 characters,
+# which the old 1,501 slice sent whole and this cuts at a word). `EXCERPT_CHARS`, one over the
+# old stored limit, stays in the caps so the key's other parts don't move.
+WINDOW = 1500
+EXCERPT_CHARS = WINDOW + 1
 UNKNOWN_DATE = "unknown"
 
 # Values learned in the live check (SPEC §21.2); empty until then.
@@ -260,8 +265,9 @@ def header_lines(email: Email, *, redact: bool) -> list[str]:
     return lines
 
 
-def _excerpt(text: str) -> str:
-    return text[:EXCERPT_CHARS]
+def excerpt_text(text: str) -> str:
+    """The stored classifier excerpt cut to Jev's window."""
+    return cut(text, WINDOW)
 
 
 def state(email: Email, sent: tuple[str, ...], token: str, *, redact: bool) -> str:
@@ -270,7 +276,7 @@ def state(email: Email, sent: tuple[str, ...], token: str, *, redact: bool) -> s
     question's instructions, and neither did better, OD-512)."""
     headers = "\n".join(header_lines(email, redact=redact))
     return (f"{systemone.PREAMBLE}\n\n{signals.block(sent, token)}<<<EMAIL {token}>>>\n{headers}"
-            f"\n\n{_excerpt(email.text)}\n<<<END EMAIL {token}>>>")  # fmt: skip
+            f"\n\n{excerpt_text(email.text)}\n<<<END EMAIL {token}>>>")  # fmt: skip
 
 
 # `requires_action` is asked as three narrow yes/no questions and folded back into one answer,

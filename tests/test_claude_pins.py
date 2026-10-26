@@ -328,7 +328,7 @@ def test_0041_removes_a_stored_sonnet_override(
         c.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, 't',"
                   " 'os_user')", (claude_pins.OVERRIDE_KEY, json.dumps(stored)))  # fmt: skip
     monkeypatch.setattr(db, "_migration_files", lambda: every)
-    assert db.migrate(c) == ["0041_sonnet_override_removed.sql"]
+    assert db.migrate(c, up_to=41) == ["0041_sonnet_override_removed.sql"]
     assert claude_pins.overrides(c) == (left or {})
     row = c.execute("SELECT 1 FROM settings WHERE key = ?", (claude_pins.OVERRIDE_KEY,))
     assert (row.fetchone() is not None) == (left is not None)
@@ -337,5 +337,5 @@ def test_0041_removes_a_stored_sonnet_override(
                                                  " 'migration'")]  # fmt: skip
     assert audit == ([{"from": stored, "to": left or {}}] if stored and "sonnet" in stored
                      else [])  # fmt: skip
-    assert db.migrate(c) == []
+    assert db.migrate(c, up_to=41) == []
     c.close()

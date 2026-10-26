@@ -25,9 +25,9 @@
   `classifier_high_batch` (default 1, V1.4 step 9). A hide decided for an item of a batch that
   held a risky or still unclassified item needs approval (claude_queue.batch_risky; unknown
   counts as risky, operator decision 2026-10-02).
-- **`get_message`** returns the stored excerpt (about 1,500 characters to classify, 4,000 to act,
-  both with OD-254's redaction) inside the untrusted-data wrapper. No computed facts except the
-  derived signals an OD exempts (§7.2, OD-483): Claude gets what the local model gets. To
+- **`get_message`** returns the stored excerpt (about 4,000 characters to classify and to act,
+  OD-558; both with OD-254's redaction) inside the untrusted-data wrapper. No computed facts
+  except the derived signals an OD exempts (§7.2, OD-483): Claude gets what the local model gets. To
   classify it also gets the effective schema (with any extension) as a JSON schema and as
   `schema_text`, the meaning of each field and value, a separate trusted field (SCHEMA-V2-PLAN
   4.3). To act it also gets the classification, the actions and targets it may choose, and your

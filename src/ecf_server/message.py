@@ -35,7 +35,7 @@ from ecf_server.mail import PartInfo
 
 HASH_VERSION = 1
 PARTIAL_HASH_VERSION = 0  # oversized messages: headers and part sizes only (see parse_partial)
-CLASSIFIER_CHARS = 1500  # SPEC §5.1 step 4
+CLASSIFIER_CHARS = 4000  # SPEC §5.1 step 4; 1,500 until window tuning step 8 (OD-558)
 ACTOR_CHARS = 4000
 NAME_CHARS = 100  # attachment names are capped (§7.2) ...
 NAME_TAIL = 12  # ... as head…tail, keeping the end, so the extension stays readable (P24)
@@ -148,7 +148,7 @@ class ParsedMessage:
         """The prepared body (`excerpt.py`), or with `prep` off the first plain part, else the
         first visible HTML text; `redact` applied before the cut at a word boundary."""
         text = self.prepared() if prep else self._body_text()
-        return _cut(text if redact is None else redact(text), limit)
+        return cut(text if redact is None else redact(text), limit)
 
     def excerpt_sets_and_length(
         self, redact: Callable[[str], str]
@@ -157,8 +157,8 @@ class ParsedMessage:
         (pre-gate review G8), and the length of the redacted text they are cut from (OD-553)."""
         text = self.prepared()
         red = redact(text)
-        return ((_cut(red, CLASSIFIER_CHARS), _cut(red, ACTOR_CHARS)),
-                (_cut(text, CLASSIFIER_CHARS), _cut(text, ACTOR_CHARS)), len(red))  # fmt: skip
+        return ((cut(red, CLASSIFIER_CHARS), cut(red, ACTOR_CHARS)),
+                (cut(text, CLASSIFIER_CHARS), cut(text, ACTOR_CHARS)), len(red))  # fmt: skip
 
     def excerpts(self, redact: Callable[[str], str], *, prep: bool = True) -> tuple[str, str]:
         """The classifier and actor excerpts (SPEC §5.1 step 4) from one redaction; `prep` off:
@@ -171,7 +171,7 @@ class ParsedMessage:
         """`excerpts`, and the whole redacted text they are cut from (the eval measures it,
         OD-555); `limit`: the classifier's window, which only an eval changes (window tuning)."""
         text = redact(self.prepared() if prep else self._body_text())
-        return (_cut(text, limit), _cut(text, ACTOR_CHARS)), text
+        return (cut(text, limit), cut(text, ACTOR_CHARS)), text
 
     def prepared(self) -> str:
         """The body for the excerpts (pre-classifier plan step 10): every plain body part, else
@@ -192,8 +192,10 @@ class ParsedMessage:
         return (plain or html or [""])[0]
 
 
-def _cut(text: str, limit: int) -> str:
-    """`text` cut at a word boundary to at most `limit` characters, with an ellipsis."""
+def cut(text: str, limit: int) -> str:
+    """`text` cut at a word boundary to at most `limit` characters, with an ellipsis. Cutting
+    an excerpt again at a smaller limit gives what cutting the whole text there gives (Jev's
+    1,500 from the stored 4,000)."""
     if len(text) <= limit:
         return text
     cut = text[:limit]

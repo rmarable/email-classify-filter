@@ -107,8 +107,8 @@ def _migration_files() -> list[tuple[int, str, str]]:
 
 # Migrations that rewrite many rows, after which a WAL checkpoint runs (0036 schema v3, 0037 its
 # removed values, 0038 the local models' columns and the `addresses` rebuild; P27; 0039 builds two
-# indexes over the whole audit table, OD-507)
-CHECKPOINT_AFTER = frozenset({36, 37, 38, 39})
+# indexes over the whole audit table, OD-507; 0042 writes every excerpt's window, OD-558)
+CHECKPOINT_AFTER = frozenset({36, 37, 38, 39, 42})
 # Migrations that rebuild a table other tables reference (0038 `addresses`; P1), with that table:
 # SQLite ignores `PRAGMA foreign_keys` inside a transaction, and with enforcement on, dropping the
 # old table would delete or refuse its children. So enforcement goes off before the transaction,
@@ -175,7 +175,18 @@ def _apply(conn: sqlite3.Connection, version: int, name: str, sql: str) -> bool:
             if conn.execute(again, (version,)).fetchone():
                 return False
             for statement in _split(sql):
-                conn.execute(statement)
+                try:
+                    conn.execute(statement)
+                except sqlite3.OperationalError as exc:
+                    # a CHECK that `ALTER TABLE ... ADD COLUMN` tests against existing rows
+                    # fails as an OperationalError: report it like any row that breaks a rule
+                    if "CHECK constraint failed" not in str(exc):
+                        raise
+                    raise MigrationError(
+                        f"migration {name}: a stored row breaks a rule of the new schema"
+                        f" ({exc}); nothing was changed, and ecf upgrade puts the previous"
+                        " version back"
+                    ) from None
             if parent is not None and (found := orphans(conn, parent)):
                 named = ", ".join(f"{t} rowid {r} -> {p}" for t, r, p in found[:ORPHANS_NAMED])
                 raise MigrationError(

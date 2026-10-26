@@ -119,7 +119,7 @@ def test_an_email_with_no_space_near_the_cut_is_stored(
     row = conn.execute(
         "SELECT length(classifier_text), length(actor_text) FROM excerpts"
     ).fetchone()
-    assert tuple(row) == (1500, 4000)
+    assert tuple(row) == (4000, 4000)  # the classifier reads 4,000 too (OD-558)
     assert conn.execute("SELECT count(*) FROM processing").fetchone()[0] == 0
     assert conn.execute("SELECT prechecked FROM items").fetchone()[0] == 1
 

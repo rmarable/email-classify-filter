@@ -36,7 +36,8 @@ from importlib import resources
 from ecf.yamlio import load_yaml
 from ecf_server.skeleton import normalize
 
-VERSION = 2  # joins the prompt digests (P18): a change here is a new gate (2: review G1, G5-G7)
+VERSION = 3  # joins the prompt digests (P18): a change here is a new gate (2: review G1, G5-G7;
+# 3: the classifier's window, 4,000 from 1,500, OD-558)
 HEAD_CHARS = 256 * 1024  # operator decision 2026-10-11 (plan §6 B: 64-256 KB)
 MARKER_CHARS = 400  # a longer line is never a quote marker
 MARKER_LOOKAHEAD = 4  # lines after `From:` searched for `Sent:` or `Date:`
