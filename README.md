@@ -157,8 +157,9 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Status
 
-`v3.0.5` (2026-10-16) is the current version: `ecf upgrade` run from a copy of ecf that wasn't
-installed the usual way no longer deletes a file another install needs to undo an upgrade. It runs
+`v3.1.0` (2026-10-26) is the current version: the classifier now reads the first 4,000
+characters of each email instead of 1,500, so a scam whose request comes late in a long email is
+caught, and a Slack card that can't be posted no longer holds up its channel. It runs
 on macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
 your Mac, for connecting to Gmail directly through Google's own interface, and then for Google
 Workspace (company and school) accounts are planned. What changed in each version is in
