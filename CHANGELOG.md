@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- When Slack reports an outage (it answers posts with a server error), ecf holds the posts and sends them when Slack recovers, instead of giving up after 42 minutes; a post that keeps failing while others get through is given up after 15 minutes, and any post after 2 hours, each with a notice (OD-557).
+- Fixed: a card that Slack refuses no longer blocks that mailbox's Slack channel for 42 minutes or keeps coming back. You get a desktop notice (and an email, if you send Slack alerts there) naming the command to decide the email at your computer, and `ecf slack repost` brings the card back (OD-557).
 - New `ecf slack repost`: puts ecf's cards back in Slack, including cards of emails waiting for your approval that weren't shown. `ecf doctor` now says how many of the Slack posts that gave up were cards of emails waiting for you (OD-557).
 - Fixed: after `ecf slack remove` and a new install, or an import, the cards of emails still waiting for your approval are posted again (OD-557).
 - New for evals: a test card can be a long email: its text padded to a set length with ordinary paragraphs in the voice of a supplier, a colleague or a friend, followed by a signature, an earlier thread quoted the way a mail client quotes it, and a footer, so you can test where in a long email the warning signs sit. `ecf eval build` says where each long card's warning words start, and `ecf eval show`, `ecf eval label` and the review screen show the whole email as built. Existing test cards build exactly as before (OD-555).

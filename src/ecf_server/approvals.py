@@ -783,10 +783,12 @@ def post_held_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_P
         f" WHERE i.status = 'awaiting_approval' AND g.status = 'issued' AND NOT {marked.sql('i.')}"
         " ORDER BY i.updated_at, i.stable_id").fetchall()  # fmt: skip
     posted = 0
+    refused = slack_out.refused_keys(conn)  # left for `ecf slack repost` (OD-557)
     for row in rows:
         if posted >= limit:
             break
-        if has_card(conn, f"item:{row['stable_id']}"):
+        key = f"item:{row['stable_id']}"
+        if key in refused or has_card(conn, key):
             continue
         _card(conn, clock, _item(conn, row["stable_id"]), row["grant_id"])
         posted += 1
@@ -849,6 +851,38 @@ def repost_cards(conn: sqlite3.Connection, clock: Clock) -> dict[str, Any]:
     return {"queued": len(drawn) + resent, "reposting": len(reposting),
             "not_recovered": inbox.waiting_lost(conn),
             "backlog_held": claude_queue.backlog(conn) > claude_queue.BACKLOG_BATCH}  # fmt: skip
+
+
+def lost_post_kind(conn: sqlite3.Connection, key: str) -> tuple[str, str]:
+    """What a Slack post that gave up was, for its notice (OD-557): the kind and the email's short
+    ID ("none" for anything but an email's card or an escalation)."""
+    kind, _, rest = key.partition(":")
+    if kind in ("burst", "rollup"):
+        return ("escalation", "")
+    row = conn.execute("SELECT * FROM items WHERE stable_id = ?", (rest,)).fetchone()
+    if kind != "item" or row is None:
+        return ("none", "")
+    return (_item_kind(conn, row), rest[: cards.SHORT_ID])
+
+
+def _item_kind(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """A question first (an item at `needs_clarification` can still hold an issued grant, and
+    only `ecf answer` works then), then an approval, a send counting down, an escalation."""
+    status, granted = row["status"], _latest_grant(conn, row["stable_id"]) is not None
+    if status == Status.NEEDS_CLARIFICATION or queued_answer(row):
+        kind = "question"
+    elif status == Status.AWAITING_APPROVAL and granted:
+        kind = "approval"
+    elif status == Status.AWAITING_STEPUP and granted:
+        kind = "approval_stepup"
+    elif status == Status.DELAYED:
+        kind = "delayed"
+    elif conn.execute("SELECT 1 FROM escalations WHERE stable_id = ?",
+                      (row["stable_id"],)).fetchone():  # fmt: skip
+        kind = "escalation"
+    else:
+        kind = "other_item"
+    return kind
 
 
 def _latest_grant(conn: sqlite3.Connection, sid: str) -> str | None:

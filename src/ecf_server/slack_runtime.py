@@ -114,7 +114,14 @@ class SlackRuntime:
         self.status["installed"] = True
         self._web = self._make_web(bot)
         self._remember_bot_user()
-        self._sender = SlackSender(SlackChat(self._web), self._clock, self._notifier)
+        clock, notifier = self._clock, self._notifier
+
+        def on_lost(conn: sqlite3.Connection, detail: str) -> None:
+            """A post that gave up: one Slack Delivery Failed event, never through Slack."""
+            alerts.event(conn, clock, notifier, slack_out.ALERT, detail, condition=slack_out.LOST)
+
+        self._sender = SlackSender(SlackChat(self._web), clock, notifier, on_lost=on_lost,
+                                   lost_kind=approvals.lost_post_kind)  # fmt: skip
         inbound = Inbound(slack_admin.identity, self._clock, self._connect, self._ack,
                           self._open_view)  # fmt: skip
         self._socket = self._make_socket(app, self._web, inbound.on_envelope)
