@@ -814,12 +814,14 @@ def edit_card(conn: sqlite3.Connection, clock: Clock, sid: str, title: str) -> N
 
 
 def has_card(conn: sqlite3.Connection, key: str) -> bool:
-    """Posted, or queued to be posted (an edit queued behind it edits it); a post Slack gave up
-    on doesn't count, so it is posted again."""
+    """Posted, or queued or in flight to be posted (an edit queued behind it edits it). A post
+    Slack gave up on doesn't count, so it is posted again; nor does a finished job without a
+    message record (its channel went, or Slack was removed or the data imported), since a post
+    that went through is recorded before its job finishes (OD-557)."""
     if slack_out.message_ref(conn, key):
         return True
     return bool(conn.execute(
-        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND state != 'dead'"
+        "SELECT 1 FROM jobs WHERE queue = 'slack_out' AND state IN ('queued', 'claimed')"
         " AND json_extract(payload, '$.key') = ?", (key,)).fetchone())  # fmt: skip
 
 

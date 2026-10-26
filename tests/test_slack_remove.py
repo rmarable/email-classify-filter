@@ -278,8 +278,9 @@ def test_item_cards_after_removal_and_a_new_install(env: Env) -> None:
     sid = "a" * 64
     _awaiting_approval(env.conn, env.clock, sid)
     now = to_ts(env.clock.now())
-    with write_tx(env.conn):  # the card was posted to the old channel
-        env.conn.execute("DELETE FROM jobs WHERE queue = 'slack_out'")
+    with write_tx(env.conn):  # the card was posted to the old channel; its job is done, as a sent
+        # post leaves it (remove keeps done rows)
+        env.conn.execute("UPDATE jobs SET state = 'done' WHERE queue = 'slack_out'")
         env.conn.execute("INSERT INTO slack_messages (key, channel, ts, created_at,"
                          " updated_at) VALUES (?, 'CAP', '2.0001', ?, ?)",
                          (f"item:{sid}", now, now))  # fmt: skip
