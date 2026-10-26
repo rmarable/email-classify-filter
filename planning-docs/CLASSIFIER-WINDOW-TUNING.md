@@ -390,6 +390,9 @@ The experiment leaves the main set alone, so the gate stays as it is and needs n
 
 ## Later: windows above 4,000
 
+From OD-558, migration 0042 caps `excerpts.classifier_text` and `classifier_chars` at 4,000,
+so a larger window also needs a migration that lifts those caps.
+
 Out of scope from draft 7 (operator, 2026-10-25). Measured mail runs longer (39% over 4,000 and
 21% over 8,000 in the personal count), but a window above 4,000 needs the actor's window raised
 with it (the rule classifier ≤ actor), a table-rebuild migration for `actor_text` (a
