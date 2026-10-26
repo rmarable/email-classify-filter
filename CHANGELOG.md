@@ -3,7 +3,7 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.1.0 (2026-10-26)
 
 - Decided: anyone can use the `claude` provider of `ecf eval generate` and `ecf eval grade` on their own Claude Code sign-in; it was meant for the operator only (OD-559).
 - Fixed: when Slack stops answering for 2 hours and ecf gives up on a card of an email waiting for your approval, ecf now posts that card once more by itself, as it does after other failures (if that fails too, `ecf slack repost` brings it back); before, it left it for `ecf slack repost` as if Slack had refused the card (OD-557).
