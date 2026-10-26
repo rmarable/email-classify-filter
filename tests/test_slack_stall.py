@@ -163,7 +163,7 @@ def test_one_unknown_failure_is_posted_once_more_and_two_are_not(
         assert _states(conn, key)[-1] == "dead"
         posted = approvals.post_held_cards(conn, clock)
         assert posted == (1 if round_ == 1 else 0)  # X3 once; then left for ecf slack repost
-    assert "ecf posts it once more shortly" in notes.sent[0]
+    assert "ecf posts it once more when it can" in notes.sent[0]
     assert "didn't reach Slack twice" in notes.sent[1]
 
 

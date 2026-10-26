@@ -656,8 +656,8 @@ def _approval_notice(email: str, short: str, method: str, reason: str, flavour: 
         return (
             f"{email}: {decide}. Its card didn't reach Slack twice; ecf slack repost tries again."
         )
-    return (f"{email}: its card didn't reach Slack; ecf posts it once more shortly. If that fails"
-            f" too, {decide}.")  # fmt: skip
+    return (f"{email}: its card didn't reach Slack; ecf posts it once more when it can. If that"
+            f" fails too, {decide}.")  # fmt: skip
 
 
 def dead_posts(conn: sqlite3.Connection) -> list[dict[str, Any]]:

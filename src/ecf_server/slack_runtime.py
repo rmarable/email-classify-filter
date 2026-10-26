@@ -121,7 +121,8 @@ class SlackRuntime:
             alerts.event(conn, clock, notifier, slack_out.ALERT, detail, condition=slack_out.LOST)
 
         if self._sender is None:  # kept across connect retries: its notice window and outage
-            # counts must outlast them; a reload or `ecf slack remove` drops it first (OD-557)
+            # counts must outlast them; a reload or `ecf slack remove` drops it first (OD-557).
+            # It keeps the first `self._web`, which a retry rebuilds on the same token
             self._sender = SlackSender(SlackChat(self._web), clock, notifier, on_lost=on_lost,
                                        lost_kind=approvals.lost_post_kind)  # fmt: skip
         inbound = Inbound(slack_admin.identity, self._clock, self._connect, self._ack,
