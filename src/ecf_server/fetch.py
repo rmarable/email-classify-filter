@@ -946,6 +946,9 @@ def _pause(conn: sqlite3.Connection, clock: Clock, address_id: str, why: str) ->
     return bool(n)
 
 
+REFERENCES_KEPT = 10  # the email's last Message-IDs kept in its facts, as a reply keeps
+
+
 def _facts(p: ParsedMessage) -> dict[str, Any]:
     refs = message_ids(*p.headers.get("references", ()), *p.headers.get("in-reply-to", ()))
     return {
@@ -953,6 +956,8 @@ def _facts(p: ParsedMessage) -> dict[str, Any]:
         "from_count": p.from_count,
         # the thread's first Message-ID, the key of "one template reply per thread" (OD-325)
         "thread_root": refs[0] if refs else None,
+        # the email's own chain, so a saved draft threads under the whole conversation (M8 step 2)
+        "references": refs[-REFERENCES_KEPT:],
         "mime_defects": p.defects,
         "text_truncated": p.any_truncated,
         "attachments": [
