@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: `ecf eval` now works out each test email's facts as ecf does for real mail. A test email that states a known, authenticated sender no longer gets the "first-time sender with a payment keyword" warning, and the actor's draft replies are no longer thrown away in test runs. Results record the change, and `ecf eval compare` warns when two runs differ in it. This can change the expected outcome of some generated test emails; re-run `ecf eval expect` on a kept set.
 - Fixed: a draft reply ecf saves now threads under the whole email conversation in your mail app, not just under the one email it answers.
 - Decided: plan and code reviews that normally use Fable agents fall back to Opus agents when Fable is out of credits, and say so (OD-562).
 - Changed: test runs with TypeSafe's Jev model now use Jev 1.14, its newest version, and give it the same first 4,000 characters of each test email that Claude reads, instead of 1,500. None of your mail goes to TypeSafe (OD-561).

@@ -444,6 +444,6 @@ def test_fetch_keeps_the_last_ten_references() -> None:
     raw = ("From: a@vendor-a.example\r\nTo: ap@acme.example\r\nSubject: s\r\n"
            f"Message-ID: <x@vendor-a.example>\r\nReferences: {' '.join(ids)}\r\n"
            "In-Reply-To: <m11@vendor-a.example>\r\n\r\nbody\r\n").encode()  # fmt: skip
-    got = fetch._facts(parse(raw, max_scan_bytes=MB))  # pyright: ignore[reportPrivateUsage]
+    got = fetch.message_facts(parse(raw, max_scan_bytes=MB))
     assert got["references"] == ids[-10:]
     assert got["thread_root"] == ids[0]

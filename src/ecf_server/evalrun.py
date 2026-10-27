@@ -865,6 +865,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         if determinism is not None:  # which cases repeated, the flips per field (plan 0.3)
             summary["determinism"] = determinism
         summary["excerpt_prep"] = excerpt.VERSION
+        summary["facts_version"] = ruletest.FACTS_VERSION
         summary["keywords_digest"] = triggers.keywords_digest()
         summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
         summary["scoring"] = "live"
@@ -1053,7 +1054,8 @@ def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[st
         return case.facts, case.excerpts, {}
     read = ruletest.read_case(case.path.read_bytes())
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
-                                   case.expected.get("facts") or {})  # fmt: skip
+                                   case.expected.get("facts") or {},
+                                   from_addr=read.parsed.from_addr)  # fmt: skip
     texts, whole = read.parsed.excerpts_and_text(redact, limit=limit)
     return found, texts, measured(case, whole, texts[0])
 
@@ -1119,7 +1121,8 @@ class Measures:
         start = time.perf_counter()
         read = ruletest.read_case(case.path.read_bytes())
         found = ruletest.with_expected(scratch.analyze(read, case.profile),
-                                       case.expected.get("facts") or {})  # fmt: skip
+                                       case.expected.get("facts") or {},
+                                       from_addr=read.parsed.from_addr)  # fmt: skip
         texts, whole = read.parsed.excerpts_and_text(redact, limit=limit)
         self.facts_s.append(time.perf_counter() - start)
         start = time.perf_counter()
@@ -1754,7 +1757,7 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     summary = _rescored_summary(before, out, schema=schema)
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
-                "excerpt_prep", "environment", "claude"):  # fmt: skip
+                "excerpt_prep", "facts_version", "environment", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     _spawns_again(summary, out)
