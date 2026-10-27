@@ -15,7 +15,7 @@ The rules shared with Codex are in `AGENTS.md` (OD-532, ADR 0033):
   `OD-NEW` / `ADR-NEW`; run the macOS merge gate unless it is docs only; merge with the gate line;
   push; watch CI; then remove the Codex worktree and branch (OK needed). Fixes go on the branch
   before the merge, or back to Codex as a list.
-- Phase R and diff reviews stay Fable only (OD-532); Codex isn't one of the reviewers.
+- Phase R and diff reviews stay Fable only (OD-532), falling back to Opus when Fable is out of credits (OD-562); Codex isn't one of the reviewers.
 
 ## Session state
 
