@@ -287,7 +287,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
     @eval_app.command("agree")
     def agree(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:
         """Set the labels from the judges' grades: where they agree, the label is theirs; where
-        they don't, the email waits for you (`ecf eval settle`)."""
+        they don't, the email waits for you (`ecf eval settle`). A disagreement on category or
+        deadline_mentioned waits for `ecf eval expect`, which asks you only if it changes the
+        expected rule or safety."""
         from datetime import UTC, datetime  # noqa: PLC0415
 
         from ecf.eval import agree as ag  # noqa: PLC0415
@@ -307,6 +309,10 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if o.fields:
             typer.echo("disputed fields: " + ", ".join(f"{k} {v}" for k, v in
                                                        o.fields.most_common()))  # fmt: skip
+        if o.deferred:
+            typer.echo("left to `ecf eval expect` (asked only if they change the rule): "
+                       + ", ".join(f"{k} {v}" for k, v in o.deferred.most_common())
+                       + "; \"agreed\" counts emails the judges agree on otherwise")  # fmt: skip
         typer.echo(f"Next: ecf eval expect --root {root}")
 
     @eval_app.command("settle")
@@ -347,8 +353,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
     @eval_app.command("expect")
     def expect(root: Annotated[Path, typer.Option("--root", help="A generated set.")]) -> None:
         """Fill each labelled card's expected rule and safety from ecf's rules engine. A card the
-        judges labelled is evaluated with each judge's sender_type and priority; when they
-        decide the rule, the email goes to `ecf eval settle` for them."""
+        judges labelled is evaluated with each judge's sender_type and priority, and category or
+        deadline_mentioned when they disagreed on it; when one decides the rule, the email goes to
+        `ecf eval settle` for it."""
         from datetime import UTC, datetime  # noqa: PLC0415
 
         from ecf.eval import expect as ex  # noqa: PLC0415
@@ -358,16 +365,21 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         gen.verify(where)
         p = ex.plan(where)
         with LocalClient(paths()) as c:
-            r = c.request("POST", "/v1/eval/expect", {"root": str(where), "variants": p.options})
+            r = c.request("POST", "/v1/eval/expect", {"root": str(where), "variants": p.options},
+                          timeout=300.0)  # fmt: skip
         counts = ex.apply(where, list(r["cases"]), datetime.now(UTC).date(), plan=p,
                           digest=r.get("rules_digest"))  # fmt: skip
         typer.echo(", ".join(f"{k} {v}" for k, v in counts.items()))
         if p.edited:
             typer.echo(f"{len(p.edited)} judged emails were edited by hand since their"
                        f" confirmation: run `ecf eval agree --root {root}` first")  # fmt: skip
-        if counts["undecided"]:
-            typer.echo(f"{counts['undecided']} emails stay undecided (a rules error; see"
-                       " work/expect.jsonl): they count in the label figures only")  # fmt: skip
+        if failed := counts["undecided"] - counts["not_evaluated"]:
+            typer.echo(f"{failed} emails stay undecided and unconfirmed (a rules error; see"
+                       " work/expect.jsonl): no figure counts them yet")  # fmt: skip
+        if counts["not_evaluated"]:
+            typer.echo(f"{counts['not_evaluated']} emails weren't evaluated by the service (too"
+                       " large to send): no expected rule, so out of the rule and safety figures;"
+                       " their labels still count")  # fmt: skip
         if waiting := counts["to_settle"] + counts["waiting"]:
             typer.echo(f"Next: ecf eval settle --root {root} (or --export for the phone page):"
                        f" {waiting} emails wait for you")  # fmt: skip

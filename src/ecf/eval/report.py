@@ -25,7 +25,7 @@ from ecf.eval import genset, models
 from ecf.eval import grade as grading
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
-from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile
+from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile, subset_lines
 from ecf.schema import FIXED_ITEMS, load_schema
 
 DEV_BANNER = "DEV: plumbing test, not a measurement"
@@ -42,13 +42,25 @@ def confirmed(root: Path) -> dict[str, dict[str, Any]]:
             if label_file.is_confirmed(r, models_ok=ok)}  # fmt: skip
 
 
-def _asked(exp: Mapping[str, Mapping[str, Any]],
-           judged: set[str]) -> dict[str, dict[str, Any]]:  # fmt: skip
-    """Each case's labels, without sender_type and priority on a judge-labelled row: those are
-    never scored there (eval plan draft 21, OD-549)."""
-    return {c: {k: v for k, v in cast(dict[str, Any], e.get("labels") or {}).items()
-                if not (c in judged and k in label_file.UNASKED)}
-            for c, e in exp.items()}  # fmt: skip
+def _asked(exp: Mapping[str, Mapping[str, Any]], rows: list[dict[str, Any]], *,
+           deferred: bool = False) -> dict[str, dict[str, Any]]:  # fmt: skip
+    """Each case's labels without those never scored on its row (`labels.unscored`):
+    sender_type and priority on a judge-labelled row (eval plan draft 21, OD-549), and the
+    fields the row defers (OD-563); with `deferred`, those are kept, for the judges' figures on
+    what you settled (marked as a subset)."""
+    by_id = {r["id"]: r for r in rows}
+
+    def skip(c: str) -> set[str]:
+        row = by_id.get(c) or {}
+        base: set[str] = set(label_file.UNASKED) if label_file.judged(row) else set()
+        return base if deferred else base | set(label_file.unscored(row))
+
+    out: dict[str, dict[str, Any]] = {}
+    for c, e in exp.items():
+        drop = skip(c)  # once per case
+        out[c] = {k: v for k, v in cast(dict[str, Any], e.get("labels") or {}).items()
+                  if k not in drop}  # fmt: skip
+    return out
 
 
 def _figure(agree: int, n: int) -> str:
@@ -68,10 +80,16 @@ def agreement(a: Mapping[str, Mapping[str, Any]], b: Mapping[str, Mapping[str, A
     return out
 
 
-def _field_lines(title: str, figures: dict[str, tuple[int, int]]) -> list[str]:
+def _field_lines(title: str, figures: dict[str, tuple[int, int]],
+                 subset: frozenset[str] = frozenset()) -> list[str]:  # fmt: skip
+    """A figure per field and their total; a field in `subset` (deferred, OD-563) is shown as a
+    judges-agreed or asked subset and left out of the total."""
     lines = [title]
-    lines += [f"  {f:<20} {_figure(*v)}" for f, v in figures.items() if v[1]]
-    total = (sum(v[0] for v in figures.values()), sum(v[1] for v in figures.values()))
+    lines += [f"  {f:<20} {_figure(*v)}"
+              + ("  (judges-agreed or asked subset, not an accuracy)" if f in subset else "")
+              for f, v in figures.items() if v[1]]  # fmt: skip
+    kept = [v for f, v in figures.items() if f not in subset]
+    total = (sum(v[0] for v in kept), sum(v[1] for v in kept))
     lines.append(f"  {'all fields':<20} {_figure(*total)}")
     return lines
 
@@ -150,10 +168,11 @@ def assignments(root: Path) -> dict[str, dict[str, str]]:
 
 
 def _detectability(root: Path, labels: Mapping[str, Mapping[str, Any]],
-                   results: list[ResultFile]) -> list[str]:  # fmt: skip
+                   results: list[ResultFile],
+                   given: dict[str, dict[str, str]] | None = None) -> list[str]:  # fmt: skip
     """How many of the emails written as scams each reader called phishing, and how the seeds'
     authentication results fall by kind (OD-544): reported, never scored."""
-    given = assignments(root)
+    given = assignments(root) if given is None else given
     scams = sorted(c for c, a in given.items() if a["kind"] == "scam")
     if not scams:
         return []
@@ -200,7 +219,8 @@ def weak_fields(grades: list[ResultFile]) -> set[str]:
 
 
 def _scorable(root: Path, labels: dict[str, dict[str, Any]], theirs: dict[str, dict[str, Any]],
-              grades: list[ResultFile]) -> tuple[dict[str, dict[str, Any]], list[str]]:  # fmt: skip
+              grades: list[ResultFile], given: dict[str, dict[str, str]] | None = None,
+              ) -> tuple[dict[str, dict[str, Any]], list[str]]:  # fmt: skip
     """The labels ecf is scored on when judges set some (OD-547, J7): fields the judges agree
     on only weakly are report-only, except the safety fields (the fixed items and fraud_risk,
     whose disputes you always settle; eval plan draft 21), and a judges' label contradicting the
@@ -208,7 +228,7 @@ def _scorable(root: Path, labels: dict[str, dict[str, Any]], theirs: dict[str, d
     and fraud_risk, unless you settled them (`theirs`: the fields the judges set, per case)."""
     weak: set[str] = weak_fields(grades) if len(grades) > 1 else set()
     weak -= {*FIXED_ITEMS, "fraud_risk"}
-    given = assignments(root)
+    given = assignments(root) if given is None else given
     contradicted: list[str] = []
     out: dict[str, dict[str, Any]] = {}
     for c, lab in labels.items():
@@ -248,10 +268,12 @@ def _split(labels: dict[str, dict[str, Any]], rows: list[dict[str, Any]],
 
 
 def _expect_lines(root: Path, exp: Mapping[str, Mapping[str, Any]], rows: list[dict[str, Any]],
-                  runs: list[ResultFile]) -> list[str]:  # fmt: skip
-    """What `ecf eval expect` did on a judged set (draft 21): the cases sent to you because
-    sender_type or priority decided the rule, the cases with no expected rule, and the rules it
-    used beside each run's."""
+                  runs: list[ResultFile],
+                  given: dict[str, dict[str, str]] | None = None) -> list[str]:  # fmt: skip
+    """What `ecf eval expect` did on a judged set (draft 21, OD-563): the label policy, the cases
+    expect sent to you (a varied field decided the rule or safety, or no judge answered it
+    validly), the cases with no expected rule (the
+    scam ones by id), and the rules it used beside each run's."""
     from ecf.eval import expect as ex  # noqa: PLC0415 - expect reads the agreement this reports
 
     work = gen.Work(root)
@@ -259,11 +281,29 @@ def _expect_lines(root: Path, exp: Mapping[str, Mapping[str, Any]], rows: list[d
     authors = {r["id"]: str(r.get("author", "")) for r in rows}
     undecided = sum(1 for c, e in exp.items() if genset.undecided(authors.get(c, ""), dict(e)))
     log = work.read(ex.LOG)
-    errors = len(log[-1].get("errors") or []) if log else 0
+    errs = cast(list[dict[str, Any]], log[-1].get("errors") or []) if log else []
+    skipped = sum(1 for e in errs if e.get("error") == ex.NOT_EVALUATED)
     digest = str(log[-1].get("rules_digest") or "") if log else ""
-    lines = [f"sender_type and priority: not scored on judged rows; {len(sent)} sent to you"
-             " because they decided the rule",
-             f"rule undecided: {undecided} (errors: {errors})"]  # fmt: skip
+    deferring = sum(1 for r in rows if label_file.deferred(r))
+    lines = [f"sender_type and priority: not scored on judged rows; {len(sent)} emails sent to"
+             " you by expect (a varied field decided the rule or safety, or no judge answered it"
+             " validly)",
+             f"rule undecided: {undecided} (rules errors: {len(errs) - skipped}, not evaluated"
+             f" by the service: {skipped})"]  # fmt: skip
+    if deferring:
+        lines.append(f"label policy (OD-563): {', '.join(label_file.DEFERRED)} deferred on"
+                     f" {deferring} emails; where the judges disagreed and it decided nothing,"
+                     " left unlabelled and unscored")  # fmt: skip
+    kinds = assignments(root) if given is None else given
+    last = log[-1] if log else {}
+    if risky := _undecided_risky(rows, last, kinds):
+        lines.append(f"undecided scam or regulator emails, {len(risky)} in all (a rules error: no"
+                     f" expected rule and unconfirmed, so out of every figure until expect decides"
+                     f" them): {', '.join(risky[:10])}")  # fmt: skip
+    if risky := _undecided_risky(rows, last, kinds, not_evaluated=True):
+        lines.append(f"scam or regulator emails the service didn't evaluate, {len(risky)} in all"
+                     f" (too large to send: no expected rule, so out of the rule and safety"
+                     f" figures; their labels still count): {', '.join(risky[:10])}")  # fmt: skip
     for r in runs:
         theirs = str((r.summary or {}).get("rules_digest") or "")
         flag = "" if theirs == digest else " MISMATCH: run `ecf eval expect` again, or the run"
@@ -281,6 +321,7 @@ def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
     lines = [f"labels: {by['models']} emails set by the judges, {by['operator']} by you,"
              f" {n['cases'] - n['confirmed']} not confirmed"
              f" ({len(ag.open_disputes(root))} waiting for you to settle)"]  # fmt: skip
+    lines += _shares(root)
     if len(grades) < 2:
         return lines
     got = [{c.id: dict(c.got) for c in g.cases if c.got} for g in grades]
@@ -300,6 +341,56 @@ def _judge_lines(root: Path, grades: list[ResultFile]) -> list[str]:
         if parts:
             lines.append(f"  {f:<20} " + "; ".join(parts))
     return lines
+
+
+# the fixed items that mark a fraud or regulator case (private_individual only says who wrote it)
+RISK_ITEMS = tuple(f for f in FIXED_ITEMS if f != "private_individual")
+
+
+def _undecided_risky(rows: list[dict[str, Any]], last: Mapping[str, Any],
+                     kinds: dict[str, dict[str, str]], *,
+                     not_evaluated: bool = False) -> list[str]:  # fmt: skip
+    """The emails the last expect left undecided by a rules error (unconfirmed, OD-563), or with
+    `not_evaluated` those the service didn't evaluate (still confirmed), that were written as
+    scams or whose labels make them a fraud or regulator case: a fixed item other than
+    private_individual true (`RISK_ITEMS`), or fraud_risk medium or high."""
+    from ecf.eval import expect as ex  # noqa: PLC0415 - as _expect_lines
+
+    errs = cast(list[dict[str, Any]], last.get("errors") or [])
+    ids = {str(e.get("id")) for e in errs if (e.get("error") == ex.NOT_EVALUATED) == not_evaluated}
+    out: list[str] = []
+    for r in rows:
+        lab = _labels_of(r)
+        if r["id"] in ids and (kinds.get(r["id"], {}).get("kind") == "scam"
+                               or any(lab.get(f) is True for f in RISK_ITEMS)
+                               or lab.get("fraud_risk") in ("medium", "high")):  # fmt: skip
+            out.append(r["id"])
+    return sorted(out)
+
+
+def _shares(root: Path) -> list[str]:
+    """Per field on the confirmed rows that defer fields (OD-563): how many labels the judges
+    agreed on, how many you settled, and how many the label policy left unlabelled."""
+    ok = label_file.models_ok(root)
+    rows = [r for r in label_file.read(root)
+            if label_file.deferred(r) and label_file.is_confirmed(r, models_ok=ok)]  # fmt: skip
+    if not rows:
+        return []
+    lines = [f"label shares on the {len(rows)} emails under the label policy (judges agreed /"
+             " you settled / left unlabelled):"]  # fmt: skip
+    for f in load_schema().fields:
+        if f in label_file.UNASKED:
+            continue
+        mine = sum(1 for r in rows if f in label_file.settled(r))
+        on = sum(1 for r in rows if f in _labels_of(r))
+        off = sum(1 for r in rows if f in label_file.deferred(r)) - on
+        lines.append(f"  {f:<20} {on - mine} / {mine} / {max(off, 0)}")
+    return lines
+
+
+def _labels_of(row: dict[str, Any]) -> dict[str, Any]:
+    expected = cast(dict[str, Any], row.get("expected") or {})
+    return cast(dict[str, Any], expected.get("labels") or {})
 
 
 def _no_self_grades(doc: dict[str, Any], grades: list[ResultFile]) -> None:
@@ -354,7 +445,8 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
     ids = set(doc["cases"])
     exp = confirmed(root)
     rows = label_file.read(root)
-    labels = _asked(exp, {r["id"] for r in rows if label_file.judged(r)})
+    labels = _asked(exp, rows)
+    full = _asked(exp, rows, deferred=True)  # with deferred fields, for the judges' figures
     lines.append(f"confirmed labels: {len(labels)} of {len(ids)} cases")
     if not labels:
         lines.append(f"no confirmed labels yet: label blind with `ecf eval label --root {root}"
@@ -371,6 +463,8 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
     shared = _families(doc, grades)
     sources = {r["id"]: label_file.source(r) for r in rows if r["id"] in labels}
     settled, theirs = _split(labels, rows, sources)
+    settled_full, _ = _split(full, rows, sources)
+    subset = frozenset(f for r in rows if r["id"] in labels for f in label_file.deferred(r))
     judged = bool(theirs) or any(label_file.judged(r) for r in rows if r["id"] in labels)
     graded: dict[str, dict[str, Any]] = {}
     for g in grades:  # measured first: every report states it (P8)
@@ -378,19 +472,21 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         graded = graded or got
         if judged:  # the judges' own labels can't measure them (OD-547, J6)
             title = (f"grader {g.pair.removeprefix('grader:')} against the labels you settled"
-                     f" ({len(settled)} emails; never the labels the judges set):")  # fmt: skip
-            figures = agreement(got, settled, fields)
+                     f" ({len(settled_full)} emails; never the labels the judges"
+                     " set):")  # fmt: skip
+            figures = agreement(got, settled_full, fields)
         else:
             title = (f"grader {g.pair.removeprefix('grader:')} against your labels (its"
                      " measured accuracy):")  # fmt: skip
             figures = agreement(got, labels, fields)
-        lines += _field_lines(title, figures)
+        lines += _field_lines(title, figures, subset if judged else frozenset())
         if not judged:
             lines += _measured(root, g.run_id, labels, figures)
-    scored, notes = _scorable(root, labels, theirs, grades) if judged else (labels, [])
+    given = assignments(root)  # read once (the work logs)
+    scored, notes = _scorable(root, labels, theirs, grades, given) if judged else (labels, [])
     lines += notes
     if judged:
-        lines += _expect_lines(root, exp, rows, runs)
+        lines += _expect_lines(root, exp, rows, runs, given)
     proposals = {p["id"]: cast(dict[str, Any], p["labels"])
                  for p in gen.Work(root).read("proposals")}  # fmt: skip
     if proposals:
@@ -429,8 +525,9 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         if graded:
             lines += _field_lines(f"ecf result {r.run_id[:8]} against the grader:",
                                   agreement(got, graded, fields))  # fmt: skip
+        lines += [f"  {line}" for line in subset_lines(r.summary)]
         lines += _rule_lines(r, exp)
-    lines += _detectability(root, labels, results)
+    lines += _detectability(root, labels, results, given)
     lines += _judge_lines(root, grades)
     if not runs:
         lines.append(f"no ecf result given: run `ecf eval run --root {root} --claude`, then"

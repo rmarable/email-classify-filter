@@ -71,14 +71,20 @@ def test_disagreements_wait_for_the_operator_with_the_judges_values(tmp_path: Pa
     _judge(tmp_path, root, "judge-a")
     _judge(tmp_path, root, "judge-b", {a: {"phishing": True}, b: {"category": "invoice"}})
     o = ag.run(root, ON)
-    assert (o.agreed, o.disputed) == (18, 2) and o.fields == {"phishing": 1, "category": 1}
+    # OD-563 (changed on purpose): a category disagreement opens no dispute; expect decides it
+    assert (o.agreed, o.disputed) == (19, 1) and o.fields == {"phishing": 1}
+    assert o.deferred == {"category": 1}
     open_ = {d["id"]: d for d in ag.open_disputes(root)}
-    assert open_[a]["fields"] == ["phishing"]
+    assert set(open_) == {a} and open_[a]["fields"] == ["phishing"]
     assert open_[a]["judges"]["phishing"] == {"fake:judge-a": False, "fake:judge-b": True}
-    assert label_file.counts(root)["confirmed"] == 18
-    # the agreed fields are on the card already; the disputed one isn't
-    card = next(c for c in load_cards(root / "cases") if c.id == a)
-    assert "phishing" not in card.expected.labels and card.expected.labels["category"] == "other"
+    assert label_file.counts(root)["confirmed"] == 19
+    # the agreed fields are on the card already; the disputed ones aren't
+    cards = {c.id: c for c in load_cards(root / "cases")}
+    assert "phishing" not in cards[a].expected.labels
+    assert cards[a].expected.labels["category"] == "other"
+    assert "category" not in cards[b].expected.labels
+    rows = {r["id"]: r for r in label_file.read(root)}
+    assert label_file.deferred(rows[b]) == ["category", "deadline_mentioned"]
 
 
 def test_a_refused_email_goes_to_the_operator_whole(tmp_path: Path) -> None:
@@ -263,9 +269,19 @@ def test_the_safety_fields_stay_in_ecfs_figures_whatever_the_judges_kappa(
 
 
 def test_the_report_drops_sender_type_and_priority_only_on_judged_rows() -> None:
-    lab = {"labels": {"sender_type": "vendor", "priority": "low", "phishing": True}}
-    got = rep._asked({"j": lab, "o": lab}, {"j"})  # pyright: ignore[reportPrivateUsage]
-    assert got == {"j": {"phishing": True}, "o": lab["labels"]}
+    lab = {"labels": {"sender_type": "vendor", "priority": "low", "phishing": True,
+                      "category": "invoice"}}  # fmt: skip
+    rows = [
+        {"id": "j", "labelled_by": {"judges": ["x"]}},
+        {"id": "o"},
+        {"id": "d", "labelled_by": {"judges": ["x"], "deferred": ["category"]}},
+    ]
+    got = rep._asked({"j": lab, "o": lab, "d": lab}, rows)  # pyright: ignore[reportPrivateUsage]
+    assert got == {"j": {"phishing": True, "category": "invoice"}, "o": lab["labels"],
+                   "d": {"phishing": True}}  # fmt: skip
+    # the judges' figures on what you settled keep the deferred field (OD-563, D1)
+    full = rep._asked({"d": lab}, rows, deferred=True)  # pyright: ignore[reportPrivateUsage]
+    assert full == {"d": {"phishing": True, "category": "invoice"}}
 
 
 def test_the_rule_figure_reads_the_result_not_later_labels() -> None:
