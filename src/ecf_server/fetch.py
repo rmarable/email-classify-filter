@@ -654,7 +654,7 @@ def _store(
             pg.labels.update(pg.src.gmail_labels([uid]))
         labels = pg.labels.get(uid, frozenset())
     found = pg.analyzer.analyze(parsed, raw, auth, labels) if pg.analyzer else {}
-    facts = _facts(parsed) | extra | found
+    facts = message_facts(parsed) | extra | found
     facts["identity_digest"] = digest
     if pg.scan:  # scanned mail: marked before sender history sees it (OD-507 §2, P12)
         facts["backfill"] = 1
@@ -946,7 +946,8 @@ def _pause(conn: sqlite3.Connection, clock: Clock, address_id: str, why: str) ->
     return bool(n)
 
 
-def _facts(p: ParsedMessage) -> dict[str, Any]:
+def message_facts(p: ParsedMessage) -> dict[str, Any]:
+    """The facts the fetch takes from the parsed message itself (the eval's scratch too)."""
     refs = message_ids(*p.headers.get("references", ()), *p.headers.get("in-reply-to", ()))
     return {
         "size": p.size,

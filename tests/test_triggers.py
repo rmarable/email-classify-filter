@@ -1126,20 +1126,26 @@ def test_the_eval_routes_after_a_cards_expected_facts(
 
     scratch = ruletest.Scratch(clock)
     try:
-        found = scratch.facts(mail("Please reply with your password today."))
+        read = ruletest.read_case(mail("Please reply with your password today."))
+        found = scratch.analyze(read)
     finally:
         scratch.close()
+    addr = read.parsed.from_addr
     assert found["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and {tr.NO_HISTORY}"]
-    known = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "pass"})
+    known = ruletest.with_expected(
+        found, {"sender_seen_before": True, "auth_result": "pass"}, from_addr=addr
+    )
     assert known["triggers"]["fraud"] == []
     assert known["triggers"]["fraud_weak"] == [
         f"{tr.CREDENTIAL} from a known sender, with no second signal"
     ]
-    failed = ruletest.with_expected(found, {"sender_seen_before": True, "auth_result": "fail"})
+    failed = ruletest.with_expected(
+        found, {"sender_seen_before": True, "auth_result": "fail"}, from_addr=addr
+    )
     assert failed["known_sender_auth_regressed"] is True
     # as live: a shared platform's history isn't the sender's (pre-gate review G3)
     regressed = {"sender_seen_before": True, "auth_result": "fail"}
-    shared = ruletest.with_expected(found | {"shared_platform": True}, regressed)
+    shared = ruletest.with_expected(found | {"shared_platform": True}, regressed, from_addr=addr)
     assert shared["known_sender_auth_regressed"] is False
     assert failed["triggers"]["fraud"] == [f"{tr.CREDENTIAL} and DMARC fail"]
     del conn
