@@ -50,7 +50,7 @@ from ecf.errors import (
 )
 from ecf.ids import new_random_id
 from ecf.plugin_digest import plugin_digest
-from ecf.schema import load_schema
+from ecf.schema import FieldKind, load_schema
 from ecf_server import (
     _slack,
     addresses,
@@ -819,9 +819,9 @@ def _config_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: P
     def eval_expect(request: Request) -> JSONResponse:
         """`ecf eval expect`: each case's rule and safety from the starter rules (as `ecf eval run`
         uses them) on its labels and facts (eval generate plan decision 8), and for a judged
-        case each combination of sender_type and priority in `variants` (draft 21); writes
+        case each combination of its varied fields in `variants` (draft 21, OD-563); writes
         nothing."""
-        body = _body(request)
+        body = _body(request, limit=EXPECT_BODY)
         root = Path(_str(body, "root"))
         if not root.is_absolute():
             raise InvalidInputError("root must be an absolute path")
@@ -2408,6 +2408,9 @@ def _planned_channel(state: ServiceState, address_id: str) -> str | None:
 
 
 MAX_BODY = 64 * 1024
+# `ecf eval expect` sends every judged case's varied values: about 48 KB for 300 cases with two
+# judges, 190 KB for 1,000 with three (OD-563), so that route alone takes more
+EXPECT_BODY = 2 * 1024 * 1024
 
 
 _VERIFIED: dict[tuple[str, int, int], dict[str, Any]] = {}
@@ -2428,10 +2431,10 @@ def _verified(root: Path, verify: Callable[[Path], dict[str, Any]]) -> dict[str,
     return _VERIFIED[key]
 
 
-def _body(request: Request) -> dict[str, Any]:
+def _body(request: Request, *, limit: int = MAX_BODY) -> dict[str, Any]:
     """The JSON object body of a sync handler (run in a worker thread by Starlette)."""
     raw = anyio.from_thread.run(request.body)
-    if len(raw) > MAX_BODY:
+    if len(raw) > limit:
         raise InvalidInputError("request body too large")
     try:
         data: Any = json.loads(raw or b"{}")
@@ -2565,10 +2568,11 @@ def _copy_to(body: dict[str, Any]) -> Path | None:
 
 
 def _variants(v: Any) -> dict[str, list[dict[str, Any]]]:
-    """`ecf eval expect`'s values to combine (draft 21): per case id, a list of values for
-    sender_type and priority (no other field), each one the schema allows; at most
-    `MAX_VARIANTS` combinations, which are returned in field order."""
+    """`ecf eval expect`'s values to combine (draft 21, OD-563): per case id, a list of values
+    for each field in `labels.VARIED` (no other field), each one the schema allows (true or false
+    for a yes/no field); at most `labels.max_variants()` combinations, returned in field order."""
     from itertools import product  # noqa: PLC0415
+    from math import prod  # noqa: PLC0415
 
     from ecf.eval import labels as label_file  # noqa: PLC0415 - eval only
 
@@ -2577,27 +2581,28 @@ def _variants(v: Any) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(v, dict):
         raise InvalidInputError("variants must be an object of case id to field values")
     spec = load_schema().fields
+    limit = label_file.max_variants()
     out: dict[str, list[dict[str, Any]]] = {}
     for cid, given in cast(dict[str, Any], v).items():
         if not isinstance(given, dict) or not given:
             raise InvalidInputError(f"variants for {cid!r}: an object of field to values")
         options = cast(dict[str, Any], given)
         for f, vals in options.items():
-            if f not in label_file.UNASKED:
-                raise InvalidInputError(f"variants may set only {', '.join(label_file.UNASKED)}")
-            allowed = set(spec[f].values or ())  # both fields take named values
+            if f not in label_file.VARIED:
+                raise InvalidInputError(f"variants may set only {', '.join(label_file.VARIED)}")
+            boolean = spec[f].kind is FieldKind.BOOLEAN
+            allowed = set(spec[f].values or ())
             if not isinstance(vals, list) or not vals or any(
-                    not isinstance(x, str) or x not in allowed
+                    not isinstance(x, bool) if boolean
+                    else not isinstance(x, str) or x not in allowed
                     for x in cast(list[Any], vals)):  # fmt: skip
                 raise InvalidInputError(f"variants for {cid!r}: {f} takes a list of its values")
-            options[f] = list(dict.fromkeys(cast(list[str], vals)))
+            options[f] = list(dict.fromkeys(cast(list[Any], vals)))
         fields = list(options)
-        made = [dict(zip(fields, t, strict=True))
-                for t in product(*(cast(list[Any], options[f]) for f in fields))]  # fmt: skip
-        if len(made) > label_file.MAX_VARIANTS:
-            raise InvalidInputError(f"variants for {cid!r}: at most {label_file.MAX_VARIANTS}"
-                                    " combinations")  # fmt: skip
-        out[str(cid)] = made
+        if prod(len(options[f]) for f in fields) > limit:  # counted before any is built
+            raise InvalidInputError(f"variants for {cid!r}: at most {limit} combinations")
+        lists = [cast(list[Any], options[f]) for f in fields]
+        out[str(cid)] = [dict(zip(fields, t, strict=True)) for t in product(*lists)]
     return out
 
 

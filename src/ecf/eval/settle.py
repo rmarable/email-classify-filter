@@ -9,7 +9,8 @@ together: every card written, the set rebuilt once, and the settled cases confir
 atomic write as the operator's. A phone page uses the same export (`export`; the page is built by
 `scripts/build_settle_page.py`) and import (`apply`); the terminal (`ecf eval settle`) asks the
 same questions. A dispute `ecf eval expect` raised (sender_type or priority deciding the
-expected rule; eval plan draft 21) carries a note saying so. Settling records the answered
+expected rule, eval plan draft 21; from OD-563 also category or deadline_mentioned) carries a note
+saying so. Settling records the answered
 fields in the row's `labelled_by`; then run `ecf eval expect` again.
 """
 
@@ -139,8 +140,9 @@ def apply(root: Path, answers: dict[str, dict[str, Any]], on: date) -> int:
     provenance: dict[str, dict[str, Any]] = {}
     for cid, a in answers.items():
         lb: dict[str, Any] = rows[cid].get(label_file.LABELLED_BY) or {}
-        provenance[cid] = {"judges": list(lb.get("judges") or latest),
-                           "settled": sorted({*label_file.settled(rows[cid]), *a})}  # fmt: skip
+        kept = {k: v for k, v in lb.items() if k != "labels_sha256"}  # keeps `deferred`
+        answered = sorted({*label_file.settled(rows[cid]), *a})
+        provenance[cid] = kept | {"judges": list(lb.get("judges") or latest), "settled": answered}
     done = label_file.confirm_many(root, provenance, on) if answers else 0
     gen.Work(root).append(SETTLED, [{"id": c, "fields": sorted(a), "on": on.isoformat()}
                                     for c, a in answers.items()])  # fmt: skip

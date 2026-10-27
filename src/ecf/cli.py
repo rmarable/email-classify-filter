@@ -1940,8 +1940,10 @@ def eval_compare(
                f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
         ends = compare_endpoints(ra, rb)
+        how = ("Holm over the two" if "category" in ends else
+               "end-to-end only: category is deferred by the label policy, OD-563")  # fmt: skip
         typer.echo(
-            "confirmatory (exact McNemar, Holm over the two): "
+            f"confirmatory (exact McNemar, {how}): "
             + "; ".join(
                 f"{k.replace('_', '-')} p = {p:.3g}, Holm p = {h:.3g}" for k, (p, h) in ends.items()
             )

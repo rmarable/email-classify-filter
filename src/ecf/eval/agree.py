@@ -7,11 +7,15 @@ and, in PROD, a different family from the generator, the seed writer, Claude and
 every judge gave the same valid value; `category` takes a majority when three or more judges
 answered. `sender_type` and `priority` are never asked here and never set on the card (eval plan
 draft 21, OD-549): `ecf eval expect` evaluates the rules with each judge's value and sends them to
-the operator only when they decide the expected rule. A case any judge refused, left out or answered
-with a missing asked field goes to the operator whole (with sender_type and priority too when every
-judge refused). Agreed values are written into the cards at once, the set rebuilt once, and fully
-agreed cases confirmed in one atomic write with their `labelled_by` (`labels.confirm_many`); the
-rest go to `work/disputes.jsonl` with the judges' closed values, for `ecf eval settle`.
+the operator only when they decide the expected rule. From OD-563 a disputed `category` or
+`deadline_mentioned` (`labels.DEFERRED`) is handled the same way: it opens no dispute here and stays
+off the card, and expect asks it only when it decides the rule or safety; each row labelled now
+records the deferred fields in its `labelled_by`. A case any judge refused, left out or found too
+large (an empty answer) goes to the operator whole, category and deadline_mentioned included and
+deferred on none (OD-563), with sender_type and priority too when every judge refused. Agreed
+values are written into the cards at once, the set rebuilt once, and fully agreed cases confirmed
+in one atomic write with their `labelled_by` (`labels.confirm_many`); the rest go to
+`work/disputes.jsonl` with the judges' closed values, for `ecf eval settle`.
 `work/agreement.jsonl` records each judge file's digest so the report and expect can recompute from
 them. A rerun skips a judged row whose labels are unchanged since it was confirmed, and an
 operator-confirmed row; a judged row edited by hand is decided again, keeping the fields the
@@ -38,8 +42,10 @@ from ecf.eval.results import ResultFile, load_result
 from ecf.schema import FieldKind, load_schema
 
 MAJORITY_FIELDS = ("category",)
-MAX_JUDGES = 3  # OD-547; expect's combinations are bounded by it
+MAX_JUDGES = label_file.MAX_JUDGES  # OD-547; expect's combinations are bounded by it
 UNASKED = label_file.UNASKED  # never asked or set here (eval plan draft 21)
+DEFERRED = label_file.DEFERRED  # asked by expect only when deciding (OD-563)
+VARIED = label_file.VARIED
 DISPUTES = "disputes"
 AGREEMENT = "agreement"
 
@@ -48,12 +54,13 @@ AGREEMENT = "agreement"
 class Outcome:
     agreed: int = 0  # cases every counted field agreed on, confirmed by the judges
     disputed: int = 0  # cases with at least one field for the operator
-    whole: int = 0  # cases sent whole (a judge refused, left it out or a field missing)
+    whole: int = 0  # cases sent whole (a judge refused it, left it out or it was too large)
     skipped: int = 0  # already confirmed: left alone
     redecided: int = 0  # judged rows edited by hand, decided again
     yours_edited: int = 0  # your confirmed rows whose card was edited: unconfirmed by the rebuild
     waiting: int = 0  # judged rows left alone with a dispute still open
     fields: Counter[str] = field(default_factory=Counter[str])  # disputed fields
+    deferred: Counter[str] = field(default_factory=Counter[str])  # left to expect (OD-563)
 
 
 def unanimous_fields() -> tuple[str, ...]:
@@ -99,10 +106,10 @@ def check_roles(doc: dict[str, Any], judge_ids: list[tuple[str, str]]) -> None:
             models.check_pair(a, b)
 
 
-def decide(values: list[Any], name: str, unanimous: tuple[str, ...],
-           allowed: set[Any]) -> tuple[bool, Any]:  # fmt: skip
-    """(settled, value) for one field from every judge's answer."""
-    if any(v is None or v not in allowed for v in values):
+def decide(values: list[Any], name: str, unanimous: tuple[str, ...]) -> tuple[bool, Any]:
+    """(settled, value) for one field from every judge's answer; a value the schema doesn't
+    allow (1 for true included, `labels.valid`) settles nothing."""
+    if any(not label_file.valid(name, v) for v in values):
         return False, None
     top, n = Counter(values).most_common(1)[0]
     if n == len(values):
@@ -155,9 +162,12 @@ def run(root: Path, on: date) -> Outcome:  # noqa: PLR0912, PLR0915 - one pass o
         settled = label_file.settled(row)
         kept = {f: old[f] for f in settled if f in old}  # the operator's answers stand
         got = [a.get(cid) for a in answers]
+        policy = {"judges": who, "settled": settled, "deferred": list(DEFERRED)}
         if any(not g for g in got):  # refused, too large or left out by a judge
+            # you answer category and deadline_mentioned too, never one judge's lone value, so
+            # none is deferred (scored in full); sender_type and priority too if every judge did
             fields = [n for n in spec if n not in UNASKED or not any(got)]
-            provenance[cid] = {"judges": who, "settled": settled}
+            provenance[cid] = policy | {"deferred": []}
             if left := [f for f in fields if f not in kept]:
                 out.whole += 1
                 out.disputed += 1
@@ -165,19 +175,21 @@ def run(root: Path, on: date) -> Outcome:  # noqa: PLR0912, PLR0915 - one pass o
             continue  # nothing left: you settled every field, so it is confirmed
         labels: dict[str, Any] = {}
         open_fields: dict[str, list[Any]] = {}
-        for name, f in spec.items():
+        for name in spec:
             if name in UNASKED or name in kept:
                 continue
             values = [cast(dict[str, Any], g).get(name) for g in got]
-            allowed: set[Any] = {True, False} if f.kind is FieldKind.BOOLEAN else set(f.values)
-            settled_ok, value = decide(values, name, unanimous, allowed)
+            settled_ok, value = decide(values, name, unanimous)
             if settled_ok:
                 labels[name] = value
+            elif name in DEFERRED:
+                out.deferred[name] += 1  # off the card; expect asks it if it decides
             else:
                 open_fields[name] = values
-        base = {k: v for k, v in old.items() if k not in UNASKED or k in kept}
+        # an old value of a varied field never stands unless you settled it (OD-563, P3)
+        base = {k: v for k, v in old.items() if k not in VARIED or k in kept}
         writes[path] = review.merged(base, labels | kept)
-        provenance[cid] = {"judges": who, "settled": settled}
+        provenance[cid] = policy
         if open_fields:
             out.disputed += 1
             out.fields.update(open_fields.keys())
@@ -207,7 +219,8 @@ def run(root: Path, on: date) -> Outcome:  # noqa: PLR0912, PLR0915 - one pass o
          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
         for (path, _r), (p, m) in zip(found, names, strict=True)],
         "agreed": len(agreed), "disputed": out.disputed, "whole": out.whole,
-        "fields": dict(out.fields)}])  # fmt: skip
+        "fields": dict(out.fields), "deferred": list(DEFERRED),
+        "deferred_open": dict(out.deferred)}])  # fmt: skip
     out.agreed = label_file.confirm_many(root, agreed, on) if agreed else 0
     _mark(root, {c: p for c, p in provenance.items() if c in open_ids})  # hash taken now
     return out

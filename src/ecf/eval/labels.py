@@ -11,7 +11,10 @@ On a generated set, a row whose labels the judges set carries `labelled_by` (eva
 OD-549): the judges, the fields the operator settled, and a SHA-256 of the labels at its
 last confirmation. Such rows count only on a generated set (`models_ok`), never on the synthetic
 set or anything built from copied cards (J8), and only `ecf eval agree`, `settle` and `expect`
-confirm them. A row without it is the operator's.
+confirm them. A row without it is the operator's. A row agree labels from OD-563 on also lists
+the fields it defers (`labelled_by.deferred`: category and deadline_mentioned, asked only when
+they decide the expected rule); those, with sender_type and priority, are never scored on it
+(`unscored`).
 """
 
 from __future__ import annotations
@@ -42,7 +45,36 @@ MODELS = "models"  # `confirmed.by` of a label the judges agreed on (OD-547)
 # `sender_type` and `priority` are never scored, in ecf's figures or the judges'
 LABELLED_BY = "labelled_by"
 UNASKED = ("sender_type", "priority")
-MAX_VARIANTS = 9  # combinations per case: at most 3 judges (OD-547), 3 values for each field
+# Lighter settling (OD-563): on a row agree labels now, a disputed `category` or
+# `deadline_mentioned` is asked only when it decides the expected rule or safety, as sender_type
+# and priority are; when it decides nothing it stays off the card and isn't scored
+DEFERRED = ("category", "deadline_mentioned")
+VARIED = UNASKED + DEFERRED  # the fields expect combines over the judges' answers
+MAX_JUDGES = 3  # OD-547
+
+
+def max_variants() -> int:
+    """Combinations per case: each VARIED field takes at most one value per judge, or fewer when
+    it has fewer values (OD-563: 2 judges 16, 3 judges 54)."""
+    from ecf.schema import FieldKind, load_schema  # noqa: PLC0415 - only when expect runs
+
+    spec = load_schema().fields
+    n = 1
+    for f in VARIED:
+        values = 2 if spec[f].kind is FieldKind.BOOLEAN else len(spec[f].values)
+        n *= min(MAX_JUDGES, values)
+    return n
+
+
+def valid(name: str, value: Any) -> bool:
+    """Whether a judge's value is one the schema allows for this field: a yes/no field takes
+    only true or false (never 1 or 0), a choice one of its values."""
+    from ecf.schema import FieldKind, load_schema  # noqa: PLC0415 - as max_variants
+
+    f = load_schema().fields[name]
+    if f.kind is FieldKind.BOOLEAN:
+        return isinstance(value, bool)
+    return isinstance(value, str) and value in f.values
 
 
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
@@ -63,6 +95,21 @@ def settled(row: dict[str, Any]) -> list[str]:
     lb: dict[str, Any] = row.get(LABELLED_BY) or {}
     items: list[Any] = lb.get("settled") or []
     return [str(f) for f in items]
+
+
+def deferred(row: dict[str, Any]) -> list[str]:
+    """The fields a judged row defers (`labelled_by.deferred`, OD-563); none on older rows."""
+    lb: dict[str, Any] = row.get(LABELLED_BY) or {}
+    items: list[Any] = lb.get("deferred") or []
+    return [str(f) for f in items]
+
+
+def unscored(row: dict[str, Any]) -> tuple[str, ...]:
+    """The labels never scored on this row: sender_type and priority on a judged row (OD-549),
+    and the deferred fields on a row labelled under OD-563."""
+    if not judged(row):
+        return ()
+    return UNASKED + tuple(f for f in deferred(row) if f not in UNASKED)
 
 
 def models_ok(root: Path) -> bool:
@@ -95,12 +142,13 @@ def edited(row: dict[str, Any], card_labels: dict[str, Any]) -> bool:
 def source(row: dict[str, Any]) -> str | None:
     """Who confirmed this case: `operator`, `models`, or None. A judged row is the operator's
     once they settled an asked field (a disputed one, or every field of a whole case);
-    answering only sender_type or priority leaves it the judges'."""
+    answering only fields it doesn't score (`unscored`) leaves it the judges'."""
     c: dict[str, Any] = row.get("confirmed") or {}
     if not c:
         return None
     if judged(row):
-        return "operator" if any(f not in UNASKED for f in settled(row)) else MODELS
+        skip = unscored(row)
+        return "operator" if any(f not in skip for f in settled(row)) else MODELS
     return MODELS if c.get("by") == MODELS else "operator"
 
 

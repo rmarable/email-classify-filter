@@ -218,17 +218,27 @@ def test_expect_refuses_a_judge_file_changed_since_agree(make: Make, tmp_path: P
         ex.plan(root)
 
 
-def test_the_route_takes_only_sender_type_and_priority_and_at_most_nine(
+def test_the_route_takes_only_the_varied_fields_by_kind_and_at_most_the_bound(
     make: Make, env: Env, tmp_path: Path
 ) -> None:
+    """OD-563 (changed on purpose): category and deadline_mentioned join sender_type and
+    priority; a yes/no field takes true or false; the bound is 54 (three judges)."""
     root, ids = make({}, {})
     five = ["automated", "vendor", "company", "regulator", "person"]
-    for variants, why in (({ids[0]: {"category": ["invoice"]}}, "may set only"),
+    four = ["low", "medium", "high", "urgent"]
+    for variants, why in (({ids[0]: {"fraud_risk": ["low"]}}, "may set only"),
                           ({ids[0]: {"sender_type": ["martian"]}}, "takes a list of its values"),
-                          ({ids[0]: {"sender_type": five, "priority": ["low", "high"]}},
-                           "at most 9 combinations")):  # fmt: skip
+                          ({ids[0]: {"deadline_mentioned": ["yes"]}}, "takes a list of its values"),
+                          ({ids[0]: {"sender_type": five, "priority": four,
+                                     "category": ["invoice", "other", "private"]}},
+                           "at most 54 combinations")):  # fmt: skip
         r = env.post("/v1/eval/expect", {"root": str(root), "variants": variants})
         assert r.status_code == 400 and why in r.text
+    ok = {ids[0]: {"category": ["invoice", "other"], "deadline_mentioned": [True, False]}}
+    r = env.post("/v1/eval/expect", {"root": str(root), "variants": ok})
+    assert r.status_code == 200
+    case = next(c for c in r.json()["cases"] if c["id"] == ids[0])
+    assert len(case["variants"]) == 4
 
 
 def test_label_refuses_judged_rows_but_not_your_own(make: Make, tmp_path: Path) -> None:
@@ -369,8 +379,9 @@ def test_the_report_states_what_expect_did_and_flags_other_rules(
     root, _ = make({}, {"0": {"sender_type": "vendor"}})
     _expect(env, root)
     lines = rep._expect_lines(root, rep.confirmed(root), label_file.read(root), [])  # pyright: ignore[reportPrivateUsage]
-    assert lines[0].endswith("1 sent to you because they decided the rule")
-    assert lines[1] == "rule undecided: 0 (errors: 0)"  # the one sent to you isn't confirmed
+    assert "; 1 emails sent to you by expect (a varied field decided" in lines[0]
+    # the one sent to you isn't confirmed
+    assert lines[1] == "rule undecided: 0 (rules errors: 0, not evaluated by the service: 0)"
 
 
 def test_the_report_flags_runs_on_other_rules(make: Make, env: Env) -> None:

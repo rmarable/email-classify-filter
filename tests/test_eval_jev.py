@@ -193,7 +193,7 @@ def test_a_jev_run_end_to_end_on_the_fake(
     assert KEY not in text and "req_" not in text.lower() and "request_id" not in text
     assert "Updated remittance" not in text  # no message text (I5)
     result = load_result(Path(row["path"]))
-    assert result.format == RESULT_FORMAT == 5
+    assert result.format == RESULT_FORMAT == 6
     assert all(c.tries == 1 and c.fault is None and c.confidence for c in result.cases)
     assert len(fake.cases) == 10 and evalrun.RUN.snapshot()["state"] == "done"
 
@@ -552,12 +552,12 @@ def test_format_5_and_the_old_client_message(
     monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
     root: Path, tmp_path: Path,
 ) -> None:  # fmt: skip
-    """P16: files without `format` read as 1; this ecf writes 5 (OD-555's text measures); an ecf
+    """P16: files without `format` read as 1; this ecf writes 6 (OD-563's deferred fields); an ecf
     from step 2 on refuses a file of a later format with a reason, not a validation dump (an ecf
     from before format 2 can't read a format-2 file at all, J9)."""
     del conn
     path = _jev_result(monkeypatch, db_path, clock, root, incomplete=False)
-    assert json.loads(path.read_text())["format"] == 5
+    assert json.loads(path.read_text())["format"] == 6
     raw = json.loads(path.read_text())
     del raw["format"]
     for c in raw["cases"]:
@@ -568,8 +568,8 @@ def test_format_5_and_the_old_client_message(
     assert load_result(older).format == 1
     from ecf.eval import results  # noqa: PLC0415
 
-    monkeypatch.setattr(results, "RESULT_FORMAT", 4)  # a client from before OD-555
-    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 5\); run `uv"):
+    monkeypatch.setattr(results, "RESULT_FORMAT", 5)  # a client from before OD-563
+    with pytest.raises(InvalidInputError, match=r"written by a newer ecf \(format 6\); run `uv"):
         load_result(path)
 
 

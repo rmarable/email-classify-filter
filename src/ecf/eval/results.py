@@ -42,9 +42,10 @@ INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different in
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 # the result file's format (v3.0.0 step 2, P16): 1 for files without the key; 2 adds the Jev
 # per-case fields; 3 (step 3) the unsure, below-bar and held fields; 4 (step 6, OD-518) the
-# proposal checks; 5 (window tuning, OD-555) each case's text measures. A file of a later format
-# is refused with a reason, not a validation dump
-RESULT_FORMAT = 5
+# proposal checks; 5 (window tuning, OD-555) each case's text measures; 6 (OD-563) the deferred
+# fields and their subset scores. A file of a later format is refused with a reason, not a
+# validation dump
+RESULT_FORMAT = 6
 
 
 class CallMetrics(BaseModel):
@@ -174,6 +175,11 @@ class CaseResult(BaseModel):
     injection_missing: bool | None = None  # the card had an injection phrase the text lacked
     injection_seen: bool | None = None
     injection_hit: bool | None = None
+    # lighter settling (format 6, OD-563): the fields this judged case defers, and for each one
+    # labelled on its card (the judges agreed, or expect asked it) whether the answer matched;
+    # kept apart from `fields`, so the main figures never score them. Empty in older files
+    deferred: list[str] = Field(default_factory=list[str])
+    subset: dict[str, bool] = Field(default_factory=dict[str, bool])
 
 
 class ResultFile(BaseModel):
@@ -278,6 +284,8 @@ def compare_endpoints(a: ResultFile, b: ResultFile) -> dict[str, tuple[float, fl
     """The decision-model experiment's confirmatory tests (§7.8, R17): exact McNemar on end-to-end
     correctness and on category, each with its Holm-adjusted p-value over the two."""
     e2e = compare(a, b).p_value
+    if "category" in deferred(a) | deferred(b):  # unscored on deferring cases (OD-563)
+        return {"end_to_end": (e2e, e2e)}
     cat = next((f.p_value for f in compare_fields(a, b) if f.field == "category"), 1.0)
     adjusted = holm({"end_to_end": e2e, "category": cat})
     return {"end_to_end": (e2e, adjusted["end_to_end"]), "category": (cat, adjusted["category"])}
@@ -300,8 +308,10 @@ class FieldComparison:
 def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
     """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
     §16.5, secondary). A field counts on a confirmed case only when both runs scored it there.
-    Results under different label maps are refused (`check_label_maps`)."""
+    Results under different label maps are refused (`check_label_maps`); a field either side
+    defers (OD-563) is left out."""
     check_label_maps(a, b)
+    skip = deferred(a) | deferred(b)
     bm = {c.id: c.fields for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
     for c in a.cases:
@@ -309,7 +319,7 @@ def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
         if other is None:
             continue
         for name, ok in c.fields.items():
-            if name in other:
+            if name in other and name not in skip:
                 pairs.setdefault(name, []).append((ok, other[name]))
     raw: dict[str, tuple[int, int, int, float]] = {}
     for name, ps in pairs.items():
@@ -379,6 +389,10 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     if (wa := switches(a)) != (wb := switches(b)):  # pre-gate review G3
         out.append(f"warning: different switches ({', '.join(wa) or 'all on'} vs"
                    f" {', '.join(wb) or 'all on'})")  # fmt: skip
+    if (pa := deferred(a)) != (pb := deferred(b)):  # one side may predate OD-563
+        out.append(f"warning: different label policy (deferred {', '.join(sorted(pa)) or 'none'}"
+                   f" vs {', '.join(sorted(pb)) or 'none'}): those fields are left out, and up to"
+                   " 2 in 300 expected rules can differ")  # fmt: skip
     for key, what in INPUT_KEYS.items():
         va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
         if va is not None and vb is not None and va != vb:
@@ -985,4 +999,26 @@ def field_lines(r: ResultFile) -> list[str]:
                 f"{name}: macro-F1 {m['macro_f1']} over {m['n']}"
                 + (f"; confused: {', '.join(off)}" if off else "")
             )
+    return lines + subset_lines(r.summary)
+
+
+def deferred(r: ResultFile) -> set[str]:
+    """The fields a result's judged cases defer (`summary.label_policy`, OD-563); none before."""
+    policy = cast(dict[str, Any], (r.summary or {}).get("label_policy") or {})
+    return {str(f) for f in cast(list[Any], policy.get("deferred") or [])}
+
+
+def subset_lines(summary: Mapping[str, object] | None) -> list[str]:
+    """One line per deferred field (OD-563): the cases it's labelled on, the judges agreed or
+    expect asked it, so a share of those, never an accuracy; and the cases left unlabelled.
+    Then how many counted cases are under the policy and how many aren't."""
+    per = cast(dict[str, dict[str, Any]], (summary or {}).get("deferred_fields") or {})
+    lines = [f"{name}: judges-agreed or asked subset, {m['subset_right']}% of"
+             f" n={m['subset_n']} (not an accuracy); {m['unlabelled']} left unlabelled by the"
+             " label policy" for name, m in sorted(per.items())]  # fmt: skip
+    n = cast(dict[str, int], (summary or {}).get("label_policy_cases") or {})
+    if n:
+        lines.append(f"label policy: {n.get('deferring', 0)} cases under it, {n.get('other', 0)}"
+                     " not (older judged rows, emails a judge refused, or your own"
+                     " labels)")  # fmt: skip
     return lines

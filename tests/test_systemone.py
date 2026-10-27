@@ -190,6 +190,17 @@ def test_compare_shows_the_experiment_figures(tmp_path: Path) -> None:
     assert "B  calibration category: ECE 0.040 (0.010-0.080" in text
 
 
+def test_compare_says_why_category_left_the_experiment_figures(tmp_path: Path) -> None:
+    policy = {"deferred": ["category", "deadline_mentioned"]}  # OD-563
+    g = _file(tmp_path, "g", "gemma", [True, False] * 10, label_policy=policy)
+    d = _file(tmp_path, "d", "systemone:test-decision", [True] * 20, label_policy=policy)
+    out = CliRunner().invoke(app, ["eval", "compare", str(g), str(d)])
+    assert out.exit_code == 0, out.output
+    assert ("confirmatory (exact McNemar, end-to-end only: category is deferred by the label"
+            " policy, OD-563): end-to-end p =") in out.output  # fmt: skip
+    assert "category p =" not in out.output
+
+
 def test_compare_of_two_gemma_runs_is_unchanged(tmp_path: Path) -> None:
     a = _file(tmp_path, "a", "gemma", [True, False] * 5)
     b = _file(tmp_path, "b", "gemma", [True] * 10)
