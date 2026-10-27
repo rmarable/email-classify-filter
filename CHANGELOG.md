@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: a draft reply ecf saves now threads under the whole email conversation in your mail app, not just under the one email it answers.
 - Decided: plan and code reviews that normally use Fable agents fall back to Opus agents when Fable is out of credits, and say so (OD-562).
 - Changed: test runs with TypeSafe's Jev model now use Jev 1.14, its newest version, and give it the same first 4,000 characters of each test email that Claude reads, instead of 1,500. None of your mail goes to TypeSafe (OD-561).
 - Added: while a TypeSafe key is stored, the weekly model check asks TypeSafe which Jev version is its latest, sending no email content, and `ecf models status` and the daily summary tell you when it's a different version than the one ecf uses. ecf never switches versions by itself (OD-561).

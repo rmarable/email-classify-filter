@@ -10,11 +10,12 @@ from typing import Any
 
 import pytest
 
-from ecf_server import actor, approvals, decide, digests, mailbox_actions
+from ecf_server import actor, approvals, decide, digests, fetch, mailbox_actions
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.mail import Folder
 from ecf_server.mail.fake import DEFAULT_FOLDERS, FakeMailSource
+from ecf_server.message import parse
 from ecf_server.notify import FakeNotifier
 from tests.test_decide import item_row
 from tests.test_mailbox_actions import (  # pyright: ignore[reportPrivateUsage]
@@ -34,10 +35,10 @@ TEXT = "Hello,\n\nThanks for your note; see https://acme.example/terms or write 
 
 
 def _approved_draft(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, *,
-                    address: bool = True) -> str:  # fmt: skip
+                    address: bool = True, facts: dict[str, Any] | None = None) -> str:  # fmt: skip
     if address:
         _address(conn, clock)
-    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS, src.deliver)
+    sid = _mail_item(conn, clock, src, 0, REPLY, FACTS if facts is None else facts, src.deliver)
     item = item_row(conn, sid)
     ctx, p = decide.plan_for(conn, item)
     actor.decide_one(conn, clock, item, ctx, p,
@@ -405,3 +406,44 @@ def test_undo_leaves_a_draft_you_touched(conn: sqlite3.Connection, clock: FakeCl
 def test_digest_undo_route_still_works_for_drafts() -> None:
     assert mailbox_actions.undo_item is digests.mailbox_actions.undo_item
     assert MB > 0
+
+
+# The saved draft keeps the email's thread (M8 step 2): References carries the email's own chain
+# and then the email, so mail clients thread the reply under the whole conversation.
+
+
+def _saved_headers(conn: sqlite3.Connection, clock: FakeClock, facts: dict[str, Any]) -> Any:
+    src = FakeMailSource()
+    _approved_draft(conn, clock, src, facts=facts)
+    assert _run(conn, clock, src) == 1
+    [stored] = _drafts(src).values()
+    return message_from_bytes(stored.raw, policy=policy.default)
+
+
+def test_a_draft_carries_the_emails_references(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    chain = ["<root@vendor-a.example>", "<second@vendor-a.example>"]
+    m = _saved_headers(conn, clock, FACTS | {"references": chain})
+    assert str(m["References"]).split() == [*chain, "<contract-0@synthetic.acme.example>"]
+
+
+def test_an_older_item_falls_back_to_its_thread_root(conn: sqlite3.Connection,
+                                                    clock: FakeClock) -> None:  # fmt: skip
+    m = _saved_headers(conn, clock, FACTS | {"thread_root": "<root@vendor-a.example>"})
+    assert str(m["References"]).split() == ["<root@vendor-a.example>",
+                                            "<contract-0@synthetic.acme.example>"]  # fmt: skip
+
+
+def test_a_new_thread_references_only_the_email(conn: sqlite3.Connection,
+                                                clock: FakeClock) -> None:  # fmt: skip
+    m = _saved_headers(conn, clock, FACTS)
+    assert str(m["References"]).split() == ["<contract-0@synthetic.acme.example>"]
+
+
+def test_fetch_keeps_the_last_ten_references() -> None:
+    ids = [f"<m{i}@vendor-a.example>" for i in range(12)]
+    raw = ("From: a@vendor-a.example\r\nTo: ap@acme.example\r\nSubject: s\r\n"
+           f"Message-ID: <x@vendor-a.example>\r\nReferences: {' '.join(ids)}\r\n"
+           "In-Reply-To: <m11@vendor-a.example>\r\n\r\nbody\r\n").encode()  # fmt: skip
+    got = fetch._facts(parse(raw, max_scan_bytes=MB))  # pyright: ignore[reportPrivateUsage]
+    assert got["references"] == ids[-10:]
+    assert got["thread_root"] == ids[0]
