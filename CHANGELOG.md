@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Unreleased
+
+- Planned: ecf's reply drafts get their own milestone, with a quality test and a draft-writing model you can replace (Opus by default), then a Send email button on the draft's Slack card that you confirm at your computer; Mistral and OpenAI as model options, external forwards, learning from past mail and sending without approval are on the later list (OD-560).
+
 ## v3.1.0 (2026-10-26)
 
 - Decided: anyone can use the `claude` provider of `ecf eval generate` and `ecf eval grade` on their own Claude Code sign-in; it was meant for the operator only (OD-559).
