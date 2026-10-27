@@ -1,6 +1,7 @@
 # Jev 1.14 classifier comparison
 
 Status: draft 5, 2026-10-26.
+- **Done 2026-10-27:** results in SPEC §21.2 ("Jev 1.14 vs Sonnet 5.5 vs Opus 5.5 as classifier at 4,000"). D failed stage 1 (−16.5 and −18.3 against Opus), so stage 2 and D 2 weren't run, and Jev stays shelved. Sonnet passed all four pairs; recorded, not adopted. The last runs ran from a detached worktree at `4fd5442` to keep the code identical.
 - Step 1's TypeSafe facts were gathered on 2026-10-26: the price is unchanged, 1.14 accepted the key check, and the listing can't signal a new version. The operator chose to have the watch ask `jev-latest` which version answers.
 - Draft 3's delta checks found no high findings: design said "Ready to build: yes" for steps 1-3 and 5, and measurement said "Measurement sound: yes". Their medium and low findings (R1-R9) are folded into this draft.
 - Draft 2 was checked by two Fable agents (design and measurement), which produced Q1-Q17. The operator decided Q1, Q2 and Q8; the rest are folded in as recommended.
