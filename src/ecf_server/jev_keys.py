@@ -51,6 +51,11 @@ def _data(name: str) -> str | None:
     return f.read_text("utf-8") if f.is_file() else None
 
 
+def is_version(model: str) -> bool:
+    """A versioned Jev ID (`jev-1.14.0`), never an alias."""
+    return bool(_PIN.fullmatch(model))
+
+
 def pin() -> str:
     """The pinned Jev version from `jev.lock` ("unknown" when the file can't be read)."""
     raw = _data(LOCK)

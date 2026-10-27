@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed: test runs with TypeSafe's Jev model now use Jev 1.14, its newest version, and give it the same first 4,000 characters of each test email that Claude reads, instead of 1,500. None of your mail goes to TypeSafe (OD-561).
+- Added: while a TypeSafe key is stored, the weekly model check asks TypeSafe which Jev version is its latest, sending no email content, and `ecf models status` and the daily summary tell you when it's a different version than the one ecf uses. ecf never switches versions by itself (OD-561).
 - Planned: ecf's reply drafts get their own milestone, with a quality test and a draft-writing model you can replace (Opus by default), then a Send email button on the draft's Slack card that you confirm at your computer; Mistral and OpenAI as model options, external forwards, learning from past mail and sending without approval are on the later list (OD-560).
 
 ## v3.1.0 (2026-10-26)

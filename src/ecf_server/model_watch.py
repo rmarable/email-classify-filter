@@ -17,12 +17,16 @@
   System Error (`models_api`), cleared by the next success; offline (the host doesn't resolve)
   waits an hour and raises nothing.
 - **Ollama library:** the tags-page watch went with the local model in v3.0.0 (ADR 0031).
-- **TypeSafe's models** (only with the TypeSafe key while preset D is available, so not in
-  v3.0.0 (OD-516); step 4, hand-off 6): `GET /v1/models`
-  once a week, recording each listed alias's `release_date` (top key `models`; items `name`,
-  `description`, `release_date`; SPEC §21.2's live check). The listing shows aliases only, so it
-  can't see the pinned version retire (`jev.lock`); a failure is shown in `ecf models status`
-  only, offline waits an hour.
+- **TypeSafe's models** (whenever the TypeSafe key is stored, OD-561; step 4, hand-off 6): once
+  a week, `GET /v1/models`, recording each listed alias's `release_date` (top key `models`;
+  items `name`, `description`, `release_date`), and one key-check request (`jev.KEY_CHECK_STATE`,
+  no email content) to `jev-latest`, recording which version answers. The listing shows the
+  aliases only, and their dates are when each alias was made (2026-09-10; read 2026-10-26), so
+  the answering version is what shows a new Jev: one that isn't the pin goes on the next daily
+  summary, once. It can't see the pinned version retire (`jev.lock`). A failure, a TypeSafe host
+  that doesn't resolve included, is shown in `ecf models status` only and keeps the weekly
+  cadence. Logged as one `jev.watch` line (status, time,
+  billed input tokens, the answering version); no `model_calls` row, as for the Claude part.
 - **ecf releases** (operator decision D7, 2026-10-06): the release list of ecf's GitHub
   repository through `gh` (ecf/release_source.py; metadata only, nothing downloaded), once a
   week. The newest stable release newer than this ecf goes on the next daily summary, once,
@@ -39,6 +43,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Any, cast
@@ -47,7 +52,7 @@ import httpx
 
 from ecf import __version__, release_source
 from ecf.errors import ConflictError, EcfError, InvalidInputError
-from ecf_server import addresses, alerts, claude_pins, health, jev_keys
+from ecf_server import alerts, claude_pins, health, jev, jev_keys
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -66,8 +71,10 @@ REMIND_DAYS = (30, 7)
 NEXT, CLAUDE, RETIRE = ("model_watch.next_at", "model_watch.claude",
                         "model_watch.retirement")  # fmt: skip
 RELEASE = "model_watch.release"
-JEV = "model_watch.jev"  # TypeSafe's aliases and their release dates (step 4)
+JEV = "model_watch.jev"  # TypeSafe's aliases, and the version jev-latest answers as (OD-561)
 JEV_MODELS_URL = f"https://{jev_keys.HOST}/v1/models"
+JEV_ASK_URL = f"https://{jev_keys.HOST}{jev.PATH}"
+JEV_LATEST = "jev-latest"
 GITHUB_HOST = "api.github.com"
 API_ALERT, MISSING_ALERT, RETIRE_KIND = "models_api", "models_missing", "model_retirement"
 HttpFactory = Callable[[], httpx.Client]
@@ -238,13 +245,12 @@ def run(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, store: Secre
     is a week on, or an hour on when a host didn't resolve."""
     offline = False
     key = _key(store)
-    # TypeSafe is asked only while preset D is available (held back, OD-516)
-    jev_key = _key(store, jev_keys.KEY_SECRET) if addresses.D_AVAILABLE else None
+    jev_key = _key(store, jev_keys.KEY_SECRET)  # with D held back too (OD-561)
     with http() as client:
         if key:
             offline |= _claude(conn, clock, notifier, client, key) == "offline"
-        if jev_key:
-            offline |= _jev(conn, clock, client, jev_key) == "offline"
+        if jev_key:  # never "offline": TypeSafe alone doesn't make the watch hourly
+            _jev(conn, clock, client, jev_key)
     if releases is not None:
         offline |= _release(conn, clock, releases) == "offline"
     now = clock.now()
@@ -316,35 +322,85 @@ def _claude(conn: sqlite3.Connection, clock: Clock, notifier: Notifier, client: 
 
 
 def _jev(conn: sqlite3.Connection, clock: Clock, client: httpx.Client, key: str) -> str:
-    """TypeSafe's aliases and their `release_date` (hand-off 6); numbers and names only."""
+    """TypeSafe's aliases and their `release_date` (hand-off 6), and the version `jev-latest`
+    answers as (OD-561); numbers and names only, never a body. Advisory: a host that doesn't
+    resolve is a failure here, not "offline", so it never turns the whole watch hourly."""
     now = to_ts(clock.now())
-    if not health.resolves(jev_keys.HOST):
-        return "offline"
+    aliases: dict[str, str] | None = None
+    headers = jev.request_headers(key)
     try:
-        headers = {"Authorization": f"Bearer {key}", "User-Agent": "ecf"}
-        r = client.get(JEV_MODELS_URL, headers=headers, timeout=TIMEOUT_S)
-        if r.status_code != 200:
-            raise ModelsApiError(f"http_{r.status_code}", f"HTTP {r.status_code}")
+        if not health.resolves(jev_keys.HOST):
+            raise ModelsApiError("offline", "the host doesn't resolve")
+        listing = {k: v for k, v in headers.items() if k != "Content-Type"}  # a GET has no body
+        r = client.get(JEV_MODELS_URL, headers=listing, timeout=TIMEOUT_S)
+        _jev_status(r)
         listed: Any = r.json().get("models")
         aliases = {str(m["name"]): str(m.get("release_date") or "")
                    for m in cast("list[dict[str, Any]]", listed)}  # fmt: skip
+        latest = _jev_latest(client, headers)
     except httpx.TimeoutException:
         err = f"no answer in {TIMEOUT_S:.0f} s"
     except httpx.TransportError as e:
         err = f"network error ({type(e).__name__})"
     except ModelsApiError as e:
-        err = str(e)
+        err = f"{e}{e.fix}"
     except (ValueError, KeyError, TypeError, AttributeError):
         err = "an answer ecf can't read"
     else:
-        with write_tx(conn):
-            _put(conn, JEV, {"checked_at": now, "error": None, "aliases": aliases}, now)
-            _audit(conn, now, "models.watch", {"part": "jev", "listed": len(aliases)})
+        pin = jev_keys.pin()
+        with write_tx(conn):  # read here, not before the calls: the daily summary may mark it
+            last: dict[str, Any] = _get(conn, JEV) or {}
+            old: dict[str, Any] = last.get("newer") or {}
+            newer: dict[str, Any] | None = None
+            if latest != pin:  # a second new version replaces the first, to be reported again
+                fresh = {"version": latest, "pinned": pin, "seen_at": now, "reported": False}
+                newer = old if old.get("version") == latest else fresh
+            _put(conn, JEV, {"checked_at": now, "error": None, "aliases": aliases,
+                             "latest": latest, "newer": newer}, now)  # fmt: skip
+            _audit(conn, now, "models.watch", {"part": "jev", "listed": len(aliases),
+                                               "latest": latest})  # fmt: skip
         return "ok"
     with write_tx(conn):
-        _put(conn, JEV, (_get(conn, JEV) or {}) | {"error": err, "failed_at": now}, now)
+        got = {"error": err, "failed_at": now} | ({"aliases": aliases} if aliases else {})
+        _put(conn, JEV, (_get(conn, JEV) or {}) | got, now)
         _audit(conn, now, "models.watch", {"part": "jev", "error": err})
     return "failed"
+
+
+def _jev_latest(client: httpx.Client, headers: dict[str, str]) -> str:
+    """The version that answers as `jev-latest`: the key check's request (no email content) with
+    the alias, read from the reply's `model` (TypeSafe names the version that answered); only a
+    version-shaped name is taken."""
+    body = {"model": JEV_LATEST, "questions": jev.KEY_CHECK_QUESTIONS,
+            "state": jev.KEY_CHECK_STATE}  # fmt: skip
+    start = time.monotonic()
+    r = client.post(JEV_ASK_URL, content=jev.encode(body), headers=headers, timeout=TIMEOUT_S)
+    ms = int((time.monotonic() - start) * 1000)
+    try:
+        reply: Any = r.json() if r.status_code == 200 else {}
+    except ValueError:
+        reply = None
+    got: dict[str, Any] = cast("dict[str, Any]", reply) if isinstance(reply, dict) else {}
+    usage: Any = got.get("usage")
+    model: Any = got.get("model")
+    model = model if isinstance(model, str) and jev_keys.is_version(model) else None
+    used: dict[str, Any] = cast("dict[str, Any]", usage) if isinstance(usage, dict) else {}
+    billed: Any = used.get("input_tokens")
+    log.info("jev.watch", status=r.status_code, http_ms=ms, usage_in=billed, model=model)
+    _jev_status(r)
+    if model is None:
+        raise ModelsApiError("format", "an answer ecf can't read")
+    return model
+
+
+def _jev_status(r: httpx.Response) -> None:
+    if r.status_code in (401, 403):
+        raise ModelsApiError(f"http_{r.status_code}", f"the TypeSafe key was refused, HTTP"
+                             f" {r.status_code}", ": replace it with `ecf models api-key set"
+                             " --provider typesafe` or remove it with `ecf models api-key clear"
+                             " --provider typesafe`")  # fmt: skip
+    if r.status_code != 200:
+        raise ModelsApiError(f"http_{r.status_code}", f"HTTP {r.status_code}")
 
 
 class ModelsApiError(Exception):
@@ -425,6 +481,11 @@ def daily_lines(conn: sqlite3.Connection) -> list[str]:
         out.append("Newer Claude model(s) in a family ecf uses: " + ", ".join(
             f"{m} (ecf pins {v['pinned']})" for m, v in fresh)
             + ". ecf never switches by itself; a release moves the pins.")  # fmt: skip
+    j: dict[str, Any] = _jev_view(conn) or {}
+    jn: dict[str, Any] = j.get("newer") or {}
+    if jn and not jn.get("reported"):
+        out.append(f"TypeSafe's jev-latest is now {jn['version']} (ecf pins {jn['pinned']}):"
+                   " Jev is evaluated before a release moves the pin.")  # fmt: skip
     rel: dict[str, Any] = _get(conn, RELEASE) or {}
     if rel.get("newest") and not rel.get("reported") and rel.get("current") == __version__:
         out.append(f"ecf {release_source.tag_version(rel['newest'])} is out (this is"
@@ -438,6 +499,9 @@ def mark_reported(conn: sqlite3.Connection, now: str) -> None:
     if v and any(not e["reported"] for e in v.get("newer", {}).values()):
         v["newer"] = {k: e | {"reported": True} for k, e in v["newer"].items()}
         _put(conn, CLAUDE, v, now)
+    j: dict[str, Any] | None = _jev_view(conn)  # what daily_lines showed
+    if j and j.get("newer") and not j["newer"].get("reported"):
+        _put(conn, JEV, j | {"newer": j["newer"] | {"reported": True}}, now)
     rel: dict[str, Any] | None = _get(conn, RELEASE)
     if rel and rel.get("newest") and not rel.get("reported"):
         _put(conn, RELEASE, rel | {"reported": True}, now)
@@ -456,6 +520,15 @@ def _release_status(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return rel
 
 
+def _jev_view(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The last TypeSafe check; its newer version is dropped once a release has pinned it."""
+    j: dict[str, Any] | None = _get(conn, JEV)
+    newer: dict[str, Any] = (j or {}).get("newer") or {}
+    if j and newer.get("version") == jev_keys.pin():
+        return j | {"newer": None}
+    return j
+
+
 def status(conn: sqlite3.Connection) -> dict[str, Any]:
     """For `ecf models status` and `ecf doctor`."""
     pinned = _pinned(conn)
@@ -466,7 +539,7 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
         "api_key": bool(_get(conn, "model_watch.api_key_set")),
         "claude": _get(conn, CLAUDE),
         "release": _release_status(conn),
-        "jev": _get(conn, JEV),  # TypeSafe's aliases (step 4)
+        "jev": _jev_view(conn),  # TypeSafe's aliases and jev-latest's version (OD-561)
         "jev_pin": jev_keys.pin(),
         "retiring": retiring(conn),
         "lifecycle": {

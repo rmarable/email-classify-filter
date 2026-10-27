@@ -194,8 +194,8 @@ class ParsedMessage:
 
 def cut(text: str, limit: int) -> str:
     """`text` cut at a word boundary to at most `limit` characters, with an ellipsis. Cutting
-    an excerpt again at a smaller limit gives what cutting the whole text there gives (Jev's
-    1,500 from the stored 4,000)."""
+    an excerpt again at a smaller limit gives what cutting the whole text there gives (an eval's
+    smaller `--classifier-window` from the stored 4,000)."""
     if len(text) <= limit:
         return text
     cut = text[:limit]

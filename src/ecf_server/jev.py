@@ -63,6 +63,8 @@ BASE_URL = f"https://{HOST}"
 PATH = "/v1/systemone"
 USER_AGENT = "ecf"  # D8
 KEY_SECRET = "jev-api-key"  # noqa: S105 - the secret store's entry name, not a secret
+# the model watch's settings (`model_watch.NEXT`, `model_watch.JEV`; it imports this module)
+WATCH_NEXT, WATCH_RECORD = "model_watch.next_at", "model_watch.jev"
 LOCK = "jev.lock"
 _PIN = re.compile(r"^jev-\d+\.\d+\.\d+$")
 
@@ -94,14 +96,10 @@ PACE_BYTES_PER_TOKEN = 4.0
 NAME_CHARS = 300  # display name, and each attachment's name
 SUBJECT_CHARS = 300
 MAX_ATTACHMENTS = 10
-# Jev reads the first 1,500 characters, cut as the service cuts (never a byte cut, P10), when
-# Claude's classifier reads 4,000 (OD-558; operator 2026-10-26: raise it when Jev is evaluated
-# again). Cutting the stored excerpt again at 1,500 gives what the 1,500 excerpt was, so Jev's
-# input doesn't change for any excerpt cut since OD-552 (an older one could be 1,501 characters,
-# which the old 1,501 slice sent whole and this cuts at a word). `EXCERPT_CHARS`, one over the
-# old stored limit, stays in the caps so the key's other parts don't move.
-WINDOW = 1500
-EXCERPT_CHARS = WINDOW + 1
+# Jev reads the first 4,000 characters of the stored excerpt, the window Claude's classifier
+# reads (OD-561; it read 1,500 under OD-558), cut as the service cuts (never a byte cut, P10).
+WINDOW = 4000
+EXCERPT_CHARS = WINDOW
 UNKNOWN_DATE = "unknown"
 
 # Values learned in the live check (SPEC §21.2); empty until then.
@@ -347,7 +345,7 @@ def estimate(body: Mapping[str, Any]) -> Estimate:
     return Estimate(st_bytes + longest, len(encode(body)))
 
 
-def _headers(key: str) -> dict[str, str]:
+def request_headers(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
             "Accept": "application/json", "User-Agent": USER_AGENT}  # fmt: skip
 
@@ -355,7 +353,7 @@ def _headers(key: str) -> dict[str, str]:
 def build_request(client: httpx.Client, body: Mapping[str, Any], key: str) -> httpx.Request:
     """The POST exactly as sent: ecf's four headers plus Host and Content-Length (httpx's own
     defaults removed)."""
-    req = client.build_request("POST", PATH, content=encode(body), headers=_headers(key))
+    req = client.build_request("POST", PATH, content=encode(body), headers=request_headers(key))
     for h in ("accept-encoding", "connection"):
         if h in req.headers:
             del req.headers[h]
@@ -1078,17 +1076,21 @@ def _audit(conn: sqlite3.Connection, now: str, event: str, data: dict[str, Any])
 def set_key(conn: sqlite3.Connection, clock: Clock, store: SecretStore, key: str | None,
             transport: httpx.BaseTransport | None = None) -> dict[str, Any]:  # fmt: skip
     """Store the TypeSafe key after one minimal call shows it works, or remove it (`None`).
-    Audited without the key (`{"replaced": bool}`); no step-up (D3)."""
+    Audited without the key (`{"replaced": bool}`); no step-up (D3). Like the Anthropic key, a new
+    key brings the model watch forward to the next tick, and clearing it drops the watch's TypeSafe
+    record (OD-561)."""
     now = to_ts(clock.now())
     had = store.get(KEY_SECRET) is not None
     if key is None:
         store.delete(KEY_SECRET)
         with write_tx(conn):
+            conn.execute("DELETE FROM settings WHERE key = ?", (WATCH_RECORD,))
             _audit(conn, now, "models.jev_key_cleared", {"had": had})
         return {"provider": "typesafe", "stored": False, "had": had}
     check_key(key, transport, clock=clock)
     store.set(KEY_SECRET, key)
     with write_tx(conn):
+        conn.execute("DELETE FROM settings WHERE key = ?", (WATCH_NEXT,))
         _audit(conn, now, "models.jev_key_set", {"replaced": had})
     return {"provider": "typesafe", "stored": True, "replaced": had}
 
