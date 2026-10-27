@@ -14,6 +14,8 @@
   its guardrails stay as they are); `/loop`; M4's Bedrock and always-on host; model-written sends.
   Autonomy (proposals that skip approval) is a separate later decision, informed by what this
   plan measures.
+  Sending without approval is on SPEC §1.2's Later list with no plan (OD-560); M9's sends need
+  your click and step-up.
 
 ## Context
 

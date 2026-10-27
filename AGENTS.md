@@ -20,7 +20,7 @@ through `CLAUDE.md`, which adds what only Claude does.
 
 ## Project
 
-ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 teams, M3 remote access, M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace.
+ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 teams, M3 remote access, M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace, M8 model-written drafts, M9 send drafts from Slack.
 
 Each deliverable, and each real-service test, starts only when the operator names it.
 
