@@ -744,6 +744,7 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["options"] |= _window_options(run.opts)
     summary["rules_digest"] = rules.composed_digest(run.schema, None)  # as items (OD-507, P14)
     summary["excerpt_prep"] = excerpt.VERSION
+    summary["facts_version"] = ruletest.FACTS_VERSION
     summary["plugin_digest"] = plugin_digest()  # the skills and agent prompts (v2.2.0)
     summary["actor_prompt_digest"] = actor_prompt_digest()  # the actor's instructions (OD-523)
     summary["keywords_digest"] = triggers.keywords_digest()

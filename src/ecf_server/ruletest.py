@@ -44,6 +44,10 @@ from ecf_server.facts import PUBLIC_DOMAINS, AddressInfo, corroborates
 from ecf_server.mail.fake import fetch_part_of, structure_of
 from ecf_server.message import ParsedMessage, parse, parse_partial
 
+# how the scratch computes a case's facts; a result records it, and compare warns across a change.
+# 2: the fetch's own facts (`from_count`, `thread_root`, ...) and the money and authentication
+# triggers recomputed after a card's expected facts (M8 plan R2); 1: before, unrecorded
+FACTS_VERSION = 2
 FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
 
 
@@ -206,20 +210,25 @@ class Scratch:
         analyzer = MessageAnalyzer(conn, self.clock, PROFILES[profile].address,
                                    DnsCache(conn, self.clock, lookup=_no_dns),
                                    public_domains=PUBLIC_DOMAINS | {FREEMAIL})  # fmt: skip
-        return read.extra | analyzer.analyze(read.parsed, read.raw)
+        found = analyzer.analyze(read.parsed, read.raw)
+        return fetch.message_facts(read.parsed) | read.extra | found
 
     def close(self) -> None:
         for conn in self._conns.values():
             conn.close()
 
 
-def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+def with_expected(found: dict[str, Any], expected: dict[str, Any], *,
+                  from_addr: str | None) -> dict[str, Any]:  # fmt: skip
     """Computed facts with a case's expected ones over them, the internal set's excepted
     (OD-443), and `bulk_corroborates` recomputed unless the case sets it: it is derived in
     `facts.compute` before any override, so a card's `auth_result: pass` or `sender_seen_before`
     would otherwise never reach the hide path (Q1). Likewise `known_sender_auth_regressed` (from
     the expected `sender_seen_before` and `auth_result`), and the routes are computed again over
-    the result (OD-490), so a card's expected facts reach them."""
+    the result (OD-490), so a card's expected facts reach them. So are the fraud triggers and
+    `unverified_payment` that read authentication and sender history (`triggers.with_money`, M8
+    plan R2), before the routes; `from_addr` is the message's From address, which trigger 6b
+    names."""
     out = found | {k: v for k, v in expected.items() if k not in INTERNAL_FACTS}
     if "bulk_corroborates" not in expected:
         out["bulk_corroborates"] = corroborates(bool(out.get("bulk_signal")),
@@ -230,6 +239,7 @@ def with_expected(found: dict[str, Any], expected: dict[str, Any]) -> dict[str, 
         out["known_sender_auth_regressed"] = (bool(out.get("sender_seen_before"))
                                               and out.get("auth_result") == "fail"
                                               and not out.get("shared_platform"))  # fmt: skip
+    out = triggers.with_money(out, from_addr=from_addr)
     return triggers.with_routes(out, public_domains=PUBLIC_DOMAINS | {FREEMAIL})
 
 
@@ -264,8 +274,9 @@ def outcomes(clock: Clock, current: rules.CompiledRules, root: Path,
         for case in cases:
             if case.path.stat().st_size > MAX_CASE_BYTES:
                 continue
-            found = with_expected(scratch.facts(case.path.read_bytes(), case.profile),
-                                  case.facts)  # fmt: skip
+            read = read_case(case.path.read_bytes())
+            found = with_expected(scratch.analyze(read, case.profile), case.facts,
+                                  from_addr=read.parsed.from_addr)  # fmt: skip
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
             row = _row(current, inp, case.labels) | {"id": case.id}
@@ -295,8 +306,9 @@ def run(
             if case.path.stat().st_size > MAX_CASE_BYTES:  # skipped, named (V1.2 review)
                 missing.append(case.id)
                 continue
-            found = with_expected(scratch.facts(case.path.read_bytes(), case.profile),
-                                  case.facts)  # fmt: skip
+            read = read_case(case.path.read_bytes())
+            found = with_expected(scratch.analyze(read, case.profile), case.facts,
+                                  from_addr=read.parsed.from_addr)  # fmt: skip
             inp = rules.RuleInput(case.labels, found, frozenset(precheck.fired(found)),
                                   {"sensitivity": ADDRESS.sensitivity})  # fmt: skip
             before, after = _outcome(current, inp), _outcome(proposed, inp)

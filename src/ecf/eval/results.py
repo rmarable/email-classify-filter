@@ -38,7 +38,11 @@ INPUT_KEYS = {"prompt_digest": "different prompt", "input_format": "different in
               "rules_digest": "different rules",
               "actor_prompt_digest": "different actor instructions",  # v3.0.1, OD-523
               # bytes of schema per Claude classify read (v3.0.0 S4, review R9; C runs)
-              "read_bytes": "different inputs"}  # fmt: skip
+              "read_bytes": "different inputs",
+              # how the eval computed each case's facts (M8 plan R2)
+              "facts_version": "different inputs"}  # fmt: skip
+# a run that recorded its keywords but not this key computed its facts the first way
+INPUT_DEFAULTS = {"facts_version": 1}
 HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 # the result file's format (v3.0.0 step 2, P16): 1 for files without the key; 2 adds the Jev
 # per-case fields; 3 (step 3) the unsure, below-bar and held fields; 4 (step 6, OD-518) the
@@ -375,6 +379,13 @@ def _set_changed(r: ResultFile) -> bool:
     return rescored.get("set_changed") is True
 
 
+def _input(r: ResultFile, key: str) -> object:
+    summary = r.summary or {}
+    if key in summary or "keywords_digest" not in summary:
+        return summary.get(key)
+    return INPUT_DEFAULTS.get(key)
+
+
 def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
     """ "different prompt", "different inputs", "different keywords" or "different rules" when
     both runs recorded a value and they differ (OD-486), and "different scoring" when one result's
@@ -394,7 +405,7 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
                    f" vs {', '.join(sorted(pb)) or 'none'}): those fields are left out, and up to"
                    " 2 in 300 expected rules can differ")  # fmt: skip
     for key, what in INPUT_KEYS.items():
-        va, vb = (a.summary or {}).get(key), (b.summary or {}).get(key)
+        va, vb = _input(a, key), _input(b, key)
         if va is not None and vb is not None and va != vb:
             line = f"warning: {what} ({key} {_differ(va, vb)})"
             if line not in out:

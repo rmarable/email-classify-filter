@@ -521,7 +521,6 @@ def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
     scratch, which adds its stand-in `freemail.example` (OD-443)."""
     t = Triggers(keywords)
     payment = bool(keywords["payment"])
-    auth = found["auth_result"]
     from_domain: str | None = found["from_domain"]
     candidates = [d for d in [from_domain, *(domain_of(r) for r in parsed.reply_to)] if d]
     candidates += _display_domains(parsed.from_name)
@@ -551,11 +550,16 @@ def evaluate(  # noqa: PLR0913 - the message, its facts and the install's sets
         t.fraud.append(f'text addressed to an automated reader: "{keywords["injection"][0]}"')
 
     t.regulator = list(keywords["regulator"])
+    t.unverified_payment = _unverified_payment(payment, found)
+    return t
+
+
+def _unverified_payment(payment: bool, found: dict[str, Any]) -> bool:
+    auth = found["auth_result"]
     unsigned_mime = auth == "pass" and found["auth"].get("mime_headers_signed") is False
     verified = bool(found.get("sender_verified"))  # `ecf sender set-verified` (OD-065)
-    t.unverified_payment = (payment and (auth == "none" or unsigned_mime) and not verified
-                            and not found.get("self_sent"))  # OD-446  # fmt: skip
-    return t
+    return (payment and (auth == "none" or unsigned_mime) and not verified
+            and not found.get("self_sent"))  # OD-446  # fmt: skip
 
 
 def _money_triggers(
@@ -738,23 +742,14 @@ def _other_triggers(
     payment: bool,
 ) -> list[str]:
     """Fraud triggers 3 to 9."""
-    auth = found["auth_result"]
     display = _display_mismatch(parsed.from_name, found["from_domain"])
+    dmarc_fail, org_domain, org_address = _auth_checks(parsed.from_addr, found, payment)
     checks = (
-        (bool(lookalikes), f"lookalike domain: {lookalikes[0]}" if lookalikes else ""),  # 3
-        (auth == "fail" and payment, "DMARC fail on a payment item"),  # 4
+        (bool(lookalikes), f"{LOOKALIKE}{lookalikes[0]}" if lookalikes else ""),  # 3
+        dmarc_fail,  # 4
         (duplicate, "Message-ID reused with different content"),  # 5
-        (
-            found["from_org_domain"] and auth != "pass",
-            "From uses your organization's domain but isn't authenticated",
-        ),  # 6
-        (  # 6 for a listed address; not for the account's own note to itself (OD-446)
-            not found["from_org_domain"]
-            and found.get("from_org_address")
-            and auth != "pass"
-            and not found.get("self_sent"),
-            f"From is {parsed.from_addr}, one of your org addresses, but isn't authenticated",
-        ),
+        org_domain,  # 6
+        org_address,  # 6 for a listed address
         (display is not None, f"display name shows {display}"),  # 7
         (parsed.from_count > 1, "more than one From header"),  # 8
         (
@@ -772,6 +767,67 @@ def _other_triggers(
         ),
     )
     return [reason for hit, reason in checks if hit]
+
+
+# The reasons that read the sender's authentication or history, worded so the eval can find
+# them again: it recomputes them after laying a card's expected facts over (`with_money`).
+LOOKALIKE = "lookalike domain: "
+MONEY_REASONS = ("bank details with ", "first-time sender with a payment keyword",
+                 "Reply-To mismatch on a payment item")  # fmt: skip
+DMARC_FAIL_PAYMENT = "DMARC fail on a payment item"
+ORG_DOMAIN_UNAUTH = "From uses your organization's domain but isn't authenticated"
+ORG_ADDRESS_UNAUTH = ", one of your org addresses, but isn't authenticated"
+
+
+def _auth_checks(
+    from_addr: str | None, found: dict[str, Any], payment: bool
+) -> tuple[tuple[bool, str], tuple[bool, str], tuple[bool, str]]:
+    """Fraud triggers 4, 6 and 6b, each as (fired, reason)."""
+    auth = found["auth_result"]
+    return (
+        (auth == "fail" and payment, DMARC_FAIL_PAYMENT),
+        (bool(found["from_org_domain"]) and auth != "pass", ORG_DOMAIN_UNAUTH),
+        (  # not for the account's own note to itself (OD-446)
+            not found["from_org_domain"]
+            and bool(found.get("from_org_address"))
+            and auth != "pass"
+            and not found.get("self_sent"),
+            f"From is {from_addr}{ORG_ADDRESS_UNAUTH}",
+        ),
+    )
+
+
+def _authish(reason: str) -> bool:
+    return (reason.startswith(MONEY_REASONS) or reason in (DMARC_FAIL_PAYMENT, ORG_DOMAIN_UNAUTH)
+            or (reason.startswith("From is ") and reason.endswith(ORG_ADDRESS_UNAUTH)))  # fmt: skip
+
+
+def with_money(found: dict[str, Any], *, from_addr: str | None) -> dict[str, Any]:
+    """`found` with fraud triggers 1, 2, 4, 6 and 6b and `unverified_payment` computed again from
+    its facts, for the eval after a card's expected facts are laid over (M8 plan R2): they read
+    `auth_result` and the sender's history, which `evaluate` saw before the card's. The earlier
+    reasons are taken out by their fixed wording first, and the new ones go where `evaluate`
+    puts them; a message whose reasons come out the same is returned unchanged. Run it before
+    `with_routes`, which reads the fraud reasons as "another fraud signal"."""
+    t: dict[str, Any] = dict(found.get("triggers") or {})
+    keywords: dict[str, list[str]] | None = t.get("keywords") or found.get("keywords")
+    if keywords is None:
+        return found
+    payment = bool(keywords["payment"])
+    money, money_weak = _money_triggers(keywords, found, bool(t.get("lookalikes")))
+    auth = [reason for hit, reason in _auth_checks(from_addr, found, payment) if hit]
+    before: list[str] = t.get("fraud") or []
+    before_weak: list[str] = t.get("fraud_weak") or []
+    other = [r for r in before if not _authish(r)]
+    lead = 1 if other and other[0].startswith(LOOKALIKE) else 0  # 3 comes before 4
+    fraud = money + other[:lead] + auth + other[lead:]
+    weak = money_weak + [r for r in before_weak if not _authish(r)]
+    unverified = _unverified_payment(payment, found)
+    if (fraud, weak, unverified) == (t.get("fraud"), t.get("fraud_weak"),
+                                     t.get("unverified_payment")):  # fmt: skip
+        return found
+    return found | {"triggers": t | {"fraud": fraud, "fraud_weak": weak,
+                                     "unverified_payment": unverified}}  # fmt: skip
 
 
 # Impersonation (trigger 7, V1.6): a sender claiming to be someone in the internal set

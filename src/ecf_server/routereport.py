@@ -111,9 +111,12 @@ class _Env:
         self.scratch = ruletest.Scratch(clock)
 
     def facts(self, case: evalrun.Case, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        raw = self.scratch.analyze(ruletest.read_case(case.path.read_bytes()), case.profile)
+        read = ruletest.read_case(case.path.read_bytes())
+        raw = self.scratch.analyze(read, case.profile)
         expected: dict[str, Any] = case.expected.get("facts") or {}
-        return ruletest.with_expected(raw, expected | (extra or {}))
+        return ruletest.with_expected(
+            raw, expected | (extra or {}), from_addr=read.parsed.from_addr
+        )
 
     def alone(self, case: evalrun.Case, facts: dict[str, Any]) -> str:
         return evalrun.rules_alone(case, facts, self.rules, self.known, self.schema)

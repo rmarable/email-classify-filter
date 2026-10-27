@@ -226,6 +226,14 @@ def _move(src: MailSource, uid: int, a: Planned, folders: dict[str, frozenset[st
     return {"name": a.name, "folder": target} | ({"gm_msgid": msgid} if msgid is not None else {})
 
 
+def _references(item: sqlite3.Row) -> str | None:
+    """The email's own References chain, from its facts; an item fetched before the chain was kept
+    has only its thread's first Message-ID."""
+    facts: dict[str, Any] = json.loads(item["facts"] or "{}")
+    chain = facts.get("references") or ([facts["thread_root"]] if facts.get("thread_root") else [])
+    return " ".join(str(m) for m in chain) or None
+
+
 def _save_draft(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sqlite3.Row,
                 payload: dict[str, Any], folder: str) -> dict[str, Any]:  # fmt: skip
     """Build the approved draft and append it to the Drafts folder; what Undo needs to find it."""
@@ -234,7 +242,7 @@ def _save_draft(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: s
     built = outbound_msg.build_draft(from_addr=str(frm), to_addr=str(payload["to"]),
                                      subject=str(item["subject"] or ""),
                                      body=str(payload["text"]), in_reply_to=item["message_id"],
-                                     references=None, date=clock.now())  # fmt: skip
+                                     references=_references(item), date=clock.now())  # fmt: skip
     src.append(folder, built.raw, ["\\Draft"])
     return {"name": "draft_reply", "folder": folder, "message_id": built.message_id,
             "content_hash": built.content_hash}  # fmt: skip
