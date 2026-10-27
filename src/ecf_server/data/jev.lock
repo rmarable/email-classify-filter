@@ -1,6 +1,6 @@
 {
-  "_comment": "The pinned TypeSafe Jev version (v3.0.0 step 2, PLANNING §4.3, OD-503). Every reply's `model` must equal it, or the run stops. `GET /v1/models` lists aliases only and versioned IDs are accepted unlisted, so the model watch can't see a pin retire (/models, read 2026-10-14). Only an ecf release changes this file.",
-  "model": "jev-1.13.0",
+  "_comment": "The pinned TypeSafe Jev version (v3.0.0 step 2, PLANNING §4.3, OD-503; jev-1.14.0 from OD-561). Every reply's `model` must equal it, or the run stops. `GET /v1/models` lists the aliases jev-latest and jev-preview only, and versioned IDs are accepted unlisted, so the model watch asks jev-latest which version answers (OD-561; /models and /openapi.json, read 2026-10-26). Only an ecf release changes this file.",
+  "model": "jev-1.14.0",
   "source": "docs.typesafe.ai/models",
-  "checked": "2026-10-14"
+  "checked": "2026-10-26"
 }

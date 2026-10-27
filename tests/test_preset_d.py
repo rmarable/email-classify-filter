@@ -216,12 +216,12 @@ def test_the_d_questions_need_a_terminal(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_the_wheel_names_jevs_pin_and_mapping(tmp_path: Path) -> None:
     path = _wheel(tmp_path)
     with zipfile.ZipFile(path, "a") as z:
-        z.writestr("ecf_server/data/jev.lock", json.dumps({"model": "jev-1.14.0"}))
+        z.writestr("ecf_server/data/jev.lock", json.dumps({"model": "jev-1.15.0"}))
         z.writestr("ecf_server/data/jev_mapping.json", '{"bands": {"phishing": 0.4}}')
     rel = upgrade_check.read_wheel(path)
-    assert rel.pins["jev"] == "jev-1.14.0"
+    assert rel.pins["jev"] == "jev-1.15.0"
     assert rel.pins["jev_mapping"] == upgrade_check.mapping_digest({"bands": {"phishing": 0.4}})
-    fams, hit = upgrade_check.changes({"jev": PIN}, None, {"jev": "jev-1.14.0"}, None,
+    fams, hit = upgrade_check.changes({"jev": PIN}, None, {"jev": "jev-1.15.0"}, None,
                                       {"jev": ["d"], "actor": ["c", "d"]})  # fmt: skip
     assert (fams, hit) == (["jev"], ["d"])
 
@@ -313,51 +313,220 @@ def test_reprocessing_d_goes_to_the_drain(conn: sqlite3.Connection, clock: FakeC
     jev_keys.WAKE.clear()
 
 
-# The model watch records TypeSafe's aliases (hand-off 6).
+# The model watch records TypeSafe's aliases (hand-off 6) and the version jev-latest answers as,
+# whenever the TypeSafe key is stored, D held back or not (OD-561).
 
 
-def test_the_watch_records_jevs_aliases(conn: sqlite3.Connection, clock: FakeClock,
-                                        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+def _watch_jev(  # noqa: PLR0913 - one watch's knobs, all keyword-only after `latest`
+        conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch,
+        latest: str | None, *, status: int = 200, key: str | None = KEY,
+        post_status: int | None = None, post_body: bytes | None = None,
+        resolves: bool = True, released: str = "2026-09-30",
+) -> tuple[list[httpx.Request], list[dict[str, Any]]]:  # fmt: skip
+    """One watch with only the TypeSafe key (D held back), jev-latest answering as `latest` (or
+    no `model` when None); the requests sent and the `jev.watch` log lines."""
     from ecf_server import health  # noqa: PLC0415
 
+    monkeypatch.setattr(addresses, "D_AVAILABLE", False)
+
     def online(_host: str) -> bool:
-        return True
+        return resolves
 
     monkeypatch.setattr(health, "resolves", online)
+    logged: list[dict[str, Any]] = []
+
+    def info(event: str, **kw: Any) -> None:
+        if event == "jev.watch":
+            logged.append(kw)
+
+    monkeypatch.setattr(model_watch.log, "info", info)
     seen: list[httpx.Request] = []
 
     def answer(r: httpx.Request) -> httpx.Response:
         seen.append(r)
-        return httpx.Response(200, json={"models": [
-            {"name": "jev-latest", "description": "x", "release_date": "2026-09-30"}]})  # fmt: skip
+        if r.method == "GET":
+            listed = [{"name": "jev-latest", "description": "x", "release_date": released}]
+            return httpx.Response(status, json={"models": listed})
+        if post_body is not None:
+            return httpx.Response(post_status or status, content=post_body)
+        reply: dict[str, Any] = {"answers": {"check": {"type": "noul", "noul": 0.9}},
+                                 "usage": {"input_tokens": 279, "output_tokens": 20}}  # fmt: skip
+        answered = reply | ({"model": latest} if latest else {})
+        return httpx.Response(post_status or status, json=answered)
 
     s = MemorySecretStore()
-    s.set(jev_keys.KEY_SECRET, KEY)
+    if key:
+        s.set(jev_keys.KEY_SECRET, key)
     model_watch.run(conn, clock, FakeNotifier(), s,
                     lambda: httpx.Client(transport=httpx.MockTransport(answer)))  # fmt: skip
-    assert [str(r.url) for r in seen] == [model_watch.JEV_MODELS_URL]
-    assert seen[0].headers["authorization"] == f"Bearer {KEY}"
-    st = model_watch.status(conn)
-    assert st["jev"]["aliases"] == {"jev-latest": "2026-09-30"} and st["jev_pin"] == PIN
-    from ecf.cli_models import watch_lines  # noqa: PLC0415
-
-    assert any("jev-latest released 2026-09-30" in x for x in watch_lines(st))
+    return seen, logged
 
 
-def test_the_model_watch_leaves_typesafe_alone_while_d_is_held_back(
+def test_the_watch_asks_typesafe_while_d_is_held_back(
         conn: sqlite3.Connection, clock: FakeClock,
         monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
-    monkeypatch.setattr(addresses, "D_AVAILABLE", False)
-    seen: list[httpx.Request] = []
+    """The listing, then the key check's request to jev-latest: no email content, the key only
+    in the Authorization header, and the log line without the key or a body."""
+    seen, logged = _watch_jev(conn, clock, monkeypatch, PIN)
+    sent = [(r.method, str(r.url)) for r in seen]
+    assert sent == [("GET", model_watch.JEV_MODELS_URL), ("POST", model_watch.JEV_ASK_URL)]
+    assert all(r.headers["authorization"] == f"Bearer {KEY}" for r in seen)
+    assert seen[1].headers["accept"] == "application/json"  # D9: Jev's own header set
+    assert "content-type" not in seen[0].headers and seen[1].headers["content-type"]
+    assert json.loads(seen[1].content) == {"model": "jev-latest",
+                                           "questions": jev.KEY_CHECK_QUESTIONS,
+                                           "state": jev.KEY_CHECK_STATE}  # fmt: skip
+    assert KEY.encode() not in seen[1].content
+    assert logged == [{"status": 200, "http_ms": logged[0]["http_ms"], "usage_in": 279,
+                       "model": PIN}]  # fmt: skip
+    st = model_watch.status(conn)
+    assert st["jev"]["aliases"] == {"jev-latest": "2026-09-30"} and st["jev_pin"] == PIN
+    assert st["jev"]["latest"] == PIN and st["jev"]["newer"] is None
+    assert model_watch.daily_lines(conn) == []
+    from ecf.cli_models import watch_lines  # noqa: PLC0415
 
-    def answer(r: httpx.Request) -> httpx.Response:
-        seen.append(r)
-        return httpx.Response(500)
+    lines = watch_lines(st)
+    assert any("jev-latest released 2026-09-30" in x for x in lines)
+    assert any(f"jev-latest answers as {PIN}, the pinned version" in x for x in lines)
 
+
+def test_a_newer_jev_goes_on_the_daily_summary_once(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    st = model_watch.status(conn)
+    assert st["jev"]["newer"]["version"] == "jev-9.9.0" and st["jev"]["newer"]["pinned"] == PIN
+    from ecf.cli_models import watch_lines  # noqa: PLC0415
+
+    assert any("jev-latest is now jev-9.9.0" in x and f"the pin is {PIN}" in x
+               for x in watch_lines(st))  # fmt: skip
+    lines = model_watch.daily_lines(conn)
+    assert len(lines) == 1 and "jev-9.9.0" in lines[0] and PIN in lines[0]
+    with write_tx(conn):
+        model_watch.mark_reported(conn, to_ts(clock.now()))
+    assert model_watch.daily_lines(conn) == []
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")  # the same version: not reported again
+    assert model_watch.daily_lines(conn) == []
+    _watch_jev(conn, clock, monkeypatch, "jev-9.10.0")  # another one replaces it
+    assert len(model_watch.daily_lines(conn)) == 1
+    _watch_jev(conn, clock, monkeypatch, PIN)  # back to the pin: the flag goes
+    assert model_watch.status(conn)["jev"]["newer"] is None
+    assert model_watch.daily_lines(conn) == []
+
+
+def test_a_release_that_pins_the_newer_jev_drops_the_flag(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    monkeypatch.setattr(jev_keys, "pin", lambda: "jev-9.9.0")
+    assert model_watch.status(conn)["jev"]["newer"] is None
+    assert model_watch.daily_lines(conn) == []
+
+
+@pytest.mark.parametrize(("latest", "status", "error"), [
+    (None, 200, "an answer ecf can't read"),
+    ("jev-9.9.0", 401, "the TypeSafe key was refused, HTTP 401: replace it with `ecf models"
+     " api-key set --provider typesafe`"),
+    ("jev-latest", 200, "an answer ecf can't read"),  # D5: an alias, never a version
+    ("x" * 5000, 200, "an answer ecf can't read"),
+    ("jev-9.9.0", 500, "HTTP 500"),
+])  # fmt: skip
+def test_a_failed_typesafe_check_raises_no_flag(conn: sqlite3.Connection, clock: FakeClock,
+                                                monkeypatch: pytest.MonkeyPatch,
+                                                latest: str | None, status: int,
+                                                error: str) -> None:  # fmt: skip
+    _watch_jev(conn, clock, monkeypatch, latest, status=status)
+    j = model_watch.status(conn)["jev"]
+    assert error in j["error"] and not j.get("newer")
+    assert model_watch.daily_lines(conn) == []
+    assert not conn.execute("SELECT 1 FROM alerts").fetchone()
+
+
+def test_the_daily_summary_mark_isnt_lost_to_a_slow_check(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """D1: the summary marks the newer version while the next check is waiting on TypeSafe; the
+    check's write keeps the mark."""
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    real = model_watch._jev_latest  # pyright: ignore[reportPrivateUsage]
+
+    def slow(client: httpx.Client, headers: dict[str, str]) -> str:
+        got = real(client, headers)
+        with write_tx(conn):  # the daily summary runs meanwhile
+            model_watch.mark_reported(conn, to_ts(clock.now()))
+        return got
+
+    monkeypatch.setattr(model_watch, "_jev_latest", slow)
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    assert model_watch.daily_lines(conn) == []
+
+
+def test_a_failed_check_keeps_the_newer_version_on_show(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """D2, D7: a failed check keeps last week's flag on `ecf models status`, and a failed version
+    request keeps the aliases it just read."""
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0", post_status=500, released="2026-10-20")
+    st = model_watch.status(conn)
+    assert st["jev"]["error"] == "HTTP 500"
+    assert st["jev"]["aliases"] == {"jev-latest": "2026-10-20"}  # the listing this check read
+    from ecf.cli_models import watch_lines  # noqa: PLC0415
+
+    lines = watch_lines(st)
+    assert any("couldn't read them: HTTP 500" in x for x in lines)
+    assert any("jev-latest is now jev-9.9.0" in x for x in lines)
+
+
+@pytest.mark.parametrize("body", [b"not json", b'{"model": "jev-9.9.0", "usage": [1]}'])
+def test_an_odd_reply_is_logged_and_read_safely(conn: sqlite3.Connection, clock: FakeClock,
+                                                monkeypatch: pytest.MonkeyPatch,
+                                                body: bytes) -> None:  # fmt: skip
+    """D7: a 200 that isn't JSON fails the check; usage that isn't an object doesn't, and either
+    way the log line is written."""
+    _, logged = _watch_jev(conn, clock, monkeypatch, None, post_body=body)
+    assert len(logged) == 1 and logged[0]["status"] == 200 and logged[0]["usage_in"] is None
+    j = model_watch.status(conn)["jev"]
+    if body == b"not json":
+        assert j["error"] == "an answer ecf can't read"
+    else:
+        assert j["error"] is None and j["newer"]["version"] == "jev-9.9.0"
+
+
+def test_typesafe_offline_keeps_the_weekly_cadence(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """D3: an unresolvable TypeSafe host is a failed check, never an hour-on retry for the whole
+    watch."""
+    seen, _ = _watch_jev(conn, clock, monkeypatch, PIN, resolves=False)
+    assert seen == []
+    st = model_watch.status(conn)
+    assert st["jev"]["error"] == "the host doesn't resolve"
+    assert st["next_at"] == to_ts(clock.now() + model_watch.EVERY)
+
+
+def test_the_typesafe_key_resets_the_watch(conn: sqlite3.Connection, clock: FakeClock,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """D6: setting the key brings the watch to the next tick; clearing it drops the TypeSafe
+    record, so no stale version line or summary line is left."""
+    assert (jev.WATCH_NEXT, jev.WATCH_RECORD) == (model_watch.NEXT, model_watch.JEV)
+    _watch_jev(conn, clock, monkeypatch, "jev-9.9.0")
+    assert model_watch.status(conn)["next_at"] is not None
     s = MemorySecretStore()
-    s.set(jev_keys.KEY_SECRET, KEY)
-    model_watch.run(conn, clock, FakeNotifier(), s,
-                    lambda: httpx.Client(transport=httpx.MockTransport(answer)))  # fmt: skip
+
+    def ok(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"model": PIN, "answers": {}})
+
+    jev.set_key(conn, clock, s, KEY, httpx.MockTransport(ok))
+    assert model_watch.status(conn)["next_at"] is None
+    jev.set_key(conn, clock, s, None)
+    assert model_watch.status(conn)["jev"] is None and model_watch.daily_lines(conn) == []
+
+
+def test_the_watch_leaves_typesafe_alone_without_its_key(
+        conn: sqlite3.Connection, clock: FakeClock,
+        monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    seen, _ = _watch_jev(conn, clock, monkeypatch, PIN, key=None)
     assert seen == [] and model_watch.status(conn)["jev"] is None
 
 

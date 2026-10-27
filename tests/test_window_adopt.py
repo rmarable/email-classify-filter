@@ -56,14 +56,13 @@ def test_the_excerpt_version_moves_once() -> None:
     "", "short text", "a" * 1500, "a" * 1501, "a" * 6000, _filler(1500), _filler(1501),
     _filler(3999), _filler(6000), "漢" * 5000, ("word " * 299) + "x" * 600,
 ], ids=lambda t: f"{len(t)}-{t[:1] or 'empty'}")  # fmt: skip
-def test_jev_reads_the_same_1500_characters_as_before(text: str) -> None:
-    """Q1 (operator 2026-10-26): Jev stays at 1,500 until it is re-evaluated. From the stored
-    4,000 excerpt it gets exactly what it got from the stored 1,500 one."""
-    assert (jev.WINDOW, jev.EXCERPT_CHARS) == (1500, 1501)
+def test_jev_reads_the_classifiers_4000_characters(text: str) -> None:
+    """OD-561 (operator 2026-10-26; it read 1,500 under OD-558): Jev reads the window Claude's
+    classifier reads, so the stored excerpt reaches it whole."""
+    assert jev.WINDOW == jev.EXCERPT_CHARS == message.CLASSIFIER_CHARS == 4000
     stored = message.cut(text, message.CLASSIFIER_CHARS)
-    before = message.cut(text, 1500)
-    assert jev.excerpt_text(stored) == before
-    assert jev.excerpt_cap()["excerpt_chars"] == 1501
+    assert jev.excerpt_text(stored) == stored
+    assert jev.excerpt_cap()["excerpt_chars"] == 4000
 
 
 def test_the_excerpts_limits_hold(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -143,9 +142,13 @@ def test_a_classifiers_message_at_the_full_window_stays_small(
 
 
 def test_a_jev_run_measures_what_jev_reads(conn: sqlite3.Connection, db_path: Path,
-                                           clock: FakeClock, tmp_path: Path) -> None:  # fmt: skip
-    """R1: a signal at about 2,000 characters is in Claude's 4,000 excerpt but not in Jev's 1,500,
-    so a Jev run records it unseen (and its excerpt length as Jev's)."""
+                                           clock: FakeClock, tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """R1: a Jev run measures against Jev's own window. Jev reads 4,000 since OD-561, the same as
+    Claude, so a smaller window is set here: a signal at about 2,000 characters is in Claude's
+    4,000 excerpt but not in a 1,500 one, and the Jev run records it unseen (and its excerpt
+    length as Jev's)."""
+    monkeypatch.setattr(jev, "WINDOW", 1500)
     r = tmp_path / "synthetic"
     (r / "cases").mkdir(parents=True)
     (r / "cases" / "long-signal.md").write_text(LONG.replace(FILLER, FILLER[:2000]))

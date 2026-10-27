@@ -341,15 +341,20 @@ until it passes the test again.
 
 ## Models
 
-- `ecf models status` shows which Claude models ecf uses, and any override.
+- `ecf models status` shows which Claude models ecf uses, and any override, and the Jev version
+  used for testing.
 - `ecf models api-key set|clear --provider anthropic` stores or removes an optional Anthropic API
   key, used only to check weekly for new or retiring Claude models. ecf tests the key once before
   saving it, and posts a Security Notice whenever it's added, changed or removed.
   `ecf models watch` runs that weekly check at the next minute.
 
-ecf can also run its test emails through TypeSafe's Jev model for comparison
-(`ecf eval run --classifier-backend jev`, with `--provider typesafe` for its key). That's for
-testing only: in v3.0.0 none of your mail goes to TypeSafe, and mailboxes can't use Jev.
+ecf can also run its test emails through TypeSafe's Jev model, to compare it with Claude
+(`ecf eval run --classifier-backend jev`). This is for testing only: none of your mail goes to
+TypeSafe, and mailboxes can't use Jev. Jev reads the same first 4,000 characters of each test
+email that Claude does. To use it, store a TypeSafe key with
+`ecf models api-key set --provider typesafe`. While a key is stored, the weekly check also asks
+TypeSafe which Jev version is its latest, sending no email content, and `ecf models status` says
+when it's a different version than the one ecf uses. ecf never switches versions by itself.
 
 ## Slack
 

@@ -39,7 +39,7 @@ def resolve(spec: str | None, role: str, mode: str, paths: Paths, *,
             claude_waiver: bool = False) -> Adapter:  # fmt: skip
     """The adapter for a role. In PROD, Claude never judges (it is the classifier) and writes a
     set only with `claude_waiver`: the operator's recorded choice that Claude is then scored on
-    Claude-written mail, on their own Claude plan sign-in (OD-547; operator-only, OD-542)."""
+    Claude-written mail, on the user's own Claude plan sign-in (OD-547, OD-559)."""
     provider, model = parse(spec or DEFAULTS[(role, mode)])
     default_provider, default_model = parse(DEFAULTS[(role, mode)])
     if model is None and provider == default_provider:

@@ -55,9 +55,10 @@ from ecf_server.evalrun import (
     spread,
 )
 
-# TypeSafe's price (/models, read 2026-10-14): input tokens only, output free (§5.5, P21)
+# TypeSafe's price (/models, read 2026-10-26; the same for jev-1.14.0): input tokens only,
+# output free (§5.5, P21)
 COST_PER_M_INPUT = 0.042
-COST_BASIS = ("$0.042 per million input tokens (/models, read 2026-10-14) over"
+COST_BASIS = ("$0.042 per million input tokens (/models, read 2026-10-26) over"
               " input_tokens_billed: every 200's usage, repeats and probes included; replies"
               " other than 200 aren't counted (their billing is unknown), nor 200s without usage"
               " (usage_missing)")  # fmt: skip

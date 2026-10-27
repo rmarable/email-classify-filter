@@ -240,15 +240,17 @@ def _sent_bytes(e: jev.Email) -> int:
     return len(jev.build_request(client, b, KEY).content)
 
 
-def test_the_request_as_sent_is_at_most_16_kb() -> None:
-    """The placeholder bound (P20), calibrated from the live check's L8. Ten attachment names of
-    300 CJK characters each would reach about 24 KB, still far under the refusal (step 3 sets
-    the bound and any cap on attachment names)."""
-    assert _sent_bytes(_worst()) <= 16 * 1024, _sent_bytes(_worst())
+def test_the_request_as_sent_is_at_most_24_kb() -> None:
+    """The placeholder bound (P20), calibrated from the live check's L8 and re-measured at the
+    4,000 window (OD-561: 23,063 bytes worst case). Ten attachment names of 400 CJK characters
+    each reach about 31 KB: under the refusal, but past the `near` mark (D4)."""
+    assert _sent_bytes(_worst()) <= 24 * 1024, _sent_bytes(_worst())
     huge = _worst("附" * 400)
-    assert _sent_bytes(huge) <= 25 * 1024
+    assert _sent_bytes(huge) <= 32 * 1024
     b = jev.request_body(SCHEMA, huge, tuple(signals.WORDING), pin=PIN, token="T", redact=True)
-    assert not jev.estimate(b).over
+    # D4 (OD-561): under the refusal but near it, so a 429 on this one isn't retried; no card in
+    # the synthetic set comes within a third of it (largest 8,216 estimated tokens)
+    assert not jev.estimate(b).over and jev.estimate(b).near
 
 
 def test_the_state_holds_each_part_once() -> None:
@@ -971,10 +973,11 @@ def test_the_three_questions_are_in_the_gate_key(monkeypatch: pytest.MonkeyPatch
 
 
 def test_every_request_stays_under_the_bounds() -> None:
-    """Measured 2026-10-15 with the three questions: 15,566 bytes worst case (16 KB bound),
-    24,316 with 400-CJK attachment names (25 KB)."""
+    """Measured 2026-10-26 with the three questions at the 4,000 window (OD-561): 23,063 bytes
+    worst case (24 KB bound), 31,813 with 400-CJK attachment names (32 KB); 15,566 and 24,316 at
+    1,500."""
     client = jev.http_client(httpx.MockTransport(ok()))
-    for e, bound in ((_worst(), 16 * 1024), (_worst("附" * 400), 25 * 1024)):
+    for e, bound in ((_worst(), 24 * 1024), (_worst("附" * 400), 32 * 1024)):
         b = jev.request_body(SCHEMA, e, tuple(signals.WORDING), pin=PIN,
                              token="0123456789abcdef", redact=True)  # fmt: skip
         assert len(jev.build_request(client, b, KEY).content) <= bound
