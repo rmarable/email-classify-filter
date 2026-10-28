@@ -53,7 +53,7 @@ from ecf_server.precheck import fired
 EVERY = timedelta(hours=1)
 GAP = timedelta(hours=2)
 SECTION_MAX = 15
-UNDO_MAX = 20
+UNDO_MAX = 10  # with the other buttons, within Slack's 25 per message
 UNDO = "undo"
 LAST = "slack_digest_at:"  # + address_id
 NEVER_UNDONE = frozenset({"suspicious", "regulatory"})  # fraud and regulator labels (OD-213)
@@ -119,7 +119,7 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
     weak: list[str] = []
     posing: list[str] = []
     unverified: list[str] = []
-    undoable: list[str] = []
+    undoable: list[tuple[sqlite3.Row, str]] = []  # the pre-check's labels and flag
     unscanned = 0
     for r in rows:
         facts: dict[str, Any] = json.loads(r["facts"] or "{}")
@@ -134,12 +134,14 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
         elif "unverified_payment" in names and "fraud" not in names:
             unverified.append(_line(r, facts))
         if may_undo(facts):
-            undoable.append(r["stable_id"])
+            undoable.append((r, _line(r, facts)))
     when = since.strftime("%H:%M UTC")
     opener = (f"Caught up: {len(rows)} message(s) since {since.strftime('%Y-%m-%d %H:%M UTC')}."
               " Anything waiting: ecf inbox" if now - since > GAP
               else f"{len(rows)} new message(s) since {when}.")  # fmt: skip
-    text = [opener]
+    # the Undo list first: Slack runs a card's lines past the 29th together (slack_render)
+    undo_text, buttons = _undo([*digest_actions.undo_rows(rows), *undoable])
+    text = [opener, *undo_text]
     for title, lines in (("Pretending to be someone you work with (no payment wording found):",
                           posing),
                          ("Weak fraud signals (flagged, not escalated):", weak),
@@ -152,11 +154,28 @@ def build(conn: sqlite3.Connection, aid: str, since: datetime, now: datetime) ->
         text += ["", f"Not fully scanned: {unscanned}"]
     more, offered = digest_actions.lines(conn, now, aid, rows, key=f"{aid}:{to_ts(now)}")
     text += more
-    buttons = [Button(UNDO, f"Undo {sid[: cards.SHORT_ID]}", sid) for sid in undoable[:UNDO_MAX]]
     buttons += offered
     buttons.append(Button(pause.PAUSE, f"Pause {aid}", aid))
     note = cards.PAYMENT_NOTE if (weak or posing or unverified) else ""
     return Card(f"Digest: {aid}", text="\n".join(text), buttons=tuple(buttons), note=note)
+
+
+def _undo(undo: list[tuple[sqlite3.Row, str]]) -> tuple[list[str], list[Button]]:
+    """The "You can undo" list and its buttons, each naming its email. One entry per email, the
+    first kept: what its model plan did comes before the pre-check's labels, as `queue_undo`
+    chooses."""
+    seen: set[str] = set()
+    shown: list[tuple[sqlite3.Row, str]] = []
+    for r, ln in undo:
+        if r["stable_id"] not in seen:
+            seen.add(r["stable_id"])
+            shown.append((r, ln))
+    if not shown:
+        return [], []
+    text = ["", f"You can undo ({len(shown)}):", *(ln for _r, ln in shown[:UNDO_MAX])]
+    if len(shown) > UNDO_MAX:
+        text.append(f"... and {len(shown) - UNDO_MAX} more, not shown")
+    return text, [Button(UNDO, cards.undo_label(r), r["stable_id"]) for r, _ln in shown[:UNDO_MAX]]
 
 
 def _line(r: sqlite3.Row, facts: dict[str, Any]) -> str:
@@ -203,7 +222,7 @@ def _undo_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -
     except ConflictError:
         _tell(conn, clock, click, "Nothing to undo here (fraud and regulator labels stay).")
         raise
-    _tell(conn, clock, click, f"Undo queued for {item['stable_id'][:8]}: done at the next check,"
+    _tell(conn, clock, click, f"Undo queued for {cards.short_ref(item)}: done at the next check,"
                               " within a minute while your computer is awake.")  # fmt: skip
 
 
@@ -262,13 +281,13 @@ def run_model_undos(conn: sqlite3.Connection, clock: Clock, src: MailSource, add
     for item in rows:
         try:
             done = mailbox_actions.undo_item(conn, clock, src, item, install=install, lost=lost)
-            result, text = "done", f"Undone for {item['stable_id'][:8]}: {', '.join(done)}."
+            result, text = "done", f"Undone for {cards.short_ref(item)}: {', '.join(done)}."
         except (MessageChangedError, mailbox_actions.LeaseLostError) as exc:
-            result, text = "failed", f"Couldn't undo {item['stable_id'][:8]}: {exc.detail}"
+            result, text = "failed", f"Couldn't undo {cards.short_ref(item)}: {exc.detail}"
         except Exception as exc:  # e.g. the connection dropped: the item still records it
             log.warning("undo.failed", stable_id=item["stable_id"][:8],
                         error_type=type(exc).__name__)  # fmt: skip
-            result, text = "failed", (f"Couldn't undo {item['stable_id'][:8]}"
+            result, text = "failed", (f"Couldn't undo {cards.short_ref(item)}"
                                       f" ({type(exc).__name__}); undo it by hand")  # fmt: skip
         row = conn.execute("SELECT proposal FROM items WHERE stable_id = ?",
                            (item["stable_id"],)).fetchone()  # fmt: skip
@@ -302,9 +321,9 @@ def run_undos(
         try:
             done = undo(conn, clock, src, item, actions, install=install,
                         max_scan_bytes=max_scan_bytes) if actions else []  # fmt: skip
-            result, text = "done", f"Undone for {item['stable_id'][:8]}: removed {', '.join(done)}."
+            result, text = "done", f"Undone for {cards.short_ref(item)}: removed {', '.join(done)}."
         except MessageChangedError as exc:
-            result, text = f"failed: {exc.detail}", f"Couldn't undo {item['stable_id'][:8]}: " \
+            result, text = f"failed: {exc.detail}", f"Couldn't undo {cards.short_ref(item)}: " \
                 f"{exc.detail}"  # fmt: skip
         facts["precheck"] = dict(facts.get("precheck") or {}) | {"undo": result}
         with write_tx(conn):

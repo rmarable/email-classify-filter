@@ -27,6 +27,7 @@ from typing import Any
 from ecf_server import jev_facts, jev_keys
 from ecf_server.chat import Button, Card
 from ecf_server.precheck import payment_or_fraud
+from ecf_server.slack_render import LABEL_MAX, scrub
 
 URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]{1,20}://|www\.)\S+")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
@@ -162,10 +163,16 @@ def classified_line(item: sqlite3.Row) -> str | None:
 NOT_RECORDED = " (sender not recorded before V1.2)"
 
 
+def one_line(text: str) -> str:
+    """Text from an email on one line: a decoded header can hold a line break, which on a card
+    would start what looks like another email's line."""
+    return " ".join(text.split())
+
+
 def sender_line(item: sqlite3.Row, facts: dict[str, Any]) -> str:
     sender, name = item["sender"], item["sender_name"]
     if sender:
-        return f"{name} <{sender}>" if name else str(sender)
+        return f"{one_line(name)} <{sender}>" if name else str(sender)
     domain = facts.get("from_domain") or "an unknown domain"
     return f"someone at {domain}{NOT_RECORDED}"
 
@@ -183,7 +190,33 @@ def short_sender(sender: str, limit: int = 40) -> str:
 def subject_line(item: sqlite3.Row) -> str:
     if item["subject"] is None:
         return "(not recorded before V1.2)"
-    return str(item["subject"]) or "(no subject)"
+    return one_line(str(item["subject"])) or "(no subject)"
+
+
+def undo_label(item: sqlite3.Row) -> str:
+    """A digest's Undo button: "Undo: <address>, <subject>", the subject cut to fit Slack's label.
+    The address alone, since a display name can itself look like a known address, and never cut
+    (see `short_sender`): one too long for the label gives "Undo <id>". Measured as Slack shows
+    it, in UTF-16 units, so an emoji can't push it over the limit and lose the whole digest."""
+    head = scrub(f"Undo: {item['sender']}") if item["sender"] else ""
+    if not head or _units(head) > LABEL_MAX - 4:  # room for ", " and "…" after a cut
+        return f"Undo {item['stable_id'][:SHORT_ID]}"
+    label = scrub(f"{head}, {subject_line(item)}")
+    if _units(label) <= LABEL_MAX:
+        return label
+    while _units(label) > LABEL_MAX - 1:
+        label = label[:-1]
+    return label + "…"
+
+
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def short_ref(item: sqlite3.Row) -> str:
+    """An item in a reply to a click: its short ID and subject, links defanged, since a reply's
+    text is Slack markup and might link a bare host."""
+    return f"{item['stable_id'][:SHORT_ID]} ({defang(subject_line(item)[:60])})"
 
 
 def why(facts: dict[str, Any]) -> str:
