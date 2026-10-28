@@ -165,6 +165,44 @@ def hide_blockers(ctx: Context, action: str | None = None) -> list[str]:
     return out
 
 
+def draft_refusal(ctx: Context, *, check_language: bool = True) -> str | None:  # noqa: PLR0911
+    """Why no draft is offered for this item, as the first failing clause's code, or None (P-a,
+    P-b; M8 plan §2). It lists the hide blockers itself: `hide_blockers` counts `fraud_risk` low as
+    a fraud signal, and a draft allows low. `check_language` False only at the approval of an item
+    fetched before the `language` fact existed."""
+    f = ctx.facts
+    t: dict[str, Any] = f.get("triggers") or {}
+    cls = risk(ctx)
+    if f.get("auth_result") != "pass":
+        return "not_authenticated"
+    if f.get("quarantined"):
+        return "quarantined"
+    if f.get("content_unscanned"):
+        return "unscanned"
+    if f.get("bulk_signal"):
+        return "bulk"
+    if f.get("from_count") != 1 or f.get("from_ambiguous"):
+        return "from_ambiguous"
+    if t.get("fraud") or t.get("lookalikes") or t.get("unverified_payment"):
+        return "fraud"
+    if t.get("fraud_weak"):
+        return "fraud_weak"
+    if t.get("regulator") or fixed_item(cls, "regulator_claim"):
+        return "regulator"
+    if (
+        cls.get("fraud_risk") in ("medium", "high")
+        or fixed_item(cls, "phishing")
+        or fixed_item(cls, "bank_detail_change")
+        or (fixed_item(cls, "claims_internal") and f.get("sender_origin") == "external")
+    ):
+        return "risk"
+    if f.get("risky_attachment"):
+        return "risky_attachment"
+    if check_language and f.get("language") != "en":
+        return "language_other" if f.get("language") == "other" else "language_unknown"
+    return None
+
+
 def corroborated(ctx: Context) -> bool:
     """From facts alone (I1): authenticated bulk mail from a sender seen before, or a category a
     person confirmed for this sender, matching this classification, on an authenticated message."""
@@ -287,7 +325,8 @@ def _outbound_refusal(ctx: Context, p: Plan, name: str, target: str | None) -> s
         return f"{str(target)[:40]!r} isn't an enabled template"
     if name == "forward_internal" and target not in ctx.forwards:
         return f"{str(target)[:40]!r} isn't on the forward allow-list"
-    why = send_refusal(name, ctx.facts, fraud_signal=fraud_signal(ctx))
+    why = draft_refusal(ctx) if name == "draft_reply" else None
+    why = why or send_refusal(name, ctx.facts, fraud_signal=fraud_signal(ctx))
     if why is not None:
         return why
     if name in SENDS and not ctx.outbound:

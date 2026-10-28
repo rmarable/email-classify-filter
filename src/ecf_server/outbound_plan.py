@@ -25,7 +25,7 @@ import unicodedata
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf_server import config, templates
+from ecf_server import config, draftcheck, templates
 from ecf_server.outbound_msg import addr_spec
 
 DRAFT_MAX = 4000  # in propose_action's description and its refusal (actor.problem); never cut
@@ -37,12 +37,16 @@ class Unresolved(InvalidInputError):
     """The draft or send can't be resolved (no usable sender, unknown template or entry)."""
 
 
+DROPPED = frozenset({"Cc", "Cf", "Co", "Cs", "Cn"})  # as Slack's _scrub, and unassigned (AG1)
+
+
 def clean_draft(text: str) -> str:
-    """The actor's draft text: control and format characters removed (line breaks and tabs kept),
-    trailing spaces trimmed. Never cut: `resolve` refuses one longer than DRAFT_MAX."""
+    """The actor's draft text: line separators made line breaks, control, format, private-use,
+    surrogate and unassigned characters removed (line breaks and tabs kept), trailing spaces
+    trimmed. Never cut: `resolve` refuses one longer than DRAFT_MAX."""
+    lines_only = text.replace("\r\n", "\n").replace("\r", "\n").translate(draftcheck.LINE_BREAKS)
     kept = "".join(
-        c if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf") else ""
-        for c in text.replace("\r\n", "\n").replace("\r", "\n")
+        c if c in "\n\t" or unicodedata.category(c) not in DROPPED else "" for c in lines_only
     )
     lines = [ln.rstrip() for ln in kept.split("\n")]
     return "\n".join(lines).strip()
@@ -75,6 +79,8 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
         return {"entry": target, "to": to}
     sender = _sender(item)
     if name == "draft_reply":
+        if monitored(conn, sender):  # P-c: a reply there comes back in as new mail (M8 plan §2)
+            raise Unresolved("monitored_recipient")
         body = clean_draft(text or "")
         if not body:
             raise Unresolved("the draft has no text")
@@ -88,6 +94,12 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
         r = render(item, t)
         return {"to": sender, "template": t.id, "rendered": _digest(r.subject, r.body)}
     raise Unresolved(f"{name} has no payload")
+
+
+def monitored(conn: sqlite3.Connection, to: str) -> bool:
+    """`to` is one of this install's monitored addresses."""
+    rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL")
+    return to.lower() in {str(r[0]).lower() for r in rows}
 
 
 def render(item: sqlite3.Row, t: templates.Template) -> templates.Rendered:

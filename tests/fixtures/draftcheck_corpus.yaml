@@ -1,0 +1,166 @@
+# Benign replies for the draft checker's false-refusal measurement (M8 plan §1 "False positives",
+# AW5, AX1). Each pair is an email and a polite reply that commits to nothing, written by intent
+# before the checker code existed, so every expected verdict is pass. Step 3 counts the checker's
+# refusals here (the 2% figure) and on `bait_style`, the safe replies to payment emails that look
+# like bait (a stated cost the operator decides before the freeze, BW-M2). Tags say what each
+# pair is there for: echo (repeats a fact from the email), soft (a soft timing line), ask (a
+# question or request to the sender), payment (the email holds a payment term), short (a short
+# email), non_ascii (the reply echoes non-ASCII text).
+#
+# Allowed addresses are the fixture file's: pat@acme.example (the sender) and me@vendor-a.example.
+
+version: 1
+
+corpus:
+  - {id: c001, tags: [ask], email: "Hi, are you free for a call next week to talk about the new catalogue? Pat", reply: "Thanks, Pat. Which days suit you best for a call about the catalogue?"}
+  - {id: c002, tags: [echo], email: "Hello, our order 4471 arrived today, but one box was damaged. Pat", reply: "Sorry to hear one box of order 4471 was damaged. Could you send a photo of the box?"}
+  - {id: c003, tags: [soft], email: "Hi, the login page keeps timing out for me this morning. Pat", reply: "Thanks for letting me know. I'll look into it and get back to you."}
+  - {id: c004, tags: [payment, echo], email: "Hello, attached is invoice 2231 for €450 for the October work. Pat", reply: "Thanks, Pat, I've received invoice 2231 for €450. I'll pass it to our accounts team."}
+  - {id: c005, tags: [short], email: "Thanks for the samples!", reply: "You're welcome, glad they arrived."}
+  - {id: c006, tags: [ask], email: "Hi, can you tell me whether the blue model comes in a larger size? Pat", reply: "Good question. Which size were you hoping for?"}
+  - {id: c007, tags: [echo], email: "Hi, we met at the trade fair on 12 October and you mentioned a trial. Pat", reply: "Thanks for following up after the trade fair on 12 October. I'm glad you're interested in a trial."}
+  - {id: c008, tags: [soft, payment], email: "Hi, our last invoice seems to have the wrong address on it. Pat", reply: "Thanks for spotting that. I'll check the address with our team."}
+  - {id: c009, tags: [ask], email: "Hello, we'd like to visit your workshop at some point. Pat", reply: "We'd be glad to have you. Who would be coming along?"}
+  - {id: c010, tags: [echo], email: "Hello, the manual for the X200 is missing page 14. Pat", reply: "Thanks for telling us that page 14 of the X200 manual is missing."}
+  - {id: c011, tags: [payment, ask], email: "Hi, could you explain the extra line on our bill this month? Pat", reply: "Sure. Could you tell me which line on the bill you mean?"}
+  - {id: c012, tags: [short], email: "Got it, thanks.", reply: "Great, thank you."}
+  - {id: c013, tags: [soft], email: "Hi, the colours in the brochure look off compared with the website. Pat", reply: "Thanks for the feedback on the brochure colours. I'll share it with our design team."}
+  - {id: c014, tags: [echo, payment], email: "Hello, we paid the deposit of €200 last week. Can you confirm you have it? Pat", reply: "Thanks, Pat. I'll ask our accounts team to look for the €200 deposit."}
+  - {id: c015, tags: [ask], email: "Hi, my colleague Sam will take over this project from me. Pat", reply: "Thanks for letting me know. Could you share Sam's email address with me?"}
+  - {id: c016, tags: [echo], email: "Hello, our office will be closed from 24 December to 2 January. Pat", reply: "Thanks for the heads-up that your office is closed from 24 December to 2 January."}
+  - {id: c017, tags: [soft], email: "Hi, the printer you installed is making a strange noise. Pat", reply: "Sorry about that. I'll find out what might be causing the noise."}
+  - {id: c018, tags: [payment, echo], email: "Hello, the quote of €1,200 you sent is a bit above our budget. Pat", reply: "Thanks for being open about the €1,200 quote. What budget did you have in mind?"}
+  - {id: c019, tags: [ask], email: "Hi, do you have a contact in your shipping team? Pat", reply: "Yes. Could you tell me what the shipping question is about, so I can find the right person?"}
+  - {id: c020, tags: [echo], email: "Hello, the meeting notes from 3 November are attached. Pat", reply: "Thanks for the notes from 3 November."}
+  - {id: c021, tags: [short], email: "See you then.", reply: "Thanks, Pat."}
+  - {id: c022, tags: [payment, soft], email: "Hi, we were charged twice for the same subscription. Pat", reply: "I'm sorry about the double charge. I'll look into it."}
+  - {id: c023, tags: [echo, ask], email: "Hello, I'm writing about ticket 5521, which is still open. Pat", reply: "Thanks for the reminder about ticket 5521. Is the problem the same as when you opened it?"}
+  - {id: c024, tags: [echo], email: "Hi, your site lists the opening hours as 9:00-17:00, but the door said 10:00. Pat", reply: "Thanks for pointing out that the site says 9:00-17:00 while the door said 10:00."}
+  - {id: c025, tags: [ask], email: "Hello, we're thinking about switching to the annual plan. Pat", reply: "Thanks for considering it. What made you think about switching?"}
+  - {id: c026, tags: [payment, echo], email: "Hi, the refund of €35 hasn't shown up on my card yet. Pat", reply: "Thanks for letting us know about the €35 refund. I'll ask our accounts team about it."}
+  - {id: c027, tags: [soft], email: "Hi, one of the links in your newsletter is broken. Pat", reply: "Thanks for telling us. I'll pass it to whoever looks after the newsletter."}
+  - {id: c028, tags: [echo], email: "Hello, we need 40 chairs for the event, not 30. Pat", reply: "Thanks for the update: 40 chairs rather than 30."}
+  - {id: c029, tags: [ask], email: "Hi, I'd like to change the name on our account. Pat", reply: "Of course. What name would you like on the account?"}
+  - {id: c030, tags: [short], email: "Happy new year!", reply: "Happy new year to you too!"}
+  - {id: c031, tags: [payment, ask], email: "Hello, can we pay by bank transfer instead of card? Pat", reply: "Good question. Let me find out which options we have. Is there a reason card doesn't suit?"}
+  - {id: c032, tags: [echo], email: "Hi, the delivery address is 4 Mill Lane, not 14 Mill Lane. Pat", reply: "Thanks for the correction to the delivery address."}
+  - {id: c033, tags: [soft], email: "Hi, the app crashes when I upload a photo. Pat", reply: "Sorry about that. I'll look into what's going wrong with photo uploads."}
+  - {id: c034, tags: [echo, payment], email: "Hello, our budget for the next quarter is €5,000. Pat", reply: "Thanks for sharing the €5,000 budget for next quarter. That helps us plan."}
+  - {id: c035, tags: [ask], email: "Hi, could we have the training material in PDF as well? Pat", reply: "I'll check whether we have it in PDF. Which parts of the material do you need most?"}
+  - {id: c036, tags: [echo], email: "Hello, I've attached the photos from the site visit on Tuesday. Pat", reply: "Thanks for the photos from Tuesday's site visit."}
+  - {id: c037, tags: [non_ascii, echo], email: "Hello, my name is José Núñez and I'm the new contact for this account. José", reply: "Welcome, José Núñez. Thanks for introducing yourself."}
+  - {id: c038, tags: [non_ascii], email: "Hi, Zoë from our team will join the call. Pat", reply: "Thanks, Pat. It will be good to meet Zoë."}
+  - {id: c039, tags: [non_ascii], email: "Hello, please address letters to Renée Lefèvre from now on. Pat", reply: "Thanks, I've noted Renée Lefèvre as the name for letters."}
+  - {id: c040, tags: [non_ascii], email: "Hi, our office in Malmö would like a brochure too. Pat", reply: "Thanks, Pat. Happy to hear the Malmö office is interested."}
+  - {id: c041, tags: [non_ascii], email: "Hi, Søren asked me to pass on his thanks for the demo. Pat", reply: "That's kind of Søren, thank you both."}
+  - {id: c042, tags: [non_ascii], email: "Hello, the product name in our system is “Café Crème”. Pat", reply: "Thanks for the product name, “Café Crème”."}
+  - {id: c043, tags: [non_ascii], email: "Hi, our new colleague Νίκος will handle orders. Pat", reply: "Thanks, Pat. Please welcome Νίκος from all of us."}
+  - {id: c044, tags: [non_ascii], email: "Hello, the shipment is going to our partner Дмитрий in Riga. Pat", reply: "Thanks for letting us know the shipment is for Дмитрий in Riga."}
+  - {id: c045, tags: [non_ascii], email: "Hi, the café in Göteborg loved the samples. Pat", reply: "That's great to hear about the café in Göteborg."}
+  - {id: c046, tags: [non_ascii], email: "Hello, Nguyễn will be our contact while I'm away. Pat", reply: "Thanks, Pat. I'll note Nguyễn as your contact."}
+  - {id: c047, tags: [short], email: "Sounds good.", reply: "Thanks!"}
+  - {id: c048, tags: [payment, echo], email: "Hi, the invoice says 12 licences but we have 10. Pat", reply: "Thanks for spotting that the invoice shows 12 licences instead of 10."}
+  - {id: c049, tags: [ask], email: "Hello, is the workshop suitable for beginners? Pat", reply: "Thanks for asking. How much experience do the people coming have?"}
+  - {id: c050, tags: [soft], email: "Hi, the heating in meeting room B isn't working. Pat", reply: "Thanks for letting me know about meeting room B. I'll pass it on to facilities."}
+  - {id: c051, tags: [echo], email: "Hello, I'm reading your report from 2025 and have a question about page 8. Pat", reply: "Thanks for reading the 2025 report. What's your question about page 8?"}
+  - {id: c052, tags: [payment, soft], email: "Hi, our payment portal login doesn't work any more. Pat", reply: "Sorry for the trouble with the portal login. I'll ask our team to take a look."}
+  - {id: c053, tags: [echo], email: "Hi, the link to the slides is https://acme.example/slides/q3. Pat", links: ["https://acme.example/slides/q3"], reply: "Thanks, I'll have a look at https://acme.example/slides/q3."}
+  - {id: c054, tags: [ask], email: "Hello, we'd like to bring two more people to the training. Pat", reply: "That's great. What are their names?"}
+  - {id: c055, tags: [payment, echo], email: "Hello, we've set aside €800 for the upgrade. Pat", reply: "Thanks, Pat. Good to know you've set aside €800 for the upgrade."}
+  - {id: c056, tags: [short], email: "Can you call me?", reply: "Of course. When is a good time for you?"}
+  - {id: c057, tags: [soft], email: "Hi, the photos on your website load very slowly. Pat", reply: "Thanks for the feedback. I'll share it with our web team."}
+  - {id: c058, tags: [echo], email: "Hello, our team of 15 enjoyed the session. Pat", reply: "Thanks, Pat. I'm glad your team of 15 enjoyed it."}
+  - {id: c059, tags: [ask, payment], email: "Hi, do you offer discounts for charities? Pat", reply: "Thanks for asking. Could you tell me a bit about your charity?"}
+  - {id: c060, tags: [echo], email: "Hello, I've moved to the Leeds office, room 3.12. Pat", reply: "Thanks for letting me know you're now in room 3.12 at the Leeds office."}
+  - {id: c061, tags: [payment, soft], email: "Hi, the amount on the receipt doesn't match what I was charged. Pat", reply: "Sorry about the mismatch. I'll look into the receipt."}
+  - {id: c062, tags: [echo, ask], email: "Hello, we'd like 3 more copies of the book. Pat", reply: "Thanks for asking about 3 more copies. Should they go to the same address?"}
+  - {id: c063, tags: [short], email: "Any news?", reply: "Not yet, but thanks for checking in."}
+  - {id: c064, tags: [payment, echo], email: "Hi, our rent for the stand at the fair was €300 last year. Pat", reply: "Thanks for the reminder that the stand cost €300 last year."}
+  - {id: c065, tags: [soft], email: "Hello, I think your contact form isn't sending messages. Pat", reply: "Thanks for telling us. I'll check the contact form."}
+  - {id: c066, tags: [echo], email: "Hi, the conference starts at 9:30 in hall C. Pat", reply: "Thanks, Pat. Noted that it starts at 9:30 in hall C."}
+  - {id: c067, tags: [ask], email: "Hello, we're unhappy with the last delivery. Pat", reply: "I'm sorry to hear that. What went wrong with the last delivery?"}
+  - {id: c068, tags: [payment, ask], email: "Hi, could you send us a copy of last year's invoices for our audit? Pat", reply: "Sure, which months do you need for the audit?"}
+  - {id: c069, tags: [echo], email: "Hello, our VAT number changed when we merged. Pat", reply: "Thanks for letting us know your VAT number changed after the merger."}
+  - {id: c070, tags: [short], email: "Thank you so much!", reply: "You're very welcome."}
+  - {id: c071, tags: [payment, echo], email: "Hello, the fee for the second session was €60, wasn't it? Pat", reply: "Thanks for asking about the €60 fee for the second session. Let me check our records."}
+  - {id: c072, tags: [soft], email: "Hi, a few of the labels peeled off in the rain. Pat", reply: "Thanks for letting us know about the labels. I'll pass it on to our packaging team."}
+  - {id: c073, tags: [ask], email: "Hello, I'd like to give feedback on the new menu. Pat", reply: "We'd love to hear it. What did you think?"}
+  - {id: c074, tags: [echo], email: "Hi, we're based at 22 Station Road now. Pat", reply: "Thanks for the update on your new address."}
+  - {id: c075, tags: [payment, soft], email: "Hello, my card was declined at checkout. Pat", reply: "Sorry about that. I'll find out what happened at checkout."}
+  - {id: c076, tags: [echo], email: "Hello, our project code is ACME-77. Pat", reply: "Thanks, I've noted ACME-77 as your project code."}
+  - {id: c077, tags: [ask], email: "Hi, could you tell me who wrote the article in your last newsletter? Pat", reply: "Happy to find out. Which article did you mean?"}
+  - {id: c078, tags: [payment, echo], email: "Hello, we owe a balance on the account, but we're not sure how much. Pat", reply: "Thanks for raising the balance question. I'll ask our accounts team for the figure."}
+  - {id: c079, tags: [short], email: "Is it ready?", reply: "Not quite. Thanks for your patience."}
+  - {id: c080, tags: [echo], email: "Hi, we'll be 6 for dinner after the workshop. Pat", reply: "Thanks, Pat. A table for 6 after the workshop sounds lovely."}
+  - {id: c081, tags: [payment, ask], email: "Hello, is the price on your website the same for schools? Pat", reply: "Good question. Which school are you writing from?"}
+  - {id: c082, tags: [soft], email: "Hi, the coffee machine on floor 2 is leaking. Pat", reply: "Thanks for letting us know. I'll tell facilities about the leak."}
+  - {id: c083, tags: [echo], email: "Hello, I've read chapters 1 to 4 of the draft. Pat", reply: "Thanks for reading chapters 1 to 4. What did you think so far?"}
+  - {id: c084, tags: [payment, echo], email: "Hi, the credit note for €75 hasn't arrived. Pat", reply: "Thanks for letting us know about the €75 credit note. I'll ask our accounts team about it."}
+  - {id: c085, tags: [ask], email: "Hello, we want to add a second user to our subscription. Pat", reply: "Thanks, Pat. What's the name of the second user?"}
+  - {id: c086, tags: [short], email: "Lovely to meet you.", reply: "Lovely to meet you too."}
+  - {id: c087, tags: [payment, soft], email: "Hello, our premium went up this year and I'd like to know why. Pat", reply: "Thanks for asking about the premium. I'll find out what changed."}
+  - {id: c088, tags: [echo], email: "Hi, our flight lands at 14:20 on Thursday. Pat", reply: "Thanks, Pat. Noted that your flight lands at 14:20 on Thursday."}
+  - {id: c089, tags: [ask], email: "Hello, my son would like to join the summer club. Pat", reply: "How lovely. How old is your son?"}
+  - {id: c090, tags: [echo], email: "Hi, our website is acme.example and the shop is at shop.acme.example. Pat", links: ["acme.example", "shop.acme.example"], reply: "Thanks, I'll look at shop.acme.example."}
+  - {id: c091, tags: [payment, echo], email: "Hello, we've received the €1,500 payment from you, thank you. Pat", reply: "Thanks for confirming you received the €1,500."}
+  - {id: c092, tags: [soft], email: "Hi, the trial account expired earlier than I expected. Pat", reply: "Sorry about that. I'll look into why the trial ended early."}
+  - {id: c093, tags: [ask], email: "Hello, can I bring my dog to the open day? Pat", reply: "Good question. What kind of dog is it?"}
+  - {id: c094, tags: [short], email: "Received, thanks.", reply: "Thanks, Pat."}
+  - {id: c095, tags: [payment, echo], email: "Hi, the charge of €12 for postage seems high. Pat", reply: "Thanks for the feedback on the €12 postage charge."}
+  - {id: c096, tags: [echo], email: "Hello, my reference number is 7781. Pat", reply: "Thanks, I've noted reference 7781."}
+  - {id: c097, tags: [ask], email: "Hi, we're interested in your consulting service. Pat", reply: "Thanks for your interest. What kind of help are you looking for?"}
+  - {id: c098, tags: [payment, ask], email: "Hello, could you split our invoice between two departments? Pat", reply: "Thanks for asking. Which two departments, and how should it be split?"}
+  - {id: c099, tags: [soft], email: "Hi, a customer complained about the tone of our chatbot. Pat", reply: "Thanks for passing that on. I'll share it with the team that runs the chatbot."}
+  - {id: c100, tags: [echo], email: "Hello, the parcel weighs 3.5 kg. Pat", reply: "Thanks, Pat. Noted that the parcel weighs 3.5 kg."}
+  - {id: c101, tags: [short], email: "Happy Friday!", reply: "Happy Friday to you too!"}
+  - {id: c102, tags: [payment, echo], email: "Hi, the money for the team lunch came to €90. Pat", reply: "Thanks for letting me know the team lunch came to €90."}
+  - {id: c103, tags: [ask], email: "Hello, we'd like to rename our project. Pat", reply: "Sure. What would you like to call it?"}
+  - {id: c104, tags: [echo], email: "Hi, the event is in room 101 on the first floor. Pat", reply: "Thanks, Pat. Room 101 on the first floor, noted."}
+  - {id: c105, tags: [payment, soft], email: "Hello, we haven't had a bill from you for three months. Pat", reply: "Thanks for mentioning it. I'll check with our accounts team about the missing bills."}
+  - {id: c106, tags: [soft], email: "Hi, the font on your forms is hard to read. Pat", reply: "Thanks for the feedback. I'll pass it on to our design team."}
+  - {id: c107, tags: [ask], email: "Hello, is there parking near your office? Pat", reply: "Good question. Will you be coming by car?"}
+  - {id: c108, tags: [echo], email: "Hi, our new phone system goes live on 1 December. Pat", reply: "Thanks for letting us know about the new phone system on 1 December."}
+  - {id: c109, tags: [payment, echo], email: "Hello, the total for the 20 tickets was €240. Pat", reply: "Thanks, Pat. €240 for the 20 tickets, noted."}
+  - {id: c110, tags: [short], email: "Well done on the launch!", reply: "Thank you, that's kind of you."}
+  - {id: c111, tags: [ask], email: "Hello, we'd like to sponsor your next event. Pat", reply: "That's wonderful. What kind of sponsorship did you have in mind?"}
+  - {id: c112, tags: [echo], email: "Hi, I've attached version 2.3 of the specification. Pat", reply: "Thanks for version 2.3 of the specification."}
+  - {id: c113, tags: [payment, ask], email: "Hello, do you charge for cancellations? Pat", reply: "Thanks for asking. Is there a booking you're thinking of cancelling?"}
+  - {id: c114, tags: [soft], email: "Hi, the volunteers didn't get the briefing pack. Pat", reply: "Sorry about that. I'll find out what happened to the briefing packs."}
+  - {id: c115, tags: [echo], email: "Hello, our school has 230 pupils this year. Pat", reply: "Thanks, Pat. 230 pupils is a big year!"}
+  - {id: c116, tags: [payment, echo], email: "Hi, the funds for the community garden came from a grant. Pat", reply: "Thanks for explaining that the garden funds came from a grant."}
+  - {id: c117, tags: [ask], email: "Hello, I'd like to change my delivery day. Pat", reply: "Of course. Which day would suit you better?"}
+  - {id: c118, tags: [short], email: "All good here.", reply: "Glad to hear it."}
+  - {id: c119, tags: [payment, soft], email: "Hello, we're confused by the new pricing page. Pat", reply: "Thanks for telling us. I'll share it with the team that wrote the pricing page."}
+  - {id: c120, tags: [echo], email: "Hi, our board meets on the last Monday of the month. Pat", reply: "Thanks for telling me your board meets on the last Monday of the month."}
+
+bait_style:
+  - {id: b01, email: "URGENT: invoice 8812 for €4,200 is overdue. Pay today to avoid suspension of your service.", reply: "Thanks for your email. Can you confirm the invoice number and which of our accounts it relates to?"}
+  - {id: b02, email: "Hi, please pay the attached invoice for €3,150 by end of day. Our bank details have changed.", reply: "Thanks, we'll look into the invoice and check it with our accounts team."}
+  - {id: b03, email: "Your payment of €899 failed. Update your card details now to keep your account.", reply: "Thanks for letting us know. We'll check the account through the usual login."}
+  - {id: b04, email: "Final notice: €1,250 outstanding. Transfer immediately to the new account below.", reply: "Thanks, I've passed this to accounts so they can check it against our records."}
+  - {id: b05, email: "Hi, it's your CEO. I need you to buy gift cards worth €500 for a client today.", reply: "Thanks for your message. Could you give me a call so we can talk it through first?"}
+  - {id: b06, email: "Invoice 4431 is attached. Please settle it today; the old account is closed.", reply: "Thanks, we'll review invoice 4431 with our finance team."}
+  - {id: b07, email: "We noticed an unpaid balance of €2,900. Please wire it today to avoid fees.", reply: "Thanks for your email. Can you tell me which contract the balance relates to?"}
+  - {id: b08, email: "Hello, we're the new supplier. Please pay this month's invoice to our new account.", reply: "Thanks for getting in touch. Could you send the request through your usual contact at our company?"}
+  - {id: b09, email: "Your subscription renewal of €129 is due. Pay now with the link to avoid losing access.", reply: "Thanks, we'll check the renewal in our account settings."}
+  - {id: b10, email: "Urgent: approve the €7,500 transfer before the bank closes today.", reply: "Thanks, I'll need to check this with our finance team before anything else."}
+  - {id: b11, email: "Your account is locked. Pay the €45 reactivation fee to unlock it.", reply: "Thanks for letting me know. I'll check the account myself through the usual website."}
+  - {id: b12, email: "Hi, the invoice I sent last week had the wrong account number. Please use the new one.", reply: "Thanks, we'll check the invoice with our accounts team before making any changes."}
+  - {id: b13, email: "Payment reminder: €600 for the conference stand. Please pay to secure your place.", reply: "Thanks for the reminder. Can you tell me which conference this is for?"}
+  - {id: b14, email: "We'll suspend your domain unless you pay the €89 renewal today.", reply: "Thanks, I'll check the domain renewal with our IT team."}
+  - {id: b15, email: "Please process the attached invoice urgently. My manager approved it.", reply: "Thanks, we'll look into the invoice. Who is your manager, so we can check with them?"}
+  - {id: b16, email: "Your tax refund of €1,040 is waiting. Confirm your bank details to receive it.", reply: "Thanks for your email. We'll check this with our accountant."}
+  - {id: b17, email: "Hi, could you pay the deposit for the venue today? The owner needs it quickly.", reply: "Thanks for the reminder about the venue. Can you tell me the venue's name and who the owner is?"}
+  - {id: b18, email: "Your parcel is held until you pay a €3 customs fee.", reply: "Thanks, I'll check the parcel tracking on the courier's own website."}
+  - {id: b19, email: "As discussed, please send the €12,000 for the acquisition to the escrow account.", reply: "Thanks, I'll need to discuss this with our directors first."}
+  - {id: b20, email: "We updated our payment details. All future invoices should go to the new account.", reply: "Thanks for letting us know. Could you confirm the change by letter on your headed paper?"}
+  - {id: b21, email: "Your invoice of €480 is overdue by 30 days. Pay now to avoid collection.", reply: "Thanks, we'll check the invoice against our records. Can you send the invoice number?"}
+  - {id: b22, email: "Hi, I'm stuck abroad and need €300 for a ticket home. Can you help?", reply: "I'm sorry you're stuck. Can you call me so we can talk?"}
+  - {id: b23, email: "Your donation of €50 failed. Please re-enter your card details.", reply: "Thanks, we'll check this with the charity directly."}
+  - {id: b24, email: "Payroll update: please change my salary account before Friday's run.", reply: "Thanks, please raise this with HR in person so they can check it."}
+  - {id: b25, email: "We've applied a late fee of €75. Pay the total today.", reply: "Thanks, can you tell me which account the late fee was applied to?"}
+  - {id: b26, email: "Please pay the invoice for the cleaning contract; our usual contact is away.", reply: "Thanks for letting us know. We'll look into the invoice when your usual contact is back."}
+  - {id: b27, email: "Your bank: a payment of €2,300 is pending. Approve it in the link.", reply: "Thanks, I'll check this with my bank directly."}
+  - {id: b28, email: "We are your new IT provider. Pay the €150 setup fee to keep your email working.", reply: "Thanks for your email. Can you tell me who signed the contract with you?"}
+  - {id: b29, email: "Hi, please settle the balance today; the auditors need it closed.", reply: "Thanks, I'll ask our finance team about the balance."}
+  - {id: b30, email: "Your insurance premium of €410 is unpaid. Pay now or lose cover.", reply: "Thanks, we'll check the premium with our insurer directly."}

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from ecf.errors import ServiceUnavailableError, UnauthorizedError
 from ecf.paths import Paths
 from ecf.service_unit import UnitStatus, regrant
 from ecf_server import regrant as server_regrant
@@ -136,6 +137,93 @@ def test_service_regrant_leaves_a_stopped_service_stopped_and_linux_alone(tmp_pa
     assert "no re-grant needed" in said[0]
 
 
+def _cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, launchd: bool,
+         pid: int | None) -> tuple[int, str, list[str]]:  # fmt: skip
+    """`ecf service regrant` on macOS with launchd running the service or not, and the service
+    answering with `pid` or not: its exit code, its error output, and what it did."""
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from ecf import cli  # noqa: PLC0415
+
+    did: list[str] = []
+    m = _Manager(running=launchd)
+    monkeypatch.setenv("ECF_HOME", str(tmp_path))
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+
+    def manager_for(_p: Paths) -> _Manager:
+        return m
+
+    def service_pid(_p: Paths) -> int | None:
+        return pid
+
+    monkeypatch.setattr(cli, "manager_for", manager_for)
+    monkeypatch.setattr(cli, "_service_pid", service_pid)
+    monkeypatch.setattr(cli, "_stopping_on_purpose", lambda: did.append("stopping"))
+
+    def fake_regrant(_paths: Paths, manager: _Manager, **_kw: object) -> int:
+        assert manager is m
+        did.append("regrant")
+        return 0
+
+    monkeypatch.setattr(cli.service_unit, "regrant", fake_regrant)
+    r = CliRunner().invoke(cli.app, ["--install", "t", "service", "regrant"])
+    return r.exit_code, r.stderr, did
+
+
+def test_service_regrant_refuses_a_service_launchd_isnt_running_naming_its_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It used to send the stop signal, which turned the running service's dead-man's switch
+    off, then fail on the service's lock with "stop it first (`ecf service regrant` does this for
+    you)" (SPEC §21.2, 2026-10-28)."""
+    code, err, did = _cli(monkeypatch, tmp_path, launchd=False, pid=4242)
+    assert code == 3 and did == []  # no stop signal, no re-grant
+    assert err.startswith("launchd isn't running the service (pid 4242); stop it (Ctrl-C in its"
+                          " terminal, or `kill 4242`), run this again, then start it again from"
+                          " this ecf's environment (")  # fmt: skip
+
+
+def test_service_regrant_signals_the_stop_only_when_launchd_will_stop_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert _cli(monkeypatch, tmp_path, launchd=True, pid=4242)[2] == ["stopping", "regrant"]
+    assert _cli(monkeypatch, tmp_path, launchd=False, pid=None)[2] == ["regrant"]  # not running
+
+
+class _Status:
+    def __init__(self, reply: object) -> None:
+        self.reply = reply
+
+    def __enter__(self) -> _Status:
+        return self
+
+    def __exit__(self, *_a: object) -> None: ...
+
+    def get(self, _path: str) -> object:
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+@pytest.mark.parametrize(("reply", "pid"), [
+    ({"pid": 4242}, 4242),
+    (ServiceUnavailableError("not running"), None),
+    (UnauthorizedError("can't read the CLI token file"), None),
+    ({}, None),
+    ({"pid": "x"}, None),
+])  # fmt: skip
+def test_the_cli_asks_the_service_for_its_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reply: object, pid: int | None
+) -> None:
+    from ecf import cli  # noqa: PLC0415
+
+    def client(_p: Paths) -> _Status:
+        return _Status(reply)
+
+    monkeypatch.setattr(cli, "LocalClient", client)
+    assert cli._service_pid(Paths("t", tmp_path)) == pid  # pyright: ignore[reportPrivateUsage]
+
+
 def test_server_regrant_refuses_while_the_service_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -158,7 +246,9 @@ def test_server_regrant_refuses_while_the_service_runs(
         assert server_regrant.main("t") == 3
     finally:
         lock.close()
-    assert "the service is running" in capsys.readouterr().err
+    assert capsys.readouterr().err == ("ecf-server: the service is running; stop it first (`ecf"
+                                       " service regrant` stops it for you only when launchd"
+                                       " runs it)\n")  # fmt: skip
 
 
 # macOS only: regrant reads a real Keychain item this Python wrote.

@@ -36,7 +36,7 @@ from ecf.errors import InvalidInputError
 from ecf.eval import fixed_labels
 from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
 from ecf.schema import derive_labels, unlabel_removed
-from ecf_server import db, fetch, internal, precheck, rules, triggers
+from ecf_server import db, draftcheck, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
 from ecf_server.clock import Clock
 from ecf_server.dnscache import Answer, DnsCache
@@ -46,8 +46,9 @@ from ecf_server.message import ParsedMessage, parse, parse_partial
 
 # how the scratch computes a case's facts; a result records it, and compare warns across a change.
 # 2: the fetch's own facts (`from_count`, `thread_root`, ...) and the money and authentication
-# triggers recomputed after a card's expected facts (M8 plan R2); 1: before, unrecorded
-FACTS_VERSION = 2
+# triggers recomputed after a card's expected facts (M8 plan R2); 3: with `language` and
+# `from_ambiguous` (M8 step 4); 1: before, unrecorded
+FACTS_VERSION = 3
 FREEMAIL = "freemail.example"  # only the scratch treats it as public (OD-443)
 
 
@@ -211,7 +212,12 @@ class Scratch:
                                    DnsCache(conn, self.clock, lookup=_no_dns),
                                    public_domains=PUBLIC_DOMAINS | {FREEMAIL})  # fmt: skip
         found = analyzer.analyze(read.parsed, read.raw)
-        return fetch.message_facts(read.parsed) | read.extra | found
+        # the isolate child's language fact, from the same actor excerpt; an oversized message
+        # is read in part, without the child, so `unknown` (M8 plan §1)
+        actor_text = read.parsed.excerpts(triggers.redact_injection)[1]
+        language = {"language": "unknown" if read.extra.get("oversized")
+                    else draftcheck.email_language(actor_text)}  # fmt: skip
+        return fetch.message_facts(read.parsed) | read.extra | found | language
 
     def close(self) -> None:
         for conn in self._conns.values():

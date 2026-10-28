@@ -20,7 +20,7 @@ INVOICE: dict[str, Any] = {"category": "invoice", "priority": "normal", "require
            "requires_reply": True, "payment_related": False, "deadline_mentioned": False,
            "sender_type": "vendor", "fraud_risk": "none"}  # fmt: skip
 FACTS: dict[str, Any] = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
-         "from_count": 1}  # fmt: skip
+         "from_count": 1, "language": "en"}  # fmt: skip
 TEMPLATES = {"version": 1, "templates": [
     {"id": "ack", "enabled": True, "subject": "Re: {subject}",
      "body": "Hello {sender_name},\n\nThanks, we got it.\n"},
@@ -100,6 +100,23 @@ def test_draft_text_is_cleaned(conn: sqlite3.Connection, clock: FakeClock, live:
     body = a["payload"]["text"]
     assert body.startswith("Hello Pat,\n\nThanks for the invoice.\n") and body.endswith("x" * 3900)
     assert a["payload"]["to"] == "news@vendor-a.example"
+
+
+@pytest.mark.parametrize(("sep", "out"), [
+    ("\r\n", "\n"), ("\r", "\n"), ("\x0b", "\n"), ("\x0c", "\n"), ("\x1c", "\n"), ("\x1d", "\n"),
+    ("\x1e", "\n"), ("\x85", "\n"), ("\u2028", "\n"), ("\u2029", "\n\n"),
+])  # fmt: skip
+def test_every_line_separator_becomes_a_line_break(sep: str, out: str) -> None:
+    """M8 plan §1 (AE7, AF4): what `str.splitlines` breaks on is a line break in the saved draft,
+    so deleting a control can't join two words ("Dana\\x85CFO" was saved "DanaCFO")."""
+    assert sep.join(["Dana", "CFO"]).splitlines() == ["Dana", "CFO"]
+    assert outbound_plan.clean_draft(f"Dana{sep}CFO") == f"Dana{out}CFO"
+
+
+@pytest.mark.parametrize("char", ["\ue000", "\U000f0000", "\ud800", "\u0378"])
+def test_private_use_surrogate_and_unassigned_characters_are_dropped(char: str) -> None:
+    """M8 plan §1 (AG1): Co, Cs and Cn go as Cc and Cf do, as Slack's `_scrub` drops them."""
+    assert outbound_plan.clean_draft(f"I w{char}ill pay") == "I will pay"
 
 
 def test_an_over_long_draft_goes_back_to_the_model() -> None:

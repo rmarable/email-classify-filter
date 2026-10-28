@@ -550,7 +550,8 @@ def _process(pg: _Page, uid: int, internaldate: datetime | None = None) -> None:
             t1 = time.perf_counter()  # a measurement, not the check's clock (OD-507)
             got = pg.isolator(raw, cfg.max_scan_bytes)
             _count_child(pg.result, time.perf_counter() - t1, got)
-            _store(pg, uid, got.parsed, raw, {}, internaldate, got.auth, got.excerpts)
+            extra = {"language": got.language}
+            _store(pg, uid, got.parsed, raw, extra, internaldate, got.auth, got.excerpts)
         else:
             _store(pg, uid, parse(raw, max_scan_bytes=cfg.max_scan_bytes), raw, {}, internaldate)
     except (LeaseLostError, MailUnavailableError):  # not the message's fault
@@ -620,7 +621,9 @@ def _store(
     excerpts: tuple[str, str] | None = None,
 ) -> None:
     """Create the item for a read message, re-point a known one after a mailbox reset, or record
-    a repeat delivery (§6.3, §6.4). `excerpts` come from the isolated child when there is one."""
+    a repeat delivery (§6.3, §6.4). `excerpts`, and `extra`'s `language`, come from the isolated
+    child when there is one; without it, and for an oversized message, the language is `unknown`,
+    so no draft is offered (M8 plan §1)."""
     conn, clock, cfg, lease, uv = pg.conn, pg.clock, pg.cfg, pg.lease, pg.uidvalidity
     sid = stable_id(cfg.address_id, parsed.message_id, parsed.content_hash, uv, uid)
     when = internaldate.isoformat() if internaldate else None
@@ -654,7 +657,7 @@ def _store(
             pg.labels.update(pg.src.gmail_labels([uid]))
         labels = pg.labels.get(uid, frozenset())
     found = pg.analyzer.analyze(parsed, raw, auth, labels) if pg.analyzer else {}
-    facts = message_facts(parsed) | extra | found
+    facts = message_facts(parsed) | {"language": "unknown"} | extra | found
     facts["identity_digest"] = digest
     if pg.scan:  # scanned mail: marked before sender history sees it (OD-507 §2, P12)
         facts["backfill"] = 1
@@ -955,6 +958,7 @@ def message_facts(p: ParsedMessage) -> dict[str, Any]:
     return {
         "size": p.size,
         "from_count": p.from_count,
+        "from_ambiguous": p.from_ambiguous,  # P-b: a draft needs one clear From mailbox (M8)
         # the thread's first Message-ID, the key of "one template reply per thread" (OD-325)
         "thread_root": refs[0] if refs else None,
         # the email's own chain, so a saved draft threads under the whole conversation (M8 step 2)

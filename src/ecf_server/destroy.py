@@ -385,7 +385,8 @@ def _addresses(conn: sqlite3.Connection) -> list[dict[str, str]]:
 
 def main(install: str, confirm: str, *, ask_token: bool) -> int:
     """`ecf-server destroy --install <name> --confirm <name> [--config-token]` (OD-387): the
-    service's part when the service can't run. 0 done, 1 step-up refused, 3 service running."""
+    service's part when the service can't run. 0 done, 1 step-up refused or Keychain prompts
+    can't be turned on, 3 service running."""
     import getpass  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
@@ -393,6 +394,7 @@ def main(install: str, confirm: str, *, ask_token: bool) -> int:
     from ecf_server import _slack, db  # noqa: PLC0415
     from ecf_server.clock import SystemClock  # noqa: PLC0415
     from ecf_server.notify import host_notifier  # noqa: PLC0415
+    from ecf_server.secretstore.macos_interaction import KeychainPromptsError  # noqa: PLC0415
     from ecf_server.secretstore.select import host_probe, open_store  # noqa: PLC0415
     from ecf_server.service import (  # noqa: PLC0415
         AlreadyRunningError,
@@ -420,7 +422,11 @@ def main(install: str, confirm: str, *, ask_token: bool) -> int:
         conn = db.connect(paths.db)
         try:
             db.migrate(conn)
-            store = open_store(install, paths.data_dir, interactive=True, probe=host_probe())
+            try:
+                store = open_store(install, paths.data_dir, interactive=True, probe=host_probe())
+            except KeychainPromptsError as exc:
+                sys.stderr.write(f"ecf-server: {exc.detail}; nothing was destroyed\n")
+                return 1
             stepper = host_stepper()
             issued = stepup.issue(conn, clock, stepper, "destroy", {"install": install})
             password = getpass.getpass("your login password: ") if issued.needs_password else None
