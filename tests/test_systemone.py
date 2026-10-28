@@ -158,7 +158,10 @@ def test_the_service_classifier_path_never_imports_systemone() -> None:
 
 
 def _file(tmp: Path, name: str, backend: str, correct: list[bool], **extra: Any) -> Path:
-    cases = [CaseResult(id=f"c{i}", correct=c, fields={"category": c})
+    """With a `label_policy`, every case defers its fields, as `score_parts` writes them."""
+    deferred: list[str] = list(extra.get("label_policy", {}).get("deferred", []))
+    cases = [CaseResult(id=f"c{i}", correct=c, deferred=deferred,
+                        fields={} if "category" in deferred else {"category": c})
              for i, c in enumerate(correct)]  # fmt: skip
     summary: dict[str, object] = {"backend": backend, "redact": True, **extra}
     r = ResultFile(run_id=name, pair=evalrun.pair_for(backend), set_version="v",
@@ -196,8 +199,8 @@ def test_compare_says_why_category_left_the_experiment_figures(tmp_path: Path) -
     d = _file(tmp_path, "d", "systemone:test-decision", [True] * 20, label_policy=policy)
     out = CliRunner().invoke(app, ["eval", "compare", str(g), str(d)])
     assert out.exit_code == 0, out.output
-    assert ("confirmatory (exact McNemar, end-to-end only: category is deferred by the label"
-            " policy, OD-563): end-to-end p =") in out.output  # fmt: skip
+    assert ("confirmatory (exact McNemar, end-to-end only: every case defers category,"
+            " OD-563): end-to-end p =") in out.output  # fmt: skip
     assert "category p =" not in out.output
 
 
