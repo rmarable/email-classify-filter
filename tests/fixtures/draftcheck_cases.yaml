@@ -35,17 +35,17 @@ emails:
 
 cases:
   # characters (AH1, AI3, AI4, AJ7): checked on the saved text before anything else
-  - {id: chars-private-use, draft: "I will pay 2,000", refuse: [characters], spans: {characters: ""}, source: AG1}
-  - {id: chars-nbsp, draft: "I will pay soon", refuse: [characters], spans: {characters: " "}, source: AH1}
-  - {id: chars-figure-space, draft: "Account 44 7122", refuse: [characters], spans: {characters: " "}, source: AH1}
-  - {id: chars-ideographic-space, draft: "We　will pay", refuse: [characters], spans: {characters: "　"}, source: AH1}
+  - {id: chars-private-use, draft: "I w\ue000ill p\ue000ay 2,000", refuse: [characters], spans: {characters: "\ue000"}, source: AG1}
+  - {id: chars-nbsp, draft: "I will\u00a0pay soon", refuse: [characters], spans: {characters: "\u00a0"}, source: AH1}
+  - {id: chars-figure-space, draft: "Account 44\u20077122", refuse: [characters], spans: {characters: "\u2007"}, source: AH1}
+  - {id: chars-ideographic-space, draft: "We\u3000will pay", refuse: [characters], spans: {characters: "\u3000"}, source: AH1}
   - {id: chars-hangul-filler, draft: "I wㅤill pay", refuse: [characters], spans: {characters: "ㅤ"}, source: AH1}
   - {id: chars-hangul-filler-2, draft: "I wᅟill pay", refuse: [characters], spans: {characters: "ᅟ"}, source: AH1}
   - {id: chars-braille-blank, draft: "I w⠀ill pay", refuse: [characters], spans: {characters: "⠀"}, source: AH1}
   - {id: chars-object-replacement, draft: "Thanks￼ Pat", refuse: [characters], spans: {characters: "￼"}, source: AH1}
   - {id: chars-mark-mc, draft: "Thanks aः lot", refuse: [characters], spans: {characters: "ः"}, source: AH1}
   - {id: chars-mark-me, draft: "Thanks a⃝ lot", refuse: [characters], spans: {characters: "⃝"}, source: AH1}
-  - {id: chars-line-separator, draft: "Thanks Pat", refuse: [characters], spans: {characters: " "}, source: AI1}
+  - {id: chars-line-separator, draft: "Thanks\u2028Pat", refuse: [characters], spans: {characters: "\u2028"}, source: AI1}
   - {id: chars-tab-inside, draft: "Thanks\tPat", refuse: [characters], spans: {characters: "\t"}, source: AI4}
   - {id: chars-tab-leading, draft: "\tThanks for your email.", near_miss: characters, source: AI4}
   - {id: chars-typographic, draft: "We’re “glad” it worked – thanks… Pat", near_miss: characters, source: AH1}
