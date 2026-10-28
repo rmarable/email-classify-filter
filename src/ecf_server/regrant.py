@@ -84,10 +84,12 @@ def _say(text: str) -> None:
 
 
 def main(install: str) -> int:
-    """`ecf-server regrant --install <name>`: 0 done, 1 a read was refused, 3 service running."""
+    """`ecf-server regrant --install <name>`: 0 done, 1 a read was refused (or Keychain prompts
+    can't be turned on), 3 service running."""
     from ecf.paths import paths_for  # noqa: PLC0415
     from ecf_server import db  # noqa: PLC0415
     from ecf_server.clock import SystemClock  # noqa: PLC0415
+    from ecf_server.secretstore.macos_interaction import KeychainPromptsError  # noqa: PLC0415
     from ecf_server.secretstore.select import (  # noqa: PLC0415
         choose_backend,
         host_probe,
@@ -110,7 +112,11 @@ def main(install: str) -> int:
         conn = db.connect(paths.db)
         try:
             db.migrate(conn)
-            store = open_store(install, paths.data_dir, interactive=True, probe=host_probe())
+            try:
+                store = open_store(install, paths.data_dir, interactive=True, probe=host_probe())
+            except KeychainPromptsError as exc:
+                sys.stderr.write(f"ecf-server: {exc.detail}; nothing recorded\n")
+                return 1
             sys.stdout.write(INTRO + "\n")
             got = run(conn, SystemClock(), store, echo=_say)
         finally:

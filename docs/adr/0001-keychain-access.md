@@ -32,4 +32,8 @@ The gate test (macOS 27.0, uv 0.12.15, uv-managed CPython 3.12.14, keyring 25.7.
 
 - SPEC §12.2 and SECURITY.md state the limit plainly.
 - Updating the Python under ecf requires one foreground re-grant; the service alerts rather than stalls.
-- `SecKeychainSetUserInteractionAllowed` is a legacy API; if Apple removes it, this decision is revisited.
+- `SecKeychainSetUserInteractionAllowed` is deprecated (macOS 10.10) but still exported; see the amendment below.
+
+## Amendment (2026-10-27, OD-569)
+
+Checked against the macOS 27.0 SDK: the call is deprecated since macOS 10.10 and still exported. Apple's replacement (`LAContext.interactionNotAllowed` through `kSecUseAuthenticationContext`) applies on macOS only to Data Protection keychain items; ecf's are legacy items, and Data Protection items need an entitlement (above). A helper child process killed on a timeout was measured and rejected: the service never hangs, but the Keychain dialog stays on screen after the kill and none of its buttons grants anything (SPEC §21.2). Decision 2 stands, with a fail-safe: if the call is missing or fails, or prompts still read back as on afterwards, the service starts without secrets ("secret store needs you") instead of reading with prompts on, and `ecf doctor` and `ecf status` say why. Do-nothing stubs of both the set and the get call would get past this. A macOS test fails the merge gate if PyObjC stops finding the call. Leaving the call behind means a code-signed helper app (alternatives above).
