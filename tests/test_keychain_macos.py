@@ -55,3 +55,14 @@ def test_interaction_can_be_restored(install: str) -> None:
     assert not interaction_allowed()
     set_interaction_allowed(True)
     assert interaction_allowed()
+
+
+def test_prompt_control_is_still_exported() -> None:
+    """Apple deprecated this call in macOS 10.10 (ADR 0001). If PyObjC stops finding it on a new
+    macOS, the service runs without secrets (OD-569); this fails the merge gate first.
+    `test_interaction_can_be_restored` checks that it still changes the setting."""
+    import Security  # pyright: ignore[reportMissingImports, reportMissingTypeStubs]  # noqa: PLC0415
+
+    assert hasattr(Security, "SecKeychainSetUserInteractionAllowed"), (
+        "macOS no longer exports SecKeychainSetUserInteractionAllowed: see ADR 0001"
+    )
