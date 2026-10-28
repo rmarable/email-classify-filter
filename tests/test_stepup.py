@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ import pytest
 from ecf.claude_wrapper import client_doc
 from ecf.errors import (
     InvalidInputError,
+    NotFoundError,
     RateLimitedError,
     StepupFailedError,
     StepupRequiredError,
@@ -91,6 +94,47 @@ def test_an_expired_nonce_cant_be_verified(conn: sqlite3.Connection, clock: Fake
     clock.advance(11 * 60)
     with pytest.raises(StepupFailedError, match="expired"):
         stepup.verify(conn, clock, s, n.nonce_id)
+
+
+def test_a_used_nonce_cant_be_verified_again(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    """Replay: a verified or consumed nonce never shows the dialog again."""
+    s = FakeStepper()
+    nonce = _verified(conn, clock, s)
+    with pytest.raises(StepupFailedError, match="already used"):
+        stepup.verify(conn, clock, s, nonce)
+    stepup.consume(conn, clock, "test.setting", TARGET, nonce)
+    consumed = "SELECT 1 FROM audit WHERE event = 'stepup.consumed'"
+    assert len(conn.execute(consumed).fetchall()) == 1  # the race test's control
+    with pytest.raises(StepupFailedError, match="already used"):
+        stepup.verify(conn, clock, s, nonce)
+    assert len(s.reasons) == 1  # the replays showed no dialog
+
+
+def test_a_nonce_consumed_by_another_writer_is_refused(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The single-use UPDATE is the last word: another writer consuming the nonce between the
+    check and the write leaves this action refused."""
+    nonce = _verified(conn, clock, FakeStepper())
+    real_tx = stepup.write_tx
+
+    @contextmanager
+    def raced(c: sqlite3.Connection) -> Generator[None]:
+        c.execute("UPDATE nonces SET consumed_at = 'elsewhere' WHERE nonce_id = ?", (nonce,))
+        with real_tx(c):
+            yield
+
+    monkeypatch.setattr(stepup, "write_tx", raced)
+    with pytest.raises(StepupRequiredError, match="already used"):
+        stepup.consume(conn, clock, "test.setting", TARGET, nonce)
+    row = conn.execute("SELECT consumed_at FROM nonces WHERE nonce_id = ?", (nonce,)).fetchone()
+    assert row["consumed_at"] == "elsewhere"  # the refused write changed nothing
+    assert not conn.execute("SELECT 1 FROM audit WHERE event = 'stepup.consumed'").fetchall()
+
+
+def test_an_unknown_nonce_is_not_found(conn: sqlite3.Connection, clock: FakeClock) -> None:
+    with pytest.raises(NotFoundError):
+        stepup.verify(conn, clock, FakeStepper(), "no-such-nonce")
 
 
 def test_a_changed_target_is_refused(conn: sqlite3.Connection, clock: FakeClock) -> None:
