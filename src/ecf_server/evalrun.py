@@ -1545,7 +1545,7 @@ def _rescored_summary(before: dict[str, Any], out: list[CaseResult], *,
         else None, fraud_only=o.get("fraud_only") is True))  # fmt: skip
     if o.get("for_gate") is False:  # an experiment stays one
         cast(dict[str, Any], summary["options"])["for_gate"] = False
-    for key in ("switches_off", "measuring", "classifier_window", "cases"):
+    for key in ("switches_off", "measuring", "classifier_window", "cases", "forced_draft"):
         if key in o:
             cast(dict[str, Any], summary["options"])[key] = o[key]
     for key in KEPT_SUMMARY_KEYS:

@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import InvalidInputError
+from ecf.eval.drafts import DRAFTS_SUFFIX
 from ecf.eval.metrics import (
     confusion,
     holm,
@@ -72,6 +73,10 @@ ClaimOutcome = Literal["recorded", "invalid", "claim_expired", "claim_mismatch",
 HighRiskReason = Literal["high_sensitivity", "first_time_sender", "fraud_signal", "payment"]
 
 
+def _empty(v: object) -> bool:
+    return not v
+
+
 class ClaimRecord(BaseModel):
     """One claim of a Claude eval case (v2.2.0 timing plan item 3): closed values, counters and
     service-side times in seconds from the run's registration (`summary.claude.registered_at`);
@@ -92,6 +97,9 @@ class ClaimRecord(BaseModel):
     # submissions refused (an invalid classification or proposal) before the outcome (v3.0.0
     # S4, P19); 0 in results from before it. Strict, so an older ecf can't read a result with it
     invalid: int = 0
+    # an act claim's refused tries on a draft set: the action each named (a known action name,
+    # "other" or "not text") and its reason code (M8 plan AH6); left out when empty
+    tries: list[tuple[str, str]] = Field(default_factory=list[tuple[str, str]], exclude_if=_empty)
 
 
 class CaseResult(BaseModel):
@@ -453,7 +461,8 @@ def _models(claude: dict[str, Any]) -> dict[str, str]:
 
 def latest(folder: Path) -> ResultFile | None:
     """The newest readable result file in `folder` (an install's `evals`), or None."""
-    files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted((p for p in folder.glob("*.json") if not p.name.endswith(DRAFTS_SUFFIX)),
+                   key=lambda p: p.stat().st_mtime, reverse=True)  # fmt: skip
     for path in files:
         try:
             return load_result(path)

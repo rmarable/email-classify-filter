@@ -70,7 +70,7 @@ from ecf.errors import (
     InvalidInputError,
     NotFoundError,
 )
-from ecf.eval import genset
+from ecf.eval import drafts, genset
 from ecf.eval.results import (
     CaseResult,
     ClaimOutcome,
@@ -90,6 +90,8 @@ from ecf_server import (
     claude_review,
     claude_usage,
     config,
+    draftcheck,
+    drafteval,
     evalrun,
     excerpt,
     jev_facts,
@@ -149,6 +151,9 @@ class Options:
     # the default, and only the cards whose ids match these globs; either makes an experiment
     classifier_window: int = CLASSIFIER_CHARS
     cases: tuple[str, ...] = ()
+    # the draft set (M8 plan §4, AE2): the actor offered only draft_reply where policy offers
+    # it; an experiment, never for the gate
+    forced_draft: bool = False
 
 
 Outcome = ClaimOutcome
@@ -175,6 +180,8 @@ class Claim:
     # an agent called under it, or named it with a mixed-up token: its spawn runs (OD-501)
     called: bool = False
     invalid: int = 0  # submissions refused before its outcome (S4, P19: M2's criterion 1)
+    # an act claim's refused tries: the action each named and its reason code (M8 plan AH6)
+    tries: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
 
 @dataclass
@@ -198,6 +205,15 @@ class Work:
     before_actor: frozenset[str] | None = None
     proposal: dict[str, str] | None = None
     result: CaseResult | None = None
+    # a draft card (M8 plan §4): its block, the addresses the checker allows (the sender and the
+    # profile's own), why no draft_reply was offered, what policy did with the proposal, and the
+    # draft as the model wrote it after `clean_draft`
+    spec: drafts.DraftSpec | None = None
+    addresses: tuple[str, ...] = ()
+    offer_why: str | None = None
+    planned: bool | None = None
+    dropped_why: str | None = None
+    draft: str | None = None
     # the claim
     session: str | None = None
     token_hash: str = ""
@@ -490,11 +506,17 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
         raise InvalidInputError("--classifier-window is for preset C asking its own classifier"
                                 " (preset D's classifications are Jev's, and a source run's"
                                 " are already made)")  # fmt: skip
-    # a generated set, another window or a few cards is never the gate's evidence (eval plan
-    # P1; window tuning: a for-gate run counts whatever its size)
-    if genset.is_generated(opts.root) or window or opts.cases:
+    # a generated set, another window, a few cards or a forced run is never the gate's evidence
+    # (eval plan P1; window tuning: a for-gate run counts whatever its size; M8 plan AF5)
+    if genset.is_generated(opts.root) or window or opts.cases or opts.forced_draft:
         opts = replace(opts, for_gate=False)
     cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
+    specs = _draft_specs(cases)
+    if any(specs.values()):  # the draft set is run --not-for-gate (M8 plan §4 "Set")
+        opts = replace(opts, for_gate=False)
+    elif opts.forced_draft:
+        raise InvalidInputError("--forced-draft is for the draft set: no card here has a draft"
+                                " block")  # fmt: skip
     if opts.cases:  # the set's version stays the whole set's
         if unmatched := [g for g in opts.cases
                          if not any(fnmatch.fnmatchcase(c.id, g) for c in cases)]:  # fmt: skip
@@ -523,7 +545,7 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
     finally:
         conn.close()
     starter = rules.load_starter_rules(schema)
-    works = [Work(c, secrets.token_hex(16)) for c in cases]
+    works = [Work(c, secrets.token_hex(16), spec=specs.get(c.id)) for c in cases]
     with _SLOT.lock:
         old = _SLOT.run
         if old is not None and old.open and not _expired(old, clock):
@@ -553,6 +575,17 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
 
 def _thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name="ecf-claude-eval", daemon=True).start()
+
+
+def _draft_specs(cases: list[evalrun.Case]) -> dict[str, drafts.DraftSpec | None]:
+    """Each case's draft block (M8 plan §4), None on a card without one."""
+    out: dict[str, drafts.DraftSpec | None] = {}
+    for c in cases:
+        try:
+            out[c.id] = drafts.parse(c.expected)
+        except ValueError as exc:  # pydantic's ValidationError is one
+            raise InvalidInputError(f"{c.id}: its draft block is invalid ({exc})") from exc
+    return out
 
 
 def _check_root(conn: sqlite3.Connection, root: Path) -> None:
@@ -604,6 +637,9 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                 if not run.open:
                     return
                 w.facts, w.email, w.cls_text, w.act_text = facts, email, cls_text, act_text
+                # the sender and the profile's own address: the checker's allowed addresses
+                own = ruletest.PROFILES[w.case.profile].address.email
+                w.addresses = tuple(a for a in (msg.from_addr, own) if a)
                 w.measured = measured
                 if run.source_run is not None:  # an empty answer (a faulted case) fails (P1)
                     w.classification = (got or {}).get(w.case.id) or None
@@ -650,19 +686,27 @@ def _classified(run: Run, w: Work) -> None:
     w.plan = policy.plan(_context(run, w), run.known)
     if w.plan.to_actor:
         w.before_actor = frozenset(a.name for a in w.plan.actions)
+        # why no draft_reply is offered, as at the actor's offered call (M8 plan AH5)
+        w.offer_why = drafteval.offer_why(_context(run, w, risk=True))
         w.stage = "act"
     else:
+        w.offer_why = f"rule:{w.plan.rule_id}"  # the rule stopped it before the actor (AI5)
         _score(run, w)
 
 
 def _proposed(run: Run, w: Work, proposal: dict[str, Any] | None) -> None:
     if proposal is not None and w.plan is not None:
         w.proposal = {"action": str(proposal["action"]), "target": str(proposal["target"] or "")}
+        if proposal["action"] == "draft_reply":  # kept for the draft record (M8 plan §4)
+            w.draft = drafteval.clean(proposal.get("text"))
         if proposal["action"] != "needs_clarification":
             one = policy.proposal(_context(run, w, risk=True), w.plan, w.proposal["action"],
                                   w.proposal["target"] or None, run.known)  # fmt: skip
+            w.planned = isinstance(one, policy.Planned)  # planned or dropped, and why (AL5)
             if isinstance(one, policy.Planned):
                 w.plan.actions.append(one)
+            else:
+                w.dropped_why = one.why
     _score(run, w)
 
 
@@ -699,8 +743,11 @@ def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
 
 def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             state: str, detail: str = "") -> None:  # fmt: skip
-    """Save what was scored (a stopped or expired run too, marked incomplete) and end the run."""
-    complete = state == "done"
+    """Save what was scored (a stopped or expired run too, marked incomplete) and end the run.
+    A draft run is complete once every case is scored, so one stopped during the determinism
+    repeats counts, with its repeats marked unfinished (M8 plan AK3)."""
+    draft_run = any(w.spec is not None for w in run.works)
+    complete = state == "done" or (draft_run and all(w.result is not None for w in run.works))
     run.state, run.detail = state, detail
     for w in run.works:
         if w.claim != "free":
@@ -742,6 +789,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         summary["excerpt_cap"] = {"classifier_chars": run.opts.classifier_window,
                                   "actor_chars": ACTOR_CHARS}  # fmt: skip
     summary["options"] |= _window_options(run.opts)
+    if complete and state != "done":
+        summary["repeats_unfinished"] = True
     summary["rules_digest"] = rules.composed_digest(run.schema, None)  # as items (OD-507, P14)
     summary["excerpt_prep"] = excerpt.VERSION
     summary["facts_version"] = ruletest.FACTS_VERSION
@@ -761,15 +810,47 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                       copy_to=run.opts.copy_to)  # fmt: skip
     finally:
         conn.close()
+    if draft_run:
+        drafteval.write(run.data_dir / "evals", _drafts_file(run, result, state, complete))
     run.summary = summary
     log.info("claude_eval.saved", run_id=run.run_id[:8], state=state, cases=len(results))
 
 
 def _window_options(opts: Options) -> dict[str, Any]:
-    """A window-tuning run's options, written only when used (step 2)."""
+    """A window-tuning or forced run's options, written only when used (step 2; M8 AF5)."""
     return ({} if opts.classifier_window == CLASSIFIER_CHARS
             else {"classifier_window": opts.classifier_window}) | (
-        {"cases": list(opts.cases)} if opts.cases else {})  # fmt: skip
+        {"cases": list(opts.cases)} if opts.cases else {}) | (
+        {"forced_draft": True} if opts.forced_draft else {})  # fmt: skip
+
+
+def _drafts_file(run: Run, result: ResultFile, state: str, complete: bool) -> drafts.DraftsFile:
+    """The run's draft record (M8 plan §4 "Recording"): every case of the draft set, scored or
+    not; judged later by the judge route."""
+    cases = [drafteval.case(_seen(w), forced_run=run.opts.forced_draft)
+             for w in run.works if w.spec is not None]  # fmt: skip
+    return drafts.DraftsFile(
+        run_id=run.run_id, set_version=run.version, created_at=result.created_at,
+        forced=run.opts.forced_draft, complete=complete, state=state,
+        models={r: run.models[r] for r in used_roles(run.opts)},
+        actor_prompt_digest=actor_prompt_digest(), checker_digest=draftcheck.digest(),
+        cases=cases)  # fmt: skip
+
+
+def _seen(w: Work) -> drafteval.Seen:
+    spec = w.spec
+    if spec is None:
+        raise ValueError("not a draft card")
+    safety: dict[str, Any] = w.case.expected.get("safety") or {}
+    return drafteval.Seen(
+        case_id=w.case.id, spec=spec, stage=w.stage, scored=w.result is not None,
+        classified=w.classification is not None, offer_why=w.offer_why,
+        proposal=w.proposal["action"] if w.proposal else None, planned=w.planned,
+        dropped_why=w.dropped_why,
+        tries=[list(c.tries) for c in w.claims if c.stage == "act"],
+        text=w.draft, email_text=w.act_text, allowed_addresses=w.addresses,
+        must_not_hide=bool(safety.get("must_not_hide")),
+        actions=frozenset(a.name for a in w.plan.actions) if w.plan else frozenset())  # fmt: skip
 
 
 def _claim_records(run: Run, w: Work) -> list[ClaimRecord]:
@@ -781,7 +862,7 @@ def _claim_records(run: Run, w: Work) -> list[ClaimRecord]:
     return [ClaimRecord(stage=c.stage, spawn=c.spawn, round=c.round, session=c.session,
                         preparing=c.preparing, claimed_s=s(c.claimed) or 0.0, read_s=s(c.read),
                         answered_s=s(c.answered), settled_s=s(c.settled), outcome=c.outcome,
-                        high_risk=list(c.high_risk), invalid=c.invalid)
+                        high_risk=list(c.high_risk), invalid=c.invalid, tries=list(c.tries))
             for c in w.claims]  # fmt: skip
 
 
@@ -1169,7 +1250,7 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
             out |= claude_review.schema_fields(run.schema) | {"signals": sent}
         else:
             out |= {"classification": _cls(w),
-                    "actions": list(actor.offered(_context(run, w, risk=True))),
+                    "actions": list(_offered(run, w)),
                     "labels": sorted(run.known), "move_folders": [],
                     "earlier_answers": []}  # fmt: skip
     return out
@@ -1199,10 +1280,18 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
             return again
         w = _claimed(run, clock, session_id, ref, token, agent, "act")
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
-                                           actor.offered(_context(run, w, risk=True)))  # fmt: skip
+                                           _offered(run, w))  # fmt: skip
         if why is not None:
+            if w.claims:  # the action this try named and its reason code (M8 plan AH6)
+                w.claims[-1].tries.append(drafteval.try_record(proposal, why))
             return _invalid(run, w, [why], digest)
         return _hold(clock, run, w, session_id, {"proposal": proposal}, digest)
+
+
+def _offered(run: Run, w: Work) -> tuple[str, ...]:
+    """The actions the act claim is offered; a forced run narrows them to draft_reply where
+    policy offers it (M8 plan AE2). Only these two call sites narrow; production never does."""
+    return drafteval.forced(actor.offered(_context(run, w, risk=True)), run.opts.forced_draft)
 
 
 def _run_or_missing() -> Run:
@@ -1386,6 +1475,7 @@ def snapshot(run: Run) -> dict[str, Any]:
             **({} if run.opts.for_gate else {"for_gate": False}),
             # echoed so the CLI can tell a service that ignored them (window tuning step 2)
             "classifier_window": run.opts.classifier_window, "cases": list(run.opts.cases),
+            "forced_draft": run.opts.forced_draft,
             "created_at": to_ts(run.created), "result": run.summary,
         }  # fmt: skip
 

@@ -731,6 +731,22 @@ def _not_a_domain(
     )
 
 
+def links(email_text: str) -> tuple[str, ...]:
+    """The links in an email's text as `check` reads a draft's, for its `email_links` (§1, G11):
+    the eval passes the actor excerpt's."""
+    pats = _patterns()
+    base = _fold(email_text if _bad_character(email_text) is None else _ascii_only(email_text))
+    not_tlds = frozenset(map(str, _lists()["not_tlds"]))
+    abbreviations = frozenset(map(str, _lists()["abbreviations"]))
+    out: dict[str, None] = {}
+    for name in ("url", "domain"):
+        for m in pats[name].finditer(base.text):
+            if name == "domain" and _not_a_domain(m, not_tlds, abbreviations):
+                continue
+            out[_clean_link(m.group())] = None
+    return tuple(out)
+
+
 def _clean_link(link: str) -> str:
     return link.rstrip(".,;:!?)]'\"")
 

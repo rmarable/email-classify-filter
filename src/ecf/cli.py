@@ -1333,6 +1333,14 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " experiment, never for the gate.",
         ),
     ] = None,
+    forced_draft: Annotated[
+        bool,
+        typer.Option(
+            "--forced-draft",
+            help="With --claude, on the draft set: the actor is offered only draft_reply where"
+            " policy offers a draft (measures the drafts); an experiment, never for the gate.",
+        ),
+    ] = False,
     classifier_backend: Annotated[
         str,
         typer.Option(
@@ -1394,8 +1402,9 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                                 " corpus")  # fmt: skip
     copy = _copy_folder(copy_to)
     globs = [g.strip() for g in cases.split(",") if g.strip()] if cases is not None else []
-    if not claude and (classifier_window is not None or cases is not None):
-        raise InvalidInputError("--classifier-window and --cases work only with --claude")
+    if not claude and (classifier_window is not None or cases is not None or forced_draft):
+        raise InvalidInputError("--classifier-window, --cases and --forced-draft work only with"
+                                " --claude")  # fmt: skip
     if cases is not None and not globs:  # else a mistyped filter would run the whole set
         raise InvalidInputError("--cases needs at least one pattern")
     if claude:
@@ -1409,7 +1418,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy, actor_high_model=actor_high_model,
                      source_run=source_run, for_gate=not not_for_gate,
-                     classifier_window=classifier_window, cases=globs)  # fmt: skip
+                     classifier_window=classifier_window, cases=globs,
+                     forced_draft=forced_draft)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
@@ -1451,10 +1461,10 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
                  batch: int, copy: Path | None, *, actor_high_model: str | None = None,
                  source_run: str | None = None, for_gate: bool = True,
                  classifier_window: int | None = None, cases: list[str] | None = None,
-                 ) -> None:  # fmt: skip
-    # another window or a few cards is an experiment: sent as one, so a service on an older
-    # version, which ignores these options, never pins the run or re-points the gate (W2)
-    tuned = classifier_window not in (None, CLASSIFIER_WINDOW) or bool(cases)
+                 forced_draft: bool = False) -> None:  # fmt: skip
+    # another window, a few cards or a forced run is an experiment: sent as one, so a service on
+    # an older version, which ignores these options, never pins the run or re-points the gate (W2)
+    tuned = classifier_window not in (None, CLASSIFIER_WINDOW) or bool(cases) or forced_draft
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/claude", {
             "root": str(root.resolve()), "preset": preset, "sensitivity": sensitivity,
@@ -1462,12 +1472,15 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
             "actor_model": actor_model, "actor_high_model": actor_high_model,
             "source_run": source_run, "batch": batch,
             "copy_to": str(copy) if copy else None, "for_gate": for_gate and not tuned,
-            "classifier_window": classifier_window, "cases": cases or None})  # fmt: skip
+            "classifier_window": classifier_window, "cases": cases or None,
+            **({"forced_draft": True} if forced_draft else {})})  # fmt: skip
         # such a service runs the defaults and its reply doesn't echo the options
         if tuned and (r.get("classifier_window", CLASSIFIER_WINDOW)
                       != (classifier_window or CLASSIFIER_WINDOW)
-                      or r.get("cases", []) != (cases or [])):  # fmt: skip
-            raise InvalidInputError("the service didn't take --classifier-window or --cases"
+                      or r.get("cases", []) != (cases or [])
+                      or r.get("forced_draft", False) != forced_draft):  # fmt: skip
+            raise InvalidInputError("the service didn't take --classifier-window, --cases or"
+                                    " --forced-draft"
                                     " (it runs an older version): " + _stop_unwanted(c)
                                     + ". Restart the service, then run this again")  # fmt: skip
     models = ", ".join(f"{k} {v}" for k, v in r["models"].items())
@@ -1476,7 +1489,8 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
            else PRESET_D_ONLY if r["preset"] == "D"
            else _frozen_only(r) or "other models: for comparison only")  # fmt: skip
     tuning = (f"; classifier window {classifier_window}" if classifier_window is not None
-              else "") + (f"; cases {','.join(cases)}" if cases else "")  # fmt: skip
+              else "") + (f"; cases {','.join(cases)}" if cases else "") + (
+        "; forced drafts" if forced_draft else "")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
                f" {r['preset']}, {r['sensitivity']}{tuning}; {use} ({models}).")  # fmt: skip
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
