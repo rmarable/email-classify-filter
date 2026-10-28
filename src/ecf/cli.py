@@ -199,10 +199,7 @@ def status() -> None:
         f"breaker:   {'TRIPPED' if br.get('tripped') else 'ok'} "
         f"({br.get('recent_crashes', 0)} recent crashes)"
     )
-    typer.echo(
-        f"secrets:   {ss.get('backend') or 'none usable'}"
-        + (" (Python changed: run `ecf service regrant`)" if ss.get("interpreter_changed") else "")
-    )
+    typer.echo(f"secrets:   {secrets_line(ss)}")
     sl = st.get("slack", {})
     if not sl.get("installed"):
         typer.echo("slack:     not installed (`ecf slack install`)")
@@ -226,6 +223,16 @@ def status() -> None:
         typer.echo(line)
     for alert in st.get("alerts", []):
         typer.echo(f"ALERT      {alert['title']}: {alert['detail']}")
+
+
+def secrets_line(ss: dict[str, Any]) -> str:
+    """The status line for the secret store: why it is unusable, if the service couldn't open it."""
+    text = ss.get("backend") or "none usable"
+    if ss.get("detail"):
+        text += f", unusable: {ss['detail']}" if ss.get("backend") else f" ({ss['detail']})"
+    if ss.get("interpreter_changed"):
+        text += " (Python changed: run `ecf service regrant`)"
+    return text
 
 
 @app.command()

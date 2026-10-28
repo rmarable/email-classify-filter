@@ -47,12 +47,13 @@ class KeyringSecretStore:
 
 
 def macos_keychain(install: str, *, interactive: bool) -> KeyringSecretStore:
-    """The Keychain store. `interactive=False` (the service) turns prompts off for this process."""
-    from keyring.backends import macOS  # noqa: PLC0415
-
+    """The Keychain store. `interactive=False` (the service) turns prompts off for this process
+    first; if that fails, no store is built and nothing reads the Keychain (OD-564)."""
     from ecf_server.secretstore.macos_interaction import set_interaction_allowed  # noqa: PLC0415
 
     set_interaction_allowed(interactive)
+    from keyring.backends import macOS  # noqa: PLC0415
+
     return KeyringSecretStore(macOS.Keyring(), install, backend_name="keychain")
 
 

@@ -80,7 +80,7 @@ from ecf_server.mail.smtp import Sender, SmtpSender
 from ecf_server.notify import Notifier, NullNotifier, host_notifier
 from ecf_server.schedule import Scheduler
 from ecf_server.secretstore import SecretStore
-from ecf_server.secretstore.macos_interaction import set_interaction_allowed
+from ecf_server.secretstore.macos_interaction import KeychainPromptsError, set_interaction_allowed
 from ecf_server.secretstore.memory import MemorySecretStore
 from ecf_server.secretstore.select import (
     choose_backend,
@@ -400,6 +400,16 @@ class Service:
         except Exception as exc:  # reporting must never stop the start
             log.error("service.restart_report_failed", error_type=type(exc).__name__)
 
+    def _keychain_prompts_off(self) -> None:
+        """OD-163: never wait on a Keychain dialog. If macOS no longer allows that, opening the
+        store fails the same way and the service runs without secrets (OD-564)."""
+        if sys.platform != "darwin" or self.dev:
+            return
+        try:
+            set_interaction_allowed(False)
+        except KeychainPromptsError as exc:
+            log.error("secretstore.prompts_not_off", detail=exc.detail)
+
     def _report_trip(self, crashes: int) -> None:
         """The breaker tripped: the service is about to exit, so nothing will send a queued post.
         Tell the desktop, and Slack and alert email directly (best effort, §11.1, §13.3)."""
@@ -409,8 +419,7 @@ class Service:
             return
         try:
             host_notifier().notify(alerts.title("system_error"), text)
-            if sys.platform == "darwin":
-                set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+            # on macOS this turns Keychain prompts off first (OD-163)
             store = open_store(self.paths.install, self.paths.data_dir, interactive=False,
                                probe=host_probe())  # fmt: skip
             conn = db.connect(self.paths.db)
@@ -421,6 +430,9 @@ class Service:
                                     alerts.title("system_error"), text)  # fmt: skip
             finally:
                 conn.close()
+        except KeychainPromptsError as exc:  # the desktop was told; Slack and email need secrets
+            log.error("service.trip_report_failed", error_type=type(exc).__name__,
+                      detail=exc.detail)  # fmt: skip
         except Exception as exc:  # the service is stopping either way
             log.error("service.trip_report_failed", error_type=type(exc).__name__)
 
@@ -671,8 +683,7 @@ class Service:
             breaker.mark_clean_exit(self.paths.running_marker)
             return EXIT_OK  # exit 0 so launchd/systemd don't restart it
         breaker.mark_running(self.paths.running_marker)
-        if sys.platform == "darwin" and not self.dev:
-            set_interaction_allowed(False)  # OD-163: never wait on a Keychain dialog
+        self._keychain_prompts_off()
         applied = self._open_state()
         if st.crashed_before:
             self._report_restart(len(st.crashes))
