@@ -1078,8 +1078,9 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
 
 
 def _window_tuning(body: dict[str, Any]) -> dict[str, Any]:
-    """`ecf eval run --claude`'s `classifier_window` and `cases` (window tuning step 2), as
-    `claude_eval.Options` fields; absent or null: the defaults."""
+    """`ecf eval run --claude`'s `classifier_window`, `cases` (window tuning step 2) and
+    `forced_draft` (M8 plan AE2), as `claude_eval.Options` fields; absent or null: the
+    defaults."""
     out: dict[str, Any] = {}
     if (window := body.get("classifier_window")) is not None:
         if isinstance(window, bool) or not isinstance(window, int):
@@ -1090,6 +1091,10 @@ def _window_tuning(body: dict[str, Any]) -> dict[str, Any]:
         if items is None or not all(isinstance(g, str) for g in items):
             raise InvalidInputError("cases must be a list of text")
         out["cases"] = tuple(str(g) for g in items)
+    if (forced := body.get("forced_draft")) is not None:  # the draft set (M8 plan AE2)
+        if not isinstance(forced, bool):
+            raise InvalidInputError("forced_draft must be true or false")
+        out["forced_draft"] = forced
     return out
 
 

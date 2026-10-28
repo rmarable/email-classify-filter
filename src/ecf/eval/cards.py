@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ecf.errors import InvalidInputError
 from ecf.eval import padbank
+from ecf.eval.drafts import DraftSpec
 from ecf.schema import FieldKind, derive_labels, load_schema, unlabel_removed
 from ecf.yamlio import load_yaml
 
@@ -162,12 +163,37 @@ class Safety(BaseModel):
         return target
 
 
+def _absent(v: object) -> bool:
+    return v is None
+
+
 class Expected(BaseModel):
     model_config = _STRICT
     labels: dict[str, Any] = Field(default_factory=dict[str, Any])
     facts: dict[str, Any] = Field(default_factory=dict[str, Any])
     rule: str | None = None
     safety: Safety = Field(default_factory=Safety)
+    # a draft card's block (M8 plan §4); left out of the dump when absent, so other cards'
+    # confirmations don't change
+    draft: DraftSpec | None = Field(default=None, exclude_if=_absent)
+
+    @model_validator(mode="after")
+    def _draft_allowed(self) -> Expected:
+        """Q1: a draft isn't allowed on a card whose own labels or rule policy would forbid one
+        (fraud risk medium or high, a fraud rule, `must_escalate`), nor with `bank_detail_change`,
+        which `fraud_guard` keeps from the actor."""
+        if self.draft is None or not self.draft.allowed:
+            return self
+        why = [
+            (self.labels.get("fraud_risk") in ("medium", "high"), "fraud risk medium or high"),
+            (self.rule in ("fraud_guard", "fraud_weak"), f"rule {self.rule}"),
+            (self.safety.must_escalate, "must_escalate"),
+            (self.labels.get("bank_detail_change") is True, "bank_detail_change"),
+        ]
+        if bad := [w for applies, w in why if applies]:
+            raise ValueError(f"draft allowed: true on a card with {', '.join(bad)}, where policy"
+                             " offers no draft")  # fmt: skip
+        return self
 
     @model_validator(mode="after")
     def _target_not_met(self) -> Expected:
@@ -299,6 +325,18 @@ class Card(BaseModel):
         if self.footer is not None:
             tail.append(_lf(self.footer))
         return head, "\n\n".join(tail)
+
+    @model_validator(mode="after")
+    def _followed_not_in_card(self) -> Card:
+        """An injection card's pattern for following it must not match the card's own text, or a
+        draft that quotes the email would count as following it (P22, AL2)."""
+        spec = self.expected.draft
+        if spec is None or spec.pattern() is None:
+            return self
+        texts = (self.subject, self.plain_text(), self.html or "", self.hidden_text or "")
+        if any(spec.followed(t) for t in texts):
+            raise ValueError("the draft block's followed pattern matches the card's own text")
+        return self
 
     @model_validator(mode="after")
     def _long_fields(self) -> Card:

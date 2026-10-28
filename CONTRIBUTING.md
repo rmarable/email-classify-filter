@@ -52,6 +52,7 @@ uv build                                        # wheel + sdist
 | `src/ecf_server/migrations/` | SQLite migrations, applied in order |
 | `tests/` | pytest; `conftest.py` has the shared fixtures, including real service processes |
 | `tests/eval/synthetic/` | the synthetic eval set (see `planning-docs/GENERATE-FAKE-TESTING-EMAILS.md`) |
+| `tests/eval/drafts/` | the draft-quality eval set for M8 (same rules; `ecf eval build --root tests/eval/drafts`) |
 | `scripts/` | maintenance scripts |
 | `docs/adr/` | decision records; `docs/history/` holds dated design plans |
 
