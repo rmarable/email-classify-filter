@@ -12,7 +12,8 @@ import pytest
 
 from ecf.errors import ConflictError
 from ecf.ids import AddressId, StableId
-from ecf_server import checks, daily, db, digests, items, pause, slack_admin
+from ecf.status import Status
+from ecf_server import checks, daily, db, digests, items, pause, slack_admin, slack_render
 from ecf_server._slack import Envelope
 from ecf_server.actions import MessageChangedError, Planned
 from ecf_server.chat import FakeChat, RouteRef
@@ -20,6 +21,7 @@ from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
 from ecf_server.slack_in import Inbound, SlackReceiver
+from ecf_server.state_machine import Stage, TransitionContext
 
 ME, BOT = "U0ME1", "U0BOT"
 # 2026-10-01 is a Thursday; 12:00 UTC is 08:00 in New York (business hours start)
@@ -52,9 +54,10 @@ def slack_setup(conn: sqlite3.Connection, clock: FakeClock) -> None:
 
 def _item(conn: sqlite3.Connection, clock: FakeClock, sid: str, facts: dict[str, Any],
           **extra: Any) -> str:  # fmt: skip
+    columns: dict[str, Any] = {"subject": f"Invoice {sid[:3]}",
+                               "sender": "billing@vendor-a.example"} | extra  # fmt: skip
     items.create_item(conn, clock, stable_id=StableId(sid), address_id=AddressId("ap"),
-                      content_hash="h", facts=json.dumps(facts), subject=f"Invoice {sid[:3]}",
-                      sender="billing@vendor-a.example", **extra)  # fmt: skip
+                      content_hash="h", facts=json.dumps(facts), **columns)  # fmt: skip
     return sid
 
 
@@ -89,10 +92,11 @@ def test_a_digest_lists_its_sections_with_undo_only_where_allowed(conn: sqlite3.
     assert post["channel"] == "CAP" and card["title"] == "Digest: ap"
     text = card["text"].splitlines()
     assert text[0] == "3 new message(s) since 13:00 UTC."
-    assert text[2] == "Weak fraud signals (flagged, not escalated):"
-    assert text[3].startswith("aaaaaaaa billing@vendor-a.example: Invoice aaa")
-    assert text[3].endswith(": first-time sender asking for payment")  # why (OD-490)
-    assert text[5] == "Payment email from unverified senders:" and text[6].startswith("bbbbbbbb")
+    assert text[2:4] == ["You can undo (1):", text[9]]  # first; the line its section has
+    assert text[5] == "Weak fraud signals (flagged, not escalated):"
+    assert text[6].startswith("aaaaaaaa billing@vendor-a.example: Invoice aaa")
+    assert text[6].endswith(": first-time sender asking for payment")  # why (OD-490)
+    assert text[8] == "Payment email from unverified senders:" and text[9].startswith("bbbbbbbb")
     assert text[-1] == "Not fully scanned: 1"
     assert [(b["action"], b["ref"]) for b in card["buttons"]] == [("undo", "b" * 64),
                                                                   ("pause", "ap")]  # fmt: skip
@@ -165,6 +169,139 @@ def test_a_digest_on_demand_needs_a_channel(conn: sqlite3.Connection) -> None:
         digests.post_now(conn, clock, "ap")
 
 
+# Undo buttons name their email (operator decision 2026-10-27): "Undo: <sender>, <subject>", the
+# subject cut to fit, never the address; each email once, listed above the buttons.
+
+ARCHIVED = json.dumps({"actions": [{"name": "archive"}, {"name": "label", "target": "marketing"}],
+                       "done": [{"name": "label", "target": "marketing"}]})  # fmt: skip
+
+
+def _executed(conn: sqlite3.Connection, clock: FakeClock, sid: str, facts: dict[str, Any],
+              **extra: Any) -> str:  # fmt: skip
+    """An email a model plan acted on, which Undo may take back."""
+    _item(conn, clock, sid, facts, decision_source="rule", proposal=ARCHIVED, **extra)
+    for status in (Status.CLASSIFIED, Status.PROPOSED, Status.EXECUTING, Status.EXECUTED):
+        items.transition(conn, clock, StableId(sid), status, TransitionContext(stage=Stage.LIVE),
+                         actor="t")  # fmt: skip
+    return sid
+
+
+def _undo_buttons(card: Any) -> list[tuple[str, str]]:
+    return [(b.label, b.ref) for b in card.buttons if b.action == digests.UNDO]
+
+
+def test_undo_buttons_name_the_sender_and_subject_and_are_listed(
+    conn: sqlite3.Connection,
+) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    _item(conn, clock, "b" * 64, UNVERIFIED)  # the pre-check's labels
+    _executed(conn, clock, "d" * 64, {})  # a model plan's archive
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    assert _undo_buttons(card) == [
+        ("Undo: billing@vendor-a.example, Invoice ddd", "d" * 64),
+        ("Undo: billing@vendor-a.example, Invoice bbb", "b" * 64),
+    ]
+    text = card.text.splitlines()
+    i = text.index("You can undo (2):")
+    assert i == 2  # right after the opener
+    assert text[i + 1] == ("dddddddd billing@vendor-a.example: Invoice ddd"
+                           " (label marketing)")  # fmt: skip  # what was done, not planned
+    assert text[i + 2].startswith("bbbbbbbb billing@vendor-a.example: Invoice bbb (")
+    assert text[i + 3] == ""  # the list ends
+
+
+def test_an_email_undoable_both_ways_gets_one_button(conn: sqlite3.Connection) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    _executed(conn, clock, "e" * 64, UNVERIFIED)  # pre-check labels and a model plan
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    assert [ref for _l, ref in _undo_buttons(card)] == ["e" * 64]
+    lines = card.text.splitlines()
+    assert lines[lines.index("You can undo (1):") + 1].endswith("(label marketing)")
+
+
+def test_an_undo_label_cuts_the_subject_never_the_address(conn: sqlite3.Connection) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    head = "Undo: " + "x" * 48 + "@vendor-a.example"  # 71: room for ", ", one character, "…"
+    _item(conn, clock, "a" * 64, UNVERIFIED, subject="Quarterly statement " * 6)
+    _item(conn, clock, "b" * 64, UNVERIFIED, sender=head.removeprefix("Undo: "))
+    _item(conn, clock, "c" * 64, UNVERIFIED, sender="y" * 49 + "@vendor-a.example")  # 72
+    _item(conn, clock, "e" * 64, UNVERIFIED, subject="\U0001f381" * 40)  # 2 UTF-16 units each
+    _item(conn, clock, "f" * 64, UNVERIFIED, subject="Pay\u202enow https://evil.example")
+    _item(conn, clock, "9" * 64, UNVERIFIED, sender_name="billing@vendor-a.example",
+          sender="x@evil.test")  # fmt: skip
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    label = {ref[0]: lb for lb, ref in _undo_buttons(card)}
+    units = {k: len(v.encode("utf-16-le")) // 2 for k, v in label.items()}
+    assert max(units.values()) <= slack_render.LABEL_MAX
+    assert label["a"].startswith("Undo: billing@vendor-a.example, Quarterly statement")
+    assert label["a"].endswith("…") and units["a"] == slack_render.LABEL_MAX
+    assert label["b"] == head + ", I…"  # one character of the subject
+    assert label["c"] == "Undo cccccccc"
+    assert label["e"].startswith("Undo: billing@vendor-a.example, \U0001f381")
+    assert units["e"] == slack_render.LABEL_MAX
+    assert label["9"] == "Undo: x@evil.test, Invoice 999"  # the address alone, not the name
+    rendered = json.dumps(slack_render.blocks(card), ensure_ascii=False)
+    assert "Undo: billing@vendor-a.example, Paynow https[:]//evil.example" in rendered
+    assert "\u202e" not in rendered
+
+
+def test_a_line_break_in_a_subject_cant_add_a_line_to_the_undo_list(
+    conn: sqlite3.Connection,
+) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    _item(conn, clock, "b" * 64, UNVERIFIED, subject="Hi\n7fbf7921 ceo@acme.example: Wire",
+          sender_name="Pat\nLee")  # fmt: skip
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    lines = card.text.splitlines()
+    i = lines.index("You can undo (1):")
+    assert lines[i + 1].startswith("bbbbbbbb Pat Lee <billing@vendor-a.example>: Hi 7fbf7921 ceo")
+    assert lines[i + 2] == ""  # no extra line in the list
+    assert _undo_buttons(card)[0][0] == ("Undo: billing@vendor-a.example,"
+                                          " Hi 7fbf7921 ceo@acme.example: Wire")  # fmt: skip
+
+
+def test_the_undo_list_shows_ten_and_counts_the_rest(conn: sqlite3.Connection) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    for n in range(25):
+        _item(conn, clock, f"{n:02d}" + "b" * 62, UNVERIFIED)
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    assert len(_undo_buttons(card)) == digests.UNDO_MAX == 10
+    lines = card.text.splitlines()
+    i = lines.index("You can undo (25):")
+    assert lines[i + 11] == "... and 15 more, not shown"
+    assert card.buttons[-1].action == pause.PAUSE  # within Slack's 25 buttons
+    assert len(card.buttons) <= slack_render.BUTTONS_MAX
+
+
+@pytest.mark.parametrize("facts", [FRAUD, {"triggers": {"regulator": ["regulator named"]}},
+                                   {"quarantined": True}])  # fmt: skip
+def test_a_model_plan_on_fraud_regulator_or_quarantined_mail_offers_no_undo(
+    conn: sqlite3.Connection, facts: dict[str, Any]
+) -> None:
+    clock = FakeClock(MORNING)
+    slack_setup(conn, clock)
+    clock.advance(60)
+    _executed(conn, clock, "d" * 64, facts)
+    card = digests.build(conn, "ap", MORNING, clock.now())
+    assert card is not None
+    assert _undo_buttons(card) == [] and "You can undo" not in card.text
+
+
 # Undo from a digest: queued for the next check, run inside it, and never on fraud.
 
 
@@ -189,7 +326,7 @@ def test_undo_is_queued_for_the_next_check_and_refused_on_fraud(
     assert _facts(conn, "b" * 64)["precheck"]["undo"] == "queued"
     due = conn.execute("SELECT next_due_at FROM check_state WHERE address_id = 'ap'").fetchone()
     assert due[0] == to_ts(clock.now())  # checked within a minute
-    assert _posts(conn)[-1]["text"].startswith("Undo queued for bbbbbbbb")
+    assert _posts(conn)[-1]["text"].startswith("Undo queued for bbbbbbbb (Invoice bbb): done")
     _click(db_path, clock, conn, "a" * 64)  # a weak fraud signal: its label stays
     assert "undo" not in _facts(conn, "a" * 64)["precheck"]
     assert _posts(conn)[-1]["text"].startswith("Nothing to undo here")
@@ -221,8 +358,25 @@ def test_queued_undos_run_inside_the_check_and_never_on_fraud(
     assert _facts(conn, "f" * 64)["precheck"]["undo"] == "done"  # nothing removed
     assert _facts(conn, "x" * 64)["precheck"]["undo"].startswith("failed: message no longer")
     texts = [p["text"] for p in _posts(conn)]
-    assert "Undone for bbbbbbbb: removed label unverified_sender, flag." in texts
-    assert any(t.startswith("Couldn't undo xxxxxxxx") for t in texts)
+    assert "Undone for bbbbbbbb (Invoice bbb): removed label unverified_sender, flag." in texts
+    assert any(t.startswith("Couldn't undo xxxxxxxx (Invoice xxx): ") for t in texts)
+
+
+def test_a_model_plan_undo_reply_names_the_subject_with_links_defanged(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slack_setup(conn, clock)
+    sid = _executed(conn, clock, "d" * 64, {}, subject="Deals at www.shop.example")
+    with write_tx(conn):
+        conn.execute("UPDATE items SET proposal = json_set(proposal, '$.undo', 'queued')")
+
+    def fake_undo(*_a: Any, **_k: Any) -> list[str]:
+        return ["label marketing"]
+
+    monkeypatch.setattr(digests.mailbox_actions, "undo_item", fake_undo)
+    assert digests.run_model_undos(conn, clock, None, "ap", "t", lambda: False) == 1  # type: ignore[arg-type]
+    assert _posts(conn)[-1]["text"] == (f"Undone for {sid[:8]} (Deals at www[.]shop[.]example):"
+                                        " label marketing.")  # fmt: skip
 
 
 # The daily summary: once per business day, what waits, and hourly checks of who is in the

@@ -40,7 +40,7 @@ _SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}):(//)")
 _MEMBER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
 
-def _scrub(text: str) -> str:
+def scrub(text: str) -> str:
     kept = [
         ch
         for ch in text
@@ -51,7 +51,7 @@ def _scrub(text: str) -> str:
 
 def clean(text: str, limit: int) -> str:
     """Plain, safe, bounded text for Slack."""
-    out = _scrub(text)
+    out = scrub(text)
     return out if len(out) <= limit else out[: limit - 1] + "…"
 
 
@@ -111,16 +111,16 @@ def _pieces(text: str) -> tuple[list[str], bool]:
         lines = [*lines[: TEXT_LINES_MAX - 1], " · ".join(lines[TEXT_LINES_MAX - 1 :])]
     out: list[str] = []
     for ln in lines:
-        rest = _scrub(ln)
+        rest = scrub(ln)
         while len(rest) > TEXT_MAX:
             cut = rest.rfind(" ", TEXT_MAX // 2, TEXT_MAX)
             cut = cut if cut > 0 else TEXT_MAX
             # a cut can start a new word that reads as a URL scheme: scrub each side again, and
             # cut earlier while defanging makes the head too long, so no section is shortened
-            while len(head := _scrub(rest[:cut])) > TEXT_MAX and cut > 1:
+            while len(head := scrub(rest[:cut])) > TEXT_MAX and cut > 1:
                 cut -= 1
             out.append(head)
-            rest = _scrub(rest[cut:].lstrip())
+            rest = scrub(rest[cut:].lstrip())
         if rest:
             out.append(rest)
     if len(out) <= TEXT_BLOCKS_MAX:

@@ -1,7 +1,7 @@
 """What the hourly digest offers from V1.3 (SPEC §5.1 step 9, §8.3, §9.5; OD-210; V1.3 step 4d).
 
 - **Done automatically:** a count of the model-driven actions that ran since the last digest, by
-  action. (Undo for hide actions arrives with the executor, V1.3 step 5.)
+  action. The emails whose actions can be taken back go to the digest's Undo list (`digests.py`).
 - **Approve all N reversible** (§9.5): the approvals waiting for this address whose actions are all
   reversible and which aren't excluded: outbound (sends and drafts), the fraud guard, an
   unverified sender, any high-risk item (§8.2), regulator, `content_unscanned`, or a `high`
@@ -43,8 +43,6 @@ from ecf_server.db import write_tx
 from ecf_server.precheck import fired
 
 APPROVE_ALL = "approve_all"
-UNDO = "undo"  # the digest's Undo button (digests.py handles it)
-UNDO_MAX = 10
 CONFIRM = "confirm_category"
 BATCH_KEY = "digest_batch:"  # + key: the grant IDs a button binds
 BATCH_MAX = 20
@@ -100,8 +98,6 @@ def lines(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.
             "",
             "Done automatically: " + ", ".join(f"{n} {k}" for k, n in sorted(done.items())),
         ]
-        buttons += [Button(UNDO, f"Undo {r['stable_id'][: cards.SHORT_ID]}", r["stable_id"])
-                    for r in rows if mailbox_actions.undoable(r)][:UNDO_MAX]  # fmt: skip
     rows_waiting = conn.execute(
         "SELECT * FROM items WHERE address_id = ? AND status = 'awaiting_approval'"
         " ORDER BY created_at, stable_id", (aid,)).fetchall()  # fmt: skip
@@ -128,6 +124,12 @@ def lines(conn: sqlite3.Connection, now: datetime, aid: str, rows: list[sqlite3.
     return text, buttons
 
 
+def undo_rows(rows: list[sqlite3.Row]) -> list[tuple[sqlite3.Row, str]]:
+    """The emails whose model plan Undo may take back, each with its line for the digest's Undo
+    list, naming what was done rather than what was planned."""
+    return [(r, _line(r, "done")) for r in rows if mailbox_actions.undoable(r)]
+
+
 def _draft_without_card(conn: sqlite3.Connection, item: sqlite3.Row) -> bool:
     """A draft waiting for approval whose card hasn't been posted (old mail has `--scan`)."""
     doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
@@ -142,11 +144,11 @@ def _grant_for(conn: sqlite3.Connection, sid: str) -> str | None:
     return str(row[0]) if row else None
 
 
-def _line(r: sqlite3.Row) -> str:
+def _line(r: sqlite3.Row, key: str = "actions") -> str:
     facts: dict[str, Any] = json.loads(r["facts"] or "{}")
     doc: dict[str, Any] = json.loads(r["proposal"] or "{}")
     what = ", ".join(str(a["name"]) + (f" {a['target']}" if a.get("target") else "")
-                     for a in doc.get("actions", []))  # fmt: skip
+                     for a in doc.get(key, []))  # fmt: skip
     sender = cards.short_sender(cards.sender_line(r, facts))
     return f"{r['stable_id'][: cards.SHORT_ID]} {sender}: {cards.subject_line(r)[:60]} ({what})"
 

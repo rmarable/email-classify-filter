@@ -152,7 +152,10 @@ N of 2)". The question comes from the AI, so it can be wrong.
 - **Undo** (on digests) removes the labels and flag ecf added. It never works on fraud, lookalike,
   regulator or quarantined emails, and never removes the `suspicious` or `regulatory` labels. It
   runs at the mailbox's next check and tells you how it went. If the email changed or was moved
-  out of the inbox in the meantime, ecf reports that rather than forcing it.
+  out of the inbox in the meantime, ecf reports that rather than forcing it. Each button names
+  the sender's address and the subject, for example "Undo: billing@vendor-a.example, Invoice
+  4471"; when the address is too long for a button, it shows the email's short ID instead. The
+  digest lists the same emails, with their IDs, under "You can undo" near its top.
 - An undone draft is deleted only if it's still unchanged in Drafts. If you edited, sent or deleted
   it, ecf leaves it alone and says "draft not deleted".
 - **Dismiss** closes an item that has no payment, fraud or regulator warning.
