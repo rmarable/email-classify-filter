@@ -2014,8 +2014,27 @@ def eval_confirm_set(
                f" {', '.join(changed) if changed else 'none'}.")  # fmt: skip
 
 
+def _compare_drafts(a: str, b: str, margin: float) -> None:
+    """`ecf eval compare --drafts A B` (M8 plan §4): paired on `draft_ok`."""
+    from ecf.eval import draftjudge  # noqa: PLC0415
+
+    with LocalClient(_paths()) as c:
+        sa = c.request("GET", f"/v1/eval/drafts/{a}/score")
+        sb = c.request("GET", f"/v1/eval/drafts/{b}/score")
+    r = draftjudge.compare_runs(sa, sb, margin)
+    for w in r["warnings"]:
+        typer.echo(f"warning: {w}")
+    if r["provisional"]:
+        typer.echo("provisional: no field has passed calibration yet")
+    lo, hi = r["diff_ci"]
+    typer.echo(f"draft_ok on {r['n']} paired drafts: A {r['a_ok']}, B {r['b_ok']};"
+               f" B - A {r['diff_points']:+.1f} points [{lo:+.1f}, {hi:+.1f}],"
+               f" discordant {r['b_only']} vs {r['a_only']}, exact p {r['p_value']:.3f};"
+               f" non-inferior at -{margin:g}: {'yes' if r['non_inferior'] else 'no'}")  # fmt: skip
+
+
 @eval_app.command("compare")
-def eval_compare(
+def eval_compare(  # noqa: PLR0912 - the result, the settled block, the drafts route
     a: Path,
     b: Path,
     margin: Annotated[float, typer.Option(min=0, help="Non-inferiority margin, in points")] = 5.0,
@@ -2035,6 +2054,10 @@ def eval_compare(
             " settled where the judges disagreed. Both must be scored on its current labels.",
         ),
     ] = None,
+    drafts: Annotated[
+        bool,
+        typer.Option("--drafts", help="A and B are draft runs (IDs): compare them on draft_ok."),
+    ] = False,
 ) -> None:
     """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
     -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486). With
@@ -2049,6 +2072,11 @@ def eval_compare(
         summary,
     )
 
+    if drafts:
+        if subset is not None or root is not None:  # J5C-12
+            raise InvalidInputError("--drafts compares two draft runs whole: no --subset or --root")
+        _compare_drafts(str(a), str(b), margin)
+        return
     ra, rb = load_result(a), load_result(b)
     ids = _subset_ids(subset) if subset is not None else None
     if root is not None:  # refused before any output (J12 P5, P10)
