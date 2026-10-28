@@ -202,6 +202,7 @@ cases:
   - {id: date-get-back-monday-accent, draft: "I'll get back to you Mönday.", refuse: [date], spans: {date: "Mönday"}, near_miss: characters, source: AL1}
   - {id: date-deliver-dotted, draft: "We'll deliver on 10.11.2026.", refuse: [date], spans: {date: "10.11.2026"}, source: AL1}
   - {id: date-call-pm, draft: "I'll call at 3 p.m. Friday.", refuse: [date], spans: {date: "Friday"}, source: AL1}
+  - {id: date-call-pm-span, draft: "I'll call at 3 p.m. Friday.", refuse: [date], spans: {date: "3 p.m."}, supersedes: date-call-pm, reason: "span: the checker reports the sentence's first date; the codes are unchanged", source: Step 3}
   - {id: date-by-newline, draft: "We'll reply by\nMonday.", refuse: [date], spans: {date: "Monday"}, source: AL1}
   - {id: date-prof, draft: "I'll confirm with Prof. Lee on Friday.", refuse: [date], spans: {date: "Friday"}, source: AN2}
   - {id: date-mrs, draft: "We'll meet Mrs. Lee on Friday.", refuse: [date], spans: {date: "Friday"}, source: AN2}
@@ -315,3 +316,9 @@ cases:
   - {id: harmless-all-20, draft: "We have all 20.", source: AO1}
   - {id: harmless-top-10, draft: "It's in the top 10.", source: AO1}
   - {id: harmless-try-2, draft: "Try 2 of them.", source: AO1}
+
+  # found by the Step 3 measurement (measure 1, 2026-10-28), added before the fix
+  - {id: price-copied-quote, draft: "Thanks for being open about the €1,200 quote.", email: {text: "Hello, the quote of €1,200 is a bit above our budget. Pat"}, near_miss: price, source: Step 3}
+  - {id: money-invoice-number, draft: "I've received invoice 2231 for €450.", email: {text: "Hello, attached is invoice 2231 for €450. Pat"}, source: Step 3}
+  - {id: bank-amount-with-cents, draft: "The total of €1,180.00 is noted.", email: {text: "Hello, €1,180.00 is overdue. Pat"}, source: Step 3}
+  - {id: date-amount-not-a-date, draft: "We'll keep the 180.00 aside for now.", source: Step 3}

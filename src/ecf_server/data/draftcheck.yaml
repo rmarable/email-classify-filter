@@ -1,0 +1,104 @@
+# The draft checker's lists (docs/roadmap/m8-model-written-drafts.md §1; ecf_server/draftcheck.py).
+# The fixture file tests/fixtures/draftcheck_cases.yaml is the specification; a list grows when a
+# fixture needs it ("and others the fixtures add"). Words are matched on the folded, casefolded
+# text at word boundaries; a phrase matches with any run of spaces between its words. Changing
+# this file changes the checker's digest.
+
+version: 1
+
+# characters: allowed beyond printable ASCII and the 178 accented letters (generated, below)
+typographic: ["‘", "’", "“", "”", "–", "—", "…", "£", "€"]
+
+# The precomposed letters in U+00C0-U+017F whose first two skeleton.folds forms are plain ASCII
+# letters, less ı, İ and ſ (plan AI3); tests/test_draftcheck.py regenerates and compares.
+accented_letters: "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåæçèéêëìíîïñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįĲĳĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽž"
+
+# date: commitment verbs; "by" counts only before a date
+commitment_verbs: [
+  will, shall, can, could, would, should, going to, promise, promised, expect, plan, aim, intend,
+  due, scheduled, confirm, agree, by, please note, please expect, be advised, rest assured,
+  happy to, want us to, ship, ships, deliver, delivers, arrive, arrives, start, starts, dispatch,
+  dispatches,
+]
+contractions: ["'ll", "'d", "we're going to", "i'm going to"]
+# a question or request to the sender: the only date exemption (AQ8, AR2, AS2, AT1, AU5, AW2)
+request_openers: [could you, can you, would you, will you, please, kindly]
+not_requests: [please note, please expect, would you like us to, do you want us to, will you let us]
+act_objects: [it, them, this, that, these, those, me, us]
+
+weekdays: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+months: [
+  january, february, march, april, may, june, july, august, september, october, november,
+  december, jan, feb, mar, apr, jun, jul, aug, sep, sept, oct, nov, dec,
+]
+relative_dates: [
+  today, tomorrow, tonight, this week, next week, this month, next month, end of the day,
+  end of day, end of the week, end of the month, close of business,
+]
+
+# money
+pay_verbs: [pay, pays, paid, paying, transfer, transfers, transferred, transferring, wire, wires,
+            wired, wiring, remit, remits, remitted, remitting]
+inflections: [sent, scheduled, processed, released, settled, confirmed, approved, on its way, done,
+              gone through, actioned, completed, taken care of]
+payment_nouns: [payment, payments, funds, transfer, transfers, invoice, invoices, amount, balance,
+                deposit, money, fee, fees, charge, charges, bill, bills, refund, refunds, credit,
+                rent, premium]
+# a bare number after one of these is an amount ("balance 4500"); after the others only with
+# "of" or "for" ("invoice for 4500"), since "invoice 2231" is an invoice's number
+amount_nouns: [balance, amount, deposit, fee, fees, charge, charges, rent, premium, total]
+currency_symbols: ["$", "€", "£"]
+currency_words: [pounds, pound, quid, bucks, dollars, dollar, euros, euro, yen, cents, kr, "zł", zl,
+                 pence, rupees, francs]
+# matched in uppercase only (AX5)
+currency_codes: [EUR, USD, GBP, SEK, NOK, DKK, CHF, CAD, AUD, NZD, JPY, PLN, ZAR, INR, Rs, R, Fr]
+number_words: [thousand, hundred, million]
+
+# bank (AR1): words whose sentence makes any 4-digit group a bank number
+bank_words: [account, accounts, acct, a/c, sort code, routing, aba, iban, bic, swift, bsb, bank,
+             beneficiary, payee, details, ending]
+digit_words: {zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6",
+              seven: "7", eight: "8", nine: "9"}
+digit_connectors: [then, and]
+
+# price
+price_words: [price, prices, priced, quote, quotes, quoted, quotation, discount, vat, per hour,
+              per day, per week, per month, per unit, per item, per person, per night]
+
+# contact
+street_suffixes: [street, st, road, rd, lane, ln, avenue, ave, drive, dr, way, close, place,
+                  square, boulevard, blvd, court, crescent, terrace]
+
+# credential
+credential_nouns: [password, passcode, pin, one-time code, verification code, security code, code,
+                   login, otp]
+not_credentials: [sort code, post code, postcode, zip code, area code, country code, project code,
+                  discount code, promo code, product code, tax code, dress code]
+credential_sends: [send, share, give, tell, forward, email, text, read out, confirm]
+negations: [don't, do not, never, please don't, won't]
+
+# injection
+injection: [ignore previous instructions, ignore all previous instructions, ignore the above,
+            disregard previous instructions, note to the reviewer, note to the grader,
+            note to the assistant, note to the judge, note to the model, rate this draft,
+            rate this reply, system prompt, as an ai]
+
+# links
+link_tlds: [com, net, org, io, co, uk, de, fr, nl, es, it, eu, info, biz, us, ca, au, example,
+            test, invalid, localhost, app, dev, ai, me, tv, xyz, online, site, shop, gov, edu]
+
+# sentences: a full stop after these doesn't end a sentence
+abbreviations: [mr, mrs, ms, dr, prof, dept, no, st, sr, jr, co, inc, ltd, vs, etc, e.g, i.e,
+                a.m, p.m, fr, approx, ref, fig, vol, jan, feb, mar, apr, jun, jul, aug, sep,
+                sept, oct, nov, dec]
+
+# language: common words; the draft refuses when another language's count beats English's
+stop_words:
+  en: [the, and, to, of, a, in, is, it, you, for, we, that, on, with, this, be, are, your, have, i,
+       thanks, thank, will, our, can, me, at, as, please, would, could, let, know]
+  es: [el, la, los, las, de, que, y, en, un, una, por, su, lo, le, con, para, es, gracias, se, del]
+  fr: [le, la, les, de, des, et, un, une, est, pour, que, en, du, votre, merci, nous, vous, pas]
+  de: [der, die, das, und, ist, nicht, ein, eine, zu, den, mit, sie, wir, ihr, danke, für, bitte]
+  it: [il, la, di, che, e, un, una, per, non, sono, grazie, della, del, con, vostro]
+  pt: [o, a, os, as, de, que, e, um, uma, para, com, não, obrigado, por, seu, sua]
+  nl: [de, het, een, en, van, ik, je, dat, niet, met, voor, bedankt, wij, u, uw]

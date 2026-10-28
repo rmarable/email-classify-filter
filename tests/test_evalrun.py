@@ -372,6 +372,19 @@ def test_a_cards_expected_facts_reach_the_hide_path(
         "starter-control"]  # fmt: skip
 
 
+def test_a_rescore_records_the_facts_version_it_used(
+    root: Path, tmp_path: Path, clock: FakeClock
+) -> None:
+    """M8 plan Step 3 (found 2026-10-27): the rescore recomputes every card's facts with today's
+    code, so it records today's `facts_version`, not the old run's (version 1 or none)."""
+    path = _answered(root, tmp_path, BEC)
+    old = load_result(path)
+    old = old.model_copy(update={"summary": dict(old.summary or {}) | {"facts_version": 1}})
+    path = evalrun.write_result(tmp_path, old, "answered-v1.json")
+    out = evalrun.rescore_through_policy(root, path, clock)
+    assert out["summary"]["facts_version"] == ruletest.FACTS_VERSION
+
+
 def test_the_fraud_figures_catch_a_hidden_fraud_card(
     root: Path, tmp_path: Path, clock: FakeClock
 ) -> None:

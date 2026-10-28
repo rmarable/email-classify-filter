@@ -1797,11 +1797,15 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
     summary = _rescored_summary(before, out, schema=schema)
     for key in ("model", "roles", "backend", "redact", "classifier_digest", "actor_digest",
                 "classifier_latency_s", "power", "schema_digest", "prompt_digest",
-                "excerpt_prep", "facts_version", "environment", "claude"):  # fmt: skip
+                "excerpt_prep", "environment", "claude"):  # fmt: skip
         if key in before:
             summary[key] = before[key]
     _spawns_again(summary, out)
-    summary["keywords_digest"] = triggers.keywords_digest()
+    # recomputed now, so today's: the keywords and the facts (M8 plan Step 3)
+    summary |= {
+        "keywords_digest": triggers.keywords_digest(),
+        "facts_version": ruletest.FACTS_VERSION,
+    }
     summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
     summary["scoring"] = "policy"
     summary["label_map_unlabelled"] = map_effect(cases)

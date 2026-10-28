@@ -492,3 +492,36 @@ def test_stats_stages_on_many_transitions(tmp_path: Path) -> None:
     unit = _unit()
     took, r = _best(lambda: timings.stages(conn, t0), 15 * unit)
     assert r["new_mail"]["items"] == 25_000 and took < 15 * unit
+
+
+DRAFT_SHAPES = {
+    "by-by-by": "by " * 1333,
+    "dollar-signs": "$ $ $ 1 " * 500,
+    "iban-prefixes": "IE29 AIBK " * 400,
+    "digits": "1" * 4000,
+    "fridays": "Friday, " * 500,
+}
+
+
+@pytest.mark.parametrize("shape", sorted(DRAFT_SHAPES))
+def test_the_draft_checker_on_a_crafted_draft(shape: str) -> None:
+    """M8 plan §1 (P24): a crafted 4,000-character draft checks in under 0.05 unit."""
+    from ecf_server import draftcheck  # noqa: PLC0415
+
+    draft = DRAFT_SHAPES[shape][:4000]
+    unit = _unit()
+    draftcheck.check("Thanks.", "", (), ())  # lists and patterns built outside the timing
+    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.05 * unit)
+    assert took < 0.05 * unit, (shape, took, unit)
+
+
+def test_the_draft_checker_on_a_plain_draft() -> None:
+    """M8 plan §1 (P24): an ordinary reply checks in under 0.01 unit."""
+    from ecf_server import draftcheck  # noqa: PLC0415
+
+    draft = ("Thanks for your email, Pat. I'll look into the order and get back to you. "
+             "Could you tell me which box was damaged?\n\nBest,\n[Your Name]")  # fmt: skip
+    unit = _unit()
+    draftcheck.check("Thanks.", "", (), ())
+    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.01 * unit)
+    assert took < 0.01 * unit, (took, unit)
