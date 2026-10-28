@@ -1981,9 +1981,9 @@ def eval_compare(
     typer.echo(f"B non-inferior (lower bound > -{margin:g} points):"
                f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
-        ends = compare_endpoints(ra, rb)
+        ends = compare_endpoints(ra, rb, ids)
         how = ("Holm over the two" if "category" in ends else
-               "end-to-end only: category is deferred by the label policy, OD-563")  # fmt: skip
+               "end-to-end only: every case defers category, OD-563")  # fmt: skip
         typer.echo(
             f"confirmatory (exact McNemar, {how}): "
             + "; ".join(
@@ -1994,7 +1994,7 @@ def eval_compare(
         typer.echo(f"{name}  {_state_line(run)}")
         for line in _run_lines(run):
             typer.echo(f"{name}{line}")
-    fields = compare_fields(ra, rb)
+    fields = compare_fields(ra, rb, ids)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
         for f in fields:
