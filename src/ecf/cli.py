@@ -510,16 +510,37 @@ def watch_command() -> None:
 @service_app.command("regrant")
 def service_regrant() -> None:
     """After a Python change: let ecf read its Keychain items again (macOS; choose Always Allow
-    at each dialog). Stops and restarts the service."""
+    at each dialog). Stops and restarts the service when launchd runs it; a service started
+    another way (`ecf-server local` in a terminal) you stop and start yourself."""
     paths = _paths()
     m = watch.marker(paths)
     if m and m["alive"]:
         typer.echo(f"`ecf watch` is running the service (pid {m['pid']}); stop it first", err=True)
         raise typer.Exit(3)
+    manager = manager_for(paths)
     if sys.platform == "darwin":
-        _stopping_on_purpose()
-    code = service_unit.regrant(paths, manager_for(paths), echo=typer.echo)
-    raise typer.Exit(code)
+        # refused before the stop signal: it would leave a running service's dead-man's switch
+        # off (SPEC §21.2, 2026-10-28)
+        running = manager.status().running
+        if not running and (pid := _service_pid(paths)) is not None:
+            typer.echo(f"launchd isn't running the service (pid {pid}); stop it (Ctrl-C in its"
+                       f" terminal, or `kill {pid}`), run this again, then start it again from"
+                       f" this ecf's environment ({Path(sys.executable).parent})",
+                       err=True)  # fmt: skip
+            raise typer.Exit(3)
+        if running:
+            _stopping_on_purpose()
+    raise typer.Exit(service_unit.regrant(paths, manager, echo=typer.echo))
+
+
+def _service_pid(paths: Paths) -> int | None:
+    """The running service's pid, from the service itself; None when it doesn't answer or the
+    answer can't be read (the re-grant then meets the service's lock and refuses)."""
+    try:
+        with LocalClient(paths) as c:
+            return int(c.get("/v1/status")["pid"])
+    except (EcfError, KeyError, TypeError, ValueError):
+        return None
 
 
 @service_app.command("stop")

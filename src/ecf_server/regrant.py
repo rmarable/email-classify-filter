@@ -106,7 +106,7 @@ def main(install: str) -> int:
         lock = acquire_lock(paths)
     except AlreadyRunningError:
         sys.stderr.write("ecf-server: the service is running; stop it first (`ecf service"
-                         " regrant` does this for you)\n")  # fmt: skip
+                         " regrant` stops it for you only when launchd runs it)\n")  # fmt: skip
         return 3
     try:
         conn = db.connect(paths.db)
