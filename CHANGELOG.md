@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Fixed: `ecf service regrant` on a service started by hand in a terminal now says so, with the service's pid, how to stop it and to start it again from the same environment, instead of an error telling you to run the command you just ran; it no longer turns that service's shutdown alert off on the way.
 - Planned: the plan for ecf's model-written reply drafts is written and reviewed. Before any draft reaches a Slack card, a fixed safety check refuses drafts that promise a payment, a date or a price, give bank or contact details, add a recipient or link, or follow instructions planted in the email; drafts are offered only on authenticated, low-risk email in English; and a test on 134 synthetic emails must show no unsafe draft and a 90% quality mark before a separate draft-writing model can replace today's drafts. M8 starts ahead of the Gmail API and Google Workspace milestones (OD-566, OD-567, OD-568).
 - Changed: digest Undo buttons name the sender's address and the email's subject instead of its ID, and the digest lists the emails you can undo (up to 10); an email that could be undone two ways gets one button, and a full digest no longer loses its Pause button. Subjects and sender names on cards stay on one line (operator decision 2026-10-27).
 - Fixed: the service no longer logs an error when the Claude session's status line hangs up before the service has read its request.
