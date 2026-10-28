@@ -144,6 +144,14 @@ PRIVACY_ENV = {
     "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "180000",
     "DISABLE_AUTOUPDATER": "1",  # OD-276: updates come from normal use, not ecf's sessions
 }
+# Sessions only: Haiku 5.5 bills a prompt over 100,000 tokens at 5x (pricing page, read
+# 2026-10-27), and Claude Code compacts it only near its 1M window, so the main session would
+# pay that on most requests of a long run. Compact near 80k instead (the window's floor is
+# 100,000; code.claude.com env-vars and model-config, read 2026-10-27; OD-564).
+SESSION_ENV = {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
+}
 
 
 LOGS_INTERVAL_MS = "1000"  # as in the 2026-10-02 test; the model check waits about 2 s
@@ -393,6 +401,7 @@ def base_env(lay: Layout) -> dict[str, str]:
 def session_env(lay: Layout, token: str, agent_token: str,
                 telemetry: dict[str, str]) -> dict[str, str]:  # fmt: skip
     env = base_env(lay)
+    env.update(SESSION_ENV)
     env.update(telemetry)
     env["ECF_PROFILE_TOKEN"] = token
     env["ECF_AGENT_TOKEN"] = agent_token  # the agent servers inherit it (OD-307)
