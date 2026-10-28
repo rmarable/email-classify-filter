@@ -152,6 +152,29 @@ def source(row: dict[str, Any]) -> str | None:
     return MODELS if c.get("by") == MODELS else "operator"
 
 
+def yours(row: dict[str, Any], fields: set[str], source_: str | None) -> set[str]:
+    """Which of a confirmed case's `fields` are the operator's (OD-547 J6, J13; draft 21): on a
+    judged row only those settled; an older row the judges confirmed (`source_` models), none;
+    any other row, all of them."""
+    if judged(row):
+        return fields & set(settled(row))
+    return set() if source_ == MODELS else set(fields)
+
+
+def set_version(root: Path) -> str:
+    """The set's version: a hash of its labels.jsonl (confirmations included), and of its
+    fixed_labels.jsonl when there is one (S2; without one the hash is labels.jsonl's alone, as
+    before). The one copy: the service's runs and gate and the client's grades and compare all
+    use it (J12 Phase R P3)."""
+    from ecf.eval import fixed_labels  # noqa: PLC0415 - fixed_labels imports this module
+
+    h = hashlib.sha256((root / "labels.jsonl").read_bytes())
+    fixed = root / fixed_labels.FILE
+    if fixed.is_file():
+        h.update(b"\0" + fixed.read_bytes())
+    return h.hexdigest()[:16]
+
+
 def is_confirmed(row: dict[str, Any], *, models_ok: bool = False) -> bool:
     c: dict[str, Any] = row.get("confirmed") or {}
     if (judged(row) or c.get("by") == MODELS) and not models_ok:
