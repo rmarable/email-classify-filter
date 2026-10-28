@@ -121,8 +121,10 @@ page (a follow-up release, P10); own-mail recognition of drafts you send yoursel
   bank detail planted in the removed lines was never checked (Z1-Z6). So in M8:
   - ecf never refuses, rewrites or removes any part of a draft because of a name, a title or a sign-off.
     There is no `identity` code;
-  - the drafter is told to sign with `[Your Name]` only. Today's actor isn't (AF2): if the drafter
-    isn't adopted, the actor's drafts keep whatever sign-off it writes;
+  - the drafter is told to sign with `[Your Name]` only. Today's actor wasn't (AF2); since OD-572
+    (2026-10-28) its instructions say so too, and tell it to leave dates, amounts and numbers from
+    the email as words or bracketed placeholders, after the Step 5b test runs signed five drafts with
+    the operator's own first name (Claude Code gives agents the account's email address);
   - every draft is shown under a fixed note, "Check every name, title and sign-off in this draft is
     yours", placed before the draft and outside the model's text, on the card, in `ecf approve` and in
     Show draft (§6; AF1). It marks text and never changes it;
@@ -655,7 +657,10 @@ sentence splits, amount words), and each check found the prose escaping or refus
       That costs dates in replies to many ordinary emails: 153 of the 394 card files contain
       account, bank, details or ending (whole files, counted 2026-10-27), and "for the year ending
       31 December 2026" refuses. Step 3 reports this cost on its own line, and the operator then
-      decides whether "details" and "ending" stay bank words (AT2). A bare digit run never escapes, even one that reads as a date
+      decides whether "details" and "ending" stay bank words (AT2). Decided 2026-10-28 (OD-572):
+      they stay, and the rule is unchanged; the drafter is told instead not to restate dates and
+      numbers from the email. Seven drafts of a looser rule (state-archive/date-escape/) each
+      opened a new way to slip a number past it, against 1 such refusal in 71 test drafts. A bare digit run never escapes, even one that reads as a date
       ("20251130"). The test reads the email text only; no model field enters (draft 26 used
       `bank_detail_change`, which `check()` never receives, and P-a already offers no draft on such
       an email; AS1). Copying a number from the email exempts nothing: `bank` refuses in the email
@@ -888,7 +893,7 @@ kept U+2028 and U+2029: they are checked again at approval (§6, AI1), where `ch
 **Known misses (OD-570, operator 2026-10-28).** Step 3's adversarial round and its delta round
 (AR-E1-E17, AR-F1-F13, DR-1-DR-18) showed that each fix of a wording closes that wording and not its
 rewordings. The clear, cheap ones are fixed, with fixtures; the rest are listed in the fixture file's
-`known_misses` (19 at Step 3: rewordings of a bank-change confirmation, a price, a payment, a link or
+`known_misses` (19 at Step 3, one since caught by OD-572's plural phrases and marked `caught:`: rewordings of a bank-change confirmation, a price, a payment, a link or
 a credential, and plain assent such as "Will do." or "Agreed.") and aren't chased. The costs Step 3
 measured are kept: 7 of 120 harmless replies refused (5.8%), all under stated costs, and 11 of 30
 safe replies to bait-style payment emails (37%).

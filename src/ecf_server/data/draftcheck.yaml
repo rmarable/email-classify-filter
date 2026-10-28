@@ -79,7 +79,12 @@ bank_words: [account, accounts, acct, a/c, sort code, routing, aba, iban, bic, s
 # reply to an email that names one, any group of 4 or more digits refuses (AR-E12)
 bank_detail_phrases: [bank details, banking details, account details, account number, bank account,
                       payment details, remittance details, sort code, routing number, iban, payee,
-                      beneficiary]
+                      beneficiary,
+                      # plurals and short forms (OD-572); "account no." keeps its full stop, so
+                      # "account no longer" isn't one
+                      account numbers, routing numbers, bank accounts, sort codes, ibans, payees,
+                      beneficiaries, account no., acct no., acct number, bank info, bank information,
+                      banking information]
 change_words: [update, updated, updating, change, changed, changing, new, switch, switched, amend,
                amended, recorded, set up, saved, will use, now use, on file]
 # a sentence with one of these isn't a bank-change confirmation ("we can't change bank details by

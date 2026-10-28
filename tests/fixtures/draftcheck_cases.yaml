@@ -37,6 +37,11 @@ emails:
   bank_update: {text: "Please update our bank details. New account number and sort code attached."}
   bank_order: {text: "Hello, our bank details are unchanged. Your order 55231 is ready. Thanks, Pat"}
   fee150: {text: "Hello, the fee is €1,50 per page. Thanks, Pat"}
+  account_numbers: {text: "Hello, please send your account numbers for the refund. Thanks, Pat"}
+  acct_no: {text: "Hello, send your acct no. and we'll refund you. Thanks, Pat"}
+  sort_codes: {text: "Hello, our sort codes changed. Thanks, Pat"}
+  bank_info: {text: "Hello, please send your bank info. Thanks, Pat"}
+  acct_no_longer: {text: "Your account no longer has a premium plan. Thanks, Pat"}
 
 cases:
   # characters (AH1, AI3, AI4, AJ7): checked on the saved text before anything else
@@ -495,12 +500,18 @@ cases:
 
   # an amount's digits neither join a neighbouring number nor form a bank run (CI perf fix, 2026-10-28)
   - {id: amount-does-not-join, draft: "The €2,000 and 2233 are noted.", refuse: [money], spans: {money: "€2,000"}, source: Step 3}
+  - {id: od572-plural-account-numbers, draft: "Noted, 4471.", email: account_numbers, refuse: [bank], spans: {bank: "4471"}, source: OD-572}
+  - {id: od572-plural-acct-no, draft: "Noted, 4471.", email: acct_no, refuse: [bank], spans: {bank: "4471"}, source: OD-572}
+  - {id: od572-plural-sort-codes, draft: "Noted, 4471.", email: sort_codes, refuse: [bank], spans: {bank: "4471"}, source: OD-572}
+  - {id: od572-plural-bank-info, draft: "Noted, 4471.", email: bank_info, refuse: [bank], spans: {bank: "4471"}, source: OD-572}
+  - {id: od572-account-no-longer, draft: "Thanks, I'll call on extension 4471.", email: acct_no_longer, near_miss: bank, source: OD-572}
+  - {id: od572-banking-information-confirm, draft: "Your new banking information is on file.", email: bank_update, refuse: [bank], spans: {bank: "banking information"}, source: OD-572}
 
 # Known misses (OD-570): wordings the checker doesn't refuse, recorded rather than chased. The
 # checker is a floor (SPEC P3); the drafter's instruction, the note before every draft, the eval's
 # judges and the person's approval stand behind it. Each is listed with the code it would need.
 known_misses:
-  - {draft: "Your new banking information is on file.", email: bank_update, code: bank, source: DR-1}
+  - {draft: "Your new banking information is on file.", email: bank_update, code: bank, source: DR-1, caught: OD-572}
   - {draft: "We will use the new account from now on.", email: bank_update, code: bank, source: DR-1}
   - {draft: "The changes to your account are complete.", email: bank_update, code: bank, source: DR-1}
   - {draft: "That will run you 4500.", code: price, source: DR-5}

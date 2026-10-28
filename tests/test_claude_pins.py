@@ -196,6 +196,18 @@ def test_an_override_drops_a_live_claude_address_to_assist(
     assert conn.execute("SELECT stage FROM addresses").fetchone()[0] == "assist"
 
 
+def test_the_actor_drafts_with_placeholders_and_no_name() -> None:
+    """OD-572: a draft names no date, amount or number from the email (the draft checker refuses
+    most of them) and signs only as [Your Name] (M8 plan AE1); the person fills both in."""
+    from importlib import resources  # noqa: PLC0415
+
+    text = " ".join(resources.files("ecf.data").joinpath("plugin", "agents", "actor.md")
+                    .read_text(encoding="utf-8").split())  # fmt: skip
+    assert "Don't restate dates, times, amounts, or account, card or reference numbers" in text
+    assert "such as [time] or [amount]" in text
+    assert "End with [Your Name]; never sign with a name." in text
+
+
 def test_a_change_to_the_actors_instructions_drops_a_live_address_to_assist(
     conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
