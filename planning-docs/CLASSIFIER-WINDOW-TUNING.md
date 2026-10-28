@@ -1,5 +1,6 @@
 # Classifier window tuning (before M8)
 
+- **Shipped (2026-10-28 audit):** steps 2 to 8 done; 4,000 adopted and released in v3.1.0 (OD-558). Still open: step 1's business-mailbox count (SPEC §21.1). Windows above 4,000 are Later.
 - **Status:** draft 10 (2026-10-26; dates are local, US Eastern). Step 1 done (OD-553, f7ab110;
   personal-mailbox count below); the business-mailbox count is not done. Step 2 built (OD-555,
   OD-556; main 3bab1b6). Step 3 (pilot) done: the window matters (below). Step 4 built: the

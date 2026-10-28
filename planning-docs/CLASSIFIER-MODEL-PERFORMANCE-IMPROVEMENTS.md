@@ -1,5 +1,6 @@
 # Classifier model performance improvements (v2.1.0, v2.2.0)
 
+- **Shipped (2026-10-28 audit):** Stage 1 shipped in v2.1.0 (OD-483 to OD-486). Stage 2 (extensions on in v2.2.0) never shipped: the S4 user layer replaced it (OD-502 supersedes OD-478 and OD-481), and that is off. The status below is the last draft's and is out of date.
 - **Status:** draft 3 (2026-10-09). Draft 1 approved by the operator in session; Phase R (three
   Fable reviewers) gave 23 findings, P1-P23, all accepted as recommended by the operator
   2026-10-09 (`state-archive/classifier-plan/review-findings.md`, local). A second-round review of
