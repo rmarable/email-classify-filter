@@ -246,6 +246,21 @@ real drafts have earned a set 👍 rate over a set period. M8's plan sets both t
 - Open: a draft edited in Drafts can't be sent from the card, because the grant covers the text you saw
   (recommended, not decided).
 - Sending from a phone: a phone-safe step-up belongs to M3 (remote access), not M9.
+- **Tone setting** (moved from Later, operator decision 2026-10-28, OD-575): a tone you choose for
+  drafts, explored at M9's start. To settle then:
+  - which prompt it changes: the drafter's if M8 adopts the drafter, else `actor.md` (moves the actor
+    prompt digest and gate key, OD-523);
+  - measuring it: `tone` is report-only in M8's judges; M9 needs it primary and calibrated, and each
+    value re-checked on the bait and injection cards (commits, invents_facts);
+  - overlap with Regenerate's fixed hints, if the drafter is adopted;
+  - demand: M8's 👎 "wrong tone" counts on real drafts.
+
+  Settings to explore: formality, warmth, length (brief / normal / detailed; M8's judges already record
+  `length`); directness only if the 👎 reasons show demand; a default per address or sender type;
+  sign-off, greeting and exclamation/emoji style as template rules, not tone. Not offered: apologetic or
+  conciliatory (reads as admitting fault, implies commitments), firm or urgent (pushes deadlines and
+  demands), free-text tone instructions (injection and privacy; would need its own OD). Each setting is
+  tested alone at its extremes, not every combination.
 
 ## Later
 On SPEC §1.2's Later list (OD-560), unless noted:
@@ -257,7 +272,6 @@ On SPEC §1.2's Later list (OD-560), unless noted:
 
   Anything that puts past mail or draft text into new requests needs an OD (privacy, injection
   persistence), and every change goes through the draft-quality eval and Phase R.
-- **A tone setting you choose** (formality, warmth) for drafts.
 - **The actor's window beyond 4,000** (not on SPEC's list; window plan only): see the window plan's Later
   section (`CLASSIFIER-WINDOW-TUNING.md`).
 - **A claude.ai dashboard for the draft figures:** probably never; perhaps the Claude app only; to be
