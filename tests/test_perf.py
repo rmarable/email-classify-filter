@@ -492,3 +492,47 @@ def test_stats_stages_on_many_transitions(tmp_path: Path) -> None:
     unit = _unit()
     took, r = _best(lambda: timings.stages(conn, t0), 15 * unit)
     assert r["new_mail"]["items"] == 25_000 and took < 15 * unit
+
+
+DRAFT_SHAPES = {
+    "by-by-by": "by " * 1333,
+    "dollar-signs": "$ $ $ 1 " * 500,
+    "iban-prefixes": "IE29 AIBK " * 400,
+    "digits": "1" * 4000,
+    "fridays": "Friday, " * 500,
+    # the adversarial round's slow shapes (AR-F1, AR-F9)
+    "hyphen-run-domain": "x-" * 1999 + "x.com",
+    "dotted-run": "a." * 2000,
+    "plus-run": "a+" * 2000,
+    "dot-hyphen-run": "a.b-" * 1000,
+    "www-run": "www." * 1000,
+    "clock-times": "10:30 " * 666,
+    "spaced-thousands": "1 000 " * 666,
+    "spelled-digits": "four " * 800,
+    "amount-run": "\u00a31" * 2000,  # DR-14
+}
+
+
+@pytest.mark.parametrize("shape", sorted(DRAFT_SHAPES))
+def test_the_draft_checker_on_a_crafted_draft(shape: str) -> None:
+    """M8 plan §1 (P24, OD-570): a crafted 4,000-character draft checks in under 0.07 unit (the
+    plan's 0.05 raised by the operator, 2026-10-28: digit-dense shapes measured 0.063)."""
+    from ecf_server import draftcheck  # noqa: PLC0415
+
+    draft = DRAFT_SHAPES[shape][:4000]
+    unit = _unit()
+    draftcheck.check("Thanks.", "", (), ())  # lists and patterns built outside the timing
+    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.07 * unit)
+    assert took < 0.07 * unit, (shape, took, unit)
+
+
+def test_the_draft_checker_on_a_plain_draft() -> None:
+    """M8 plan §1 (P24): an ordinary reply checks in under 0.01 unit."""
+    from ecf_server import draftcheck  # noqa: PLC0415
+
+    draft = ("Thanks for your email, Pat. I'll look into the order and get back to you. "
+             "Could you tell me which box was damaged?\n\nBest,\n[Your Name]")  # fmt: skip
+    unit = _unit()
+    draftcheck.check("Thanks.", "", (), ())
+    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.01 * unit)
+    assert took < 0.01 * unit, (took, unit)

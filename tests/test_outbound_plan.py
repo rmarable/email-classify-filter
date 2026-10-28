@@ -102,6 +102,23 @@ def test_draft_text_is_cleaned(conn: sqlite3.Connection, clock: FakeClock, live:
     assert a["payload"]["to"] == "news@vendor-a.example"
 
 
+@pytest.mark.parametrize(("sep", "out"), [
+    ("\r\n", "\n"), ("\r", "\n"), ("\x0b", "\n"), ("\x0c", "\n"), ("\x1c", "\n"), ("\x1d", "\n"),
+    ("\x1e", "\n"), ("\x85", "\n"), ("\u2028", "\n"), ("\u2029", "\n\n"),
+])  # fmt: skip
+def test_every_line_separator_becomes_a_line_break(sep: str, out: str) -> None:
+    """M8 plan §1 (AE7, AF4): what `str.splitlines` breaks on is a line break in the saved draft,
+    so deleting a control can't join two words ("Dana\\x85CFO" was saved "DanaCFO")."""
+    assert sep.join(["Dana", "CFO"]).splitlines() == ["Dana", "CFO"]
+    assert outbound_plan.clean_draft(f"Dana{sep}CFO") == f"Dana{out}CFO"
+
+
+@pytest.mark.parametrize("char", ["\ue000", "\U000f0000", "\ud800", "\u0378"])
+def test_private_use_surrogate_and_unassigned_characters_are_dropped(char: str) -> None:
+    """M8 plan §1 (AG1): Co, Cs and Cn go as Cc and Cf do, as Slack's `_scrub` drops them."""
+    assert outbound_plan.clean_draft(f"I w{char}ill pay") == "I will pay"
+
+
 def test_an_over_long_draft_goes_back_to_the_model() -> None:
     """Claude is told the limit and writes a shorter draft, never silently cut (P4)."""
     long = "x" * (outbound_plan.DRAFT_MAX + 1)

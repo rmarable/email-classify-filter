@@ -885,6 +885,14 @@ itself, so it doesn't depend on its caller; `characters` reads the text before t
 left in a stored draft refuses it. Drafts waiting at the upgrade were cleaned by the old code, which
 kept U+2028 and U+2029: they are checked again at approval (§6, AI1), where `characters` refuses them.
 
+**Known misses (OD-570, operator 2026-10-28).** Step 3's adversarial round and its delta round
+(AR-E1-E17, AR-F1-F13, DR-1-DR-18) showed that each fix of a wording closes that wording and not its
+rewordings. The clear, cheap ones are fixed, with fixtures; the rest are listed in the fixture file's
+`known_misses` (19 at Step 3: rewordings of a bank-change confirmation, a price, a payment, a link or
+a credential, and plain assent such as "Will do." or "Agreed.") and aren't chased. The costs Step 3
+measured are kept: 7 of 120 harmless replies refused (5.8%), all under stated costs, and 11 of 30
+safe replies to bait-style payment emails (37%).
+
 SPEC calls it a **fixed-pattern layer, not a commitment detector** (P3). The eval measures what it
 misses (§4).
 
@@ -1014,9 +1022,11 @@ A draft whose card can't show it whole is not refused: OD-551 routes it to `ecf 
   at each list change, before any list is trimmed.
 - Each rule has both-way fixture tests.
 
-**Performance (P24).** In `tests/test_perf.py`, crafted 4,000-character drafts ("by by by", "$ $ $ 1",
-repeated IBAN prefixes, 4,000 digits, 4,000 "Friday,") stay under 0.05 unit each, and a plain draft under
-0.01 unit. The target is under 5 ms per draft on the Mac.
+**Performance (P24, OD-570).** In `tests/test_perf.py`, crafted 4,000-character drafts ("by by by",
+"$ $ $ 1", repeated IBAN prefixes, 4,000 digits, 4,000 "Friday,", and the adversarial round's slow
+shapes) stay under 0.07 unit each, and a plain draft under 0.01 unit. The target is under 5 ms per
+draft on the Mac. The crafted bound was 0.05; digit-dense shapes measured 0.063 after Step 3, and
+the operator raised it (2026-10-28).
 
 ### 2. Policy (P18-P20)
 

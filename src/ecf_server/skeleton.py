@@ -69,6 +69,11 @@ def _ascii_confusables() -> tuple[tuple[str, str], ...]:
     return tuple((chr(c), v) for c, v in sorted(_table().items()) if c < 0x80)
 
 
+def ascii_confusables() -> tuple[tuple[str, str], ...]:
+    """`_ascii_confusables` for a caller that folds character by character (`draftcheck`)."""
+    return _ascii_confusables()
+
+
 def _ascii_skeleton(text: str) -> str:
     for k, v in _ascii_confusables():
         text = text.replace(k, v)
