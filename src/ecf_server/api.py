@@ -31,7 +31,7 @@ from typing import Any, cast
 import anyio.from_thread
 import httpx
 from starlette.applications import Starlette
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
@@ -243,6 +243,13 @@ def _problem(err: EcfError, request: Request) -> JSONResponse:
 Handler = Callable[[Request], Response]
 
 
+async def _on_client_gone(request: Request, _exc: Exception) -> Response:
+    """The caller hung up before its body was read (the status line's 1 s timeout): nobody reads
+    this reply, and it isn't an error. Its own handler key keeps it out of the catch-all."""
+    log.debug("api.client_gone", path=request.url.path)
+    return Response(status_code=499)
+
+
 def create_app(state: ServiceState) -> Starlette:
     def allow(*callers: Caller) -> Callable[[Handler], Handler]:
         def deco(handler: Handler) -> Handler:
@@ -383,7 +390,12 @@ def create_app(state: ServiceState) -> Starlette:
             Route("/v1/dev/clock", dev_clock, methods=["GET", "POST"]),
             Route("/v1/dev/chat/posts", dev_posts, methods=["GET", "DELETE"]),
         ],
-        exception_handlers={EcfError: on_ecf_error, 404: on_not_found, Exception: on_unexpected},
+        exception_handlers={
+            EcfError: on_ecf_error,
+            404: on_not_found,
+            ClientDisconnect: _on_client_gone,
+            Exception: on_unexpected,
+        },
     )
 
 
