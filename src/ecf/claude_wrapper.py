@@ -146,12 +146,11 @@ PRIVACY_ENV = {
 }
 # Sessions only: Haiku 5.5 bills a prompt over 100,000 tokens at 5x (pricing page, read
 # 2026-10-27), and Claude Code compacts it only near its 1M window, so the main session would
-# pay that on most requests of a long run. Compact near 80k instead (the window's floor is
-# 100,000; code.claude.com env-vars and model-config, read 2026-10-27; OD-564).
-SESSION_ENV = {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
-}
+# pay that on most requests of a long run. A 100,000 window (its floor; code.claude.com
+# env-vars and model-config, read 2026-10-27) makes it compact near 67k: Claude Code keeps a
+# 33k buffer, and CLAUDE_AUTOCOMPACT_PCT_OVERRIDE at 80 or 100 didn't move it (`/context`,
+# Claude Code 2.1.312, 2026-10-28; OD-564).
+SESSION_ENV = {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000"}
 
 
 LOGS_INTERVAL_MS = "1000"  # as in the 2026-10-02 test; the model check waits about 2 s
