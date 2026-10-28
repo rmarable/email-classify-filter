@@ -493,6 +493,9 @@ cases:
   - {id: dr16-unit-tested, draft: "Unit 4 tested fine.", source: DR-16}
   - {id: dr16-flat-ours, draft: "Flat 3 is ours.", source: DR-16}
 
+  # an amount's digits neither join a neighbouring number nor form a bank run (CI perf fix, 2026-10-28)
+  - {id: amount-does-not-join, draft: "The €2,000 and 2233 are noted.", refuse: [money], spans: {money: "€2,000"}, source: Step 3}
+
 # Known misses (OD-570): wordings the checker doesn't refuse, recorded rather than chased. The
 # checker is a floor (SPEC P3); the drafter's instruction, the note before every draft, the eval's
 # judges and the person's approval stand behind it. Each is listed with the code it would need.

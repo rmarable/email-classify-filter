@@ -534,14 +534,11 @@ def _valid_date(text: str) -> bool:
     return False
 
 
-def _inside(span: tuple[int, int], hits: Sequence[_Hit]) -> bool:
-    """Whether `span` lies inside one of `hits`, which don't overlap and are in order."""
-    k = bisect_right(hits, span[0], key=_start) - 1
+def _inside(span: tuple[int, int], hits: Sequence[_Hit], starts: Sequence[int]) -> bool:
+    """Whether `span` lies inside one of `hits`, which don't overlap and are in order; `starts`
+    are their start positions."""
+    k = bisect_right(starts, span[0]) - 1
     return k >= 0 and span[1] <= hits[k].end
-
-
-def _start(h: _Hit) -> int:
-    return h.start
 
 
 def _plausible_date(text: str) -> bool:
@@ -562,7 +559,7 @@ def _ok(y: int, m: int, d: int) -> bool:
     return True
 
 
-@dataclass
+@dataclass(slots=True)
 class _Chain:
     start: int  # in the digit view
     end: int
@@ -570,9 +567,10 @@ class _Chain:
     clock: bool
 
 
-def _chains(view: Mapped) -> list[_Chain]:
+def _chains(view: Mapped, amounts: Sequence[_Hit], amount_starts: Sequence[int]) -> list[_Chain]:
     """Digit groups joined across separators, connector words and month names (AS1, AV4); a colon
-    clock time never joins (AW4, AY3, BW-D1)."""
+    clock time never joins (AW4, AY3, BW-D1); a group inside an amount is `money`'s and neither
+    joins nor forms a run ("€1,180.00")."""
     pats = _patterns()
     clocks = [m.span() for m in pats["clock"].finditer(view.text)]
     clock_starts = [s for s, _ in clocks]
@@ -582,7 +580,9 @@ def _chains(view: Mapped) -> list[_Chain]:
         return clocks[k] if k >= 0 and pos < clocks[k][1] else None
 
     groups: list[tuple[int, int, tuple[int, int] | None]] = [
-        (m.start(), m.end(), clock_of(m.start())) for m in pats["digits"].finditer(view.text)
+        (m.start(), m.end(), clock_of(m.start()) if clocks else None)
+        for m in pats["digits"].finditer(view.text)
+        if not amounts or not _inside(view.origin(*m.span()), amounts, amount_starts)
     ]
     chains: list[_Chain] = []
     for s, e, clock in groups:
@@ -648,6 +648,7 @@ class _Draft:
     bank_sentence: list[bool]  # the sentence holds a bank word
     email: _EmailFacts
     amounts: list[_Hit]
+    amount_starts: list[int]
 
 
 def _read(text: str, email_text: str, email_links: Sequence[str], allowed: Sequence[str],
@@ -667,7 +668,7 @@ def _read(text: str, email_text: str, email_links: Sequence[str], allowed: Seque
         _hits(masked, pats["amount"], starts) if pats["amount_hint"].search(masked.text) else []
     )
     return _Draft(text, masked, words, plain, digits, starts, bank_sentence,
-                  _email_facts(email_text), amounts)  # fmt: skip
+                  _email_facts(email_text), amounts, [h.start for h in amounts])  # fmt: skip
 
 
 def _addresses_and_links(base: Mapped, text: str, email_links: Sequence[str],
@@ -800,10 +801,8 @@ def _check_bank(d: _Draft, refuse: Refuse) -> None:
     for m in pats["iban"].finditer(d.masked.text):
         if sum(ch.isdigit() for ch in m.group().translate(LOOKALIKE_DIGITS)) >= 10:
             refuse("bank", d.masked.origin(m.start(), m.end()))
-    for ch in _chains(d.digits):
-        span = d.digits.origin(ch.start, ch.end)
-        if not _inside(span, d.amounts):  # an amount is `money`'s ("€1,180.00")
-            _check_chain(d, ch, span, refuse)
+    for ch in _chains(d.digits, d.amounts, d.amount_starts):
+        _check_chain(d, ch, d.digits.origin(ch.start, ch.end), refuse)
     details = {h.sentence: h for h in reversed(_hits(d.words, pats["bank_detail"], d.starts))}
     negated = {h.sentence for h in _hits(d.words, pats["bank_negation"], d.starts)}
     for h in _hits(d.words, pats["change_word"], d.starts):  # a bank-change confirmation (AR-E1)
@@ -875,7 +874,7 @@ def _dates(d: _Draft) -> list[_Hit]:
         found += [
             h
             for h in numeric
-            if _plausible_date(h.text) and not _inside((h.start, h.end), d.amounts)
+            if _plausible_date(h.text) and not _inside((h.start, h.end), d.amounts, d.amount_starts)
         ]
         found += _hits(d.digits, pats["time"], d.starts)
     return sorted(found, key=lambda h: h.start)
@@ -1014,7 +1013,8 @@ def _check_price(d: _Draft, refuse: Refuse) -> None:
         *(
             h
             for h in _hits(digits, pats["bare_number"], starts)
-            if not _inside((h.start, h.end), amounts) and not _year_or_count(digits, h)
+            if not _inside((h.start, h.end), amounts, d.amount_starts)
+            and not _year_or_count(digits, h)
         ),
     ]
     sentences = {h.sentence for h in price} | {h.sentence + 1 for h in price}
