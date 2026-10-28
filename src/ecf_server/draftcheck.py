@@ -245,6 +245,14 @@ def _patterns() -> dict[str, re.Pattern[str]]:
         "bank_word": _phrase(L["bank_words"]),
         "bank_detail": _phrase(L["bank_detail_phrases"]),
         "change_word": _phrase(L["change_words"]),
+        "bank_negation": _phrase(L["bank_negations"]),
+        "number_label": re.compile(
+            r"(?i)\b(?:" + "|".join(map(str, L["number_labels"])) + r")\.?\s*(?:#\s*)?\Z"
+        ),
+        "request_lead": re.compile(
+            r"(?:(?:" + "|".join(map(str, L["request_lead_ins"])) + r")\b[^,\n.!?]{0,30}[,!]?\s*"
+            r"|[a-z]+,\s+)*"
+        ),
         "price_word": _phrase(L["price_words"]),
         # the word view is folded (`m` reads `rn`), so hand-written words are folded too
         "credential": re.compile(
@@ -268,11 +276,13 @@ def _patterns() -> dict[str, re.Pattern[str]]:
         "negation": _phrase(L["negations"]),
         "injection": _phrase(L["injection"]),
         "reader_injection": re.compile(
-            rf"(?i)\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:{readers})\b"
+            rf"(?i)\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:{readers})\s*[:,]"
             r"|\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above"
             r"|earlier|preceding)\s+(?:instructions|messages|rules)\b"
             r"|\bdisregard\s+(?:everything|all)\s+(?:above|before)\b"
-            rf"|(?:^|(?<=[.!?]\s))(?:{readers})\s*[,:]|\brate\s+this\s+(?:as|draft|reply|response)\b"
+            rf"|(?:^|(?<=[.!?]\s))(?:{readers})\s*[,:]\s*(?:\w+\s+){{0,3}}?"
+            r"(?:please|rate|score|mark|approve|ignore|treat|consider|this\s+(?:draft|reply|email))\b"
+            r"|\brate\s+this\s+(?:as|draft|reply|response)\b"
             r"|\bscore\s+it\s+\d+"
         ),
         "abbreviation": re.compile(
@@ -307,15 +317,15 @@ def _patterns() -> dict[str, re.Pattern[str]]:
         ),
         "clock": re.compile(r"(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])"),
         "amount": re.compile(
-            rf"(?:[{sym}]\s?{num}|\b{num}\s?(?:[{sym}]|(?:{codes})\b|(?:{words})\b)"
+            rf"(?:[{sym}]\s?{num}|\b{num}\s?(?:[{sym}]|(?:{codes})\b|(?i:{words})\b)"
             rf"|\b(?:{codes})\.?\s?{num}\b"
-            rf"|\b(?:{'|'.join(map(str, L['number_words']))})\s+(?:{words})\b"
-            rf"|\b(?:a|{spelled})\s+grand\b|\b\d+(?:[.,]\d)?k\b)"
+            rf"|(?i:\b(?:{'|'.join(map(str, L['number_words']))})\s+(?:{words})\b"
+            rf"|\b(?:a|{spelled})\s+grand\b)|\b\d+(?:[.,]\d)?k\b)"
         ),
         "amount_hint": re.compile(
             rf"\d|[{sym}]|(?i:\bgrand\b|\bthousand\b|\bhundred\b|\bmillion\b)"
         ),
-        "percent": re.compile(r"\b\d+(?:\.\d+)?\s?%"),
+        "percent": re.compile(r"(?i)\b\d+(?:\.\d+)?\s?(?:%|percent\b|per\s+cent\b)"),
         "bare_number": re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d{3,})(?![\w])"),
         # "balance 4500" is an amount; "invoice 2231" is an invoice's number, "invoice for 4500"
         # an amount
@@ -346,7 +356,7 @@ def _patterns() -> dict[str, re.Pattern[str]]:
         ),
         # a suffix that is also an ordinary word ("to close", "a park") needs a capitalised name
         "street": re.compile(
-            r"(?i:\b(?:unit|suite|apt|flat)\s+\d+[a-z]?\b|\bp\.?\s?o\.?\s+box\s+\d+"
+            r"(?i:\b(?:unit|suite|apt|flat)\s+\d+[a-z]?(?=\s*,|\s+\d)|\bp\.?\s?o\.?\s+box\s+\d+"
             r"|\b\d{1,5}\s+(?:[a-z]+\s+){1,3}(?:"
             + "|".join(map(str, L["street_suffixes"]))
             + r")\b)"
@@ -526,20 +536,12 @@ def _valid_date(text: str) -> bool:
 
 def _inside(span: tuple[int, int], hits: Sequence[_Hit]) -> bool:
     """Whether `span` lies inside one of `hits`, which don't overlap and are in order."""
-    k = _start_index(hits, span[0])
+    k = bisect_right(hits, span[0], key=_start) - 1
     return k >= 0 and span[1] <= hits[k].end
 
 
-def _start_index(hits: Sequence[_Hit], pos: int) -> int:
-    """The last hit starting at or before `pos`, or -1."""
-    lo, hi = 0, len(hits)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if hits[mid].start <= pos:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo - 1
+def _start(h: _Hit) -> int:
+    return h.start
 
 
 def _plausible_date(text: str) -> bool:
@@ -593,11 +595,12 @@ def _chains(view: Mapped) -> list[_Chain]:
             continue
         if chains and not chains[-1].clock:
             gap = view.text[chains[-1].end : s]
-            if (
+            joined = (  # a short gap is separators; a longer one a connector or a month name
                 pats["joiner"].match(gap)
-                or pats["connector"].match(gap)
-                or pats["month_word"].match(gap)
-            ):
+                if len(gap) <= 4
+                else (pats["connector"].match(gap) or pats["month_word"].match(gap))
+            )
+            if joined:
                 chains[-1].end = e
                 chains[-1].digits += e - s
                 continue
@@ -715,8 +718,11 @@ def _not_a_domain(
     host = m.group().split("/")[0].lower()
     first = host.split(".")[0]
     more_digits = re.match(r"\.\d", m.string[m.end() : m.end() + 2])  # "IE29.AIBK.9311..."
+    tld = m.group(1)
+    sentence_join = not tld.islower() and tld.lower() not in _link_tlds()  # "Thanks.See" (DR-11)
     return (
-        m.group(1).lower() in not_tlds
+        sentence_join
+        or tld.lower() in not_tlds
         or host in abbreviations
         or first in abbreviations
         or bool(more_digits)
@@ -750,6 +756,13 @@ def _ascii_only(text: str) -> str:
     return "".join(c if c.isascii() or c in allowed else " " for c in text)
 
 
+_CODE_BEFORE = re.compile(r"([A-Z][A-Za-z]{0,2})\.?\s?\d")
+_CODE_AFTER = re.compile(r"\d\s?([A-Z]{3})\b")
+_NUMBER = re.compile(r"\d[\d ,.]*")
+_DECIMAL = re.compile(r"(.*?)[.,](\d{1,2})")
+_SEPARATORS = re.compile(r"[.,]")
+
+
 def _amount_key(text: str) -> tuple[str, float]:
     """An amount as (currency, value): "EUR 2,000", "EUR 2 000" and "2,000 euros" are equal."""
     t = text.strip()
@@ -762,19 +775,19 @@ def _amount_key(text: str) -> tuple[str, float]:
                        ("quid", "gbp"), ("yen", "jpy")):  # fmt: skip
         if word in low:
             cur = name
-    code = re.match(r"([A-Z][A-Za-z]{0,2})\.?\s?\d", t) or re.search(r"\d\s?([A-Z]{3})\b", t)
+    code = _CODE_BEFORE.match(t) or _CODE_AFTER.search(t)
     if code:
         cur = code.group(1).lower()
-    num = re.search(r"\d[\d ,.]*", t)
+    num = _NUMBER.search(t)
     value = 0.0
     if num:
         n = num.group().strip().replace(" ", "").rstrip(".,")
-        decimal = re.fullmatch(r"(.*?)[.,](\d{1,2})", n)
+        decimal = _DECIMAL.fullmatch(n)
         if decimal:
             whole, frac = decimal.groups()
-            value = float(re.sub(r"[.,]", "", whole) or 0) + int(frac) / 10 ** len(frac)
+            value = float(_SEPARATORS.sub("", whole) or 0) + int(frac) / 10 ** len(frac)
         else:
-            value = float(re.sub(r"[.,]", "", n))
+            value = float(_SEPARATORS.sub("", n))
         if low.rstrip().endswith("k"):
             value *= 1000
     return cur, value
@@ -792,9 +805,16 @@ def _check_bank(d: _Draft, refuse: Refuse) -> None:
         if not _inside(span, d.amounts):  # an amount is `money`'s ("€1,180.00")
             _check_chain(d, ch, span, refuse)
     details = {h.sentence: h for h in reversed(_hits(d.words, pats["bank_detail"], d.starts))}
+    negated = {h.sentence for h in _hits(d.words, pats["bank_negation"], d.starts)}
     for h in _hits(d.words, pats["change_word"], d.starts):  # a bank-change confirmation (AR-E1)
-        if h.sentence in details:
+        if h.sentence in details and h.sentence not in negated and not _question(d, h.sentence):
             refuse("bank", (details[h.sentence].start, details[h.sentence].end))
+
+
+def _question(d: _Draft, i: int) -> bool:
+    """Whether sentence `i` of the draft is a question (DR-2)."""
+    end = d.starts[i + 1] if i + 1 < len(d.starts) else len(d.text)
+    return d.text[d.starts[i] : end].rstrip().endswith("?")
 
 
 def _check_chain(d: _Draft, ch: _Chain, span: tuple[int, int], refuse: Refuse) -> None:
@@ -809,7 +829,13 @@ def _check_chain(d: _Draft, ch: _Chain, span: tuple[int, int], refuse: Refuse) -
     if phone:
         refuse("contact", span)
     in_bank = d.bank_sentence[_sentence(d.starts, span[0])]
-    if ch.digits >= 4 and (in_bank or (d.email.bank_details and not ch.clock)):
+    reply = (  # DR-3: in a reply to an email naming bank details, not a year or a labelled number
+        d.email.bank_details
+        and not ch.clock
+        and not _YEAR.fullmatch(chain_text)
+        and not pats["number_label"].search(d.digits.text[max(0, ch.start - 12) : ch.start])
+    )
+    if ch.digits >= 4 and (in_bank or reply):
         refuse("bank", span)
         return
     if ch.clock or ch.digits < 6 or phone:
@@ -909,8 +935,9 @@ def _check_dates_and_money(d: _Draft, refuse: Refuse) -> None:
     for h in d.amounts:
         if _amount_key(h.text) not in d.email.amounts:
             refuse("money", (h.start, h.end))
-    for h in noun_numbers:
-        refuse("money", (h.start, h.end))
+            break  # one is enough: the code is already refused
+    if noun_numbers:
+        refuse("money", (noun_numbers[0].start, noun_numbers[0].end))
 
 
 def _check_money_sentence(s: dict[str, list[_Hit]], email: _EmailFacts, refuse: Refuse) -> None:
@@ -942,6 +969,8 @@ def _exempt(words: Mapped, starts: Sequence[int], i: int, commits: Sequence[_Hit
     end = _view_pos(words, starts[i + 1]) if i + 1 < len(starts) else len(words.text)
     sentence = words.text[start:end]
     lead = len(sentence) - len(sentence.lstrip(" \"'("))
+    lead_in = pats["request_lead"].match(sentence, lead)  # "Hi Pat,", "Thanks," (DR-6)
+    lead = lead_in.end() if lead_in else lead
     opener = pats["request"].match(sentence, lead)
     if opener is None or pats["not_request"].match(sentence, lead):
         return False
@@ -992,14 +1021,14 @@ def _check_price(d: _Draft, refuse: Refuse) -> None:
     for h in sorted(numbers, key=lambda x: x.start):
         before = digits.text[max(0, _view_pos(digits, h.start) - 5) : _view_pos(digits, h.start)]
         after = digits.text[_view_pos(digits, h.end) : _view_pos(digits, h.end) + 5]
-        off = h.text.rstrip().endswith("%") and _OFF.match(after)
+        off = re.search(r"(?i)(?:%|cent)\s*\Z", h.text) and _OFF.match(after)
         bid = h.sentence in commits and _FOR_END.search(before)
         if h.sentence in sentences or off or bid:
             refuse("price", (h.start, h.end))
             return
 
 
-_OFF = re.compile(r"(?i)\s*off\b")
+_OFF = re.compile(r"(?i)\s*(?:off|discount|reduction)\b")
 _FOR_END = re.compile(r"(?i)\bfor\s+\Z")
 _YEAR = re.compile(r"(?:19|20)\d\d|2100")
 _NEXT_WORD = re.compile(r"(?i)\s+([a-z]+)")
@@ -1063,6 +1092,11 @@ def _check_language(text: str, refuse: Refuse) -> None:
     if best >= 3 and best > english:
         m = re.search(r"\S+(?:\s+\S+){0,3}", text)
         refuse("language", (0, m.end() if m else len(text)))
+
+
+@cache
+def _link_tlds() -> frozenset[str]:
+    return frozenset(map(str, _lists()["link_tlds"]))
 
 
 @cache

@@ -84,6 +84,15 @@ def test_every_code_has_a_refusing_case_and_a_near_miss(code: str) -> None:
     assert any(c.get("near_miss") == code for c in active), code
 
 
+def test_known_misses_name_a_code_and_a_source() -> None:
+    """OD-570: the misses recorded rather than fixed each say which code would catch them."""
+    data = _load()
+    for miss in data["known_misses"]:
+        assert miss["code"] in REFUSE_CODES and miss["draft"] and miss.get("source"), miss
+        email = miss.get("email", "default")
+        assert email in data["emails"], miss
+
+
 CORPUS = Path(__file__).parent / "fixtures" / "draftcheck_corpus.yaml"
 
 

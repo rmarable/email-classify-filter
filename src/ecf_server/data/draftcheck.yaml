@@ -28,7 +28,10 @@ commitment_verbs: [
 contractions: ["'ll", "'d", "we're going to", "i'm going to", "they're going to", "you're going to"]
 # a question or request to the sender: the only date exemption (AQ8, AR2, AS2, AT1, AU5, AW2)
 request_openers: [please could you, please can you, please would you, could you please, could you,
-                  can you, would you, will you, please, kindly]
+                  can you, would you, will you, please, kindly, let us know, let me know]
+# skipped before a request: a greeting, "Thanks,", a name and a comma (DR-6)
+request_lead_ins: [hi, hello, hey, dear, thanks, thank you, many thanks, good morning,
+                   good afternoon, if possible, when you can, if you can]
 not_requests: [please note, please expect, would you like us to, do you want us to, will you let us]
 act_objects: [it, them, this, that, these, those, me, us]
 
@@ -46,7 +49,8 @@ relative_dates: [
 # money
 pay_verbs: [pay, pays, paid, paying, payed, transfer, transfers, transferred, transfered,
             transferring, wire, wires, wired, wiring, remit, remits, remitted, remitting, reimburse,
-            reimbursed, reimburses, reimbursing]
+            reimbursed, reimburses, reimbursing, venmo, paypal, zelle, send you a check,
+            send a check, write a check, mail a check, send you a cheque]
 # these uses of a pay verb or payment noun aren't about money (AR-F5, operator 2026-10-28)
 not_money: [pay attention, paid attention, paying attention, pay a visit, paid a visit, pay tribute,
             pay off, paid off, pays off, transfer the file, transfer the files, transfer the call,
@@ -54,7 +58,7 @@ not_money: [pay attention, paid attention, paying attention, pay a visit, paid a
 inflections: [sent, scheduled, processed, released, settled, confirmed, approved, on its way, done,
               gone through, actioned, completed, taken care of, made, initiated, cleared, covered,
               handled, in progress, gone out, went out, sorted, squared away, good to go,
-              authorised, authorized, arranged, executed, finalised, finalized]
+              authorised, authorized, arranged, executed, finalised, finalized, went through]
 payment_nouns: [payment, payments, funds, transfer, transfers, invoice, invoices, amount, balance,
                 deposit, money, fee, fees, charge, charges, bill, bills, refund, refunds, credit,
                 rent, premium, cheque, cheques, gift card, gift cards, voucher, vouchers]
@@ -77,8 +81,13 @@ bank_detail_phrases: [bank details, banking details, account details, account nu
                       payment details, remittance details, sort code, routing number, iban, payee,
                       beneficiary]
 change_words: [update, updated, updating, change, changed, changing, new, switch, switched, amend,
-               amended, noted, record, recorded, confirm, confirmed, received, set up, added, saved,
-               will use, now use]
+               amended, recorded, set up, saved, will use, now use, on file]
+# a sentence with one of these isn't a bank-change confirmation ("we can't change bank details by
+# email"), and neither is a question (DR-2)
+bank_negations: ["can't", cannot, never, "won't", "don't", do not, not, "isn't", "aren't"]
+# a number after one of these is that thing's number, not an account's (DR-3)
+number_labels: [order, orders, ref, reference, room, ticket, case, invoice, po, item, booking, no,
+                number, unit, flat, suite, version, since, in, from, until, year]
 digit_words: {zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6",
               seven: "7", eight: "8", nine: "9"}
 digit_connectors: [then, and, and then, followed by]
@@ -89,7 +98,8 @@ tens_words: {ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "1
              ninety: "9"}
 
 # price
-price_words: [price, prices, priced, quote, quotes, quoted, quotation, discount, vat, fee, fees,
+price_words: [price, prices, priced, quote, quotes, quoted, quotation, discount, vat, fee, fees, cost,
+              costs, costing, total, rate, rates, reduction, an hour, a day, a week, a month, a night,
               per hour, per day, per week, per month, per unit, per item, per person, per night]
 
 # contact
