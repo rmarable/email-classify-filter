@@ -370,6 +370,7 @@ def test_session_compacts_under_haiku_long_context_line(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
     env = cw.session_env(lay, "tok", "atok", {})
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "100000"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env  # didn't move the 33k buffer (OD-564)
     # only ecf's sessions: `claude auth` (base_env) and the `claude -p` generator (PRIVACY_ENV)
     # keep Claude Code's default
     assert not cw.SESSION_ENV.keys() & cw.base_env(lay).keys()
