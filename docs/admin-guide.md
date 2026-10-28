@@ -466,7 +466,8 @@ ecf eval run --root ~/ecf-sets/first-300 --claude   # then type /ecf-eval in `ec
 
 Run it twice. Two runs of the same models show how much the scores move by chance alone;
 `ecf eval compare <result 1> <result 2>` puts them side by side, and `ecf eval status` lists the
-result files. Then:
+result files. With two judges, add `--root ~/ecf-sets/first-300`: compare then also puts the runs
+side by side on only the answers you gave where the judges disagreed. Then:
 
 ```sh
 ecf eval report --root ~/ecf-sets/first-300 <result files> ~/ecf-sets/first-300/grades/*.json

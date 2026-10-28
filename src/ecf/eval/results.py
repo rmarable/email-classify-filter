@@ -320,12 +320,22 @@ class FieldComparison:
 
 
 def compare_fields(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None,
+                   only: Mapping[str, set[str]] | None = None,
                    ) -> list[FieldComparison]:  # fmt: skip
     """Per-field exact McNemar on the cases both ran (only those in `subset` when given),
     Holm-adjusted over the fields (SPEC §16.5, secondary). A field counts on a confirmed case
     only when both runs scored it there, and not when either run's case defers it (OD-563: per
-    case, so one deferring case leaves the field out there only). Results under different label
-    maps are refused (`check_label_maps`)."""
+    case, so one deferring case leaves the field out there only). With `only` (case id -> the
+    fields to count there), any other (case, field) pair is left out: `ecf eval compare --root`
+    on the labels you settled (J12). Results under different label maps are refused
+    (`check_label_maps`)."""
+    return holm_fields(paired_fields(a, b, subset, only))
+
+
+def paired_fields(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None,
+                  only: Mapping[str, set[str]] | None = None,
+                  ) -> dict[str, list[tuple[bool, bool]]]:  # fmt: skip
+    """Per field, the (A right, B right) pairs `compare_fields` tests."""
     check_label_maps(a, b)
     bm = {c.id: c for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
@@ -334,9 +344,15 @@ def compare_fields(a: ResultFile, b: ResultFile, subset: frozenset[str] | None =
         if other is None or (subset is not None and c.id not in subset):
             continue
         skip = {*c.deferred, *other.deferred}
+        allowed = None if only is None else only.get(c.id, set())
         for name, ok in c.fields.items():
-            if name in other.fields and name not in skip:
+            if name in other.fields and name not in skip and (allowed is None or name in allowed):
                 pairs.setdefault(name, []).append((ok, other.fields[name]))
+    return pairs
+
+
+def holm_fields(pairs: Mapping[str, list[tuple[bool, bool]]]) -> list[FieldComparison]:
+    """Each field's exact McNemar on its pairs, Holm-adjusted over the fields given."""
     raw: dict[str, tuple[int, int, int, float]] = {}
     for name, ps in pairs.items():
         a_only = sum(x and not y for x, y in ps)
