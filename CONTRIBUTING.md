@@ -35,6 +35,7 @@ uv run pytest                                   # the same, one test at a time
 uv run pytest -m "not macos"                    # what CI runs (Linux)
 uv run pytest -m imap                           # the IMAP adapter against Dovecot
 uv run pytest -n auto -m perf                   # CPU-time bounds of the trigger hot path
+uv run pytest -n auto -m "not perf" --cov --cov-report=term --cov-report=html   # coverage report, htmlcov/ (on demand; ~4x slower)
 uv run pytest tests/test_state_machine.py::test_edges_match_spec   # one test
 uv run python scripts/check_licenses.py         # dependency license allow-list
 uv run python scripts/check_licenses.py --markdown   # regenerate the table below

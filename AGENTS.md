@@ -63,6 +63,7 @@ uv run lint-imports                       # ecf must never import ecf_server
 uv run pytest -n auto                     # all tests for this OS, in parallel (pytest-xdist)
 uv run pytest tests/test_smoke.py::test_cli_version   # one test
 uv run pytest -m macos                    # macOS-only tests
+uv run pytest -n auto -m "not perf" --cov --cov-report=term --cov-report=html  # coverage, on demand only
 uv run python scripts/check_licenses.py   # dependency license allow-list (--markdown: table)
 uv run ecf-server dev                     # throwaway dev service; prints ECF_SOCKET=...
 uv run ecf eval build                     # synthetic set: hygiene scan, then .eml + labels

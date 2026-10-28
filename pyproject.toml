@@ -49,6 +49,7 @@ dev = [
     "testcontainers>=4.8",
     "aiosmtpd>=1.4.6",
     "pytest-xdist>=3.8.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -116,6 +117,22 @@ markers = [
     "imap: needs a Docker socket for the Dovecot container (Colima on macOS; OD-186)",
     "perf: CPU-time bounds on the trigger hot path, against an in-test baseline",
 ]
+
+# Coverage report, local and on demand only (CONTRIBUTING); never in CI or the merge gate.
+# patch = subprocess measures the isolate child (python -m ecf_server.isolate) too; coverage hands
+# children an absolute data-file path, so a child started in another folder still writes here.
+[tool.coverage.run]
+source = ["ecf", "ecf_server"]
+branch = true
+parallel = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.coverage.html]
+directory = "htmlcov"
 
 [tool.importlinter]
 root_packages = ["ecf", "ecf_server"]

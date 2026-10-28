@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Added: a test coverage report for contributors, run on demand with one command (in CONTRIBUTING); it shows which lines and branches no test runs. It isn't part of CI or the checks before a merge (OD-573).
 - Changed: `ecf claude` sessions load only the one built-in Claude Code tool they use, the one that starts ecf's agents. The others were already refused; now they aren't loaded at all, so the session starts with a smaller context (about 10,000 tokens smaller on a test session) and should need to compact less often. `ecf claude --model` now refuses a value that starts with `-` (OD-571).
 - Decided: two labelling rules for test emails. A request to sign or agree to something isn't medium fraud risk on its own, and a public body's routine service notice, such as a water outage, isn't a regulator claim; the classifier's own wording for the second follows at the next schema change.
 - Added: the groundwork for testing ecf's model-written reply drafts: a separate test set for drafts, `ecf eval run --claude --forced-draft`, which asks the model to write a draft wherever ecf would offer one, and a record of every test draft, why any draft is missing, and what the draft check made of it. Draft text from these synthetic test emails is kept in its own file beside the result, never in the result itself; these runs never count for the go-live gate (M8 plan, OD-568).
