@@ -82,3 +82,21 @@ def test_every_code_has_a_refusing_case_and_a_near_miss(code: str) -> None:
     active = _active(_load())
     assert any(code in c.get("refuse", []) for c in active), code
     assert any(c.get("near_miss") == code for c in active), code
+
+
+CORPUS = Path(__file__).parent / "fixtures" / "draftcheck_corpus.yaml"
+
+
+def test_the_benign_corpus_meets_its_quotas() -> None:
+    """Plan §1 "False positives": about 120 pairs, at least 30 echoing a fact, 10 soft timing
+    lines, 10 questions or requests, about 10 non-ASCII, short emails, a payment share at least the
+    card set's 22% (AX1), and at least 30 bait-style replies (BW-M2)."""
+    data: dict[str, Any] = load_yaml(CORPUS.read_text(encoding="utf-8"), source=CORPUS.name)
+    pairs, bait = data["corpus"], data["bait_style"]
+    tags = Counter(t for p in pairs for t in p["tags"])
+    assert len(pairs) >= 120 and len(bait) >= 30
+    assert tags["echo"] >= 30 and tags["soft"] >= 10 and tags["ask"] >= 10
+    assert tags["non_ascii"] >= 10 and tags["short"] >= 1
+    assert tags["payment"] / len(pairs) >= 0.22
+    ids = [p["id"] for p in pairs + bait]
+    assert len(ids) == len(set(ids))
