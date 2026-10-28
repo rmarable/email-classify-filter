@@ -292,13 +292,15 @@ def check_label_maps(a: ResultFile, b: ResultFile) -> None:
                                 " first (ecf eval rescore --synthetic)")  # fmt: skip
 
 
-def compare_endpoints(a: ResultFile, b: ResultFile) -> dict[str, tuple[float, float]]:
+def compare_endpoints(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None,
+                      ) -> dict[str, tuple[float, float]]:  # fmt: skip
     """The decision-model experiment's confirmatory tests (§7.8, R17): exact McNemar on end-to-end
-    correctness and on category, each with its Holm-adjusted p-value over the two."""
-    e2e = compare(a, b).p_value
-    if "category" in deferred(a) | deferred(b):  # unscored on deferring cases (OD-563)
+    correctness and on category, each with its Holm-adjusted p-value over the two; end to end only
+    when no case pair scores category (every case defers it, OD-563)."""
+    e2e = compare(a, b, subset).p_value
+    cat = next((f.p_value for f in compare_fields(a, b, subset) if f.field == "category"), None)
+    if cat is None:
         return {"end_to_end": (e2e, e2e)}
-    cat = next((f.p_value for f in compare_fields(a, b) if f.field == "category"), 1.0)
     adjusted = holm({"end_to_end": e2e, "category": cat})
     return {"end_to_end": (e2e, adjusted["end_to_end"]), "category": (cat, adjusted["category"])}
 
@@ -317,22 +319,40 @@ class FieldComparison:
         return self.p_holm < HOLM_ALPHA
 
 
-def compare_fields(a: ResultFile, b: ResultFile) -> list[FieldComparison]:
-    """Per-field exact McNemar on the cases both ran, Holm-adjusted over the fields (SPEC
-    §16.5, secondary). A field counts on a confirmed case only when both runs scored it there.
-    Results under different label maps are refused (`check_label_maps`); a field either side
-    defers (OD-563) is left out."""
+def compare_fields(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None,
+                   only: Mapping[str, set[str]] | None = None,
+                   ) -> list[FieldComparison]:  # fmt: skip
+    """Per-field exact McNemar on the cases both ran (only those in `subset` when given),
+    Holm-adjusted over the fields (SPEC §16.5, secondary). A field counts on a confirmed case
+    only when both runs scored it there, and not when either run's case defers it (OD-563: per
+    case, so one deferring case leaves the field out there only). With `only` (case id -> the
+    fields to count there), any other (case, field) pair is left out: `ecf eval compare --root`
+    on the labels you settled (J12). Results under different label maps are refused
+    (`check_label_maps`)."""
+    return holm_fields(paired_fields(a, b, subset, only))
+
+
+def paired_fields(a: ResultFile, b: ResultFile, subset: frozenset[str] | None = None,
+                  only: Mapping[str, set[str]] | None = None,
+                  ) -> dict[str, list[tuple[bool, bool]]]:  # fmt: skip
+    """Per field, the (A right, B right) pairs `compare_fields` tests."""
     check_label_maps(a, b)
-    skip = deferred(a) | deferred(b)
-    bm = {c.id: c.fields for c in b.cases if _counts(c)}
+    bm = {c.id: c for c in b.cases if _counts(c)}
     pairs: dict[str, list[tuple[bool, bool]]] = {}
     for c in a.cases:
         other = bm.get(c.id) if _counts(c) else None
-        if other is None:
+        if other is None or (subset is not None and c.id not in subset):
             continue
+        skip = {*c.deferred, *other.deferred}
+        allowed = None if only is None else only.get(c.id, set())
         for name, ok in c.fields.items():
-            if name in other and name not in skip:
-                pairs.setdefault(name, []).append((ok, other[name]))
+            if name in other.fields and name not in skip and (allowed is None or name in allowed):
+                pairs.setdefault(name, []).append((ok, other.fields[name]))
+    return pairs
+
+
+def holm_fields(pairs: Mapping[str, list[tuple[bool, bool]]]) -> list[FieldComparison]:
+    """Each field's exact McNemar on its pairs, Holm-adjusted over the fields given."""
     raw: dict[str, tuple[int, int, int, float]] = {}
     for name, ps in pairs.items():
         a_only = sum(x and not y for x, y in ps)
@@ -410,8 +430,8 @@ def input_warnings(a: ResultFile, b: ResultFile) -> list[str]:
                    f" {', '.join(wb) or 'all on'})")  # fmt: skip
     if (pa := deferred(a)) != (pb := deferred(b)):  # one side may predate OD-563
         out.append(f"warning: different label policy (deferred {', '.join(sorted(pa)) or 'none'}"
-                   f" vs {', '.join(sorted(pb)) or 'none'}): those fields are left out, and up to"
-                   " 2 in 300 expected rules can differ")  # fmt: skip
+                   f" vs {', '.join(sorted(pb)) or 'none'}): those fields are left out on the cases"
+                   " that defer them, and up to 2 in 300 expected rules can differ")  # fmt: skip
     for key, what in INPUT_KEYS.items():
         va, vb = _input(a, key), _input(b, key)
         if va is not None and vb is not None and va != vb:

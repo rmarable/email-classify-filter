@@ -1,5 +1,6 @@
 # Pre-classifier improvements: deterministic routes, input preparation (v2.1.0)
 
+- **Shipped (2026-10-28 audit):** every step shipped in v2.1.0, steps 4 onward included (merge `8bda36c`). The status below is the last draft's and is out of date.
 - **Status:** draft 4 (2026-10-10). Draft 3 amended step 4's route shape after held-out batches 1
   and 2 (§3a); Phase R R3 on it found R3-P1..P23, all accepted as recommended (operator 2026-10-10);
   draft 4 folds them in, `(R3-Pn)` marks their text. Draft 2 (2026-10-10): draft 1 (`31d1a22`)

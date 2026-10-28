@@ -2027,9 +2027,18 @@ def eval_compare(
             " line); needed when the two runs used different sets.",
         ),
     ] = None,
+    root: Annotated[
+        Path | None,
+        typer.Option(
+            "--root",
+            help="A generated set both results ran on: also compare them on only the labels you"
+            " settled where the judges disagreed. Both must be scored on its current labels.",
+        ),
+    ] = None,
 ) -> None:
     """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
-    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486)."""
+    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486). With
+    --root, a second block on the labels you settled only (J12)."""
     from ecf.eval.results import (  # noqa: PLC0415
         compare,
         compare_endpoints,
@@ -2042,6 +2051,10 @@ def eval_compare(
 
     ra, rb = load_result(a), load_result(b)
     ids = _subset_ids(subset) if subset is not None else None
+    if root is not None:  # refused before any output (J12 P5, P10)
+        from ecf.eval import report  # noqa: PLC0415
+
+        report.check_settled_root(root.expanduser().resolve(), ra, rb)
     c = compare(ra, rb, ids)
     if ids is not None and subset is not None:
         typer.echo(f"subset: {len(ids)} case ids from {subset.name}"
@@ -2061,9 +2074,9 @@ def eval_compare(
     typer.echo(f"B non-inferior (lower bound > -{margin:g} points):"
                f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
-        ends = compare_endpoints(ra, rb)
+        ends = compare_endpoints(ra, rb, ids)
         how = ("Holm over the two" if "category" in ends else
-               "end-to-end only: category is deferred by the label policy, OD-563")  # fmt: skip
+               "end-to-end only: every case defers category, OD-563")  # fmt: skip
         typer.echo(
             f"confirmatory (exact McNemar, {how}): "
             + "; ".join(
@@ -2074,13 +2087,18 @@ def eval_compare(
         typer.echo(f"{name}  {_state_line(run)}")
         for line in _run_lines(run):
             typer.echo(f"{name}{line}")
-    fields = compare_fields(ra, rb)
+    fields = compare_fields(ra, rb, ids)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
         for f in fields:
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+    if root is not None:
+        from ecf.eval import report  # noqa: PLC0415
+
+        for line in report.settled_lines(root.expanduser().resolve(), ra, rb, ids):
+            typer.echo(line)
 
 
 def _run_lines(run: ResultFile) -> list[str]:

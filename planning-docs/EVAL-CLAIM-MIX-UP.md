@@ -1,5 +1,7 @@
 # Eval claim-token mix-up: fix plan
 
+Shipped (2026-10-28 audit): merged in `72a3bf3` (OD-499); the "uncommitted" status below is out of date.
+
 Draft 2, 2026-10-13 (draft 1 + Phase R P1-P9, operator accepted all, P5 option a; findings in
 `state-archive/eval-claim-mix-up/review-findings.md`). Status: built, diff review fixes R1-R6 and R8 applied (uncommitted); build on `main` (S2 merged
 at `845af58`). OD-499.

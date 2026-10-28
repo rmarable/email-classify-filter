@@ -121,8 +121,10 @@ page (a follow-up release, P10); own-mail recognition of drafts you send yoursel
   bank detail planted in the removed lines was never checked (Z1-Z6). So in M8:
   - ecf never refuses, rewrites or removes any part of a draft because of a name, a title or a sign-off.
     There is no `identity` code;
-  - the drafter is told to sign with `[Your Name]` only. Today's actor isn't (AF2): if the drafter
-    isn't adopted, the actor's drafts keep whatever sign-off it writes;
+  - the drafter is told to sign with `[Your Name]` only. Today's actor wasn't (AF2); since OD-572
+    (2026-10-28) its instructions say so too, and tell it to leave dates, amounts and numbers from
+    the email as words or bracketed placeholders, after the Step 5b test runs signed five drafts with
+    the operator's own first name (Claude Code gives agents the account's email address);
   - every draft is shown under a fixed note, "Check every name, title and sign-off in this draft is
     yours", placed before the draft and outside the model's text, on the card, in `ecf approve` and in
     Show draft (§6; AF1). It marks text and never changes it;
@@ -655,7 +657,10 @@ sentence splits, amount words), and each check found the prose escaping or refus
       That costs dates in replies to many ordinary emails: 153 of the 394 card files contain
       account, bank, details or ending (whole files, counted 2026-10-27), and "for the year ending
       31 December 2026" refuses. Step 3 reports this cost on its own line, and the operator then
-      decides whether "details" and "ending" stay bank words (AT2). A bare digit run never escapes, even one that reads as a date
+      decides whether "details" and "ending" stay bank words (AT2). Decided 2026-10-28 (OD-572):
+      they stay, and the rule is unchanged; the drafter is told instead not to restate dates and
+      numbers from the email. Seven drafts of a looser rule (state-archive/date-escape/) each
+      opened a new way to slip a number past it, against 1 such refusal in 71 test drafts. A bare digit run never escapes, even one that reads as a date
       ("20251130"). The test reads the email text only; no model field enters (draft 26 used
       `bank_detail_change`, which `check()` never receives, and P-a already offers no draft on such
       an email; AS1). Copying a number from the email exempts nothing: `bank` refuses in the email
@@ -888,7 +893,7 @@ kept U+2028 and U+2029: they are checked again at approval (§6, AI1), where `ch
 **Known misses (OD-570, operator 2026-10-28).** Step 3's adversarial round and its delta round
 (AR-E1-E17, AR-F1-F13, DR-1-DR-18) showed that each fix of a wording closes that wording and not its
 rewordings. The clear, cheap ones are fixed, with fixtures; the rest are listed in the fixture file's
-`known_misses` (19 at Step 3: rewordings of a bank-change confirmation, a price, a payment, a link or
+`known_misses` (19 at Step 3, one since caught by OD-572's plural phrases and marked `caught:`: rewordings of a bank-change confirmation, a price, a payment, a link or
 a credential, and plain assent such as "Will do." or "Agreed.") and aren't chased. The costs Step 3
 measured are kept: 7 of 120 harmless replies refused (5.8%), all under stated costs, and 11 of 30
 safe replies to bait-style payment emails (37%).
@@ -1024,9 +1029,15 @@ A draft whose card can't show it whole is not refused: OD-551 routes it to `ecf 
 
 **Performance (P24, OD-570).** In `tests/test_perf.py`, crafted 4,000-character drafts ("by by by",
 "$ $ $ 1", repeated IBAN prefixes, 4,000 digits, 4,000 "Friday,", and the adversarial round's slow
-shapes) stay under 0.07 unit each, and a plain draft under 0.01 unit. The target is under 5 ms per
-draft on the Mac. The crafted bound was 0.05; digit-dense shapes measured 0.063 after Step 3, and
-the operator raised it (2026-10-28).
+shapes) stay under 0.15 unit each, and a plain draft under 0.01 unit. Measured on the Mac
+(2026-10-28): about 0.3 ms for an ordinary draft, 3.4-8.5 ms for the crafted shapes; the earlier
+"under 5 ms per draft" target was set at Phase R (P24), before the checker existed, and is
+withdrawn (operator, 2026-10-28). The crafted bound was 0.05; digit-dense shapes measured 0.063 after Step 3, and
+the operator raised it to 0.07 (2026-10-28). On the GitHub runners the heaviest shapes then
+measured 0.074-0.098 (best of three; about 0.050 on the Mac), so the test failed at random, and
+the operator raised it to 0.15, about three times the Mac's figure like the file's other bounds
+(operator decision 2026-10-28). Limit: it fails a pattern that turns quadratic on these shapes, as
+the pre-fix ones did (about 2.3 units), but not a mild slowdown under about 25 ms on the Mac.
 
 ### 2. Policy (P18-P20)
 
@@ -2021,7 +2032,7 @@ operator, AB0):**
     uses; AL6; imported inside the function, since `decide` imports `approvals`, `decide.py:40-41`; AK7, AM6). The
     language clause applies only when the item has a `language` fact; items fetched before the
     release have none, and the checker's own `language` rule covers the draft text (X10). The checker
-    is pure and under 5 ms (§1).
+    is pure and takes about 0.3 ms on an ordinary draft (§1).
   - Every approval of a draft goes through `approve`: a Slack click, `ecf approve`, an
     `awaiting_stepup` item and an expired item's re-offer; `ecf approve --pending` and `ecf approve
     --scan` refuse a draft and call `approve` for the rest (:426-451, :493-508), and Approve all never

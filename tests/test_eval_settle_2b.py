@@ -219,9 +219,18 @@ def test_deferred_fields_are_scored_apart() -> None:
     assert "label_policy" not in evalrun.summarize([old], 0)
 
 
-def _result(run_id: str, deferred: list[str] | None, cat: bool) -> ResultFile:
-    cases = [CaseResult(id=f"c{n}", correct=True, fields={"rule": True, "category": cat})
-             for n in range(3)]  # fmt: skip
+def _result(run_id: str, deferred: list[str] | None, cat: bool,
+            deferring: frozenset[int] = frozenset({0, 1, 2})) -> ResultFile:  # fmt: skip
+    """Three cases; with `deferred`, those at `deferring` defer it (category left out of their
+    fields, as `score_parts` does) and the rest score category."""
+
+    def case(n: int) -> CaseResult:
+        if deferred and n in deferring:
+            return CaseResult(id=f"c{n}", correct=True, deferred=list(deferred),
+                              fields={"rule": True})  # fmt: skip
+        return CaseResult(id=f"c{n}", correct=True, fields={"rule": True, "category": cat})
+
+    cases = [case(n) for n in range(3)]
     summary: dict[str, object] = {"label_map": evalrun.LABEL_MAP}
     if deferred:
         summary["label_policy"] = {"deferred": deferred}
@@ -237,6 +246,26 @@ def test_compare_leaves_deferred_fields_out_and_warns_on_mixed_policies() -> Non
     same = _result("c" * 32, None, True)
     assert "category" in {f.field for f in compare_fields(same, b)}
     assert not any("label policy" in w for w in input_warnings(same, b))
+
+
+def test_compare_defers_per_case_not_per_run() -> None:
+    """One deferring case leaves category out there only; the cases that score it are compared
+    (OD-563 "on those rows"; before: one such case dropped category from every case)."""
+    a = _result("a" * 32, DEFERRED, True, deferring=frozenset({0}))
+    b = _result("b" * 32, DEFERRED, False, deferring=frozenset({0}))
+    by = {f.field: f for f in compare_fields(a, b)}
+    assert (by["category"].n, by["category"].a_only) == (2, 2)
+    assert set(compare_endpoints(a, b)) == {"end_to_end", "category"}
+    other = _result("c" * 32, DEFERRED, False, deferring=frozenset({1}))  # defers another case
+    assert {f.field: f.n for f in compare_fields(a, other)}["category"] == 1  # c2 only
+
+
+def test_compare_fields_and_endpoints_take_the_subset() -> None:
+    a, b = _result("a" * 32, None, True), _result("b" * 32, None, False)
+    by = {f.field: f for f in compare_fields(a, b, frozenset({"c0", "c2"}))}
+    assert by["category"].n == 2 and by["rule"].n == 2
+    assert {f.field: f.n for f in compare_fields(a, b)}["category"] == 3
+    assert set(compare_endpoints(a, b, frozenset({"c1"}))) == {"end_to_end", "category"}
 
 
 def _refusing(base: Path, a: list[int], b: list[int]) -> tuple[Path, list[str]]:

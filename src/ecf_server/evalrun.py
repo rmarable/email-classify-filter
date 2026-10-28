@@ -286,14 +286,8 @@ def corpus_run(session: corpus_session.Session,
 
 
 def set_version(root: Path) -> str:
-    """The set's version: a hash of its labels.jsonl (confirmations included), and of its
-    fixed_labels.jsonl when there is one (S2; without one the hash is labels.jsonl's alone, as
-    before)."""
-    h = hashlib.sha256((root / "labels.jsonl").read_bytes())
-    fixed = root / fixed_labels.FILE
-    if fixed.is_file():
-        h.update(b"\0" + fixed.read_bytes())
-    return h.hexdigest()[:16]
+    """The set's version (`ecf.eval.labels.set_version`, shared with the client)."""
+    return label_file.set_version(root)
 
 
 def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
