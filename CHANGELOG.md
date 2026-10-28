@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Decided: ecf's check on model-written reply drafts is a safety floor, not a full commitment detector: wordings it misses are recorded rather than chased, and you approve every draft before it is saved. It withholds a draft that mentions a payment, a bank number, a date commitment, a price, a contact detail, a new link or recipient, or a password, and it holds back some harmless drafts too, such as a reply about an invoice (OD-570).
 - Fixed: a reply draft written with an unusual line separator (a vertical tab, form feed or Unicode line or paragraph separator) keeps it as a line break, where before the words on each side were joined; private-use, surrogate and unassigned characters are removed from drafts as other invisible characters are.
 - Fixed: `ecf eval rescore --synthetic --through-policy` records the facts version it computed with, not the original run's, so `ecf eval compare` no longer warns about a facts change that didn't happen.
 - Fixed: `ecf service regrant` on a service started by hand in a terminal now says so, with the service's pid, how to stop it and to start it again from the same environment, instead of an error telling you to run the command you just ran; it no longer turns that service's shutdown alert off on the way.
