@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import re
 from bisect import bisect_left, bisect_right
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -42,7 +43,8 @@ LINE_BREAKS = str.maketrans(
     {c: "\n" for c in "\x0b\x0c\x1c\x1d\x1e\x85\u2028"} | {"\u2029": "\n\n"}
 )
 TYPOGRAPHIC_ASCII = {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-",
-                     "\u2014": "-", "\u2026": "..."}  # fmt: skip
+                     "\u2014": "-", "\u2026": "...", "\u2022": "-", "\u00b0": " ", "\u2122": " ",
+                     "\u00a9": " ", "\u2192": "-", "\u2010": "-"}  # fmt: skip
 LOOKALIKE_DIGITS = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1", "i": "1", "S": "5",
                                   "s": "5", "B": "8", "Z": "2", "z": "2"})  # fmt: skip
 
@@ -127,6 +129,15 @@ class Mapped:
     def __init__(self, text: str, idx: Sequence[int]) -> None:
         self.text = text
         self.idx = list(idx)
+        self._tokens: frozenset[str] | None = None
+
+    @property
+    def tokens(self) -> frozenset[str]:
+        """The text's words, lowercased: a word pattern none of whose first words is here can't
+        match, so `_hits` skips it."""
+        if self._tokens is None:
+            self._tokens = frozenset(re.findall(r"[\w']+", self.text.lower()))
+        return self._tokens
 
     @classmethod
     def per_char(cls, src: Mapped, fold: dict[str, str]) -> Mapped:
@@ -148,7 +159,7 @@ class Mapped:
 
     def replaced(self, spans: Iterable[tuple[int, int, str]]) -> Mapped:
         """The text with each (start, end, new) span replaced; new characters map to the span's
-        first character."""
+        first character, the last of them to its last."""
         out: list[str] = []
         idx: list[int] = []
         pos = 0
@@ -156,7 +167,8 @@ class Mapped:
             out.append(self.text[pos:start])
             idx.extend(self.idx[pos:start])
             out.append(new)
-            idx.extend([self.idx[start]] * len(new))
+            # the last new character maps to the span's last, so origin() spans the whole
+            idx.extend([self.idx[start]] * (len(new) - 1) + [self.idx[end - 1]] * (len(new) > 0))
             pos = end
         out.append(self.text[pos:])
         idx.extend(self.idx[pos:])
@@ -167,13 +179,22 @@ class Mapped:
         return self.idx[start], self.idx[max(start, end - 1)] + 1
 
 
+# A word pattern's first words, so `_hits` can skip it on a text that holds none of them.
+_FIRST_WORDS: dict[re.Pattern[str], frozenset[str]] = {}
+
+
 def _phrase(words: Iterable[str]) -> re.Pattern[str]:
     """One regex for a list of words and phrases, at word boundaries, longest first."""
     parts: list[str] = []
+    firsts: set[str] = set()
     for w in sorted({str(x) for x in words}, key=len, reverse=True):
         folded = skeleton.keyword_fold_ci(w)
         parts.append(r"\s+".join(re.escape(p) for p in folded.split()))
-    return re.compile(r"(?<![\w'])(?:" + "|".join(parts) + r")(?![\w])")
+        firsts.add(re.findall(r"[\w']+", folded)[0] if re.search(r"[\w']", folded) else "")
+    pattern = re.compile(r"(?<![\w'])(?:" + "|".join(parts) + r")(?![\w])")
+    if "" not in firsts:
+        _FIRST_WORDS[pattern] = frozenset(firsts)
+    return pattern
 
 
 @cache
@@ -186,35 +207,74 @@ def _patterns() -> dict[str, re.Pattern[str]]:
     num = r"\d+(?:[ ,.]\d{3})*(?:[.,]\d{1,2})?k?"
     words = "|".join(re.escape(str(w)) for w in L["currency_words"])
     codes = "|".join(re.escape(str(c)) for c in L["currency_codes"])
+    spelled = "|".join([*map(str, L["digit_words"]), *map(str, L["tens_words"])])
+    readers = "|".join(map(str, L["readers"]))
     return {
-        "email": re.compile(r"(?<![\w.%+'-])[\w.%+'-]+@[\w-]+(?:\.[\w-]+)+"),
+        # every pattern here starts only where a token starts, so none rescans a long run (AR-F1)
+        "email": re.compile(r"(?<![\w.%+'-])[\w.%+'-]++@[\w-]++(?:\.[\w-]++)*"),
         "obfuscated": re.compile(
-            r"(?i)\b[\w.+-]+\s*[(\[{]\s*at\s*[)\]}]\s*[\w-]+"
-            r"(?:\s*[(\[{]\s*dot\s*[)\]}]\s*[\w-]+)+"
+            r"(?i)(?<![\w.+-])[\w.+-]++\s*+[(\[{]\s*at\s*[)\]}]\s*[\w-]++"
+            r"(?:\s*[(\[{]\s*dot\s*[)\]}]\s*[\w-]++)+"
+            r"|(?<![\w.+-])[\w.+-]++\s+at\s+[\w-]++(?:\s+dot\s+[\w-]++)+"
         ),
         "url": re.compile(r"(?i)\b(?:https?|hxxps?|ftp)://[^\s<>\"']+|\bwww\.[^\s<>\"']+"),
-        "defanged": re.compile(r"(?i)\b[\w-]+(?:\[\.\]|\(\.\)|\{\.\})[\w.\-\[\]()/]+"),
+        "defanged": re.compile(r"(?i)(?<![\w-])[\w-]++(?:\[\.\]|\(\.\)|\{\.\})[\w.\-\[\]()/]++"),
         "domain": re.compile(
-            r"(?i)(?<![\w@.\-/])(?:[a-z0-9][a-z0-9-]+\.)+(?:"
-            + "|".join(L["link_tlds"])
-            + r")(?:/[^\s<>\"']*)?(?![\w@])"
+            r"(?i)(?<![\w@.\-/])(?:[a-z0-9][a-z0-9-]{0,62}+\.){1,10}([a-z]{2,24}+)(?:/[^\s<>\"']*+)?(?![\w@])"
         ),
+        "spelled_link": re.compile(
+            r"(?i)(?<![\w-])[\w-]++\s+dot\s+(?:" + "|".join(L["link_tlds"]) + r")\b"
+            r"(?:\s+slash\s+[\w-]+)*"
+        ),
+        "spaced_link": re.compile(r"(?i)(?<![\w-])[\w-]++(?:\s+\.\s+[\w-]++)+"),
+        "comma_link": re.compile(r"(?i)(?<![\w-])[\w-]++,[a-z]{2,24}+/[\w./-]+"),
         "commit": _phrase(L["commitment_verbs"]),
+        # a suffix ("'ll") after any word, or a whole phrase ("we're going to")
         "contraction": re.compile(
-            r"(?i)\w(?:'ll|'d)\b|\b(?:we're|i'm|they're|you're)\s+going\s+to\b"
+            r"(?i)\w(?:"
+            + "|".join(re.escape(str(c)) for c in L["contractions"] if str(c)[0] == "'")
+            + r")\b|"
+            + _phrase(str(c) for c in L["contractions"] if str(c)[0] != "'").pattern
         ),
         "request": _phrase(L["request_openers"]),
         "not_request": _phrase(L["not_requests"]),
         "pay": _phrase(L["pay_verbs"]),
+        "not_money": _phrase(L["not_money"]),
         "inflection": _phrase(L["inflections"]),
         "payment_noun": _phrase(L["payment_nouns"]),
         "bank_word": _phrase(L["bank_words"]),
+        "bank_detail": _phrase(L["bank_detail_phrases"]),
+        "change_word": _phrase(L["change_words"]),
         "price_word": _phrase(L["price_words"]),
-        "credential": _phrase(L["credential_nouns"]),
-        "not_credential": _phrase(L["not_credentials"]),
+        # the word view is folded (`m` reads `rn`), so hand-written words are folded too
+        "credential": re.compile(
+            _phrase(L["credential_nouns"]).pattern
+            + r"|\b\d-digit\s+(?:"
+            + "|".join(skeleton.keyword_fold_ci(w) for w in ("code", "number", "pin"))
+            + r")\b"
+        ),
+        "weak_credential": _phrase(L["weak_credentials"]),
+        "weak_after": re.compile(
+            r"(?:"
+            + "|".join(re.escape(skeleton.keyword_fold_ci(str(w))) for w in L["weak_signs_after"])
+            + r")\b"
+        ),
+        "weak_before": re.compile(
+            r"(?:"
+            + "|".join(re.escape(skeleton.keyword_fold_ci(str(w))) for w in L["weak_signs_before"])
+            + r")\s+(?:the\s+)?\Z"
+        ),
         "credential_send": _phrase(L["credential_sends"]),
         "negation": _phrase(L["negations"]),
         "injection": _phrase(L["injection"]),
+        "reader_injection": re.compile(
+            rf"(?i)\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:{readers})\b"
+            r"|\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above"
+            r"|earlier|preceding)\s+(?:instructions|messages|rules)\b"
+            r"|\bdisregard\s+(?:everything|all)\s+(?:above|before)\b"
+            rf"|(?:^|(?<=[.!?]\s))(?:{readers})\s*[,:]|\brate\s+this\s+(?:as|draft|reply|response)\b"
+            r"|\bscore\s+it\s+\d+"
+        ),
         "abbreviation": re.compile(
             r"(?i)(?:^|[\s(])(?:"
             + "|".join(re.escape(str(a)) for a in L["abbreviations"])
@@ -230,14 +290,30 @@ def _patterns() -> dict[str, re.Pattern[str]]:
             r"(?i)\bthe\s+(?:[12]?\d|3[01])(?:st|nd|rd|th)\b|\b(?:[12]?\d|3[01])(?:st|nd|rd|th)\b"
         ),
         "relative_date": _phrase(L["relative_dates"]),
+        # deadlines that aren't a named date (AR-E10), a bare hour after "at" (AR-F11), a date
+        # agreed to ("Friday it is", "Friday works"; AR-E4, AR-E9)
+        "deadline": re.compile(
+            rf"(?i)\b(?:in|by|until|before|end\s+of|early|late|mid)\s+(?:{months})\b"
+            r"|\b(?:within|in)\s+(?:\d+|a|an|a\s+few|a\s+couple\s+of|" + spelled + r")"
+            r"\s+(?:business\s+|working\s+)?(?:days?|weeks?|months?|hours?)\b"
+        ),
+        "bare_hour": re.compile(r"(?i)\bat\s+(?:[1-9]|1[0-2])\b(?!\s*(?:%|\d|[a-z])|[:.]\d)"),
+        "date_agree": re.compile(
+            r"(?i)^\s*(?:it\s+is|works|is\s+fine|is\s+good|suits|is\s+confirmed|it\s+is\s+then)\b"
+        ),
         "numeric_date": re.compile(r"(?<![\d.])(?:\d{1,4}[/.\-]\d{1,2}(?:[/.\-]\d{2,4})?)(?![\d])"),
         "time": re.compile(
             r"(?i)\b(?:[01]?\d|2[0-3])(?:[:.][0-5]\d)?\s*(?:a\.?m\.?|p\.?m\.?)|\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b"
         ),
         "clock": re.compile(r"(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])"),
         "amount": re.compile(
-            rf"(?:[{sym}]\s?{num}|\b{num}\s?(?:{words})\b|\b(?:{codes})\.?\s?{num}\b"
-            rf"|\b(?:\w+\s+)?(?:{'|'.join(map(str, L['number_words']))})\s+(?:{words})\b)"
+            rf"(?:[{sym}]\s?{num}|\b{num}\s?(?:[{sym}]|(?:{codes})\b|(?:{words})\b)"
+            rf"|\b(?:{codes})\.?\s?{num}\b"
+            rf"|\b(?:{'|'.join(map(str, L['number_words']))})\s+(?:{words})\b"
+            rf"|\b(?:a|{spelled})\s+grand\b|\b\d+(?:[.,]\d)?k\b)"
+        ),
+        "amount_hint": re.compile(
+            rf"\d|[{sym}]|(?i:\bgrand\b|\bthousand\b|\bhundred\b|\bmillion\b)"
         ),
         "percent": re.compile(r"\b\d+(?:\.\d+)?\s?%"),
         "bare_number": re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d{3,})(?![\w])"),
@@ -256,7 +332,11 @@ def _patterns() -> dict[str, re.Pattern[str]]:
         "lookalike_date": re.compile(
             r"(?<![A-Za-z0-9])[0-9OolI]{1,4}(?:[/.][0-9OolI]{1,4}){1,2}(?![A-Za-z0-9])"
         ),
-        "digit_word": re.compile(r"(?i)\b(?:" + "|".join(L["digit_words"]) + r")\b"),
+        "number_token": re.compile(
+            r"(?i)\b(?:\d+|double|triple|oh|"
+            + "|".join([*map(str, L["digit_words"]), *map(str, L["tens_words"])])
+            + r")\b"
+        ),
         "digits": re.compile(r"\d+"),
         # a + or 0 prefix, 3-3-4 or 3-4: a doubtful number is left to `bank` (AR1, AT8)
         "phone": re.compile(
@@ -264,15 +344,22 @@ def _patterns() -> dict[str, re.Pattern[str]]:
             r"|\(?0\d{2,4}\)?[ \-.]?\d{3,4}[ \-.]?\d{3,4}"
             r"|\(?\d{3}\)?[ \-.]?\d{3}[ \-.]\d{4}|\d{3}[ \-.]\d{4})$"
         ),
+        # a suffix that is also an ordinary word ("to close", "a park") needs a capitalised name
         "street": re.compile(
-            r"\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:"
-            + "|".join(w.capitalize() for w in map(str, L["street_suffixes"]))
-            + r")\b\.?"
+            r"(?i:\b(?:unit|suite|apt|flat)\s+\d+[a-z]?\b|\bp\.?\s?o\.?\s+box\s+\d+"
+            r"|\b\d{1,5}\s+(?:[a-z]+\s+){1,3}(?:"
+            + "|".join(map(str, L["street_suffixes"]))
+            + r")\b)"
+            r"|\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:"
+            + "|".join(w.capitalize() for w in map(str, L["word_street_suffixes"]))
+            + r")\b"
         ),
         "month_word": re.compile(rf"(?i)^\s+(?:{months})\.?,?\s+$"),
         "month_before": re.compile(rf"(?i)(?:{months})\.?\s+$"),
-        "joiner": re.compile(r"^[\s\-\u2013\u2014/.,_:]{1,3}$"),
-        "connector": re.compile(r"(?i)^\s+(?:" + "|".join(L["digit_connectors"]) + r")\s+$"),
+        "joiner": re.compile(r"^[\s\-\u2013\u2014/.,_:|*+()]{1,4}$"),
+        "connector": re.compile(
+            r"(?i)^,?\s+(?:" + "|".join(map(str, L["digit_connectors"])) + r"),?\s+$"
+        ),
     }
 
 
@@ -300,9 +387,10 @@ def _digits(src: Mapped, bank_sentence: Sequence[bool], starts: Sequence[int]) -
     reps: list[tuple[int, int, str]] = []
     for m in pats["lookalike_token"].finditer(src.text):
         tok = m.group()
+        if tok.isdigit():
+            continue
         has_digit = any(ch.isdigit() for ch in tok)
-        in_bank = bank_sentence[_sentence(starts, src.idx[m.start()])]
-        if (has_digit or (in_bank and len(tok) >= 4)) and not tok.isdigit():
+        if has_digit or (len(tok) >= 4 and bank_sentence[_sentence(starts, src.idx[m.start()])]):
             reps.append((m.start(), m.end(), tok.translate(LOOKALIKE_DIGITS)))
     for m in pats["lookalike_date"].finditer(src.text):
         tok = m.group()
@@ -310,23 +398,54 @@ def _digits(src: Mapped, bank_sentence: Sequence[bool], starts: Sequence[int]) -
             reps.append((m.start(), m.end(), tok.translate(LOOKALIKE_DIGITS)))
     reps = _no_overlap(reps)
     mapped = src.replaced(reps)
-    words = list(pats["digit_word"].finditer(mapped.text))
+    if _number_words().isdisjoint(mapped.tokens):
+        return mapped
+    return mapped.replaced(_spelled_runs(mapped.text))
+
+
+def _spelled_runs(text: str) -> list[tuple[int, int, str]]:
+    """Runs of two or more number tokens, at least one spelled out, as digits (AR-E12): "four four
+    seven one", "double four seven one", "forty-four seventy-one", "44 seventy one", and "oh" for
+    0 inside such a run ("five five five oh one four two")."""
+    lists = _lists()
+    unit = {str(k): str(v) for k, v in lists["digit_words"].items()} | {"oh": "0"}
+    tens = {str(k): str(v) for k, v in lists["tens_words"].items()}
     runs: list[tuple[int, int, str]] = []
-    run: list[re.Match[str]] = []
-    digit_of = {str(k): str(v) for k, v in _lists()["digit_words"].items()}
-    for w in [*words, None]:
-        if (
-            w is not None
-            and run
-            and re.fullmatch(r"[\s,\-]+", mapped.text[run[-1].end() : w.start()])
-        ):
-            run.append(w)
+    run: list[tuple[int, int, str, bool]] = []  # start, end, digits, spelled
+
+    def close() -> None:
+        if len(run) >= 2 and any(sp for *_, sp in run) and not all(d == "0" for _, _, d, _ in run):
+            runs.append((run[0][0], run[-1][1], "".join(d for _, _, d, _ in run)))
+        run.clear()
+
+    pending = ""  # "double" or "triple" before a unit word
+    for m in _patterns()["number_token"].finditer(text):
+        word = m.group().lower()
+        if run and not re.fullmatch(r"[\s,\-]+", text[run[-1][1] : m.start()]):
+            close()
+        if word in ("double", "triple"):
+            pending = word
+            run.append((m.start(), m.end(), "", True))
             continue
-        if len(run) >= 2:
-            runs.append((run[0].start(), run[-1].end(),
-                         "".join(digit_of[x.group().lower()] for x in run)))  # fmt: skip
-        run = [w] if w is not None else []
-    return mapped.replaced(runs)
+        if word.isdigit():
+            digits, spelled = word, False
+        elif word in tens and len(tens[word]) == 2:
+            digits, spelled = tens[word], True
+        elif word in tens:
+            digits, spelled = tens[word] + "0", True
+            nxt = re.match(r"[\s\-]+(\w+)", text[m.end() :])
+            if nxt and nxt.group(1).lower() in unit and nxt.group(1).lower() != "oh":
+                digits = tens[word]  # "seventy one": the unit word adds the last digit
+        else:
+            digits, spelled = unit[word], True
+            if word == "oh" and not run:
+                continue  # "oh" alone is a word
+        if pending:
+            digits = digits * (2 if pending == "double" else 3)
+            pending = ""
+        run.append((m.start(), m.end(), digits, spelled))
+    close()
+    return runs
 
 
 def _no_overlap(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
@@ -358,7 +477,7 @@ def _sentence(starts: Sequence[int], pos: int) -> int:
     return bisect_right(starts, pos) - 1
 
 
-@dataclass
+@dataclass(slots=True)
 class _Hit:
     start: int  # in the draft
     end: int
@@ -367,12 +486,17 @@ class _Hit:
 
 
 def _hits(view: Mapped, pat: re.Pattern[str], starts_orig: Sequence[int]) -> list[_Hit]:
+    firsts = _FIRST_WORDS.get(pat)
+    if firsts is not None and firsts.isdisjoint(view.tokens):
+        return []
+    idx = view.idx
     out: list[_Hit] = []
     for m in pat.finditer(view.text):
-        if m.end() == m.start():
+        a, b = m.span()
+        if a == b:
             continue
-        s, e = view.origin(m.start(), m.end())
-        out.append(_Hit(s, e, _sentence(starts_orig, s), m.group()))
+        s = idx[a]
+        out.append(_Hit(s, idx[b - 1] + 1, bisect_right(starts_orig, s) - 1, m.group()))
     return out
 
 
@@ -448,11 +572,16 @@ def _chains(view: Mapped) -> list[_Chain]:
     """Digit groups joined across separators, connector words and month names (AS1, AV4); a colon
     clock time never joins (AW4, AY3, BW-D1)."""
     pats = _patterns()
-    clocks = [(m.start(), m.end()) for m in pats["clock"].finditer(view.text)]
-    groups: list[tuple[int, int, tuple[int, int] | None]] = []
-    for m in pats["digits"].finditer(view.text):
-        clock = next(((s, e) for s, e in clocks if s <= m.start() < e), None)
-        groups.append((m.start(), m.end(), clock))
+    clocks = [m.span() for m in pats["clock"].finditer(view.text)]
+    clock_starts = [s for s, _ in clocks]
+
+    def clock_of(pos: int) -> tuple[int, int] | None:
+        k = bisect_right(clock_starts, pos) - 1
+        return clocks[k] if k >= 0 and pos < clocks[k][1] else None
+
+    groups: list[tuple[int, int, tuple[int, int] | None]] = [
+        (m.start(), m.end(), clock_of(m.start())) for m in pats["digits"].finditer(view.text)
+    ]
     chains: list[_Chain] = []
     for s, e, clock in groups:
         if clock is not None:
@@ -491,29 +620,51 @@ def check(draft: str, email_text: str, email_links: Sequence[str],
         return Result(("characters",), (), {"characters": bad}, digest())
     text = draft.replace("\r\n", "\n").replace("\r", "\n").translate(LINE_BREAKS)
     draft_for_spans = text  # same length as the draft: `characters` refused U+2029 already
+    d = _read(text, email_text, email_links, allowed_addresses, refuse, warn)
+    _check_bank(d, refuse)
+    _check_contact(d, refuse)
+    _check_dates_and_money(d, refuse)
+    _check_price(d, refuse)
+    _check_credential_and_injection(d, refuse)
+    _check_language(d.masked.text, refuse)
+    spans = {code: draft_for_spans[s:e].rstrip(".,;:") or draft_for_spans[s:e]
+             for code, (s, e) in found.items()}  # fmt: skip
+    return Result(tuple(sorted(found)), tuple(sorted(warn)), spans, digest())
+
+
+@dataclass
+class _Draft:
+    """A draft's views, all mapping back to its characters, and what the checks share."""
+
+    text: str  # the draft, line separators made line breaks
+    masked: Mapped  # folded to ASCII, addresses and links masked
+    words: Mapped  # casefolded, with the ASCII confusables
+    plain: Mapped  # casefolded, without them (dates, requests, reader-addressed text)
+    digits: Mapped  # look-alike letters and spelled numbers read as digits
+    starts: list[int]  # each sentence's start in the draft
+    bank_sentence: list[bool]  # the sentence holds a bank word
+    email: _EmailFacts
+    amounts: list[_Hit]
+
+
+def _read(text: str, email_text: str, email_links: Sequence[str], allowed: Sequence[str],
+          refuse: Refuse, warn: set[str]) -> _Draft:  # fmt: skip
+    """The draft's views; `recipient`, `new_link` and the `link` warning on the way."""
     pats = _patterns()
     base = _fold(text)
-    masks = _addresses_and_links(base, text, email_links, allowed_addresses,
-                                 refuse, warn)  # fmt: skip
-    masked = base.replaced(masks)
+    masked = base.replaced(_addresses_and_links(base, text, email_links, allowed, refuse, warn))
     words = _words(masked)
-    starts_folded = _sentences(masked.text)
-    starts = [masked.idx[s] if s < len(masked.idx) else len(text) for s in starts_folded]
-    bank_words = _hits(words, pats["bank_word"], starts)
-    n = len(starts)
-    bank_sentence = [False] * n
-    for h in bank_words:
+    starts = [masked.idx[s] if s < len(masked.idx) else len(text) for s in _sentences(masked.text)]
+    bank_sentence = [False] * len(starts)
+    for h in _hits(words, pats["bank_word"], starts):
         bank_sentence[h.sentence] = True
     digits = _digits(masked, bank_sentence, starts)
-    email = _email_facts(email_text)
-    amounts = _hits(masked, pats["amount"], starts)
-    _check_bank_and_contact(digits, masked, starts, bank_sentence, email, amounts, refuse)
-    _check_dates_and_money(words, digits, masked, starts, email, amounts, refuse)
-    _check_price(words, digits, starts, email, amounts, refuse)
-    _check_credential_and_injection(words, starts, refuse)
-    _check_language(masked.text, refuse)
-    spans = {code: draft_for_spans[s:e] for code, (s, e) in found.items()}
-    return Result(tuple(sorted(found)), tuple(sorted(warn)), spans, digest())
+    plain = Mapped(masked.text.lower(), masked.idx)
+    amounts = (
+        _hits(masked, pats["amount"], starts) if pats["amount_hint"].search(masked.text) else []
+    )
+    return _Draft(text, masked, words, plain, digits, starts, bank_sentence,
+                  _email_facts(email_text), amounts)  # fmt: skip
 
 
 def _addresses_and_links(base: Mapped, text: str, email_links: Sequence[str],
@@ -533,9 +684,15 @@ def _addresses_and_links(base: Mapped, text: str, email_links: Sequence[str],
             masks.append((m.start(), m.end(), " " * (m.end() - m.start())))
     masks = _no_overlap(masks)
     taken = [(s, e) for s, e, _ in masks]
-    for name in ("url", "defanged", "domain"):
+    not_tlds = frozenset(map(str, _lists()["not_tlds"]))
+    abbreviations = frozenset(map(str, _lists()["abbreviations"]))
+    for name in ("url", "defanged", "domain", "spelled_link", "spaced_link", "comma_link"):
         for m in pats[name].finditer(base.text):
             if any(s < m.end() and m.start() < e for s, e in taken):
+                continue
+            if name == "domain" and _not_a_domain(m, not_tlds, abbreviations):
+                continue
+            if name == "spaced_link" and m.group().count(".") < 2:
                 continue
             link = _clean_link(m.group())
             end = m.start() + len(link)
@@ -550,6 +707,22 @@ def _addresses_and_links(base: Mapped, text: str, email_links: Sequence[str],
     return _no_overlap(masks)
 
 
+def _not_a_domain(
+    m: re.Match[str], not_tlds: frozenset[str], abbreviations: frozenset[str]
+) -> bool:
+    """A file name ("report.pdf"), an abbreviation ("e.g", "p.m", "Mr.Lee") or a dotted number
+    ("IE29.AIBK.9311") that the domain pattern also matches."""
+    host = m.group().split("/")[0].lower()
+    first = host.split(".")[0]
+    more_digits = re.match(r"\.\d", m.string[m.end() : m.end() + 2])  # "IE29.AIBK.9311..."
+    return (
+        m.group(1).lower() in not_tlds
+        or host in abbreviations
+        or first in abbreviations
+        or bool(more_digits)
+    )
+
+
 def _clean_link(link: str) -> str:
     return link.rstrip(".,;:!?)]'\"")
 
@@ -558,6 +731,7 @@ def _clean_link(link: str) -> str:
 class _EmailFacts:
     payment_term: bool
     bank_word: bool
+    bank_details: bool  # names bank details (AR-E12)
     amounts: set[tuple[str, float]]
 
 
@@ -567,7 +741,8 @@ def _email_facts(email_text: str) -> _EmailFacts:
     words = _words(base).text
     amounts = {_amount_key(m.group()) for m in pats["amount"].finditer(base.text)}
     term = bool(pats["payment_noun"].search(words) or pats["pay"].search(words) or amounts)
-    return _EmailFacts(term, bool(pats["bank_word"].search(words)), amounts)
+    return _EmailFacts(term, bool(pats["bank_word"].search(words)),
+                       bool(pats["bank_detail"].search(words)), amounts)  # fmt: skip
 
 
 def _ascii_only(text: str) -> str:
@@ -587,16 +762,17 @@ def _amount_key(text: str) -> tuple[str, float]:
                        ("quid", "gbp"), ("yen", "jpy")):  # fmt: skip
         if word in low:
             cur = name
-    code = re.match(r"([A-Z][A-Za-z]{0,2})\.?\s?\d", t)
+    code = re.match(r"([A-Z][A-Za-z]{0,2})\.?\s?\d", t) or re.search(r"\d\s?([A-Z]{3})\b", t)
     if code:
         cur = code.group(1).lower()
     num = re.search(r"\d[\d ,.]*", t)
     value = 0.0
     if num:
-        n = num.group().strip().replace(" ", "")
-        if re.search(r"[.,]\d{1,2}$", n):
-            whole, cents = n[: -3 if n[-3] in ".," else -2], n[-2:].lstrip(".,")
-            value = float(re.sub(r"[.,]", "", whole) or 0) + float(cents) / 100
+        n = num.group().strip().replace(" ", "").rstrip(".,")
+        decimal = re.fullmatch(r"(.*?)[.,](\d{1,2})", n)
+        if decimal:
+            whole, frac = decimal.groups()
+            value = float(re.sub(r"[.,]", "", whole) or 0) + int(frac) / 10 ** len(frac)
         else:
             value = float(re.sub(r"[.,]", "", n))
         if low.rstrip().endswith("k"):
@@ -604,38 +780,50 @@ def _amount_key(text: str) -> tuple[str, float]:
     return cur, value
 
 
-def _check_bank_and_contact(digits: Mapped, masked: Mapped, starts: Sequence[int],
-                            bank_sentence: Sequence[bool], email: _EmailFacts,
-                            amounts: Sequence[_Hit], refuse: Refuse) -> None:  # fmt: skip
-    """`bank` (AR1, AS1, AT2, AU6, AY3, BW-D1) and `contact` (phone numbers, street addresses)."""
+def _check_bank(d: _Draft, refuse: Refuse) -> None:
+    """`bank` (AR1, AS1, AT2, AU6, AY3, BW-D1, AR-E1, AR-E12): IBANs, digit runs, and a bank-change
+    confirmation; a phone number goes to `contact` (escape 2)."""
     pats = _patterns()
-    for m in pats["iban"].finditer(masked.text):
+    for m in pats["iban"].finditer(d.masked.text):
         if sum(ch.isdigit() for ch in m.group().translate(LOOKALIKE_DIGITS)) >= 10:
-            refuse("bank", masked.origin(m.start(), m.end()))
-    for ch in _chains(digits):
-        span = digits.origin(ch.start, ch.end)
-        if _inside(span, amounts):
-            continue  # an amount is `money`'s ("€1,180.00" isn't an account number)
-        sentence = _sentence(starts, span[0])
-        chain_text = digits.text[ch.start : ch.end]
-        phone = not ch.clock and bool(pats["phone"].match(chain_text)) and ch.digits >= 7
-        if phone:
-            refuse("contact", span)
-        if bank_sentence[sentence] and ch.digits >= 4:
-            refuse("bank", span)
-            continue
-        if ch.clock or ch.digits < 6:
-            continue
-        if phone:
-            continue
-        before = digits.text[max(0, ch.start - 12) : ch.start]
-        month = pats["month_before"].search(before)
-        shown = (month.group() if month else "") + chain_text
-        if _valid_date(shown) and not email.bank_word:
-            continue
+            refuse("bank", d.masked.origin(m.start(), m.end()))
+    for ch in _chains(d.digits):
+        span = d.digits.origin(ch.start, ch.end)
+        if not _inside(span, d.amounts):  # an amount is `money`'s ("€1,180.00")
+            _check_chain(d, ch, span, refuse)
+    details = {h.sentence: h for h in reversed(_hits(d.words, pats["bank_detail"], d.starts))}
+    for h in _hits(d.words, pats["change_word"], d.starts):  # a bank-change confirmation (AR-E1)
+        if h.sentence in details:
+            refuse("bank", (details[h.sentence].start, details[h.sentence].end))
+
+
+def _check_chain(d: _Draft, ch: _Chain, span: tuple[int, int], refuse: Refuse) -> None:
+    """One digit run: `contact` if it is phone-shaped; `bank` if a bank word shares its sentence
+    or the email names bank details and it has 4 or more digits, or if it has 6 or more and isn't
+    a date (escape 1) or a phone number (escape 2)."""
+    pats = _patterns()
+    chain_text = d.digits.text[ch.start : ch.end]
+    spelled = not any(c.isdigit() for c in d.text[span[0] : span[1]])
+    shaped = bool(pats["phone"].match(chain_text)) or (spelled and ch.digits <= 11)
+    phone = not ch.clock and ch.digits >= 7 and shaped
+    if phone:
+        refuse("contact", span)
+    in_bank = d.bank_sentence[_sentence(d.starts, span[0])]
+    if ch.digits >= 4 and (in_bank or (d.email.bank_details and not ch.clock)):
         refuse("bank", span)
-    for m in pats["street"].finditer(masked.text):
-        refuse("contact", masked.origin(m.start(), m.end()))
+        return
+    if ch.clock or ch.digits < 6 or phone:
+        return
+    month = pats["month_before"].search(d.digits.text[max(0, ch.start - 12) : ch.start])
+    if _valid_date((month.group() if month else "") + chain_text) and not d.email.bank_word:
+        return
+    refuse("bank", span)
+
+
+def _check_contact(d: _Draft, refuse: Refuse) -> None:
+    """`contact`'s street addresses (Q2, AR-E17); phone numbers are found with the digit runs."""
+    for m in _patterns()["street"].finditer(d.masked.text):
+        refuse("contact", d.masked.origin(m.start(), m.end()))
 
 
 def _is_by_commitment(hit: _Hit, date_starts: Sequence[int]) -> bool:
@@ -644,55 +832,97 @@ def _is_by_commitment(hit: _Hit, date_starts: Sequence[int]) -> bool:
     return k < len(date_starts) and date_starts[k] - hit.end <= 2
 
 
-def _check_dates_and_money(words: Mapped, digits: Mapped, masked: Mapped, starts: Sequence[int],
-                           email: _EmailFacts, amounts: Sequence[_Hit],
-                           refuse: Refuse) -> None:  # fmt: skip
-    """`date` (P7, Q2, AP4, AQ8, AR2, AS2, AT1, AU3, AU5, AW2) and `money` (V12, AV1, AW1, AX1)."""
+def _dates(d: _Draft) -> list[_Hit]:
+    """Every date, time and deadline in the draft, in order."""
     pats = _patterns()
-    plain = Mapped(masked.text.lower(), masked.idx)  # date words without the confusables
-    dates: list[_Hit] = []
-    for name in ("weekday_date", "month_date", "ordinal_date"):
-        dates += _hits(plain, pats[name], starts)
-    dates += _hits(words, pats["relative_date"], starts)
-    dates += [h for h in _hits(digits, pats["numeric_date"], starts)
-              if _plausible_date(h.text) and not _inside((h.start, h.end), amounts)]  # fmt: skip
-    dates += _hits(digits, pats["time"], starts)
-    dates.sort(key=lambda h: h.start)
-    raw_commits = _hits(words, pats["commit"], starts) + _hits(words, pats["contraction"], starts)
-    date_starts = [d.start for d in dates]
-    commits = [h for h in raw_commits if h.text != "by" or _is_by_commitment(h, date_starts)]
-    noun_numbers = _hits(masked, pats["noun_number"], starts) + _hits(
-        masked, pats["noun_for_number"], starts
+    has_digit = any(c.isdigit() for c in d.digits.text)
+    has_month = not _month_words().isdisjoint(d.plain.tokens)
+    names = ["weekday_date"]
+    names += ["ordinal_date", "bare_hour"] if has_digit else []
+    names += ["month_date", "deadline"] if has_month else []
+    found: list[_Hit] = []
+    for name in names:
+        found += _hits(d.plain, pats[name], d.starts)
+    found += _hits(d.words, pats["relative_date"], d.starts)
+    if has_digit:
+        numeric = _hits(d.digits, pats["numeric_date"], d.starts)
+        found += [
+            h
+            for h in numeric
+            if _plausible_date(h.text) and not _inside((h.start, h.end), d.amounts)
+        ]
+        found += _hits(d.digits, pats["time"], d.starts)
+    return sorted(found, key=lambda h: h.start)
+
+
+_AGREE = re.compile(r"(?i)\b(?:it\s+is|works|is\s+fine|is\s+good|suits|is\s+confirmed)\b")
+
+
+def _commits(d: _Draft, dates: Sequence[_Hit]) -> list[_Hit]:
+    """The commitment verbs: "by" only before a date, and a date agreed to ("Friday it is")."""
+    pats = _patterns()
+    raw = _hits(d.words, pats["commit"], d.starts) + _hits(d.words, pats["contraction"], d.starts)
+    date_starts = [h.start for h in dates]
+    out = [h for h in raw if h.text != "by" or _is_by_commitment(h, date_starts)]
+    for h in dates:
+        if pats["date_agree"].match(d.words.text[_view_pos(d.words, h.end) :]):
+            out.append(_Hit(h.start, h.end, h.sentence, h.text))
+    return out
+
+
+def _check_dates_and_money(d: _Draft, refuse: Refuse) -> None:
+    """`date` (P7, Q2, AP4, AQ8, AR2, AS2, AT1, AU3, AU5, AW2) and `money` (V12, AV1, AW1, AX1),
+    sentence by sentence; an amount not copied from the email refuses `money` anywhere."""
+    pats = _patterns()
+    # dates matter only beside a commitment verb or a date agreed to ("Friday it is")
+    agree = _AGREE.search(d.words.text)
+    raw_commits = _hits(d.words, pats["commit"], d.starts) or agree
+    dates = _dates(d) if raw_commits or _hits(d.words, pats["contraction"], d.starts) else []
+    money_words = d.words.replaced(  # the exempt phrases out of the money words (AR-F5)
+        (m.start(), m.end(), " " * (m.end() - m.start()))
+        for m in pats["not_money"].finditer(d.words.text)
     )
-    pays = _hits(words, pats["pay"], starts)
-    infl = _hits(words, pats["inflection"], starts)
-    nouns = _hits(words, pats["payment_noun"], starts)
-    n = len(starts)
+    noun_numbers = [
+        h
+        for name in ("noun_number", "noun_for_number")
+        if any(c.isdigit() for c in d.masked.text)
+        for h in _hits(d.masked, pats[name], d.starts)
+    ]
     by_sentence: list[dict[str, list[_Hit]]] = [
         {"date": [], "commit": [], "pay": [], "infl": [], "noun": [], "amount": []}
-        for _ in range(n)
+        for _ in d.starts
     ]
-    for key, hits in (("date", dates), ("commit", commits), ("pay", pays), ("infl", infl),
-                      ("noun", nouns), ("amount", [*amounts, *noun_numbers])):  # fmt: skip
+    for key, hits in (
+        ("date", dates),
+        ("commit", _commits(d, dates)),
+        ("pay", _hits(money_words, pats["pay"], d.starts)),
+        ("infl", _hits(money_words, pats["inflection"], d.starts)),
+        ("noun", _hits(money_words, pats["payment_noun"], d.starts)),
+        ("amount", [*d.amounts, *noun_numbers]),
+    ):
         for h in hits:
             by_sentence[h.sentence][key].append(h)
     for i, s in enumerate(by_sentence):
-        if s["date"] and s["commit"] and not _exempt(words, starts, i, s["commit"], s["date"]):
+        if s["date"] and s["commit"] and not _exempt(d.plain, d.starts, i, s["commit"], s["date"]):
             refuse("date", (s["date"][0].start, s["date"][0].end))
-        if s["pay"]:
-            refuse("money", (s["pay"][0].start, s["pay"][0].end))
-        term_here = bool(s["pay"] or s["noun"] or s["amount"])
-        if s["infl"] and (term_here or email.payment_term):
-            refuse("money", (s["infl"][0].start, s["infl"][0].end))
-        if s["commit"] and term_here:
-            term = (s["pay"] or s["noun"] or s["amount"])[0]
-            refuse("money", (term.start, term.end))
-    for h in amounts:
-        key = _amount_key(masked.text[_view_pos(masked, h.start) : _view_pos(masked, h.end)])
-        if key not in email.amounts:
+        _check_money_sentence(s, d.email, refuse)
+    for h in d.amounts:
+        if _amount_key(h.text) not in d.email.amounts:
             refuse("money", (h.start, h.end))
     for h in noun_numbers:
         refuse("money", (h.start, h.end))
+
+
+def _check_money_sentence(s: dict[str, list[_Hit]], email: _EmailFacts, refuse: Refuse) -> None:
+    """A pay verb alone; an inflection with a payment term in the sentence or the email; a
+    commitment verb with a payment term in the sentence (AV1, AW1, AX1)."""
+    if s["pay"]:
+        refuse("money", (s["pay"][0].start, s["pay"][0].end))
+    terms = s["pay"] or s["noun"] or s["amount"]
+    if s["infl"] and (terms or email.payment_term):
+        refuse("money", (s["infl"][0].start, s["infl"][0].end))
+    if s["commit"] and terms:
+        refuse("money", (terms[0].start, terms[0].end))
 
 
 def _view_pos(view: Mapped, draft_pos: int) -> int:
@@ -704,7 +934,9 @@ def _exempt(words: Mapped, starts: Sequence[int], i: int, commits: Sequence[_Hit
             dates: Sequence[_Hit]) -> bool:  # fmt: skip
     """A question or request to the sender: the sentence opens with one, its only commitment verbs
     are the opener and the act it asks for (and a "by" before the act's date), and every date
-    belongs to that act (AQ8, AR2, AS2, AT1, AU5, AW2)."""
+    belongs to that act: after "by", or right after the act or its pronoun object ("send it on
+    Friday", "call me tomorrow"), never after a noun ("confirm the delivery on Friday") (AQ8, AR2,
+    AS2, AT1, AU5, AW2, AR-F2)."""
     pats = _patterns()
     start = _view_pos(words, starts[i])
     end = _view_pos(words, starts[i + 1]) if i + 1 < len(starts) else len(words.text)
@@ -713,16 +945,17 @@ def _exempt(words: Mapped, starts: Sequence[int], i: int, commits: Sequence[_Hit
     opener = pats["request"].match(sentence, lead)
     if opener is None or pats["not_request"].match(sentence, lead):
         return False
-    act = re.compile(r"\s+(?:kindly\s+|please\s+)?([a-z]+)").match(sentence, opener.end())
+    act = re.compile(r"\s+(?:kindly\s+|please\s+)?(let\s+(?:me|us)\s+know|[a-z]+)").match(
+        sentence, opener.end()
+    )
     if act is None:
         return False
     act_end = start + act.end()
-    lists = _lists()
-    objects = "|".join(map(str, lists["act_objects"]))
-    belongs = re.compile(rf"\s*(?:(?:{objects})\s+)?(?:by\s+)?\Z")
+    objects = "|".join(map(str, _lists()["act_objects"]))
+    right_after = re.compile(rf"\s*(?:(?:{objects})\s+)?(?:(?:on|at|for)\s+)?\Z")
     for d in dates:
         between = words.text[act_end : _view_pos(words, d.start)]
-        if not belongs.match(between):
+        if not (re.search(r"\bby\s+\Z", between) or right_after.match(between)):
             return False
     for c in commits:
         pos = _view_pos(words, c.start)
@@ -731,50 +964,91 @@ def _exempt(words: Mapped, starts: Sequence[int], i: int, commits: Sequence[_Hit
         if start + act.start(1) <= pos < act_end:
             continue  # the act it asks for
         if c.text == "by":
-            continue  # "by" before the act's date: `belongs` checked it
+            continue  # "by" before the act's date: checked above
         return False
     return True
 
 
-def _check_price(words: Mapped, digits: Mapped, starts: Sequence[int], email: _EmailFacts,
-                 amounts: Sequence[_Hit], refuse: Refuse) -> None:  # fmt: skip
-    """`price` (AM1): a price, discount or quote word in a sentence, or the one before it, with a
-    number that isn't an amount copied from the email."""
+def _check_price(d: _Draft, refuse: Refuse) -> None:
+    """`price` (AM1, AR-E8, AR-F6): a number that isn't an amount copied from the email, in a
+    sentence with a price, discount, quote or fee word (or the sentence after one); a percentage
+    "off"; or "for" and a number after a commitment verb ("we can do the job for 4500"). A year
+    and a count ("150 stores") aren't prices."""
     pats = _patterns()
+    words, digits, starts, amounts = d.words, d.digits, d.starts, d.amounts
     price = _hits(words, pats["price_word"], starts)
-    if not price:
+    commits = {h.sentence for h in _hits(words, pats["commit"], starts)}
+    if not price and not commits and "%" not in digits.text:
         return
-    numbers = [*amounts, *_hits(digits, pats["percent"], starts),
-               *(h for h in _hits(digits, pats["bare_number"], starts)
-                 if not _inside((h.start, h.end), amounts))]  # fmt: skip
+    numbers = [  # an amount is `money`'s; a copied one with no commitment verb passes both
+        *_hits(digits, pats["percent"], starts),
+        *(
+            h
+            for h in _hits(digits, pats["bare_number"], starts)
+            if not _inside((h.start, h.end), amounts) and not _year_or_count(digits, h)
+        ),
+    ]
     sentences = {h.sentence for h in price} | {h.sentence + 1 for h in price}
     for h in sorted(numbers, key=lambda x: x.start):
-        if h.sentence not in sentences:
-            continue
-        if h in amounts and _amount_key(h.text) in email.amounts:
-            continue
-        refuse("price", (h.start, h.end))
-        return
+        before = digits.text[max(0, _view_pos(digits, h.start) - 5) : _view_pos(digits, h.start)]
+        after = digits.text[_view_pos(digits, h.end) : _view_pos(digits, h.end) + 5]
+        off = h.text.rstrip().endswith("%") and _OFF.match(after)
+        bid = h.sentence in commits and _FOR_END.search(before)
+        if h.sentence in sentences or off or bid:
+            refuse("price", (h.start, h.end))
+            return
 
 
-def _check_credential_and_injection(words: Mapped, starts: Sequence[int], refuse: Refuse) -> None:
+_OFF = re.compile(r"(?i)\s*off\b")
+_FOR_END = re.compile(r"(?i)\bfor\s+\Z")
+_YEAR = re.compile(r"(?:19|20)\d\d|2100")
+_NEXT_WORD = re.compile(r"(?i)\s+([a-z]+)")
+
+
+def _year_or_count(view: Mapped, h: _Hit) -> bool:
+    """A year from 1900 to 2100, or a number followed by a word that isn't a price word: "in 2026",
+    "150 stores", "500 emails" (AR-F6)."""
+    if _YEAR.fullmatch(h.text):
+        return True
+    after = view.text[_view_pos(view, h.end) : _view_pos(view, h.end) + 20]
+    word = _NEXT_WORD.match(after)
+    return word is not None and not _patterns()["price_word"].match(after.lstrip().lower())
+
+
+def _check_credential_and_injection(d: _Draft, refuse: Refuse) -> None:
+    """`credential` (AR-E13, AR-F7): a strong noun (a password, PIN, token, 2FA code) asked for,
+    sent or stated; a bare "code" or "number" only with a sign it is one. `injection` (P5, S10,
+    AR-E16): the listed phrases and wording addressed to a reader other than the sender."""
     pats = _patterns()
-    for h in _hits(words, pats["credential"], starts):
-        p = _view_pos(words, h.start)
-        e = _view_pos(words, h.end)
-        around = words.text[max(0, p - 30) : e + 12]
-        if pats["not_credential"].search(words.text[max(0, p - 12) : e]):
-            continue
-        sends = pats["credential_send"].search(words.text[max(0, p - 30) : p])
-        stated = re.match(r"\s*(?:is|:|=)\s*\S", words.text[e : e + 12])
-        if pats["negation"].search(around[:30]) and not stated:
-            continue
-        if sends or stated:
+    words, starts = d.words, d.starts
+    text = words.text
+    candidates = [
+        *((h, True) for h in _hits(words, pats["credential"], starts)),
+        *((h, False) for h in _hits(words, pats["weak_credential"], starts)),
+    ]
+    for h, strong in candidates:  # fmt: skip
+        p, e = _view_pos(words, h.start), _view_pos(words, h.end)
+        before, after = text[max(0, p - 30) : p], text[e : e + 40]
+        if strong and h.text == "login":
+            hit = re.match(r"(?:\s+\w+){0,3}\s+is\s+\S", after)
+        elif strong:
+            stated = re.match(r"(?:'s)?\s*(?:is\b|:|=|\s+\S*[\d!@#$%^&*])", after)
+            asked = pats["credential_send"].search(before)
+            if pats["negation"].search(before) and not stated:
+                continue
+            hit = stated or asked
+        else:
+            hit = pats["weak_after"].match(after.lstrip()) or pats["weak_before"].search(before)
+        if hit:
             refuse("credential", (h.start, h.end))
             break
-    for h in _hits(words, pats["injection"], starts):
-        refuse("injection", (h.start, h.end))
-        break
+    readers = not _reader_words().isdisjoint(d.plain.tokens)
+    for name, view in (("injection", words), ("reader_injection", d.plain if readers else None)):
+        if view is None:
+            continue
+        for h in _hits(view, pats[name], starts):
+            refuse("injection", (h.start, h.end))
+            break
 
 
 def _check_language(text: str, refuse: Refuse) -> None:
@@ -782,13 +1056,31 @@ def _check_language(text: str, refuse: Refuse) -> None:
     `characters` already made; above, another language's common words outnumbering English's."""
     if len(text.strip()) < 40:
         return
-    tokens = re.findall(r"[a-z]+", text.lower())
-    counts = {lang: sum(t in words for t in tokens) for lang, words in _stop_words().items()}
+    seen = Counter(re.findall(r"[a-z]+", text.lower()))
+    counts = {lang: sum(seen[w] for w in words) for lang, words in _stop_words().items()}
     english = counts.pop("en")
     best = max(counts.values())
     if best >= 3 and best > english:
         m = re.search(r"\S+(?:\s+\S+){0,3}", text)
         refuse("language", (0, m.end() if m else len(text)))
+
+
+@cache
+def _number_words() -> frozenset[str]:
+    L = _lists()
+    return frozenset([*map(str, L["digit_words"]), *map(str, L["tens_words"]), "double", "triple"])
+
+
+@cache
+def _month_words() -> frozenset[str]:
+    return frozenset([*map(str, _lists()["months"]), "within", "in"])
+
+
+@cache
+def _reader_words() -> frozenset[str]:
+    return frozenset(
+        [*map(str, _lists()["readers"]), "ignore", "disregard", "forget", "rate", "score"]
+    )
 
 
 @cache

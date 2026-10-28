@@ -7,7 +7,10 @@
 version: 1
 
 # characters: allowed beyond printable ASCII and the 178 accented letters (generated, below)
-typographic: ["‘", "’", "“", "”", "–", "—", "…", "£", "€"]
+# the bullet, degree, trade mark, copyright, arrow and hyphen were added after the adversarial
+# round (AR-F8, operator 2026-10-28); emoji stay refused
+typographic: ["\u2018", "\u2019", "\u201c", "\u201d", "\u2013", "\u2014", "\u2026", "\u00a3", "\u20ac",
+              "\u2022", "\u00b0", "\u2122", "\u00a9", "\u2192", "\u2010"]
 
 # The precomposed letters in U+00C0-U+017F whose first two skeleton.folds forms are plain ASCII
 # letters, less ı, İ and ſ (plan AI3); tests/test_draftcheck.py regenerates and compares.
@@ -18,11 +21,14 @@ commitment_verbs: [
   will, shall, can, could, would, should, going to, promise, promised, expect, plan, aim, intend,
   due, scheduled, confirm, agree, by, please note, please expect, be advised, rest assured,
   happy to, want us to, ship, ships, deliver, delivers, arrive, arrives, start, starts, dispatch,
-  dispatches,
+  dispatches, shipping, shipped, delivering, sending, aiming, arriving, starting, dispatching,
+  dispatched, guarantee, guaranteed, commit to, committed to, youll, theyll, itll, ill, well have,
+  well send, well be, well get, well pay, well deliver, well ship,
 ]
-contractions: ["'ll", "'d", "we're going to", "i'm going to"]
+contractions: ["'ll", "'d", "we're going to", "i'm going to", "they're going to", "you're going to"]
 # a question or request to the sender: the only date exemption (AQ8, AR2, AS2, AT1, AU5, AW2)
-request_openers: [could you, can you, would you, will you, please, kindly]
+request_openers: [please could you, please can you, please would you, could you please, could you,
+                  can you, would you, will you, please, kindly]
 not_requests: [please note, please expect, would you like us to, do you want us to, will you let us]
 act_objects: [it, them, this, that, these, those, me, us]
 
@@ -33,22 +39,30 @@ months: [
 ]
 relative_dates: [
   today, tomorrow, tonight, this week, next week, this month, next month, end of the day,
-  end of day, end of the week, end of the month, close of business,
+  end of day, end of the week, end of the month, close of business, eod, cob, eow, noon, midnight,
+  this afternoon, this evening, tomorrow morning, tomorrow afternoon, end of play,
 ]
 
 # money
-pay_verbs: [pay, pays, paid, paying, transfer, transfers, transferred, transferring, wire, wires,
-            wired, wiring, remit, remits, remitted, remitting]
+pay_verbs: [pay, pays, paid, paying, payed, transfer, transfers, transferred, transfered,
+            transferring, wire, wires, wired, wiring, remit, remits, remitted, remitting, reimburse,
+            reimbursed, reimburses, reimbursing]
+# these uses of a pay verb or payment noun aren't about money (AR-F5, operator 2026-10-28)
+not_money: [pay attention, paid attention, paying attention, pay a visit, paid a visit, pay tribute,
+            pay off, paid off, pays off, transfer the file, transfer the files, transfer the call,
+            transfer you, transfer the ticket, wire up, wired up, wiring up]
 inflections: [sent, scheduled, processed, released, settled, confirmed, approved, on its way, done,
-              gone through, actioned, completed, taken care of]
+              gone through, actioned, completed, taken care of, made, initiated, cleared, covered,
+              handled, in progress, gone out, went out, sorted, squared away, good to go,
+              authorised, authorized, arranged, executed, finalised, finalized]
 payment_nouns: [payment, payments, funds, transfer, transfers, invoice, invoices, amount, balance,
                 deposit, money, fee, fees, charge, charges, bill, bills, refund, refunds, credit,
-                rent, premium]
+                rent, premium, cheque, cheques, gift card, gift cards, voucher, vouchers]
 # a bare number after one of these is an amount ("balance 4500"); after the others only with
 # "of" or "for" ("invoice for 4500"), since "invoice 2231" is an invoice's number
 amount_nouns: [balance, amount, deposit, fee, fees, charge, charges, rent, premium, total]
 currency_symbols: ["$", "€", "£"]
-currency_words: [pounds, pound, quid, bucks, dollars, dollar, euros, euro, yen, cents, kr, "zł", zl,
+currency_words: [pounds, pound, quid, bucks, dollars, dollar, euros, euro, yen, cents, kr, "zł", zl, grand,
                  pence, rupees, francs]
 # matched in uppercase only (AX5)
 currency_codes: [EUR, USD, GBP, SEK, NOK, DKK, CHF, CAD, AUD, NZD, JPY, PLN, ZAR, INR, Rs, R, Fr]
@@ -56,36 +70,63 @@ number_words: [thousand, hundred, million]
 
 # bank (AR1): words whose sentence makes any 4-digit group a bank number
 bank_words: [account, accounts, acct, a/c, sort code, routing, aba, iban, bic, swift, bsb, bank,
-             beneficiary, payee, details, ending]
+             beneficiary, payee, details, ending, ending in, ends in, finishing, last four, last 4]
+# a bank-change confirmation: one of these with a change word in its sentence (AR-E1); and in a
+# reply to an email that names one, any group of 4 or more digits refuses (AR-E12)
+bank_detail_phrases: [bank details, banking details, account details, account number, bank account,
+                      payment details, remittance details, sort code, routing number, iban, payee,
+                      beneficiary]
+change_words: [update, updated, updating, change, changed, changing, new, switch, switched, amend,
+               amended, noted, record, recorded, confirm, confirmed, received, set up, added, saved,
+               will use, now use]
 digit_words: {zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6",
               seven: "7", eight: "8", nine: "9"}
-digit_connectors: [then, and]
+digit_connectors: [then, and, and then, followed by]
+# spelled numbers beyond the digits (AR-E12); a tens word before a digit word makes two digits
+tens_words: {ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "14", fifteen: "15",
+             sixteen: "16", seventeen: "17", eighteen: "18", nineteen: "19", twenty: "2",
+             thirty: "3", forty: "4", fifty: "5", sixty: "6", seventy: "7", eighty: "8",
+             ninety: "9"}
 
 # price
-price_words: [price, prices, priced, quote, quotes, quoted, quotation, discount, vat, per hour,
-              per day, per week, per month, per unit, per item, per person, per night]
+price_words: [price, prices, priced, quote, quotes, quoted, quotation, discount, vat, fee, fees,
+              per hour, per day, per week, per month, per unit, per item, per person, per night]
 
 # contact
-street_suffixes: [street, st, road, rd, lane, ln, avenue, ave, drive, dr, way, close, place,
-                  square, boulevard, blvd, court, crescent, terrace]
+street_suffixes: [street, st, road, rd, lane, ln, avenue, ave, drive, dr, square, boulevard, blvd,
+                  crescent, terrace, gardens, parade, mews, grove]
+# also ordinary words ("to close", "a park"): these need a capitalised name ("40 Riverside Park")
+word_street_suffixes: [way, close, place, court, park, view, row, hill, green, walk, rise]
 
-# credential
-credential_nouns: [password, passcode, pin, one-time code, verification code, security code, code,
-                   login, otp]
-not_credentials: [sort code, post code, postcode, zip code, area code, country code, project code,
-                  discount code, promo code, product code, tax code, dress code]
-credential_sends: [send, share, give, tell, forward, email, text, read out, confirm]
+# credential (AR-E13, AR-F7): strong nouns count when sent, asked for or stated; a bare "code"
+# or "number" only with a sign that it is one ("the code we texted you", "send you the codes")
+credential_nouns: [password, passwords, passcode, passcodes, pin, pins, credential, credentials,
+                   token, tokens, otp, 2fa code, mfa code, verification code, verification codes,
+                   verification number, security code, security codes, one-time code,
+                   one-time passcode, one-time password, access code, access codes, login code,
+                   sign-in code, login details, login credentials, login]
+weak_credentials: [code, codes, number]
+weak_signs_after: [we sent, we texted, we emailed, we just sent, we just texted, you received,
+                   you got, from the app, sent to your, texted to you]
+weak_signs_before: [send you, give you, share with you, here is, here are, below is, below are]
+credential_sends: [send, share, give, tell, forward, email, text, read out, confirm, reply with,
+                   need, enter, provide]
 negations: [don't, do not, never, please don't, won't]
 
-# injection
+# injection: phrases; draftcheck.py adds the reader-addressed patterns over `readers` (AR-E16)
 injection: [ignore previous instructions, ignore all previous instructions, ignore the above,
             disregard previous instructions, note to the reviewer, note to the grader,
             note to the assistant, note to the judge, note to the model, rate this draft,
             rate this reply, system prompt, as an ai]
+readers: [reviewer, grader, judge, assistant, model, ai, evaluator, checker, classifier]
 
-# links
+# links: any letters after the last dot are a top-level domain, except these (file names);
+# link_tlds are the ones a spelled-out "dot" link may end with (AR-E15, AR-F3)
 link_tlds: [com, net, org, io, co, uk, de, fr, nl, es, it, eu, info, biz, us, ca, au, example,
-            test, invalid, localhost, app, dev, ai, me, tv, xyz, online, site, shop, gov, edu]
+            test, invalid, localhost, app, dev, ai, me, tv, xyz, online, site, shop, gov, edu, ru]
+not_tlds: [pdf, docx, doc, xlsx, xls, csv, txt, png, jpg, jpeg, gif, zip, pptx, ppt, html, htm,
+           json, xml, md, rtf, odt, ods, mp4, mp3, mov, wav, eml, msg, ics, svg, tif, tiff, heic,
+           py, js, ts, sh, log, bak, tmp]
 
 # sentences: a full stop after these doesn't end a sentence
 abbreviations: [mr, mrs, ms, dr, prof, dept, no, st, sr, jr, co, inc, ltd, vs, etc, e.g, i.e,

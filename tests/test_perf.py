@@ -500,6 +500,15 @@ DRAFT_SHAPES = {
     "iban-prefixes": "IE29 AIBK " * 400,
     "digits": "1" * 4000,
     "fridays": "Friday, " * 500,
+    # the adversarial round's slow shapes (AR-F1, AR-F9)
+    "hyphen-run-domain": "x-" * 1999 + "x.com",
+    "dotted-run": "a." * 2000,
+    "plus-run": "a+" * 2000,
+    "dot-hyphen-run": "a.b-" * 1000,
+    "www-run": "www." * 1000,
+    "clock-times": "10:30 " * 666,
+    "spaced-thousands": "1 000 " * 666,
+    "spelled-digits": "four " * 800,
 }
 
 

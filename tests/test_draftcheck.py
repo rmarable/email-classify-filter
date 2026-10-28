@@ -44,8 +44,8 @@ def test_a_fixture_case(case: dict[str, Any]) -> None:
     assert sorted(got.refuse) == sorted(case.get("refuse", [])), got.spans
     assert sorted(got.warn) == sorted(case.get("warn", []))
     for code, want in case.get("spans", {}).items():
-        span = got.spans[code]
-        assert want in span or span in want, (code, span, want)
+        span = got.spans[code]  # the matched text, not one character of it (AR-F4)
+        assert want in span or (span in want and 2 * len(span) >= len(want)), (code, span, want)
 
 
 def test_the_accented_letters_are_the_plans_list() -> None:
