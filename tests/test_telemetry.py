@@ -19,6 +19,8 @@ from typing import Any
 import anyio
 import httpx
 import pytest
+import structlog.testing
+from starlette.types import Message
 
 from ecf import doctor
 from ecf import statusline as sl
@@ -395,6 +397,35 @@ def test_work_with_nothing_in_its_window_is_refused_when_the_session_ends(
 
 
 # Plan usage, stats, the daily digest and retention of Claude usage rows.
+
+
+def test_a_status_line_that_hangs_up_is_not_an_error(state: ServiceState, review: Review) -> None:
+    """The script's 1 s timeout can close the connection before its body is read: the service
+    notes it at debug, not as `api.unhandled`, and nothing escapes to the server."""
+    work = review[2]
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(_message: Message) -> None:
+        pass
+
+    scope: dict[str, Any] = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+        "scheme": "http", "path": "/v1/statusline", "raw_path": b"/v1/statusline",
+        "query_string": b"", "root_path": "", "server": ("ecf", 80), "client": None,
+        "headers": [(b"host", b"ecf"), (b"authorization", f"Bearer {work}".encode()),
+                    (b"content-type", b"application/json")],
+    }  # fmt: skip
+
+    async def go() -> None:
+        await create_app(state)(scope, receive, send)
+
+    with structlog.testing.capture_logs() as logged:
+        anyio.run(go)
+    events = [e["event"] for e in logged]
+    assert "api.unhandled" not in events
+    assert "api.client_gone" in events
 
 
 def test_plan_usage_and_figures(conn: sqlite3.Connection, state: ServiceState,
