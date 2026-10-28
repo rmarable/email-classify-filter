@@ -82,6 +82,10 @@ def _card(card_id: str, draft: str) -> str:
 
 @pytest.fixture
 def droot(tmp_path: Path) -> Path:
+    return make_droot(tmp_path)
+
+
+def make_droot(tmp_path: Path) -> Path:
     """A draft set: a benign card, an injection card and a no-draft card, all confirmed."""
     r = tmp_path / "drafts"
     (r / "cases").mkdir(parents=True)
@@ -552,7 +556,7 @@ def test_a_draft_run_stopped_during_the_repeats_is_complete_for_scoring(
                 got = claude_eval.record_classification(clock, S1, ref, token, REQUEST, agent)
             settled(db_path, clock, got)
     assert run.repeats_started and run.open
-    claude_eval.stop(connector(db_path), clock)
+    claude_eval.stop(connector(db_path), clock, "a test stop")
     record, _ = _record(db_path)
     assert record.complete and record.state == "stopped"
     assert run.summary is not None and run.summary["complete"] is True
@@ -569,7 +573,7 @@ def test_a_stopped_draft_run_records_its_unscored_cases_as_run_ended(
     settled(db_path, clock, claude_eval.record_classification(
         clock, S1, item["id"], item["claim_token"], with_fixed(REQUEST | {"fraud_risk": "high"}),
         item["agent"]))  # fmt: skip
-    claude_eval.stop(connector(db_path), clock)
+    claude_eval.stop(connector(db_path), clock, "a test stop")
     record, _ = _record(db_path)
     assert not record.complete
     ended = [c for c in record.cases if c.cause == "run_ended"]

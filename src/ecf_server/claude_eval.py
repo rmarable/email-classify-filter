@@ -54,23 +54,27 @@ import fnmatch
 import hashlib
 import hmac
 import json
+import random
 import secrets
 import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import (
     ConflictError,
+    EcfError,
     ForbiddenProfileError,
     InvalidInputError,
     NotFoundError,
+    ServiceUnavailableError,
 )
 from ecf.eval import drafts, genset
+from ecf.eval.drafts import DraftCase
 from ecf.eval.results import (
     CaseResult,
     ClaimOutcome,
@@ -92,6 +96,7 @@ from ecf_server import (
     config,
     draftcheck,
     drafteval,
+    draftruns,
     evalrun,
     excerpt,
     jev_facts,
@@ -105,7 +110,7 @@ from ecf_server import (
     telemetry,
     triggers,
 )
-from ecf_server.clock import Clock, to_ts
+from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.log_bridge import log
 from ecf_server.message import ACTOR_CHARS, CLASSIFIER_CHARS
 from ecf_server.notify import Notifier
@@ -154,6 +159,12 @@ class Options:
     # the draft set (M8 plan §4, AE2): the actor offered only draft_reply where policy offers
     # it; an experiment, never for the gate
     forced_draft: bool = False
+    # the draft set: the operator's reason for a new attempt in a slot whose attempt ended
+    # incomplete (M8 plan AL4); not part of the arm
+    new_attempt: str | None = None
+    # the draft set: act items a round hands out (None: DRAFT_ACT_ROUND), so test runs can
+    # compare round sizes before the pilot (M8 plan 3b); not part of the arm
+    act_round: int | None = None
 
 
 Outcome = ClaimOutcome
@@ -182,6 +193,9 @@ class Claim:
     invalid: int = 0  # submissions refused before its outcome (S4, P19: M2's criterion 1)
     # an act claim's refused tries: the action each named and its reason code (M8 plan AH6)
     tries: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    # the same stage handed out again after a claim that ended unrecorded: that claim's outcome,
+    # or `restart` (M8 plan AR3)
+    reclaimed: str | None = None
 
 
 @dataclass
@@ -214,6 +228,17 @@ class Work:
     planned: bool | None = None
     dropped_why: str | None = None
     draft: str | None = None
+    # a draft run's handling (M8 plan §4 "Incomplete runs"): the classification an earlier run of
+    # the slot recorded, a claim a restart ended (`restart`), an act claim a restart ended after
+    # it read the message, why the case was scored missing after a read (3a), this run made the
+    # classification, and the case's draft record once scored
+    restored: dict[str, Any] | None = None
+    restart_stage: str | None = None
+    lost_read: str | None = None
+    lost: str | None = None
+    lost_detail: str | None = None
+    classified_here: bool = False
+    draft_case: drafts.DraftCase | None = None
     # the claim
     session: str | None = None
     token_hash: str = ""
@@ -271,6 +296,20 @@ class Run:
     summary: dict[str, Any] | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    expires_at: datetime | None = None  # None: `created` plus EXPIRY
+    # a draft run (M8 plan §4): its journal, slot, the slot's earlier runs and their scored
+    # cases, the determinism sample, its sessions' Claude Code versions and why each ended
+    journal: Path | None = None
+    slot: str = ""
+    prior: list[str] = field(default_factory=list[str])
+    prior_scored: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    repeat_ids: frozenset[str] = frozenset()
+    versions: list[str] = field(default_factory=list[str])
+    session_ends: dict[str, str] = field(default_factory=dict[str, str])
+    attempt: int = 0
+    stop_reason: str | None = None
+    clock: Clock | None = None  # the journal's times
+    last_beat: datetime | None = None  # the heartbeat last saved (5B-11)
 
     @property
     def by_ref(self) -> dict[str, Work]:
@@ -279,6 +318,11 @@ class Run:
     @property
     def open(self) -> bool:
         return self.state in ("preparing", "ready")
+
+    @property
+    def draft(self) -> bool:
+        """A draft-set run: registered in the record, with a journal (M8 plan §4)."""
+        return self.journal is not None
 
 
 @dataclass
@@ -290,6 +334,7 @@ class _Slot:
 
 
 _SLOT = _Slot()
+_REG_LOCK = threading.Lock()  # the draft runs' record (`draftruns`): one writer at a time
 
 
 def current() -> Run | None:
@@ -482,7 +527,10 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
 def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
           clock: Clock, data_dir: Path, opts: Options, *,
           spawn: Callable[[Callable[[], None]], None] | None = None,
+          resume: draftruns.Registration | None = None,
           ) -> dict[str, Any]:  # fmt: skip
+    """Register a run. `resume`: a draft run lost to a restart, carried on in its slot
+    (`recover`)."""
     if opts.preset not in USED_ROLES:
         raise InvalidInputError("a Claude eval runs preset C or D (preset B was removed in"
                                 " v3.0.0, ADR 0031)")  # fmt: skip
@@ -512,11 +560,24 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
         opts = replace(opts, for_gate=False)
     cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
     specs = _draft_specs(cases)
-    if any(specs.values()):  # the draft set is run --not-for-gate (M8 plan §4 "Set")
+    draft = any(specs.values())
+    if draft:  # the draft set is run --not-for-gate (M8 plan §4 "Set")
         opts = replace(opts, for_gate=False)
+        if opts.cases or opts.fraud_only:  # a slot scores each case of the set once (AO3)
+            raise InvalidInputError("a draft run covers the whole set: no --cases or"
+                                    " --fraud-only")  # fmt: skip
+        if opts.source_run is not None or opts.preset == "D":  # its own classifications (5B-6)
+            raise InvalidInputError("a draft run asks its own classifier: no source run"
+                                    " (--source-run or preset D)")  # fmt: skip
     elif opts.forced_draft:
         raise InvalidInputError("--forced-draft is for the draft set: no card here has a draft"
                                 " block")  # fmt: skip
+    if opts.new_attempt is not None and not (draft and opts.new_attempt.strip()):
+        raise InvalidInputError("--new-attempt is for the draft set, with the reason")
+    if opts.act_round is not None and not (
+            draft and 1 <= opts.act_round <= claude_review.LIMIT_MAX):  # fmt: skip
+        raise InvalidInputError(f"--act-round is for the draft set, from 1 to"
+                                f" {claude_review.LIMIT_MAX}")  # fmt: skip
     if opts.cases:  # the set's version stays the whole set's
         if unmatched := [g for g in opts.cases
                          if not any(fnmatch.fnmatchcase(c.id, g) for c in cases)]:  # fmt: skip
@@ -542,18 +603,42 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
                                                   {c.id for c in cases})  # fmt: skip
         source_key = _source_key(conn, source_run)
         models, pinned, key = models_for(conn, opts, source_key)
+        baseline = draft and _baseline(conn, opts, models)
     finally:
         conn.close()
     starter = rules.load_starter_rules(schema)
-    works = [Work(c, secrets.token_hex(16), spec=specs.get(c.id)) for c in cases]
     with _SLOT.lock:
         old = _SLOT.run
-        if old is not None and old.open and not _expired(old, clock):
-            raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
-                                " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
-        run = Run(new_random_id(), opts, models, pinned, key, version, clock.now(), works,
+        superseded: str | None = None
+        if old is not None and old.open:
+            with old.lock:  # an expired run is ended and saved first, never dropped (AM3)
+                _check_expiry(connect, clock, old)
+            if old.open:
+                raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
+                                    " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
+            superseded = old.run_id if old.draft else None
+        run_id = new_random_id()
+        rec: draftruns.Registration | None = None
+        prior: dict[str, dict[str, Any]] = {}
+        prior_ids: list[str] = []
+        if draft:
+            rec, works, prior, prior_ids = _register_draft(
+                data_dir, clock, run_id, opts, cases, specs, version, schema, models, pinned, key,
+                baseline=baseline, resume=resume, superseded=superseded)  # fmt: skip
+        else:
+            works = [Work(c, secrets.token_hex(16), spec=specs.get(c.id)) for c in cases]
+        run = Run(run_id, opts, models, pinned, key, version, clock.now(), works,
                   starter, policy.labels(schema, starter), data_dir, schema, source_run,
                   source, source_key)  # fmt: skip
+        if rec is not None:
+            run.journal, run.clock = draftruns.journal_path(data_dir, run_id), clock
+            run.slot, run.attempt, run.expires_at = rec.slot, rec.attempt, rec.expires_at
+            run.prior = prior_ids
+            run.prior_scored = prior
+            run.last_beat = rec.heartbeat_at  # the registration's own heartbeat (5B-11)
+            run.repeat_ids = frozenset(evalrun.determinism_sample(cases))
+            _j(run, {"e": "registered", "slot": rec.slot, "attempt": rec.attempt,
+                     "kind": rec.kind, "resumed_from": rec.resumed_from})  # fmt: skip
         _SLOT.run = run
     if opts.for_gate:  # only here (P16); never an experiment's or a generated set's (eval P1)
         evalrun.remember_root(connect, clock, opts.root)
@@ -568,6 +653,7 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             with run.lock:
                 run.state = "failed"
                 run.detail = f"preparing the cases failed ({type(exc).__name__})"
+                _end_record(clock, run, "failed", run.detail, complete=False)
 
     (spawn or _thread)(work)
     return snapshot(run)
@@ -586,6 +672,148 @@ def _draft_specs(cases: list[evalrun.Case]) -> dict[str, drafts.DraftSpec | None
         except ValueError as exc:  # pydantic's ValidationError is one
             raise InvalidInputError(f"{c.id}: its draft block is invalid ({exc})") from exc
     return out
+
+
+def _baseline(conn: sqlite3.Connection, opts: Options, models: dict[str, str]) -> bool:
+    """The baseline arm (M8 plan §4): today's actor, preset C on the pins in force, asking its own
+    classifier at the default window and standard sensitivity (diff review 5B-3)."""
+    eff = claude_pins.effective(conn)
+    return (opts.preset == "C" and opts.source_run is None and opts.sensitivity == "standard"
+            and opts.classifier_window == CLASSIFIER_CHARS
+            and all(models[r] == eff[r] for r in used_roles(opts)))  # fmt: skip
+
+
+def _opts_doc(opts: Options) -> dict[str, Any]:
+    """A draft run's options as the record keeps them, to resume it after a restart."""
+    doc = asdict(opts)
+    doc |= {"root": str(opts.root.resolve()), "cases": list(opts.cases),
+            "copy_to": None if opts.copy_to is None else str(opts.copy_to)}  # fmt: skip
+    return doc
+
+
+def _opts_from(doc: dict[str, Any]) -> Options:
+    d = dict(doc)
+    d |= {"root": Path(d["root"]), "cases": tuple(d.get("cases") or ()),
+          "copy_to": None if d.get("copy_to") is None else Path(d["copy_to"])}  # fmt: skip
+    return Options(**d)
+
+
+def _register_draft(data_dir: Path, clock: Clock, run_id: str,  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - what start() resolved, one transaction
+                    opts: Options,
+                    cases: list[evalrun.Case], specs: dict[str, drafts.DraftSpec | None],
+                    version: str, schema: CompiledSchema, models: dict[str, str], pinned: bool,
+                    key: str, *, baseline: bool, resume: draftruns.Registration | None,
+                    superseded: str | None,
+                    ) -> tuple[draftruns.Registration, list[Work], dict[str, dict[str, Any]],
+                               list[str]]:  # fmt: skip
+    """A draft run's registration (M8 plan §4 "Incomplete runs"), written before any case runs:
+    its slot and attempt (or the lost run's, when it resumes one), and its cases: the slot's
+    still unscored, in the slot's shuffled order, with the classifications earlier runs of the
+    slot recorded. Also the slot's scored cases and its earlier runs."""
+    with _REG_LOCK:
+        reg = draftruns.load(data_dir)
+        checker = draftcheck.digest()
+        if reg.frozen_checker is not None and checker != reg.frozen_checker:
+            raise ConflictError(f"the draft checker changed since the pilot ({checker[:12]}, frozen"
+                                f" {reg.frozen_checker[:12]}): a checker change comes back to the"
+                                " operator first (M8 plan AP5)")  # fmt: skip
+        actor_digest = actor_prompt_digest()
+        doc = _opts_doc(opts)
+        arm = draftruns.arm_key({r: models[r] for r in used_roles(opts)}, actor_digest, doc)
+        now = clock.now()
+        if resume is None and (stuck := next((r for r in reg.runs if r.open), None)):
+            # a run stopped on a write error keeps its record open for the restart (5B-14)
+            raise ConflictError(f"draft run {stuck.run_id[:8]} stopped without closing its"
+                                " record (a write error): restart the service to resume it"
+                                " first")  # fmt: skip
+        if resume is None:
+            kind: draftruns.Kind = "forced" if opts.forced_draft else "natural"
+            slot, attempt, _keyed = draftruns.assign(reg, arm=arm, baseline=baseline, kind=kind,
+                                                     digest=version,
+                                                     new_attempt=opts.new_attempt)  # fmt: skip
+            started, restarts, expires = now, 0, now + EXPIRY
+        else:
+            if arm != resume.arm or version != resume.set_digest:
+                raise ConflictError("the arm's models or prompts, or the set, changed since the"
+                                    " run was lost")  # fmt: skip
+            kind, slot, attempt = resume.kind, resume.slot, resume.attempt
+            started, restarts = resume.attempt_started_at, resume.restarts
+            expires = min(now + EXPIRY, started + draftruns.ATTEMPT_LIMIT)
+        pilot = slot.startswith("pilot-")
+        digests = ({c.id: draftruns.card_digest(c.path.read_bytes(), c.expected) for c in cases}
+                   if pilot else {})  # fmt: skip
+        rec = draftruns.Registration(
+            run_id=run_id,
+            kind=kind,
+            slot=slot,
+            attempt=attempt,
+            arm=arm,
+            baseline=baseline,
+            models=dict(models),
+            actor_prompt_digest=actor_digest,
+            set_digest=version,
+            root=doc["root"],
+            options=doc,
+            pinned=pinned,
+            key=key,
+            schema_digest=schema.digest,
+            checker_digest=checker,
+            registered_at=now,
+            expires_at=expires,
+            attempt_started_at=started,
+            heartbeat_at=now,
+            resumed_from=None if resume is None else resume.run_id,
+            restarts=restarts,
+            new_attempt_reason=opts.new_attempt if resume is None else None,
+            supersedes=superseded,
+            card_digests=digests,
+        )
+        prior = [r for r in draftruns.slot_of(reg, rec) if r.run_id != run_id]
+        done: dict[str, dict[str, Any]] = {}
+        cls: dict[str, dict[str, Any] | None] = {}
+        out: dict[tuple[str, str], dict[str, Any]] = {}
+        unscored: set[str] = set()
+        ids = {c.id for c in cases}
+        for p in prior:
+            events = draftruns.read(draftruns.journal_path(data_dir, p.run_id))
+            # a pilot slot spans versions of the set: only an unchanged card's work carries over,
+            # and a removed card's is dropped (diff review 5B-4)
+            keep = _carried(p, digests, ids) if pilot else ids
+            done |= {k: v for k, v in draftruns.scored(events).items() if k in keep}
+            cls |= {k: v for k, v in draftruns.classified(events).items() if k in keep}
+            # an open claim keeps how its run ended: expired is the run's end, else a restart
+            cause = "run_ended" if p.end == "expired" else "restart"
+            out |= {k: v | {"cause": cause}
+                    for k, v in draftruns.open_claims(events).items() if k[0] in keep}  # fmt: skip
+            unscored |= draftruns.recorded_unscored(events) & keep
+        # every attempt in a slot runs in the same order (AQ9): the whole set shuffled, then cut
+        order = [c for c in cases]
+        random.Random(draftruns.shuffle_seed(version, arm, slot)).shuffle(order)  # noqa: S311 - an order, not a secret
+        works = [Work(c, secrets.token_hex(16), spec=specs.get(c.id))
+                 for c in order if c.id not in done]  # fmt: skip
+        for w in works:
+            w.restored = cls.get(w.case.id)
+            act = out.get((w.case.id, "act"))
+            if w.restored is not None and act is not None and act.get("read"):
+                w.lost_read = str(act["cause"])  # it read the message: scored missing (3a)
+            elif w.restored is not None and w.case.id in unscored:
+                w.lost_read = "restart"
+            elif act is not None:
+                w.restart_stage = "act"
+            elif (w.case.id, "classify") in out:
+                w.restart_stage = "classify"
+        if reg.frozen_checker is None:  # the first pilot run freezes the checker (AP5)
+            reg.frozen_checker = checker
+        if resume is not None and (lost := reg.get(resume.run_id)) is not None:
+            reg.put(lost.model_copy(update={"resumed_by": run_id}))
+        reg.put(rec)
+        draftruns.save(data_dir, reg)
+    return rec, works, done, [p.run_id for p in prior]
+
+
+def _carried(p: draftruns.Registration, digests: dict[str, str], ids: set[str]) -> set[str]:
+    """The cases of an earlier pilot run whose card is unchanged in the set as it is now."""
+    return {k for k in ids if p.card_digests.get(k) == digests.get(k)}
 
 
 def _check_root(conn: sqlite3.Connection, root: Path) -> None:
@@ -645,6 +873,11 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
                     w.classification = (got or {}).get(w.case.id) or None
                     w.derived = (derived or {}).get(w.case.id, jev_mapping.NO_BAND)
                     _classified(run, w)
+                elif w.restored is not None:  # an earlier run of its slot classified it
+                    w.classification = w.restored
+                    _classified(run, w)
+                    if w.lost_read is not None and w.stage == "act":
+                        _missing(run, w, w.lost_read)
                 else:
                     w.stage = "classify"
         with run.lock:
@@ -725,6 +958,33 @@ def _score(run: Run, w: Work) -> None:
         "model_only_fraud": w.case.expected.get("rule") == "fraud_guard" and alone != "fraud_guard",
     })  # fmt: skip
     w.stage = "done"
+    if run.draft:  # journalled as it is scored, so a stop or a restart loses nothing (AK3)
+        if w.spec is not None:
+            w.draft_case = drafteval.case(_seen(w), forced_run=run.opts.forced_draft)
+        _j(run, {"e": "scored", "case": w.case.id, "result": w.result.model_dump(mode="json"),
+                 "draft": None if w.draft_case is None else w.draft_case.model_dump(mode="json"),
+                 "lost": w.lost})  # fmt: skip
+
+
+def _missing(run: Run, w: Work, cause: str, detail: str | None = None) -> None:
+    """An act claim that read the message ended without a recorded answer: the case is scored
+    missing and never handed out again (M8 plan 3a), its cause kept."""
+    w.lost, w.lost_detail = cause, detail
+    _j(run, {"e": "lost", "case": w.case.id, "cause": cause, "detail": detail})
+    log.warning("claude_eval.missing_after_read", run_id=run.run_id[:8], cause=cause)
+    _proposed(run, w, None)
+
+
+def _lost_after_read(run: Run, w: Work, cause: str, detail: str | None = None) -> bool:
+    """3a on a draft run: the claim that just ended unrecorded was an act claim that had read the
+    message."""
+    if not run.draft or w.stage != "act" or w.result is not None or not w.claims:
+        return False
+    c = w.claims[-1]
+    if c.stage != "act" or c.read is None:
+        return False
+    _missing(run, w, cause, detail)
+    return True
 
 
 def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
@@ -735,27 +995,39 @@ def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
         return
     if run.source_run is None and not run.repeats_started:
         run.repeats_started = True
-        for w in run.works[: evalrun.DETERMINISM_CASES]:
+        # a draft run repeats `determinism_sample`'s cases that it classified itself (AR8)
+        repeat = ([w for w in run.works if w.case.id in run.repeat_ids and w.classified_here]
+                  if run.draft else run.works[: evalrun.DETERMINISM_CASES])  # fmt: skip
+        for w in repeat:
             w.stage = "repeat"
-        return
+        if repeat:
+            return
     _finish(connect, clock, run, "done")
 
 
-def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
+def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  # noqa: PLR0915 - the summary's parts
             state: str, detail: str = "") -> None:  # fmt: skip
     """Save what was scored (a stopped or expired run too, marked incomplete) and end the run.
     A draft run is complete once every case is scored, so one stopped during the determinism
     repeats counts, with its repeats marked unfinished (M8 plan AK3)."""
-    draft_run = any(w.spec is not None for w in run.works)
-    complete = state == "done" or (draft_run and all(w.result is not None for w in run.works))
+    draft_run = any(w.spec is not None for w in run.works) or run.draft
     run.state, run.detail = state, detail
     for w in run.works:
         if w.claim != "free":
-            _ended(w, "run_ended")
+            _ended(run, w, "run_ended")
+            w.claim, w.session = "free", None
+            _lost_after_read(run, w, "run_ended", detail)  # a stop can't re-roll a read case (3a)
         w.claim, w.session = "free", None
-    results = [w.result.model_copy(update={"claims": _claim_records(run, w)})
-               for w in run.works if w.result is not None]  # fmt: skip
+    complete = state == "done" or (draft_run and all(w.result is not None for w in run.works))
+    # a draft run's result is its slot's: the earlier runs' scored cases too (AO3)
+    results = [CaseResult.model_validate(e["result"]) for e in run.prior_scored.values()]
+    results += [w.result.model_copy(update={"claims": _claim_records(run, w)})
+                for w in run.works if w.result is not None]  # fmt: skip
+    _end_record(clock, run, state, detail, complete=complete)
     if not results:
+        if run.draft:  # nothing scored: the draft record still lists every case (run_ended)
+            drafteval.write(run.data_dir / "evals", _drafts_file(run, to_ts(clock.now()), state,
+                                                                  complete))  # fmt: skip
         return
     # only a run on the pinned models can pass the gate: an unpinned run is comparison only (J8;
     # a D run also needs its source run on D's current key, P8); a C run on frozen
@@ -798,6 +1070,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     summary["actor_prompt_digest"] = actor_prompt_digest()  # the actor's instructions (OD-523)
     summary["keywords_digest"] = triggers.keywords_digest()
     summary["label_map_unlabelled"] = evalrun.map_effect([w.case for w in run.works])
+    if run.draft:
+        summary["draft_run"] = _draft_summary(run)
     conn = connect()
     try:
         summary["claude"] = _figures(conn, run)
@@ -811,7 +1085,8 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
     finally:
         conn.close()
     if draft_run:
-        drafteval.write(run.data_dir / "evals", _drafts_file(run, result, state, complete))
+        drafteval.write(run.data_dir / "evals", _drafts_file(run, result.created_at, state,
+                                                              complete))  # fmt: skip
     run.summary = summary
     log.info("claude_eval.saved", run_id=run.run_id[:8], state=state, cases=len(results))
 
@@ -821,16 +1096,19 @@ def _window_options(opts: Options) -> dict[str, Any]:
     return ({} if opts.classifier_window == CLASSIFIER_CHARS
             else {"classifier_window": opts.classifier_window}) | (
         {"cases": list(opts.cases)} if opts.cases else {}) | (
-        {"forced_draft": True} if opts.forced_draft else {})  # fmt: skip
+        {"forced_draft": True} if opts.forced_draft else {}) | (
+        {"act_round": opts.act_round} if opts.act_round is not None else {})  # fmt: skip
 
 
-def _drafts_file(run: Run, result: ResultFile, state: str, complete: bool) -> drafts.DraftsFile:
+def _drafts_file(run: Run, created_at: str, state: str, complete: bool) -> drafts.DraftsFile:
     """The run's draft record (M8 plan §4 "Recording"): every case of the draft set, scored or
     not; judged later by the judge route."""
-    cases = [drafteval.case(_seen(w), forced_run=run.opts.forced_draft)
-             for w in run.works if w.spec is not None]  # fmt: skip
+    cases = [DraftCase.model_validate(e["draft"]) for e in run.prior_scored.values()
+             if e.get("draft") is not None]  # fmt: skip
+    cases += [w.draft_case or drafteval.case(_seen(w), forced_run=run.opts.forced_draft)
+              for w in run.works if w.spec is not None]  # fmt: skip
     return drafts.DraftsFile(
-        run_id=run.run_id, set_version=run.version, created_at=result.created_at,
+        run_id=run.run_id, set_version=run.version, created_at=created_at,
         forced=run.opts.forced_draft, complete=complete, state=state,
         models={r: run.models[r] for r in used_roles(run.opts)},
         actor_prompt_digest=actor_prompt_digest(), checker_digest=draftcheck.digest(),
@@ -848,7 +1126,7 @@ def _seen(w: Work) -> drafteval.Seen:
         proposal=w.proposal["action"] if w.proposal else None, planned=w.planned,
         dropped_why=w.dropped_why,
         tries=[list(c.tries) for c in w.claims if c.stage == "act"],
-        text=w.draft, email_text=w.act_text, allowed_addresses=w.addresses,
+        lost=w.lost, text=w.draft, email_text=w.act_text, allowed_addresses=w.addresses,
         must_not_hide=bool(safety.get("must_not_hide")),
         actions=frozenset(a.name for a in w.plan.actions) if w.plan else frozenset())  # fmt: skip
 
@@ -895,13 +1173,14 @@ def _figures(conn: sqlite3.Connection, run: Run) -> dict[str, Any]:
 
 
 def _expired(run: Run, clock: Clock) -> bool:
-    return clock.now() - run.created >= EXPIRY
+    return clock.now() >= (run.expires_at or run.created + EXPIRY)
 
 
 def _check_expiry(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run) -> None:
     if run.open and _expired(run, clock):
         run.stop.set()
-        _finish(connect, clock, run, "expired", "expired 24 hours after it was registered")
+        until = run.expires_at or run.created + EXPIRY
+        _finish(connect, clock, run, "expired", f"expired at {to_ts(until)}")
 
 
 def session_info(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dict[str, Any] | None:
@@ -919,8 +1198,8 @@ def session_info(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dic
 
 
 def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str, *,
-              limit: int = claude_review.LIMIT_DEFAULT,
-              stopped: str | None = None) -> dict[str, Any]:  # fmt: skip
+              limit: int = claude_review.LIMIT_DEFAULT, stopped: str | None = None,
+              claude_version: str | None = None) -> dict[str, Any]:  # fmt: skip
     """Claim the next cases for this session: `{id, need, agent, spawn}` each, and `spawns`, one
     `{agent, prompt}` per Agent spawn, the prompt written by the service: the tokens are only there
     (OD-499). `results` reports this session's earlier claims."""
@@ -940,7 +1219,10 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
                 if w.session is not None:
                     run.grace.setdefault(w.session, {})[w.agent] = now + GRACE
                 w.claim, w.session = "free", None
+                _lost_after_read(run, w, "claim_expired")
         _free_unread(run, now)
+        if run.open:  # a case scored missing may have been the last (M8 plan 3a)
+            _maybe_finish(connect, clock, run)
         results = run.outcomes.pop(session_id, [])
         base: dict[str, Any] = {"run_id": run.run_id[:8], "results": results,
                                 "left": sum(w.stage != "done" for w in run.works)}  # fmt: skip
@@ -952,15 +1234,17 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
                            "stopped": stopped}  # fmt: skip
         if session_id not in run.sessions:
             run.sessions.append(session_id)
+            _joined(clock, run, session_id, claude_version)
         free = [w for w in run.works if w.stage in ("classify", "act", "repeat")
                 and w.claim == "free"]  # fmt: skip
         picked, more = _round(run, session_id, free, limit, now)
         tokens = [_claim(run, w, session_id, now) for w in picked]
         out = [{"id": w.ref, "need": w.need, "agent": w.agent} for w in picked]
         _spawns(run, out)
-        if out:
+        if out:  # journalled before the reply hands them out (M8 plan AS4)
             _record_claims(run, picked, out, session_id, limit, now)
             run.awaiting.setdefault(session_id, []).append(run.rounds)
+            _beat(clock, run)
         busy = sum(w.claim != "free" for w in run.works)
         reply = base | {"items": out, "spawns": claude_review.spawn_prompts(out, tokens),
                         "more": more, "done": False,
@@ -989,8 +1273,10 @@ def _round(run: Run, session_id: str, free: list[Work], limit: int,
         return [], True
     # The session goes straight back for more, so the service paces it: Claude Code runs a
     # bounded number of subagents at once, and a claim it can't spawn only expires.
-    room = max(0, min(limit, OUT_LIMITS * limit - claimed.count(agent)))
     same = [w for w in free if _agent_of(run, w) == agent]
+    if run.draft and same and same[0].stage == "act":
+        limit = min(limit, run.opts.act_round or DRAFT_ACT_ROUND)
+    room = max(0, min(limit, OUT_LIMITS * limit - claimed.count(agent)))
     return same[:room], len(same) > room
 
 
@@ -1068,17 +1354,24 @@ HOLD_WAIT = timedelta(seconds=120)  # a held submission keeps the session pollin
 # the session no longer waits for its spawns: its agent counts as out this long (review R1).
 TAIL = timedelta(seconds=15)
 OUT_LIMITS = 2  # a session's claims out per agent type: at most this many `limit`s (review R2)
+# A draft run's act stage writes the draft (M8 plan 3b, AX2): a longer claim, so a timeout is rare,
+# and a smaller round, since the actor's spawn takes the round's act items and a read case lost
+# with it is scored missing (3a); an `ecf-actor-high` spawn takes one
+DRAFT_ACT_TTL = timedelta(seconds=600)
+DRAFT_ACT_ROUND = 5
 
 
 def eval_next_waiting(connect: Callable[[], sqlite3.Connection], clock: Clock, session_id: str,
                       *, limit: int = claude_review.LIMIT_DEFAULT, stopped: str | None = None,
+                      claude_version: str | None = None,
                       sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:  # fmt: skip
     """`eval_next`, but a reply that would be empty only because work is still out or being
     prepared waits up to `WAIT_S` for some: the session can't pause itself (`ecf claude` denies
     every tool that could), so each call it makes waits a little before `next` sends it back."""
     waited, results = 0.0, list[dict[str, Any]]()
     while True:
-        got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped)
+        got = eval_next(connect, clock, session_id, limit=limit, stopped=stopped,
+                        claude_version=claude_version)  # fmt: skip
         results += got["results"]  # each call hands over the outcomes since the last: keep them
         got["results"] = results
         busy = got.get("in_progress", 0) or got.get("preparing") or got.get("next") == "call again"
@@ -1097,7 +1390,8 @@ def _claim(run: Run, w: Work, session_id: str, now: datetime) -> str:
         w.hashes.add(w.token_hash)
     w.fence += 1
     token = f"{w.fence}.{secrets.token_urlsafe(24)}"
-    w.session, w.token_hash, w.expires = session_id, _hash(token), now + claude_review.CLAIM_TTL
+    ttl = DRAFT_ACT_TTL if run.draft and need == "act" else claude_review.CLAIM_TTL
+    w.session, w.token_hash, w.expires = session_id, _hash(token), now + ttl
     w.claim, w.need, w.agent, w.invalid = "claimed", need, _agent_of(run, w), 0
     return token
 
@@ -1123,21 +1417,49 @@ def _record_claims(run: Run, picked: list[Work], out: list[dict[str, Any]], sess
     run.rounds += 1
     ordinal = run.sessions.index(session_id) + 1
     preparing = run.state == "preparing"
+    events: list[dict[str, Any]] = []
     for w, it in zip(picked, out, strict=True):
         reasons = policy.high_risk_reasons(_context(run, w)) if w.stage == "act" else ()
         stage = cast(ClaimStage, w.stage)  # a claimable stage
+        again = _reclaimed(w, stage) if run.draft else None
         w.claims.append(Claim(stage, str(it["spawn"]), run.rounds, ordinal, limit, len(out),
-                              preparing, now, high_risk=reasons))  # fmt: skip
+                              preparing, now, high_risk=reasons, reclaimed=again))  # fmt: skip
+        events.append({"e": "claim", "case": w.case.id, "stage": stage, "attempt": run.attempt,
+                       "spawn": str(it["spawn"]), "round": run.rounds, "session": ordinal,
+                       "limit": limit, "items": len(out), "preparing": preparing,
+                       "reclaimed": again, "at": to_ts(now)})  # fmt: skip
+    _j_many(run, events)  # the round in one write and one fsync (5B-12)
 
 
-def _ended(w: Work, outcome: Outcome) -> None:
-    """The current claim's outcome, set once."""
+def _reclaimed(w: Work, stage: str) -> str | None:
+    """Why this stage of the case is handed out again (M8 plan AR3): its last claim of the stage
+    ended unrecorded (a claim timeout, a closed session, a token mix-up, a model refusal), or a
+    restart ended it. Not an unread spawn, an invalid ending or a determinism repeat."""
+    if stage == "repeat":
+        return None
+    before = [c for c in w.claims if c.stage == stage]
+    if not before:
+        return "restart" if w.restart_stage == stage else None
+    last = before[-1].outcome
+    return None if last in (None, "recorded", "invalid", "claim_unread") else last
+
+
+def _ended(run: Run, w: Work, outcome: Outcome) -> None:
+    """The current claim's outcome, set once (and journalled on a draft run)."""
     if w.claims and w.claims[-1].outcome is None:
-        w.claims[-1].outcome = outcome
+        c = w.claims[-1]
+        c.outcome = outcome
+        _j(run, {"e": "end", "case": w.case.id, "stage": c.stage, "outcome": outcome,
+                 "answered": _ts(c.answered), "settled": _ts(c.settled), "invalid": c.invalid,
+                 "called": c.called, "tries": c.tries})  # fmt: skip
+
+
+def _ts(t: datetime | None) -> str | None:
+    return None if t is None else to_ts(t)
 
 
 def _outcome(run: Run, w: Work, outcome: Outcome) -> None:
-    _ended(w, outcome)
+    _ended(run, w, outcome)
     if w.session is not None:
         run.outcomes.setdefault(w.session, []).append({"id": w.ref, "outcome": outcome})
 
@@ -1227,6 +1549,7 @@ def _mismatch(run: Run, clock: Clock, w: Work, session_id: str, agent: str) -> N
     mine_freed[w.token_hash] = w.expires
     _outcome(run, w, "claim_mismatch")
     w.claim, w.session = "free", None
+    _lost_after_read(run, w, "claim_mismatch")
     mine = run.grace.setdefault(session_id, {})
     mine[agent] = max(mine.get(agent, now), now + TAIL)
     log.warning("claude_eval.claim_mismatch", run_id=run.run_id[:8])
@@ -1239,8 +1562,10 @@ def get_message(clock: Clock, session_id: str, ref: str, token: str,
     run = _run_or_missing()
     with run.lock:
         w = _claimed(run, clock, session_id, ref, token, agent)
-        if w.claims and w.claims[-1].read is None:
+        if w.claims and w.claims[-1].read is None:  # journalled as it happens (M8 plan AT8)
             w.claims[-1].read = clock.now()
+            _j(run, {"e": "read", "case": w.case.id, "stage": w.claims[-1].stage,
+                     "at": to_ts(w.claims[-1].read)})  # fmt: skip
         text = w.cls_text if w.need == "classify" else w.act_text
         out: dict[str, Any] = {"id": ref, "need": w.need,
                                "untrusted_email": w.email | {"text": text},
@@ -1264,6 +1589,7 @@ def record_classification(clock: Clock, session_id: str, ref: str, token: str,
         if (again := _again(run, session_id, ref, token, agent, digest)) is not None:
             return again
         w = _claimed(run, clock, session_id, ref, token, agent, "classify")
+        _beat(clock, run)
         result, errors = claude_review.check_classification(classification, run.schema)
         if result is None:
             return _invalid(run, w, errors, digest)
@@ -1279,6 +1605,7 @@ def propose_action(clock: Clock, session_id: str, ref: str, token: str, body: di
         if (again := _again(run, session_id, ref, token, agent, digest)) is not None:
             return again
         w = _claimed(run, clock, session_id, ref, token, agent, "act")
+        _beat(clock, run)
         why = claude_review.check_proposal(proposal, run.known, frozenset(),
                                            _offered(run, w))  # fmt: skip
         if why is not None:
@@ -1349,6 +1676,7 @@ def _invalid(run: Run, w: Work, errors: list[str], digest: str) -> dict[str, Any
         _outcome(run, w, "invalid")
         w.claim, w.session = "free", None
         if w.stage == "classify":
+            w.classified_here = True
             _classified(run, w)
         elif w.stage == "act":
             _proposed(run, w, None)
@@ -1386,19 +1714,27 @@ def settle(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: No
             w.claims[-1].settled = clock.now()
         if seen is None or seen.model != expected:
             return _refuse(connect, clock, notifier, tel, run, w, seen, expected)
-        _outcome(run, w, "recorded")
+        session = w.session
         _keep(w, w.held_digest, {"accepted": True, "errors": []}, ended=True)
         w.claim, w.session = "free", None
+        # the answer is journalled before the claim's end, so a crash between them leaves an
+        # open claim (resumed, or scored missing after a read), never an ended one with no
+        # answer, which a restart would hand out again (diff review 5B-2)
         if hold.need == "classify":
             cls: dict[str, Any] = hold.payload["classification"]
             if w.stage == "repeat":
                 run.diffs += cls != w.classification
+                _j(run, {"e": "repeat", "case": w.case.id, "diff": cls != w.classification})
                 w.stage = "done"
             else:
-                w.classification = cls
+                w.classification, w.classified_here = cls, True
+                _j(run, {"e": "classified", "case": w.case.id, "classification": cls})
                 _classified(run, w)
         else:
             _proposed(run, w, hold.payload["proposal"])
+        _ended(run, w, "recorded")
+        if session is not None:
+            run.outcomes.setdefault(session, []).append({"id": w.ref, "outcome": "recorded"})
         _maybe_finish(connect, clock, run)
     return {"accepted": True, "errors": []}
 
@@ -1415,6 +1751,7 @@ def _refuse(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: N
     why_text = f"refused: the call came from {model}; this agent's model is {expected}"
     _keep(w, w.held_digest, {"accepted": False, "tries_left": 0, "errors": [why_text]}, ended=True)
     w.claim, w.session = "free", None  # the case waits for another round
+    _lost_after_read(run, w, "model_refused")
     log.warning("claude_eval.model_refused", run_id=run.run_id[:8], check=why)
     if tel.refused(session_id, model, expected):
         conn = connect()
@@ -1428,16 +1765,22 @@ def _refuse(connect: Callable[[], sqlite3.Connection], clock: Clock, notifier: N
     return {"accepted": False, "tries_left": 0, "errors": [why_text]}
 
 
-def release_session(session_id: str) -> None:
-    """The session ended: its claims end with it (the run carries on in the next session)."""
+def release_session(session_id: str, reason: str = "closed") -> None:
+    """The session ended: its claims end with it (the run carries on in the next session). A
+    draft run keeps why it ended, so a session closed on purpose can be seen (M8 plan AW5)."""
     run = current()
     if run is None:
         return
     with run.lock:
+        if run.draft and session_id in run.sessions:
+            run.session_ends[session_id] = reason
+            _j(run, {"e": "session_end", "session": run.sessions.index(session_id) + 1,
+                     "reason": reason})  # fmt: skip
         for w in run.works:
             if w.session == session_id and w.claim != "free":
-                _ended(w, "session_ended")
+                _ended(run, w, "session_ended")
                 w.claim, w.session = "free", None
+                _lost_after_read(run, w, "session_ended", reason)
         run.outcomes.pop(session_id, None)
         run.freed.pop(session_id, None)
         run.unread.pop(session_id, None)
@@ -1448,14 +1791,26 @@ def release_session(session_id: str) -> None:
 # show (counts and rates only, no case IDs).
 
 
-def stop(connect: Callable[[], sqlite3.Connection], clock: Clock) -> dict[str, Any] | None:
-    """`ecf eval stop`: end the run now and save what was scored (OD-291)."""
+def check_stop_reason(reason: str | None) -> None:
+    """A draft run is stopped with a reason, checked before anything is stopped (5B-9)."""
+    run = current()
+    if run is not None and run.open and run.draft and not (reason or "").strip():
+        raise InvalidInputError("a draft run is stopped with a reason (`ecf eval stop --reason"
+                                " TEXT`); the record keeps it")  # fmt: skip
+
+
+def stop(connect: Callable[[], sqlite3.Connection], clock: Clock,
+         reason: str | None = None) -> dict[str, Any] | None:  # fmt: skip
+    """`ecf eval stop`: end the run now and save what was scored (OD-291). A draft run is stopped
+    with a reason, recorded with it (M8 plan §4)."""
     run = current()
     if run is None or not run.open:
         return None
+    check_stop_reason(reason)
     run.stop.set()
     with run.lock:
         if run.open:
+            run.stop_reason = (reason or "").strip() or None
             scored = sum(w.result is not None for w in run.works)
             _finish(connect, clock, run, "stopped",
                     f"stopped after {scored} of {len(run.works)} cases")  # fmt: skip
@@ -1476,6 +1831,8 @@ def snapshot(run: Run) -> dict[str, Any]:
             # echoed so the CLI can tell a service that ignored them (window tuning step 2)
             "classifier_window": run.opts.classifier_window, "cases": list(run.opts.cases),
             "forced_draft": run.opts.forced_draft,
+            **({"slot": run.slot, "attempt": run.attempt,
+                "act_round": run.opts.act_round or DRAFT_ACT_ROUND} if run.draft else {}),
             "created_at": to_ts(run.created), "result": run.summary,
         }  # fmt: skip
 
@@ -1535,3 +1892,363 @@ def results() -> dict[str, Any]:
                                                  "gate_passed")} | {
             "unsafe": len(m.get("unsafe") or [])}  # fmt: skip
     return out
+
+
+# The draft eval's run handling (M8 plan §4 "Incomplete runs"; `draftruns`): the journal and the
+# record as the run goes, the minute timer, what a service start does with a run it lost, and the
+# operator's confirmation of the set.
+
+
+def _j(run: Run, event: dict[str, Any]) -> None:
+    """Append to a draft run's journal; nothing on any other run."""
+    _j_many(run, [event])
+
+
+def _j_many(run: Run, events: list[dict[str, Any]]) -> None:
+    """Append events in one write. A write that fails (a full disk, a refused write) stops the
+    run closed: nothing more is handed out or journalled, the request fails, and the record stays
+    open, so a restart resumes it from what was written (diff review 5B-14)."""
+    if run.journal is None or not events:
+        return
+    now = run.clock.now() if run.clock is not None else datetime.now().astimezone()
+    try:
+        draftruns.append_many(run.journal, [{"at": to_ts(now)} | e for e in events])
+    except OSError as exc:
+        run.journal = None
+        run.stop.set()
+        run.state, run.detail = "failed", f"its record couldn't be written ({exc.strerror or exc})"
+        log.error("claude_eval.journal_failed", run_id=run.run_id[:8], errno=exc.errno)
+        raise ServiceUnavailableError(f"the draft run stopped: its record couldn't be written"
+                                      f" ({exc.strerror or exc}); a service restart resumes it"
+                                      " from what was written") from exc  # fmt: skip
+
+
+def _update_record(data_dir: Path, run_id: str, **changes: Any) -> None:
+    with _REG_LOCK:
+        reg = draftruns.load(data_dir)
+        r = reg.get(run_id)
+        if r is not None:
+            reg.put(r.model_copy(update=changes))
+            draftruns.save(data_dir, reg)
+
+
+HEARTBEAT_EVERY = timedelta(seconds=15)  # well inside `draftruns.HEARTBEAT_MARGIN` (5B-11)
+
+
+def _beat(clock: Clock, run: Run) -> None:
+    """The heartbeat (AQ6): at each claim, each submission and each minute's tick, saved at most
+    every `HEARTBEAT_EVERY`. A failed save is logged: the heartbeat only times the run's end."""
+    now = clock.now()
+    if not (run.draft and run.open) or (
+            run.last_beat is not None and now - run.last_beat < HEARTBEAT_EVERY):  # fmt: skip
+        return
+    try:
+        _update_record(run.data_dir, run.run_id, heartbeat_at=now)
+    except OSError as exc:
+        log.error("claude_eval.heartbeat_failed", run_id=run.run_id[:8], errno=exc.errno)
+        return
+    run.last_beat = now
+
+
+def _joined(clock: Clock, run: Run, session_id: str, claude_version: str | None) -> None:
+    """A session's first claim: its Claude Code version is recorded on the attempt (AP2 5)."""
+    if not run.draft:
+        return
+    _j(run, {"e": "session", "session_id": session_id, "session": len(run.sessions),
+             "claude_version": claude_version})  # fmt: skip
+    if claude_version is not None and claude_version not in run.versions:
+        run.versions.append(claude_version)
+        _update_record(run.data_dir, run.run_id, claude_versions=list(run.versions),
+                       heartbeat_at=clock.now())  # fmt: skip
+
+
+def _end_record(clock: Clock, run: Run, state: str, detail: str, *, complete: bool) -> None:
+    if not run.draft:
+        return
+    end = state if state in ("done", "stopped", "expired", "lost") else "failed"
+    _j(run, {"e": "finished", "state": state, "complete": complete})
+    _update_record(run.data_dir, run.run_id, end=end, ended_at=clock.now(), end_detail=detail,
+                   complete=complete, stop_reason=run.stop_reason)  # fmt: skip
+
+
+def _draft_summary(run: Run) -> dict[str, Any]:
+    """What the result says of a draft run's handling: its slot and runs, the Claude Code
+    versions, reclaims by cause, the cases scored missing after a read, and the repeats' n."""
+    reclaims: dict[str, int] = {}
+    for w in run.works:
+        for c in w.claims:
+            if c.reclaimed is not None:
+                reclaims[c.reclaimed] = reclaims.get(c.reclaimed, 0) + 1
+    missing = [
+        {"case": e["case"], "cause": e["lost"]} for e in run.prior_scored.values() if e.get("lost")
+    ]
+    missing += [{"case": w.case.id, "cause": w.lost, "detail": w.lost_detail}
+                for w in run.works if w.lost is not None]  # fmt: skip
+    return {"slot": run.slot, "attempt": run.attempt, "kind": "forced" if run.opts.forced_draft
+            else "natural", "runs": [*run.prior, run.run_id], "claude_versions": run.versions,
+            "reclaims": reclaims, "missing_after_read": missing,
+            "repeats": sum(c.stage == "repeat" for w in run.works for c in w.claims),
+            "stop_reason": run.stop_reason}  # fmt: skip
+
+
+def tick(connect: Callable[[], sqlite3.Connection], clock: Clock) -> None:
+    """The service's minute timer: an open run past its expiry ends and is saved (AQ6), a run
+    whose last case was scored missing finishes, and a draft run's heartbeat is saved."""
+    run = current()
+    if run is None or not run.open:
+        return
+    with run.lock:
+        _check_expiry(connect, clock, run)
+        if run.open:
+            _maybe_finish(connect, clock, run)
+        _beat(clock, run)
+
+
+def recover(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, *,
+            spawn: Callable[[Callable[[], None]], None] | None = None) -> list[str]:  # fmt: skip
+    """At service start, each draft run the record shows open (the service stopped under it):
+    expired if its last heartbeat reached its expiry less `HEARTBEAT_MARGIN`, else lost to a
+    restart. Either way its result is written from its journal. A lost run is resumed once in its
+    slot, running only the slot's unscored cases, unless its attempt has passed 48 hours or this
+    is its second restart with claims out (AR6, AS5). Returns a line per run, for the log."""
+    with _REG_LOCK:
+        runs = draftruns.load(data_dir).runs
+    # open: the service stopped under it; lost with no resume and its attempt not over: a crash
+    # came between finishing it and resuming it (diff review 5B-1)
+    todo = [r for r in runs if r.open or (r.end == "lost" and r.resumed_by is None
+                                          and not r.attempt_over and not r.complete)]  # fmt: skip
+    lines: list[str] = []
+    for r in todo:  # one run failing never stops the others
+        try:
+            lines.append(_recover_one(connect, clock, data_dir, r, spawn))
+        except Exception as exc:
+            log.error("claude_eval.recover_failed", run=r.run_id[:8], error_type=type(exc).__name__)
+            try:  # its slot takes a new attempt, on the operator's word, rather than jamming
+                _update_record(data_dir, r.run_id, end=r.end or "lost", ended_at=clock.now(),
+                               complete=False, attempt_over=True,
+                               end_detail=f"recovery failed ({type(exc).__name__})")  # fmt: skip
+            except Exception as again:
+                log.error("claude_eval.recover_mark_failed", run=r.run_id[:8],
+                          error_type=type(again).__name__)  # fmt: skip
+            lines.append(f"{r.run_id[:8]} not recovered ({type(exc).__name__})")
+    return lines
+
+
+def _recover_one(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
+                 rec: draftruns.Registration,
+                 spawn: Callable[[Callable[[], None]], None] | None) -> str:  # fmt: skip
+    if not rec.open:  # finished as lost, never resumed: only the resume is left
+        return _resume_lost(connect, clock, data_dir, rec, spawn,
+                            bool(draftruns.open_claims(draftruns.read(
+                                draftruns.journal_path(data_dir, rec.run_id)))),
+                            rec.end_detail or "lost to a service restart")  # fmt: skip
+    now = clock.now()
+    events = draftruns.read(draftruns.journal_path(data_dir, rec.run_id))
+    expired = rec.heartbeat_at >= rec.expires_at - draftruns.HEARTBEAT_MARGIN
+    out = draftruns.open_claims(events)
+    state = "expired" if expired else "lost"
+    detail = ("expired: its last heartbeat reached its expiry" if expired
+              else "lost to a service restart" + (" with claims out" if out else ""))  # fmt: skip
+    try:
+        run = _restored(connect, clock, data_dir, rec, events)
+    except (EcfError, OSError, ValueError) as exc:
+        _update_record(data_dir, rec.run_id, end=state, ended_at=now, complete=False,
+                       end_detail=f"{detail}; its cases couldn't be read back"
+                                  f" ({type(exc).__name__})", attempt_over=True)  # fmt: skip
+        return f"{rec.run_id[:8]} {state}, not resumed ({type(exc).__name__})"
+    with run.lock:
+        _finish(connect, clock, run, state, detail)
+    complete = all(w.result is not None for w in run.works)
+    if expired or complete:
+        return f"{rec.run_id[:8]} {state}" + (", complete" if complete else "")
+    return _resume_lost(connect, clock, data_dir, rec, spawn, bool(out), detail)
+
+
+def _resume_lost(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
+                 rec: draftruns.Registration,
+                 spawn: Callable[[Callable[[], None]], None] | None, out: bool,
+                 detail: str) -> str:  # fmt: skip
+    """A lost run resumed once in its slot, within its attempt's limits."""
+    now = clock.now()
+    counted = rec.restarts + (1 if out else 0)
+    over = None
+    if counted >= draftruns.RESTART_LIMIT:
+        over = "its attempt ended at its second restart with claims out"
+    elif now >= rec.attempt_started_at + draftruns.ATTEMPT_LIMIT:
+        over = "its attempt passed 48 hours"
+    if over is None:
+        try:
+            start(connect, clock, data_dir, _opts_from(rec.options), spawn=spawn,
+                  resume=rec.model_copy(update={"restarts": counted}))  # fmt: skip
+        except EcfError as exc:
+            over = f"not resumed: {exc.detail}"
+        else:
+            return f"{rec.run_id[:8]} lost, resumed as {current().run_id[:8]}"  # pyright: ignore[reportOptionalMemberAccess]
+    _update_record(data_dir, rec.run_id, attempt_over=True, end_detail=f"{detail}; {over}")
+    return f"{rec.run_id[:8]} lost; {over}"
+
+
+def _restored(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
+              rec: draftruns.Registration, events: list[dict[str, Any]]) -> Run:  # fmt: skip
+    """A draft run as its journal left it, to save its result: its scored cases, its claims and
+    the slot's cases still unscored."""
+    opts = _opts_from(rec.options)
+    cases, _version = evalrun.load(opts.root, fraud_only=False)
+    specs = _draft_specs(cases)
+    conn = connect()
+    try:
+        schema = config.current_schema(conn)
+    finally:
+        conn.close()
+    starter = rules.load_starter_rules(schema)
+    with _REG_LOCK:
+        reg = draftruns.load(data_dir)
+    # every other run of the slot: one run is open at a time, so the others came before it
+    # (by the record, not by timestamp, which a clock step could reorder; diff review 5B-7)
+    prior = [r for r in draftruns.slot_of(reg, rec) if r.run_id != rec.run_id]
+    ids = {c.id for c in cases}
+    prior_scored: dict[str, dict[str, Any]] = {}
+    for p in prior:
+        keep = _carried(p, rec.card_digests, ids) if rec.slot.startswith("pilot-") else ids
+        got = draftruns.scored(draftruns.read(draftruns.journal_path(data_dir, p.run_id)))
+        prior_scored |= {k: v for k, v in got.items() if k in keep}
+    mine, cls, claims = draftruns.scored(events), draftruns.classified(events), _claims_from(events)
+    works: list[Work] = []
+    for c in cases:
+        if c.id in prior_scored:
+            continue
+        w = Work(c, secrets.token_hex(16), spec=specs.get(c.id), claims=claims.get(c.id, []))
+        w.classification = cls.get(c.id)
+        # how far it got, for its draft record (diff review 5B-5)
+        w.stage = "act" if cls.get(c.id) is not None else ("classify" if w.claims else "preparing")
+        if (e := mine.get(c.id)) is not None:
+            w.result = CaseResult.model_validate(e["result"])
+            w.draft_case = None if e.get("draft") is None else DraftCase.model_validate(e["draft"])
+            w.stage, w.lost = "done", e.get("lost")
+        works.append(w)
+    run = Run(rec.run_id, opts, rec.models, rec.pinned, rec.key, rec.set_digest,
+              rec.registered_at, works, starter, policy.labels(schema, starter), data_dir,
+              schema)  # fmt: skip
+    run.state, run.expires_at, run.clock = "ready", rec.expires_at, clock
+    run.journal, run.slot, run.attempt = (
+        draftruns.journal_path(data_dir, rec.run_id),
+        rec.slot,
+        rec.attempt,
+    )
+    run.prior, run.prior_scored = [p.run_id for p in prior], prior_scored
+    run.sessions = [str(e["session_id"]) for e in events if e.get("e") == "session"]
+    run.versions = list(rec.claude_versions)
+    run.diffs = sum(bool(e.get("diff")) for e in events if e.get("e") == "repeat")
+    run.repeats_started = any(e.get("e") == "repeat" for e in events)
+    run.stop_reason = rec.stop_reason
+    return run
+
+
+def _claims_from(events: list[dict[str, Any]]) -> dict[str, list[Claim]]:
+    """Each case's claims as the journal recorded them."""
+    out: dict[str, list[Claim]] = {}
+    for e in events:
+        kind, case = e.get("e"), str(e.get("case"))
+        if kind == "claim":
+            out.setdefault(case, []).append(Claim(
+                cast(ClaimStage, e["stage"]), str(e["spawn"]), int(e["round"]), int(e["session"]),
+                int(e["limit"]), int(e["items"]), bool(e["preparing"]), from_ts(e["at"]),
+                reclaimed=e.get("reclaimed")))  # fmt: skip
+            continue
+        mine = [c for c in out.get(case, []) if c.stage == e.get("stage")]
+        if not mine:
+            continue
+        c = mine[-1]
+        if kind == "read":
+            c.read = from_ts(e["at"])
+        elif kind == "end":
+            c.outcome = cast(Outcome, e["outcome"])
+            c.answered = None if e.get("answered") is None else from_ts(e["answered"])
+            c.settled = None if e.get("settled") is None else from_ts(e["settled"])
+            c.invalid, c.called = int(e.get("invalid") or 0), bool(e.get("called"))
+            tries: list[list[Any]] = e.get("tries") or []
+            c.tries = [(str(t[0]), str(t[1])) for t in tries]
+    return out
+
+
+def confirm_set(clock: Clock, data_dir: Path, root: Path, digest: str) -> dict[str, Any]:
+    """The operator's confirmation of the draft set (M8 plan AM3, AN5, AP5): after both pilot
+    runs, naming the digest it freezes, with every card confirmed; each card changed since the
+    pilot must be one a pilot run missed at the classifier stage. Then the slots open, on that
+    digest only."""
+    cases, version = evalrun.load(root, fraud_only=False)
+    if not any(_draft_specs(cases).values()):
+        raise InvalidInputError(f"{root} isn't the draft set: no card has a draft block")
+    if digest != version:
+        raise InvalidInputError(f"the set at {root} is {version}; name that digest to freeze it")
+    if unconfirmed := sorted(c.id for c in cases if not c.confirmed):
+        raise InvalidInputError(f"{len(unconfirmed)} card(s) aren't confirmed (`ecf eval label`):"
+                                f" {', '.join(unconfirmed[:10])}")  # fmt: skip
+    with _REG_LOCK:
+        reg = draftruns.load(data_dir)
+        if reg.confirmation is not None:
+            raise ConflictError(f"the set was confirmed at {reg.confirmation.set_digest[:16]} on"
+                                f" {to_ts(reg.confirmation.at)}")  # fmt: skip
+        pilots = sorted((r for r in reg.runs if r.slot.startswith("pilot-")),
+                        key=lambda r: r.registered_at)  # fmt: skip
+        for (slot,) in draftruns.PILOT_SLOTS.values():
+            state, _n = draftruns.slot_state([r for r in pilots if r.slot == slot])
+            if state not in ("filled", "ended"):
+                raise InvalidInputError(f"the pilot comes first: slot {slot} is {state}")
+        now = {c.id: draftruns.card_digest(c.path.read_bytes(), c.expected) for c in cases}
+        changed_set: set[str] = set()
+        for r in pilots:  # every pilot run, not only the last (diff review 5B-4)
+            before = r.card_digests
+            if set(now) != set(before):
+                gone, new = sorted(set(before) - set(now)), sorted(set(now) - set(before))
+                raise InvalidInputError(f"cards added or removed since pilot run"
+                                        f" {r.run_id[:8]} (added {new}, removed {gone}); only"
+                                        " rewrites of pilot misses")  # fmt: skip
+            changed_set |= {k for k, v in now.items() if before[k] != v}
+        changed = sorted(changed_set)
+        missed: set[str] = set()
+        for r in pilots:  # a classifier-stage miss: no classification, or no draft offered (M5)
+            events = draftruns.read(draftruns.journal_path(data_dir, r.run_id))
+            for case_id, e in draftruns.scored(events).items():
+                seen: dict[str, Any] = e.get("draft") or {}
+                if seen.get("cause") in ("no_classification", "not_offered"):
+                    missed.add(case_id)
+        if bad := [c for c in changed if c not in missed]:
+            raise InvalidInputError(f"changed since the pilot but not a pilot classifier-stage"
+                                    f" miss: {', '.join(bad)}")  # fmt: skip
+        reg.confirmation = draftruns.Confirmation(set_digest=version, at=clock.now(),
+                                                  changed=changed)  # fmt: skip
+        draftruns.save(data_dir, reg)
+    log.info("claude_eval.set_confirmed", set_digest=version[:16], changed=len(changed))
+    return {"set_digest": version, "changed": changed}
+
+
+def draft_status(data_dir: Path) -> dict[str, Any] | None:
+    """The record for `ecf eval status`: the frozen checker, the confirmation, and each slot's
+    state and runs (no outcomes: those wait for the run's end, AK3)."""
+    try:
+        with _REG_LOCK:
+            reg = draftruns.load(data_dir)
+    except (EcfError, OSError, ValueError) as exc:  # status still answers for every eval (5B-8)
+        return {"error": f"the draft run record is unreadable ({type(exc).__name__})"}
+    if not reg.runs:
+        return None
+    slots: dict[tuple[str, str, str], list[draftruns.Registration]] = {}
+    for r in reg.runs:
+        digest = "" if r.slot.startswith("pilot-") else r.set_digest
+        slots.setdefault((r.arm, r.slot, digest), []).append(r)
+    # before the confirmation: the digest the pilots ran on, which `ecf eval confirm-set` names
+    pilots = [r for r in reg.runs if r.slot.startswith("pilot-")]
+    pilot_set = (None if reg.confirmation is not None or not pilots
+                 else {"digest": pilots[-1].set_digest, "root": pilots[-1].root})  # fmt: skip
+    return {
+        "frozen_checker": reg.frozen_checker,
+        "pilot_set": pilot_set,
+        "confirmation": None if reg.confirmation is None
+        else reg.confirmation.model_dump(mode="json"),
+        "slots": [{"arm": arm, "slot": slot, "set_digest": digest or None,
+                   "state": draftruns.slot_state(runs)[0],
+                   "runs": [{"run_id": r.run_id, "attempt": r.attempt, "end": r.end,
+                             "complete": r.complete, "detail": r.end_detail} for r in runs]}
+                  for (arm, slot, digest), runs in slots.items()],
+    }  # fmt: skip
