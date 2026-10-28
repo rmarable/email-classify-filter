@@ -13,7 +13,8 @@ You are responsible for:
 2. having the right to read every mailbox you connect, including the informed consent of anyone
    else whose mail it holds;
 3. what ecf sends to the services you enable (your mail provider, Slack, Anthropic and, if you run
-   Jev evaluations, TypeSafe), and your agreements with them (`SPEC.md` §12.4);
+   Jev evaluations, TypeSafe; if you build generated test sets, OpenAI and Mistral), and your
+   agreements with them (`SPEC.md` §12.4);
 4. your own data protection and recovery, independent of ecf: backups of your mailboxes kept by
    your mail provider or your own tools, backups of ecf's data folder and exports, and a restore
    you have tested before you need it. ecf's export (`SPEC.md` §11.9) holds ecf's own state,
@@ -70,7 +71,7 @@ unlawful use.
 ## 4. Third parties
 
 ecf depends on services and software it does not control: mail providers, Slack, hosted models
-(Anthropic's Claude; TypeSafe's Jev for evaluations), and the packages in `THIRD_PARTY_NOTICES`. Their outages, changes, limits,
+(Anthropic's Claude; TypeSafe's Jev for evaluations; OpenAI's and Mistral's models for generated test sets), and the packages in `THIRD_PARTY_NOTICES`. Their outages, changes, limits,
 retention and errors are not the author's responsibility.
 
 ## 5–8. Warranty, liability and indemnity
