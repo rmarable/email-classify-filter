@@ -1,6 +1,6 @@
 # Per-sender bank-account history (draft 1)
 
-Status: draft 1, approved by the operator 2026-10-27, **PARKED 2026-10-27** (operator). Nothing built; no Phase R yet; OD-564 proposed, not assigned (re-check the next free OD when resumed). Code references checked against main 188a1e8. Resume at Step 0 (corpus count; needs the operator's go-ahead and a mailbox) and Step 1 (Phase R).
+Status: draft 1, approved by the operator 2026-10-27, **PARKED 2026-10-27** (operator). Nothing built; no Phase R yet; an OD to be assigned when resumed (OD-564, proposed here first, was taken by main-session compaction on 2026-10-28). Code references checked against main 188a1e8. Resume at Step 0 (corpus count; needs the operator's go-ahead and a mailbox) and Step 1 (Phase R).
 
 ## Context
 
@@ -16,7 +16,7 @@ Operator decisions (2026-10-27):
 - History stays out of export bundles and is relearned after a restore.
 - Count on the corpus first.
 
-New OD = OD-564 (re-check it is still free at the time). This changes rules and facts, so **Phase R (4 Fable: safety, measurement, cost+design, performance; Opus if Fable is out of credits, OD-562)** reviews this plan before any build.
+New OD: the next free one when resumed (OD-564 is taken). This changes rules and facts, so **Phase R (4 Fable: safety, measurement, cost+design, performance; Opus if Fable is out of credits, OD-562)** reviews this plan before any build.
 
 ## Design
 
@@ -87,7 +87,7 @@ So a vendor's first IBAN after confirmation is learned, a known IBAN refreshes `
    - `item_accounts` and the accept command (CLI, API route, step-up purpose);
    - the card text, and `ecf sender show`;
    - eval card field, `with_expected`, `facts_version` 3;
-   - SPEC §8.5 paragraph, OD-564 row, §12.2 limit, §1.2 Later entry removed;
+   - SPEC §8.5 paragraph, OD row, §12.2 limit, §1.2 Later entry removed;
    - CHANGELOG line, operator guide (user-facing style).
 3. Eval cards (blind check, then the operator labels and confirms). Run `ecf rules test` / `eval expect` on the kept sets to confirm no other outcome moves.
 4. Diff review (2 agents) only if the build departs from the plan Phase R reviewed. Then the full macOS gate with Colima (0 skipped), commit, merge and push with the operator's OK, and watch CI.
