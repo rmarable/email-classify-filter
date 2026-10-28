@@ -515,15 +515,16 @@ DRAFT_SHAPES = {
 
 @pytest.mark.parametrize("shape", sorted(DRAFT_SHAPES))
 def test_the_draft_checker_on_a_crafted_draft(shape: str) -> None:
-    """M8 plan §1 (P24, OD-570): a crafted 4,000-character draft checks in under 0.07 unit (the
-    plan's 0.05 raised by the operator, 2026-10-28: digit-dense shapes measured 0.063)."""
+    """M8 plan §1 (P24, OD-570): a crafted 4,000-character draft checks in under 0.15 unit, about
+    three times the Mac's 0.05 like the other bounds here (operator, 2026-10-28: 0.07 failed at
+    random on the CI runners, 0.074-0.098; the plan's first bound was 0.05)."""
     from ecf_server import draftcheck  # noqa: PLC0415
 
     draft = DRAFT_SHAPES[shape][:4000]
     unit = _unit()
     draftcheck.check("Thanks.", "", (), ())  # lists and patterns built outside the timing
-    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.07 * unit)
-    assert took < 0.07 * unit, (shape, took, unit)
+    took, _ = _best(lambda: draftcheck.check(draft, LINE, (), ()), 0.15 * unit)
+    assert took < 0.15 * unit, (shape, took, unit)
 
 
 def test_the_draft_checker_on_a_plain_draft() -> None:
