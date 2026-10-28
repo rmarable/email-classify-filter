@@ -41,6 +41,7 @@ from ecf_server import (
     audit,
     breaker,
     checks,
+    claude_eval,
     claude_queue,
     claude_review,
     config,
@@ -245,6 +246,11 @@ class Service:
         if self.state.db_path is None:
             return
         ok = True
+        try:  # a Claude eval run's expiry, and a draft run's heartbeat (M8 plan AQ6), first, so a
+            # slow schedule step can't delay the heartbeat (diff review 5B-13)
+            claude_eval.tick(self.state.connect, self.clock)
+        except Exception as exc:  # never stops the timer; the next tick tries again
+            log.error("claude_eval.tick_failed", error_type=type(exc).__name__)
         try:
             conn = db.connect(self.state.db_path)
             try:
@@ -585,6 +591,11 @@ class Service:
             config.activate_stored(conn, self.clock, self.state.notifier)
         finally:
             conn.close()
+        try:  # draft eval runs the last process left open: expired, or lost and resumed (M8 §4)
+            for line in claude_eval.recover(self.state.connect, self.clock, self.paths.db.parent):
+                log.info("claude_eval.recovered", run=line)
+        except Exception as exc:  # the service starts anyway; the record says what's open
+            log.error("claude_eval.recover_failed", error_type=type(exc).__name__)
         # dev mode never shows a real Touch ID dialog; its fake approves (dev refuses production)
         self.state.stepper = FakeStepper() if self.dev else host_stepper()
         self.state.secrets = self.secrets

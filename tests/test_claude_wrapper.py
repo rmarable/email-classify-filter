@@ -221,7 +221,7 @@ def test_refuses_a_work_folder_inside_a_git_repository(tmp_path: Path) -> None:
 def test_refusal_opens_no_service_session(running: Paths, monkeypatch: pytest.MonkeyPatch) -> None:
     """The work-folder check runs before `POST /v1/sessions` (OD-497)."""
     (cw.layout(running).work_dir / ".claude").mkdir(parents=True)
-    monkeypatch.setattr(cw, "find_claude", lambda: "/no/claude")
+    monkeypatch.setattr(cw, "find_claude_version", lambda: ("/no/claude", (2, 1, 0)))
     monkeypatch.setattr(cw, "ecf_mcp_path", lambda: Path("/abs/ecf-mcp"))
     with pytest.raises(InvalidInputError, match="ecf never creates it"):
         cw.run(running, [], echo=lambda _s: None)
@@ -407,3 +407,27 @@ def test_purge_happens_even_if_revoke_fails(
     monkeypatch.setattr(cw, "LocalClient", RevokeFails)
     assert cw.run(running, []) == 0
     assert not (cw.layout(running).config_dir / "projects").exists()
+
+
+def test_the_session_carries_the_claude_code_version_and_its_exit(
+    running: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draft eval run records the Claude Code version each session ran under, and why it
+    ended (M8 plan AP2, AW5)."""
+    fake_claude(tmp_path / "bin", tmp_path / "record.txt", version="2.1.312")
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+    real = cw.LocalClient
+    sent: list[tuple[str, str, object]] = []
+
+    class Recording(real):  # type: ignore[misc, valid-type]
+        def request(self, method: str, path: str, json: object = None, *, auth: bool = True):  # type: ignore[no-untyped-def]
+            sent.append((method, path, json))
+            return super().request(method, path, json, auth=auth)
+
+    monkeypatch.setattr(cw, "LocalClient", Recording)
+    assert cw.run(running, []) == 0
+    made = next(j for m, p, j in sent if m == "POST" and p == "/v1/sessions")
+    assert made == {"client": cw.client_doc((2, 1, 312))["client"]}
+    assert made["client"]["claude_version"] == "2.1.312"  # type: ignore[index]
+    assert next(j for m, _p, j in sent if m == "DELETE") == {"exit_code": 0}
+    assert "claude_version" not in cw.client_doc()["client"]

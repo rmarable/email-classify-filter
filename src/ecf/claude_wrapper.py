@@ -203,10 +203,14 @@ def layout(paths: Paths) -> Layout:
                   cfg / "ecf-mcp.json", cfg / "ecf-plugin", cfg / ".claude.json")  # fmt: skip
 
 
-def client_doc() -> dict[str, Any]:
+def client_doc(claude_version: tuple[int, ...] | None = None) -> dict[str, Any]:
     """What `POST /v1/sessions` checks against the service's own install (v2.2.0): this
-    client's version and the digest of the plugin it renders."""
-    return {"client": {"version": __version__, "plugin_digest": plugin_digest()}}
+    client's version and the digest of the plugin it renders; and the Claude Code version, which
+    a draft eval run records (M8 plan AP2)."""
+    doc: dict[str, Any] = {"version": __version__, "plugin_digest": plugin_digest()}
+    if claude_version is not None:
+        doc["claude_version"] = ".".join(map(str, claude_version))
+    return {"client": doc}
 
 
 def settings_doc(main_model: str, statusline: str) -> dict[str, Any]:
@@ -354,6 +358,11 @@ def claude_version(claude: str) -> tuple[int, ...] | None:
 
 
 def find_claude() -> str:
+    return find_claude_version()[0]
+
+
+def find_claude_version() -> tuple[str, tuple[int, ...]]:
+    """`claude` and its version, refused below MIN_CLAUDE."""
     claude = shutil.which("claude")
     if claude is None:
         raise ServiceUnavailableError("Claude Code (`claude`) is not installed")
@@ -362,7 +371,7 @@ def find_claude() -> str:
         found = ".".join(map(str, version)) if version else "unknown"
         need = ".".join(map(str, MIN_CLAUDE))
         raise ServiceUnavailableError(f"ecf claude needs Claude Code {need}+ (found {found})")
-    return claude
+    return claude, version
 
 
 def ecf_mcp_path() -> Path:
@@ -441,13 +450,13 @@ def purge_transcripts(lay: Layout) -> int:
 
 def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print) -> int:
     check_args(extra_args)
-    claude = find_claude()
+    claude, version = find_claude_version()
     ecf_mcp = ecf_mcp_path()
     lay = layout(paths)
     check_work_dir(lay)  # before a service session is opened
     purge_transcripts(lay)  # a crashed earlier session may have left some behind
     with LocalClient(paths) as c:
-        session: dict[str, Any] = c.request("POST", "/v1/sessions", client_doc())
+        session: dict[str, Any] = c.request("POST", "/v1/sessions", client_doc(version))
     socket = paths.socket.absolute()
     try:
         ev: dict[str, Any] | None = session.get("eval")
@@ -474,12 +483,15 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
         raise ServiceUnavailableError("the service's telemetry receiver isn't listening")
     env = session_env(lay, session["profile_token"], session["agent_token"],
                       telemetry_env(port, session["telemetry_bearer"]))  # fmt: skip
+    code: int | None = None
     try:
-        return subprocess.run(args, cwd=lay.work_dir, env=env, check=False).returncode  # noqa: S603
+        code = subprocess.run(args, cwd=lay.work_dir, env=env, check=False).returncode  # noqa: S603
+        return code
     finally:
         purge_transcripts(lay)  # first: it must not depend on the service being reachable
         try:
-            with LocalClient(paths) as c:
-                c.request("DELETE", f"/v1/sessions/{session['session_id']}")
+            with LocalClient(paths) as c:  # the exit code: why a draft run's session ended
+                c.request("DELETE", f"/v1/sessions/{session['session_id']}",
+                          {} if code is None else {"exit_code": code})  # fmt: skip
         except EcfError:
             pass  # service restarted or stopped: its in-memory session tokens are gone anyway
