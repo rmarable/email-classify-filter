@@ -294,12 +294,13 @@ def test_run_end_to_end(running: Paths, tmp_path: Path, monkeypatch: pytest.Monk
     assert args[:2] == ["--setting-sources", "user"]  # no project or local settings (OD-497)
     args = args[2:]
     assert args[:3] == ["--strict-mcp-config", "--mcp-config", str(lay.mcp_config)]
-    assert args[3:5] == ["--plugin-dir", str(lay.plugin_dir)] and args[5] == "--agents"
-    agents = json.loads(args[6])
+    assert args[3:5] == ["--tools", "Agent"]  # no other built-in tool is loaded (OD-571)
+    assert args[5:7] == ["--plugin-dir", str(lay.plugin_dir)] and args[7] == "--agents"
+    agents = json.loads(args[8])
     assert sorted(agents) == sorted(cw.AGENTS)  # no eval waiting: no ecf-eval-* agents
     sock = agents["ecf-actor"]["mcpServers"][0]["ecf-actor"]["args"][-1]
     assert sock == str(running.socket.absolute())
-    assert args[7:] == ["--model", "x"]
+    assert args[9:] == ["--model", "x"]
     assert rec["CFG"] == str(lay.config_dir) and rec["PROMPTS"] == "0"
     assert Path(rec["PWD"]).resolve() == lay.work_dir.resolve()
     token, agent_token = rec["TOKEN"], rec["AGENT_TOKEN"]
@@ -337,6 +338,12 @@ def test_allowed_args(args: list[str]) -> None:
         ["--settings", "x.json"],
         ["--mcp-config", "x"],
         ["--add-dir", "/"],
+        ["--tools", "Bash"],
+        ["--tools=Agent,Bash"],
+        ["--model", "--tools=Bash"],
+        ["--model", "-p"],
+        ["--model=-p"],
+        ["--model="],
         ["--permission-mode", "bypassPermissions"],
         ["--model"],
         ["-p", "hi"],

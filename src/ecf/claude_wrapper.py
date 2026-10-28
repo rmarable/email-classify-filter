@@ -45,6 +45,9 @@ from ecf.plugin_digest import plugin_digest
 MIN_CLAUDE = (2, 1, 295)  # `onFailure: block` on the spawn guard hook (OD-497)
 # the main session: dispatch only (`/ecf-review`; `/ecf-eval` from V1.4 step 7)
 MAIN_TOOLS = ["mcp__ecf__review_queue", "mcp__ecf__eval_next", "mcp__ecf__eval_results"]
+# The only built-in tool the main session loads (`--tools`, OD-571; measured in SPEC §10.3): the
+# skills need nothing but Agent. The allow and deny lists below stay as a second layer.
+MAIN_BUILTIN_TOOLS = ["Agent"]
 # Built-in agent types, denied by name (OD-275): general-purpose had Bash in the 2026-10-02 test.
 # `claude` appeared in a later Claude Code (2.1.291): the first /ecf-eval run handed its loop to
 # it (v1.0.0, 2026-10-06). Claude Code can deny agents only by name, so the service also stops a
@@ -372,14 +375,24 @@ def ecf_mcp_path() -> Path:
     return p.absolute()
 
 
+def _value_ok(value: str | None) -> bool:
+    """A passthrough value is present and doesn't look like an option (`--model --tools=Bash`)."""
+    return value is not None and value[:1] not in ("", "-")
+
+
 def check_args(args: list[str]) -> list[str]:
     i = 0
     while i < len(args):
         a = args[i]
         name = a.split("=", 1)[0]
-        if name in PASSTHROUGH_FLAGS or (name in PASSTHROUGH_WITH_VALUE and "=" in a):
+        value = a.split("=", 1)[1] if "=" in a else None
+        if name in PASSTHROUGH_FLAGS or (name in PASSTHROUGH_WITH_VALUE and _value_ok(value)):
             i += 1
-        elif name in PASSTHROUGH_WITH_VALUE and i + 1 < len(args):
+        elif (
+            name in PASSTHROUGH_WITH_VALUE
+            and value is None
+            and _value_ok(next(iter(args[i + 1 :]), None))
+        ):
             i += 2
         else:
             allowed = ", ".join(sorted(PASSTHROUGH_FLAGS | PASSTHROUGH_WITH_VALUE))
@@ -466,7 +479,7 @@ def run(paths: Paths, extra_args: list[str], echo: Callable[[str], None] = print
         echo(line)
     # only ecf's own settings: no project or local settings file can turn the hook off (OD-497)
     args = [claude, "--setting-sources", "user", "--strict-mcp-config", "--mcp-config",
-            str(lay.mcp_config),
+            str(lay.mcp_config), "--tools", ",".join(MAIN_BUILTIN_TOOLS),
             "--plugin-dir", str(lay.plugin_dir), "--agents", json.dumps(agents),
             *extra_args]  # fmt: skip
     port = session.get("telemetry_port")
