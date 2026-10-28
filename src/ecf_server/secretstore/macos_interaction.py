@@ -5,7 +5,7 @@ fail at once instead of showing a dialog (tested 2026-09-27: 0.02 s, error -2529
 it in macOS 10.10; it is still exported in the macOS 27.0 SDK, and no supported call does the same
 for ecf's legacy keychain items (ADR 0001). Turning prompts off raises KeychainPromptsError when the
 call is missing, fails, or the setting still reads back as on, and the service then runs without
-secrets (OD-564). A macOS whose set and get calls are both no-op stubs would get past this.
+secrets (OD-569). A macOS whose set and get calls are both no-op stubs would get past this.
 """
 
 from __future__ import annotations

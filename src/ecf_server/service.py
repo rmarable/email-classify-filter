@@ -402,7 +402,7 @@ class Service:
 
     def _keychain_prompts_off(self) -> None:
         """OD-163: never wait on a Keychain dialog. If macOS no longer allows that, opening the
-        store fails the same way and the service runs without secrets (OD-564)."""
+        store fails the same way and the service runs without secrets (OD-569)."""
         if sys.platform != "darwin" or self.dev:
             return
         try:

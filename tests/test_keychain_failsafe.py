@@ -1,5 +1,5 @@
 """If macOS stops letting ecf turn Keychain prompts off (the call is deprecated), the service starts
-without secrets ("secret store needs you") instead of crashing or reading with prompts on (OD-564,
+without secrets ("secret store needs you") instead of crashing or reading with prompts on (OD-569,
 ADR 0001). The Security module is faked, so these run on every OS."""
 
 import sqlite3
