@@ -143,9 +143,10 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
     the rules made it, never handed to the actor (`ecf reprocess --rules-only` calls no model)."""
     item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
     if p is None:
-        _ctx, p = plan_for(conn, item)
+        ctx, p = plan_for(conn, item)
     else:  # the actor's proposal, or a held plan released: Jev's caution again (idempotent)
-        p = held(context(conn, item), p)
+        ctx = context(conn, item)
+        p = held(ctx, p)
     stage = Stage(conn.execute("SELECT stage FROM addresses WHERE address_id = ?",
                                (item["address_id"],)).fetchone()["stage"])  # fmt: skip
     if any(a.name == "escalate" for a in p.actions):
@@ -155,7 +156,7 @@ def apply(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan | None = Non
         planned = _added(conn, clock, item, planned, to_actor=p.to_actor)
     mailbox = [MailAction(a.name, a.target, a.payload) for a in planned]
     needs_person = any(a.mode == "approve" for a in planned)
-    _record(conn, clock, sid, p, mailbox, source)
+    _record(conn, clock, sid, p, mailbox, source, draft_withheld(ctx))
     if p.to_actor and source == "rule" and actor:  # the actor decides next: Claude (V1.4)
         return claude_queue.to_actor(conn, clock, sid)
     ctx = TransitionContext(stage=stage)
@@ -227,12 +228,23 @@ def _added(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row,
 
 def record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan, source: str) -> None:
     """Keep a plan with the item without moving it on (the actor's question, which goes to you)."""
-    _record(conn, clock, sid, p, [], source)
+    item = conn.execute("SELECT * FROM items WHERE stable_id = ?", (sid,)).fetchone()
+    _record(conn, clock, sid, p, [], source, draft_withheld(context(conn, item)))
+
+
+def draft_withheld(ctx: Context) -> str | None:
+    """Why a reply-needed item is offered no draft, as `policy.draft_refusal`'s code; None when a
+    draft is allowed or no reply is needed (P-d, M8 plan §2)."""
+    if not policy.risk(ctx).get("requires_reply"):
+        return None
+    return policy.draft_refusal(ctx)
 
 
 def _record(conn: sqlite3.Connection, clock: Clock, sid: str, p: Plan,
-            mailbox: list[MailAction], source: str) -> None:  # fmt: skip
+            mailbox: list[MailAction], source: str, withheld: str | None) -> None:  # fmt: skip
+    """`withheld` is always written, so no earlier plan's code survives the merge below."""
     doc: dict[str, Any] = {
+        "draft_withheld": withheld,
         "actions": [a.to_json() for a in mailbox],
         "plan": {
             "rule": p.rule_id,

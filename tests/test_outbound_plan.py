@@ -20,7 +20,7 @@ INVOICE: dict[str, Any] = {"category": "invoice", "priority": "normal", "require
            "requires_reply": True, "payment_related": False, "deadline_mentioned": False,
            "sender_type": "vendor", "fraud_risk": "none"}  # fmt: skip
 FACTS: dict[str, Any] = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
-         "from_count": 1}  # fmt: skip
+         "from_count": 1, "language": "en"}  # fmt: skip
 TEMPLATES = {"version": 1, "templates": [
     {"id": "ack", "enabled": True, "subject": "Re: {subject}",
      "body": "Hello {sender_name},\n\nThanks, we got it.\n"},

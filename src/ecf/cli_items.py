@@ -318,12 +318,14 @@ def _action_line(a: dict[str, Any]) -> str:
 def proposal_lines(d: dict[str, Any]) -> list[str]:
     """What ecf proposes for the item, with a draft's whole text: what `ecf approve` approves
     (§8.4: a draft is shown in full before approval); and each action left out, with why (a
-    refused draft also flags its item, OD-551)."""
+    refused draft also flags its item, OD-551), and why no draft was offered, if one wasn't."""
     p: dict[str, Any] = d.get("proposal") or {}
     plan: dict[str, Any] = p.get("plan") or {}
     actions: list[dict[str, Any]] = plan.get("actions") or p.get("actions") or []
     gone: list[dict[str, Any]] = plan.get("dropped") or []
     dropped = [f"not proposed: {g.get('name')}: {g.get('why')}" for g in gone]
+    if p.get("draft_withheld"):  # a reply is needed, but policy offers no draft (M8 plan P-d)
+        dropped.append(f"no draft offered: {p['draft_withheld']}")
     if not actions or p.get("done") is not None:
         return dropped
     lines = [*dropped, "proposed:"]

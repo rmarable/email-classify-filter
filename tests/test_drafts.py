@@ -30,7 +30,7 @@ REPLY: dict[str, Any] = {"category": "invoice", "priority": "normal", "requires_
          "requires_reply": True, "payment_related": False, "deadline_mentioned": False,
          "sender_type": "vendor", "fraud_risk": "none"}  # fmt: skip
 FACTS: dict[str, Any] = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
-         "from_count": 1}  # fmt: skip
+         "from_count": 1, "language": "en"}  # fmt: skip
 TEXT = "Hello,\n\nThanks for your note; see https://acme.example/terms or write to ar@acme.example."
 
 

@@ -79,6 +79,8 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
         return {"entry": target, "to": to}
     sender = _sender(item)
     if name == "draft_reply":
+        if monitored(conn, sender):  # P-c: a reply there comes back in as new mail (M8 plan §2)
+            raise Unresolved("monitored_recipient")
         body = clean_draft(text or "")
         if not body:
             raise Unresolved("the draft has no text")
@@ -92,6 +94,12 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
         r = render(item, t)
         return {"to": sender, "template": t.id, "rendered": _digest(r.subject, r.body)}
     raise Unresolved(f"{name} has no payload")
+
+
+def monitored(conn: sqlite3.Connection, to: str) -> bool:
+    """`to` is one of this install's monitored addresses."""
+    rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL")
+    return to.lower() in {str(r[0]).lower() for r in rows}
 
 
 def render(item: sqlite3.Row, t: templates.Template) -> templates.Rendered:

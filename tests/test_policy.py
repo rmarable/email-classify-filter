@@ -189,7 +189,8 @@ def _ctx(**kw: Any) -> Context:
                       "deadline_mentioned": False, "sender_type": "vendor",
                       "fraud_risk": "none"} | kw.pop("classification", {})  # fmt: skip
     facts = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
-             "bulk_corroborates": True, "from_count": 1} | kw.pop("facts", {})  # fmt: skip
+             "bulk_corroborates": True, "from_count": 1,
+             "language": "en"} | kw.pop("facts", {})  # fmt: skip
     return Context(classification, facts, kw.pop("sensitivity", "standard"),
                    kw.pop("rules", STARTER), kw.pop("action_policy", {}), FOLDERS,
                    kw.pop("confirmed_category", None), **kw)  # fmt: skip
@@ -328,7 +329,7 @@ def test_sends_on_high_addresses_are_allowed() -> None:
         ("forward_internal", "nope", {}, "allow-list"),
         ("reply_template", "ack", {"auth_result": "none"}, "authenticated"),
         ("reply_template", "ack", {"from_count": 2}, "one From"),
-        ("draft_reply", None, {"from_count": 0}, "one From"),
+        ("draft_reply", None, {"from_count": 0}, "from_ambiguous"),  # P-b (M8 plan §2)
         ("forward_internal", "ap_lead", {"bulk_signal": True}, "bulk"),
         ("forward_internal", "ap_lead", {"content_unscanned": True}, "scanned"),
         ("reply_template", "ack", {"triggers": {"fraud_weak": ["x"]}}, "fraud signal"),

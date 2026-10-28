@@ -50,6 +50,7 @@ from ecf_server.senderauth import AuthOutcome, SigResult
 TIMEOUT_BASE_S = 30
 TIMEOUT_PER_MB_S = 3
 EXIT_ERROR = 3
+LANGUAGES = ("en", "other", "unknown")  # the `language` fact's values
 
 
 def timeout_for(size: int) -> float:
@@ -72,6 +73,8 @@ class Isolated(NamedTuple):
     stats: ChildStats = ChildStats()
     # the redacted text's length before the cut (OD-553); None from a child of an earlier version
     prepared_chars: int | None = None
+    # the email's language from the actor excerpt (M8 plan §1, V3); `unknown` from an earlier child
+    language: str = "unknown"
 
 
 # (raw, max_scan_bytes) -> the parsed message, its sender-authentication outcome and its excerpts
@@ -109,14 +112,18 @@ def subprocess_isolator(
 
 def isolated(parsed: ParsedMessage, auth: AuthOutcome, stats: ChildStats | None = None) -> Isolated:
     """The result for a parsed and verified message: its excerpts are cut here."""
+    from ecf_server import draftcheck  # noqa: PLC0415 - its lists load only in the child
+
     redacted, plain, length = parsed.excerpt_sets_and_length(triggers.redact_injection)
-    return Isolated(parsed, auth, redacted, plain, stats or ChildStats(), length)
+    return Isolated(parsed, auth, redacted, plain, stats or ChildStats(), length,
+                    draftcheck.email_language(redacted[1]))  # fmt: skip
 
 
 def encode(result: Isolated) -> dict[str, Any]:
     return {"parsed": asdict(result.parsed), "auth": asdict(result.auth),
             "excerpts": list(result.excerpts), "plain": list(result.plain),
-            "stats": result.stats._asdict(), "prepared_chars": result.prepared_chars}  # fmt: skip
+            "stats": result.stats._asdict(), "prepared_chars": result.prepared_chars,
+            "language": result.language}  # fmt: skip
 
 
 def decode(data: dict[str, Any]) -> Isolated:
@@ -157,8 +164,11 @@ def decode(data: dict[str, Any]) -> Isolated:
     stats = ChildStats(float(st.get("auth_s", 0.0)), int(st.get("dns_hits", 0)),
                        int(st.get("dns_queries", 0)))  # fmt: skip
     length = data.get("prepared_chars")
+    language = str(data.get("language", "unknown"))
+    if language not in LANGUAGES:
+        raise ValueError("unknown language value")
     return Isolated(parsed, auth, (excerpts[0], excerpts[1]), (plain[0], plain[1]), stats,
-                    None if length is None else int(length))  # fmt: skip
+                    None if length is None else int(length), language)  # fmt: skip
 
 
 def _reason(stdout: bytes) -> str:
