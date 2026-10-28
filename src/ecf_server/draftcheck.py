@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
@@ -1083,15 +1084,36 @@ def _check_credential_and_injection(d: _Draft, refuse: Refuse) -> None:
 def _check_language(text: str, refuse: Refuse) -> None:
     """`language` (P8, Q13): below 40 characters only the script test applies, which
     `characters` already made; above, another language's common words outnumbering English's."""
-    if len(text.strip()) < 40:
-        return
+    if len(text.strip()) >= 40 and _stop_words_other(text):
+        m = re.search(r"\S+(?:\s+\S+){0,3}", text)
+        refuse("language", (0, m.end() if m else len(text)))
+
+
+def _stop_words_other(text: str) -> bool:
+    """Another language's common words outnumber English's, three at least."""
     seen = Counter(re.findall(r"[a-z]+", text.lower()))
     counts = {lang: sum(seen[w] for w in words) for lang, words in _stop_words().items()}
     english = counts.pop("en")
     best = max(counts.values())
-    if best >= 3 and best > english:
-        m = re.search(r"\S+(?:\s+\S+){0,3}", text)
-        refuse("language", (0, m.end() if m else len(text)))
+    return best >= 3 and best > english
+
+
+def email_language(text: str) -> str:
+    """The email's `language` fact (M8 plan §1, V3): `unknown` with no letters, `other` when
+    letters outside the Latin script outnumber Latin ones or, from 40 characters, by the draft
+    rule's common-word count, else `en`. Linear in the text; the fetch passes the actor excerpt."""
+    latin = other = 0
+    for ch in text:
+        if ch.isalpha():
+            if unicodedata.name(ch, "").startswith("LATIN"):
+                latin += 1
+            else:
+                other += 1
+    if not latin and not other:
+        return "unknown"
+    if other > latin or (len(text.strip()) >= 40 and _stop_words_other(text)):
+        return "other"
+    return "en"
 
 
 @cache

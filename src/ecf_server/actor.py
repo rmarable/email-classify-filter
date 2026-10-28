@@ -104,8 +104,12 @@ def problem(action: Any, target: Any, reason: Any, labels: frozenset[str],  # no
 
 def offered(ctx: policy.Context) -> tuple[str, ...]:
     """The actions this item's actor is offered: Jev's unsure `requires_action` counts as yes, so
-    no hide is offered (`policy.risk`, OD-511)."""
-    return allowed(policy.risk(ctx), templates=ctx.templates, forwards=ctx.forwards)
+    no hide is offered (`policy.risk`, OD-511); `draft_reply` only where `policy.draft_refusal`
+    allows a draft (M8 plan §2)."""
+    acts = allowed(policy.risk(ctx), templates=ctx.templates, forwards=ctx.forwards)
+    if "draft_reply" in acts and policy.draft_refusal(ctx) is not None:
+        return tuple(a for a in acts if a != "draft_reply")
+    return acts
 
 
 def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: policy.Context,
@@ -127,10 +131,10 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
             payload = outbound_plan.resolve(conn, item, one.name, one.target, got.get("text"))
             one = Planned(one.name, one.target, one.mode, payload)
         except outbound_plan.Unresolved as exc:
-            if one.name == "draft_reply":  # the draft the actor wrote isn't lost unseen (OD-551)
-                _add(p, Planned("flag", None, "auto"))
             one = Dropped(one.name, one.target, str(exc.detail))
     if isinstance(one, Dropped):
+        if one.name == "draft_reply":  # a dropped draft flags its item (OD-551, M8 plan P-d)
+            _add(p, Planned("flag", None, "auto"))
         p.dropped.append(one)
     else:
         _add(p, one)

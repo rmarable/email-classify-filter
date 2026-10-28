@@ -412,6 +412,7 @@ def run(  # noqa: PLR0912, PLR0913, PLR0915 - one loop over the selection, as fe
                     continue
                 facts = analyzer.analyze(got.parsed, raw, auth=got.auth,
                                          gmail_labels=meta.labels if gmail else None)  # fmt: skip
+                facts["language"] = got.language  # the child's, as the fetch stores it (M8)
                 index = len(out.rows) + 1
                 out.add(f"{index:05d}.eml", raw)
                 out.rows.append(_row(index, meta, folder.uidvalidity, name, raw, key, got, facts,

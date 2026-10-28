@@ -62,10 +62,7 @@ def refusal(  # noqa: PLR0911 - one return per check, in order
     why = policy.send_refusal(a.name, ctx.facts, fraud_signal=policy.fraud_signal(ctx))
     if why is not None:
         return why
-    to = str((a.payload or {}).get("to", "")).lower()
-    monitored = {str(r[0]).lower() for r in conn.execute(
-        "SELECT email FROM addresses WHERE removed_at IS NULL")}  # fmt: skip
-    if to in monitored:
+    if outbound_plan.monitored(conn, str((a.payload or {}).get("to", ""))):
         return "the recipient is a monitored address"
     if a.name == "reply_template":
         return _reply_limits(conn, clock, item, _grant(conn, item["stable_id"]))
