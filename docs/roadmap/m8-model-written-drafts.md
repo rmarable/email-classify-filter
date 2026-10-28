@@ -1024,9 +1024,15 @@ A draft whose card can't show it whole is not refused: OD-551 routes it to `ecf 
 
 **Performance (P24, OD-570).** In `tests/test_perf.py`, crafted 4,000-character drafts ("by by by",
 "$ $ $ 1", repeated IBAN prefixes, 4,000 digits, 4,000 "Friday,", and the adversarial round's slow
-shapes) stay under 0.07 unit each, and a plain draft under 0.01 unit. The target is under 5 ms per
-draft on the Mac. The crafted bound was 0.05; digit-dense shapes measured 0.063 after Step 3, and
-the operator raised it (2026-10-28).
+shapes) stay under 0.15 unit each, and a plain draft under 0.01 unit. Measured on the Mac
+(2026-10-28): about 0.3 ms for an ordinary draft, 3.4-8.5 ms for the crafted shapes; the earlier
+"under 5 ms per draft" target was set at Phase R (P24), before the checker existed, and is
+withdrawn (operator, 2026-10-28). The crafted bound was 0.05; digit-dense shapes measured 0.063 after Step 3, and
+the operator raised it to 0.07 (2026-10-28). On the GitHub runners the heaviest shapes then
+measured 0.074-0.098 (best of three; about 0.050 on the Mac), so the test failed at random, and
+the operator raised it to 0.15, about three times the Mac's figure like the file's other bounds
+(operator decision 2026-10-28). Limit: it fails a pattern that turns quadratic on these shapes, as
+the pre-fix ones did (about 2.3 units), but not a mild slowdown under about 25 ms on the Mac.
 
 ### 2. Policy (P18-P20)
 
@@ -2021,7 +2027,7 @@ operator, AB0):**
     uses; AL6; imported inside the function, since `decide` imports `approvals`, `decide.py:40-41`; AK7, AM6). The
     language clause applies only when the item has a `language` fact; items fetched before the
     release have none, and the checker's own `language` rule covers the draft text (X10). The checker
-    is pure and under 5 ms (§1).
+    is pure and takes about 0.3 ms on an ordinary draft (§1).
   - Every approval of a draft goes through `approve`: a Slack click, `ecf approve`, an
     `awaiting_stepup` item and an expired item's re-offer; `ecf approve --pending` and `ecf approve
     --scan` refuse a draft and call `approve` for the rest (:426-451, :493-508), and Approve all never
