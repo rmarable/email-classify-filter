@@ -146,6 +146,8 @@ def _claude_figures(g: dict[str, Any]) -> None:
     if g["api_equivalent_usd"] is not None:
         typer.echo(f"    API-equivalent cost: ${g['api_equivalent_usd']:.2f} (not a charge on a"
                    " plan)")  # fmt: skip
+    if g.get("prompts_over_100k"):  # Haiku 5.5 bills these at 5x (OD-564)
+        typer.echo(f"    requests over 100,000 tokens: {g['prompts_over_100k']}")
 
 
 def _figures(g: dict[str, Any]) -> None:

@@ -2221,6 +2221,11 @@ def _claude_figures(run: ResultFile, cases: int) -> list[str]:
         tokens = g["input_tokens"] + g["output_tokens"]
         out.append(f"  {g['model']} ({g['source']}): {g['calls']} requests, {tokens} tokens"
                    + _per_request(g))  # fmt: skip
+        long = g.get("prompts_over_100k")
+        if g["source"] in ("main", "compact") and isinstance(long, int) and long:
+            out.append(f"  warning: {long} {g['source']} requests over 100,000 tokens on"
+                       f" {g['model']} (Haiku 5.5 bills prompts over 100,000 tokens at 5x; the"
+                       " session should compact below that)")  # fmt: skip
     p = f.get("plan")
     if isinstance(p, dict):
         plan = cast(dict[str, Any], p)

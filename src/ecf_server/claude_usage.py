@@ -21,6 +21,8 @@ from ecf_server.db import write_tx
 from ecf_server.stats import percentile
 from ecf_server.telemetry import ApiCall, Tel
 
+LONG_PROMPT = 100_000  # tokens, cache reads and writes included (pricing page, read 2026-10-27)
+
 
 def source_of(query_source: str) -> str:
     if query_source in ("main", "sdk", "repl_main_thread"):  # repl_main_thread: interactive
@@ -161,8 +163,14 @@ def _figures(rows: list[sqlite3.Row]) -> dict[str, Any]:
     def rounded(v: float | None) -> float | None:
         return None if v is None else round(v, 2)
 
+    def prompt(r: sqlite3.Row) -> int:
+        return sum(r[c] or 0 for c in ("input_tokens", "cache_read_tokens",
+                                       "cache_creation_tokens"))  # fmt: skip
+
     return {
         "calls": len(rows),
+        # Haiku 5.5 bills a prompt over this at 5x; the session compacts below it (OD-564)
+        "prompts_over_100k": sum(1 for r in rows if prompt(r) > LONG_PROMPT),
         "input_tokens": total("input_tokens"),
         "output_tokens": total("output_tokens"),
         "cache_read_tokens": total("cache_read_tokens"),

@@ -365,6 +365,18 @@ def test_environment_is_allow_listed(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "0" and env["DISABLE_AUTOUPDATER"] == "1"
 
 
+def test_session_compacts_under_haiku_long_context_line(tmp_path: Path) -> None:
+    # Haiku 5.5 pays 5x on a prompt over 100,000 tokens: the session compacts below that
+    lay = cw.layout(Paths("t", tmp_path))
+    env = cw.session_env(lay, "tok", "atok", {})
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "100000"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in env  # didn't move the 33k buffer (OD-564)
+    # only ecf's sessions: `claude auth` (base_env) and the `claude -p` generator (PRIVACY_ENV)
+    # keep Claude Code's default
+    assert not cw.SESSION_ENV.keys() & cw.base_env(lay).keys()
+    assert not cw.SESSION_ENV.keys() & cw.PRIVACY_ENV.keys()
+
+
 def test_purge_keeps_only_login_and_config(tmp_path: Path) -> None:
     lay = cw.layout(Paths("t", tmp_path))
     cw.write_config(lay, Path("/abs/ecf-mcp"), Path("/data/t/run/ecf.sock"), MODELS)
