@@ -20,12 +20,19 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval import fixed_labels, genset, models
 from ecf.eval import generate as gen
-from ecf.eval import genset, models
 from ecf.eval import grade as grading
 from ecf.eval import labels as label_file
 from ecf.eval.metrics import wilson
-from ecf.eval.results import REPORT_ONLY_BELOW, ResultFile, subset_lines
+from ecf.eval.results import (
+    REPORT_ONLY_BELOW,
+    ResultFile,
+    compare,
+    holm_fields,
+    paired_fields,
+    subset_lines,
+)
 from ecf.schema import FIXED_ITEMS, load_schema
 
 DEV_BANNER = "DEV: plumbing test, not a measurement"
@@ -256,10 +263,7 @@ def _split(labels: dict[str, dict[str, Any]], rows: list[dict[str, Any]],
     yours: dict[str, dict[str, Any]] = {}
     theirs: dict[str, dict[str, Any]] = {}
     for c, lab in labels.items():
-        row = by_id.get(c) or {}
-        mine: set[str] = (set(label_file.settled(row)) if label_file.judged(row)
-                          else set() if sources.get(c) == label_file.MODELS
-                          else set(lab))  # fmt: skip
+        mine = label_file.yours(by_id.get(c) or {}, set(lab), sources.get(c))
         if y := {f: v for f, v in lab.items() if f in mine}:
             yours[c] = y
         if t := {f: v for f, v in lab.items() if f not in mine}:
@@ -493,17 +497,7 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
         lines += _field_lines("generator's label hints against your labels:",
                               agreement(proposals, labels, fields))  # fmt: skip
     for r in runs:
-        fam = models.classifier_family(r.pair)
-        if fam is None:
-            raise InvalidInputError(f"result {r.run_id[:8]}: ecf doesn't know its classifier's"
-                                    f" family ({r.pair})")  # fmt: skip
-        if fam in shared and shared[fam] == "generator" and doc.get("generator_family_waiver"):
-            lines.append(f"WAIVER: result {r.run_id[:8]}: Claude wrote these emails and Claude"
-                         " classifies them (operator decision, OD-547); read every figure with"
-                         " that in mind")  # fmt: skip
-        elif fam in shared:
-            lines.append(f"NOT A MEASUREMENT: result {r.run_id[:8]}'s classifier is {fam}, the"
-                         f" family of the {shared[fam]}")  # fmt: skip
+        lines += _family_line(doc, shared, r)
         got = {c.id: dict(c.got) for c in r.cases}
         if judged:  # three figures: judges' labels, your settled ones, both (J13)
             for part, which in (
@@ -532,12 +526,30 @@ def report(root: Path, results: list[ResultFile]) -> list[str]:  # noqa: PLR0912
     if not runs:
         lines.append(f"no ecf result given: run `ecf eval run --root {root} --claude`, then"
                      " pass its result file")  # fmt: skip
-    lines.append("noise: two runs of the same models on this set (`ecf eval compare`) give the"
-                 " run-to-run spread to read these figures against")  # fmt: skip
+    lines.append("noise: two runs of the same models on this set (`ecf eval compare A B --root"
+                 f" {root}`) give the run-to-run spread to read these figures against, and with"
+                 " judges, the comparison on the labels you settled")  # fmt: skip
     return lines
 
 
 ACCURACY_LOG = "grader-accuracy"
+
+
+def _family_line(doc: dict[str, Any], shared: dict[str, str], r: ResultFile) -> list[str]:
+    """WAIVER or NOT A MEASUREMENT when the result's classifier shares a family with the set's
+    writer or a grader; nothing otherwise."""
+    fam = models.classifier_family(r.pair)
+    if fam is None:
+        raise InvalidInputError(f"result {r.run_id[:8]}: ecf doesn't know its classifier's"
+                                f" family ({r.pair})")  # fmt: skip
+    if fam in shared and shared[fam] == "generator" and doc.get("generator_family_waiver"):
+        return [f"WAIVER: result {r.run_id[:8]}: Claude wrote these emails and Claude"
+                " classifies them (operator decision, OD-547); read every figure with"
+                " that in mind"]  # fmt: skip
+    if fam in shared:
+        return [f"NOT A MEASUREMENT: result {r.run_id[:8]}'s classifier is {fam}, the"
+                f" family of the {shared[fam]}"]  # fmt: skip
+    return []
 
 
 def _families(doc: dict[str, Any], grades: list[ResultFile]) -> dict[str, str]:
@@ -586,3 +598,116 @@ def _rule_lines(r: ResultFile, exp: Mapping[str, Mapping[str, Any]]) -> list[str
     unsafe = [c.id for c in with_rule if c.safety is False]
     return [f"  rule {_figure(rule_ok, len(with_rule))}; unsafe {len(unsafe)}"
             + (f" ({', '.join(unsafe[:5])})" if unsafe else "")]  # fmt: skip
+
+
+# `ecf eval compare A B --root <set>` (J12; plan state-archive/eval-compare-settled draft 2): the
+# two results paired again on the labels you settled only. The judges' agreed labels dominate the
+# main comparison (94% of PROD 300's), so this is the one comparison no model labelled.
+TOO_FEW = 6  # discordant pairs below which exact McNemar can't reach p < 0.05 (P9)
+NOT_PER_FIELD = ("rule", "safety")  # derived from all the labels, never set by anyone
+
+
+def check_settled_root(root: Path, ra: ResultFile, rb: ResultFile) -> None:
+    """Refuse `--root` unless both results were scored on the set's labels as they stand now
+    (P5, P10, P12)."""
+    if not genset.is_generated(root):
+        raise InvalidInputError(f"{root} isn't a generated set: --root is for a set the judges"
+                                " labelled")  # fmt: skip
+    if (root / fixed_labels.FILE).is_file():
+        raise InvalidInputError(f"{root} has {fixed_labels.FILE}: its hand-set labels aren't"
+                                " in the judges' records, so who set each label can't be"
+                                " told")  # fmt: skip
+    version, ids = label_file.set_version(root), {r["id"] for r in label_file.read(root)}
+    for r in (ra, rb):
+        if r.set_version != version:
+            raise InvalidInputError(
+                f"the set's labels changed since result {r.run_id[:8]} ({r.set_version} vs"
+                f" {version}); rescore both results the same way, both with or both without"
+                f" --through-policy: `ecf eval rescore <result> --synthetic {root}`"
+            )
+        if extra := {c.id for c in r.cases} - ids:
+            raise InvalidInputError(f"result {r.run_id[:8]} has {len(extra)} cases this set"
+                                    " doesn't (matched by case id)")  # fmt: skip
+
+
+def settled_lines(root: Path, ra: ResultFile, rb: ResultFile,
+                  subset: frozenset[str] | None = None) -> list[str]:  # fmt: skip
+    """The comparison on the labels you settled, after `check_settled_root`."""
+    doc = gen.verify(root)
+    shared = _families(doc, [])
+    rows = {r["id"]: r for r in label_file.read(root)}
+    lines = [line for r in (ra, rb) for line in _family_line(doc, shared, r)]
+    lines.append("On the labels you settled only. Not a gate figure: these are the emails the"
+                 " judges disagreed on, the hardest in the set; read A against B here, never"
+                 " against the figures above.")  # fmt: skip
+    if not any(label_file.judged(r) for r in rows.values()):
+        by = Counter(label_file.source(r) for r in rows.values())
+        mine, theirs = by["operator"], by[label_file.MODELS]
+        lines.append(f"no rows the judges labelled field by field: emails confirmed by you"
+                     f" {mine}, by the judges (older rows) {theirs}")  # fmt: skip
+    only: dict[str, set[str]] = {}
+    for c in ra.cases:
+        row = rows.get(c.id) or {}
+        only[c.id] = label_file.yours(row, set(c.fields), label_file.source(row)) - set(
+            NOT_PER_FIELD
+        )
+    every = {f: ps for f, ps in paired_fields(ra, rb, subset).items() if f not in NOT_PER_FIELD}
+    mine = {f: ps for f, ps in paired_fields(ra, rb, subset, only).items()
+            if f not in NOT_PER_FIELD}  # fmt: skip
+    total, k = sum(map(len, every.values())), sum(map(len, mine.values()))
+    if total:
+        lines.append(f"field labels compared: {total}; judges agreed {total - k}, you settled"
+                     f" {k} ({100 * k / total:.1f}%)")  # fmt: skip
+    unscored = sum(1 for r in rows.values()
+                   if set(label_file.settled(r)) & set(label_file.UNASKED))  # fmt: skip
+    if unscored:
+        lines.append(f"you also settled sender_type or priority on {unscored} emails: those"
+                     " decide the expected rule and aren't scored per field")  # fmt: skip
+    if not k:
+        lines.append("no labels you settled in both results: nothing to compare on your labels")
+    else:
+        lines += _settled_fields(mine)
+    return lines + _settled_end_to_end(ra, rb, rows, subset)
+
+
+def _settled_fields(mine: dict[str, list[tuple[bool, bool]]]) -> list[str]:
+    def discordant(ps: list[tuple[bool, bool]]) -> int:
+        return sum(x != y for x, y in ps)
+
+    tested = {f: ps for f, ps in mine.items() if discordant(ps) >= TOO_FEW}
+    lines = ["per field on your labels (exact McNemar, Holm over the fields tested here, alpha"
+             " 0.05; its own family, on cases the table above also counts; scored as each run"
+             " scored them, so a field `ecf eval report` leaves out (weak judge agreement, or a"
+             " label against the email's assignment) counts here):"]  # fmt: skip
+    for f in holm_fields(tested):
+        mark = "  significant" if f.significant else ""
+        lines.append(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
+                     f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+    for name, ps in sorted(mine.items()):
+        if name not in tested:
+            lines.append(f"  {name:<18} n={len(ps):<4} B-only"
+                         f" {sum(y and not x for x, y in ps):<3} A-only"
+                         f" {sum(x and not y for x, y in ps):<3} too few to test")  # fmt: skip
+    return lines
+
+
+def _settled_end_to_end(ra: ResultFile, rb: ResultFile, rows: dict[str, dict[str, Any]],
+                        subset: frozenset[str] | None) -> list[str]:  # fmt: skip
+    """End to end on the cases with a label of yours: counts, difference, interval and p, never
+    a non-inferiority verdict (P2): `correct` there still reads the judges' other labels."""
+    ids = frozenset(c for c, r in rows.items() if label_file.source(r) == "operator"
+                    and (subset is None or c in subset))  # fmt: skip
+    try:
+        c = compare(ra, rb, ids)
+    except InvalidInputError:
+        return ["end to end: no emails with a label of yours in both results"]
+    safety = {*FIXED_ITEMS, "fraud_risk"}  # the safety fields, as `_scorable` names them
+    fixed = sum(1 for i in ids if set(label_file.settled(rows[i])) & safety
+                or not label_file.judged(rows[i]))  # fmt: skip
+    return [f"end to end on the emails with at least one label of yours: {len(ids)} ({fixed}"
+            f" where you set a safety field such as phishing or fraud risk,"
+            f" {len(ids) - fixed} only other fields; on judge-labelled emails the rest are the"
+            f" judges'), {c.n} decided in both: A {c.a_correct}, B {c.b_correct}; B-A"
+            f" {c.diff_points:+.1f} points (95% Newcombe"
+            f" interval {c.diff_ci[0]:+.1f} to {c.diff_ci[1]:+.1f}); McNemar p ="
+            f" {c.p_value:.3g}"]  # fmt: skip

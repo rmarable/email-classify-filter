@@ -13,7 +13,6 @@ against your confirmed labels. A refused email is recorded and left out, never r
 
 from __future__ import annotations
 
-import hashlib
 import json
 import secrets
 from collections import Counter
@@ -93,9 +92,9 @@ class CaseGrader(Protocol):
 
 
 def set_version(root: Path) -> str:
-    """As the service computes it (a hash of labels.jsonl): for display only; the report matches
+    """As the service computes it (`labels.set_version`): for display only; the report matches
     a result to the set by its cases."""
-    return hashlib.sha256((root / "labels.jsonl").read_bytes()).hexdigest()[:16]
+    return label_file.set_version(root)
 
 
 @dataclass
