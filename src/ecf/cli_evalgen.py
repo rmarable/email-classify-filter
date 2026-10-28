@@ -22,6 +22,9 @@ NOTICE = {
                   " install is sent."),
     "grader": ("The grader receives each generated email and the field definitions, under your"
                " own sign-in to {provider}; never ecf's answers or your labels."),
+    "draft_judge": ("The judge receives each synthetic test email of the draft set, its question"
+                    " and the model's draft reply, under your own sign-in to {provider} (Mistral:"
+                    " through ecf, with your key); never your mail."),
 }  # fmt: skip
 NEVER_REAL = "Never put real mail in a generated set."
 
@@ -403,3 +406,65 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         loaded = [load_result(p) for p in results or []]
         for line in rep.report(root.expanduser(), loaded):
             typer.echo(line)
+
+    @eval_app.command("judge-drafts")
+    def judge_drafts(
+        run: Annotated[str, typer.Argument(help="A finished draft run's ID (or its first 8).")],
+        judge: Annotated[str, typer.Option("--judge", help="<provider>:<model>, never Claude.")],
+        yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation.")] = False,
+        max_cost: Annotated[
+            float, typer.Option("--max-cost", help="US$ this run may spend (API judges).")
+        ] = 1.0,
+    ) -> None:
+        """Have a judge grade every draft of a finished draft run (M8 plan §4); run it again to
+        finish a stopped one: judged drafts are kept."""
+        import tempfile  # noqa: PLC0415
+
+        from ecf.eval import judgedrafts, mistral_api, providers  # noqa: PLC0415
+
+        adapter = providers.resolve(judge, "grader", "prod", paths())
+        typer.echo(NOTICE["draft_judge"].format(provider=adapter.provider) + " " + NEVER_REAL)
+        if not yes and not typer.confirm("Go ahead?", default=False):
+            raise typer.Exit(1)
+        if isinstance(adapter, mistral_api.MistralAdapter):
+            if max_cost <= 0:
+                raise InvalidInputError("--max-cost must be more than 0")
+            adapter.max_cost = max_cost
+        _checked(adapter)
+        with LocalClient(paths()) as c, tempfile.TemporaryDirectory(prefix="ecf-judge-") as tmp:
+            counts, detail = judgedrafts.run(c.request, adapter, run, Path(tmp),
+                                             echo=typer.echo)  # fmt: skip
+        typer.echo(", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing judged")
+        if detail:
+            typer.echo(detail)
+
+    @eval_app.command("null-drafts")
+    def null_drafts(root: Annotated[Path, typer.Option("--root", help="The draft set.")]) -> None:
+        """The null floor (M8 plan §4): the fixed reply wherever a draft is allowed, as a run the
+        judges grade like any other. A pipeline and judge check, never a gate."""
+        where = str(root.expanduser().resolve())
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/eval/drafts/null", {"root": where})
+        short = str(r["run_id"])[:8]
+        typer.echo(f"null floor {short}: {r['drafts']} fixed drafts on {r['cases']} cards."
+                   f" Next: ecf eval judge-drafts {short} --judge ...")  # fmt: skip
+
+    @eval_app.command("drafts-score")
+    def drafts_score(
+        run: Annotated[str, typer.Argument(help="A finished draft run's ID (or its first 8).")],
+    ) -> None:
+        """A finished draft run's scores per group: OK with and without checker refusals, unsafe,
+        still to settle. Provisional until calibration names the fields that count."""
+        with LocalClient(paths()) as c:
+            r = c.request("GET", f"/v1/eval/drafts/{run}/score")
+        s = r["summary"]
+        typer.echo(f"run {r['run_id'][:8]} ({'forced' if r['forced'] else 'natural'}), judges:"
+                   f" {', '.join(r['judges']) or 'none yet'}")  # fmt: skip
+        if s["provisional"]:
+            typer.echo("provisional: no field has passed calibration yet, so OK reads the"
+                       " deterministic checks only")  # fmt: skip
+        for g, n in sorted(s["groups"].items()):
+            typer.echo(f"  {g}: {n['ok']}/{n['counted']} OK ({n['ok_without_refusals']} without"
+                       f" checker refusals), unsafe {n['unsafe']} (+{n['unsafe_pending']} to"
+                       f" settle), awaiting a judge {n['awaiting']}, to settle"
+                       f" {n['to_settle']}")  # fmt: skip

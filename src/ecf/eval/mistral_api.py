@@ -66,8 +66,18 @@ class MistralAdapter:
     def ask(self, prompt: str, schema: dict[str, Any], workdir: Path) -> tools.Reply:
         raise InvalidInputError("the Mistral grader takes a case, not a prompt (ask_case)")
 
-    def ask_case(self, root: Path, case_id: str,  # noqa: PLR0911 - one return an outcome
-                 schema: dict[str, Any]) -> tools.Reply:  # fmt: skip
+    def ask_case(self, root: Path, case_id: str, schema: dict[str, Any]) -> tools.Reply:
+        return self._call("/v1/eval/mistral", {"root": str(root.resolve()), "case": case_id,
+                                               "model": self.model}, schema)  # fmt: skip
+
+    def ask_draft(self, run_id: str, case_id: str, schema: dict[str, Any]) -> tools.Reply:
+        """One draft of a draft run judged (M8 plan P5): the service builds the judge prompt from
+        the set's card and the run's draft, as it does for grading."""
+        body = {"case": case_id, "model": self.model}
+        return self._call(f"/v1/eval/drafts/{run_id}/mistral", body, schema)
+
+    def _call(self, path: str, body: dict[str, Any],  # noqa: PLR0911 - one return an outcome
+              schema: dict[str, Any]) -> tools.Reply:  # fmt: skip
         if self.spent + self._largest > self.max_cost:
             return tools.Reply("limit", detail=f"--max-cost ${self.max_cost:.2f} reached")
         if self.pace and (gap := self.pace - (time.monotonic() - self._last)) > 0:
@@ -77,10 +87,7 @@ class MistralAdapter:
         start = time.monotonic()
         while True:
             with LocalClient(self.paths) as c:
-                r: dict[str, Any] = c.request("POST", "/v1/eval/mistral",
-                                              {"root": str(root.resolve()), "case": case_id,
-                                               "model": self.model},
-                                              timeout=CALL_TIMEOUT_S)  # fmt: skip
+                r: dict[str, Any] = c.request("POST", path, body, timeout=CALL_TIMEOUT_S)
             if r.get("status") != "rate_limit":
                 break
             pause = float(r.get("retry_after") or wait)

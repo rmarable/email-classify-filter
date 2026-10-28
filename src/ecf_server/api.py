@@ -75,6 +75,7 @@ from ecf_server import (
     db,
     destroy,
     digests,
+    draftjudging,
     evalrun,
     export_keys,
     gate,
@@ -1099,9 +1100,85 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
         return JSONResponse(claude_eval.confirm_set(state.clock, state.db_path.parent, root,
                                                     _str(body, "digest")))  # fmt: skip
 
+    def _data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    @allow(Caller.CLI)
+    def draft_judge_items(request: Request) -> JSONResponse:
+        """`ecf eval judge-drafts`: a finished draft run's drafts for the judges (M8 plan P5)."""
+        return JSONResponse(draftjudging.items(_data_dir(), str(request.path_params["run"])))
+
+    @allow(Caller.CLI)
+    def draft_judgements(request: Request) -> JSONResponse:
+        run = str(request.path_params["run"])
+        if request.method == "GET":
+            return JSONResponse(draftjudging.judgements(_data_dir(), run))
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object of case id -> answer")
+        spent = body.get("spent")
+        if spent is not None and (isinstance(spent, bool) or not isinstance(spent, int | float)):
+            raise InvalidInputError("spent: a number of US$")
+        return JSONResponse(draftjudging.save(_data_dir(), run, _str(body, "judge"),
+                                              cast(dict[str, Any], answers),
+                                              _str(body, "prompt_digest"),
+                                              None if spent is None else float(spent)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_mistral(request: Request) -> JSONResponse:
+        """`ecf eval judge-drafts --judge mistral:<model>`: one draft judged by the Mistral API,
+        with the prompt the service built, and the answer kept here: the client never posts a
+        Mistral answer (J5C-1)."""
+        from ecf.eval import draftjudge  # noqa: PLC0415 - eval only
+        from ecf.eval import models as eval_models  # noqa: PLC0415
+        from ecf.eval.tools import checked  # noqa: PLC0415
+        from ecf_server import mistral  # noqa: PLC0415 - eval only, not a service import
+
+        body = _body(request)
+        case_id, model = _str(body, "case"), _str(body, "model")
+        judge = f"mistral:{model}"
+        if draftjudge.judge_name(judge) is None:
+            raise InvalidInputError(f"{judge} isn't a plan judge")
+        entry = eval_models.check("mistral", model, "grader", "prod")
+        got = draftjudging.items(_data_dir(), str(request.path_params["run"]))
+        it = next((i for i in got["items"] if i["case"] == case_id), None)
+        if it is None:
+            raise NotFoundError(f"{case_id}: no draft of this run to judge")
+        if case_id in draftjudging.judgements(_data_dir(), got["run_id"])["judges"].get(judge, {}):
+            raise ConflictError(f"{case_id}: already judged by {judge}")  # before paying for it
+        r: dict[str, Any] = mistral.complete(state.store(), model, it["prompt"], it["schema"],
+                                             state.mistral_transport,
+                                             reasoning_effort=entry.reasoning_effort)  # fmt: skip
+        if r.get("status") == "ok" and checked(r.get("answer"), it["schema"]) is None:
+            draftjudging.save(_data_dir(), got["run_id"], judge, {case_id: r["answer"]},
+                              got["prompt_digest"])  # fmt: skip
+            r = r | {"saved": True}
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def draft_null(request: Request) -> JSONResponse:
+        """`ecf eval null-drafts`: the null floor's draft record for the draft set (M8 plan P6)."""
+        root = Path(_str(_body(request), "root")).expanduser()
+        if not root.is_absolute():
+            raise InvalidInputError("root: the draft set's folder (an absolute path)")
+        return JSONResponse(draftjudging.null_floor(_data_dir(), root, to_ts(state.clock.now())))
+
+    @allow(Caller.CLI)
+    def draft_score(request: Request) -> JSONResponse:
+        """`ecf eval drafts-score`: a finished draft run's scores (no draft text)."""
+        return JSONResponse(draftjudging.score(_data_dir(), str(request.path_params["run"])))
+
     return [
         Route("/v1/eval/claude", start_claude_eval, methods=["POST"]),
         Route("/v1/eval/drafts/confirm", confirm_draft_set, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/items", draft_judge_items, methods=["GET"]),
+        Route("/v1/eval/drafts/{run}/judgements", draft_judgements, methods=["GET", "POST"]),
+        Route("/v1/eval/drafts/{run}/score", draft_score, methods=["GET"]),
+        Route("/v1/eval/drafts/{run}/mistral", draft_mistral, methods=["POST"]),
+        Route("/v1/eval/drafts/null", draft_null, methods=["POST"]),
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
