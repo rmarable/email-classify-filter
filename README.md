@@ -149,6 +149,12 @@ say, and encrypts its backups with a key only you have. The full privacy stateme
 If you use ecf for business mail, use a Claude Team or Enterprise plan. On a personal Pro or Max
 plan, turn off the setting that lets Anthropic use your chats to improve its models.
 
+Testing ecf sends no email of yours anywhere. If you choose to test ecf with other companies'
+models, fake test emails go to them under your own accounts: TypeSafe (its Jev model), and OpenAI
+and Mistral when you build a test set another model wrote. The
+[admin guide](https://github.com/rmarable/email-classify-filter/blob/main/docs/admin-guide.md)
+explains what they receive and which privacy settings to turn off.
+
 ## Important
 
 ecf makes fraud much harder to miss, but it can't catch everything. **Always confirm a payment

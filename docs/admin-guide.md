@@ -332,6 +332,8 @@ stay held).
 test emails. You start it by typing `/ecf-eval` in `ecf claude`; it uses your Claude plan.
 `ecf eval status`, `stop` and `compare` follow it up. `ecf eval run --classifier-backend null` runs
 ecf's rules alone, as a quick wiring check that never counts for going live.
+To test ecf on mail another company's model wrote, see
+[Testing ecf on mail another model wrote](#testing-ecf-on-mail-another-model-wrote).
 
 **When ecf's Claude models change:** a release that changes which Claude model ecf uses drops every
 mailbox from `live` to `assist` until it passes the go-live test again. v3.0.0 did this when it
@@ -355,6 +357,127 @@ email that Claude does. To use it, store a TypeSafe key with
 `ecf models api-key set --provider typesafe`. While a key is stored, the weekly check also asks
 TypeSafe which Jev version is its latest, sending no email content, and `ecf models status` says
 when it's a different version than the one ecf uses. ecf never switches versions by itself.
+
+## Testing ecf on mail another model wrote
+
+ecf's own test emails were written by Claude, and ecf classifies mail with Claude, so its test
+scores show Claude reading Claude's mail. For a second opinion you can build a **generated test
+set**: another model writes a few hundred fake emails, the emails are labelled (what type each is,
+whether it's phishing, whether it asks for money, and so on), and ecf then runs on the set as it
+runs on its own test emails. A generated set is for your information only: it never counts toward
+the go-live test.
+
+Nothing from your mailboxes or your ecf data goes to these models. The model that writes the
+emails (the **writer**) gets ecf's published list of email types (scam types from the FBI's crime
+reports, ordinary mail from Gmail's inbox categories), a made-up company to write to, and rules
+that keep the emails fake (no real companies, addresses or account numbers). A model that labels
+them (a **grader**) gets each fake email and the meaning of each label. Never put real mail in a
+generated set.
+
+### Two ways to label a set
+
+- **You label every email; one grader checks you.** OpenAI's model writes the set, Mistral's
+  grades it, and you label every email yourself without seeing the grader's answers. The report
+  then shows how often the grader agreed with you. This is the most trustworthy, and the most
+  work.
+- **Two graders label it; you decide where they disagree.** The two graders are called
+  **judges**, and they must come from two different companies, neither of them the writer's
+  company or Claude's. With the models ecf accepts today that means Claude writes the set and
+  Mistral's and OpenAI's models judge it. Claude is then scored on mail Claude wrote, which is
+  what this test is meant to avoid, so you have to ask for it (`--claude-generator`) and the
+  report says so beside every figure. You answer only the disagreements that matter: replayed
+  on ecf's first 300-email set, that comes to about 150 of the 300 emails.
+
+ecf refuses models from some labs, and accepts only the models on its list for each job; the
+error message names the ones it would take.
+
+### What you need
+
+- **For OpenAI's model** (`gpt-6.1-sol` by default, as writer or judge): OpenAI's Codex
+  command-line tool and a ChatGPT plan. ecf keeps a separate Codex sign-in for itself, so install
+  Codex and sign it in once for ecf (replace `default` with your install's name if you use
+  `--install`):
+
+  ```sh
+  CODEX_HOME="$HOME/Library/Application Support/ecf/default/codex-home" \
+    codex login --device-auth -c cli_auth_credentials_store="keyring"
+  ```
+
+  The device sign-in needs device code sign-in turned on in ChatGPT's settings; the last part keeps
+  the sign-in in your Keychain rather than in a file. A ChatGPT plan has usage limits, so a run may
+  stop part-way: run the same command again with `--resume` later. In ChatGPT's settings, turn off
+  "Improve the model for everyone", and don't rate these runs with a thumbs up or down.
+- **For Mistral's model** (`mistral-large-4-0`, as grader or judge): a paid Mistral API account.
+  Store its key with `ecf models api-key set --provider mistral` (it's kept in your Keychain), and
+  set a spending limit in Mistral's console as well. In the console's Privacy settings, opt out of
+  having your data used for training. ecf stops a grading run before it would pass
+  `--max-cost` (US$15 by default); grading 300 emails cost about US$1 in October 2026.
+- **For Claude as the writer:** ecf's Claude sign-in (`ecf claude --login`, on your own Claude
+  plan). With Claude writing, 300 emails took about 25 minutes.
+
+### Example: you label every email
+
+The set lives in a new, empty folder; here `~/ecf-sets/first-300`. Each command prints the next
+one.
+
+```sh
+ecf eval generate --root ~/ecf-sets/first-300                        # OpenAI writes 300 emails
+ecf eval grade --root ~/ecf-sets/first-300                           # Mistral grades them
+ecf eval label --root ~/ecf-sets/first-300 --review all --add        # you label each email
+ecf eval expect --root ~/ecf-sets/first-300                          # what ecf's rules should do
+ecf eval label --root ~/ecf-sets/first-300                           # you confirm each result
+```
+
+- **generate** writes the emails in batches and checks each one as it's made: anything that looks
+  like a real address, phone number, account number or brand is dropped and another is written.
+  If the model refuses to write one, that's recorded and not retried. `--count` sets how many to
+  keep (300 by default).
+- **label --review** shows you each email as your mail program would, in random order, and asks
+  each question from the email alone.
+- **expect** works out, from your labels, which of ecf's rules should handle each email and
+  whether hiding it would be unsafe; you then confirm each.
+
+### Example: two judges
+
+```sh
+ecf eval generate --root ~/ecf-sets/first-300 --generator claude:claude-sonnet-5-5 --claude-generator
+ecf eval grade --root ~/ecf-sets/first-300 --grader mistral:mistral-large-4-0
+ecf eval grade --root ~/ecf-sets/first-300 --grader codex:gpt-6.1-sol
+ecf eval agree --root ~/ecf-sets/first-300     # labels both judges gave are kept
+ecf eval expect --root ~/ecf-sets/first-300    # what ecf's rules should do with each email
+ecf eval settle --root ~/ecf-sets/first-300    # you decide where the judges disagreed
+ecf eval expect --root ~/ecf-sets/first-300    # again, after settling
+```
+
+- **agree** keeps every label the two judges answered the same way. Where they differ, the email
+  waits for you. Some differences matter only if they change what ecf should do (the email's type,
+  or whether it mentions a deadline); `expect` checks those and sends you only the ones that do.
+  The safety questions (phishing, fraud risk, changed bank details and the like) are always yours
+  when the judges disagree.
+- **settle** shows you each waiting email as your mail program would, one at a time and in random
+  order, with only the questions the judges disagreed on. You answer before you see what the
+  judges said. If the second `expect` sends more emails back, settle and expect once more.
+
+### Running ecf on the set and reading the report
+
+```sh
+ecf eval run --root ~/ecf-sets/first-300 --claude   # then type /ecf-eval in `ecf claude`
+```
+
+Run it twice. Two runs of the same models show how much the scores move by chance alone;
+`ecf eval compare <result 1> <result 2>` puts them side by side, and `ecf eval status` lists the
+result files. Then:
+
+```sh
+ecf eval report --root ~/ecf-sets/first-300 <result files> ~/ecf-sets/first-300/grades/*.json
+```
+
+The report starts with each grader's accuracy, measured only against labels you gave. With two
+judges it then scores ecf three ways: against the labels the judges agreed on, against the ones
+you settled, and against both. Read the second closely: those are the emails the judges found
+hard, and your answers there are the only ones no model set. A question the judges often disagreed
+on is shown but not scored, except the safety questions, which are always scored. How a set is
+built and checked is described in [SPEC.md](../SPEC.md) section 16.
 
 ## Slack
 
