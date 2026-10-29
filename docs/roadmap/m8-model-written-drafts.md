@@ -2259,13 +2259,20 @@ operator, AB0):**
      misses all counted OK, the plan comes back to the operator before the baseline (AX1, AY2); any refusal among the hits brings
      the full-name clause back to the operator before the baseline (AI2). It runs once Step 5 records
      draft text;
-   - the operator decides the coverage figure (AE3);
+   - the operator decides the coverage figure (AE3); decided 2026-10-29: at least 80% (OD-576);
    - after the pilot: Step 6's rewrites and re-labelling, then operator calibration on 30 real drafts
      and about 65 seeds (M7, AN6);
    - the operator confirms the set, naming the frozen digest, before the baseline; the 90% mark was
      fixed before the pilot (K10, AN5, AO4);
    - two forced baseline runs and one natural run (the baseline arm);
    - the null floor.
+
+   - forced pilot f61e9bb5 ran 2026-10-29 (on `3fd923f`): about 11 minutes, US$7.66 API-equivalent;
+     105 drafts, 24 checker refusals, 24 not offered (`fraud_guard`); its findings and the operator's
+     decisions are SPEC §16.2 "the draft set" and OD-576 (AP5 kept without exception).
+   - natural pilot db85aa25 ran 2026-10-29 (same commit): US$7.55 API-equivalent, 484 s of claims;
+     87 drafted, 14 declined, 33 not offered (28 by `fraud_guard`, 5 no-draft cards); findings in the same SPEC
+     paragraph.
 
    Measured cost and time replace the estimates. Result: does today's drafting pass?
 8. **Data and stats:**

@@ -530,3 +530,4 @@ known_misses:
   - {draft: "We will meet at 10 sharp.", code: date, source: DR-15}
   - {draft: "Ship to twelve Mill Street.", code: contact, source: DR-16}
   - {draft: "Address: 12 Mill.", code: contact, source: DR-16}
+  - {draft: "At that size we can offer [per-site discount terms].", code: price, source: pilot f61e9bb5}
