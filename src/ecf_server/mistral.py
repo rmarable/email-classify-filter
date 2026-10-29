@@ -31,7 +31,9 @@ BASE_URL = f"https://{HOST}"
 TIMEOUT_S = 60.0  # one grading call (J19)
 KEY_CHECK_TIMEOUT_S = 5.0  # under the CLI's 10 s socket timeout, as Jev's
 CONNECT_S, WRITE_S, POOL_S = 5.0, 10.0, 5.0
-MAX_TOKENS = 2048  # the answer: labels for one email
+# the answer: labels for one email, after the reasoning `reasoning_effort: low` adds (1,254 and
+# 2,734 output tokens on two calls measured 2026-10-29; OD-581); only what's used is billed
+MAX_TOKENS = 8192
 MAX_PROMPT_CHARS = 400_000
 # ecf's adapter text: format only, no guidance on content (decision 1)
 SYSTEM_PROMPT = "Answer with JSON that matches the given schema, and nothing else."
@@ -198,8 +200,16 @@ def _read(raw: bytes) -> dict[str, Any]:  # noqa: PLR0911 - one return an outcom
     if (finish := choice.get("finish_reason")) != "stop":
         return {"status": "failed", "detail": f"finish {finish}", "usage": usage}
     content = msg.get("content")
+    if isinstance(content, list):  # a reasoning model's chunks: the answer is the text ones;
+        # the thinking is dropped unread, never kept or logged (OD-581)
+        texts: list[str] = []
+        for ch in cast(list[Any], content):
+            chunk = cast(dict[str, Any], ch) if isinstance(ch, dict) else {}
+            if chunk.get("type") == "text":
+                texts.append(str(chunk.get("text", "")))
+        content = "".join(texts)
     try:
-        answer: Any = json.loads(content) if isinstance(content, str) else None
+        answer: Any = json.loads(content) if isinstance(content, str) and content else None
     except ValueError:
         answer = None
     if not isinstance(answer, dict):

@@ -323,3 +323,28 @@ def test_pace_spaces_the_calls(fake: Mistral, tmp_path: Path) -> None:
     for _ in range(2):
         assert adapter.ask_case(root, row["id"], grading.grade_schema()).status == "ok"
     assert len(slept) == 1 and 25 < slept[0] <= 30
+
+
+def _raw(content: Any) -> bytes:
+    return json.dumps(
+        {
+            "choices": [
+                {"finish_reason": "stop", "message": {"role": "assistant", "content": content}}
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+    ).encode()
+
+
+def test_a_reasoning_reply_is_read_from_its_text_chunks() -> None:
+    """OD-581: with reasoning_effort low, Mistral Large 4 answers as chunks: thinking, then the
+    JSON in a text chunk (seen 2026-10-29); the thinking is dropped."""
+    chunks = [{"type": "thinking", "thinking": [{"type": "text", "text": "Let me look."}]},
+              {"type": "text", "text": '{"a": 1}'}]  # fmt: skip
+    got = mistral._read(_raw(chunks))  # pyright: ignore[reportPrivateUsage]
+    assert got["status"] == "ok" and got["answer"] == {"a": 1}
+    only = mistral._read(_raw(chunks[:1]))  # pyright: ignore[reportPrivateUsage]
+    assert only["status"] == "failed" and only["detail"] == "not one JSON object"
+    plain = mistral._read(_raw('{"b": 2}'))  # pyright: ignore[reportPrivateUsage]
+    assert plain["answer"] == {"b": 2}
+    assert mistral.MAX_TOKENS >= 8192
