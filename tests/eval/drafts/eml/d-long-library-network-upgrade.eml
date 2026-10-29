@@ -1,0 +1,92 @@
+Received: from mail.northgate-library.example (mail.northgate-library.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ d-long-library-network-upgrade; Thu, 29 Oct 2026 13:40:00 +0000
+From: Corinne Abbott - Northgate Library Services
+ <finance@northgate-library.example>
+To: ap@acme.example
+Subject: Network upgrade at our branches
+Date: Thu, 29 Oct 2026 13:40:00 +0000
+Message-ID: <d-long-library-network-upgrade.bae19684eb@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+I'm writing on behalf of our IT team, who are planning a network upgrade acro=
+ss our branches
+early next year. They've asked me to pass on some details and one question, s=
+ince I'm the one
+who deals with you on the kiosks.
+
+What's happening. The council's IT contractor is replacing the routers and sw=
+itches at all nine
+of our branch libraries between January and March. Each branch will be done o=
+n a single day,
+usually a Monday when we open late. The contractor expects each branch to be =
+without a network
+for between two and six hours.
+
+The kiosks. Seven of the nine branches have one of your kiosks at the entranc=
+e. The other two are
+small enough that staff sign visitors in by hand. At the busiest branch, Cent=
+ral, the kiosk signs
+in around 150 people a day, mostly volunteers, contractors and community grou=
+p leaders. Reading
+groups and the job club are the heaviest users.
+
+Our worry. On the days the network is down, branches will still be open. Staf=
+f will be busy
+helping people whose library accounts won't work either, so they won't have t=
+ime to run a paper
+book as well. If the kiosk simply stops, visitors will walk past it and we'll=
+ have no record of
+who was in the building, which matters for fire safety.
+
+What we'd do anyway. Each branch has a printed fire list of staff on duty. We=
+ could also put a
+paper sheet next to the kiosk on those days, but past experience says people =
+ignore it when there
+is a screen next to it.
+
+Other details. Our IT team will send you the new network addresses once they =
+have them, in
+case anything on your side needs updating. They'd also like to know whether t=
+he kiosks need any
+particular ports or websites opened through the new firewall, so they can set=
+ it up correctly
+from the first day rather than troubleshoot afterwards.
+
+Visitors on the day. The busiest groups at Central meet on Monday evenings, a=
+fter the late
+opening starts, so the outage there may overlap with them. The reading group =
+alone can bring 25
+people, most of whom sign in within ten minutes of each other. We'd rather no=
+t ask them to queue
+at the desk, and some of our regular volunteers find it awkward to sign a pap=
+er sheet when they
+are used to the screen. If the kiosk could keep working through the outage, i=
+t would save the
+branch managers a real headache.
+
+Timing. The first branch, Eastgate, is due on Monday 11 January. We'd like to=
+ know where we
+stand well before then, so that branch managers can plan.
+
+Training. If any change is needed in how staff use the kiosks during the outa=
+ge, we'd want a short
+note we can pass to branch managers. They're comfortable with the dashboard b=
+ut not with anything
+technical.
+
+Contact. For anything technical, our IT lead would rather hear from your supp=
+ort team directly
+than through me, though I'm happy to stay copied.
+
+So, the question our IT team most wants answered: will the kiosks keep signin=
+g visitors in while
+a branch is offline, and catch up once the connection is back?
+
+Many thanks,
+Corinne Abbott
+Northgate Library Services

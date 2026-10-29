@@ -22,6 +22,9 @@ NOTICE = {
                   " install is sent."),
     "grader": ("The grader receives each generated email and the field definitions, under your"
                " own sign-in to {provider}; never ecf's answers or your labels."),
+    "draft_judge": ("The judge receives each synthetic test email of the draft set, its question"
+                    " and the model's draft reply, under your own sign-in to {provider} (Mistral:"
+                    " through ecf, with your key); never your mail."),
 }  # fmt: skip
 NEVER_REAL = "Never put real mail in a generated set."
 
@@ -129,6 +132,17 @@ def _settle_terminal(root: Path, today: Any) -> None:
     typer.echo(f"settled {n_done} emails; {len(items) - n_done} still open")
     if n_done:
         typer.echo(f"Next: ecf eval expect --root {root}")
+
+
+def _write_private(path: Path, text: str) -> None:
+    """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6)."""
+    import os  # noqa: PLC0415
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    path.chmod(0o600)  # an existing file keeps its old mode through O_CREAT
 
 
 def _notice(role: str, provider: str, yes: bool) -> None:
@@ -403,3 +417,231 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         loaded = [load_result(p) for p in results or []]
         for line in rep.report(root.expanduser(), loaded):
             typer.echo(line)
+
+    @eval_app.command("judge-drafts")
+    def judge_drafts(
+        run: Annotated[str, typer.Argument(help="A finished draft run's ID (or its first 8).")],
+        judge: Annotated[str, typer.Option("--judge", help="<provider>:<model>, never Claude.")],
+        yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation.")] = False,
+        max_cost: Annotated[
+            float, typer.Option("--max-cost", help="US$ this run may spend (API judges).")
+        ] = 1.0,
+    ) -> None:
+        """Have a judge grade every draft of a finished draft run (M8 plan §4); run it again to
+        finish a stopped one: judged drafts are kept."""
+        import tempfile  # noqa: PLC0415
+
+        from ecf.eval import judgedrafts, mistral_api, providers  # noqa: PLC0415
+
+        adapter = providers.resolve(judge, "grader", "prod", paths())
+        typer.echo(NOTICE["draft_judge"].format(provider=adapter.provider) + " " + NEVER_REAL)
+        if not yes and not typer.confirm("Go ahead?", default=False):
+            raise typer.Exit(1)
+        if isinstance(adapter, mistral_api.MistralAdapter):
+            if max_cost <= 0:
+                raise InvalidInputError("--max-cost must be more than 0")
+            adapter.max_cost = max_cost
+        _checked(adapter)
+        with LocalClient(paths()) as c, tempfile.TemporaryDirectory(prefix="ecf-judge-") as tmp:
+            counts, detail = judgedrafts.run(c.request, adapter, run, Path(tmp),
+                                             echo=typer.echo)  # fmt: skip
+        typer.echo(", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "nothing judged")
+        if detail:
+            typer.echo(detail)
+
+    @eval_app.command("null-drafts")
+    def null_drafts(root: Annotated[Path, typer.Option("--root", help="The draft set.")]) -> None:
+        """The null floor (M8 plan §4): the fixed reply wherever a draft is allowed, as a run the
+        judges grade like any other. A pipeline and judge check, never a gate."""
+        where = str(root.expanduser().resolve())
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/eval/drafts/null", {"root": where})
+        short = str(r["run_id"])[:8]
+        typer.echo(f"null floor {short}: {r['drafts']} fixed drafts on {r['cases']} cards."
+                   f" Next: ecf eval judge-drafts {short} --judge ...")  # fmt: skip
+
+    @eval_app.command("drafts-score")
+    def drafts_score(
+        run: Annotated[str, typer.Argument(help="A finished draft run's ID (or its first 8).")],
+    ) -> None:
+        """A finished draft run's scores per group: OK with and without checker refusals, unsafe,
+        still to settle. Provisional until calibration names the fields that count."""
+        with LocalClient(paths()) as c:
+            r = c.request("GET", f"/v1/eval/drafts/{run}/score")
+        s = r["summary"]
+        cal = r["calibration_digest"]
+        typer.echo(f"run {r['run_id'][:8]} ({'forced' if r['forced'] else 'natural'}), judges:"
+                   f" {', '.join(r['judges']) or 'none yet'}, calibration"
+                   f" {cal[:12] if cal else 'none'}")  # fmt: skip
+        for w in r["warnings"]:
+            typer.echo(f"warning: {w}")
+        for w in s["provisional_why"]:
+            typer.echo(f"provisional: {w}")
+        for g, n in sorted(s["groups"].items()):
+            typer.echo(f"  {g}: {n['ok']}/{n['counted']} OK ({n['ok_without_refusals']} without"
+                       f" checker refusals), unsafe {n['unsafe']} (+{n['unsafe_pending']} to"
+                       f" settle), awaiting a judge {n['awaiting']}, to settle"
+                       f" {n['to_settle']}")  # fmt: skip
+            extra = [f"{n[k]} {w}" for k, w in (("withheld", "withheld by policy (out of n)"),
+                                                ("stated_faults", "stated scoring faults"),
+                                                ("stated_reads", "stated-fault reads to answer"))
+                     if n.get(k)]  # fmt: skip
+            if extra:
+                typer.echo(f"    {', '.join(extra)}")
+        if s["disagreement"]:  # how often the two judges answered a field apart (K12)
+            typer.echo("judges apart: " + ", ".join(
+                f"{f} {d['apart']}/{d['of']}" + (" (over 30%)" if d["over_limit"] else "")
+                for f, d in s["disagreement"].items()))  # fmt: skip
+        if s.get("soft_with_terms"):
+            typer.echo(f"read these: {len(s['soft_with_terms'])} drafts a judge called a soft"
+                       " commitment carry a date, amount or term the checker refused: "
+                       + ", ".join(s["soft_with_terms"]))  # fmt: skip
+        if s["taps"]["hidden"]:
+            typer.echo(f"settle page: {s['taps']['hidden']} name lines hidden,"
+                       f" {s['taps']['tapped']} shown on a tap")  # fmt: skip
+
+    @eval_app.command("drafts-record")
+    def drafts_record(
+        runs: Annotated[list[str], typer.Argument(help="Judged draft runs to record.")],
+    ) -> None:
+        """Fill each run's draft record with its scores and pin it to the calibration in force, if
+        it isn't pinned already (a run with nothing to settle needs this; `settle-drafts --from`
+        records the runs on its page)."""
+        with LocalClient(paths()) as c:
+            for run in runs:
+                r = c.request("POST", f"/v1/eval/drafts/{run}/record", {})
+                cal = r["calibration_digest"]
+                typer.echo(f"run {r['run_id'][:8]}: recorded {r['recorded']} scored drafts,"
+                           f" {r['to_settle']} still to settle, calibration"
+                           f" {cal[:12] if cal else 'none yet'}")  # fmt: skip
+
+    @eval_app.command("calibration-build")
+    def calibration_build(
+        pilot: Annotated[str, typer.Option("--pilot", help="A complete forced pilot run.")],
+        seeds: Annotated[Path, typer.Option("--seeds", help="The seeds file (YAML).")],
+    ) -> None:
+        """Build the judges' calibration set: real drafts from the pilot and the seeded drafts,
+        mixed unmarked (M8 plan §4). Then both judges grade it with `ecf eval judge-drafts`."""
+        from ecf.yamlio import load_yaml  # noqa: PLC0415
+
+        doc = load_yaml(seeds.expanduser().read_text(encoding="utf-8"), source=seeds.name)
+        with LocalClient(paths()) as c:
+            r = c.request("POST", "/v1/eval/drafts/calibration", {"pilot": pilot, "seeds": doc})
+        short = str(r["run_id"])[:8]
+        left = r["left_out_changed"]
+        typer.echo(f"calibration {short}: {r['real']} real drafts and {r['seeds']} seeds"
+                   + (f" ({left} pilot drafts left out: their card was rewritten)" if left else "")
+                   + f". Next: ecf eval judge-drafts {short} --judge ... (both judges), then"
+                   f" ecf eval calibration-export {short} --export DIR")  # fmt: skip
+
+    @eval_app.command("calibration-export")
+    def calibration_export(
+        run: Annotated[str, typer.Argument(help="The calibration record.")],
+        export: Annotated[Path, typer.Option("--export", help="A folder for the page's data.")],
+        part: Annotated[
+            int | None,
+            typer.Option("--part", help="1 or 2: one half of the drafts (two shorter pages)."),
+        ] = None,
+    ) -> None:
+        """The blind rating page's data (no ids, no key); its token map stays with ecf."""
+        import json  # noqa: PLC0415
+
+        with LocalClient(paths()) as c:
+            r = c.request("POST", f"/v1/eval/drafts/{run}/rating-page",
+                          {} if part is None else {"part": part})  # fmt: skip
+        out = export.expanduser()
+        name = "draft-rating-page.json" if part is None else f"draft-rating-page-{part}.json"
+        _write_private(out / name, json.dumps(r))
+        typer.echo(f"wrote {out / name} ({len(r['items'])} drafts), page"
+                   f" {r['page']}. Next: ecf eval calibration-import {run} --from <answers>"
+                   f" --page {r['page']}")  # fmt: skip
+
+    @eval_app.command("calibration-import")
+    def calibration_import(
+        run: Annotated[str, typer.Argument(help="The calibration record.")],
+        answers: Annotated[Path, typer.Option("--from", help="The page's saved answers.")],
+        page: Annotated[str, typer.Option("--page", help="The rating page's id.")],
+    ) -> None:
+        """Your ratings from the page; an item not fully rated is left for later."""
+        import json  # noqa: PLC0415
+
+        given = json.loads(answers.expanduser().read_text(encoding="utf-8"))
+        body = {"page": page, "answers": given}
+        with LocalClient(paths()) as c:
+            r = c.request("POST", f"/v1/eval/drafts/{run}/ratings", body)
+        typer.echo(f"rated {r['rated']} now, {r['total_rated']} of {r['of']} in all;"
+                   f" {r['left']} not fully rated")  # fmt: skip
+
+    @eval_app.command("calibration-score")
+    def calibration_score(
+        run: Annotated[str, typer.Argument(help="The calibration record.")],
+        null_run: Annotated[str, typer.Option("--null", help="The null floor run, judged.")],
+        reason: Annotated[
+            str | None, typer.Option("--reason", help="Why, once the set is confirmed.")
+        ] = None,
+    ) -> None:
+        """The judges' floors, written for every draft run's scores; the key revealed and your
+        ratings frozen."""
+        with LocalClient(paths()) as c:
+            r = c.request("POST", f"/v1/eval/drafts/{run}/calibration",
+                          {"null_run": null_run, "reason": reason})  # fmt: skip
+        typer.echo(f"fields that count: {', '.join(r['passed']) or 'none'} (calibration"
+                   f" {str(r['digest'])[:12]})")  # fmt: skip
+        for j, fs in sorted(r["judges"].items()):
+            typer.echo(f"  {j}: counts on {', '.join(fs) or 'nothing'}")
+        for f, js in sorted(r["settle_all"].items()):
+            typer.echo(f"  under the {f} floor: {', '.join(js)}; you settle {f} on their passes")
+        if r["both_failed"]:
+            typer.echo(f"both judges under the floor on {', '.join(r['both_failed'])}: scores stay"
+                       " provisional until you decide (M8 plan §4)")  # fmt: skip
+        rep = r["reports"]
+        caught = ", ".join(f"{f} {rep['operator_caught'][f]}/{rep['seeds'][f]}"
+                           for f in rep["seeds"] if rep["seeds"][f])  # fmt: skip
+        typer.echo(f"your catch of the seeded faults: {caught}")
+        for j, got in sorted(rep["judges_caught"].items()):
+            typer.echo(f"  {j}: " + ", ".join(f"{f} {got[f]}/{rep['seeds'][f]}"
+                                              for f in rep["seeds"] if rep["seeds"][f])
+                       + f"; false yes on {rep['negative_seeds']} negative seeds:"
+                       f" {rep['false_yes'][j]}")  # fmt: skip
+
+    @eval_app.command("settle-drafts")
+    def settle_drafts(
+        runs: Annotated[
+            list[str] | None, typer.Argument(help="Judged draft runs (one page across them).")
+        ] = None,
+        export: Annotated[
+            Path | None, typer.Option("--export", help="Write the settle page's data here.")
+        ] = None,
+        answers: Annotated[
+            Path | None, typer.Option("--from", help="The page's saved answers, to import.")
+        ] = None,
+        page: Annotated[str | None, typer.Option("--page", help="The settle page's id.")] = None,
+    ) -> None:
+        """What goes to you on judged draft runs (M8 plan §4 "Settling"): --export writes one
+        blind page across the runs named; --from with --page imports what you settled, then fills
+        each run's record with its scores."""
+        import json  # noqa: PLC0415
+
+        with LocalClient(paths()) as c:
+            if export is not None:
+                if not runs:
+                    raise InvalidInputError("name the judged runs to settle")
+                r = c.request("POST", "/v1/eval/drafts/settle-page", {"runs": runs})
+                out = export.expanduser()
+                _write_private(out / "draft-settle-page.json", json.dumps(r))
+                typer.echo(f"{len(r['items'])} drafts to settle: wrote"
+                           f" {out / 'draft-settle-page.json'}, page {r['page']}")  # fmt: skip
+                return
+            if answers is None or page is None:
+                raise InvalidInputError("give --export, or --from with --page")
+            given = json.loads(answers.expanduser().read_text(encoding="utf-8"))
+            body = {"page": page, "answers": given}
+            r = c.request("POST", "/v1/eval/drafts/settled", body)
+            # every run on the page is recorded, whatever was settled now (L3)
+            recorded = [c.request("POST", f"/v1/eval/drafts/{run}/record", {})["recorded"]
+                        for run in r["runs"]]  # fmt: skip
+        typer.echo(f"settled {r['settled']}, {r['left']} not fully answered; recorded"
+                   f" {sum(recorded)} scored drafts in {len(recorded)} runs")  # fmt: skip
+        if r["stale"]:
+            typer.echo(f"{r['stale']} drafts now need fields this page didn't ask (judged or"
+                       " calibrated since): make a new page with --export")  # fmt: skip

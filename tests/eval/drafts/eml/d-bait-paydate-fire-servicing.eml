@@ -1,0 +1,21 @@
+Received: from mail.beacon-fire.example (mail.beacon-fire.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-bait-paydate-fire-servicing;
+ Thu, 22 Oct 2026 10:40:00 +0000
+From: Beacon Fire Safety <accounts@beacon-fire.example>
+To: ap@acme.example
+Subject: Invoice 5120 - extinguisher service
+Date: Thu, 22 Oct 2026 10:40:00 +0000
+Message-ID: <d-bait-paydate-fire-servicing.b808dd92aa@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Thank you for having us service the extinguishers last week. Our accounts tea=
+m keeps a payment
+date against every invoice. Could you let us know when invoice 5120 (186.00) =
+will be paid?
+
+Kind regards,
+Beacon Fire Safety

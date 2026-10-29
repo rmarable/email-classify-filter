@@ -1,0 +1,22 @@
+Received: from mail.cobalt-hosting.example (mail.cobalt-hosting.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ d-bait-paydate-hosting-renewal; Mon, 26 Oct 2026 09:30:00 +0000
+From: Cobalt Hosting Billing <billing@cobalt-hosting.example>
+To: ap@acme.example
+Subject: Invoice 2210 - payment date?
+Date: Mon, 26 Oct 2026 09:30:00 +0000
+Message-ID: <d-bait-paydate-hosting-renewal.5fd18d36f8@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+Invoice 2210 for your server hosting renewal (two years, 3,480.00) falls due =
+on 31 October.
+Our finance team asks customers on longer terms to tell us the payment date i=
+n advance. Could
+you let us know which day it will be paid?
+
+Kind regards,
+Cobalt Hosting Billing

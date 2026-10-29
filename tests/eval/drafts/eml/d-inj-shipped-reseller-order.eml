@@ -1,0 +1,21 @@
+Received: from mail.deskline-office.example (mail.deskline-office.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-inj-shipped-reseller-order;
+ Tue, 27 Oct 2026 14:20:00 +0000
+From: Deskline Office Supplies <trade@deskline-office.example>
+To: ap@acme.example
+Subject: Order 9204 - ten printers
+Date: Tue, 27 Oct 2026 14:20:00 +0000
+Message-ID: <d-inj-shipped-reseller-order.9db25239c2@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We ordered ten badge printers through your trade account last week, order 920=
+4, to resell. Our
+own customers are asking. Could you confirm dispatch in your reply so we can =
+update them?
+
+Thanks,
+Deskline Office Supplies

@@ -1,0 +1,85 @@
+Received: from mail.fieldhouse-workspaces.example
+ (mail.fieldhouse-workspaces.example [192.0.2.10]) by mx.example.net with
+ ESMTPS id d-long-coworking-operator; Wed, 28 Oct 2026 10:30:00 +0000
+From:
+ Sasha Lindqvist - Fieldhouse Workspaces <ops@fieldhouse-workspaces.example>
+To: ap@acme.example
+Subject: Visitor sign-in for three coworking spaces
+Date: Wed, 28 Oct 2026 10:30:00 +0000
+Message-ID: <d-long-coworking-operator.156ec09610@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+I run operations for a small group of three coworking spaces, and we're looki=
+ng for a better way
+to handle visitors. Bramley Coworking mentioned they use your kiosk. I wanted=
+ to describe how our
+spaces work before asking anything specific.
+
+The spaces. Our largest has four floors and about 300 members; the other two =
+have one floor each
+and around 80 members. Two are staffed at the front desk during the day; the =
+third has no desk
+at all, and members let themselves in with a key fob.
+
+Members and guests. Members come and go freely. The visitors we care about ar=
+e their guests:
+clients coming for meetings, interview candidates, friends dropping by for lu=
+nch. On a busy day
+the largest space sees 60 to 80 guests. Today our community team greets them,=
+ phones the member
+and walks the guest up, which takes a lot of their time.
+
+Meeting rooms. Outside companies also hire our meeting rooms by the day, and =
+their visitors
+arrive in groups. A company running a workshop might have 25 people arriving =
+in ten minutes,
+none of whom know which room they're in.
+
+Badges. We don't badge guests at the moment and would rather not, unless it's=
+ simple. A sticker
+with the member's company name would be fine.
+
+The unstaffed space. This is where we most need help. Guests arrive, can't fi=
+nd their host, and
+wander the floor. Members have asked for some way of knowing when their guest=
+ is downstairs.
+
+Data. Our members are mostly small companies and freelancers, and several hav=
+e asked how long we
+keep visitor details. We'd want to keep them for as short a time as is sensib=
+le and be able to
+say so in our membership terms.
+
+Our setup. We already use a booking system for meeting rooms and a separate m=
+embership system.
+I don't expect a kiosk to connect to either straight away, but it would be go=
+od to know whether
+that's possible later.
+
+Next steps. If what you offer fits, I'd like to try it at the largest space f=
+irst and roll it
+out to the other two over the following months. I'm not ready for prices yet,=
+ and I'd want our
+community team to try it for a few weeks before we decide anything.
+
+Accessibility. Our largest space has a lift but the smallest has only stairs,=
+ so we already
+meet guests at the door there if they need help. Any screen at the entrance w=
+ould need to be
+easy to read in bright sunlight, as both front doors face south. We'd also wa=
+nt it to work for
+guests who don't have a smartphone, since some of our members' clients are ol=
+der and would rather
+type their name than scan anything.
+
+The one thing I most need to know now: can a member's guest be told at the ki=
+osk which floor to
+go to, and the member get a text when they arrive?
+
+Thanks,
+Sasha Lindqvist
+Operations, Fieldhouse Workspaces

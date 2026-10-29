@@ -16,6 +16,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -74,6 +75,8 @@ from ecf_server import (
     db,
     destroy,
     digests,
+    draftcalibration,
+    draftjudging,
     evalrun,
     export_keys,
     gate,
@@ -145,6 +148,7 @@ class Session:
     created_at: str
     agent_token: str = field(default="", repr=False)
     client_checked: bool = False  # `ecf claude` matched this install (v2.2.0)
+    claude_version: str | None = None  # the Claude Code version `ecf claude` found (M8 plan AP2)
 
 
 @dataclass
@@ -250,7 +254,7 @@ async def _on_client_gone(request: Request, _exc: Exception) -> Response:
     return Response(status_code=499)
 
 
-def create_app(state: ServiceState) -> Starlette:
+def create_app(state: ServiceState) -> Starlette:  # noqa: PLR0915 - one handler a route
     def allow(*callers: Caller) -> Callable[[Handler], Handler]:
         def deco(handler: Handler) -> Handler:
             def wrapper(request: Request) -> Response:
@@ -297,8 +301,10 @@ def create_app(state: ServiceState) -> Starlette:
 
     @allow(Caller.CLI)
     def create_session(request: Request) -> JSONResponse:
-        checked = _client_checked(_body(request).get("client"))
-        s = replace(_new_session(state), client_checked=checked)
+        client = _body(request).get("client")
+        checked = _client_checked(client)
+        s = replace(_new_session(state), client_checked=checked,
+                    claude_version=_claude_version(client))  # fmt: skip
         with state.lock:
             state.sessions[s.session_id] = s
         log.info("session.created", session_id=s.session_id, profile=s.profile.value)
@@ -314,11 +320,14 @@ def create_app(state: ServiceState) -> Starlette:
     @allow(Caller.CLI)
     def delete_session(request: Request) -> JSONResponse:
         session_id = str(request.path_params["session_id"])
+        code = _body(request).get("exit_code")  # `ecf claude`'s Claude Code exit (M8 plan AW5)
+        reason = f"closed, exit {code}" if isinstance(code, int) and not isinstance(
+            code, bool) else "closed"  # fmt: skip
         with state.lock:
             removed = state.sessions.pop(session_id, None)
         if removed is None:
             raise NotFoundError(f"no session {session_id[:8]}")
-        _end_session(state, session_id)
+        _end_session(state, session_id, reason)
         log.info("session.revoked", session_id=session_id)
         return JSONResponse({"revoked": session_id})
 
@@ -414,7 +423,7 @@ def _bearer(request: Request) -> str:
     return given
 
 
-def _end_claims(state: ServiceState, session_id: str) -> None:
+def _end_claims(state: ServiceState, session_id: str, reason: str = "closed") -> None:
     """A revoked session's review claims end with it (V1.4 step 3)."""
     if state.db_path is None:
         return
@@ -423,7 +432,7 @@ def _end_claims(state: ServiceState, session_id: str) -> None:
         claude_review.release_session(conn, session_id)
     finally:
         conn.close()
-    claude_eval.release_session(session_id)
+    claude_eval.release_session(session_id, reason)
 
 
 def _new_session(state: ServiceState) -> Session:
@@ -461,6 +470,13 @@ def _client_checked(client: Any) -> bool:
     return True
 
 
+def _claude_version(client: Any) -> str | None:
+    """The Claude Code version a client sent (`1.2.3`), kept on the session; anything else None."""
+    c = cast(dict[str, Any], client) if isinstance(client, dict) else {}
+    v = c.get("claude_version")
+    return v if isinstance(v, str) and re.fullmatch(r"\d{1,4}(\.\d{1,6}){2}", v) else None
+
+
 def _require_checked(request: Request) -> None:
     """`/ecf-eval` only from a session whose client was checked (`_client_checked`)."""
     if not cast(Session, request.state.session).client_checked:
@@ -485,13 +501,13 @@ def _review_setup(state: ServiceState, session_id: str) -> dict[str, Any]:
     return setup | {"eval": claude_eval.session_info(state.connect, state.clock)}
 
 
-def _end_session(state: ServiceState, session_id: str) -> None:
+def _end_session(state: ServiceState, session_id: str, reason: str = "closed") -> None:
     """Held submissions are settled (unbound ones refused) before the claims end and the
     session's usage is written (V1.4 step 6)."""
     if state.db_path is not None:
         telemetry_app.settle_bound(state, session_id, final=True)
     tel = state.telemetry.close(session_id)
-    _end_claims(state, session_id)
+    _end_claims(state, session_id, reason)
     if tel is not None and state.db_path is not None:
         conn = state.connect()
         try:
@@ -979,7 +995,7 @@ def _setup_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
-def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
+def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - one handler a route
     """SPEC §15.1, §16.2 (V1.3 step 8c): `ecf eval run|status|stop`, CLI only; from V1.4 step 7
     also `ecf eval run --claude`, which registers a run for `/ecf-eval` (its MCP side is in
     `_review_routes`)."""
@@ -1035,12 +1051,16 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             conn.close()
         recent = [dict(r) | {"metrics": json.loads(r["metrics"])} for r in rows]
         claude = claude_eval.status(state.connect, state.clock)
-        return JSONResponse({"current": run, "recent": recent, "claude": claude})
+        drafts = claude_eval.draft_status(state.db_path.parent) if state.db_path else None
+        return JSONResponse({"current": run, "recent": recent, "claude": claude,
+                             "draft_runs": drafts})  # fmt: skip
 
     @allow(Caller.CLI)
-    def stop_eval(_request: Request) -> JSONResponse:
+    def stop_eval(request: Request) -> JSONResponse:
+        reason = _opt_str(_body(request), "reason")  # a draft run's (M8 plan §4)
+        claude_eval.check_stop_reason(reason)  # before stopping anything (5B-9)
         local = evalrun.stop() if evalrun.RUN.snapshot()["state"] == "running" else None
-        claude = claude_eval.stop(state.connect, state.clock)
+        claude = claude_eval.stop(state.connect, state.clock, reason)
         if local is None and claude is None:
             raise NotFoundError("no eval is running")
         return JSONResponse({"local": local, "claude": claude})
@@ -1065,12 +1085,166 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:
             actor_high_model=_opt_str(body, "actor_high_model"),
             source_run=_opt_str(body, "source_run"), batch=batch,
             copy_to=_copy_to(body), for_gate=body.get("for_gate") is not False,
-            **_window_tuning(body))  # fmt: skip
+            new_attempt=_opt_str(body, "new_attempt"), **_window_tuning(body))  # fmt: skip
         return JSONResponse(claude_eval.start(state.connect, state.clock, state.db_path.parent,
                                               opts))  # fmt: skip
 
+    @allow(Caller.CLI)
+    def confirm_draft_set(request: Request) -> JSONResponse:
+        """`ecf eval confirm-set` (M8 plan AM3, AN5): the draft set frozen at the named digest."""
+        body = _body(request)
+        root = Path(_str(body, "root")).expanduser()
+        if not root.is_absolute():
+            raise InvalidInputError("root: the draft set's folder (an absolute path)")
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return JSONResponse(claude_eval.confirm_set(state.clock, state.db_path.parent, root,
+                                                    _str(body, "digest")))  # fmt: skip
+
+    def _data_dir() -> Path:
+        if state.db_path is None:
+            raise ServiceUnavailableError("the service has no database yet")
+        return state.db_path.parent
+
+    @allow(Caller.CLI)
+    def draft_judge_items(request: Request) -> JSONResponse:
+        """`ecf eval judge-drafts`: a finished draft run's drafts for the judges (M8 plan P5)."""
+        return JSONResponse(draftjudging.items(_data_dir(), str(request.path_params["run"])))
+
+    @allow(Caller.CLI)
+    def draft_judgements(request: Request) -> JSONResponse:
+        run = str(request.path_params["run"])
+        if request.method == "GET":
+            return JSONResponse(draftjudging.judgements(_data_dir(), run))
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object of case id -> answer")
+        spent = body.get("spent")
+        if spent is not None and (isinstance(spent, bool) or not isinstance(spent, int | float)):
+            raise InvalidInputError("spent: a number of US$")
+        return JSONResponse(draftjudging.save(_data_dir(), run, _str(body, "judge"),
+                                              cast(dict[str, Any], answers),
+                                              _str(body, "prompt_digest"),
+                                              None if spent is None else float(spent)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_mistral(request: Request) -> JSONResponse:
+        """`ecf eval judge-drafts --judge mistral:<model>`: one draft judged by the Mistral API,
+        with the prompt the service built, and the answer kept here: the client never posts a
+        Mistral answer (J5C-1)."""
+        from ecf.eval import draftjudge  # noqa: PLC0415 - eval only
+        from ecf.eval import models as eval_models  # noqa: PLC0415
+        from ecf.eval.tools import checked  # noqa: PLC0415
+        from ecf_server import mistral  # noqa: PLC0415 - eval only, not a service import
+
+        body = _body(request)
+        case_id, model = _str(body, "case"), _str(body, "model")
+        judge = f"mistral:{model}"
+        if draftjudge.judge_name(judge) is None:
+            raise InvalidInputError(f"{judge} isn't a plan judge")
+        entry = eval_models.check("mistral", model, "grader", "prod")
+        got = draftjudging.items(_data_dir(), str(request.path_params["run"]))
+        it = next((i for i in got["items"] if i["case"] == case_id), None)
+        if it is None:
+            raise NotFoundError(f"{case_id}: no draft of this run to judge")
+        if case_id in draftjudging.judgements(_data_dir(), got["run_id"])["judges"].get(judge, {}):
+            raise ConflictError(f"{case_id}: already judged by {judge}")  # before paying for it
+        r: dict[str, Any] = mistral.complete(state.store(), model, it["prompt"], it["schema"],
+                                             state.mistral_transport,
+                                             reasoning_effort=entry.reasoning_effort)  # fmt: skip
+        if r.get("status") == "ok" and checked(r.get("answer"), it["schema"]) is None:
+            draftjudging.save(_data_dir(), got["run_id"], judge, {case_id: r["answer"]},
+                              got["prompt_digest"])  # fmt: skip
+            r = r | {"saved": True}
+        return JSONResponse(r)
+
+    @allow(Caller.CLI)
+    def draft_null(request: Request) -> JSONResponse:
+        """`ecf eval null-drafts`: the null floor's draft record for the draft set (M8 plan P6)."""
+        root = Path(_str(_body(request), "root")).expanduser()
+        if not root.is_absolute():
+            raise InvalidInputError("root: the draft set's folder (an absolute path)")
+        return JSONResponse(draftjudging.null_floor(_data_dir(), root, to_ts(state.clock.now())))
+
+    @allow(Caller.CLI)
+    def draft_calibration_build(request: Request) -> JSONResponse:
+        """`ecf eval calibration-build`: the calibration record (M8 plan Q4)."""
+        body = _body(request)
+        return JSONResponse(draftcalibration.build(_data_dir(), _str(body, "pilot"),
+                                                   body.get("seeds"),
+                                                   to_ts(state.clock.now())))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_rating_page(request: Request) -> JSONResponse:
+        """`ecf eval calibration-export`: a new blind rating page; POST, as it writes the page's
+        token map (L6). `part` (1 or 2) gives one half of the items (S11)."""
+        part = _body(request).get("part")
+        if part is not None and (isinstance(part, bool) or not isinstance(part, int)):
+            raise InvalidInputError("part: 1 or 2")
+        return JSONResponse(draftcalibration.export(_data_dir(), str(request.path_params["run"]),
+                                                    part))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_ratings(request: Request) -> JSONResponse:
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object")
+        return JSONResponse(draftcalibration.rate(_data_dir(), str(request.path_params["run"]),
+                                                  _str(body, "page"),
+                                                  cast(dict[str, Any], answers)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_calibration_score(request: Request) -> JSONResponse:
+        body = _body(request)
+        return JSONResponse(draftcalibration.score(_data_dir(), str(request.path_params["run"]),
+                                                   _str(body, "null_run"),
+                                                   _opt_str(body, "reason")))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_settle_page(request: Request) -> JSONResponse:
+        """`ecf eval settle-drafts RUN... --export`: one blind page across the runs (K11)."""
+        runs = _body(request).get("runs")
+        if not isinstance(runs, list) or not runs:
+            raise InvalidInputError("runs: one or more draft run ids")
+        names = [str(r) for r in cast(list[Any], runs)]
+        return JSONResponse(draftjudging.settle_page(_data_dir(), names))
+
+    @allow(Caller.CLI)
+    def draft_settle(request: Request) -> JSONResponse:
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object")
+        return JSONResponse(draftjudging.settle(_data_dir(), _str(body, "page"),
+                                                cast(dict[str, Any], answers)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_record(request: Request) -> JSONResponse:
+        run = str(request.path_params["run"])
+        return JSONResponse(draftjudging.record_scores(_data_dir(), run))
+
+    @allow(Caller.CLI)
+    def draft_score(request: Request) -> JSONResponse:
+        """`ecf eval drafts-score`: a finished draft run's scores (no draft text)."""
+        return JSONResponse(draftjudging.score(_data_dir(), str(request.path_params["run"])))
+
     return [
         Route("/v1/eval/claude", start_claude_eval, methods=["POST"]),
+        Route("/v1/eval/drafts/confirm", confirm_draft_set, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/items", draft_judge_items, methods=["GET"]),
+        Route("/v1/eval/drafts/{run}/judgements", draft_judgements, methods=["GET", "POST"]),
+        Route("/v1/eval/drafts/{run}/score", draft_score, methods=["GET"]),
+        Route("/v1/eval/drafts/{run}/mistral", draft_mistral, methods=["POST"]),
+        Route("/v1/eval/drafts/null", draft_null, methods=["POST"]),
+        Route("/v1/eval/drafts/calibration", draft_calibration_build, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/rating-page", draft_rating_page, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/ratings", draft_ratings, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/calibration", draft_calibration_score, methods=["POST"]),
+        Route("/v1/eval/drafts/settle-page", draft_settle_page, methods=["POST"]),
+        Route("/v1/eval/drafts/settled", draft_settle, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/record", draft_record, methods=["POST"]),
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
@@ -1095,6 +1269,10 @@ def _window_tuning(body: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(forced, bool):
             raise InvalidInputError("forced_draft must be true or false")
         out["forced_draft"] = forced
+    if (size := body.get("act_round")) is not None:  # a draft run's round size (M8 plan 3b)
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise InvalidInputError("act_round must be a whole number")
+        out["act_round"] = size
     return out
 
 
@@ -1109,7 +1287,7 @@ def _statusline(state: ServiceState, session_id: str, body: dict[str, Any]) -> d
     return out
 
 
-def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
+def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR0915 - one handler a route
     """SPEC §10.4, §15.1 (V1.4 step 3): `/ecf-review`'s claims. The main session (WORK) claims;
     only its agent servers (AGENT, naming their agent) read and submit (OD-307). POST throughout:
     `review-queue` claims items, and claim tokens stay out of URLs."""
@@ -1198,8 +1376,10 @@ def _review_routes(state: ServiceState, allow: Allow) -> list[Route]:
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise InvalidInputError("limit must be a whole number")
         stopped = state.telemetry.stopped(sid)
+        version = cast(Session, request.state.session).claude_version
         return JSONResponse(claude_eval.eval_next_waiting(
-            state.connect, state.clock, sid, limit=limit, stopped=stopped))  # fmt: skip
+            state.connect, state.clock, sid, limit=limit, stopped=stopped,
+            claude_version=version))  # fmt: skip
 
     @allow(Caller.WORK)
     def eval_results(_request: Request) -> JSONResponse:

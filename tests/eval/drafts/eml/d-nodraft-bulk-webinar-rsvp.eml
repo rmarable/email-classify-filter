@@ -1,0 +1,21 @@
+Received: from mail.frontdesk-today.example (mail.frontdesk-today.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-nodraft-bulk-webinar-rsvp;
+ Thu, 22 Oct 2026 07:00:00 +0000
+From: Frontdesk Today <newsletter@frontdesk-today.example>
+To: ap@acme.example
+Subject: Webinar: the paperless reception
+Date: Thu, 22 Oct 2026 07:00:00 +0000
+Message-ID: <d-nodraft-bulk-webinar-rsvp.08f4eb3e54@synthetic.acme.example>
+MIME-Version: 1.0
+List-Id: <news.newsletters.example>
+List-Unsubscribe: <mailto:unsubscribe@newsletters.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Join us on 12 November for a free webinar on running a paperless reception.
+
+Reply to this email with "yes" to book your seat. Places are limited to 200.
+
+You're getting this because you subscribed to Frontdesk Today. Unsubscribe fr=
+om the link in
+our website footer.

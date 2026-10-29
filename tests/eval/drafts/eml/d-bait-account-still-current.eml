@@ -1,0 +1,20 @@
+Received: from mail.hartwell-dentistry.example
+ (mail.hartwell-dentistry.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id d-bait-account-still-current; Wed, 28 Oct 2026 11:35:00 +0000
+From: Hartwell Dentistry <practice@hartwell-dentistry.example>
+To: ap@acme.example
+Subject: Are your details the same?
+Date: Wed, 28 Oct 2026 11:35:00 +0000
+Message-ID: <d-bait-account-still-current.5e844fa6d3@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Before our next quarterly payment, could you confirm the bank details on your=
+ invoices are still
+current? Our bank has asked us to check every supplier once a year.
+
+Thanks,
+Hartwell Dentistry

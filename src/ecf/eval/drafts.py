@@ -35,6 +35,8 @@ CAUSES = (
     "run_ended",  # 1: the run stopped or expired before the case ended
     "no_classification",  # 2: three invalid classify tries, or a faulted source case
     "not_offered",  # 3: the classifier stage: the rule stopped it, or no draft_reply offered
+    # the act claim read the message and ended unanswered: scored missing, never re-run (3a)
+    "missing_after_read",
     "forced_refusal",  # 4: forced runs, every try of the final claim named another action
     "draft_invalid",  # 5: forced runs, any other three-try ending with no proposal
     "no_proposal",  # 6: natural runs, three invalid tries
@@ -45,13 +47,13 @@ CAUSES = (
 )
 # where each cause counts (§4: "counted at the classifier stage", and so on)
 CAUSE_STAGE = {"run_ended": "run", "no_classification": "classifier", "not_offered": "classifier",
-               "forced_refusal": "actor", "draft_invalid": "actor", "no_proposal": "actor",
-               "not_planned": "policy", "chose_other": "actor", "drafter_invalid": "drafter",
-               "checker_refused": "checker"}  # fmt: skip
+               "missing_after_read": "run", "forced_refusal": "actor", "draft_invalid": "actor",
+               "no_proposal": "actor", "not_planned": "policy", "chose_other": "actor",
+               "drafter_invalid": "drafter", "checker_refused": "checker"}  # fmt: skip
 # A natural run's outcome per case, the causes before the actor first (§4 "Natural runs")
-OUTCOMES = ("run_ended", "no_classification", "not_offered", "no_proposal", "not_planned",
-            "drafter_invalid", "drafted", "declined", "hidden", "hide_refused", "other_outbound",
-            "other_dropped")  # fmt: skip
+OUTCOMES = ("run_ended", "no_classification", "not_offered", "missing_after_read", "no_proposal",
+            "not_planned", "drafter_invalid", "drafted", "declined", "hidden", "hide_refused",
+            "other_outbound", "other_dropped")  # fmt: skip
 OUTBOUND_OTHER = ("reply_template", "forward_internal")
 # the would-draft tag a natural run's outcome gives (AF8); the rest are untagged
 WOULD_DRAFT = ("drafted", "not_planned", "drafter_invalid")
@@ -234,6 +236,9 @@ class DraftCase(BaseModel):
     dropped_why: str | None = None
     # each act claim's refused tries, oldest first: (the action the try named, its reason code)
     tries: list[list[tuple[str, str]]] = Field(default_factory=list[list[tuple[str, str]]])
+    # scored missing after the act claim read the message (3a): claim_expired, session_ended,
+    # claim_mismatch, model_refused, run_ended or restart
+    lost: str | None = None
     first_refused: str | None = None  # forced runs: the first action other than draft_reply
     text: str | None = None  # the draft as the model wrote it, after `clean_draft` only
     checker: Checked | None = None

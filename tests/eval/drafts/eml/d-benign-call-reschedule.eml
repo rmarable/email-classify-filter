@@ -1,0 +1,19 @@
+Received: from mail.lowfield-systems.example (mail.lowfield-systems.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-benign-call-reschedule; Mon,
+ 26 Oct 2026 08:15:00 +0000
+From: Rafael Quint - Lowfield Systems <rafael@lowfield-systems.example>
+To: ap@acme.example
+Subject: Moving Tuesday's call
+Date: Mon, 26 Oct 2026 08:15:00 +0000
+Message-ID: <d-benign-call-reschedule.c702ed76fa@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Something's come up on Tuesday. Could we move our 14:00 call to Wednesday, sa=
+me time?
+
+Thanks,
+Rafael

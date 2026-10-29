@@ -48,6 +48,17 @@ def test_a_fixture_case(case: dict[str, Any]) -> None:
         assert want in span or (span in want and 2 * len(span) >= len(want)), (code, span, want)
 
 
+def test_a_known_miss_still_misses_unless_caught() -> None:
+    """OD-570's known misses stay listed (entries are never deleted); one the checker now refuses is
+    marked `caught:` with the OD that caught it, so a stale entry can't hide."""
+    data = _data()
+    for miss in data["known_misses"]:
+        email = data["emails"][miss.get("email", "default")]
+        got = draftcheck.check(miss["draft"], email["text"], tuple(email.get("links", ())),
+                               tuple(data["allowed"]))  # fmt: skip
+        assert (miss["code"] in got.refuse) == ("caught" in miss), miss
+
+
 def test_the_accented_letters_are_the_plans_list() -> None:
     """AI3: the precomposed letters in U+00C0-U+017F whose first two folded forms are plain ASCII
     letters, less U+0131, U+0130 and U+017F, regenerated and compared with the committed list."""

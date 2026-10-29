@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import subprocess
+from collections.abc import Callable
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -66,6 +70,79 @@ def test_a_failing_child_names_only_the_error_type(tmp_path: Path) -> None:
         Path("/dev/null/no.db"), dns_cap_s=600, dns_budget=lambda: 30.0
     )  # can't open a database
     with pytest.raises(IsolationError, match=r"^child exited 3: \w+Error$"):
+        run(invoice(None), 1000)
+
+
+def test_a_child_that_runs_too_long_is_an_error(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def tiny(size: int) -> float:
+        return 0.001
+
+    monkeypatch.setattr(isolate, "timeout_for", tiny)
+    run = subprocess_isolator(db_path, dns_cap_s=600, dns_budget=lambda: 30.0)
+    with pytest.raises(IsolationError, match=r"^child timed out after 0 s$"):
+        run(invoice(None), 1000)
+
+
+def _child_prints(monkeypatch: pytest.MonkeyPatch, edit: Callable[[bytes], bytes]) -> None:
+    """Run the real child, then change what it printed."""
+    real = subprocess.run
+
+    def run(
+        args: list[str],
+        *,
+        input: bytes,
+        timeout: float,
+        capture_output: bool,
+        check: bool,
+        **rest: Any,
+    ) -> Any:
+        assert not rest, f"isolate now passes {sorted(rest)}: update this fake"
+        done = real(args, input=input, timeout=timeout, capture_output=capture_output, check=check)
+        return subprocess.CompletedProcess(args, done.returncode, edit(done.stdout), b"")
+
+    monkeypatch.setattr(isolate.subprocess, "run", run)
+
+
+def _changed(**fields: Any) -> Callable[[bytes], bytes]:
+    return lambda out: json.dumps({**json.loads(out), **fields}).encode()
+
+
+_UNREADABLE: list[Callable[[bytes], bytes]] = [
+    lambda out: out[: len(out) // 2],  # cut short
+    lambda out: b"",
+    lambda out: b"[]",
+    lambda out: b'{"x": 1}',
+    _changed(excerpts=["a", "b", "c"]),
+    _changed(language="klingon"),
+]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    _UNREADABLE,
+    ids=["truncated", "empty", "list", "no-fields", "three-excerpts", "unknown-language"],
+)
+def test_an_unreadable_child_result_is_an_error(
+    db_path: Path,
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    edit: Callable[[bytes], bytes],
+) -> None:
+    _child_prints(monkeypatch, edit)
+    run = subprocess_isolator(db_path, dns_cap_s=600, dns_budget=lambda: 30.0)
+    with pytest.raises(IsolationError, match=r"^child printed an unreadable result$"):
+        run(invoice(None), 1000)
+
+
+@pytest.mark.parametrize("out", [b"Traceback ... not JSON", b"[]", b'{"x": 1}'])
+def test_a_failing_child_with_no_readable_reason(
+    monkeypatch: pytest.MonkeyPatch, out: bytes
+) -> None:
+    _child_prints(monkeypatch, lambda _: out)
+    run = subprocess_isolator(Path("/dev/null/no.db"), dns_cap_s=600, dns_budget=lambda: 30.0)
+    with pytest.raises(IsolationError, match=r"^child exited 3: no reason given$"):
         run(invoice(None), 1000)
 
 

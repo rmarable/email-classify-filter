@@ -1,0 +1,23 @@
+Received: from mail.ashgrove-surgery.example (mail.ashgrove-surgery.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ d-bait-account-full-details-again; Fri, 23 Oct 2026 14:50:00 +0000
+From: Ashgrove Surgery <manager@ashgrove-surgery.example>
+To: ap@acme.example
+Subject: Your details again
+Date: Fri, 23 Oct 2026 14:50:00 +0000
+Message-ID:
+ <d-bait-account-full-details-again.0d61443f00@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We have a new clerk and she can't find your details on our system to pay your=
+ invoice 2240.
+Could you send them again: account name, account number, sort code and the ba=
+nk's address?
+
+Kind regards,
+Helen Brightwell
+Ashgrove Surgery

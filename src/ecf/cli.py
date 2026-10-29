@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import sys
 import time
 from datetime import UTC, datetime
@@ -1341,6 +1342,24 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             " policy offers a draft (measures the drafts); an experiment, never for the gate.",
         ),
     ] = False,
+    new_attempt: Annotated[
+        str | None,
+        typer.Option(
+            "--new-attempt",
+            metavar="REASON",
+            help="With --claude, on the draft set: allow one new attempt in a slot whose run"
+            " ended incomplete (stopped, expired or lost); it runs only the cases still"
+            " unscored, and the reason is recorded.",
+        ),
+    ] = None,
+    act_round: Annotated[
+        int | None,
+        typer.Option(
+            "--act-round",
+            help="With --claude, on the draft set: act items a round hands out (default 5; at"
+            " most the session's own limit, 10). For test runs that compare round sizes.",
+        ),
+    ] = None,
     classifier_backend: Annotated[
         str,
         typer.Option(
@@ -1402,9 +1421,10 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                                 " corpus")  # fmt: skip
     copy = _copy_folder(copy_to)
     globs = [g.strip() for g in cases.split(",") if g.strip()] if cases is not None else []
-    if not claude and (classifier_window is not None or cases is not None or forced_draft):
-        raise InvalidInputError("--classifier-window, --cases and --forced-draft work only with"
-                                " --claude")  # fmt: skip
+    if not claude and (classifier_window is not None or cases is not None or forced_draft
+                       or new_attempt is not None or act_round is not None):  # fmt: skip
+        raise InvalidInputError("--classifier-window, --cases, --forced-draft, --new-attempt"
+                                " and --act-round work only with --claude")  # fmt: skip
     if cases is not None and not globs:  # else a mistyped filter would run the whole set
         raise InvalidInputError("--cases needs at least one pattern")
     if claude:
@@ -1419,7 +1439,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
                      actor_model, batch, copy, actor_high_model=actor_high_model,
                      source_run=source_run, for_gate=not not_for_gate,
                      classifier_window=classifier_window, cases=globs,
-                     forced_draft=forced_draft)  # fmt: skip
+                     forced_draft=forced_draft, new_attempt=new_attempt,
+                     act_round=act_round)  # fmt: skip
         return
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/runs", {
@@ -1461,7 +1482,8 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
                  batch: int, copy: Path | None, *, actor_high_model: str | None = None,
                  source_run: str | None = None, for_gate: bool = True,
                  classifier_window: int | None = None, cases: list[str] | None = None,
-                 forced_draft: bool = False) -> None:  # fmt: skip
+                 forced_draft: bool = False, new_attempt: str | None = None,
+                 act_round: int | None = None) -> None:  # fmt: skip
     # another window, a few cards or a forced run is an experiment: sent as one, so a service on
     # an older version, which ignores these options, never pins the run or re-points the gate (W2)
     tuned = classifier_window not in (None, CLASSIFIER_WINDOW) or bool(cases) or forced_draft
@@ -1473,7 +1495,9 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
             "source_run": source_run, "batch": batch,
             "copy_to": str(copy) if copy else None, "for_gate": for_gate and not tuned,
             "classifier_window": classifier_window, "cases": cases or None,
-            **({"forced_draft": True} if forced_draft else {})})  # fmt: skip
+            **({"forced_draft": True} if forced_draft else {}),
+            **({"new_attempt": new_attempt} if new_attempt is not None else {}),
+            **({"act_round": act_round} if act_round is not None else {})})  # fmt: skip
         # such a service runs the defaults and its reply doesn't echo the options
         if tuned and (r.get("classifier_window", CLASSIFIER_WINDOW)
                       != (classifier_window or CLASSIFIER_WINDOW)
@@ -1493,6 +1517,10 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
         "; forced drafts" if forced_draft else "")  # fmt: skip
     typer.echo(f"Claude eval {r['run_id'][:8]} registered: {r['total']} cases, preset"
                f" {r['preset']}, {r['sensitivity']}{tuning}; {use} ({models}).")  # fmt: skip
+    if r.get("slot"):  # a draft run (M8 plan §4): its slot scores each case once
+        typer.echo(f"Draft run in slot {r['slot']}, attempt {r['attempt']}: {r['total']} cases"
+                   f" still unscored in the slot, act rounds of {r['act_round']}. A stop needs a"
+                   " reason (`ecf eval stop --reason`).")  # fmt: skip
     typer.echo("Preparing the cases (under a minute for the full set). Open `ecf claude` and"
                " type /ecf-eval; it uses your Claude plan. The run expires in 24 hours;"
                " `ecf eval stop` ends it.")  # fmt: skip
@@ -1825,8 +1853,32 @@ def status_lines(st: dict[str, Any]) -> list[str]:
             out.append(f"{'':30}{tuning}")
         if window := window_signal_line(m):  # window tuning runs (OD-555)
             out.append(f"{'':30}{window}")
+    out += draft_lines(st.get("draft_runs"))
     if not out:
         out.append(f"No eval has run yet: {_ecf('eval run')}")
+    return out
+
+
+def draft_lines(dr: dict[str, Any] | None) -> list[str]:
+    """The draft eval's record (M8 plan §4): the frozen checker, the set's confirmation, and each
+    slot's state and runs; no outcomes."""
+    if not dr:
+        return []
+    if dr.get("error"):
+        return ["", f"Draft eval slots: {dr['error']}"]
+    conf: dict[str, Any] | None = dr.get("confirmation")
+    pilot: dict[str, Any] | None = dr.get("pilot_set")
+    where = (f"set confirmed at {conf['set_digest'][:16]}" if conf
+             else f"set not yet confirmed: the pilots ran on {pilot['digest']}; confirm it with"
+                  f" `ecf eval confirm-set --root {shlex.quote(str(pilot['root']))}"
+                  f" --digest {pilot['digest']}`"
+             if pilot else "set not yet confirmed: pilot only")  # fmt: skip
+    out = ["", f"Draft eval slots ({where}):"]
+    for slot in dr["slots"]:
+        runs = "; ".join(f"{r['run_id'][:8]} attempt {r['attempt']} {r['end'] or 'open'}"
+                         + (", complete" if r["complete"] else "")
+                         for r in slot["runs"])  # fmt: skip
+        out.append(f"  arm {slot['arm'][:8]} {slot['slot']}: {slot['state']} ({runs})")
     return out
 
 
@@ -1881,6 +1933,8 @@ def _frozen_only(f: dict[str, Any]) -> str | None:
 
 def _pin_kind(f: dict[str, Any]) -> str:
     """A Claude eval's models: the pins, or comparison only (J8)."""
+    if f.get("slot"):  # a draft run is never for the gate, whatever its models (M8 plan §4)
+        return f"draft run in slot {f['slot']}"
     if f.get("pinned"):
         return "pinned models"
     return PRESET_D_ONLY if f.get("preset") == "D" else _frozen_only(f) or "comparison"
@@ -1901,6 +1955,9 @@ def _run_caveat(m: dict[str, Any]) -> str:  # noqa: PLR0911 - one return per cav
     claude = m.get("claude")
     if isinstance(claude, dict) and not m.get("gate_passed"):
         cl = cast(dict[str, Any], claude)
+        draft: dict[str, Any] | None = m.get("draft_run")
+        if draft:  # never for the gate, whatever its models (M8 plan §4)
+            return f", draft run in slot {draft['slot']} (never for the gate)"
         if cl.get("pinned") is False:  # never gate-eligible (J8)
             return (f", {PRESET_D_ONLY}" if cl.get("preset") == "D"
                     else f", {frozen}" if (frozen := _frozen_only(cl)) is not None
@@ -1921,10 +1978,15 @@ def _run_caveat(m: dict[str, Any]) -> str:  # noqa: PLR0911 - one return per cav
 
 
 @eval_app.command("stop")
-def eval_stop() -> None:
+def eval_stop(
+    reason: Annotated[
+        str | None,
+        typer.Option("--reason", help="Why: needed to stop a draft run, and recorded with it."),
+    ] = None,
+) -> None:
     """Stop the running eval after its current case."""
     with LocalClient(_paths()) as c:
-        r = c.request("POST", "/v1/eval/runs/stop", {})
+        r = c.request("POST", "/v1/eval/runs/stop", {"reason": reason} if reason else {})
     if r.get("local"):
         typer.echo(f"stopping eval {r['local']['run_id'][:8]} after its current case")
     if r.get("claude"):
@@ -1934,8 +1996,45 @@ def eval_stop() -> None:
                    f" cases scored{saved}")  # fmt: skip
 
 
+@eval_app.command("confirm-set")
+def eval_confirm_set(
+    root: Annotated[Path, typer.Option("--root", help="The draft set's folder.")],
+    digest: Annotated[
+        str, typer.Option("--digest", help="The set's digest you checked (`ecf eval status`).")
+    ],
+) -> None:
+    """Confirm the draft set after the pilot (M8 plan §4): freezes it at this digest and opens
+    the baseline's and the drafter's slots on it. Cards changed since the pilot must be ones the
+    pilot missed at the classifier stage."""
+    with LocalClient(_paths()) as c:
+        r = c.request("POST", "/v1/eval/drafts/confirm",
+                      {"root": str(root.expanduser().resolve()), "digest": digest})  # fmt: skip
+    changed = r["changed"]
+    typer.echo(f"Draft set confirmed at {r['set_digest'][:16]}; changed since the pilot:"
+               f" {', '.join(changed) if changed else 'none'}.")  # fmt: skip
+
+
+def _compare_drafts(a: str, b: str, margin: float) -> None:
+    """`ecf eval compare --drafts A B` (M8 plan §4): paired on `draft_ok`."""
+    from ecf.eval import draftjudge  # noqa: PLC0415
+
+    with LocalClient(_paths()) as c:
+        sa = c.request("GET", f"/v1/eval/drafts/{a}/score")
+        sb = c.request("GET", f"/v1/eval/drafts/{b}/score")
+    r = draftjudge.compare_runs(sa, sb, margin)
+    for w in r["warnings"]:
+        typer.echo(f"warning: {w}")
+    for w in r["provisional_why"]:
+        typer.echo(f"provisional, {w}")
+    lo, hi = r["diff_ci"]
+    typer.echo(f"draft_ok on {r['n']} paired drafts: A {r['a_ok']}, B {r['b_ok']};"
+               f" B - A {r['diff_points']:+.1f} points [{lo:+.1f}, {hi:+.1f}],"
+               f" discordant {r['b_only']} vs {r['a_only']}, exact p {r['p_value']:.3f};"
+               f" non-inferior at -{margin:g}: {'yes' if r['non_inferior'] else 'no'}")  # fmt: skip
+
+
 @eval_app.command("compare")
-def eval_compare(
+def eval_compare(  # noqa: PLR0912 - the result, the settled block, the drafts route
     a: Path,
     b: Path,
     margin: Annotated[float, typer.Option(min=0, help="Non-inferiority margin, in points")] = 5.0,
@@ -1947,9 +2046,22 @@ def eval_compare(
             " line); needed when the two runs used different sets.",
         ),
     ] = None,
+    root: Annotated[
+        Path | None,
+        typer.Option(
+            "--root",
+            help="A generated set both results ran on: also compare them on only the labels you"
+            " settled where the judges disagreed. Both must be scored on its current labels.",
+        ),
+    ] = None,
+    drafts: Annotated[
+        bool,
+        typer.Option("--drafts", help="A and B are draft runs (IDs): compare them on draft_ok."),
+    ] = False,
 ) -> None:
     """Compare two result files (paired: exact McNemar, Newcombe interval, non-inferiority at
-    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486)."""
+    -5 points unless --margin says otherwise; per field with Holm; SPEC §16.5, OD-486). With
+    --root, a second block on the labels you settled only (J12)."""
     from ecf.eval.results import (  # noqa: PLC0415
         compare,
         compare_endpoints,
@@ -1960,8 +2072,17 @@ def eval_compare(
         summary,
     )
 
+    if drafts:
+        if subset is not None or root is not None:  # J5C-12
+            raise InvalidInputError("--drafts compares two draft runs whole: no --subset or --root")
+        _compare_drafts(str(a), str(b), margin)
+        return
     ra, rb = load_result(a), load_result(b)
     ids = _subset_ids(subset) if subset is not None else None
+    if root is not None:  # refused before any output (J12 P5, P10)
+        from ecf.eval import report  # noqa: PLC0415
+
+        report.check_settled_root(root.expanduser().resolve(), ra, rb)
     c = compare(ra, rb, ids)
     if ids is not None and subset is not None:
         typer.echo(f"subset: {len(ids)} case ids from {subset.name}"
@@ -1981,9 +2102,9 @@ def eval_compare(
     typer.echo(f"B non-inferior (lower bound > -{margin:g} points):"
                f" {'yes' if c.b_non_inferior(margin) else 'no'}")  # fmt: skip
     if _decision_run(ra) or _decision_run(rb):  # the decision-model experiment (SPEC §7.8, §16.5)
-        ends = compare_endpoints(ra, rb)
+        ends = compare_endpoints(ra, rb, ids)
         how = ("Holm over the two" if "category" in ends else
-               "end-to-end only: category is deferred by the label policy, OD-563")  # fmt: skip
+               "end-to-end only: every case defers category, OD-563")  # fmt: skip
         typer.echo(
             f"confirmatory (exact McNemar, {how}): "
             + "; ".join(
@@ -1994,13 +2115,18 @@ def eval_compare(
         typer.echo(f"{name}  {_state_line(run)}")
         for line in _run_lines(run):
             typer.echo(f"{name}{line}")
-    fields = compare_fields(ra, rb)
+    fields = compare_fields(ra, rb, ids)
     if fields:
         typer.echo("per field (exact McNemar, Holm-adjusted over the fields, alpha 0.05):")
         for f in fields:
             mark = "  significant" if f.significant else ""
             typer.echo(f"  {f.field:<18} n={f.n:<4} B-only {f.b_only:<3} A-only {f.a_only:<3} "
                        f"p = {f.p_value:.3g}, Holm p = {f.p_holm:.3g}{mark}")  # fmt: skip
+    if root is not None:
+        from ecf.eval import report  # noqa: PLC0415
+
+        for line in report.settled_lines(root.expanduser().resolve(), ra, rb, ids):
+            typer.echo(line)
 
 
 def _run_lines(run: ResultFile) -> list[str]:

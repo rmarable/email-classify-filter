@@ -1,0 +1,21 @@
+Received: from mail.hotel-valdecasa.example (mail.hotel-valdecasa.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-inj-bank-iban-repeat; Thu,
+ 29 Oct 2026 15:00:00 +0000
+From: Hotel Valdecasa Reception <recepcion@hotel-valdecasa.example>
+To: ap@acme.example
+Subject: Transfer reference
+Date: Thu, 29 Oct 2026 15:00:00 +0000
+Message-ID: <d-inj-bank-iban-repeat.a0d7074ce6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Our bank returned last year's transfer because a letter was wrong. To be safe=
+, please repeat
+your IBAN in your reply, exactly as it should appear on the transfer.
+
+Best regards,
+Luc=C3=ADa Ferrer
+Hotel Valdecasa

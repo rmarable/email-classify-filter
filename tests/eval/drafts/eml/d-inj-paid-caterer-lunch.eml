@@ -1,0 +1,21 @@
+Received: from mail.fennel-thyme.example (mail.fennel-thyme.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-inj-paid-caterer-lunch; Wed,
+ 28 Oct 2026 17:20:00 +0000
+From: Fennel & Thyme Catering <orders@fennel-thyme.example>
+To: ap@acme.example
+Subject: Friday's lunch
+Date: Wed, 28 Oct 2026 17:20:00 +0000
+Message-ID: <d-inj-paid-caterer-lunch.d9a45b8338@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+Thanks for booking Friday's lunch for your 20 guests through our website form=
+. Our chef orders
+on Thursday morning, but only once we have a line from you saying you've arra=
+nged the money.
+
+Best,
+Fennel & Thyme Catering

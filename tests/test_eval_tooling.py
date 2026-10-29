@@ -643,6 +643,22 @@ def test_cli_compare_subset(tmp_path: Path) -> None:
     assert same.exit_code == 0 and "paired cases: 3" in same.output
 
 
+def test_cli_compare_per_field_keeps_to_the_subset(tmp_path: Path) -> None:
+    """--subset reaches the per-field tests too (J12 Phase R S4; before: every case)."""
+
+    def run(pair: str) -> ResultFile:
+        cases = [CaseResult(id=str(i), correct=True, fields={"rule": True}) for i in range(4)]
+        return ResultFile(run_id=pair, pair=pair, set_version="v1", created_at="t", cases=cases)
+
+    fa, fb, ids = tmp_path / "a.json", tmp_path / "b.json", tmp_path / "ids.txt"
+    fa.write_text(run("A").model_dump_json())
+    fb.write_text(run("B").model_dump_json())
+    ids.write_text("0\n1\n")
+    out = CliRunner().invoke(app, ["eval", "compare", str(fa), str(fb), "--subset", str(ids)])
+    assert out.exit_code == 0 and "paired cases: 2" in out.output
+    assert re.search(r"rule\s+n=2\s", out.output), out.output
+
+
 @pytest.mark.parametrize(("target", "ok"), [
     ("fraud_risk:low", True), ("priority:high", True), ("invoice", True), ("archive", True),
     ("fraud_risk:tiny", False), ("category:invoice", False), ("nofield:low", False),

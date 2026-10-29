@@ -101,6 +101,7 @@ max-args = 8
 "tests/**" = ["S101", "PLR2004", "S105", "S106", "S108", "S603", "S607"]
 "scripts/**" = ["T201", "S603", "S607"]
 "scripts/build_settle_page.py" = ["E501"]  # the page's HTML, CSS and JS are one string
+"scripts/build_draft_rating_page.py" = ["E501"]  # the same, and its usage lines
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]

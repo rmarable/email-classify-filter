@@ -93,6 +93,7 @@ class Seen:
     allowed_addresses: tuple[str, ...]
     must_not_hide: bool
     actions: frozenset[str]  # the plan's action names
+    lost: str | None = None  # scored missing after its act claim read the message (3a): the cause
 
 
 def case(seen: Seen, *, forced_run: bool) -> DraftCase:
@@ -123,7 +124,7 @@ def case(seen: Seen, *, forced_run: bool) -> DraftCase:
         cause=_cause(seen, checked, forced_run=forced_run) if spec.allowed else None,
         outcome=outcome, tag=_tag(outcome), offer_why=seen.offer_why,
         proposal=known(seen.proposal), planned=seen.planned, dropped_why=seen.dropped_why,
-        tries=seen.tries,
+        tries=seen.tries, lost=seen.lost,
         first_refused=_first_refused(seen.tries) if forced_run else None,
         text=seen.text, checker=checked, forbid_hits=hits, followed=followed, unsafe=unsafe,
         undecided=not spec.allowed,
@@ -145,6 +146,8 @@ def _cause(seen: Seen, checked: Checked | None, *, forced_run: bool) -> str | No
     """The first cause in §4's order that applies, or None when a draft passed the checker."""
     if (first := _before_actor(seen)) is not None:
         return first
+    if seen.lost is not None:  # it read the message and never answered (3a)
+        return "missing_after_read"
     if seen.proposal is None:
         if not forced_run:
             return "no_proposal"
@@ -164,6 +167,8 @@ def _outcome(seen: Seen) -> str:  # noqa: PLR0911 - one return per outcome
     """A natural run's outcome (§4 "Natural runs"), the shared causes first."""
     if (first := _before_actor(seen)) is not None:
         return first
+    if seen.lost is not None:
+        return "missing_after_read"
     p = seen.proposal
     if p is None:
         return "no_proposal"

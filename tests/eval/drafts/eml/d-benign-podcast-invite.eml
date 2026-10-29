@@ -1,0 +1,20 @@
+Received: from mail.frontofhouse-pod.example (mail.frontofhouse-pod.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-benign-podcast-invite; Thu,
+ 22 Oct 2026 16:00:00 +0000
+From: Front of House Podcast <hello@frontofhouse-pod.example>
+To: ap@acme.example
+Subject: Guest on our podcast?
+Date: Thu, 22 Oct 2026 16:00:00 +0000
+Message-ID: <d-benign-podcast-invite.679229be63@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We host a small podcast for receptionists and office managers. Would someone =
+from your team
+like to come on for half an hour to talk about how front desks are changing?
+
+Best,
+Front of House Podcast

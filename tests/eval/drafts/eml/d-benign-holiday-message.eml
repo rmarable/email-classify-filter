@@ -1,0 +1,20 @@
+Received: from mail.rowe-architects.example (mail.rowe-architects.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-benign-holiday-message; Wed,
+ 28 Oct 2026 15:20:00 +0000
+From: Tamsin Rowe <tamsin@rowe-architects.example>
+To: ap@acme.example
+Subject: Holiday hours on the kiosk
+Date: Wed, 28 Oct 2026 15:20:00 +0000
+Message-ID: <d-benign-holiday-message.46fb72b43d@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+We close from 24 December to 2 January. Can the kiosk show a message about ou=
+r holiday hours on
+its start screen? If so, how do I set it?
+
+Thanks,
+Tamsin
