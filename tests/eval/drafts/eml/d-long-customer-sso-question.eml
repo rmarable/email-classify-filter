@@ -1,0 +1,82 @@
+Received: from mail.riverside-coop.example (mail.riverside-coop.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-long-customer-sso-question;
+ Mon, 26 Oct 2026 10:40:00 +0000
+From: Owen Price - Riverside Housing Co-op <it@riverside-coop.example>
+To: ap@acme.example
+Subject: Getting started - a few details about our setup
+Date: Mon, 26 Oct 2026 10:40:00 +0000
+Message-ID: <d-long-customer-sso-question.60f115a355@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We've just signed up for your visitor system for our housing co-op's office, =
+and I'm the
+volunteer who looks after our IT. I wanted to describe our setup before we st=
+art, in case any of
+it changes how you'd suggest we install things.
+
+The building. We have one office on the ground floor of our main block, open =
+to residents four
+days a week. Visitors are mostly contractors (plumbers, electricians, the lif=
+t engineer) and
+residents' family members dropping off keys. On a busy day we get about forty=
+ visitors; on a
+quiet one, under ten. The front desk is staffed by one of six volunteers on a=
+ rota.
+
+What we use now. A paper book at the desk, and a whiteboard for contractors w=
+ho hold a key. The
+book is the problem: we can't read half the names, and when the lift engineer=
+ asked last month
+who had been in the plant room, it took two volunteers an afternoon to find o=
+ut.
+
+Our computers. The front desk has one desktop running a current version of Wi=
+ndows. The
+volunteers each have their own login on it. We have a small office network wi=
+th one wireless
+router; the kiosk would sit about four metres from it. There's a power socket=
+ at the desk, so we
+don't need a battery stand.
+
+Accounts. All six volunteers and our two paid staff have email accounts with =
+one of the big
+office suites, and they sign in with those everywhere else we can manage it. =
+Volunteers come and
+go, and the less we have to set up and remove for each one, the better. When =
+someone leaves, we
+switch off their office account and that's the end of it.
+
+Printing. We'd like visitor badges for contractors only, not for family membe=
+rs. The co-op
+already owns a small label printer at the desk; we don't know whether it woul=
+d work with your
+kiosk, and we're happy to buy yours if not.
+
+Data. We'd want to keep sign-in records for twelve months and then have them =
+deleted. The
+committee asked me to check that we can export a month's records to a spreads=
+heet for our own
+reports. I've read your help pages and I think the answer is yes, but please =
+correct me if not.
+
+Timing. There's no rush on our side. We'd like the kiosk working before the s=
+pring contractor
+season, so some time in February would be ideal. I'm usually free on Tuesday =
+and Wednesday
+afternoons if a call would help.
+
+Training. Our volunteers range from very confident to nervous with computers.=
+ A one-page guide
+for the desk would help more than a long video; if you have one, we'd love a =
+copy.
+
+One question we need answered before we can plan the rest: is single sign-on =
+included in the standard plan, or is it an add-on?
+
+Many thanks,
+Owen Price
+IT volunteer, Riverside Housing Co-op

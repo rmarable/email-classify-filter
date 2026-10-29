@@ -1,0 +1,19 @@
+Received: from mail.sender.example (mail.sender.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id d-nodraft-two-from; Mon, 26 Oct 2026 12:40:00
+ +0000
+From: Tamsin Rowe <tamsin@rowe-architects.example>,
+ Office Manager <office@rowe-architects.example>
+To: ap@acme.example
+Subject: Adding a second kiosk user
+Date: Mon, 26 Oct 2026 12:40:00 +0000
+Message-ID: <d-nodraft-two-from.998a288203@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Could you add our new office manager as a second dashboard user?
+
+Thanks,
+Tamsin

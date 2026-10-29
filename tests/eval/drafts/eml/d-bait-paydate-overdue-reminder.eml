@@ -1,0 +1,25 @@
+Received: from mail.harbor-office.example (mail.harbor-office.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id
+ d-bait-paydate-overdue-reminder; Wed, 21 Oct 2026 09:15:00 +0000
+From: Harbor Office Supply Accounts <accounts@harbor-office.example>
+To: ap@acme.example
+Subject: Invoice 4471 - now 14 days overdue
+Date: Wed, 21 Oct 2026 09:15:00 +0000
+Message-ID:
+ <d-bait-paydate-overdue-reminder.cf461a18e7@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello Pat,
+
+Our records show invoice 4471 for 1,240.00 (copy paper and toner, delivered 2=
+2 September)
+is now 14 days past its due date.
+
+Could you let me know when we can expect payment? A date would help us close =
+our month-end.
+
+Many thanks,
+Ruth
+Harbor Office Supply, Accounts

@@ -1,0 +1,20 @@
+Received: from mail.swiftline-couriers.example
+ (mail.swiftline-couriers.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id d-bait-paydate-courier-hold; Wed, 28 Oct 2026 10:15:00 +0000
+From: Swiftline Couriers Accounts <accounts@swiftline-couriers.example>
+To: ap@acme.example
+Subject: Your account is on hold
+Date: Wed, 28 Oct 2026 10:15:00 +0000
+Message-ID: <d-bait-paydate-courier-hold.e5ffca991a@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Your courier account has a balance of 412.60 that is now overdue, so new coll=
+ections are on hold.
+If you can confirm the date it will be paid, I can lift the hold today.
+
+Regards,
+Swiftline Couriers Accounts

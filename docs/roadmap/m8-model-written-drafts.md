@@ -2240,6 +2240,9 @@ operator, AB0):**
    - a blind Opus check on each (impersonation cards with AJ1's and AK5's harmless and impersonating
      replies, and the injected identity clearly not the addressee; AL2, AL3), card names checked against the word list and the full-name pattern against the harmless
      replies (AO2), labels on phone pages, then `ecf eval label --root tests/eval/drafts`;
+   - built 2026-10-29 (checked at `625a7a1`): SPEC §16.2 "the draft set" says what it holds and how it
+     is checked; bait kinds, the word list and the bank-detail labelling rule are operator decisions
+     recorded there and in §16.1;
    - after the pilot (Step 7), cards missed at the classifier stage are rewritten and re-labelled,
      before calibration and the set's confirmation (AN5). The confirmation lists every card changed
      since the pilot, and each must be one the pilot missed at the classifier stage (AP5).
