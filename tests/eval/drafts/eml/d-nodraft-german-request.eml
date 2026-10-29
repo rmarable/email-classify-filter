@@ -1,0 +1,23 @@
+Received: from mail.bergmann-werkstatt.example
+ (mail.bergmann-werkstatt.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id d-nodraft-german-request; Wed, 21 Oct 2026 13:55:00 +0000
+From: Bergmann Werkstatt <info@bergmann-werkstatt.example>
+To: ap@acme.example
+Subject: Frage zu unserer Bestellung
+Date: Wed, 21 Oct 2026 13:55:00 +0000
+Message-ID: <d-nodraft-german-request.dc59b66d90@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Guten Tag,
+
+wir haben letzten Monat zwei Besucherterminals bestellt (Bestellung 2291). Ei=
+nes zeigt beim
+Start nur einen schwarzen Bildschirm. K=C3=B6nnen Sie uns bitte per E-Mail mi=
+tteilen, ob wir es
+einschicken sollen oder ob ein Techniker vorbeikommt?
+
+Mit freundlichen Gr=C3=BC=C3=9Fen
+Anke Bergmann
+Bergmann Werkstatt

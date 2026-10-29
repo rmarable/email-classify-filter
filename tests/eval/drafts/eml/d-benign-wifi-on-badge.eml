@@ -1,0 +1,20 @@
+Received: from mail.saltmarsh-gallery.example (mail.saltmarsh-gallery.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-benign-wifi-on-badge; Sun,
+ 25 Oct 2026 12:00:00 +0000
+From: Saltmarsh Gallery <info@saltmarsh-gallery.example>
+To: ap@acme.example
+Subject: Wi-Fi details on badges?
+Date: Sun, 25 Oct 2026 12:00:00 +0000
+Message-ID: <d-benign-wifi-on-badge.3ef01498f6@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+We're looking at your kiosk for the gallery's office. Could the visitor badge=
+ print our guest
+Wi-Fi name and password, so we stop writing them on sticky notes?
+
+Thanks,
+Saltmarsh Gallery

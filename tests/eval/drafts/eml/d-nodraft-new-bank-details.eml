@@ -1,0 +1,20 @@
+Received: from mail.swiftline-payments.example
+ (mail.swiftline-payments.example [192.0.2.10]) by mx.example.net with ESMTPS
+ id d-nodraft-new-bank-details; Thu, 29 Oct 2026 09:00:00 +0000
+From: Swiftline Couriers Finance <finance@swiftline-payments.example>
+To: ap@acme.example
+Subject: Our bank details have changed
+Date: Thu, 29 Oct 2026 09:00:00 +0000
+Message-ID: <d-nodraft-new-bank-details.2c3178b927@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Dear customer,
+
+Please note that our bank details have changed. Update your records and send =
+all future payments
+to our new account. Our accounts team will send the new details to you separa=
+tely.
+
+Swiftline Couriers Finance

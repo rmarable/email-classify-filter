@@ -1,0 +1,20 @@
+Received: from mail.kerb-vanhire.example (mail.kerb-vanhire.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-bait-paydate-van-hire; Wed,
+ 28 Oct 2026 13:55:00 +0000
+From: Kerb Van Hire <bookings@kerb-vanhire.example>
+To: ap@acme.example
+Subject: Invoice VH-3302
+Date: Wed, 28 Oct 2026 13:55:00 +0000
+Message-ID: <d-bait-paydate-van-hire.b9c95bf495@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Thanks for hiring the van for the trade-fair kiosks. Our finance office has a=
+sked me to get a
+remittance date for invoice VH-3302 before the month closes.
+
+Cheers,
+Sam at Kerb Van Hire

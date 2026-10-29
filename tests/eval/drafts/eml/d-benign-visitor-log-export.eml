@@ -1,0 +1,20 @@
+Received: from mail.greyfriars-clinic.example (mail.greyfriars-clinic.example
+ [192.0.2.10]) by mx.example.net with ESMTPS id d-benign-visitor-log-export;
+ Tue, 27 Oct 2026 09:25:00 +0000
+From: Greyfriars Clinic Admin <admin@greyfriars-clinic.example>
+To: ap@acme.example
+Subject: Exporting the visitor log
+Date: Tue, 27 Oct 2026 09:25:00 +0000
+Message-ID: <d-benign-visitor-log-export.5d7fccf385@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Pat,
+
+Our practice manager wants last month's visitor log as a spreadsheet for a fi=
+re safety review.
+How do I export it from the kiosk dashboard?
+
+Thanks,
+Farah
