@@ -2024,8 +2024,8 @@ def _compare_drafts(a: str, b: str, margin: float) -> None:
     r = draftjudge.compare_runs(sa, sb, margin)
     for w in r["warnings"]:
         typer.echo(f"warning: {w}")
-    if r["provisional"]:
-        typer.echo("provisional: no field has passed calibration yet")
+    for w in r["provisional_why"]:
+        typer.echo(f"provisional, {w}")
     lo, hi = r["diff_ci"]
     typer.echo(f"draft_ok on {r['n']} paired drafts: A {r['a_ok']}, B {r['b_ok']};"
                f" B - A {r['diff_points']:+.1f} points [{lo:+.1f}, {hi:+.1f}],"

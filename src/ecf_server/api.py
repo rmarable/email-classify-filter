@@ -75,6 +75,7 @@ from ecf_server import (
     db,
     destroy,
     digests,
+    draftcalibration,
     draftjudging,
     evalrun,
     export_keys,
@@ -1167,6 +1168,60 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
         return JSONResponse(draftjudging.null_floor(_data_dir(), root, to_ts(state.clock.now())))
 
     @allow(Caller.CLI)
+    def draft_calibration_build(request: Request) -> JSONResponse:
+        """`ecf eval calibration-build`: the calibration record (M8 plan Q4)."""
+        body = _body(request)
+        return JSONResponse(draftcalibration.build(_data_dir(), _str(body, "pilot"),
+                                                   body.get("seeds"),
+                                                   to_ts(state.clock.now())))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_rating_page(request: Request) -> JSONResponse:
+        """`ecf eval calibration-export`: a new blind rating page; POST, as it writes the page's
+        token map (L6)."""
+        return JSONResponse(draftcalibration.export(_data_dir(), str(request.path_params["run"])))
+
+    @allow(Caller.CLI)
+    def draft_ratings(request: Request) -> JSONResponse:
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object")
+        return JSONResponse(draftcalibration.rate(_data_dir(), str(request.path_params["run"]),
+                                                  _str(body, "page"),
+                                                  cast(dict[str, Any], answers)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_calibration_score(request: Request) -> JSONResponse:
+        body = _body(request)
+        return JSONResponse(draftcalibration.score(_data_dir(), str(request.path_params["run"]),
+                                                   _str(body, "null_run"),
+                                                   _opt_str(body, "reason")))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_settle_page(request: Request) -> JSONResponse:
+        """`ecf eval settle-drafts RUN... --export`: one blind page across the runs (K11)."""
+        runs = _body(request).get("runs")
+        if not isinstance(runs, list) or not runs:
+            raise InvalidInputError("runs: one or more draft run ids")
+        names = [str(r) for r in cast(list[Any], runs)]
+        return JSONResponse(draftjudging.settle_page(_data_dir(), names))
+
+    @allow(Caller.CLI)
+    def draft_settle(request: Request) -> JSONResponse:
+        body = _body(request)
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise InvalidInputError("answers: an object")
+        return JSONResponse(draftjudging.settle(_data_dir(), _str(body, "page"),
+                                                cast(dict[str, Any], answers)))  # fmt: skip
+
+    @allow(Caller.CLI)
+    def draft_record(request: Request) -> JSONResponse:
+        run = str(request.path_params["run"])
+        return JSONResponse(draftjudging.record_scores(_data_dir(), run))
+
+    @allow(Caller.CLI)
     def draft_score(request: Request) -> JSONResponse:
         """`ecf eval drafts-score`: a finished draft run's scores (no draft text)."""
         return JSONResponse(draftjudging.score(_data_dir(), str(request.path_params["run"])))
@@ -1179,6 +1234,13 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
         Route("/v1/eval/drafts/{run}/score", draft_score, methods=["GET"]),
         Route("/v1/eval/drafts/{run}/mistral", draft_mistral, methods=["POST"]),
         Route("/v1/eval/drafts/null", draft_null, methods=["POST"]),
+        Route("/v1/eval/drafts/calibration", draft_calibration_build, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/rating-page", draft_rating_page, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/ratings", draft_ratings, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/calibration", draft_calibration_score, methods=["POST"]),
+        Route("/v1/eval/drafts/settle-page", draft_settle_page, methods=["POST"]),
+        Route("/v1/eval/drafts/settled", draft_settle, methods=["POST"]),
+        Route("/v1/eval/drafts/{run}/record", draft_record, methods=["POST"]),
         Route("/v1/eval/runs", start_eval, methods=["POST"]),
         Route("/v1/eval/runs", eval_status, methods=["GET"]),
         Route("/v1/eval/runs/stop", stop_eval, methods=["POST"]),
