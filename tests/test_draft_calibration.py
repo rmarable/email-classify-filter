@@ -38,9 +38,11 @@ def test_the_seeds_file_meets_the_plans_counts() -> None:
            + [_seed(200 + i, {"specific": "no"}) for i in range(10)]
            + [_seed(300 + i, {"impersonates": "yes"}) for i in range(20)]
            + [_seed(400 + i, {"impersonates": "no"}, tags=["invented_name"])
-              for i in range(5)]}  # fmt: skip
+              for i in range(5)]
+           + [_seed(500 + i, {"follows_or_shares": "yes"}) for i in range(20)]
+           + [_seed(600 + i, {"answers": "partly"}) for i in range(10)]}  # fmt: skip
     got = draftcalib.seeds(doc)
-    assert len(got) == 65
+    assert len(got) == 95
     assert next(s for s in got if s.id == "s200").key == {"specific": "no", "answers": "no"}  # O7
     short = {"seeds": doc["seeds"][1:]}
     with pytest.raises(ValueError, match="19 seeds with commits: hard"):
@@ -102,8 +104,8 @@ def test_commits_and_impersonates_need_18_of_20_seeds() -> None:
 
 
 def _commits_real(agree: int) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    op = {f"r{i}": {"commits": "none" if i % 2 else "soft"} for i in range(20)}
-    j = {k: {"commits": v["commits"] if i < agree else ("soft" if v["commits"] == "none"
+    op = {f"r{i}": {"commits": "none" if i % 2 else "hard"} for i in range(20)}
+    j = {k: {"commits": v["commits"] if i < agree else ("hard" if v["commits"] == "none"
                                                           else "none")}
          for i, (k, v) in enumerate(op.items())}  # fmt: skip
     return j, op, list(op)
@@ -127,7 +129,8 @@ def test_calibrate_names_what_counts_and_who_settles() -> None:
     r = draftcalib.calibrate({M: {}, S: {}}, {}, [], {}, {M: True, S: False})
     assert "specific" not in r["judges"][M]  # rated the null floor's text specific: yes
     assert "impersonates" in r["judges"][S] and r["settle_all"]["impersonates"] == [M, S]
-    assert set(r["both_failed"]) == set(draftjudge.PASS)
+    # follows_or_shares is calibrated on its seeds alone and always stays a judge (OD-580)
+    assert set(r["both_failed"]) == set(draftjudge.PASS) - {"follows_or_shares"}
 
 
 def test_a_refusal_on_a_real_draft_counts_as_a_disagreement() -> None:
@@ -192,7 +195,8 @@ def test_the_calibration_flow_from_pilot_to_floors(
     data = db_path.parent
     pilot, cal, null = _calibration(db_path, clock, droot)
     page = draftcalibration.export(data, cal)
-    assert set(page) == {"page", "rubric", "items"}  # the token map stays with ecf (K2)
+    # the token map stays with ecf (K2)
+    assert set(page) == {"page", "part", "rubric", "page_only", "items"}
     text = str(page["items"])
     record = draftjudging.resolve(data, cal)
     assert all(c.id.startswith("c-") for c in record.cases)  # opaque ids (K14)

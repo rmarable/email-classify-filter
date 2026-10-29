@@ -29,10 +29,20 @@ from ecf.eval.drafts import DraftCase, DraftsFile
 from ecf_server import draftjudging, draftruns, evalrun
 
 RATE_FIELDS = (*draftjudge.PRIMARY, "impersonates")
+# What only the operator's page records (OD-580): never asked of a judge, never scored
+PAGE_ONLY: dict[str, tuple[str, ...]] = {
+    "feel": ("human", "either", "machine"),
+    "writing_mistakes": ("no", "yes"),
+    "tone": ("fine", "off"),
+    "length": ("fine", "too_long", "too_short"),
+    "follows_or_shares_reason": ("none", "follows", "shares", "both"),
+}
+NOTE_MAX = 300  # characters of the operator's optional note
+PARTS = (1, 2)  # the rating page in two halves (S11)
 RATING_PAGE_SUFFIX = ".ratingpage.json"
 
 
-def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0915 - one record, its checks
+def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0912, PLR0915 - one record, its checks
           minimums: dict[tuple[str, str], int] | None = None,
           real_min: dict[str, int] | None = None,
           real_total: int | None = None) -> dict[str, Any]:  # fmt: skip
@@ -92,6 +102,7 @@ def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0
         cards[item] = cid
         real_items.append(item)
     key: dict[str, dict[str, str]] = {}
+    tags: dict[str, list[str]] = {}
     for s in sd:
         spec = specs.get(s.card)
         if spec is None or not spec.allowed:
@@ -106,6 +117,8 @@ def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0
         items.append(DraftCase(id=item, group=spec.group, kind=spec.kind, sender=spec.sender,
                                allowed=True, stage="done", text=s.text))  # fmt: skip
         cards[item], key[item] = s.card, s.key
+        if s.tags:
+            tags[item] = list(s.tags)
     confirmed = {c.id: c.confirmed for c in cases}  # rewritten cards are re-labelled first (M2)
     if unconfirmed := sorted(c for c in set(cards.values()) if not confirmed.get(c)):
         raise InvalidInputError(f"card(s) {', '.join(unconfirmed)} aren't confirmed as built:"
@@ -129,7 +142,8 @@ def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0
     folder = draftjudging.folder(data_dir)
     draftjudging.write_json(folder / f"{run_id}{draftjudging.CALIB_SUFFIX}",
                             {"root": str(root), "pilot": record.run_id, "cards": cards,
-                             "real": real_items, "key": key, "card_digests": digests,
+                             "real": real_items, "key": key, "tags": tags,
+                             "card_digests": digests,
                              "left_out_changed": left_out,
                              "views": views, "seeds_digest": seeds_digest})  # fmt: skip
     drafteval.write(folder, calib)
@@ -155,13 +169,20 @@ def _ratings_path(data_dir: Path, run_id: str) -> Path:
     return draftjudging.folder(data_dir) / f"{run_id}{draftjudging.RATINGS_SUFFIX}"
 
 
-def export(data_dir: Path, run: str) -> dict[str, Any]:
+def part_of(item: str) -> int:
+    """Which half of the rating page an item is on: fixed by its opaque id."""
+    return 1 + int(hashlib.sha256(item.encode()).hexdigest(), 16) % len(PARTS)
+
+
+def export(data_dir: Path, run: str, part: int | None = None) -> dict[str, Any]:
     """The rating page's data: each item's email view, question, identity and draft, shuffled,
     under a token, never its id, card, key or whether it is a seed; the token map stays here, and
-    the page id names it (K2)."""
+    the page id names it (K2). With `part`, only that half's items (S11)."""
     record, _side_doc = _side(data_dir, run)
+    if part is not None and part not in PARTS:
+        raise InvalidInputError(f"part is one of {', '.join(map(str, PARTS))}")
     got = draftjudging.views(data_dir, record.run_id)
-    rows = list(got["items"])
+    rows = [it for it in got["items"] if part is None or part_of(str(it["case"])) == part]
     random.Random(secrets.token_hex(8)).shuffle(rows)  # noqa: S311 - an order, not a secret
     page: list[dict[str, Any]] = []
     tokens: dict[str, str] = {}
@@ -171,18 +192,25 @@ def export(data_dir: Path, run: str) -> dict[str, Any]:
         fields = [f for f in RATE_FIELDS if f != "impersonates" or it["identity"] is not None]
         page.append({"t": t, "view": it["view"], "question": it["question"],
                      "identity": it["identity"], "draft": it["draft"], "fields": fields,
-                     "scales": {f: list(draftjudge.SCALES[f]) for f in fields}})  # fmt: skip
+                     "scales": {f: list(draftjudge.SCALES[f]) for f in fields},
+                     "group": it["group"]})  # fmt: skip
     page_id = secrets.token_hex(8)
     draftjudging.write_json(draftjudging.folder(data_dir)
                             / f"{record.run_id}.{page_id}{RATING_PAGE_SUFFIX}",
                             {"tokens": tokens})  # fmt: skip
-    return {"page": page_id, "rubric": draftjudge.RUBRIC, "items": page}
+    return {
+        "page": page_id,
+        "part": part,
+        "rubric": draftjudge.RUBRIC,
+        "page_only": {f: list(v) for f, v in PAGE_ONLY.items()},
+        "items": page,
+    }
 
 
-def rate(data_dir: Path, run: str, page: str, answers: dict[str, Any]) -> dict[str, Any]:
+def rate(data_dir: Path, run: str, page: str, answers: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912 - one check per answer
     """The operator's ratings from a rating page (`{token: {field: value}}`), mapped through the
     service's token map; refused once the floors are scored (K10); an item not fully rated is
-    left for later."""
+    left for later. The page-only fields and a short `note` are kept when given (OD-580)."""
     record, _side_doc = _side(data_dir, run)
     if not page or not all(c in "0123456789abcdef" for c in page):
         raise InvalidInputError("name the rating page by its id")
@@ -211,7 +239,19 @@ def rate(data_dir: Path, run: str, page: str, answers: dict[str, Any]) -> dict[s
             for f in need:
                 if got[f] not in draftjudge.SCALES[f]:
                     raise InvalidInputError(f"{f}: {got[f]!r} isn't on the scale")
-            doc["ratings"][item] = {f: got[f] for f in need}
+            extra: dict[str, Any] = {}
+            for f, scale in PAGE_ONLY.items():
+                if got.get(f) is not None:
+                    if got[f] not in scale:
+                        raise InvalidInputError(f"{f}: {got[f]!r} isn't on the scale")
+                    extra[f] = got[f]
+            note = got.get("note")
+            if note is not None:
+                if not isinstance(note, str) or len(note) > NOTE_MAX:
+                    raise InvalidInputError(f"note: text of at most {NOTE_MAX} characters")
+                if note.strip():
+                    extra["note"] = note.strip()
+            doc["ratings"][item] = {f: got[f] for f in need} | extra
             done += 1
         draftjudging.write_json(path, doc)
     return {"rated": done, "left": left, "of": len(kinds), "total_rated": len(doc["ratings"])}
@@ -229,6 +269,15 @@ def score(data_dir: Path, run: str, null_run: str, reason: str | None = None) ->
     ids = {c.id for c in record.cases}
     if missing := sorted(ids - set(ratings)):
         raise InvalidInputError(f"{len(missing)} items aren't rated yet: finish the page first")
+    kinds = {c.id: c.kind for c in record.cases}
+    if old := sorted(i for i in ids if any(
+            f not in ratings[i] for f in RATE_FIELDS
+            if f != "impersonates" or kinds[i] == "impersonate")):  # fmt: skip
+        what = (
+            "build a new calibration record" if ratings_doc.get("scored") else "rate them again"
+        )  # frozen once scored (K10)
+        raise InvalidInputError(f"{len(old)} items were rated before the rating questions changed"
+                                f" (OD-580): {what}")  # fmt: skip
     by_judge: dict[str, dict[str, Any]] = draftjudging.judgements(data_dir, record.run_id)[
         "judges"]  # fmt: skip
     for j in draftjudge.JUDGES:
@@ -251,7 +300,8 @@ def score(data_dir: Path, run: str, null_run: str, reason: str | None = None) ->
     if current.is_file() and confirmed and not (reason or "").strip():
         raise InvalidInputError("the set is confirmed and a calibration is in force: a new one"
                                 " needs a recorded reason (--reason)")  # fmt: skip
-    result = draftcalib.calibrate(by_judge, ratings, side["real"], side["key"], null_specific)
+    result = draftcalib.calibrate(by_judge, ratings, side["real"], side["key"], null_specific,
+                                  side.get("tags", {}))  # fmt: skip
     judged_doc = draftjudging.read_json(folder / f"{record.run_id}{draftjudging.JUDGEMENTS_SUFFIX}")
     result |= {"calibration_run": record.run_id, "pilot": side["pilot"],
                "left_out_changed": side.get("left_out_changed", []),

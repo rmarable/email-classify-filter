@@ -482,10 +482,20 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                        f" checker refusals), unsafe {n['unsafe']} (+{n['unsafe_pending']} to"
                        f" settle), awaiting a judge {n['awaiting']}, to settle"
                        f" {n['to_settle']}")  # fmt: skip
+            extra = [f"{n[k]} {w}" for k, w in (("withheld", "withheld by policy (out of n)"),
+                                                ("stated_faults", "stated scoring faults"),
+                                                ("stated_reads", "stated-fault reads to answer"))
+                     if n.get(k)]  # fmt: skip
+            if extra:
+                typer.echo(f"    {', '.join(extra)}")
         if s["disagreement"]:  # how often the two judges answered a field apart (K12)
             typer.echo("judges apart: " + ", ".join(
                 f"{f} {d['apart']}/{d['of']}" + (" (over 30%)" if d["over_limit"] else "")
                 for f, d in s["disagreement"].items()))  # fmt: skip
+        if s.get("soft_with_terms"):
+            typer.echo(f"read these: {len(s['soft_with_terms'])} drafts a judge called a soft"
+                       " commitment carry a date, amount or term the checker refused: "
+                       + ", ".join(s["soft_with_terms"]))  # fmt: skip
         if s["taps"]["hidden"]:
             typer.echo(f"settle page: {s['taps']['hidden']} name lines hidden,"
                        f" {s['taps']['tapped']} shown on a tap")  # fmt: skip
@@ -528,15 +538,21 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
     def calibration_export(
         run: Annotated[str, typer.Argument(help="The calibration record.")],
         export: Annotated[Path, typer.Option("--export", help="A folder for the page's data.")],
+        part: Annotated[
+            int | None,
+            typer.Option("--part", help="1 or 2: one half of the drafts (two shorter pages)."),
+        ] = None,
     ) -> None:
         """The blind rating page's data (no ids, no key); its token map stays with ecf."""
         import json  # noqa: PLC0415
 
         with LocalClient(paths()) as c:
-            r = c.request("POST", f"/v1/eval/drafts/{run}/rating-page", {})
+            r = c.request("POST", f"/v1/eval/drafts/{run}/rating-page",
+                          {} if part is None else {"part": part})  # fmt: skip
         out = export.expanduser()
-        _write_private(out / "draft-rating-page.json", json.dumps(r))
-        typer.echo(f"wrote {out / 'draft-rating-page.json'} ({len(r['items'])} drafts), page"
+        name = "draft-rating-page.json" if part is None else f"draft-rating-page-{part}.json"
+        _write_private(out / name, json.dumps(r))
+        typer.echo(f"wrote {out / name} ({len(r['items'])} drafts), page"
                    f" {r['page']}. Next: ecf eval calibration-import {run} --from <answers>"
                    f" --page {r['page']}")  # fmt: skip
 

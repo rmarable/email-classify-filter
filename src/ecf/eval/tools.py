@@ -237,6 +237,7 @@ class CliAdapter:
     def __init__(self, tool: CliTool, model: str,
                  environ: Mapping[str, str] | None = None) -> None:  # fmt: skip
         self.tool, self.provider, self.model = tool, tool.provider, model
+        self.timeout_s = TIMEOUT_S  # per call; the draft judge sets its own (OD-580)
         self._environ = environ
         self._version: str | None = None
         self._facts: dict[str, Any] = {}
@@ -289,7 +290,7 @@ class CliAdapter:
         schema_path.write_text(json.dumps(schema), encoding="utf-8")
         argv = [self._exe(), *self.tool.argv(self.model, schema_path, out_path)]
         try:
-            ran = run_cli(argv, prompt, self.env(), workdir)
+            ran = run_cli(argv, prompt, self.env(), workdir, timeout=self.timeout_s)
             if ran.code is None:
                 return Reply("failed", detail="timed out", seconds=ran.seconds)
             if USAGE_LIMIT_TEXT.encode() in ran.stdout + ran.stderr:

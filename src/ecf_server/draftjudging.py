@@ -184,7 +184,7 @@ def judgements(data_dir: Path, run: str) -> dict[str, Any]:
     record = resolve(data_dir, run)
     doc = read_json(folder(data_dir) / f"{record.run_id}{JUDGEMENTS_SUFFIX}")
     return {"run_id": record.run_id, "judges": doc.get("judges", {}),
-            "spent": doc.get("spent", {})}  # fmt: skip
+            "spent": doc.get("spent", {}), "prompt_digest": doc.get("prompt_digest")}  # fmt: skip
 
 
 def save(data_dir: Path, run: str, judge: str, answers: dict[str, Any], prompt_digest: str,
@@ -240,12 +240,18 @@ def _pin(data_dir: Path, run_id: str) -> str | None:
     Call under LOCK."""
     path = folder(data_dir) / f"{run_id}{drafts.DRAFTS_SUFFIX}"
     record = DraftsFile.model_validate_json(path.read_text(encoding="utf-8"))
+    judged = read_json(folder(data_dir) / f"{run_id}{JUDGEMENTS_SUFFIX}").get("prompt_digest")
     if record.calibration_digest is not None:
-        return record.calibration_digest
+        pinned, _d = calibrated(data_dir, record.calibration_digest)
+        if pinned.get("prompt_digest") in (None, judged):
+            return record.calibration_digest
+        # re-judged under another prompt (OD-580): that calibration can never count for it, so
+        # the run follows the one in force now, as a run never pinned does (M1)
+        record = record.model_copy(update={"calibration_digest": None})
+        write_json(path, record.model_dump(mode="json"))
     if read_json(folder(data_dir) / f"{run_id}{CALIB_SUFFIX}"):
         return None
     doc, digest = calibrated(data_dir)
-    judged = read_json(folder(data_dir) / f"{run_id}{JUDGEMENTS_SUFFIX}").get("prompt_digest")
     if digest is None or judged is None or doc.get("prompt_digest") != judged \
             or doc.get("both_failed"):  # fmt: skip
         return None
@@ -297,6 +303,9 @@ def score(data_dir: Path, run: str) -> dict[str, Any]:
     if doc_cal.get("both_failed"):
         why.append(f"both judges under the floor on {', '.join(doc_cal['both_failed'])}: waits"
                    " for your decision (M8 plan §4)")  # fmt: skip
+    if doc.get("prompt_digest") and doc["prompt_digest"] != draftjudge.template_digest():
+        warnings.append("judged under an older judge prompt: re-grade it (OD-580)")
+        why.append("judged under an older judge prompt")
     cal: list[str] = list(doc_cal["passed"])
     judge_fields = cast(dict[str, list[str]] | None, doc_cal.get("judges"))
     settle_all = cast(dict[str, list[str]] | None, doc_cal.get("settle_all"))
@@ -308,6 +317,15 @@ def score(data_dir: Path, run: str) -> dict[str, Any]:
     taps: dict[str, bool] = settle_doc.get("taps", {})
     summary = draftjudge.summary(scored, calibrated=cal, both_failed=both_failed)
     summary["taps"] = {"hidden": len(taps), "tapped": sum(taps.values())}  # K13
+    if summary["stated_reads"]:
+        why.append(f"{summary['stated_reads']} stated-fault reads unanswered (OD-576)")
+    # drafts a judge called a soft commitment that still carry a date, amount or term the checker
+    # refused: listed for the operator, since soft passes (R12, S14)
+    soft_terms = sorted(c.id for c in record.cases if c.checker and c.checker.refuse
+                        and any(a.get(c.id, {}).get("commits") == "soft"
+                                for a in judged.values()))  # fmt: skip
+    summary["soft_with_terms"] = soft_terms
+    summary["provisional"] = summary["provisional"] or bool(warnings)
     summary["provisional_why"] = why if summary["provisional"] else []
     return {"run_id": record.run_id, "forced": record.forced, "complete": record.complete,
             "state": record.state, "set_version": record.set_version, "judges": sorted(judged),
@@ -375,6 +393,7 @@ def settle_page(data_dir: Path, runs: list[str]) -> dict[str, Any]:
     from ecf_server import draftcheck  # noqa: PLC0415
 
     rows: list[dict[str, Any]] = []
+    specs: dict[str, dict[str, drafts.DraftSpec | None]] = {}  # per run, loaded once (diff review)
     for run in runs:
         got = views(data_dir, run)
         by = {i["case"]: i for i in got["items"]}
@@ -393,17 +412,57 @@ def settle_page(data_dir: Path, runs: list[str]) -> dict[str, Any]:
 
         fields = sorted({"impersonates" if f == "impersonates_read" else f for f in c["to_settle"]})
         shown, hidden = draftjudge.hide_line(str(it["draft"]), c["to_settle"], refuses)
+        marks: list[list[int]] = []
+        if "stated_fault_read" in fields:
+            if r["run"] not in specs:
+                specs[r["run"]] = _specs(data_dir, r["run"])
+            spec = specs[r["run"]].get(str(it["card"]))
+            marks = [] if spec is None else pattern_marks(spec, shown)
         t = secrets.token_hex(8)
         tokens[t] = {"run": r["run"], "case": c["case"], "hidden": hidden is not None,
                      "fields": fields,
                      "sha": hashlib.sha256(str(it["draft"]).encode()).hexdigest()}  # fmt: skip
         page.append({"t": t, "view": view, "question": it["question"],
                      "identity": it["identity"], "draft": shown, "hidden": hidden,
-                     "fields": fields,
-                     "scales": {f: list(draftjudge.SCALES[f]) for f in fields}})  # fmt: skip
+                     "fields": fields, "marks": marks,
+                     "scales": {f: list(_scale(f)) for f in fields}})  # fmt: skip
     page_id = secrets.token_hex(8)
     write_json(folder(data_dir) / f"{PAGE_PREFIX}{page_id}.json", {"tokens": tokens})
     return {"page": page_id, "rubric": draftjudge.RUBRIC, "items": page}
+
+
+def _scale(f: str) -> tuple[str, ...]:
+    """A settled field's values: a judge field's scale, or a settle-only key's (OD-580)."""
+    return draftjudge.SCALES.get(f) or draftjudge.SETTLE_ONLY[f]
+
+
+def _specs(data_dir: Path, run_id: str) -> dict[str, drafts.DraftSpec | None]:
+    """The run's draft set's card blocks, by card."""
+    cases = evalrun.load(root_of(data_dir, run_id), fraud_only=False)[0]
+    return {c.id: drafts.parse(c.expected) for c in cases}
+
+
+def pattern_marks(spec: drafts.DraftSpec, text: str) -> list[list[int]]:
+    """Where the card's `forbid` and `followed` patterns match the text, every match of each,
+    overlaps merged, as UTF-16 offsets (what the page's JavaScript slices by, so a character
+    beyond U+FFFF before a match can't shift the highlight); found when the page is built and
+    never stored (OD-580, F3)."""
+    import re  # noqa: PLC0415
+
+    patterns = [*spec.forbid, *([spec.followed_pattern] if spec.followed_pattern else [])]
+    spans = sorted({(m.start(), m.end()) for p in patterns for m in re.finditer(p, text)
+                    if m.end() > m.start()})  # fmt: skip
+    merged: list[list[int]] = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    def utf16(i: int) -> int:
+        return len(text[:i].encode("utf-16-le")) // 2
+
+    return [[utf16(a), utf16(b)] for a, b in merged]
 
 
 def settle(data_dir: Path, page: str, answers: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912 - one check per answer
@@ -447,7 +506,7 @@ def settle(data_dir: Path, page: str, answers: dict[str, Any]) -> dict[str, Any]
                 left += 1
                 continue
             for f in need:
-                if given[f] not in draftjudge.SCALES[f]:
+                if given[f] not in _scale(f):
                     raise InvalidInputError(f"{f}: {given[f]!r} isn't on the scale")
             doc = docs.setdefault(run, read_json(folder(data_dir) / f"{run}{SETTLED_SUFFIX}")
                                   or {"run_id": run, "cases": {}, "taps": {}})  # fmt: skip
