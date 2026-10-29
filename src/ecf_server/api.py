@@ -1178,8 +1178,12 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
     @allow(Caller.CLI)
     def draft_rating_page(request: Request) -> JSONResponse:
         """`ecf eval calibration-export`: a new blind rating page; POST, as it writes the page's
-        token map (L6)."""
-        return JSONResponse(draftcalibration.export(_data_dir(), str(request.path_params["run"])))
+        token map (L6). `part` (1 or 2) gives one half of the items (S11)."""
+        part = _body(request).get("part")
+        if part is not None and (isinstance(part, bool) or not isinstance(part, int)):
+            raise InvalidInputError("part: 1 or 2")
+        return JSONResponse(draftcalibration.export(_data_dir(), str(request.path_params["run"]),
+                                                    part))  # fmt: skip
 
     @allow(Caller.CLI)
     def draft_ratings(request: Request) -> JSONResponse:

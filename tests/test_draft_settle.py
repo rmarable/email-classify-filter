@@ -131,7 +131,9 @@ def test_settling_a_disagreement_changes_the_score_and_the_record_keeps_it(
     assert set(page) == {"page", "rubric", "items"}  # the token map stays with ecf (K2)
     assert run_id not in str(page["items"])
     assert all(set(i) == {"t", "view", "question", "identity", "draft", "hidden", "fields",
-                          "scales"} for i in page["items"])  # no judge answers  # fmt: skip
+                          "marks", "scales"}
+               for i in page["items"])  # no judge answers  # fmt: skip
+    assert all(i["marks"] == [] for i in page["items"])  # marks only on a stated-fault read
     answers = {i["t"]: {f: _pick(f) for f in i["fields"]} | {"tapped": True}
                for i in page["items"]}  # fmt: skip
     r = draftjudging.settle(data, page["page"], answers)
@@ -493,3 +495,25 @@ def test_reading_scores_never_pins_and_a_calibration_record_is_never_pinned(
         draftjudging.save(data, cal, j, {i["case"]: GOOD for i in items["items"]},
                           items["prompt_digest"])  # fmt: skip
     assert draftjudging.resolve(data, cal).calibration_digest is None
+
+
+def test_a_run_re_judged_under_a_new_prompt_leaves_its_old_pin(
+    db_path: Path,
+    clock: FakeClock,
+    droot: Path,  # noqa: F811
+) -> None:
+    """OD-580: a run pinned to a calibration made under the old judge prompt, judged again under
+    the new one, follows the calibration in force now (its old pin could never count)."""
+    data = db_path.parent
+    old = _calib_file(data, "old-prompt", ["answers"])
+    run_id = _finished(db_path, clock, droot)
+    path = data / "evals" / f"{run_id}.drafts.json"
+    record = draftjudging.resolve(data, run_id)
+    draftjudging.write_json(path, record.model_copy(update={"calibration_digest": old})
+                            .model_dump(mode="json"))  # fmt: skip
+    new = _calib_file(data, draftjudge.template_digest(), ["answers"])
+    got = draftjudging.items(data, run_id)
+    for j in (M, S):
+        draftjudging.save(data, run_id, j, {i["case"]: _answer(i) for i in got["items"]},
+                          got["prompt_digest"])  # fmt: skip
+    assert draftjudging.resolve(data, run_id).calibration_digest == new

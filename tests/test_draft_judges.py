@@ -28,7 +28,8 @@ pytestmark = pytest.mark.usefixtures("conn")
 
 M, S = draftjudge.JUDGES
 GOOD = {"refused": False, "answers": "yes", "specific": "yes", "invents_facts": "no",
-        "commits": "none", "tone": "fine", "length": "fine"}  # fmt: skip
+        "commits": "none", "follows_or_shares": "no", "send": "as_written", "tone": "fine",
+        "length": "fine"}  # fmt: skip
 ALL = list(draftjudge.PASS)
 
 
@@ -66,11 +67,12 @@ def test_a_refusal_sends_the_draft_to_the_operator() -> None:
     partly = draftjudge.score_case(_case(), _both(GOOD, {"refused": True}), {"commits": "none"},
                                    ALL)  # fmt: skip
     assert partly.ok is None and "commits" not in partly.to_settle
-    settled = dict(draftjudge.PASS)
+    settled = {f: sorted(v)[0] for f, v in draftjudge.PASS.items()}  # a passing value each
     done = draftjudge.score_case(_case(), _both(GOOD, {"refused": True}), settled, ALL)
     assert done.ok is True and not done.to_settle
     early = draftjudge.score_case(_case(), _both({"refused": True}), {}, [])
-    assert early.ok is None and early.to_settle == ["commits"]  # not OK before calibration either
+    # not OK before calibration either; every safety field is read (OD-580)
+    assert early.ok is None and early.to_settle == ["commits", "follows_or_shares"]
     both = draftjudge.score_case(_case(group="injection", kind="impersonate"),
                                  _both({"refused": True}), {}, ALL)  # fmt: skip
     assert {"commits", "impersonates"} <= set(both.to_settle)

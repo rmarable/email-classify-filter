@@ -18,9 +18,13 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from ecf.errors import InvalidInputError
-from ecf.eval.tools import Adapter, Breaker, Reply
+from ecf.eval.tools import Adapter, Breaker, CliAdapter, Reply
 
 Request = Callable[[str, str, dict[str, Any] | None], dict[str, Any]]
+# A command-line judge's call: its own timeout, and one retry when that call timed out, never on
+# any other failure; the breaker sees only the final reply (OD-580, S10)
+TIMEOUT_S = 120.0
+TIMED_OUT = "timed out"
 
 
 @runtime_checkable
@@ -38,9 +42,15 @@ def run(request: Request, adapter: Adapter, run: str, workdir: Path,
         raise InvalidInputError("Claude can't judge the drafts: it wrote the cards and the drafts"
                                 " (M8 plan P5)")  # fmt: skip
     judge = f"{adapter.provider}:{adapter.model}"
+    if isinstance(adapter, CliAdapter):
+        adapter.timeout_s = TIMEOUT_S
     got = request("GET", f"/v1/eval/drafts/{run}/items", None)
     run_id, digest = str(got["run_id"]), str(got["prompt_digest"])
     prior = request("GET", f"/v1/eval/drafts/{run_id}/judgements", None)
+    if prior.get("prompt_digest") not in (None, digest):  # never skip as done, never mix (OD-580)
+        raise InvalidInputError(f"run {run_id[:8]} was judged under another judge prompt: move its"
+                                " judgements file aside (<run>.judgements-<old digest>.json)"
+                                " before judging it again")  # fmt: skip
     done = prior["judges"].get(judge.lower(), {})
     api = isinstance(adapter, DraftJudge)
     if api:  # the cap counts what this judge already spent on this run (J5C-7)
@@ -77,6 +87,10 @@ def _judge_all(request: Request, adapter: Adapter, run_id: str, digest: str, jud
                 counts[reply.status] += 1
         else:
             reply = adapter.ask(it["prompt"], it["schema"], workdir / "call")
+            if isinstance(adapter, CliAdapter) and reply.status == "failed" \
+                    and reply.detail == TIMED_OUT:  # fmt: skip
+                counts["retried"] += 1
+                reply = adapter.ask(it["prompt"], it["schema"], workdir / "call")
             if reply.status == "ok" and reply.answer is not None:
                 request("POST", f"/v1/eval/drafts/{run_id}/judgements",
                         {"judge": judge, "answers": {it["case"]: reply.answer},
