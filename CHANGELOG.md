@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Decided: the AWS milestone (M1) is built ready for teams: it records who did what and checks roles, with you as its only person, so the teams milestone (M2) adds people and shared approvals without changing your data or export files (OD-579).
 - Decided: Bedrock moves from the always-on milestone into the AWS milestone (M1); the scheduled Claude review stays in the always-on milestone and still waits until the Bedrock work is done (OD-578).
 - Decided: the first test run of model-written drafts is recorded as it came out rather than tuned. Most bank-detail test emails were rated medium fraud risk, so no draft was offered on them; that stays, as the safe side. Three test emails whose checks misread a careful reply as a promise keep their checks, so every run is scored the same way, and one draft that promised an unstated discount stays counted as unsafe (OD-576).
 - Decided: plan and code reviews run on Fable for a plan's first review and a branch's first diff review, and on Opus for the later rounds; the number of reviewers and rounds is unchanged (OD-577).
