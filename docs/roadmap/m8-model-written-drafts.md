@@ -2267,6 +2267,13 @@ operator, AB0):**
    - two forced baseline runs and one natural run (the baseline arm);
    - the null floor.
 
+   - forced pilot f61e9bb5 ran 2026-10-29 (on `3fd923f`): about 11 minutes, US$7.66 API-equivalent;
+     105 drafts, 24 checker refusals, 24 not offered (`fraud_guard`); its findings and the operator's
+     decisions are SPEC §16.2 "the draft set" and OD-576 (AP5 kept without exception).
+   - natural pilot db85aa25 ran 2026-10-29 (same commit): US$7.55 API-equivalent, 484 s of claims;
+     87 drafted, 14 declined, 33 not offered (28 by `fraud_guard`, 5 no-draft cards); findings in the same SPEC
+     paragraph.
+
    Measured cost and time replace the estimates. Result: does today's drafting pass?
 8. **Data and stats:**
    - a migration for `draft_versions` (0043 today; the next free number at build, R14);
