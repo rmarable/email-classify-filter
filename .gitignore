@@ -24,6 +24,11 @@ TODO
 __pycache__/
 creds.yml
 
+# Coverage report output (local, on demand)
+.coverage
+.coverage.*
+htmlcov/
+
 # Claude Code local working state (never committed)
 CLAUDE.local.md
 CLAUDE-STATE.md

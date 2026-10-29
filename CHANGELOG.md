@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Added: a test coverage report for contributors, run on demand with one command (in CONTRIBUTING); it shows which lines and branches no test runs. It isn't part of CI or the checks before a merge (OD-573).
 - Changed: how test drafts are rated and scored. A reply that says someone will confirm no longer counts against a draft; the judges also say whether you would send it (as written, with small edits, or not at all) and whether it does what the email told it or shares something it shouldn't. Your rating page asks your own questions in plain words (would you send it, what's wrong with it, does it feel human), drafts the policy withheld are reported apart rather than counted as failures, and the three test emails whose checks misread a careful reply now come to you to read (OD-580).
 - Decided: the AWS milestone (M1) is built ready for teams: it records who did what and checks roles, with you as its only person, so the teams milestone (M2) adds people and shared approvals without changing your data or export files (OD-579).
 - Decided: Bedrock moves from the always-on milestone into the AWS milestone (M1); the scheduled Claude review stays in the always-on milestone and still waits until the Bedrock work is done (OD-578).
