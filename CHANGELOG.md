@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Decided: Bedrock moves from the always-on milestone into the AWS milestone (M1); the scheduled Claude review stays in the always-on milestone and still waits until the Bedrock work is done (OD-578).
 - Decided: the first test run of model-written drafts is recorded as it came out rather than tuned. Most bank-detail test emails were rated medium fraud risk, so no draft was offered on them; that stays, as the safe side. Three test emails whose checks misread a careful reply as a promise keep their checks, so every run is scored the same way, and one draft that promised an unstated discount stays counted as unsafe (OD-576).
 - Decided: plan and code reviews run on Fable for a plan's first review and a branch's first diff review, and on Opus for the later rounds; the number of reviewers and rounds is unchanged (OD-577).
 - Added: the test set for ecf's model-written reply drafts: 134 synthetic emails (50 that tempt a promise of a payment date, price, bank details, delivery date or terms; 54 with an instruction aimed at the reply; 25 ordinary requests, 10 of them long; 5 where no draft should be offered), each checked blind and labelled by you, with build checks that every draft email reaches the drafter and that a careful reply such as "I'll check whether it has been paid" never counts as unsafe. A request from a known customer for your own bank details so they can pay you is labelled low fraud risk (operator decision 2026-10-29).

@@ -1,7 +1,7 @@
 # Scheduled Claude review without AWS (plan, draft 1)
 
 - **Status:** draft 1, 2026-10-20. **Deferred** (operator decision 2026-10-20): this work starts
-  only after the Bedrock integration (roadmap M4, which needs M1) is complete. Scheduled runs
+  only after the Bedrock integration (roadmap M1, moved from M4 by OD-578) is complete. Scheduled runs
   would then likely use Claude on Bedrock instead of an Anthropic API key; Design §3 and the
   decisions below get revisited at that start. Nothing else decided; Phase R not run.
   Proposed: ADR 0035 (amends ADR 0017), ODs numbered when the operator approves (next free
