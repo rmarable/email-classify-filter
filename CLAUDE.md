@@ -15,16 +15,20 @@ The rules shared with Codex are in `AGENTS.md` (OD-532, ADR 0033):
   `OD-NEW` / `ADR-NEW`; run the macOS merge gate unless it is docs only; merge with the gate line;
   push; watch CI; then remove the Codex worktree and branch (OK needed). Fixes go on the branch
   before the merge, or back to Codex as a list.
-- Phase R and diff reviews stay Fable only (OD-532), falling back to Opus when Fable is out of credits (OD-562); Codex isn't one of the reviewers.
+- Phase R and a branch's first diff review run on Fable, later rounds on Opus (OD-577, amends OD-532); a Fable round falls back to Opus when Fable is out of credits (OD-562); Codex isn't one of the reviewers.
 
 ## Session state
 
 - `CLAUDE-STATE.md` holds local working state. It is gitignored, must never be committed, and is loaded automatically through `CLAUDE.local.md` (gitignored; the single line `@CLAUDE-STATE.md`).
 - If either file is missing (fresh clone, another worktree), create a short placeholder for each (rule 3 applies).
-- Update it as work progresses (rule 3 applies). At most 100 lines, in four sections: Current task, Next steps, Open questions, Recent progress (the last 32 entries, one line each; operator decision 2026-10-14; the file limit was 80 lines).
+- Update it as work progresses (rule 3 applies). At most 100 lines, in four sections: Current task, Next steps, Open questions, Recent progress (the last 16 entries, one line each; operator decision 2026-10-29; was 32, operator decision 2026-10-14; the file limit was 80 lines).
 - Another session may be editing this file too. Re-read it right before each write. Change only your own lines, except when archiving.
 - Decisions don't live there. A decision made during the build becomes an ADR in `docs/adr/` (committed with the operator's OK); a small decision that doesn't justify an ADR (a default value, a name) goes in the relevant SPEC section, marked with its date and "operator decision", and the commit message names the change. Either way the state file keeps at most a one-line pointer.
-- **Archiving:** at each `ms-…` tag, or when the file passes 100 lines or Recent progress passes 32 entries, entries older than the last 32 and resolved open questions (each with a one-line pointer to where its answer landed) move to `state-archive/YYYY-MM.md` (gitignored, never imported). Propose the rollover, show what moves, and do it only after the operator confirms.
+- **Archiving:** at each `ms-…` tag, or when the file passes 100 lines or Recent progress passes 16 entries, entries older than the last 16 and resolved open questions (each with a one-line pointer to where its answer landed) move to `state-archive/YYYY-MM.md` (gitignored, never imported). Propose the rollover, show what moves, and do it only after the operator confirms.
+- **Keep it short** (operator decision 2026-10-29: the file had grown to 85 KB, ~20k tokens on every request, while staying under 100 lines):
+  - **Archive finished work.** When an item is done, its full text moves to `state-archive/YYYY-MM.md` in the same update, and the state file keeps a one-line pointer (what, commit, where the detail is). This needs no rollover proposal; name it in the reply.
+  - **Entries are pointers, not logs.** Each entry is one short line: what, where (commit, file, `state-archive/<task>/`), and the next action. Step-by-step detail, review rounds, figures and pids go in `state-archive/<task>/` or git, not here.
+  - **Delete stale items.** Remove anything done, superseded, or pointing at something that no longer exists (removed worktrees, ended processes, "ask" notes already answered).
 
 ## Path-scoped rules
 
