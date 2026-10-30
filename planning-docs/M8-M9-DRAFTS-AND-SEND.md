@@ -10,7 +10,8 @@ Phase R with four Fable agents (it changes the eval, the actor prompt and policy
 
 Model-written email help comes in two stages, and nothing is ever sent without your approval:
 - **M8 (after M7):** ecf writes drafts, and they are proven safe and useful by a draft-quality eval with a
-  pass mark set in M8's plan.
+  pass mark set in M8's plan. (Superseded by OD-582: no pass mark and no drafter role in M8; see
+  `docs/roadmap/m8-model-written-drafts.md`.)
 - **M9 (needs M8 complete and a set 👍 rate on real drafts over a set period):** the draft's Slack card
   gains a **Send email** button beside **Save to Drafts**. Pressing it queues the send for the Mac, where
   step-up shows the exact text and recipient. Nothing goes out unless you press Send and confirm.

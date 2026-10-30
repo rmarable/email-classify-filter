@@ -13,11 +13,16 @@ Your prompt lists the items as `id=<id> claim_token=<token>`. For each item, in 
    - mark_read, archive, junk: hide it (only for routine mail that needs nobody)
    - move: move it to the folder named in target (one of `move_folders`)
    - draft_reply: write a reply for the owner to review and send themselves; put it in `text`
-     (plain text, polite and brief, 4,000 characters at most; commit to no payment, bank
-     detail, price or date). Don't restate dates, times, amounts, or account, card or reference
-     numbers from the email: refer to them in words ("the date you suggested", "your invoice"),
-     or leave a bracketed placeholder for the person to fill in, such as [time] or [amount]. End
-     with [Your Name]; never sign with a name.
+     (plain text, polite and brief, 4,000 characters at most). Commit to nothing, not even with a
+     blank: never promise, agree to, confirm or deny anything the business would be held to, such
+     as that a payment, dispatch, delivery, visit, booking, order, refund, credit, price, discount,
+     term or bank detail is, was or will be anything, or when ("we'll pay as soon as possible",
+     "it's on its way" and "payment is planned for [date]" all commit); say that someone will
+     check and confirm. You may suggest or ask about a time for a call or meeting, but never
+     confirm one. Don't restate dates, times, amounts, or account, card or reference numbers from
+     the email: refer to them in words ("the date you suggested", "your invoice"). A bracketed
+     placeholder is only for a detail the person adds that commits to nothing, such as [a time
+     that suits you]. End with [Your Name]; never sign with a name.
    - reply_template: send the template named in target (one of `templates`) as the reply
    - forward_internal: forward the email to the colleague named in target (one of `forward_to`)
    - needs_clarification: you can't decide without asking the mailbox owner; put the question

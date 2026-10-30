@@ -506,3 +506,44 @@ def test_the_cli_adapter_takes_its_own_timeout(monkeypatch: pytest.MonkeyPatch,
     adapter.timeout_s = judgedrafts.TIMEOUT_S
     assert adapter.ask("p", {}, tmp_path / "w").detail == "timed out"
     assert seen == [judgedrafts.TIMEOUT_S]
+
+
+class _Api:
+    """An API judge stand-in (a DraftJudge): answers from a list, in order."""
+
+    provider, model = "mistral", "mistral-large-4-0"
+
+    def __init__(self, replies: list[Reply]) -> None:
+        self.replies, self.calls, self.spent = replies, 0, 0.0
+
+    def describe(self) -> dict[str, Any]:
+        return {}
+
+    def ask(self, prompt: str, schema: dict[str, Any], workdir: Path) -> Reply:
+        raise AssertionError("an API judge is asked through ask_draft")
+
+    def ask_draft(self, run_id: str, case_id: str, schema: dict[str, Any]) -> Reply:
+        self.calls += 1
+        return self.replies.pop(0)
+
+
+def test_an_api_judge_call_that_timed_out_is_retried_once(tmp_path: Path) -> None:
+    """OD-582: Mistral with reasoning low ran past its call limit and stopped runs."""
+    from ecf.eval import mistral_api  # noqa: PLC0415
+    from ecf_server import mistral  # noqa: PLC0415
+
+    def request(method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/items"):
+            return {"run_id": "r1", "prompt_digest": "d",
+                    "items": [{"case": "c0", "prompt": "p", "schema": {}},
+                              {"case": "c1", "prompt": "p", "schema": {}}]}  # fmt: skip
+        if path.endswith("/judgements") and method == "GET":
+            return {"judges": {}, "spent": {}, "prompt_digest": None}
+        return {}
+
+    ok = Reply("ok", answer=GOOD)
+    api = _Api([Reply("failed", detail="timed out"), ok, Reply("failed", detail="HTTP 400"), ok])
+    counts, _ = judgedrafts.run(request, api, "r1", tmp_path)
+    assert api.calls == 3 and counts["retried"] == 1 and counts["judged"] == 1
+    assert counts["failed"] == 1  # any other failure isn't retried
+    assert mistral.TIMEOUT_S >= 180 and mistral_api.CALL_TIMEOUT_S > mistral.TIMEOUT_S

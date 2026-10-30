@@ -7,6 +7,6 @@
   "schema_version": 42,
   "classifier_schema": 3,
   "prompt_digest": "fb22fd651a19014779cc6385bf1a840cbf3b09ae4f99140d7fff7facc46f4a50",
-  "actor_prompt_digest": "34455764a3fd3c55acf7bf7b6c77ccd4c2690f8e076b6d98e1e9b1076e2d230e",
+  "actor_prompt_digest": "fe68ec609464c7c338b8f76803fe5c2cc67e696a11b3cdb2b9a2f20afe99f48e",
   "min_client": "0.1.0.dev0"
 }

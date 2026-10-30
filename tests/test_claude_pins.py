@@ -204,8 +204,13 @@ def test_the_actor_drafts_with_placeholders_and_no_name() -> None:
     text = " ".join(resources.files("ecf.data").joinpath("plugin", "agents", "actor.md")
                     .read_text(encoding="utf-8").split())  # fmt: skip
     assert "Don't restate dates, times, amounts, or account, card or reference numbers" in text
-    assert "such as [time] or [amount]" in text
     assert "End with [Your Name]; never sign with a name." in text
+    # OD-582: the Step 7 pilot's drafts put commitments in placeholders ("payment is planned for
+    # [payment date]"); a placeholder never stands in for a commitment
+    assert "Commit to nothing, not even with a blank" in text
+    assert '"payment is planned for [date]" all commit' in text
+    assert "someone will check and confirm" in text and "never confirm one" in text
+    assert "such as [amount]" not in text
 
 
 def test_a_change_to_the_actors_instructions_drops_a_live_address_to_assist(

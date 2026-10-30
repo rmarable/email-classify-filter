@@ -2004,7 +2004,7 @@ def eval_confirm_set(
     ],
 ) -> None:
     """Confirm the draft set after the pilot (M8 plan §4): freezes it at this digest and opens
-    the baseline's and the drafter's slots on it. Cards changed since the pilot must be ones the
+    the baseline's slots on it. Cards changed since the pilot must be ones the
     pilot missed at the classifier stage."""
     with LocalClient(_paths()) as c:
         r = c.request("POST", "/v1/eval/drafts/confirm",
