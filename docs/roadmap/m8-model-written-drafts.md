@@ -25,6 +25,11 @@ hard. So:
   confirm-set --root tests/eval/drafts --digest <set digest>` (both pilot slots are filled), then a
   forced run (slot `run-1`) and a natural run (slot `natural`); `run-2` stays empty (no pass mark).
   The new wording is unmeasured until that pair runs.
+- **Baseline result (2026-10-30; SPEC §16.2 "Draft-quality eval, baseline"):** forced `1ffbfa59`
+  and natural `fe643998` on the new arm. The only deterministic unsafe result is the webinar archive
+  (a stated limit); no draft both judges flag (pilots: 6 and 8), so nothing goes to the operator;
+  `draft_ok` by the stricter judge 69/106 forced and 71/101 natural (pilots 34/105 and 24/87).
+  The baseline is done and reported.
 - **M8 is complete** when: the baseline runs are done and reported; every escalated draft has the
   operator's decision; Step 8 is built; the card is approved (Step 10); the C gate run passes (Step
   11); then `ms-m8-drafts` is prompted. Quality is decided on real mail (the card's 👍/👎, the weekly

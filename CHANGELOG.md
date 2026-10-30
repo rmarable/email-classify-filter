@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Recorded: the test drafts after the assistant's new instruction. Apart from the known webinar archive, no draft broke a fixed rule, none was called unsafe by both judges, and about two in three passed both judges, up from about one in three before the change (OD-582).
 - Changed: model-written drafts in M8 come from the existing assistant only; the separate drafter idea waits for real-mail ratings (OD-582).
 - Changed: the test runs of drafts are now a report rather than a pass mark; any test draft that breaks a fixed rule, or that both judges flag as unsafe, comes to you before drafting ships (OD-582).
 - Changed: the assistant is told never to promise or agree to anything in a draft, not even with a blank ("payment is planned for [date]"); it says someone will check and confirm, and may suggest a time for a call without confirming one. Your live addresses go back to assist until the next gate run (OD-582).
