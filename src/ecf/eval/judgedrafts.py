@@ -81,6 +81,9 @@ def _judge_all(request: Request, adapter: Adapter, run_id: str, digest: str, jud
     for it in todo:
         if api:
             reply = adapter.ask_draft(run_id, it["case"], it["schema"])
+            if reply.status == "failed" and reply.detail == TIMED_OUT:  # one retry (OD-582)
+                counts["retried"] += 1
+                reply = adapter.ask_draft(run_id, it["case"], it["schema"])
             if reply.status == "ok" and reply.answer is not None:
                 counts["refused" if reply.answer.get("refused") else "judged"] += 1
             else:

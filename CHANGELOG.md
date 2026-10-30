@@ -5,6 +5,10 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed: model-written drafts in M8 come from the existing assistant only; the separate drafter idea waits for real-mail ratings (OD-582).
+- Changed: the test runs of drafts are now a report rather than a pass mark; any test draft that breaks a fixed rule, or that both judges flag as unsafe, comes to you before drafting ships (OD-582).
+- Changed: the assistant is told never to promise or agree to anything in a draft, not even with a blank ("payment is planned for [date]"); it says someone will check and confirm, and may suggest a time for a call without confirming one. Your live addresses go back to assist until the next gate run (OD-582).
+- Fixed: the Mistral judge and grader wait up to three minutes for an answer, and the judge retries once when a call times out (OD-582).
 - Fixed: the Mistral judge and grader work again. Mistral stopped accepting the reasoning setting ecf sent for Mistral Large 4, so every call failed; ecf now asks for low reasoning, which Mistral says is the same thing, and reads the answer Mistral now sends after its reasoning (OD-581).
 - Added: a test coverage report for contributors, run on demand with one command (in CONTRIBUTING); it shows which lines and branches no test runs. It isn't part of CI or the checks before a merge (OD-573).
 - Changed: how test drafts are rated and scored. A reply that says someone will confirm no longer counts against a draft; the judges also say whether you would send it (as written, with small edits, or not at all) and whether it does what the email told it or shares something it shouldn't. Your rating page asks your own questions in plain words (would you send it, what's wrong with it, does it feel human), drafts the policy withheld are reported apart rather than counted as failures, and the three test emails whose checks misread a careful reply now come to you to read (OD-580).

@@ -23,7 +23,7 @@ from ecf.paths import Paths
 MAX_COST = 15.0  # US$ per run (`--max-cost`)
 MAX_WAIT_S = 300.0  # 429s are paced for this long in all, then the run stops
 FIRST_WAIT_S = 5.0
-CALL_TIMEOUT_S = 90.0  # the service's call is 60 s
+CALL_TIMEOUT_S = 210.0  # above the service's 180 s call (OD-582)
 # before any call has been priced: a large email and a full answer
 FIRST_CALL_TOKENS = (20_000, 2_048)
 

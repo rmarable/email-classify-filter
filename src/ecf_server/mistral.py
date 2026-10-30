@@ -28,7 +28,7 @@ from ecf_server.secretstore import SecretStore
 KEY_SECRET = "mistral-api-key"  # noqa: S105 - the secret store's entry name, not a secret
 HOST = "api.mistral.ai"
 BASE_URL = f"https://{HOST}"
-TIMEOUT_S = 60.0  # one grading call (J19)
+TIMEOUT_S = 180.0  # one call; with reasoning low a reply ran past 60 s (OD-582; J19 was 60)
 KEY_CHECK_TIMEOUT_S = 5.0  # under the CLI's 10 s socket timeout, as Jev's
 CONNECT_S, WRITE_S, POOL_S = 5.0, 10.0, 5.0
 # the answer: labels for one email, after the reasoning `reasoning_effort: low` adds (1,254 and
