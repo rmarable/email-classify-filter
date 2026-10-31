@@ -132,6 +132,10 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
             one = Planned(one.name, one.target, one.mode, payload)
         except outbound_plan.Unresolved as exc:
             one = Dropped(one.name, one.target, str(exc.detail))
+    if isinstance(one, Planned) and one.name == "draft_reply" and one.payload is not None:
+        refused = outbound_plan.draft_refusals(conn, item, one.payload)  # before its card (P-d)
+        if refused:  # the codes only: the text goes no further
+            one = Dropped(one.name, one.target, "draft_checker: " + ", ".join(refused))
     if isinstance(one, Dropped):
         if one.name == "draft_reply":  # a dropped draft flags its item (OD-551, M8 plan P-d)
             _add(p, Planned("flag", None, "auto"))

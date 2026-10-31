@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Security: the draft checker now runs on every draft the assistant writes, before you see a card. A draft that fails is dropped and the email flagged, with the reason shown (OD-583).
+
 - Recorded: the test drafts after the assistant's new instruction. Apart from the known webinar archive, no draft broke a fixed rule, none was called unsafe by both judges, and about two in three passed both judges, up from about one in three before the change (OD-582).
 - Changed: model-written drafts in M8 come from the existing assistant only; the separate drafter idea waits for real-mail ratings (OD-582).
 - Changed: the test runs of drafts are now a report rather than a pass mark; any test draft that breaks a fixed rule, or that both judges flag as unsafe, comes to you before drafting ships (OD-582).

@@ -96,6 +96,22 @@ def resolve(conn: sqlite3.Connection, item: sqlite3.Row, name: str, target: str 
     raise Unresolved(f"{name} has no payload")
 
 
+def draft_refusals(conn: sqlite3.Connection, item: sqlite3.Row, payload: dict[str, Any],
+                   ) -> tuple[str, ...]:  # fmt: skip
+    """The checker's refuse codes for a resolved draft, read against the email's 4,000-character
+    actor excerpt, the text the actor saw (M8 plan §1). No excerpt, nothing to read it against:
+    `unchecked` (§6)."""
+    row = conn.execute("SELECT actor_text FROM excerpts WHERE stable_id = ?",
+                       (item["stable_id"],)).fetchone()  # fmt: skip
+    if row is None or row["actor_text"] is None:
+        return ("unchecked",)
+    email = str(row["actor_text"])
+    own = conn.execute("SELECT email FROM addresses WHERE address_id = ?",
+                       (item["address_id"],)).fetchone()  # fmt: skip
+    allowed = (str(payload["to"]), *([str(own["email"])] if own else []))
+    return draftcheck.check(str(payload["text"]), email, draftcheck.links(email), allowed).refuse
+
+
 def monitored(conn: sqlite3.Connection, to: str) -> bool:
     """`to` is one of this install's monitored addresses."""
     rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL")
