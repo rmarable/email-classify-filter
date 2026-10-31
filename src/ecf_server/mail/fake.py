@@ -207,6 +207,10 @@ class FakeMailSource:
         s = self._folder(folder).get(uid)
         return None if s is None else s.raw
 
+    def fetch_start_in(self, folder: str, uid: int, limit: int) -> bytes | None:
+        raw = self.fetch_in(folder, uid)
+        return None if raw is None else raw[:limit]
+
     @timed("store")
     def move_back(self, folder: str, uid: int) -> None:
         if (s := self._folder(folder).pop(uid, None)) is not None:
@@ -437,6 +441,10 @@ class GmailFakeSource:
         self._folder(folder)
         m = self._get(folder, uid)
         return None if m is None else m.raw
+
+    def fetch_start_in(self, folder: str, uid: int, limit: int) -> bytes | None:
+        raw = self.fetch_in(folder, uid)
+        return None if raw is None else raw[:limit]
 
     @timed("store")
     def move_back(self, folder: str, uid: int) -> None:

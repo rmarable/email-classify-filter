@@ -288,6 +288,14 @@ class ImapSource:
         data = self._call(lambda: conn.fetch([uid], ["BODY.PEEK[]"]))
         return lib.as_bytes(data[uid].get("BODY[]")) if uid in data else None
 
+    @timed("fetch")
+    def fetch_start_in(self, folder: str, uid: int, limit: int) -> bytes | None:
+        if limit <= 0:
+            raise ValueError(f"bad limit: {limit}")
+        conn = self._other(folder, readonly=True)
+        data = self._call(lambda: conn.fetch([uid], [f"BODY.PEEK[]<0.{limit}>"]))
+        return lib.as_bytes(data[uid].get("BODY[]<0>")) if uid in data else None
+
     @timed("store")
     def move_back(self, folder: str, uid: int) -> None:
         self._refuse_on_gmail(folder, "move a message back out of")

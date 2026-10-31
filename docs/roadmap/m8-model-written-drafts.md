@@ -30,12 +30,21 @@ hard. So:
   (a stated limit); no draft both judges flag (pilots: 6 and 8), so nothing goes to the operator;
   `draft_ok` by the stricter judge 69/106 forced and 71/101 natural (pilots 34/105 and 24/87).
   The baseline is done and reported.
+- **Step 8 changes (2026-10-31, OD-583):** the checker runs on live drafts (`actor.decide_one`; no
+  step had built it). `sent_unchanged` means the sent text is the draft with at most its placeholders
+  filled in, since every baseline draft has `[Your Name]` and a hash alone could never match; §7's
+  hash remains the fallback once the item no longer holds the draft. Added outcomes: `closed`, a version nobody decided, and `sent_unread`, a sent copy with no text
+  in its first 256 KB. Tracking reads only a copy in Sent, its first 256 KB, never a draft in
+  Drafts, so `edited` is set only at a send. `draft_versions` has no `drafter_prompt` or `hint` column until the
+  drafter and Regenerate exist, and adds `saved_at`, `missing_checks` and `alerted`. Ratings' fixed
+  reasons are in `draft_data.REASONS`; the card (Step 10) calls `draft_data.rate`, and until then
+  nothing does.
 - **M8 is complete** when: the baseline runs are done and reported; every escalated draft has the
   operator's decision; Step 8 is built; the card is approved (Step 10); the C gate run passes (Step
   11); then `ms-m8-drafts` is prompted. Quality is decided on real mail (the card's 👍/👎, the weekly
   stats), which feed M9's entry evidence.
 
-**Status: draft 35, 2026-10-30 (OD-582, the amendment above). Before it: draft 34, 2026-10-27. Steps 1-2 merged (main `2fe819a`); the draft-33 checks found no
+**Status: draft 36, 2026-10-31 (OD-583, Step 8 changes above). Before it: draft 35, 2026-10-30 (OD-582, the amendment above). Before it: draft 34, 2026-10-27. Steps 1-2 merged (main `2fe819a`); the draft-33 checks found no
 high finding, so under the operator's convergence rule the plan is ready for Steps 3-7 and their
 medium and low findings (BW-D1-BW-D3, BW-M1-BW-M3) are folded in below without another round; authentication is option A; no rule judges a sign-off (AE1); the draft-13 to draft-32 checks' AF1-AF9, AG1-AG9, AH1-AH8, AI1-AI9, AJ1-AJ7, AK1-AK7, AL1-AL6, AM1-AM6, AN1-AN6, AO1-AO6, AP1-AP7, AQ1-AQ9, AR1-AR8, AS1-AS8, AT1-AT8, AU1-AU6, AV1-AV4, AW0-AW5, AX1-AX5 and AY1-AY4 accepted.** Phase R ran on draft 1 (four Fable agents: safety,
 measurement, cost and design, performance). Its findings were merged into P1-P28, all accepted as

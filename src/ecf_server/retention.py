@@ -8,7 +8,8 @@ Once a day the service deletes, in batches of 1,000:
 - finished and dead jobs, and used or expired step-up nonces, older than the same age;
 - records of one-off Slack posts (digests, daily summaries, stale lists, alerts, answers, notices)
   older than the same age. Item cards go with their item; "Needs you" and a burst card whose items
-  remain are kept (V1.2 review, 2026-09-30).
+  remain are kept (V1.2 review, 2026-09-30);
+- draft data (`draft_versions`) by when the draft was written (M8 plan §7).
 
 Never pruned: the audit log (table and files, OD-217); senders, sent, threads, gate and eval
 results (OD-040); open items (they are never auto-closed, §6.5).
@@ -132,6 +133,7 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
         "claude_calls": 0,
         "claude_sessions": 0,
         "slack_calls": 0,
+        "draft_versions": 0,
         "batches": 0,
     }
     while True:
@@ -170,6 +172,9 @@ def run(conn: sqlite3.Connection, clock: Clock) -> dict[str, int]:
     counts["slack_calls"] = _batched(  # left out of the bundle (OD-507, P17)
         conn, "DELETE FROM slack_calls WHERE rowid IN (SELECT rowid FROM slack_calls"
         " WHERE ts < ? LIMIT ?)", (cutoff,))  # fmt: skip
+    counts["draft_versions"] = _batched(  # numbers and hashes only (M8 plan §7)
+        conn, "DELETE FROM draft_versions WHERE rowid IN (SELECT rowid FROM draft_versions"
+        " WHERE created < ? LIMIT ?)", (cutoff,))  # fmt: skip
     # what an unclicked "Approve all" or "All others correct" button binds: gone once its grants
     # have expired (every click re-checks each one anyway)
     stale = to_ts(clock.now() - BATCH_TTL)

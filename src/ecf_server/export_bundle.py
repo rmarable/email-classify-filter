@@ -63,7 +63,7 @@ INCLUDED = (
 )  # fmt: skip
 EXCLUDED = (
     "alert_outbox", "check_state", "claim_batches", "claims", "corpus_downloads", "delays",
-    "dns_cache", "downloads", "grants", "heartbeats", "jobs", "leases",
+    "dns_cache", "downloads", "draft_versions", "grants", "heartbeats", "jobs", "leases",
     "nonces", "processing", "rate", "slack_calls", "slack_dedupe", "slack_messages",
 )  # fmt: skip
 SETTINGS_LEFT_OUT = (INTERPRETER_KEY,)  # this computer's interpreter; restore resets it

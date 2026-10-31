@@ -61,6 +61,16 @@ def wilson(successes: int, n: int, z: float = Z95) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+def newcombe_unpaired(b: int, nb: int, a: int, na: int, z: float = Z95) -> tuple[float, float]:
+    """Newcombe's (1998) hybrid score interval for b/nb minus a/na, two independent proportions."""
+    pb, pa = b / nb, a / na
+    lb, ub = wilson(b, nb, z)
+    la, ua = wilson(a, na, z)
+    diff = pb - pa
+    return (diff - math.sqrt((pb - lb) ** 2 + (ua - pa) ** 2),
+            diff + math.sqrt((ub - pb) ** 2 + (pa - la) ** 2))  # fmt: skip
+
+
 def mcnemar_exact(b: int, c: int) -> float:
     """Two-sided exact McNemar p-value from the discordant pair counts b and c."""
     n = b + c

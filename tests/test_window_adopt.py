@@ -95,7 +95,7 @@ def test_0042_marks_earlier_excerpts_as_cut_at_1500(
                   ("x" * 1501,))  # an excerpt cut before OD-552 could be one over  # fmt: skip
         c.execute("INSERT INTO excerpts (stable_id, classifier_text) VALUES ('a2', NULL)")
     c.execute("PRAGMA foreign_keys=ON")
-    assert db.migrate(c) == ["0042_classifier_window.sql"]
+    assert db.migrate(c)[0] == "0042_classifier_window.sql"
     got = dict(c.execute("SELECT stable_id, classifier_chars FROM excerpts").fetchall())
     assert got == {"a1": 1500, "a2": None}
     c.close()

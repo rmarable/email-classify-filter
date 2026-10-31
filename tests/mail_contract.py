@@ -209,6 +209,8 @@ class MailSourceContract:
         assert src.uids_after(0) == [uids[1]]  # gone from INBOX, the other untouched
         [there] = src.find_in(folder, "<contract-0@synthetic.acme.example>")
         assert src.fetch_in(folder, there) == raw
+        assert raw is not None
+        assert src.fetch_start_in(folder, there, 20) == raw[:20]
         assert src.find_in(folder, "<contract-1@synthetic.acme.example>") == []
         src.move_back(folder, there)
         back = src.find_message_id("<contract-0@synthetic.acme.example>")

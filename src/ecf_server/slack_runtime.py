@@ -29,6 +29,7 @@ from ecf_server import (
     daily,
     deadman,
     digests,
+    drafts_weekly,
     escalations,
     health,
     needs_you,
@@ -252,6 +253,7 @@ class SlackRuntime:
             ("scan summaries", lambda: scan_summary.tick(conn, self._clock)),  # OD-507
             ("members", lambda: daily.check_members(conn, self._clock, chat, self._notifier)),
             ("daily", lambda: daily.run(conn, self._clock)),
+            ("drafts weekly", lambda: drafts_weekly.run(conn, self._clock)),
         )  # fmt: skip
         for name, step in steps:  # each on its own: one failing never skips the rest
             try:

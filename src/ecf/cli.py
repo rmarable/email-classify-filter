@@ -19,6 +19,7 @@ from ecf import __version__, api_keys, cli_history, service_unit, timerange, wat
 from ecf.cli_admin import make_commands as make_admin_commands
 from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
+from ecf.cli_drafts import make_drafts_app
 from ecf.cli_evalgen import make_commands as make_evalgen_commands
 from ecf.cli_export import make_commands as make_export_commands
 from ecf.cli_import import make_commands as make_import_commands
@@ -95,6 +96,7 @@ make_destroy_commands(app, _paths)
 app.add_typer(make_models_app(_paths), name="models")
 app.add_typer(make_corpus_app(_paths), name="corpus")
 make_stats_command(app, _paths)
+app.add_typer(make_drafts_app(_paths), name="drafts")
 make_evalgen_commands(eval_app, _paths)
 cli_history.make_reprocess_command(app, _paths)
 alerts_app = typer.Typer(no_args_is_help=True, help="Where alerts go.")
