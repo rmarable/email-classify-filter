@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import click
 import httpx
 import pytest
 from typer.testing import CliRunner
@@ -1233,7 +1234,7 @@ def test_the_route_and_the_cli_screen(conn: sqlite3.Connection, db_path: Path, c
 def test_the_command_refuses_an_unknown_split() -> None:
     result = CliRunner().invoke(app, ["drafts", "stats", "--by", "sender"])
     assert result.exit_code != 0
-    assert "--by" in result.output
+    assert "--by" in click.unstyle(result.output)  # CI forces colour, which splits the option
 
 
 def test_every_split_the_command_offers_is_a_routes_split() -> None:
