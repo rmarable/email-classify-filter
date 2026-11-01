@@ -202,6 +202,12 @@ class FakeMailSource:
         return sorted(u for u, s in self._folder(folder).items()
                       if _message_id(_parse(s.raw)) == message_id)  # fmt: skip
 
+    @timed("search")
+    def find_replies_in(self, folder: str, message_id: str, since: datetime) -> list[int]:
+        return sorted(u for u, s in self._folder(folder).items()
+                      if _in_reply_to(_parse(s.raw)) == message_id
+                      and s.internaldate >= since)  # fmt: skip
+
     @timed("fetch")
     def fetch_in(self, folder: str, uid: int) -> bytes | None:
         s = self._folder(folder).get(uid)
@@ -436,6 +442,13 @@ class GmailFakeSource:
         self._folder(folder)
         return sorted(u for u, m in self._in(folder) if _message_id(_parse(m.raw)) == message_id)
 
+    @timed("search")
+    def find_replies_in(self, folder: str, message_id: str, since: datetime) -> list[int]:
+        self._folder(folder)
+        return sorted(u for u, m in self._in(folder)
+                      if _in_reply_to(_parse(m.raw)) == message_id
+                      and m.internaldate >= since)  # fmt: skip
+
     @timed("fetch")
     def fetch_in(self, folder: str, uid: int) -> bytes | None:
         self._folder(folder)
@@ -667,6 +680,11 @@ def _children(part: Message) -> list[Message]:
 
 def _message_id(msg: Message) -> str | None:
     v = msg.get("Message-ID")
+    return str(v).strip() if v is not None else None
+
+
+def _in_reply_to(msg: Message) -> str | None:
+    v = msg.get("In-Reply-To")
     return str(v).strip() if v is not None else None
 
 

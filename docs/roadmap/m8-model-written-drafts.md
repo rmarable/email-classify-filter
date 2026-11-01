@@ -2207,11 +2207,14 @@ seeds only; when `send` is report-only it doesn't enter `draft_ok`.
   quoted part and signature stripped), so a client's re-encoding doesn't count as an edit.
   - Each draft is polled at most once an hour, at most 10 per check (`ORDER BY checked_at`), within 2
     seconds of check time, and for at most 14 days; then it stays `still_waiting`.
-  - There's no search by In-Reply-To.
+  - There's no search by In-Reply-To. (Replaced 2026-11-01, OD-583: Gmail in a browser gives a sent or
+    edited draft a new Message-ID but keeps its In-Reply-To, so tracking also searches by it, and
+    reads at most 3 replies.)
   - Step 8's IMAP test is a decision point (D11). Where a provider gives the sent message a new
     Message-ID, `sent_*` is recorded as "not measurable" for that provider, and the M9 criterion that
     uses it applies only where it is measurable (or an `X-ECF-Draft` header fallback comes back to the
-    operator).
+    operator). Result (2026-11-01, OD-583): the In-Reply-To search measures Gmail in a browser, so
+    nothing is "not measurable" there. Purelymail won't be evaluated (operator decision 2026-11-01).
   - The SPEC §12.2 and §12.4 text says this.
 - **Stats.** `ecf drafts stats` (`cli_drafts.py`, `/v1/drafts/stats`, modelled on `cli_stats.py`):
   - the outcome breakdown and headline rates;
@@ -2367,7 +2370,7 @@ seeds only; when `send` is report-only it doesn't enter `draft_ok`.
    - recording at each outcome;
    - bounded tracking;
    - `ecf drafts stats`, the weekly post and the alert;
-   - an IMAP real-service test (go-ahead) on Purelymail and Gmail: an edited and an unchanged send,
+   - an IMAP real-service test (go-ahead) on Gmail (Purelymail dropped, operator decision 2026-11-01): an edited and an unchanged send,
      false "edited", Message-ID behaviour.
 9. **Drafter** (moved to Later by OD-582; kept as written for when it is revisited) (own branch, merged only after adoption, W4): §5 in full (no signature setting, AE1);
    two forced drafter runs and one natural; comparison with the baseline; adoption by the rule in §5;
@@ -2752,7 +2755,7 @@ Found by running the code on the cards while writing draft 3:
 
 - Slack Block Kit limits for modals with radio buttons and `static_select`, and `chat.update` rate tiers:
   unverified; confirm against docs.slack.dev at Step 10, citing the page and date.
-- What Purelymail and Gmail do to an edited draft's Message-ID on send: unverified; Step 8's test answers
+- (Answered 2026-11-01 for Gmail in a browser, SPEC OD-583: a new Message-ID, In-Reply-To kept; Purelymail dropped.) What Purelymail and Gmail do to an edited draft's Message-ID on send: unverified; Step 8's test answers
   it.
 - The cost and time table above: estimates; Step 7 measures them.
 - Checked with scripts on the synthetic set at `595308c` (2026-10-26):

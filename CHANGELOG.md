@@ -7,8 +7,9 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 - Security: the draft checker now runs on every draft the assistant writes, before you see a card. A draft that fails is dropped and the email flagged, with the reason shown (OD-583).
 - Added: `ecf drafts stats` shows what happened to ecf's drafts: saved, sent, edited, rejected, expired or refused, how many emails needing a reply got one, ratings, and a weekly trend. A weekly Slack post gives the counts (OD-583).
-- Added: ecf looks in your Sent and Drafts folders for each draft it saved, at most hourly for 14 days and by that draft's exact Message-ID, to learn whether you sent it. It keeps only the result, never the text (OD-583).
+- Added: ecf looks in your Sent and Drafts folders for each draft it saved, at most hourly for 14 days, by that draft's exact Message-ID or as a reply to the same email, to learn whether you sent it, including from Gmail in a browser, which changes the Message-ID. It keeps only the result, never the text (OD-583).
 - Changed: filling in a draft's placeholders, such as your name, doesn't count as editing it (OD-583).
+- Decided: Purelymail is no longer evaluated (OD-583).
 
 - Recorded: the test drafts after the assistant's new instruction. Apart from the known webinar archive, no draft broke a fixed rule, none was called unsafe by both judges, and about two in three passed both judges, up from about one in three before the change (OD-582).
 - Changed: model-written drafts in M8 come from the existing assistant only; the separate drafter idea waits for real-mail ratings (OD-582).

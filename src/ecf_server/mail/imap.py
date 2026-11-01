@@ -12,7 +12,7 @@ import imaplib
 import ssl
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from ecf.errors import MailUnavailableError
@@ -280,6 +280,22 @@ class ImapSource:
             data = self._call(lambda c=chunk: conn.fetch(c, ["ENVELOPE"]))
             found += [u for u, d in data.items()
                       if lib.envelope_message_id(d.get("ENVELOPE")) == message_id]  # fmt: skip
+        return sorted(found)
+
+    @timed("search")
+    def find_replies_in(self, folder: str, message_id: str, since: datetime) -> list[int]:
+        conn = self._other(folder, readonly=True)
+        # SINCE is a date in the server's zone, so a day early; INTERNALDATE then decides
+        day = (since - timedelta(days=1)).date()
+        crit: list[Any] = ["SINCE", day, "HEADER", "In-Reply-To", message_id]
+        hits = self._call(lambda: conn.search(crit))
+        found: list[int] = []  # as in find_in: FETCH drops stale and substring hits
+        for chunk in _chunks(hits):
+            data = self._call(lambda c=chunk: conn.fetch(c, ["ENVELOPE", "INTERNALDATE"]))
+            found += [u for u, d in data.items()
+                      if lib.envelope_in_reply_to(d.get("ENVELOPE")) == message_id
+                      and isinstance(when := d.get("INTERNALDATE"), datetime)
+                      and when >= since]  # fmt: skip
         return sorted(found)
 
     @timed("fetch")

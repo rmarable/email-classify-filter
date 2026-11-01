@@ -37,7 +37,7 @@ from ecf_server import (
     retention,
     slack_admin,
 )
-from ecf_server.clock import FakeClock, to_ts
+from ecf_server.clock import FakeClock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail import Folder
 from ecf_server.mail.fake import FakeMailSource
@@ -467,6 +467,215 @@ def test_gone_from_both_takes_two_checks_and_a_late_send_still_counts(
     _send(src, mid, FILLED)
     _track(conn, clock, src)
     assert _row(conn, sid)["outcome"] == "sent_unchanged"
+
+
+def _email_id(conn: sqlite3.Connection, sid: str) -> str:
+    return str(conn.execute("SELECT message_id FROM items WHERE stable_id = ?",
+                            (sid,)).fetchone()["message_id"])  # fmt: skip
+
+
+def _reply_copy(replying_to: str, body: str, mid: str = "<new@mail.gmail.com>") -> bytes:
+    """As Gmail in a browser leaves a draft it sent or re-saved: a new Message-ID, the same
+    In-Reply-To (real test, 2026-11-01)."""
+    return outbound_msg.build_draft(
+        from_addr="ap@acme.example", to_addr="news@vendor-a.example", subject="s", body=body,
+        in_reply_to=replying_to, references=None, date=datetime(2026, 10, 31, tzinfo=UTC),
+        message_id=mid,
+    ).raw  # fmt: skip
+
+
+def _drop_draft(conn: sqlite3.Connection, src: FakeMailSource, sid: str) -> None:
+    src.delete_in("Drafts", src.find_in("Drafts", _mid(conn, sid))[0])
+
+
+@pytest.mark.usefixtures("addr")
+@pytest.mark.parametrize(("text", "outcome", "edited"), [
+    (FILLED, "sent_unchanged", 0),
+    (FILLED.replace("reply soon", "call on Friday"), "sent_edited", 1),
+])  # fmt: skip
+def test_a_send_under_a_new_message_id_is_found_as_the_reply_to_the_email(
+    conn: sqlite3.Connection, clock: FakeClock, text: str, outcome: str, edited: int
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    src.append("Sent", _reply_copy(_email_id(conn, sid), text), [])
+    _track(conn, clock, src)
+    r = _row(conn, sid)
+    assert (r["outcome"], r["edited"]) == (outcome, edited)
+
+
+@pytest.mark.usefixtures("addr")
+def test_a_draft_resaved_under_a_new_message_id_is_still_saved(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    src.append("Drafts", _reply_copy(_email_id(conn, sid), "changed"), [])
+    for _ in range(3):
+        _track(conn, clock, src)
+        clock.advance(3600)
+    r = _row(conn, sid)
+    assert (r["outcome"], r["missing_checks"], r["edited"]) == ("saved", 0, None)
+
+
+@pytest.mark.usefixtures("addr")
+def test_ecfs_own_reply_to_the_email_is_not_the_draft_being_sent(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    src.append("Sent", _reply_copy(_email_id(conn, sid), "template", "<own@acme.example>"), [])
+    with write_tx(conn):
+        conn.execute("INSERT INTO sent (message_id_hash, address_id, content_hash, kind, sent_at,"
+                     " status) VALUES (?, 'ap', 'c', 'reply', 't', 'sent')",
+                     (outbound_msg.message_id_hash("<own@acme.example>"),))  # fmt: skip
+    for _ in range(2):
+        _track(conn, clock, src)
+        clock.advance(3600)
+    assert _row(conn, sid)["outcome"] == "deleted_unsent"
+
+
+@pytest.mark.usefixtures("addr")
+def test_of_two_replies_the_one_that_is_the_draft_counts(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    email = _email_id(conn, sid)
+    src.append("Sent", _reply_copy(email, "A short note of my own.", "<first@x.example>"), [])
+    src.append("Sent", _reply_copy(email, FILLED, "<second@x.example>"), [])
+    _track(conn, clock, src)
+    assert _row(conn, sid)["outcome"] == "sent_unchanged"
+
+
+@pytest.mark.usefixtures("addr")
+def test_replies_read_are_bounded(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    for n in range(draft_data.REPLY_READS + 2):
+        src.append("Sent", _reply_copy(_email_id(conn, sid), "mine", f"<{n}@x.example>"), [])
+    reads: list[int] = []
+    real = src.fetch_start_in
+
+    def counted(folder: str, uid: int, limit: int) -> bytes | None:
+        reads.append(uid)
+        return real(folder, uid, limit)
+
+    monkeypatch.setattr(src, "fetch_start_in", counted)
+    _track(conn, clock, src)
+    assert len(reads) == draft_data.REPLY_READS
+    assert _row(conn, sid)["outcome"] == "sent_edited"
+
+
+@pytest.mark.usefixtures("addr")
+def test_an_email_with_no_message_id_is_never_searched_as_a_reply(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    with write_tx(conn):
+        conn.execute("UPDATE items SET message_id = NULL WHERE stable_id = ?", (sid,))
+
+    def searched(_folder: str, _mid: str, _since: datetime) -> list[int]:
+        pytest.fail("searched")
+
+    monkeypatch.setattr(src, "find_replies_in", searched)
+    _track(conn, clock, src)
+    assert _row(conn, sid)["outcome"] == "saved"
+
+
+@pytest.mark.usefixtures("addr")
+def test_a_reply_from_before_the_draft_was_saved_isnt_its_send(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    clock.advance(10 * 365 * 86400)  # the fake mailbox stamps today: "earlier" than this clock
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    src.append("Sent", _reply_copy(_email_id(conn, sid), "My reply this morning."), [])
+    for _ in range(2):
+        _track(conn, clock, src)
+        clock.advance(3600)
+    assert _row(conn, sid)["outcome"] == "deleted_unsent"
+
+
+@pytest.mark.usefixtures("addr")
+def test_the_reply_search_starts_just_before_the_draft_was_saved(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    asked: list[datetime] = []
+
+    def noted(_folder: str, _mid: str, since: datetime) -> list[int]:
+        asked.append(since)
+        return []
+
+    monkeypatch.setattr(src, "find_replies_in", noted)
+    _track(conn, clock, src)
+    assert asked == [from_ts(_row(conn, sid)["saved_at"]) - draft_data.SKEW]
+
+
+@pytest.mark.usefixtures("addr")
+@pytest.mark.parametrize("hostile", [
+    "<\u00fc@x.example>", "<a\r\nA1 LOGOUT\r\n@x.example>", "a", "<a@x.example> <b@x.example>",
+    "<a)b@x.example>", "<a(b@x.example>", "<a*@x.example>", "<a%@x.example>", "<a\x00@x.example>",
+    "<a\x7f@x.example>", '<a"b@x.example>', "<a\\b@x.example>", "<a{5}@x.example>",
+    "<a]@x.example>", "<a b@x.example>", f"<{'a' * 401}@x.example>",
+])  # fmt: skip
+def test_an_odd_message_id_from_the_email_is_never_put_in_a_search(
+    conn: sqlite3.Connection, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, hostile: str
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    with write_tx(conn):
+        conn.execute("UPDATE items SET message_id = ? WHERE stable_id = ?", (hostile, sid))
+
+    def searched(_folder: str, _mid: str, _since: datetime) -> list[int]:
+        pytest.fail("searched")
+
+    monkeypatch.setattr(src, "find_replies_in", searched)
+    _track(conn, clock, src)
+    assert _row(conn, sid)["outcome"] == "saved"
+
+
+def test_ordinary_message_ids_can_be_searched() -> None:
+    for mid in ("<CAFfNkcQwNmtoGL=WSmEUtbiZ4GTEn7o_ep-vkC8e0PWHqi6=_g@mail.gmail.com>",
+                "<8dc05f5b.ecf@gmail.com>", "<x@mail_relay.corp>", "<1@bugs.vendor-a.example/>",
+                "<a+b/c$d&e!f#g'h?i^j`k|l~m@mail.vendor-a.example>"):  # fmt: skip
+        assert draft_data.searchable(mid)
+
+
+@pytest.mark.usefixtures("addr")
+@pytest.mark.parametrize(("newer", "outcome"), [("closed", "deleted_unsent"),
+                                                ("undone", "sent_unchanged")])  # fmt: skip
+def test_only_the_newest_saved_version_is_matched_as_a_reply(
+    conn: sqlite3.Connection, clock: FakeClock, newer: str, outcome: str
+) -> None:
+    src = FakeMailSource()
+    sid = _saved(conn, clock, src)
+    _drop_draft(conn, src, sid)
+    cols = [c["name"] for c in conn.execute("PRAGMA table_info(draft_versions)")
+            if c["name"] not in ("version", "saved_message_id_hash", "outcome")]  # fmt: skip
+    names = ", ".join(cols)
+    with write_tx(conn):
+        conn.execute(
+            f"INSERT INTO draft_versions (version, saved_message_id_hash, outcome, {names})"  # noqa: S608 - the table's own columns
+            f" SELECT 2, 'other', ?, {names} FROM draft_versions WHERE stable_id = ?",
+            (newer, sid),
+        )  # fmt: skip
+    src.append("Sent", _reply_copy(_email_id(conn, sid), FILLED), [])
+    for _ in range(2):
+        _track(conn, clock, src)
+        clock.advance(3600)
+    assert _row(conn, sid)["outcome"] == outcome
 
 
 @pytest.mark.usefixtures("addr")

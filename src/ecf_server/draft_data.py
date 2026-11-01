@@ -3,12 +3,20 @@
 **Tracking, bounded.** Inside an address's check, after its approved actions and Undos, at most
 `PER_CHECK` saved drafts, each at most once an hour, for `draft_versions.WATCH_DAYS` days. The pass
 stops starting drafts after `BUDGET_S`; a search already sent waits on the mailbox like any other.
-Each draft costs up to two exact Message-ID searches: Sent, then Drafts. ecf reads only a message
-found in Sent, once, in memory and only its first `READ_BYTES` (an attachment isn't downloaded), and
-keeps only the outcome. It never reads a draft in Drafts, and never searches by In-Reply-To.
+Each draft costs up to four searches: Sent and Drafts, each by the draft's exact Message-ID, then
+for a reply to the same email. Gmail in a browser gives a draft a new Message-ID when it is sent or
+edited, but keeps its In-Reply-To (real test, 2026-11-01). ecf reads only a message found in Sent,
+at most `REPLY_READS` of them, once, in memory and only the first `READ_BYTES` of each (an
+attachment isn't downloaded), and keeps only the outcome. It never reads a draft in Drafts.
 
-- found in Sent: `sent_unchanged` or `sent_edited`, by `draft_versions.unchanged`, or `sent_unread`
-  when its first `READ_BYTES` hold no text, as when an attachment or inline image comes first;
+A reply counts only if it arrived after the draft was saved (`SKEW` allowed), and only for the
+item's newest saved draft, so one send isn't counted twice. The email's Message-ID is the sender's
+to choose, so an odd one (`searchable`) is never put in a search.
+
+- found in Sent: `sent_unchanged` if a copy is the draft (`draft_versions.unchanged`), else
+  `sent_edited`, so a reply written from scratch reads as an edit; `sent_unread` when the first
+  `READ_BYTES` hold no text, as when an attachment or inline image comes first. A reply ecf sent
+  itself (`sent`) isn't one;
 - found in Drafts: still `saved`;
 - in neither, `MISSES` checks running: `deleted_unsent`, watched to the end, since a send can reach
   Sent late. A mailbox with no folder marked `\\Sent` or `\\Drafts` can't tell, so the draft stays
@@ -25,6 +33,7 @@ something" 👎 alerts once per version. The card's buttons arrive in M8 Step 10
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from datetime import timedelta
@@ -41,6 +50,9 @@ from ecf_server.notify import Notifier
 from ecf_server.outbound_msg import message_id_hash
 
 PER_CHECK = 10
+REPLY_READS = 3
+SKEW = timedelta(minutes=5)  # this computer's clock against the mail server's
+_SAFE_ID = re.compile(r"<[A-Za-z0-9.!#$&'+/=?^_`|~-]{1,400}@[A-Za-z0-9.!#$&'+/=?^_`|~-]{1,200}>")
 EVERY = timedelta(hours=1)
 BUDGET_S = 2.0
 MISSES = 2
@@ -127,7 +139,7 @@ def track_in_check(conn: sqlite3.Connection, clock: Clock, src: MailSource, addr
 
 def _track_one(conn: sqlite3.Connection, clock: Clock, src: MailSource, r: sqlite3.Row,
                drafts: str | None, sent: str | None, max_scan_bytes: int) -> None:  # fmt: skip
-    item = conn.execute("SELECT proposal FROM items WHERE stable_id = ?",
+    item = conn.execute("SELECT proposal, message_id FROM items WHERE stable_id = ?",
                         (r["stable_id"],)).fetchone()  # fmt: skip
     doc: dict[str, Any] = json.loads(item["proposal"] or "{}") if item else {}
     record = _saved_record(doc, str(r["saved_message_id_hash"]))
@@ -135,17 +147,19 @@ def _track_one(conn: sqlite3.Connection, clock: Clock, src: MailSource, r: sqlit
         _update(conn, clock, r, {})
         return
     mid, text = str(record["message_id"]), _approved_text(doc, r["normalised_hash"])
-    found = src.find_in(sent, mid) if sent else []
-    if found:
-        raw = src.fetch_start_in(str(sent), found[0], READ_BYTES)
-        if raw is None:  # gone between the search and the read: look again next time
-            _update(conn, clock, r, {})
-            return
-        seen = body_text(raw, max_scan_bytes)
+    email = _reply_key(conn, r, item)
+    since = from_ts(r["saved_at"]) - SKEW
+    found = (src.find_in(sent, mid) or (src.find_replies_in(sent, email, since) if email else [])
+             ) if sent else []  # fmt: skip
+    texts = _sent_texts(conn, src, str(sent), found, max_scan_bytes)
+    if texts is None:  # gone between the search and the read: look again next time
+        _update(conn, clock, r, {})
+        return
+    if texts:
         after = (clock.now() - from_ts(r["saved_at"])).total_seconds()
         change: dict[str, Any] = {"outcome": "sent_unread", "edited": None}
-        if seen.strip():
-            same = _is_same(text, r["normalised_hash"], seen)
+        if any(t.strip() for t in texts):
+            same = any(_is_same(text, r["normalised_hash"], t) for t in texts if t.strip())
             change = {"outcome": "sent_unchanged" if same else "sent_edited",
                       "edited": int(not same)}  # fmt: skip
         _update(conn, clock, r, change | {"sent_after_s": after, "missing_checks": 0})
@@ -153,7 +167,7 @@ def _track_one(conn: sqlite3.Connection, clock: Clock, src: MailSource, r: sqlit
     if drafts is None or sent is None:  # can't tell a deleted draft from a sent one
         _update(conn, clock, r, {})
         return
-    if src.find_in(drafts, mid):
+    if src.find_in(drafts, mid) or (email and src.find_replies_in(drafts, email, since)):
         back = {"outcome": "saved"} if r["outcome"] == "deleted_unsent" else {}
         _update(conn, clock, r, {"missing_checks": 0, **back})
         return
@@ -161,6 +175,37 @@ def _track_one(conn: sqlite3.Connection, clock: Clock, src: MailSource, r: sqlit
     gone = misses >= MISSES and r["outcome"] == "saved"
     _update(conn, clock, r, {"missing_checks": misses,
                              **({"outcome": "deleted_unsent"} if gone else {})})  # fmt: skip
+
+
+def searchable(message_id: str | None) -> bool:
+    """Only characters safe in an IMAP SEARCH argument: the rest of an email's Message-ID could get
+    the search refused, ending every pass for that address, or worse."""
+    return bool(message_id and _SAFE_ID.fullmatch(message_id))
+
+
+def _reply_key(conn: sqlite3.Connection, r: sqlite3.Row, item: sqlite3.Row | None) -> str | None:
+    """The email's Message-ID, to find a reply by, for the item's newest saved draft only."""
+    newest = conn.execute("SELECT max(version) FROM draft_versions WHERE stable_id = ?"
+                          " AND saved_at IS NOT NULL AND outcome IS NOT 'undone'",
+                          (r["stable_id"],)).fetchone()[0]  # fmt: skip
+    email: str | None = item["message_id"] if item else None
+    return email if r["version"] == newest and searchable(email) else None
+
+
+def _sent_texts(conn: sqlite3.Connection, src: MailSource, sent: str, uids: list[int],
+                max_scan_bytes: int) -> list[str] | None:  # fmt: skip
+    """The text of each copy, leaving out replies ecf itself sent; None if one has gone."""
+    texts: list[str] = []
+    for uid in uids[:REPLY_READS]:
+        raw = src.fetch_start_in(sent, uid, READ_BYTES)
+        if raw is None:
+            return None
+        own = parse(raw, max_scan_bytes=max_scan_bytes).message_id
+        if own and conn.execute("SELECT 1 FROM sent WHERE message_id_hash = ?",
+                                (message_id_hash(own),)).fetchone():  # fmt: skip
+            continue
+        texts.append(body_text(raw, max_scan_bytes))
+    return texts
 
 
 def _update(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row, change: dict[str, Any]) -> None:

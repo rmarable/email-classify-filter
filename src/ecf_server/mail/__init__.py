@@ -183,6 +183,12 @@ class MailSource(Protocol):
         """Copy an INBOX message to `folder`; it stays in INBOX."""
         ...
 
+    def find_replies_in(self, folder: str, message_id: str, since: datetime) -> list[int]:
+        """UIDs in `folder` of messages whose In-Reply-To is exactly `message_id`, arrived at or
+        after `since`: for a draft a client gave a new Message-ID. `message_id` must be plain
+        ASCII: unlike `find_in`'s, it comes from an email (`draft_data.searchable`)."""
+        ...
+
     def find_in(self, folder: str, message_id: str) -> list[int]:
         """UIDs in `folder` whose Message-ID is exactly `message_id`."""
         ...

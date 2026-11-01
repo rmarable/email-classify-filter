@@ -193,6 +193,23 @@ class MailSourceContract:
     def _archive(self, h: Harness) -> str:
         return h.move_target
 
+    def test_find_replies_is_exact_and_from_a_date(self, harness: Harness) -> None:
+        src = harness.source
+        folder = self._archive(harness)
+        for n, replying_to in enumerate(("<a@acme.example>", "<a@acme.example.longer>")):
+            m = EmailMessage()
+            m["From"], m["To"], m["Subject"] = "s@vendor-a.example", "ap@acme.example", "Re: x"
+            m["Message-ID"], m["In-Reply-To"] = f"<reply-{n}@vendor-a.example>", replying_to
+            m.set_content("reply\n")
+            harness.deliver(m.as_bytes(), DAY1)
+        first = min(src.uids_after(0))
+        src.move(first, folder)
+        [there] = src.find_in(folder, "<reply-0@vendor-a.example>")
+        assert src.find_replies_in(folder, "<a@acme.example>", DAY1 - timedelta(days=1)) == [there]
+        assert src.find_replies_in(folder, "<a@acme.example>", DAY1 + timedelta(minutes=1)) == []
+        assert src.find_replies_in(folder, "<a@acme.example>", DAY1) == [there]
+        assert src.find_replies_in(folder, "<@acme.example>", DAY1 - timedelta(days=1)) == []
+
     def test_set_seen(self, harness: Harness) -> None:
         [uid] = self._fill(harness, 1)
         harness.source.set_seen(uid, True)
