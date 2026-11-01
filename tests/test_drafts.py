@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from ecf_server import actor, approvals, decide, digests, fetch, mailbox_actions
+from ecf_server import actor, approvals, decide, digests, fetch, mailbox_actions, outbound_plan
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.mail import Folder
@@ -32,6 +32,17 @@ REPLY: dict[str, Any] = {"category": "invoice", "priority": "normal", "requires_
 FACTS: dict[str, Any] = {"triggers": {}, "auth_result": "pass", "sender_seen_before": True,
          "from_count": 1, "language": "en"}  # fmt: skip
 TEXT = "Hello,\n\nThanks for your note; see https://acme.example/terms or write to ar@acme.example."
+
+
+@pytest.fixture(autouse=True)
+def _no_checker(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """These tests are about saving and showing a draft; the checker's own part of the path is
+    `tests/test_draft_live_check.py`."""
+
+    def passes(*_args: object) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(outbound_plan, "draft_refusals", passes)
 
 
 def _approved_draft(conn: sqlite3.Connection, clock: FakeClock, src: FakeMailSource, *,

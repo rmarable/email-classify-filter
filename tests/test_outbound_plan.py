@@ -28,6 +28,17 @@ TEMPLATES = {"version": 1, "templates": [
 ]}  # fmt: skip
 
 
+@pytest.fixture(autouse=True)
+def _no_checker(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """These tests are about the payload; the checker's own part of the path is
+    `tests/test_draft_live_check.py`."""
+
+    def passes(*_args: object) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(outbound_plan, "draft_refusals", passes)
+
+
 def _config(conn: sqlite3.Connection, key: str, value: Any) -> None:
     with write_tx(conn):
         conn.execute("INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?,"

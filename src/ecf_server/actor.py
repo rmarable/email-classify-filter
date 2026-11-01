@@ -20,12 +20,13 @@ name).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
 from ecf.ids import StableId
-from ecf_server import answers, decide, items, outbound_plan, policy
+from ecf_server import answers, decide, draft_versions, items, outbound_plan, policy
 from ecf_server.clock import Clock
 from ecf_server.policy import Dropped, Planned
 from ecf_server.rules import HIDE_ACTIONS
@@ -132,6 +133,14 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
             one = Planned(one.name, one.target, one.mode, payload)
         except outbound_plan.Unresolved as exc:
             one = Dropped(one.name, one.target, str(exc.detail))
+    if isinstance(one, Planned) and one.name == "draft_reply" and one.payload is not None:
+        refused = outbound_plan.draft_refusals(conn, item, one.payload)  # before its card (P-d)
+        draft_versions.record(conn, clock, item, ctx, str(one.payload["text"]),
+                              model=got.get("model"), refused=refused)  # fmt: skip
+        if refused:  # the codes only: the text goes no further
+            one = Dropped(one.name, one.target, "draft_checker: " + ", ".join(refused))
+    else:
+        draft_versions.close_waiting(conn, clock, sid)
     if isinstance(one, Dropped):
         if one.name == "draft_reply":  # a dropped draft flags its item (OD-551, M8 plan P-d)
             _add(p, Planned("flag", None, "auto"))
@@ -139,6 +148,12 @@ def decide_one(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: p
     else:
         _add(p, one)
     decide.apply(conn, clock, sid, p, source="actor")
+    if isinstance(one, Planned) and one.name == "draft_reply":
+        row = conn.execute("SELECT proposal FROM items WHERE stable_id = ?", (sid,)).fetchone()
+        doc: dict[str, Any] = json.loads(row["proposal"] or "{}")
+        kept: list[dict[str, Any]] = doc.get("actions") or []
+        if all(x.get("name") != "draft_reply" for x in kept):
+            draft_versions.close_waiting(conn, clock, sid)  # a reprocess added nothing (`_added`)
 
 
 def _add(p: policy.Plan, a: Planned) -> None:

@@ -75,6 +75,7 @@ from ecf_server import (
     db,
     destroy,
     digests,
+    draft_stats,
     draftcalibration,
     draftjudging,
     evalrun,
@@ -389,6 +390,7 @@ def create_app(state: ServiceState) -> Starlette:  # noqa: PLR0915 - one handler
             *_config_routes(state, allow),
             *_sender_routes(state, allow),
             *_data_routes(state, allow),
+            *_draft_routes(state, allow),
             *_backfill_routes(state, allow),
             *_reprocess_routes(state, allow),
             *_setup_routes(state, allow),
@@ -1552,6 +1554,30 @@ def _model_routes(state: ServiceState, allow: Allow) -> list[Route]:
         Route("/v1/models/claude-override", claude_override, methods=["POST"]),
         Route("/v1/stats", show_stats, methods=["GET"]),
     ]
+
+
+def _draft_routes(state: ServiceState, allow: Allow) -> list[Route]:
+    @allow(Caller.CLI)
+    def show_draft_stats(request: Request) -> JSONResponse:
+        """`ecf drafts stats` (M8 plan §7, OD-583)."""
+        q = request.query_params
+        now = state.clock.now()
+        try:
+            since = from_ts(q["since"]) if "since" in q else now - timedelta(days=30)
+        except ValueError as exc:
+            raise InvalidInputError("since: a UTC time, 2026-09-01T00:00:00.000000Z") from exc
+        if not now - timedelta(days=366) <= since < now:
+            raise InvalidInputError("since: in the past, at most a year back")
+        by = q.get("by")
+        if by is not None and by not in draft_stats.BY:
+            raise InvalidInputError("by: one of " + ", ".join(sorted(draft_stats.BY)))
+        conn = state.connect()
+        try:
+            return JSONResponse(draft_stats.report(conn, since, by=by))
+        finally:
+            conn.close()
+
+    return [Route("/v1/drafts/stats", show_draft_stats, methods=["GET"])]
 
 
 def _data_routes(state: ServiceState, allow: Allow) -> list[Route]:

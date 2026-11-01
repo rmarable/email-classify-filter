@@ -49,6 +49,7 @@ from ecf_server import (
     db,
     decide,
     destroy,
+    draft_data,
     health,
     jev_dispatch,
     jev_keys,
@@ -222,6 +223,7 @@ class Service:
         # registered in checks.IN_LEASE on import: actions run in their address's check (V1.3)
         self.in_check = mailbox_actions.run_in_check
         self.settle_sends = send.settle_in_check  # settles open sends in each check (V1.5)
+        self.track_drafts = draft_data.track_in_check  # what became of saved drafts (M8 plan §7)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:

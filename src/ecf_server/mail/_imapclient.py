@@ -106,6 +106,11 @@ def envelope_message_id(envelope: Any) -> str | None:
     return None if mid is None else _s(mid).strip() or None
 
 
+def envelope_in_reply_to(envelope: Any) -> str | None:
+    mid = getattr(envelope, "in_reply_to", None)
+    return None if mid is None else _s(mid).strip() or None
+
+
 def as_datetime(v: Any) -> datetime:
     if not isinstance(v, datetime):
         raise TypeError(f"expected datetime, got {type(v).__name__}")

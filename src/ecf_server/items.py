@@ -16,6 +16,7 @@ from typing import Any
 from ecf.errors import ConflictError, NotFoundError
 from ecf.ids import AddressId, StableId
 from ecf.status import TERMINAL, Status
+from ecf_server import draft_versions
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import items_writer, write_tx
 from ecf_server.state_machine import Origin, TransitionContext, check_transition
@@ -108,6 +109,7 @@ def transition(
             )  # fmt: skip
         if cur.rowcount != 1:
             raise ConflictError("item changed concurrently")
+        draft_versions.on_transition(conn, stable_id, to, now, frm)
         if to in TERMINAL:  # closed however it happened: nothing may run from it any more
             conn.execute("UPDATE grants SET status = 'voided' WHERE stable_id = ?"
                          " AND status IN ('issued', 'approved')", (stable_id,))  # fmt: skip

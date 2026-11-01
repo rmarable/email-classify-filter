@@ -53,11 +53,21 @@ from ecf.errors import ConflictError, PolicyDeniedError
 from ecf.ids import StableId
 from ecf.status import Status
 from ecf_server import actions as mail_actions
-from ecf_server import checks, items, outbound_msg, outbound_plan, pause, probe, send_actions
+from ecf_server import (
+    checks,
+    draft_versions,
+    items,
+    outbound_msg,
+    outbound_plan,
+    pause,
+    probe,
+    send_actions,
+)
 from ecf_server.actions import Planned, keyword
 from ecf_server.clock import Clock, to_ts
 from ecf_server.config import current
 from ecf_server.db import write_tx
+from ecf_server.log_bridge import log
 from ecf_server.mail import MailSource
 from ecf_server.message import parse
 from ecf_server.state_machine import TransitionContext
@@ -187,9 +197,24 @@ def executor_for(
                 record.append(_move(src, uid, a, folders, roles))
                 done.append(f"{a.name} to {record[-1]['folder']}")
         _remember(conn, clock, item["stable_id"], record)
+        _note_saved(conn, clock, item["stable_id"], record)
         return done
 
     return run
+
+
+def _note_saved(conn: sqlite3.Connection, clock: Clock, sid: str,
+                record: list[dict[str, Any]]) -> None:  # fmt: skip
+    """Draft data is a measurement: a database error here must not retry the job, which would save
+    a second draft and lose the first from Undo."""
+    for r in record:
+        if r["name"] == "draft_reply":
+            try:
+                draft_versions.saved(conn, clock, sid,
+                                     outbound_msg.message_id_hash(r["message_id"]),
+                                     r["content_hash"])  # fmt: skip
+            except sqlite3.Error as exc:
+                log.warning("drafts.saved_not_recorded", error_type=type(exc).__name__)
 
 
 def _label_and_flag(src: MailSource, uid: int, planned: list[Planned], install: str, *,

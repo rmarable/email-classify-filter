@@ -49,6 +49,7 @@ TITLES = health.TITLES | {
     "model_retirement": "Model Retirement Scheduled",
     "operator_input": "Operator Input Needed",
     "security_notice": "Security Notice",
+    "draft_promised": "Draft Rated As Promising Something",
 }
 CLASS_OF = {
     "mail_unreachable": "mail",
@@ -68,6 +69,7 @@ CLASS_OF = {
     "restored_keywords": "operator",
     "send_limit": "operator",
     "download_budget": "operator",
+    "draft_promised": "operator",
     "slack_delivery_failed": "slack",
     "slack_connection": "slack",
     "security_notice": "security",
