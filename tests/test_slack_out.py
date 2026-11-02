@@ -310,7 +310,7 @@ def test_a_long_joined_tail_is_split_too() -> None:
     lines = [f"line {i} " + "x" * 150 for i in range(60)]  # the tail join passes 3,000
     b = blocks(Card("t", text="\n".join(lines)))
     assert "…" not in _shown(b) and "line 59" in _shown(b)
-    assert slack_render.fits("\n".join(lines))
+    assert not slack_render.fits("\n".join(lines))  # they run together: not shown as written (AI8)
 
 
 def test_a_split_never_cuts_a_section() -> None:

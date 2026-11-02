@@ -49,6 +49,7 @@ from ecf_server import (
     db,
     decide,
     destroy,
+    draft_actions,
     draft_data,
     health,
     jev_dispatch,
@@ -224,6 +225,7 @@ class Service:
         self.in_check = mailbox_actions.run_in_check
         self.settle_sends = send.settle_in_check  # settles open sends in each check (V1.5)
         self.track_drafts = draft_data.track_in_check  # what became of saved drafts (M8 plan §7)
+        self.draft_work = draft_actions.run_in_check  # a card's queued deletes and flags (§6)
 
     # -- threads -------------------------------------------------------------------------------
     def _timer(self) -> None:
@@ -324,6 +326,7 @@ class Service:
                 send_limits.sweep(conn, self.clock, self.state.notifier)  # OD-059 (V1.5)
                 outbound_remind.remind(conn, self.clock, self.state.notifier)  # §9.8
                 approvals.refresh_draft_cards(conn, self.clock)  # once (OD-551)
+                approvals.redraw_draft_cards(conn, self.clock)  # after the upgrade (M8 plan §6)
                 approvals.post_held_cards(conn, self.clock)  # after a large backlog (§5.3)
                 reprocess.tick(conn, self.clock)  # a batch of `ecf reprocess` (OD-507, P8)
                 config.schema_tick(conn, self.clock, self.state.notifier)  # OD-478

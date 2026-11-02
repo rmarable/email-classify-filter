@@ -296,7 +296,7 @@ def run_model_undos(conn: sqlite3.Connection, clock: Clock, src: MailSource, add
         with write_tx(conn):
             conn.execute("UPDATE items SET proposal = ? WHERE stable_id = ?",
                          (json.dumps(doc, sort_keys=True), item["stable_id"]))  # fmt: skip
-        _tell_member(conn, clock, address_id, text)
+        tell_member(conn, clock, address_id, text)
     return len(rows)
 
 
@@ -329,7 +329,7 @@ def run_undos(
         with write_tx(conn):
             conn.execute("UPDATE items SET facts = ? WHERE stable_id = ?",
                          (json.dumps(facts, sort_keys=True), item["stable_id"]))  # fmt: skip
-        _tell_member(conn, clock, address_id, text)
+        tell_member(conn, clock, address_id, text)
         log.info("action.undo", address_id=address_id, result=result.split(":")[0])
     return len(rows)
 
@@ -340,7 +340,7 @@ def _tell(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click, text: s
                                     text=text)  # fmt: skip
 
 
-def _tell_member(conn: sqlite3.Connection, clock: Clock, address_id: str, text: str) -> None:
+def tell_member(conn: sqlite3.Connection, clock: Clock, address_id: str, text: str) -> None:
     ident = slack_admin.identity(conn)
     route = slack_routes.route_for(conn, address_id)
     if ident is not None and ident.member and route is not None:

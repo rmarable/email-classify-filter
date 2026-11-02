@@ -115,6 +115,24 @@ Buttons say exactly what they do ("Approve: archive email"). Whoever decides fir
 Approvals expire after 4 days for sends and 14 days for everything else; an expired approval does
 nothing.
 
+A draft has its own card. The top line shows who the email is from and its subject, and a small
+line under it gives the email's category, its sender check, its fraud risk and the model that wrote
+the draft. A yellow sign marks anything to look at twice, such as a first-time sender. Then comes the
+draft, each of its lines starting with │, so you can tell the model's words from ecf's. Check every
+name, title and sign-off is yours, then choose:
+
+- **Save to Drafts** saves it in your mailbox's Drafts folder. ecf never sends it. If saving also
+  does something else, such as labelling the email, the card says so above the buttons. If the
+  draft fails ecf's check when you click, nothing is saved, the email is flagged, and the card says
+  why.
+- **Delete draft** throws the draft away and flags the email, so it stays in view.
+- **Show excerpt** shows you part of the email, and only you see it.
+
+Afterwards the card asks how the draft was. Tap 👍, or 👎 and pick the main reason; you can change
+your rating later. **Show draft** shows it again to you alone, and **Delete from Drafts** deletes a
+saved draft at the next check, unless you have edited it. A draft longer than 28 lines, counting blank
+lines, can only be saved at your computer, with `ecf approve <id>`.
+
 - **Reversible actions** (mark as read, archive, move, mark as junk, save a draft) take one click
   in Slack (a draft on its own card, as above).
 - **Risky actions need you at the computer:** every send, anything that can't be undone, and

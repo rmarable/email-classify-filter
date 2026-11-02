@@ -10,7 +10,16 @@ from typing import Any
 
 import pytest
 
-from ecf_server import actor, approvals, decide, digests, fetch, mailbox_actions, outbound_plan
+from ecf_server import (
+    actor,
+    approvals,
+    decide,
+    digests,
+    draft_cards,
+    fetch,
+    mailbox_actions,
+    outbound_plan,
+)
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.mail import Folder
@@ -95,9 +104,9 @@ def test_the_card_shows_the_draft_in_full_without_live_links(
     _approved_draft(conn, clock, FakeMailSource(), address=False)
     cards = [json.loads(r[0])["card"] for r in conn.execute(
         "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid")]  # fmt: skip
-    [card] = [c for c in cards if c["title"].startswith("Approve?")]
-    assert "save a draft reply to news@vendor-a.example" in card["title"]
-    assert card["text"].startswith("Draft written by ecf's model")
+    [card] = [c for c in cards if c["text"]]
+    assert card["title"].startswith("news@vendor-a.example · ")
+    assert card["text"].startswith(draft_cards.LABEL)
     assert "https[:]//acme[.]example/terms" in card["text"]
     assert "ar[at]acme[.]example" in card["text"] and "https://" not in card["text"]
 
@@ -125,8 +134,9 @@ def test_a_draft_at_the_limit_is_shown_whole_on_the_card(
                      frozenset())  # fmt: skip
     [card] = [c for c in (json.loads(r[0])["card"] for r in conn.execute(
         "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid"))
-        if c["title"].startswith("Approve?")]  # fmt: skip
-    shown = "".join(s["text"]["text"] for s in slack_render.blocks(Card("t", text=card["text"]))
+        if c["text"]]  # fmt: skip
+    shown = "".join(s["text"]["text"].removeprefix(slack_render.MARK)
+                    for s in slack_render.blocks(Card("t", text=card["text"]))
                     if s["type"] == "section")  # fmt: skip
     assert "…" not in shown
     assert shown.replace(" ", "").endswith(cards.defang(text).replace(" ", ""))
@@ -148,7 +158,7 @@ def test_a_card_that_cant_show_the_whole_draft_has_no_approve(
     _approved_draft(conn, clock, FakeMailSource(), address=False)
     [card] = [c for c in (json.loads(r[0])["card"] for r in conn.execute(
         "SELECT payload FROM jobs WHERE queue = 'slack_out' ORDER BY rowid"))
-        if c["title"].startswith("Approve?")]  # fmt: skip
+        if c["text"].startswith(draft_cards.LABEL)]  # fmt: skip
     assert not any(b["action"] == approvals.APPROVE for b in card["buttons"])
     assert "Approve it at your computer: ecf approve" in card["note"]
 

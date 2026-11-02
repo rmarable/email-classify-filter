@@ -42,6 +42,17 @@ class Button:
     style: Style | None = None
 
 
+# A draft card's warnings (M8 plan §6): the only card text Slack gets as formatted text, so it is
+# fixed wording here, never anything from an email (operator decision 2026-11-01).
+FIRST_TIME = "first-time sender"
+REPLY_TO = "Reply-To differs from From. This draft goes to the From address."
+NOT_ADDRESSED = "not addressed to this mailbox"
+PAYMENT = "payment mentioned"
+LINKS = "draft repeats a link from the email"
+CUT = "excerpt cut, the model saw only the first part"
+FIXED_WARNINGS = frozenset({FIRST_TIME, REPLY_TO, NOT_ADDRESSED, PAYMENT, LINKS, CUT})
+
+
 @dataclass(frozen=True)
 class Card:
     title: str
@@ -50,6 +61,9 @@ class Card:
     buttons: tuple[Button, ...] = ()
     note: str = ""  # a line under the buttons, e.g. "This acts on the email only."
     mention: str = ""  # a Slack member ID to mention (escalations); never text from an email
+    context: str = ""  # a small line under the title
+    warnings: tuple[str, ...] = ()  # beside `context`; bold only if in FIXED_WARNINGS
+    status: str = ""  # a line after the text, before the buttons
 
 
 @dataclass(frozen=True)
@@ -98,7 +112,9 @@ class ChatSurface(Protocol):
 
     def pin(self, ref: ThreadRef) -> None: ...
 
-    def ephemeral(self, route: RouteRef, user: str, text: str) -> None: ...
+    def ephemeral(
+        self, route: RouteRef, user: str, text: str, card: Card | None = None
+    ) -> None: ...
 
     def create_route(self, name: str) -> RouteRef:
         """A private route; if the name is taken by one ecf is in, that one. Raises
@@ -168,9 +184,10 @@ class FakeChat:
         with self._lock:
             self._find(ref)["pinned"] = True
 
-    def ephemeral(self, route: RouteRef, user: str, text: str) -> None:
+    def ephemeral(self, route: RouteRef, user: str, text: str, card: Card | None = None) -> None:
         with self._lock:
-            self.posts.append({"route": route.channel, "ephemeral_to": user, "text": text})
+            self.posts.append({"route": route.channel, "ephemeral_to": user, "text": text,
+                               **({"card": asdict(card)} if card else {})})  # fmt: skip
 
     def create_route(self, name: str) -> RouteRef:
         route = RouteRef("C" + new_random_id()[:10].upper())

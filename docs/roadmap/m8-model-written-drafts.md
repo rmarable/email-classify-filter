@@ -39,12 +39,13 @@ hard. So:
   drafter and Regenerate exist, and adds `saved_at`, `missing_checks` and `alerted`. Ratings' fixed
   reasons are in `draft_data.REASONS`; the card (Step 10) calls `draft_data.rate`, and until then
   nothing does.
+- **Step 10 changes (2026-11-01, OD-584; mockups approved by the operator):** the draft card as in SPEC OD-584, which differs from §6 in: the coloured circles (Slack can't colour text); three more warnings, bold, under one more `mrkdwn` exception; no note box in the 👎 window; the "You rated" line; no 👍/👎 or Show draft on a refused draft; the "one line" after a decision is a text line and a row of buttons. "Queued flag" in §6 means the email is flagged at the next check (`proposal.flag_email`); Delete from Drafts is queued the same way (`proposal.delete_draft`), since a click never touches IMAP. Delete from Drafts records `deleted_unsent` (it was saved), and `deleted` stays Delete before approval. A card with other actions adds "Saving it also does: ...". Review (2026-11-01): a scan of `items` for queued work adds about 26 ms at 20,000 items and 130 ms at 100,000 per check with a 1.1 KB proposal (52 and 270 ms at 4 KB; measured on the development Mac; checks run every 10-30 minutes), left as it is, as the two digest scans beside it, since an index needs a migration. A card-deleted draft that is later undone counts as `undone`, as any undone draft does.
 - **M8 is complete** when: the baseline runs are done and reported; every escalated draft has the
   operator's decision; Step 8 is built; the card is approved (Step 10); the C gate run passes (Step
   11); then `ms-m8-drafts` is prompted. Quality is decided on real mail (the card's 👍/👎, the weekly
   stats), which feed M9's entry evidence.
 
-**Status: draft 36, 2026-10-31 (OD-583, Step 8 changes above). Before it: draft 35, 2026-10-30 (OD-582, the amendment above). Before it: draft 34, 2026-10-27. Steps 1-2 merged (main `2fe819a`); the draft-33 checks found no
+**Status: draft 37, 2026-11-01 (OD-584, Step 10 changes above). Before it: draft 36, 2026-10-31 (OD-583, Step 8 changes above). Before it: draft 35, 2026-10-30 (OD-582, the amendment above). Before it: draft 34, 2026-10-27. Steps 1-2 merged (main `2fe819a`); the draft-33 checks found no
 high finding, so under the operator's convergence rule the plan is ready for Steps 3-7 and their
 medium and low findings (BW-D1-BW-D3, BW-M1-BW-M3) are folded in below without another round; authentication is option A; no rule judges a sign-off (AE1); the draft-13 to draft-32 checks' AF1-AF9, AG1-AG9, AH1-AH8, AI1-AI9, AJ1-AJ7, AK1-AK7, AL1-AL6, AM1-AM6, AN1-AN6, AO1-AO6, AP1-AP7, AQ1-AQ9, AR1-AR8, AS1-AS8, AT1-AT8, AU1-AU6, AV1-AV4, AW0-AW5, AX1-AX5 and AY1-AY4 accepted.** Phase R ran on draft 1 (four Fable agents: safety,
 measurement, cost and design, performance). Its findings were merged into P1-P28, all accepted as
@@ -2753,8 +2754,15 @@ Found by running the code on the cards while writing draft 3:
 
 ## Facts
 
-- Slack Block Kit limits for modals with radio buttons and `static_select`, and `chat.update` rate tiers:
-  unverified; confirm against docs.slack.dev at Step 10, citing the page and date.
+- Slack limits, docs.slack.dev, fetched 2026-11-01 (OD-584): radio button group, 10 options
+  (`reference/block-kit/block-elements/radio-button-group-element`); option text, 75 characters
+  (`reference/block-kit/composition-objects/option-object`); modal title, submit and close, 24
+  characters, 100 blocks (`reference/views/modal-views`); actions block, 25 elements
+  (`reference/block-kit/blocks/actions-block`); context block, 10 elements
+  (`reference/block-kit/blocks/context-block`); `chat.update`, Tier 3, 50+ per minute
+  (`reference/methods/chat.update`); text objects have no colour field
+  (`reference/block-kit/composition-objects/text-object`). Whether Slack shows a Unicode emoji in
+  `plain_text` with `emoji: false`: unverified; the Slack test at Step 10 answers it.
 - (Answered 2026-11-01 for Gmail in a browser, SPEC OD-583: a new Message-ID, In-Reply-To kept; Purelymail dropped.) What Purelymail and Gmail do to an edited draft's Message-ID on send: unverified; Step 8's test answers
   it.
 - The cost and time table above: estimates; Step 7 measures them.

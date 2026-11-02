@@ -141,6 +141,31 @@ def record(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, ctx: polic
     return version
 
 
+def latest(conn: sqlite3.Connection, sid: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM draft_versions WHERE stable_id = ? ORDER BY version DESC"
+                        " LIMIT 1", (sid,)).fetchone()  # fmt: skip
+
+
+def set_outcome(conn: sqlite3.Connection, clock: Clock, sid: str, outcome: str,
+                codes: tuple[str, ...] | None = None) -> None:  # fmt: skip
+    """A decision the card made on the latest version: `deleted`, or `refused` with its codes.
+    `outcome` empty keeps the outcome and records only the codes (an expired draft stays so)."""
+    now = to_ts(clock.now())
+    with write_tx(conn):
+        row = latest(conn, sid)
+        if row is None:
+            return
+        conn.execute("UPDATE draft_versions SET outcome = ?, outcome_at = ?, refuse_codes ="
+                     " coalesce(?, refuse_codes), decided_after_s = CASE WHEN ? THEN NULL ELSE"
+                     " decided_after_s END WHERE stable_id = ? AND version = ?",  # a refusal: none
+                     (outcome or row["outcome"], now if outcome else row["outcome_at"],
+                      None if codes is None else json.dumps(list(codes)), outcome == "refused", sid,
+                      row["version"]))  # fmt: skip
+        _audit(conn, now, row["address_id"], sid, "draft.outcome",
+               {"version": row["version"], "outcome": outcome or row["outcome"]}
+               | ({"codes": list(codes)} if codes else {}))  # fmt: skip
+
+
 def close_waiting(conn: sqlite3.Connection, clock: Clock, sid: str) -> None:
     """The actor decided again and wrote no draft this time."""
     with write_tx(conn):
@@ -173,7 +198,8 @@ def on_transition(conn: sqlite3.Connection, sid: str, to: Status, now: str,
     if to is Status.AWAITING_APPROVAL:
         if frm is not Status.EXPIRED:  # only the same draft offered again reopens it
             return
-        sql, args = "outcome = NULL, outcome_at = NULL", "outcome = 'expired'"
+        sql = "outcome = NULL, outcome_at = NULL, refuse_codes = '[]'"  # to be checked again
+        args = "outcome = 'expired'"
     elif to is Status.EXPIRED:
         sql, args = "outcome = 'expired', outcome_at = ?", "outcome IS NULL"
     elif to is Status.REJECTED:

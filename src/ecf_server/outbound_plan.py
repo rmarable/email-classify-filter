@@ -112,6 +112,19 @@ def draft_refusals(conn: sqlite3.Connection, item: sqlite3.Row, payload: dict[st
     return draftcheck.check(str(payload["text"]), email, draftcheck.links(email), allowed).refuse
 
 
+def draft_check(conn: sqlite3.Connection, item: sqlite3.Row, payload: dict[str, Any],
+                ) -> tuple[str, ...]:  # fmt: skip
+    """What refuses a draft now, at an approval and in the save job (M8 plan §6, AI1, AJ3): the
+    checker on the stored text and policy on the item as it stands. An item fetched before the
+    `language` fact existed skips only that clause (X10)."""
+    from ecf_server import decide, policy  # noqa: PLC0415 - decide imports approvals
+
+    ctx = decide.context(conn, item)
+    why = policy.draft_refusal(ctx, check_language="language" in ctx.facts)
+    codes = draft_refusals(conn, item, payload)
+    return (*codes, why) if why is not None and why not in codes else codes
+
+
 def monitored(conn: sqlite3.Connection, to: str) -> bool:
     """`to` is one of this install's monitored addresses."""
     rows = conn.execute("SELECT email FROM addresses WHERE removed_at IS NULL")
