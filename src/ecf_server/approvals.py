@@ -265,8 +265,8 @@ def _check_draft(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, acto
     _queue_flag(conn, sid)
     _audit(conn, clock, item, "approval.draft_refused", actor, data, tx=True)
     show_decided(conn, clock, sid)
-    raise PolicyDeniedError(f"the draft check refused this draft ({shown}): nothing was saved,"
-                            " and the email is flagged")  # fmt: skip
+    raise PolicyDeniedError(f"the draft check refused this draft ({shown}). Nothing was saved,"
+                            " and ecf flags the email at its next check")  # fmt: skip
 
 
 def _queue_flag(conn: sqlite3.Connection, sid: str) -> None:
@@ -823,8 +823,9 @@ def _card(
 
 def _also(actions: list[Planned]) -> str:
     """What else approving a draft does: the grant covers it, and the card has no Action field."""
-    others = [a for a in actions if a.name != "draft_reply"]
-    return f"Saving it also does: {describe(others)}" if others else ""
+    return draft_cards.will_also([
+        (a.name, str((a.payload or {}).get("to") or a.target or "")) for a in actions
+        if a.name != "draft_reply"])  # fmt: skip
 
 
 def _draft_text(actions: list[Planned]) -> str:
@@ -849,9 +850,7 @@ def show_decided(conn: sqlite3.Connection, clock: Clock, sid: str) -> bool:
     route = slack_routes.route_for(conn, item["address_id"])
     if route is not None and has_card(conn, key):
         doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
-        also = ", ".join(f"label {r['target']}" if r["name"] == "label" else str(r["name"])
-                         for r in doc.get("done", [])
-                         if r["name"] not in ("draft_reply", "copy"))  # fmt: skip
+        also = draft_cards.done_also(doc.get("done", []))
         slack_out.enqueue_post(conn, clock, key=key, route=route,
                                card=draft_cards.decided(item, row, also=also),
                                identity=slack_routes.identity(item["address_id"]))  # fmt: skip

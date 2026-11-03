@@ -33,7 +33,7 @@ from ecf_server import (
     slack_out,
     slack_render,
 )
-from ecf_server.chat import FIXED_WARNINGS, Button, Card, FakeChat
+from ecf_server.chat import FIXED_WARNINGS, Button, Card
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.mail.fake import FakeMailSource
@@ -230,7 +230,7 @@ def test_the_waiting_card(conn: sqlite3.Connection, clock: FakeClock) -> None:
     assert card["text"].startswith(f"{draft_cards.LABEL}\n{draft_cards.NOTE}\n│ Hello,")
     assert _labels(card) == ["Save to Drafts", "Delete draft", "Show excerpt"]
     assert card["buttons"][0]["style"] == "primary"
-    assert card["status"] == "Saving it also does: label invoice"  # the grant covers it
+    assert card["status"] == "Saving it also adds the label invoice."  # the grant covers it
 
 
 def test_a_unicode_line_separator_cant_escape_the_line_mark() -> None:
@@ -506,8 +506,9 @@ def test_the_saved_card_asks_for_a_rating(conn: sqlite3.Connection, clock: FakeC
     sid = _saved(conn, clock, FakeMailSource())
     card = _card(conn, sid)
     assert card["title"] == "news@vendor-a.example · s"
-    assert card["text"].split("\n") == ["🔵 Draft saved · label invoice", "How was this draft?"]
-    assert _labels(card) == ["👍", "👎", "Delete from Drafts", "Show draft"]
+    assert card["text"].split("\n") == [f"{draft_cards.SAVED} · label invoice added",
+                                        "How was this draft?"]  # fmt: skip
+    assert _labels(card) == ["👍", "👎", "Delete from Drafts", "Show draft", "Show excerpt"]
 
 
 def test_a_saved_draft_with_other_actions_says_so(
@@ -528,8 +529,8 @@ def test_a_thumbs_up_is_recorded_and_the_card_says_so(
     _handle(conn, clock, _card(conn, sid), "👍")
     assert _latest(conn, sid)["rating"] == "up"
     card = _card(conn, sid)
-    assert card["text"].split("\n")[1] == "You rated this draft 👍. Tap to change it."
-    assert _labels(card) == ["👍", "👎", "Delete from Drafts", "Show draft"]
+    assert card["text"].split("\n")[1] == "You rated this draft 👍. Click to change it."
+    assert _labels(card) == ["👍", "👎", "Delete from Drafts", "Show draft", "Show excerpt"]
 
 
 def _form(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
@@ -560,7 +561,7 @@ def test_a_reason_is_recorded_and_promised_raises_its_alert(
     row = _latest(conn, sid)
     assert (row["rating"], row["reason"], row["note_chars"]) == ("down", draft_data.PROMISED, 0)
     assert row["alerted"]
-    assert _card(conn, sid)["text"].split("\n")[1] == "You rated this draft 👎. Tap to change it."
+    assert _card(conn, sid)["text"].split("\n")[1] == "You rated this draft 👎. Click to change it."
 
 
 def test_changing_a_rating_clears_the_reason(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -587,7 +588,7 @@ def test_delete_before_approval_rejects_voids_flags_and_counts_as_deleted(
     assert _latest(conn, sid)["outcome"] == "deleted"
     card = _card(conn, sid)
     assert card["text"].split("\n") == ["🔴 Deleted", "How was this draft?"]
-    assert _labels(card) == ["👍", "👎", "Show draft"]
+    assert _labels(card) == ["👍", "👎", "Show draft", "Show excerpt"]
     assert _with_flag(sid, conn) == "queued"
     assert _deletes(conn, clock, src) == 1
     [flags] = src.flags(src.uids_after(0)).values()
@@ -696,7 +697,7 @@ def test_reject_shows_rejected_and_queues_no_flag(
     approvals.reject(conn, clock, sid, actor="os_user")
     card = _card(conn, sid)
     assert card["text"].split("\n") == ["🔴 Rejected", "How was this draft?"]
-    assert _labels(card) == ["👍", "👎", "Show draft"]
+    assert _labels(card) == ["👍", "👎", "Show draft", "Show excerpt"]
     assert _with_flag(sid, conn) == "None"
 
 
@@ -715,8 +716,8 @@ def test_delete_from_drafts_removes_only_the_draft(
     doc = json.loads(item_row(conn, sid)["proposal"])
     assert all(r["name"] != "draft_reply" for r in doc["done"])
     card = _card(conn, sid)
-    assert card["text"].split("\n")[0] == "🔴 Deleted · label invoice"  # the label stays
-    assert _labels(card) == ["👍", "👎", "Show draft"]
+    assert card["text"].split("\n")[0] == "🔴 Deleted · label invoice added"  # the label stays
+    assert _labels(card) == ["👍", "👎", "Show draft", "Show excerpt"]
 
 
 def test_delete_from_drafts_leaves_an_edited_draft_and_says_so(
@@ -735,7 +736,7 @@ def test_delete_from_drafts_leaves_an_edited_draft_and_says_so(
     assert src.elsewhere.get("Drafts")
     assert _latest(conn, sid)["outcome"] == "saved"
     assert "edited" in _posts(conn)[-1]["text"]
-    assert _card(conn, sid)["text"].startswith("🔵 Draft saved")
+    assert _card(conn, sid)["text"].startswith("🟢 Draft saved")
 
 
 def test_a_draft_tracking_lost_sight_of_isnt_called_deleted(
@@ -747,7 +748,7 @@ def test_a_draft_tracking_lost_sight_of_isnt_called_deleted(
         conn.execute("UPDATE draft_versions SET outcome = 'deleted_unsent' WHERE stable_id = ?",
                      (sid,))  # fmt: skip
     _handle(conn, clock, _card(conn, sid), "👍")
-    assert _card(conn, sid)["text"].startswith("🔵 Draft saved")
+    assert _card(conn, sid)["text"].startswith("🟢 Draft saved")
 
 
 def test_a_second_delete_gets_its_own_tries(conn: sqlite3.Connection, clock: FakeClock) -> None:
@@ -822,39 +823,46 @@ def test_delete_from_drafts_needs_a_saved_draft(conn: sqlite3.Connection, clock:
 # Show draft.
 
 
-def test_show_draft_sends_blocks_only_you_see_with_fixed_notification_text(
+def _window(conn: sqlite3.Connection, sid: str) -> list[str]:
+    view = slack_in.WINDOWS[draft_cards.SHOW_DRAFT](conn, Click("button", draft_cards.SHOW_DRAFT,
+                                                                sid, "CAP", ME))  # fmt: skip
+    assert view["type"] == "modal" and "submit" not in view
+    assert view["title"]["text"] == draft_cards.SHOW_TITLE and len(draft_cards.SHOW_TITLE) <= 24
+    assert len(view["blocks"]) <= slack_render.MODAL_BLOCKS_MAX
+    assert {b["text"]["type"] for b in view["blocks"]} == {"plain_text"}
+    return [b["text"]["text"] for b in view["blocks"]]
+
+
+def test_show_draft_opens_a_window_only_you_see_and_is_audited(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
     sid = _saved(conn, clock, FakeMailSource())
+    before = len(_posts(conn))
+    texts = _window(conn, sid)
+    assert texts[:3] == [draft_cards.LABEL, draft_cards.NOTE, "│ Hello,"]
     _handle(conn, clock, _card(conn, sid), "Show draft")
-    p = _posts(conn)[-1]
-    assert p["op"] == "ephemeral" and p["user"] == ME and p["text"] == "A draft from ecf"
-    assert p["card"]["title"] == ""
-    assert p["card"]["text"].startswith(f"{draft_cards.LABEL}\n{draft_cards.NOTE}\n│ Hello,")
+    assert len(_posts(conn)) == before  # nothing in the channel
     assert _audit(conn, "draft.shown")
 
 
-def test_the_ephemeral_with_a_card_reaches_chat_as_blocks(
+def test_show_draft_shows_every_line_of_a_draft_too_long_for_its_card(
     conn: sqlite3.Connection, clock: FakeClock
 ) -> None:
-    from ecf_server.chat import RouteRef  # noqa: PLC0415
-
-    chat = FakeChat()
-    slack_out.enqueue_ephemeral(conn, clock, route=RouteRef("CAP"), user=ME, text="A draft",
-                                card=Card("", text="│ x"))  # fmt: skip
-    p = _posts(conn)[-1]
-    chat.ephemeral(RouteRef("CAP"), ME, p["text"], slack_out._card(p["card"]))  # pyright: ignore[reportPrivateUsage]
-    assert chat.posts[-1]["card"]["text"] == "│ x"
-
-
-def test_show_draft_of_a_long_draft_points_at_the_computer(
-    conn: sqlite3.Connection, clock: FakeClock
-) -> None:
-    sid = _waiting(conn, clock, FakeMailSource(), text="\n".join(f"line {i}" for i in range(34)))
+    lines = [f"line {i}" for i in range(34)]
+    sid = _waiting(conn, clock, FakeMailSource(), text="\n".join(lines))
     approvals.reject(conn, clock, sid, actor="os_user")
-    _handle(conn, clock, _card(conn, sid), "Show draft")
-    p = _posts(conn)[-1]
-    assert p["text"] == f"Too long to show here: ecf item show {sid[:8]}" and "card" not in p
+    assert _window(conn, sid)[2:] == [f"│ {ln}" for ln in lines]  # each line apart
+
+
+def test_show_draft_fits_the_longest_draft_ecf_saves(
+    conn: sqlite3.Connection, clock: FakeClock
+) -> None:
+    text = "\n".join(f"line {i:03} of the longest draft" for i in range(200))
+    text = text[: text.rfind("\n", 0, outbound_plan.DRAFT_MAX)]  # 4,000 characters at most
+    sid = _waiting(conn, clock, FakeMailSource(), text=text)
+    approvals.reject(conn, clock, sid, actor="os_user")
+    shown = " ".join(_window(conn, sid))  # past 100 blocks, the last lines share one
+    assert all(f"line {i:03} " in shown for i in range(text.count("\n") + 1))
 
 
 def test_show_draft_of_a_refused_draft_shows_no_text(
@@ -864,10 +872,11 @@ def test_show_draft_of_a_refused_draft_shows_no_text(
     monkeypatch.setattr(outbound_plan, "draft_refusals", _refuses)
     with pytest.raises(PolicyDeniedError):
         _approve(conn, clock, sid)
-    click = Click("button", draft_cards.SHOW_DRAFT, sid, "CAP", ME)
-    slack_in.HANDLERS[draft_cards.SHOW_DRAFT](conn, clock, click)
-    p = _posts(conn)[-1]
-    assert "card" not in p and "Hello" not in p["text"] and "credential" in p["text"]
+    [text] = _window(conn, sid)
+    assert "Hello" not in text and "credential" in text
+    slack_in.HANDLERS[draft_cards.SHOW_DRAFT](conn, clock, Click("button", draft_cards.SHOW_DRAFT,
+                                                                 sid, "CAP", ME))  # fmt: skip
+    assert not _audit(conn, "draft.shown")  # nothing was shown
 
 
 # The redraw at upgrade.
@@ -899,7 +908,7 @@ def test_the_redraw_leaves_a_queued_card_with_reject_only(
     card = _card(conn, sid)
     assert _labels(card) == ["Reject"]
     assert card["text"].startswith(draft_cards.LABEL) and card["status"].startswith("Queued")
-    assert "Saving it also does: label invoice" in card["status"]
+    assert "Saving it also adds the label invoice." in card["status"]
 
 
 def test_the_redraw_runs_once_on_a_fresh_install(

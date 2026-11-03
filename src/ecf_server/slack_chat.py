@@ -85,11 +85,9 @@ class SlackChat:
     def pin(self, ref: ThreadRef) -> None:
         self._harmless("pins.add", channel=ref.route.channel, timestamp=ref.ts)
 
-    def ephemeral(self, route: RouteRef, user: str, text: str, card: Card | None = None) -> None:
-        """`card`: blocks, `text` their notification; no draft goes through `fallback` (AG4)."""
-        extra: dict[str, Any] = {"blocks": blocks(card)} if card else {}
+    def ephemeral(self, route: RouteRef, user: str, text: str) -> None:
         self._web.call("chat.postEphemeral", channel=route.channel, user=user,
-                       text=fallback(text), **extra)  # fmt: skip
+                       text=fallback(text))  # fmt: skip
 
     def create_route(self, name: str) -> RouteRef:
         """A private channel; if the name is taken by one ecf can see, that channel is reused."""

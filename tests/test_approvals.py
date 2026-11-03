@@ -323,6 +323,7 @@ def test_pending_lists_a_draft_apart(
 ) -> None:
     """A draft is approved on its own, where its text is shown (P3). The check at approval is
     `tests/test_draft_card.py`; it would refuse this fraud item's draft."""
+
     def passes(*_a: object) -> tuple[str, ...]:
         return ()
 

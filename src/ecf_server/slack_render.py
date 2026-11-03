@@ -38,6 +38,7 @@ TEXT_LINES_MAX = 30  # lines with a section of their own; the lines after share 
 # text sections per card: with the header, mention, fields, buttons and note a card stays under
 # Slack's 50 blocks per message (unverified)
 TEXT_BLOCKS_MAX = 40
+MODAL_BLOCKS_MAX = 100  # a modal's blocks; title and button text 24 (fetched 2026-11-03)
 MARK = "│ "  # starts every draft line and each section it continues in (M8 plan §6)
 WARNING_SIGN = "\u26a0\ufe0f"  # with its emoji selector: a yellow sign, not a black-and-white one
 _SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}):(//)")
@@ -116,20 +117,30 @@ def _context_elements(card: Card) -> list[dict[str, Any]]:
     return out[:10]
 
 
+def modal(title: str, text: str, close: str) -> dict[str, Any]:
+    """A window only the person who clicked sees, with no submit: text in sections as on a card,
+    with room for each line of the longest draft ecf saves."""
+    pieces = _pieces(text, MODAL_BLOCKS_MAX, MODAL_BLOCKS_MAX)[0]
+    return {"type": "modal", "title": _plain(title, 24), "close": _plain(close, 24),
+            "blocks": [{"type": "section", "text": _plain(p, TEXT_MAX)}
+                       for p in pieces]}  # fmt: skip
+
+
 def _text_sections(text: str) -> list[dict[str, Any]]:
     """One section per non-empty line: Slack runs the lines of one plain_text section together
     (seen in the V1.2 shadow run, 2026-09-30). Lines past the cap share the last section."""
     return [{"type": "section", "text": _plain(p, TEXT_MAX)} for p in _pieces(text)[0]]
 
 
-def _pieces(text: str) -> tuple[list[str], bool]:
+def _pieces(text: str, lines_max: int = 0, blocks_max: int = 0) -> tuple[list[str], bool]:
     """The card text as sections of at most TEXT_MAX characters, and whether all of it is there,
     each line on its own. A line too long for one section goes on in the next, split at a space
-    where there is one, keeping its mark; only past TEXT_BLOCKS_MAX sections is the end cut."""
+    where there is one, keeping its mark; only past blocks_max sections is the end cut."""
+    lines_max, blocks_max = lines_max or TEXT_LINES_MAX, blocks_max or TEXT_BLOCKS_MAX  # a card's
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-    apart = len(lines) <= TEXT_LINES_MAX
+    apart = len(lines) <= lines_max
     if not apart:
-        lines = [*lines[: TEXT_LINES_MAX - 1], " · ".join(lines[TEXT_LINES_MAX - 1 :])]
+        lines = [*lines[: lines_max - 1], " · ".join(lines[lines_max - 1 :])]
     out: list[str] = []
     for ln in lines:
         rest = scrub(ln)
@@ -145,10 +156,10 @@ def _pieces(text: str) -> tuple[list[str], bool]:
             rest = mark + scrub(rest[cut:].lstrip())
         if rest:
             out.append(rest)
-    if len(out) <= TEXT_BLOCKS_MAX:
+    if len(out) <= blocks_max:
         return out, apart
-    tail = clean(" ".join(out[TEXT_BLOCKS_MAX - 1 :]), TEXT_MAX)
-    return [*out[: TEXT_BLOCKS_MAX - 1], tail], False
+    tail = clean(" ".join(out[blocks_max - 1 :]), TEXT_MAX)
+    return [*out[: blocks_max - 1], tail], False
 
 
 def action_name(action_id: str) -> str:

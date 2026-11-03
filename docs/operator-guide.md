@@ -52,8 +52,8 @@ email not actually addressed to this mailbox, an email too big to scan fully, or
 what ecf did and how it classified the email (for example "Classified: invoice, high priority, by
 Claude Opus 5.5", or "corrected by you").
 
-Cards never include the email's text. **Show excerpt** shows you, and only you, the first 200
-characters. Cards about payments or fraud say "This acts on the email only. ecf never pays
+Cards never include the email's text. **Show excerpt** opens a window, which only you see, with the
+first 200 characters. Cards about payments or fraud say "This acts on the email only. ecf never pays
 anything."
 
 ### Escalations
@@ -123,13 +123,14 @@ name, title and sign-off is yours, then choose:
 
 - **Save to Drafts** saves it in your mailbox's Drafts folder. ecf never sends it. If saving also
   does something else, such as labelling the email, the card says so above the buttons. If the
-  draft fails ecf's check when you click, nothing is saved, the email is flagged, and the card says
-  why.
+  draft fails ecf's check when you click, nothing is saved, ecf flags the email at its next check,
+  and the card says why.
 - **Delete draft** throws the draft away and flags the email, so it stays in view.
-- **Show excerpt** shows you part of the email, and only you see it.
+- **Show excerpt** opens a window with part of the email, and only you see it.
 
-Afterwards the card asks how the draft was. Tap 👍, or 👎 and pick the main reason; you can change
-your rating later. **Show draft** shows it again to you alone, and **Delete from Drafts** deletes a
+Afterwards the card asks how the draft was. Click 👍, or 👎 and pick the main reason; you can
+change your rating later. **Show draft** opens it again in a window only you see, **Show excerpt**
+is still there so you can compare it with the email, and **Delete from Drafts** deletes a
 saved draft at the next check, unless you have edited it. A draft longer than 28 lines, counting blank
 lines, can only be saved at your computer, with `ecf approve <id>`.
 

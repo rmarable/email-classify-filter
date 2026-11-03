@@ -112,9 +112,7 @@ class ChatSurface(Protocol):
 
     def pin(self, ref: ThreadRef) -> None: ...
 
-    def ephemeral(
-        self, route: RouteRef, user: str, text: str, card: Card | None = None
-    ) -> None: ...
+    def ephemeral(self, route: RouteRef, user: str, text: str) -> None: ...
 
     def create_route(self, name: str) -> RouteRef:
         """A private route; if the name is taken by one ecf is in, that one. Raises
@@ -184,10 +182,9 @@ class FakeChat:
         with self._lock:
             self._find(ref)["pinned"] = True
 
-    def ephemeral(self, route: RouteRef, user: str, text: str, card: Card | None = None) -> None:
+    def ephemeral(self, route: RouteRef, user: str, text: str) -> None:
         with self._lock:
-            self.posts.append({"route": route.channel, "ephemeral_to": user, "text": text,
-                               **({"card": asdict(card)} if card else {})})  # fmt: skip
+            self.posts.append({"route": route.channel, "ephemeral_to": user, "text": text})
 
     def create_route(self, name: str) -> RouteRef:
         route = RouteRef("C" + new_random_id()[:10].upper())

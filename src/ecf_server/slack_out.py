@@ -120,13 +120,9 @@ def enqueue_post(
 
 
 def enqueue_ephemeral(
-    conn: sqlite3.Connection, clock: Clock, *, route: RouteRef, user: str, text: str,
-    card: Card | None = None,
-) -> None:  # fmt: skip
-    payload: dict[str, Any] = {"op": "ephemeral", "channel": route.channel, "user": user,
-                               "text": text}  # fmt: skip
-    if card is not None:
-        payload["card"] = asdict(card)
+    conn: sqlite3.Connection, clock: Clock, *, route: RouteRef, user: str, text: str
+) -> None:
+    payload = {"op": "ephemeral", "channel": route.channel, "user": user, "text": text}
     jobs.enqueue(conn, clock, jobs.Queue.SLACK_OUT, AddressId(route.channel), payload,
                  timeout_s=TIMEOUT_S)  # fmt: skip
 
@@ -367,8 +363,7 @@ class SlackSender:
             self._chat.archive(route)
             return
         if p["op"] == "ephemeral":
-            self._chat.ephemeral(route, str(p["user"]), str(p["text"]),
-                                 _card(p["card"]) if p.get("card") else None)  # fmt: skip
+            self._chat.ephemeral(route, str(p["user"]), str(p["text"]))
             return
         card = _card(p["card"])
         key = str(p["key"])

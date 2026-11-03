@@ -27,7 +27,7 @@ from ecf_server import (
     slack_render,
 )
 from ecf_server.actions import Planned
-from ecf_server.chat import Card, RouteRef
+from ecf_server.chat import RouteRef
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.log_bridge import log
@@ -104,21 +104,29 @@ def _rate_down(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
         raise
 
 
-@slack_in.handles(draft_cards.SHOW_DRAFT)
-def _show_draft(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
-    """An ephemeral message only you see (OD-214), as blocks under the card's own rule (AG4)."""
-    item = inbox.find(conn, click.ref)
-    sid = item["stable_id"]
-    row = draft_versions.latest(conn, sid)
-    text = approvals.item_draft_text(item)
+def _draft_shown(conn: sqlite3.Connection, item: sqlite3.Row) -> str:
+    """The marked draft, or why there is none: a refused draft was dropped."""
+    row = draft_versions.latest(conn, item["stable_id"])
     if row is not None and row["outcome"] == "refused":
         codes = ", ".join(draft_cards.refused_codes(row))
-        _tell(conn, clock, click, f"No draft to show: the draft check refused it ({codes}).")
-    elif not text or not slack_render.fits(text):
-        _tell(conn, clock, click, f"Too long to show here: ecf item show {sid[:8]}")
-    elif click.channel:
-        slack_out.enqueue_ephemeral(conn, clock, route=RouteRef(click.channel), user=click.user,
-                                    text="A draft from ecf", card=Card("", text=text))  # fmt: skip
+        return f"No draft to show: the draft check refused it ({codes})."
+    return approvals.item_draft_text(item) or "No draft to show."
+
+
+@slack_in.shows_window(draft_cards.SHOW_DRAFT)
+def draft_window(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
+    """A window only you see (OD-214), each line marked as on the card (AG4): the longest draft
+    ecf saves fits, so a long one no longer sends you to your computer."""
+    text = _draft_shown(conn, inbox.find(conn, click.ref))
+    return slack_render.modal(draft_cards.SHOW_TITLE, text, draft_cards.CLOSE)
+
+
+@slack_in.handles(draft_cards.SHOW_DRAFT)
+def _show_draft(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
+    """After the window opened: the audit, as for an excerpt."""
+    item = inbox.find(conn, click.ref)
+    text = approvals.item_draft_text(item)
+    if text and _draft_shown(conn, item) == text:
         approvals.audit_item(conn, clock, item, "draft.shown", click.user)
 
 

@@ -28,9 +28,9 @@ from ecf_server.slack_render import MARK
 
 LABEL = "🔵 Draft written by ecf's model (it can be wrong; it is saved, never sent):"
 NOTE = "Check every name, title and sign-off in this draft is yours"
-SAVED, DELETED, REJECTED = "🔵 Draft saved", "🔴 Deleted", "🔴 Rejected"
+SAVED, DELETED, REJECTED = "🟢 Draft saved", "🔴 Deleted", "🔴 Rejected"
 ASK = "How was this draft?"
-RATED = "You rated this draft {}. Tap to change it."
+RATED = "You rated this draft {}. Click to change it."
 UP, DOWN = "👍", "👎"
 ELLIPSIS = "…"  # `message.cut` ends a cut excerpt with it
 
@@ -38,6 +38,33 @@ DELETE_WAITING, DELETE_SAVED = "draft_delete", "draft_delete_saved"
 RATE_UP, RATE_DOWN, RATE_REASON = "draft_up", "draft_down", "draft_reason"
 SHOW_DRAFT = "draft_show"
 STILL_SAVED = frozenset({"saved", "still_waiting"})  # still in Drafts, as far as ecf knows
+SHOW_TITLE, CLOSE = "Draft from ecf", "Close"  # a modal's title and button: 24 characters at most
+
+# The other actions of a draft's approval in plain words (operator decision 2026-11-03): what
+# saving will also do, then what was done. Never an action's internal name.
+WILL = {"label": "adds the label {}", "flag": "flags the email", "mark_read": "marks it read",
+        "archive": "archives the email", "move": "moves it to {}", "junk": "moves it to Junk",
+        "reply_template": "sends template {}", "forward_internal": "forwards it to {}"}  # fmt: skip
+DONE = {"label": "label {} added", "flag": "email flagged", "mark_read": "marked read",
+        "archive": "email archived", "move": "moved to {}", "junk": "moved to Junk",
+        "reply_template": "template sent", "forward_internal": "forwarded to {}"}  # fmt: skip
+
+
+def _words(table: dict[str, str], name: str, target: str) -> str:
+    return table.get(name, "another action").format(target)
+
+
+def will_also(actions: list[tuple[str, str]]) -> str:
+    """`actions`: (name, target) of the approval's actions other than the draft."""
+    said = [_words(WILL, n, t) for n, t in actions]
+    return f"Saving it also {' and '.join(said)}." if said else ""
+
+
+def done_also(records: list[dict[str, Any]]) -> str:
+    """What the approval did besides the draft, from the item's `done` records."""
+    return ", ".join(_words(DONE, str(r["name"]), str(r.get("target") or r.get("folder") or
+                                                       r.get("to") or ""))
+                     for r in records if r["name"] not in ("draft_reply", "copy"))  # fmt: skip
 
 
 def whole_text(text: str) -> str:
@@ -117,6 +144,7 @@ def decided(item: sqlite3.Row, row: sqlite3.Row, *, also: str = "") -> Card:
     rating = {"up": UP, "down": DOWN}.get(str(row["rating"]))
     lines = [f"{first} · {also}" if also else first, RATED.format(rating) if rating else ASK]
     delete = (Button(DELETE_SAVED, "Delete from Drafts", sid),) if outcome in STILL_SAVED else ()
-    return Card(headline(item), text="\n".join(lines), buttons=(
+    return Card(headline(item), text="\n".join(lines), buttons=(  # the email, to rate the draft
         Button(RATE_UP, UP, sid), Button(RATE_DOWN, DOWN, sid), *delete,
-        Button(SHOW_DRAFT, "Show draft", sid)))  # fmt: skip
+        Button(SHOW_DRAFT, "Show draft", sid),
+        Button(cards.SHOW_EXCERPT, "Show excerpt", sid)))  # fmt: skip
