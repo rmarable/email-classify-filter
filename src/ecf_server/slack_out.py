@@ -495,6 +495,9 @@ def _card(d: dict[str, Any]) -> Card:
         buttons=tuple(Button(**b) for b in d.get("buttons", ())),
         note=str(d.get("note", "")),
         mention=str(d.get("mention", "")),
+        context=str(d.get("context", "")),
+        warnings=tuple(str(w) for w in d.get("warnings", ())),
+        status=str(d.get("status", "")),
     )
 
 

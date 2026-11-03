@@ -145,6 +145,15 @@ def summary(r: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _draft(conn: sqlite3.Connection, sid: str) -> dict[str, Any] | None:
+    """What became of the item's latest draft: `ecf item show` prints a decided one (AH2)."""
+    row = conn.execute("SELECT outcome, refuse_codes FROM draft_versions WHERE stable_id = ?"
+                       " ORDER BY version DESC LIMIT 1", (sid,)).fetchone()  # fmt: skip
+    if row is None:
+        return None
+    return {"outcome": row["outcome"], "codes": json.loads(row["refuse_codes"] or "[]")}
+
+
 def show(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
     """Everything ecf keeps about one item, for your terminal (the durable path, OD-214)."""
     r = find(conn, ref)
@@ -172,6 +181,7 @@ def show(conn: sqlite3.Connection, ref: str) -> dict[str, Any]:
         "escalation": dict(esc) if esc else None,
         "classification": json.loads(r["classification"]) if r["classification"] else None,
         "proposal": json.loads(r["proposal"]) if r["proposal"] else None,
+        "draft": _draft(conn, sid),
         "grants": [dict(g) for g in grants],
         "history": [dict(h) for h in reversed(history)],
         "excerpt": ex["classifier_text"] if ex else None,

@@ -5,7 +5,16 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed: a draft has a new Slack card. It shows who it's from and the subject, a small line of facts, a note to check names and sign-offs, then the draft with every line marked. Its buttons are Save to Drafts, Delete draft and Show excerpt (OD-584).
+- Added: after you decide a draft, you can rate it 👍 or 👎 (👎 asks for one reason), delete it from Drafts, or see it again with Show draft (OD-584).
+- Recorded: a Recover draft button for deleted drafts is on the roadmap, low priority and not scheduled (OD-585).
+- Changed: Show excerpt and Show draft open a window only you see, instead of a separate message in the channel, and Show draft shows even the longest draft (OD-584).
+- Added: a draft's card warns you, with a yellow sign, about a first-time sender, a Reply-To that differs from From, mail not addressed to this mailbox, a payment, a link repeated from the email, or an email too long for the model to read in full (OD-584).
+- Security: every approval of a draft checks it again, in Slack, at your computer and just before it is saved. A draft that fails is refused and nothing is saved; if it was waiting for you, the email is flagged too (OD-584).
+- Changed: a draft over 28 lines, counting blank lines, is approved only at your computer (OD-584).
+- Changed: `ecf item show` prints a decided draft under its own heading, with what became of it (OD-584).
 - Changed (for contributors): task-specific agent rules moved out of `AGENTS.md` into files read only when needed: review and model-evaluation rules in `docs/agents/reviews-and-evals.md`, test and merge-gate rules in `docs/agents/testing-and-merge.md`, and the eval-card, roadmap and user-docs rules in `.claude/rules/`. `AGENTS.md` lists which file to read before which task. No rule changed.
+
 - Security: the draft checker now runs on every draft the assistant writes, before you see a card. A draft that fails is dropped and the email flagged, with the reason shown (OD-583).
 - Added: `ecf drafts stats` shows what happened to ecf's drafts: saved, sent, edited, rejected, expired or refused, how many emails needing a reply got one, ratings, and a weekly trend. A weekly Slack post gives the counts (OD-583).
 - Added: ecf looks in your Sent and Drafts folders for each draft it saved, at most hourly for 14 days, by that draft's exact Message-ID or as a reply to the same email, to learn whether you sent it, including from Gmail in a browser, which changes the Message-ID. It keeps only the result, never the text (OD-583).

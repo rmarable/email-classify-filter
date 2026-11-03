@@ -34,6 +34,7 @@ from ecf.errors import (
     GrantInvalidError,
     InvalidInputError,
     NotFoundError,
+    PolicyDeniedError,
 )
 from ecf.ids import AddressId, StableId, new_grant_id
 from ecf.status import Status
@@ -41,6 +42,9 @@ from ecf_server import (
     alerts,
     cards,
     claude_queue,
+    draft_cards,
+    draft_versions,
+    draftcheck,
     inbox,
     items,
     jobs,
@@ -235,6 +239,43 @@ def _describe_batch(conn: sqlite3.Connection, target: dict[str, Any]) -> stepup.
     return stepup.Bound(stepup.digest("approve_batch", state), prompt)
 
 
+def _check_draft(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, actor: str) -> None:
+    """Every approval checks the draft, before any transition, so a refusal leaves nothing half
+    done (M8 plan §6, AI1, AJ2). A waiting item is rejected and its email flagged; an expired one
+    stays expired, since no edge leaves it for `rejected`, and isn't offered again."""
+    draft = next((a for a in _actions(item) if a.name == "draft_reply" and a.payload), None)
+    if draft is None or draft.payload is None:
+        return
+    codes = outbound_plan.draft_check(conn, item, draft.payload)
+    if not codes:
+        return
+    sid, status = StableId(item["stable_id"]), Status(item["status"])
+    data = {"codes": list(codes), "checker": draftcheck.digest()[:16]}
+    shown = ", ".join(codes)
+    if status is Status.EXPIRED:
+        draft_versions.set_outcome(conn, clock, sid, "", codes)
+        _audit(conn, clock, item, "approval.draft_refused", actor, data, tx=True)
+        _edit(conn, clock, item, f"The draft check refused this draft ({shown}). It won't be"
+              f" offered again: ecf item resolve {sid[:8]}", [])  # fmt: skip
+        raise PolicyDeniedError(f"the draft check refused this draft ({shown})")
+    items.transition(conn, clock, sid, Status.REJECTED, TransitionContext(origin=Origin.APPROVAL),
+                     actor=actor, expected=status)  # fmt: skip
+    _void(conn, sid)
+    draft_versions.set_outcome(conn, clock, sid, "refused", codes)
+    _queue_flag(conn, sid)
+    _audit(conn, clock, item, "approval.draft_refused", actor, data, tx=True)
+    show_decided(conn, clock, sid)
+    raise PolicyDeniedError(f"the draft check refused this draft ({shown}). Nothing was saved,"
+                            " and ecf flags the email at its next check")  # fmt: skip
+
+
+def _queue_flag(conn: sqlite3.Connection, sid: str) -> None:
+    """Done at the next check (`draft_actions`): a click and an approval never touch IMAP."""
+    with write_tx(conn):
+        conn.execute("UPDATE items SET proposal = json_set(proposal, '$.flag_email', 'queued')"
+                     " WHERE stable_id = ?", (sid,))  # fmt: skip
+
+
 def approve(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -248,12 +289,14 @@ def approve(
 ) -> dict[str, Any]:
     item = inbox.find(conn, ref)
     status = Status(item["status"])
-    if status is Status.EXPIRED and not actor.startswith("slack:") and _actions(item):
-        item, status = _reoffer(conn, clock, item, actor), Status.AWAITING_APPROVAL
-    if status not in (Status.AWAITING_APPROVAL, Status.AWAITING_STEPUP):
+    again = status is Status.EXPIRED and not actor.startswith("slack:") and bool(_actions(item))
+    if not again and status not in (Status.AWAITING_APPROVAL, Status.AWAITING_STEPUP):
         raise ConflictError(f"this email is {status}: nothing to approve", current=str(status))
     if queued_answer(item):
         raise ConflictError(ANSWER_WAITS.format(item["stable_id"][:8]), current=str(status))
+    _check_draft(conn, clock, item, actor)
+    if again:
+        item, status = _reoffer(conn, clock, item, actor), Status.AWAITING_APPROVAL
     g = _open_grant(conn, clock, item, grant_id)
     actions = _actions(item)
     sid = StableId(item["stable_id"])
@@ -287,7 +330,9 @@ def approve(
         items.transition(conn, clock, sid, Status.APPROVED, TransitionContext(reversible=True),
                          actor=actor, expected=status)  # fmt: skip
     _set_grant(conn, g.grant_id, "issued", "approved", nonce if risky else None)
-    _audit(conn, clock, item, "approval.approved", actor, {"grant_id": g.grant_id}, tx=True)
+    checked = {"checker": draftcheck.digest()[:16]} if draft else {}  # P24
+    _audit(conn, clock, item, "approval.approved", actor, {"grant_id": g.grant_id} | checked,
+           tx=True)  # fmt: skip
     return _after_approved(conn, clock, _item(conn, sid), g.grant_id, actions)
 
 
@@ -373,7 +418,9 @@ def _start(conn: sqlite3.Connection, clock: Clock, sid: StableId, grant_id: str)
     _edit(conn, clock, item, f"Approved: {describe(_actions(item))} (running)", [])
 
 
-def reject(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> dict[str, Any]:
+def reject(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str,
+           deleted: bool = False) -> dict[str, Any]:  # fmt: skip
+    """`deleted`: the draft card's Delete draft, which counts apart and flags the email (P15)."""
     item = inbox.find(conn, ref)
     status = Status(item["status"])
     if status not in (Status.AWAITING_APPROVAL, Status.AWAITING_STEPUP):
@@ -384,8 +431,13 @@ def reject(conn: sqlite3.Connection, clock: Clock, ref: str, *, actor: str) -> d
                      TransitionContext(origin=Origin.APPROVAL), actor=actor,
                      expected=status)  # fmt: skip
     _void(conn, item["stable_id"])
-    _audit(conn, clock, item, "approval.rejected", actor, {}, tx=True)
-    _edit(conn, clock, _item(conn, item["stable_id"]), "Rejected: nothing was done", [])
+    _audit(conn, clock, item, "approval.rejected", actor, {"deleted": True} if deleted else {},
+           tx=True)  # fmt: skip
+    if deleted:
+        draft_versions.set_outcome(conn, clock, item["stable_id"], "deleted")
+        _queue_flag(conn, item["stable_id"])
+    if not show_decided(conn, clock, item["stable_id"]):
+        _edit(conn, clock, _item(conn, item["stable_id"]), "Rejected: nothing was done", [])
     return {"status": Status.REJECTED.value}
 
 
@@ -588,7 +640,9 @@ def _expire_one(conn: sqlite3.Connection, clock: Clock, r: sqlite3.Row) -> None:
            tx=True)  # fmt: skip
     if item["expiry_count"] >= 2:  # a second expiry: the daily summary lists it (§6.2)
         short = item["stable_id"][:8]
-        _edit(conn, clock, item, f"Expired twice: ecf approve {short} offers it again, or"
+        offers = ("checks the draft and offers it again if it passes" if _draft_text(_actions(item))
+                  else "offers it again")  # fmt: skip
+        _edit(conn, clock, item, f"Expired twice: ecf approve {short} {offers}, or"
               f" ecf item resolve {short}", [])  # fmt: skip
         return
     items.transition(conn, clock, sid, Status.AWAITING_APPROVAL,
@@ -744,19 +798,34 @@ def _card(
     fields = (("Action", verb), *base.fields)
     text = _draft_text(actions)
     whole = slack_render.fits(text)  # a draft is approved only where all of it is shown (§8.4)
-    approve = (Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),) if whole else ()
     short = item["stable_id"][: cards.SHORT_ID]
     computer_note = (
-        f"The draft is too long to show here. Approve it at your computer: ecf approve {short}"
+        f"The draft is too long to approve here. Approve it at your computer: ecf approve {short}"
     )
     payment = cards.PAYMENT_NOTE if item_payment_or_fraud(item) else ""
-    notes = [payment, "" if whole else computer_note]
-    card = Card(title or f"Approve? {verb}", fields=fields, text=text,
-                buttons=(*approve, Button(REJECT, "Reject", grant_id),
-                         Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])),
-                note=" ".join(n for n in notes if n), mention=member)  # fmt: skip
+    note = " ".join(n for n in (payment, "" if whole else computer_note) if n)
+    excerpt = Button(cards.SHOW_EXCERPT, "Show excerpt", item["stable_id"])
+    if text:
+        save = (Button(APPROVE, "Save to Drafts", grant_id, "primary"),) if whole else ()
+        also = _also(actions)
+        card = draft_cards.waiting(
+            conn, item, draft_versions.latest(conn, item["stable_id"]), text, title=title,
+            buttons=(*save, Button(draft_cards.DELETE_WAITING, "Delete draft", grant_id), excerpt),
+            note=note, status=also, member=member)  # fmt: skip
+    else:
+        card = Card(title or f"Approve? {verb}", fields=fields,
+                    buttons=(Button(APPROVE, f"Approve: {verb}", grant_id, "primary"),
+                             Button(REJECT, "Reject", grant_id), excerpt),
+                    note=note, mention=member)  # fmt: skip
     slack_out.enqueue_post(conn, clock, key=f"item:{item['stable_id']}", route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
+
+
+def _also(actions: list[Planned]) -> str:
+    """What else approving a draft does: the grant covers it, and the card has no Action field."""
+    return draft_cards.will_also([
+        (a.name, str((a.payload or {}).get("to") or a.target or "")) for a in actions
+        if a.name != "draft_reply"])  # fmt: skip
 
 
 def _draft_text(actions: list[Planned]) -> str:
@@ -764,8 +833,34 @@ def _draft_text(actions: list[Planned]) -> str:
     draft = next((a for a in actions if a.name == "draft_reply" and a.payload), None)
     if draft is None or draft.payload is None:
         return ""
-    return ("Draft written by ecf's model (it can be wrong; it is saved, never sent):\n"
-            + cards.defang(str(draft.payload.get("text") or "")))  # fmt: skip
+    return draft_cards.whole_text(str(draft.payload.get("text") or ""))
+
+
+def item_draft_text(item: sqlite3.Row) -> str:
+    return _draft_text(_actions(item))
+
+
+def show_decided(conn: sqlite3.Connection, clock: Clock, sid: str) -> bool:
+    """Draw the card of a draft that has been decided; False when this isn't one."""
+    item = _item(conn, sid)
+    row = draft_versions.latest(conn, sid)
+    if row is None or not _draft_text(_actions(item)):
+        return False
+    key = f"item:{sid}"
+    route = slack_routes.route_for(conn, item["address_id"])
+    if route is not None and has_card(conn, key):
+        doc: dict[str, Any] = json.loads(item["proposal"] or "{}")
+        also = draft_cards.done_also(doc.get("done", []))
+        slack_out.enqueue_post(conn, clock, key=key, route=route,
+                               card=draft_cards.decided(item, row, also=also),
+                               identity=slack_routes.identity(item["address_id"]))  # fmt: skip
+    return True
+
+
+def done_card(conn: sqlite3.Connection, clock: Clock, sid: str, done: list[str]) -> None:
+    """An item's actions ran: a draft's card asks for its rating, any other says what was done."""
+    if not show_decided(conn, clock, sid):
+        edit_card(conn, clock, sid, f"Done: {', '.join(done) or 'nothing to do'}")
 
 
 CARDS_PER_TICK = 20
@@ -925,10 +1020,18 @@ def _edit(
     route = slack_routes.route_for(conn, item["address_id"])
     if route is None or not has_card(conn, key):
         return
-    base = cards.item_card(item)
-    fields = (("Action", describe(_actions(item))), *base.fields)
-    slack_out.enqueue_post(conn, clock, key=key, route=route,
-                           card=Card(title, fields=fields, buttons=tuple(buttons)),
+    text = _draft_text(_actions(item))
+    if text and buttons:  # waiting at your computer: the draft stays on the card
+        card = draft_cards.waiting(conn, item, draft_versions.latest(conn, item["stable_id"]),
+                                   text, buttons=tuple(buttons), status=". ".join(
+                                       x for x in (title, _also(_actions(item))) if x))  # fmt: skip
+    elif text:
+        card = draft_cards.status_only(item, title)
+    else:
+        base = cards.item_card(item)
+        fields = (("Action", describe(_actions(item))), *base.fields)
+        card = Card(title, fields=fields, buttons=tuple(buttons))
+    slack_out.enqueue_post(conn, clock, key=key, route=route, card=card,
                            identity=slack_routes.identity(item["address_id"]))  # fmt: skip
 
 
@@ -1019,6 +1122,57 @@ def _refresh_one(conn: sqlite3.Connection, clock: Clock, sid: str) -> int:
     return 1
 
 
+REDRAW_KEY = "cards.drafts_redrawn"  # {"after": <stable_id>} while running, then {"done": true}
+
+
+def redraw_draft_cards(conn: sqlite3.Connection, clock: Clock, limit: int = CARDS_PER_TICK) -> int:
+    """After the upgrade to the new draft card (M8 plan §6, P16, Q11): each waiting card is drawn
+    again, keeping its grant and its buttons, a few per tick. It only redraws: safety doesn't depend
+    on it, since a click on a card not yet redrawn is checked like any other."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (REDRAW_KEY,)).fetchone()
+    state: dict[str, Any] = json.loads(row[0]) if row else {}
+    if state.get("done"):
+        return 0
+    rows = conn.execute(
+        "SELECT stable_id FROM items WHERE status IN ('awaiting_approval', 'awaiting_stepup')"
+        " AND stable_id > ? ORDER BY stable_id",
+        (str(state.get("after") or ""),)).fetchall()  # fmt: skip
+    drawn, after, finished = 0, state.get("after"), True
+    for r in rows:
+        if drawn >= limit:
+            finished = False
+            break
+        try:
+            drawn += _redraw_one(conn, clock, str(r["stable_id"]))
+        except (EcfError, ValueError, KeyError) as exc:  # a bad item: as in `refresh_draft_cards`
+            log.warning("approval.redraw_skipped", stable_id=str(r["stable_id"])[:8],
+                        error_type=type(exc).__name__)  # fmt: skip
+        after = str(r["stable_id"])
+    value = {"done": True} if finished else {"after": after}
+    with write_tx(conn):
+        conn.execute("INSERT INTO settings (key, value, updated_at, updated_by)"
+                     " VALUES (?, ?, ?, 'service') ON CONFLICT (key) DO UPDATE SET"
+                     " value = excluded.value, updated_at = excluded.updated_at",
+                     (REDRAW_KEY, json.dumps(value), to_ts(clock.now())))  # fmt: skip
+    return drawn
+
+
+def _redraw_one(conn: sqlite3.Connection, clock: Clock, sid: str) -> int:
+    item = _item(conn, sid)
+    grant = _latest_grant(conn, sid)
+    if (not _draft_text(_actions(item)) or grant is None or queued_answer(item)
+            or not has_card(conn, f"item:{sid}")):  # fmt: skip
+        return 0
+    if item["status"] == Status.AWAITING_STEPUP:  # queued for your computer: Reject only (AJ7)
+        _edit(conn, clock, item, f"Queued for your computer ({queued_count(conn)} waiting)",
+              [Button(REJECT, "Reject", grant)])  # fmt: skip
+        return 1
+    title = ("Offered again" if item["expiry_count"] >= 2
+             else "Expired, decide again" if item["expiry_count"] == 1 else "")  # fmt: skip
+    _card(conn, clock, item, grant, title=title)
+    return 1
+
+
 # Helpers shared by the sections above: an address's approval TTL, the item, its stage and
 # sensitivity, and the audit row.
 
@@ -1052,6 +1206,11 @@ def _sensitivity(conn: sqlite3.Connection, item: sqlite3.Row) -> str:
     return str(r["sensitivity"])
 
 
+def audit_item(conn: sqlite3.Connection, clock: Clock, item: sqlite3.Row, event: str,
+               actor: str) -> None:  # fmt: skip
+    _audit(conn, clock, item, event, actor, {}, tx=True)
+
+
 def _audit(
     conn: sqlite3.Connection,
     clock: Clock,
@@ -1080,7 +1239,7 @@ def _audit(
 @slack_in.handles(APPROVE)
 def _approve_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
     g = _grant(conn, click.ref)  # the button carries the grant; the action comes from it
-    _answering(conn, clock, click, lambda: approve(conn, clock, desktop, g.stable_id,
+    answering(conn, clock, click, lambda: approve(conn, clock, desktop, g.stable_id,
                                                    actor=f"slack:{click.user}",
                                                    grant_id=g.grant_id))  # fmt: skip
 
@@ -1088,17 +1247,24 @@ def _approve_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click
 @slack_in.handles(REJECT)
 def _reject_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
     g = _grant(conn, click.ref)
-    _answering(conn, clock, click,
+    answering(conn, clock, click,
                lambda: reject(conn, clock, g.stable_id, actor=f"slack:{click.user}"))  # fmt: skip
+
+
+@slack_in.handles(draft_cards.DELETE_WAITING)
+def _delete_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
+    g = _grant(conn, click.ref)
+    answering(conn, clock, click, lambda: reject(conn, clock, g.stable_id, deleted=True,
+                                                 actor=f"slack:{click.user}"))  # fmt: skip
 
 
 @slack_in.handles(CANCEL)
 def _cancel_click(conn: sqlite3.Connection, clock: Clock, click: slack_in.Click) -> None:
-    _answering(conn, clock, click,
+    answering(conn, clock, click,
                lambda: cancel(conn, clock, click.ref, actor=f"slack:{click.user}"))  # fmt: skip
 
 
-def _answering(
+def answering(
     conn: sqlite3.Connection,
     clock: Clock,
     click: slack_in.Click,

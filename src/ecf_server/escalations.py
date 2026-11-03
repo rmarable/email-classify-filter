@@ -38,7 +38,7 @@ from ecf_server.chat import Card, RouteRef
 from ecf_server.clock import Clock, from_ts, to_ts
 from ecf_server.db import write_tx
 from ecf_server.slack_in import Click
-from ecf_server.slack_render import clean
+from ecf_server.slack_render import clean, modal
 from ecf_server.state_machine import TransitionContext
 
 BURST = 5  # more than this in a minute merge into one thread (OD-036)
@@ -48,6 +48,7 @@ BURST_LIST = 20  # lines listed in a merged thread's card
 SUMMARY_DAYS = 7
 SUMMARY_TOP = 5
 EXCERPT_CHARS = 200
+EXCERPT_TITLE = "Excerpt"
 NO_EXCERPT = "No excerpt is kept for this email (for example, one over the size limit)."
 
 
@@ -236,19 +237,23 @@ def _mark(conn: sqlite3.Connection, clock: Clock, sids: list[str], state: str, k
 # Buttons: Show excerpt (an ephemeral message, OD-214) and Dismiss, and closing the card.
 
 
-@slack_in.handles(cards.SHOW_EXCERPT)
-def _show_excerpt(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
-    """OD-214: an ephemeral message only you see, not kept in the channel's history."""
+@slack_in.shows_window(cards.SHOW_EXCERPT)
+def excerpt_window(conn: sqlite3.Connection, click: Click) -> dict[str, Any]:
+    """OD-214: a window only you see, not kept in the channel's history (operator decision
+    2026-11-03; was an ephemeral message)."""
     item = _item(conn, click.ref)
     row = conn.execute(
         "SELECT classifier_text FROM excerpts WHERE stable_id = ?", (item["stable_id"],)
     ).fetchone()
     text = str(row["classifier_text"] or "") if row else ""
     shown = clean(text, EXCERPT_CHARS) if text else NO_EXCERPT
-    if click.channel:
-        slack_out.enqueue_ephemeral(conn, clock, route=RouteRef(click.channel), user=click.user,
-                                    text=f"Excerpt, only you see this: {shown}")  # fmt: skip
-    _audit(conn, clock, item, "item.excerpt_shown", click.user)
+    return modal(EXCERPT_TITLE, f"Only you see this: {shown}", "Close")
+
+
+@slack_in.handles(cards.SHOW_EXCERPT)
+def _show_excerpt(conn: sqlite3.Connection, clock: Clock, click: Click) -> None:
+    """After the window opened: the audit."""
+    _audit(conn, clock, _item(conn, click.ref), "item.excerpt_shown", click.user)
 
 
 @slack_in.handles(cards.DISMISS)

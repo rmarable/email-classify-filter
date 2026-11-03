@@ -52,8 +52,8 @@ email not actually addressed to this mailbox, an email too big to scan fully, or
 what ecf did and how it classified the email (for example "Classified: invoice, high priority, by
 Claude Opus 5.5", or "corrected by you").
 
-Cards never include the email's text. **Show excerpt** shows you, and only you, the first 200
-characters. Cards about payments or fraud say "This acts on the email only. ecf never pays
+Cards never include the email's text. **Show excerpt** opens a window, which only you see, with the
+first 200 characters. Cards about payments or fraud say "This acts on the email only. ecf never pays
 anything."
 
 ### Escalations
@@ -114,6 +114,25 @@ since <time> (<computer>)". By default this happens only during business hours (
 Buttons say exactly what they do ("Approve: archive email"). Whoever decides first wins.
 Approvals expire after 4 days for sends and 14 days for everything else; an expired approval does
 nothing.
+
+A draft has its own card. The top line shows who the email is from and its subject, and a small
+line under it gives the email's category, its sender check, its fraud risk and the model that wrote
+the draft. A yellow sign marks anything to look at twice, such as a first-time sender. Then comes the
+draft, each of its lines starting with │, so you can tell the model's words from ecf's. Check every
+name, title and sign-off is yours, then choose:
+
+- **Save to Drafts** saves it in your mailbox's Drafts folder. ecf never sends it. If saving also
+  does something else, such as labelling the email, the card says so above the buttons. If the
+  draft fails ecf's check when you click, nothing is saved, ecf flags the email at its next check,
+  and the card says why.
+- **Delete draft** throws the draft away and flags the email, so it stays in view.
+- **Show excerpt** opens a window with part of the email, and only you see it.
+
+Afterwards the card asks how the draft was. Click 👍, or 👎 and pick the main reason; you can
+change your rating later. **Show draft** opens it again in a window only you see, **Show excerpt**
+is still there so you can compare it with the email, and **Delete from Drafts** deletes a
+saved draft at the next check, unless you have edited it. A draft longer than 28 lines, counting blank
+lines, can only be saved at your computer, with `ecf approve <id>`.
 
 - **Reversible actions** (mark as read, archive, move, mark as junk, save a draft) take one click
   in Slack (a draft on its own card, as above).

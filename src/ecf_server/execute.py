@@ -87,7 +87,7 @@ def run_once(  # noqa: PLR0911 - one return per outcome
                      actor="service", expected=Status.EXECUTING)  # fmt: skip
     _audit(conn, clock, item, "action.executed", {"grant_id": grant_id, "done": done})
     jobs.complete(conn, job.job_id, WORKER)
-    approvals.edit_card(conn, clock, sid, f"Done: {', '.join(done) or 'nothing to do'}")
+    approvals.done_card(conn, clock, sid, done)
     return True
 
 

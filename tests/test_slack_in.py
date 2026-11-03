@@ -134,6 +134,16 @@ def test_a_form_button_opens_its_form_at_once_and_queues_nothing(
     assert _queued(conn) == []
 
 
+def test_a_window_button_opens_its_window_at_once_and_queues_the_click(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(slack_in.WINDOWS, "peek", lambda _conn, c: {"type": "modal", "x": c.ref})
+    ln = Listener(db_path, clock)
+    ln.inbound.on_envelope(_env(_click("peek#0", "item-7")))
+    assert ln.views == [("trig-1", {"type": "modal", "x": "item-7"})]
+    assert [q["action"] for q in _queued(conn)] == ["peek"]  # its handler writes the audit
+
+
 def test_a_form_submission_is_queued_with_capped_values(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:

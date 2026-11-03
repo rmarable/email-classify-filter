@@ -235,11 +235,14 @@ def test_v11_escalations_get_one_summary_post(conn: sqlite3.Connection, clock: F
 # reasons are shown.
 
 
+VIEWS: list[dict[str, Any]] = []
+
+
 def _click(
     db_path: Path, clock: FakeClock, conn: sqlite3.Connection, action: str, ref: str
 ) -> None:
     inbound = Inbound(slack_admin.identity, clock, lambda: db.connect(db_path),
-                      lambda _e: None, lambda _t, _v: None)  # fmt: skip
+                      lambda _e: None, lambda _t, v: VIEWS.append(v))  # fmt: skip
     payload = {"type": "block_actions", "api_app_id": "A1", "team": {"id": "T1"},
                "user": {"id": ME}, "channel": {"id": "CAP"},
                "actions": [{"action_id": f"{action}#0", "value": ref}]}  # fmt: skip
@@ -247,15 +250,19 @@ def _click(
     SlackReceiver(clock).run_once(conn)
 
 
-def test_show_excerpt_is_ephemeral_short_and_audited(
+def test_show_excerpt_opens_a_short_window_only_you_see_and_is_audited(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock
 ) -> None:
     _slack(conn, clock)
     _item(conn, clock, "a" * 64, FRAUD, excerpt="Dear customer, see https://evil.test " + "x" * 400)
+    VIEWS.clear()
     _click(db_path, clock, conn, "show_excerpt", "a" * 64)
-    [p] = _posts(conn)
-    assert p["op"] == "ephemeral" and p["user"] == ME and p["channel"] == "CAP"
-    assert "https[:]//evil.test" in p["text"] and len(p["text"]) < 260
+    [view] = VIEWS
+    assert view["type"] == "modal" and "submit" not in view and view["title"]["text"] == "Excerpt"
+    [block] = view["blocks"]
+    assert block["text"]["type"] == "plain_text"
+    assert "https[:]//evil.test" in block["text"]["text"] and len(block["text"]["text"]) < 260
+    assert _posts(conn) == []  # nothing in the channel, not even a message only you see
     events = [r[0] for r in conn.execute("SELECT event FROM audit")]
     assert "item.excerpt_shown" in events
 

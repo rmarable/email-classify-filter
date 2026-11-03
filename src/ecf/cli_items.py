@@ -315,6 +315,21 @@ def _action_line(a: dict[str, Any]) -> str:
     return text + ("   (needs your approval)" if a.get("mode") == "approve" else "")
 
 
+DRAFT_NOTE = "Check every name, title and sign-off in this draft is yours"  # as on the card
+
+
+def _draft_lines(text: str) -> list[str]:
+    return [f"    {DRAFT_NOTE}", *[f"    | {x}" for x in text.splitlines()]]
+
+
+def _decided_draft(outcome: str, codes: list[str], text: str) -> list[str]:
+    """A decided draft under its own heading, never "proposed:" (AH2). A refused one was dropped:
+    its code, no text."""
+    if outcome == "refused":
+        return [f"draft, refused: {', '.join(codes)}"]
+    return [f"draft, {outcome}:", *(_draft_lines(text) if text else [])]
+
+
 def proposal_lines(d: dict[str, Any]) -> list[str]:
     """What ecf proposes for the item, with a draft's whole text: what `ecf approve` approves
     (§8.4: a draft is shown in full before approval); and each action left out, with why (a
@@ -326,6 +341,18 @@ def proposal_lines(d: dict[str, Any]) -> list[str]:
     dropped = [f"not proposed: {g.get('name')}: {g.get('why')}" for g in gone]
     if p.get("draft_withheld"):  # a reply is needed, but policy offers no draft (M8 plan P-d)
         dropped.append(f"no draft offered: {p['draft_withheld']}")
+    draft: dict[str, Any] = d.get("draft") or {}
+    outcome = draft.get("outcome")
+    if outcome and outcome != "expired":  # an expired draft can still be offered again
+        mine = [a for a in actions if a.get("name") == "draft_reply"]
+        payload: dict[str, Any] = (mine[0].get("payload") or {}) if mine else {}
+        codes: list[Any] = draft.get("codes") or []
+        dropped += _decided_draft(str(outcome), [str(c) for c in codes],
+                                  str(payload.get("text") or ""))  # fmt: skip
+        actions = [a for a in actions if a.get("name") != "draft_reply"]
+    if outcome == "expired" and draft.get("codes"):  # it won't be offered again as it stands
+        shown = ", ".join(str(c) for c in draft["codes"])
+        dropped.append(f"draft, expired: the draft check refused it ({shown})")
     if not actions or p.get("done") is not None:
         return dropped
     lines = [*dropped, "proposed:"]
@@ -335,7 +362,7 @@ def proposal_lines(d: dict[str, Any]) -> list[str]:
         text = str(payload.get("text") or "") if a.get("name") == "draft_reply" else ""
         if text:
             lines.append("    draft written by ecf's model (it can be wrong):")
-            lines += [f"    | {x}" for x in text.splitlines()]
+            lines += _draft_lines(text)
     actor: dict[str, Any] = plan.get("actor") or {}
     if actor.get("reason"):
         lines.append(f"  model's reason: {actor['reason']}")

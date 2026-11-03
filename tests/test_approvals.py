@@ -19,7 +19,7 @@ from ecf.errors import (
 )
 from ecf.ids import AddressId, StableId
 from ecf.status import Status
-from ecf_server import approvals, db, execute, inbox, items, slack_admin, stepup
+from ecf_server import approvals, db, execute, inbox, items, outbound_plan, slack_admin, stepup
 from ecf_server._slack import Envelope
 from ecf_server.actions import Planned
 from ecf_server.clock import Clock, FakeClock, to_ts
@@ -319,9 +319,15 @@ def test_pending_batches_non_sends_under_one_step_up(
 
 
 def test_pending_lists_a_draft_apart(
-    conn: sqlite3.Connection, db_path: Path, clock: FakeClock
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A draft is approved on its own, where its text is shown (P3)."""
+    """A draft is approved on its own, where its text is shown (P3). The check at approval is
+    `tests/test_draft_card.py`; it would refuse this fraud item's draft."""
+
+    def passes(*_a: object) -> tuple[str, ...]:
+        return ()
+
+    monkeypatch.setattr(outbound_plan, "draft_check", passes)
     _setup(conn, clock)
     approvals.refresh_draft_cards(conn, clock)  # done: Slack may approve drafts (OD-551)
     sid = _proposed(conn, clock, "c" * 64, FRAUD)

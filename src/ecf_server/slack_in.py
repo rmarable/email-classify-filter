@@ -5,7 +5,8 @@ On Slack's listener thread (`Inbound.on_envelope`), only what must happen at onc
 2. refuse anything not from this app, this workspace and your member ID (OD-084), audited with the
    clicker's member ID only, never the payload;
 3. drop a repeat of an envelope already seen (`slack_dedupe`);
-4. for a button that opens a form, open it now (`views.open` needs the 3-second `trigger_id`);
+4. for a button that opens a form or a window, open it now (`views.open` needs the 3-second
+   `trigger_id`);
 5. hand the click to the durable `slack_in` queue.
 
 A worker (`SlackReceiver`) then runs the registered handler for the click's action. A button's
@@ -68,6 +69,7 @@ Handler = Callable[[sqlite3.Connection, Clock, Click], None]
 FormBuilder = Callable[[sqlite3.Connection, Click], dict[str, Any]]
 HANDLERS: dict[str, Handler] = {}
 FORMS: dict[str, FormBuilder] = {}  # buttons that open a form instead of queueing a click
+WINDOWS: dict[str, FormBuilder] = {}  # buttons that open a window to read, then queue the click
 
 
 def handles(action: str) -> Callable[[Handler], Handler]:
@@ -84,6 +86,18 @@ def opens_form(action: str) -> Callable[[FormBuilder], FormBuilder]:
 
     def register(fn: FormBuilder) -> FormBuilder:
         FORMS[action] = fn
+        return fn
+
+    return register
+
+
+def shows_window(action: str) -> Callable[[FormBuilder], FormBuilder]:
+    """A button whose answer only you should see, opened at once in a window (a modal) rather
+    than sent as a separate message (operator decision 2026-11-03). The builder only reads; the
+    click is then queued as any other, so its handler writes the audit off Slack's thread."""
+
+    def register(fn: FormBuilder) -> FormBuilder:
+        WINDOWS[action] = fn
         return fn
 
     return register
@@ -118,10 +132,14 @@ class Inbound:
             click = to_click(p)
             if click is None:
                 return
+            trigger = str(p.get("trigger_id", ""))
             form = FORMS.get(click.action) if click.kind == "button" else None
             if form is not None:
-                self._open_view(str(p.get("trigger_id", "")), form(conn, click))
+                self._open_view(trigger, form(conn, click))
                 return
+            window = WINDOWS.get(click.action) if click.kind == "button" else None
+            if window is not None:
+                self._open_view(trigger, window(conn, click))
             jobs.enqueue(conn, self._clock, jobs.Queue.SLACK_IN, AddressId(click.user),
                          asdict(click), timeout_s=TIMEOUT_S, max_attempts=3)  # fmt: skip
         finally:

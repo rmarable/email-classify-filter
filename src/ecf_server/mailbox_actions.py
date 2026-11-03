@@ -87,6 +87,10 @@ class RefusedError(PolicyDeniedError):
     """A check at execution time refused the action: the item fails at once, no retry."""
 
 
+DRAFT_REFUSED = "the draft check refused it: "
+DRAFT_DELETED = "draft deleted"
+
+
 class LeaseLostError(ConflictError):
     """The check lost its lease before a write: retried later, never written without it."""
 
@@ -134,6 +138,10 @@ def refusal(conn: sqlite3.Connection, item: sqlite3.Row, actions: list[Planned],
                             _role_folder(folders, DRAFTS) is None))  # fmt: skip
             why = outbound_plan.check(conn, item, a.name, a.target, a.payload)
             reasons.append((why or "", why is not None))
+            # here too: requeue and a job running at the upgrade never pass `approve` (AJ3)
+            codes = outbound_plan.draft_check(conn, item, a.payload) if why is None and (
+                a.payload is not None) else ()  # fmt: skip
+            reasons.append((DRAFT_REFUSED + ", ".join(codes), bool(codes)))
     return next((why for why, applies in reasons if applies), None)
 
 
@@ -157,6 +165,9 @@ def executor_for(
         why = refusal(conn, item, planned, folders) or next(
             (w for a in planned if a.name in SENDS
              if (w := send_actions.refusal(conn, clock, item, a))), None)  # fmt: skip
+        if why and why.startswith(DRAFT_REFUSED):
+            codes = tuple(why.removeprefix(DRAFT_REFUSED).split(", "))
+            draft_versions.set_outcome(conn, clock, item["stable_id"], "refused", codes)
         if why:
             raise RefusedError(why)
 
@@ -328,7 +339,7 @@ def undo_item(conn: sqlite3.Connection, clock: Clock, src: MailSource, item: sql
             raise LeaseLostError("the check lost its lease")
         for r in record:
             if r["name"] == "draft_reply":
-                undone.append(_delete_draft(src, r))
+                undone.append(delete_draft(src, r))
         moved = next((r for r in record if r["name"] in MOVES), None)
         if moved is not None:
             _move_back(src, item, moved)
@@ -361,7 +372,7 @@ def _undone(conn: sqlite3.Connection, clock: Clock, sid: StableId, undone: list[
     return undone
 
 
-def _delete_draft(src: MailSource, r: dict[str, Any]) -> str:
+def delete_draft(src: MailSource, r: dict[str, Any]) -> str:
     """Delete ecf's draft only if it is still exactly what ecf saved (see the module docstring)."""
     folder = str(r["folder"])
     found = src.find_in(folder, str(r["message_id"]))
@@ -371,7 +382,7 @@ def _delete_draft(src: MailSource, r: dict[str, Any]) -> str:
     if raw is None or parse(raw).content_hash != r["content_hash"]:
         return "draft not deleted (it was edited)"
     src.delete_in(folder, found[0])
-    return "draft deleted"
+    return DRAFT_DELETED
 
 
 def _move_back(src: MailSource, item: sqlite3.Row, moved: dict[str, Any]) -> None:
