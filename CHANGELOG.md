@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed (for contributors): task-specific agent rules moved out of `AGENTS.md` into files read only when needed: review and model-evaluation rules in `docs/agents/reviews-and-evals.md`, test and merge-gate rules in `docs/agents/testing-and-merge.md`, and the eval-card, roadmap and user-docs rules in `.claude/rules/`. `AGENTS.md` lists which file to read before which task. No rule changed.
 - Security: the draft checker now runs on every draft the assistant writes, before you see a card. A draft that fails is dropped and the email flagged, with the reason shown (OD-583).
 - Added: `ecf drafts stats` shows what happened to ecf's drafts: saved, sent, edited, rejected, expired or refused, how many emails needing a reply got one, ratings, and a weekly trend. A weekly Slack post gives the counts (OD-583).
 - Added: ecf looks in your Sent and Drafts folders for each draft it saved, at most hourly for 14 days, by that draft's exact Message-ID or as a reply to the same email, to learn whether you sent it, including from Gmail in a browser, which changes the Message-ID. It keeps only the result, never the text (OD-583).

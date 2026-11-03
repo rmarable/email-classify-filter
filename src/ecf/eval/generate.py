@@ -73,7 +73,7 @@ RECIPIENT = (
     " given. A seed's profile says which mailbox receives the email: org (the accounts-payable"
     " mailbox) or freemail (the personal mailbox)."
 )
-# The fixed safety rules (AGENTS.md, "When you edit these paths": tests/eval/synthetic/**)
+# The fixed safety rules (.claude/rules/eval-synthetic.md, shared through AGENTS.md)
 SAFETY_RULES = (
     "Rules for every email: use only reserved domain names (names ending in .example or .test,"
     " such as vendor-a.example); name regulators, government agencies and companies by role"
