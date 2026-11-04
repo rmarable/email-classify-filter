@@ -101,7 +101,7 @@ def test_labelling_shows_what_the_model_returned(
     root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     case = CaseResult(id="starter-bec", correct=False,
-                      got={"category": "invoice", "rule": "fraud_guard"})  # fmt: skip
+                      got={"category": "notification", "rule": "fraud_guard"})  # fmt: skip
     result = ResultFile(run_id="abcdef123456", pair="p", set_version="v",
                         created_at="2026-10-01T12:00:00Z", cases=[case])  # fmt: skip
     path = tmp_path / "r.json"
@@ -111,7 +111,7 @@ def test_labelling_shows_what_the_model_returned(
                                  "--results", str(path)], input="n\n")  # fmt: skip
     assert r.exit_code == 0, r.output
     assert "model answers from eval abcdef12 (2026-10-01)" in r.output
-    assert "model returned: category invoice (expected notification)" in r.output  # S3b relabel
+    assert "model returned: category notification (expected invoice)" in r.output  # OD-586
 
 
 def test_the_committed_set_is_consistent() -> None:

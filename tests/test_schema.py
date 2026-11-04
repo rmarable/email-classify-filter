@@ -55,6 +55,21 @@ def test_shipped_schemas_match_spec() -> None:
         assert load_yaml(shipped) == load_yaml(block)
 
 
+def test_v3_says_where_a_payment_details_change_and_a_regulator_notice_go() -> None:
+    """OD-586: a notice changing where we pay a bill is a money email (invoice), never finance or
+    a plain notice; a regulator's notice about us is yes even when it asks nothing, a public
+    body's service notice is no."""
+    f = load_schema().fields
+    where = "the account or address we pay a bill to"
+    assert where in f["category"].description
+    texts = dict(zip(f["category"].values, f["category"].value_descriptions, strict=True))
+    assert texts["invoice"].startswith(f"Asks us to pay, or changes {where}:")
+    assert f"not changing {where}" in texts["finance"]
+    reg = f["regulator_claim"].description
+    assert "any other notice about us or our business, is yes, even when it asks nothing" in reg
+    assert "a notice about a public service it provides, such as an outage" in reg
+
+
 def test_v2_keeps_the_safety_core() -> None:
     v2 = load_schema_v2()
     assert v2.version == 2 and v2 is load_schema_v2()  # cached
@@ -390,8 +405,8 @@ def test_the_budget_line_and_near_the_limit() -> None:
     assert cats["near"] == ["category_values"]
     empty = extension_budget(base, None)
     assert empty["line"] == ("schema: 0 of 8 fields, 0 of 4 category values, 0 of 4,000"
-                             " characters; 7,663 bytes of schema per classify read (shipped"
-                             " 7,663)")  # fmt: skip
+                             " characters; 8,074 bytes of schema per classify read (shipped"
+                             " 8,074)")  # fmt: skip
 
 
 def test_v1_value_aliases_map_each_renamed_v1_value_to_a_v2_value() -> None:

@@ -31,6 +31,8 @@ STRICTER = {"billing-plan-question", "bug-api-rate-limit", "bug-data-loss-urgent
             "v2-fin-insurance-claim-photos", "v2-fin-insurance-policy-renewed",
             "v2-fin-mortgage-escrow-analysis", "v2-fin-retirement-beneficiary-review",
             "v2-fin-tax-preparer-documents", "v2-ship-missed-delivery-pickup",
+            # OD-586: a city's outage notice, sender_type regulator, which the card lets be hidden
+            "reg-city-water-outage",
             "v2-ship-return-label",
             # classifier plan 0.2: a reply needed, and a payment-related receipt
             "ctrl-vendor-one-opener", "ctrl-exchange-withdrawal-receipt",

@@ -12,7 +12,7 @@ author: claude
 to: [ap@acme.example]
 date: 2026-10-01T09:00:00Z
 expected:
-  labels: {category: notification, payment_related: true, fraud_risk: high, bank_detail_change: true}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 ---

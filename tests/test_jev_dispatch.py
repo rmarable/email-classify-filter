@@ -40,9 +40,9 @@ PIN = jev.load_pin()
 # Jev's digests for the shipped schema and starter rules, pinned byte for byte (step 4, P5);
 # re-pinned to step 3's settings (OD-512), then to excerpt version 3 (OD-558: the state format
 # names it, though Jev's own 1,500 cut gives it the same text), then to jev-1.14.0 and the 4,000
-# window (OD-561)
-SHIPPED_GATE_KEY = "jev:jev-1.14.0+65e64c628ce580a0+jev-s1-state-b58d481303a0+0fd82c418986dfe7"
-SHIPPED_PROMPT_DIGEST = "bb868a09c2b2c5b2abc0487d1cc29895393c1b7d79df866992ee7294e6723032"
+# window (OD-561), then to OD-586's schema wording
+SHIPPED_GATE_KEY = "jev:jev-1.14.0+f241b4a5ad55e342+jev-s1-state-b58d481303a0+0fd82c418986dfe7"
+SHIPPED_PROMPT_DIGEST = "960beb38b231716c0a3865980e11cd4426f7205ade7a0778709731eb5b731a07"
 
 
 def ok(**over: Any) -> Any:

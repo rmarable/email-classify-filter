@@ -6,7 +6,7 @@
   "data_format": 4,
   "schema_version": 43,
   "classifier_schema": 3,
-  "prompt_digest": "fb22fd651a19014779cc6385bf1a840cbf3b09ae4f99140d7fff7facc46f4a50",
+  "prompt_digest": "2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2",
   "actor_prompt_digest": "fe68ec609464c7c338b8f76803fe5c2cc67e696a11b3cdb2b9a2f20afe99f48e",
   "min_client": "0.1.0.dev0"
 }

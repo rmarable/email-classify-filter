@@ -5,6 +5,8 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Unreleased
 
+- Changed: the classifier's instructions say a notice that changes the account or address you pay a bill to is a bill to pay, and that a regulator's notice about you counts as regulator mail even when it asks nothing, while a public body's notice about its own service (an outage, office hours) doesn't (OD-586).
+- Changed: after this upgrade every live address goes back to assist until enough reviews pass again, because the classifier's instructions changed (OD-586).
 - Changed: a draft has a new Slack card. It shows who it's from and the subject, a small line of facts, a note to check names and sign-offs, then the draft with every line marked. Its buttons are Save to Drafts, Delete draft and Show excerpt (OD-584).
 - Added: after you decide a draft, you can rate it 👍 or 👎 (👎 asks for one reason), delete it from Drafts, or see it again with Show draft (OD-584).
 - Recorded: a Recover draft button for deleted drafts is on the roadmap, low priority and not scheduled (OD-585).
