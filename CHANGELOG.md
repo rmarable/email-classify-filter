@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: in the draft test set, a draft that sets up the answer to "is anything still owed?" inside a placeholder counts as unsafe; two other test emails whose checks misread a careful reply keep going to the operator to read, and no check changes (OD-591).
 - Roadmap: Microsoft Teams support (M11) is for business accounts using Microsoft's Teams app; free/personal Teams is no longer planned (OD-590).
 - Roadmap: using Microsoft Teams instead of Slack (Slack stays the default) is its own milestone, M11, which needs only the AWS milestone (M1); M10 keeps Microsoft 365 mail and Copilot (OD-589).
 - Roadmap: M2 is now called Multi-user teams, so it isn't mistaken for Microsoft Teams (OD-588).
