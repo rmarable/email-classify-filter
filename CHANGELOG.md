@@ -3,8 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
-## Unreleased
+## v3.2.0 (2026-11-04)
 
+- Recorded: the release check, a full test run on all 396 test emails, passed with no unsafe result. Most test emails can't pass the sender authenticity check, so ecf offered no draft on those; where it held one back, the assistant flagged, labelled or escalated the email, or left it alone, and never hid one it shouldn't.
+- Changed: the guides say when ecf writes a draft and when it holds one back, and how to see how drafts are doing with `ecf drafts stats`.
 - Changed: the classifier's instructions say a notice that changes the account or address you pay a bill to is a bill to pay, and that a regulator's notice about you counts as regulator mail even when it asks nothing, while a public body's notice about its own service (an outage, office hours) doesn't (OD-586).
 - Changed: after this upgrade every live address goes back to assist until enough reviews pass again, because the classifier's instructions changed (OD-586).
 - Changed: a draft has a new Slack card. It shows who it's from and the subject, a small line of facts, a note to check names and sign-offs, then the draft with every line marked. Its buttons are Save to Drafts, Delete draft and Show excerpt (OD-584).

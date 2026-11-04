@@ -511,7 +511,8 @@ to create and add ecf to.
 
 ## Sending email
 
-Sending is off for every mailbox until you turn it on.
+Sending is off for every mailbox until you turn it on. Drafts aren't sending: ecf saves an approved
+draft in your Drafts folder and never sends it, so drafts need no switch.
 
 - `ecf outbound report <address>` shows what ecf would have sent, your reviews of those, what a
   `high` mailbox still needs before it can send, the send limits, recent sends and reminders.

@@ -163,9 +163,10 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Status
 
-`v3.1.0` (2026-10-26) is the current version: the classifier now reads the first 4,000
-characters of each email instead of 1,500, so a scam whose request comes late in a long email is
-caught, and a Slack card that can't be posted no longer holds up its channel. It runs
+`v3.2.0` (2026-11-04) is the current version: ecf's model can write a reply draft on its own
+Slack card, which you check and save to your Drafts folder (ecf never sends it), rate afterwards,
+and follow with `ecf drafts stats`; drafts are offered only on authenticated mail with no fraud or
+regulator warning. It runs
 on macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
 your Mac, for connecting to Gmail directly through Google's own interface, and then for Google
 Workspace (company and school) accounts are planned. What changed in each version is in

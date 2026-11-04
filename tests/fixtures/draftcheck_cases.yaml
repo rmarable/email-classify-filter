@@ -1,5 +1,5 @@
 # The draft checker's specification (docs/roadmap/m8-model-written-drafts.md §1; SPEC §12.2 names
-# this file at Step 11). Each case runs on its own: a draft, the email it answers (a name from
+# this file). Each case runs on its own: a draft, the email it answers (a name from
 # `emails` or inline text), the email's links, the allowed addresses, and the codes the checker
 # must refuse and warn with, exactly. `spans` gives, for each refuse code, text the code must
 # have matched, so a case can't pass for the wrong reason.

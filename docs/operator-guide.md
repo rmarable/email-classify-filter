@@ -275,6 +275,20 @@ ecf can suggest three kinds of outgoing email:
 - **Draft reply:** saved in your Drafts folder and never sent; you send it yourself if you want
   to. The card shows the whole text under "Draft written by ecf's model (it can be wrong; it is
   saved, never sent)". Links in it are shown but not clickable.
+
+  ecf writes a draft only when an email needs a reply and is safe to answer. Among other things,
+  its sender passed the email's authenticity check, it has one clear From address, it's in
+  English, it isn't bulk mail, it was fully scanned, and nothing about it looks like fraud, a
+  regulator, changed bank details, an outsider posing as a colleague or a risky attachment.
+  For example, a customer asking for an export from their real company address can get a
+  draft; an email saying "our bank details have changed" never does, however genuine it looks.
+  When ecf holds a draft back, `ecf item show <id>` says why, such as "no draft offered:
+  not_authenticated".
+
+  To see how drafts are doing, run `ecf drafts stats`: how many were saved, sent unchanged, edited
+  or thrown away, how many emails that needed a reply got a draft, and your 👍 and 👎. Once a week
+  ecf posts the same counts in Slack. If you mark a draft 👎 because it promised something, ecf
+  also alerts you.
 - **Template reply** and **internal forward:** these really send. Each one needs sending turned on
   for the mailbox, your approval and step-up, every time. A forward attaches the original email
   unchanged and can only go to an address on your forward allow-list.
