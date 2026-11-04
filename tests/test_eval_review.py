@@ -220,8 +220,7 @@ def _old_card(root: Path) -> None:
     """starter-bec as it was before the S3b relabel (a removed value), built and confirmed."""
     path = root / "cases" / "starter-bec.md"
     text = path.read_text(encoding="utf-8").replace(
-        "{category: notification, payment_related: true, fraud_risk: high,"
-        " bank_detail_change: true}",
+        "{category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}",
         "{category: vendor_change_request, payment_related: true, fraud_risk: high}",
     )
     assert "vendor_change_request" in text

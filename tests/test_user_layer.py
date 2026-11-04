@@ -286,8 +286,8 @@ def test_a_description_naming_a_default_or_another_user_field_warns() -> None:
 
 
 def test_read_bytes_is_the_schema_text_and_json_schema() -> None:
-    assert read_bytes(SCHEMA) == 7663
-    assert len(SCHEMA.prompt_block.encode()) == 5999
+    assert read_bytes(SCHEMA) == 8074
+    assert len(SCHEMA.prompt_block.encode()) == 6410
     assert read_bytes(EXTENDED) > read_bytes(SCHEMA)
 
 

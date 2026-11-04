@@ -1,0 +1,25 @@
+Received: from mail.freemail.example (mail.freemail.example [192.0.2.10]) by
+ mx.example.net with ESMTPS id reg-fake-inspection-reschedule; Tue, 03 Nov
+ 2026 08:30:00 +0000
+From: State Licensing Board Scheduling
+ <licensing.board.scheduling@freemail.example>
+To: ap@acme.example
+Subject: Your inspection date has moved
+Date: Tue, 03 Nov 2026 08:30:00 +0000
+Message-ID: <reg-fake-inspection-reschedule.e2ab88928e@synthetic.acme.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+The State Licensing Board has moved ACME's annual premises inspection from 18=
+ November to
+14 November at 10:00, due to inspector availability.
+
+Please reply to this email by 7 November to confirm someone will be on site. =
+If we don't hear
+from you, the inspection will be recorded as refused.
+
+Scheduling Office
+State Licensing Board

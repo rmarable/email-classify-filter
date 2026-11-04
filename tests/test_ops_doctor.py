@@ -50,12 +50,12 @@ def _by_name(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
 def test_schema_row(conn: sqlite3.Connection) -> None:
     row = ops_doctor.schema(conn)
     assert row == {"name": "schema", "level": "ok", "detail": "v3, built in (no fields of your"
-                   " own); 7,663 bytes of schema per classify read", "fix": ""}  # fmt: skip
+                   " own); 8,074 bytes of schema per classify read", "fix": ""}  # fmt: skip
     _set(conn, "config.schema", {"fields": {"a": {"type": "boolean", "description": "x"}}})
     row = ops_doctor.schema(conn)
     assert row["level"] == "ok"
     assert row["detail"].startswith("v3 with an extension; 1 of 8 fields, 0 of 4 category values")
-    assert "bytes of schema per classify read (shipped 7,663)" in row["detail"]  # P16
+    assert "bytes of schema per classify read (shipped 8,074)" in row["detail"]  # P16
     fields = {f"f{i}": {"type": "boolean", "description": "x"} for i in range(7)}
     _set(conn, "config.schema", {"fields": fields})
     row = ops_doctor.schema(conn)

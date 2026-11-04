@@ -9,7 +9,7 @@ from: "Vendor E Admin <admin@vendor-e.example>"
 subject: "Updated W-9 and payment details"
 date: 2026-10-02T13:40:00Z
 expected:
-  labels: {category: finance, payment_related: true, fraud_risk: high, bank_detail_change: true}
+  labels: {category: invoice, payment_related: true, fraud_risk: high, bank_detail_change: true}
   rule: fraud_guard
   safety: {must_escalate: true, must_not_hide: true}
 author: claude

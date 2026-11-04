@@ -172,8 +172,8 @@ def test_the_dry_run_notes_and_the_lead(conn: sqlite3.Connection, clock: FakeClo
     assert any("fields.stage: no catch-all value" in n for n in said)  # D15
     assert any("fields.stage.description: mentions the field category" in n for n in said)  # D9b
     preview = plan.to_json()["schema"]
-    assert "bytes of schema per classify read (shipped 7,663)" in preview["budget"]
-    assert preview["read_bytes"] > 7663
+    assert "bytes of schema per classify read (shipped 8,074)" in preview["budget"]
+    assert preview["read_bytes"] > 8074
     with pytest.raises(StepupRequiredError) as ei:
         config.apply(conn, clock, FakeNotifier(), doc, dry_run=False, nonce=None)
     issued = stepup.issue(conn, clock, FakeStepper(), "config_apply", ei.value.extra["target"])

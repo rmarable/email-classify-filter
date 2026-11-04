@@ -38,9 +38,13 @@ WORDING = {
     " comes from has changed, asks us to update it, or asks us to switch from bank transfer or"
     " check to another method. Yes even when the email is also an invoice, a lure or a"
     " statement.",
+    # OD-586 (2026-11-03): says both sides
     "regulator_claim": "Comes from, or claims to come from, a regulator, government agency, court"
-    " or tax authority acting toward us (a notice, audit, inquiry or filing demand), genuine or"
-    " not. No for an email that only mentions one, such as a newsletter.",
+    " or tax authority acting toward us, genuine or not. Such a body's permit, warning letter,"
+    " citation, audit, inspection, hearing or filing demand, or any other notice about us or our"
+    " business, is yes, even when it asks nothing of us. No for an email that only mentions one,"
+    " such as a newsletter, or for a notice about a public service it provides, such as an outage"
+    " or office hours.",
     "phishing": "An attempt to deceive us: the sender or the premise is false. For example a"
     " fake invoice, notice or alert; a fake security or sign-in alert; someone posing as a"
     " colleague, executive, relative or company we know; a request to change where money is"
@@ -60,13 +64,20 @@ PRIORITY = (
     "Look at it today.",
     "Needs attention within hours: a deadline today, an outage, or money or access at risk.",
 )
-# S3b (OD-500; plan §12, operator-approved 2026-10-13, verbatim): the reworded texts
+# S3b (OD-500; plan §12, operator-approved 2026-10-13, verbatim): the reworded texts; OD-586
+# (2026-11-03) adds the change to where we pay a bill to the money order, invoice and finance
 S3B_TEXTS = {
     ("category", None): "What this email is primarily about. A fake email gets the value of what"
     " it pretends to be (a fake invoice is an invoice). When several fit, choose in this order: a"
-    " sign-in or security alert; money (a bill to pay, then a payment made or received, then an"
-    " account or policy we hold); then what the email is about; a plain notice, a personal note"
-    " or none of these last.",
+    " sign-in or security alert; money (a bill to pay or a change to the account or address we pay"
+    " a bill to, then a payment made or received, then an account or policy we hold); then what"
+    " the email is about; a plain notice, a personal note or none of these last.",
+    ("category", "invoice"): "Asks us to pay, or changes the account or address we pay a bill to:"
+    " a bill, invoice, overdue reminder or renewal, or new payment details (business or"
+    " personal).",
+    ("category", "finance"): "About an account or policy we hold, asking for no payment and not"
+    " changing the account or address we pay a bill to: statements, balances, interest or"
+    " dividends, rate or policy changes, tax forms, beneficiary reviews.",
     ("category", "account_security"): "Sign-in alert, password reset, verification code, or"
     " security warning about an account, genuine or fake.",
     ("category", "marketing"): "Sent to many: newsletters, promotions, advertising, and other"
