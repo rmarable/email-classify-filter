@@ -38,7 +38,7 @@ internet that could approve something, and everything posted is kept under Slack
 - **An HTTP request URL:** needs a public endpoint, which v1 doesn't have; it is the M1 design
   (`ecf-slack` behind API Gateway, signature and timestamp checks), and `ecf migrate` switches the
   same app over (design plan).
-- No other chat surface was considered for v1; Teams is an M10 item (split from M3 by OD-587; SPEC §1.2).
+- No other chat surface was considered for v1; Microsoft Teams is M11 (OD-589; M10 by OD-587, split from M3; SPEC §1.2).
 
 ## Consequences
 
