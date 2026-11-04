@@ -2,7 +2,7 @@
 
 **Status: draft 2, 2026-10-16. Not started.** Phase R ran on draft 1 (four agents, findings P1-P29
 below); the operator accepted every recommendation (2026-10-16). Started ahead of M1-M5 (operator
-decision 2026-10-16, OD-527, amends OD-004). Released as a minor version, numbered when it ships (OD-531, OD-533). Replaces the outline
+decision 2026-10-16, OD-527, amends OD-004); parked, M1 and M11 go first (OD-592). Released as a minor version, numbered when it ships (OD-531, OD-533). Replaces the outline
 `planning-docs/M6-GMAIL-API.md` (OD-426, OD-525). Google Workspace accounts are M7, a separate
 milestone, not planned here; M6 is built so M7 can reuse its adapter and sign-in without a rewrite
 (P5).
