@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Roadmap: Microsoft Teams support (M11) is for business accounts using Microsoft's Teams app; free/personal Teams is no longer planned (OD-590).
 - Roadmap: using Microsoft Teams instead of Slack (Slack stays the default) is its own milestone, M11, which needs only the AWS milestone (M1); M10 keeps Microsoft 365 mail and Copilot (OD-589).
 - Roadmap: M2 is now called Multi-user teams, so it isn't mistaken for Microsoft Teams (OD-588).
 - Roadmap: remote access to ecf from claude.ai stays M3; Microsoft 365 mail and Copilot move to a new milestone, M10, which comes right after M3. Google Workspace accounts (M7) are parked (OD-587).
