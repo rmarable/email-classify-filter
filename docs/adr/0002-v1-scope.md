@@ -16,7 +16,7 @@ v1 builds only **single-user local mode**: one person, one computer (macOS or Li
 desktops through Secret Service, headless Linux best-effort on systemd 256+), no AWS. The OS user
 is the sole admin and approver. One local service holds state (SQLite), secrets (the OS secret
 store) and Slack (Socket Mode), and runs while the computer is on. Everything else stays fully
-designed and moves to milestones executed in order: M1 AWS mode, M2 teams, M3 remote access,
+designed and moves to milestones executed in order: M1 AWS mode, M2 multi-user teams, M3 remote access,
 M4 always-on, then later items.
 
 Security-relevant code (facts, triggers, rules, policy, transitions) runs in the service, not in a
@@ -24,7 +24,7 @@ model or client, so M1 moves it to Lambdas without redesign.
 
 ## Alternatives considered
 
-- **Everything in v1** (AWS, teams, remote MCP): rejected; too much to build before the first real
+- **Everything in v1** (AWS, multi-user teams, remote MCP): rejected; too much to build before the first real
   test (superseded 2026-09-26).
 - **A reduced v1** (R4-25): rejected in Review 4.
 - **macOS only:** rejected; Linux is in v1 but unverified until V1.6. (Reversed for `v1.0.0` by

@@ -167,10 +167,10 @@ email. ecf comes with no warranty; see [DISCLAIMER.md](DISCLAIMER.md).
 Slack card, which you check and save to your Drafts folder (ecf never sends it), rate afterwards,
 and follow with `ecf drafts stats`; drafts are offered only on authenticated mail with no fraud or
 regulator warning. It runs
-on macOS, for one person. Support for Linux, for teams, for an always-on version that doesn't need
-your Mac, for connecting to Gmail directly through Google's own interface, and then for Google
-Workspace (company and school) accounts are planned. What changed in each version is in
-[CHANGELOG.md](CHANGELOG.md).
+on macOS, for one person. Support for Linux, for teams of several people sharing one install,
+for an always-on version that doesn't need your Mac, for connecting to Gmail directly through
+Google's own interface, and then for Google Workspace (company and school) accounts are planned.
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 ## For developers
 

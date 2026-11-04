@@ -38,7 +38,7 @@ MCP client is driven by a model.
 - **Approving through MCP:** rejected (design plan); a model-driven client must not approve.
 - **Trusting a step-up result from the CLI:** rejected (OD-073); the service runs the check
   itself.
-- **Two approvers for `high` sends, TOTP step-up:** the design for teams (M2) and AWS mode (M1);
+- **Two approvers for `high` sends, TOTP step-up:** the design for multi-user teams (M2) and AWS mode (M1);
   in v1, with one person, the design plan (§7) sets approver, step-up and the delay instead.
 
 ## Consequences
