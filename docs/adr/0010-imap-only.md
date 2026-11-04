@@ -39,7 +39,7 @@ no web server, so no OAuth redirect (ADR 0002).
 
 From the design plan and SPEC §1.2:
 
-- **Microsoft 365 via Graph:** on the roadmap (M3), not v1.
+- **Microsoft 365 via Graph:** on the roadmap (M10, split from M3 by OD-587), not v1.
 - **The Gmail API and Google Workspace XOAUTH2:** "Later" items.
 - **Providers without IMAP** (Atomic Mail): not usable until they offer IMAP and app passwords or
   an equivalent (SPEC §1.2, checked 2026-09-28).
