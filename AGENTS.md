@@ -36,7 +36,7 @@ Claude Code loads the three `.claude/rules/` files on its own when it touches th
 
 ## Project
 
-ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 multi-user teams, M3 remote MCP for claude.ai, M10 Microsoft 365 and Copilot (after M3), M11 Microsoft Teams chat (after M1), M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace (parked), M8 model-written drafts, M9 send drafts from Slack.
+ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 multi-user teams, M3 remote MCP for claude.ai, M10 Microsoft 365 and Copilot (after M3), M11 Microsoft Teams chat (after M1), M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace (parked), M8 model-written drafts, M9 send drafts from Slack. Next: M1, then M11; M6 stays parked (OD-592).
 
 Each deliverable, and each real-service test, starts only when the operator names it.
 
