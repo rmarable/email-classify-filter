@@ -1,6 +1,6 @@
 # M7 Google Workspace accounts
 
-Status: outline, not started. Split from M6 (Gmail API) by operator decision 2026-10-16 (OD-525,
+Status: outline, not started; parked 2026-11-04 (operator decision, OD-587). Split from M6 (Gmail API) by operator decision 2026-10-16 (OD-525,
 amends OD-426). At M7's start this becomes `docs/roadmap/m7-google-workspace.md` and gets its own
 design review.
 

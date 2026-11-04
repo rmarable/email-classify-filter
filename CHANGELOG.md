@@ -3,6 +3,10 @@
 One entry per tag, newest first, kept up to date as changes are committed (rule: `CLAUDE.md`,
 Changelog). Milestone tags (`ms-…`) record internal progress and are not releases (ADR 0003).
 
+## Next release (not yet tagged)
+
+- Roadmap: remote access to ecf from claude.ai stays M3; Microsoft 365 mail, Teams and Copilot move to a new milestone, M10, which comes right after M3. Google Workspace accounts (M7) are parked (OD-587).
+
 ## v3.2.0 (2026-11-04)
 
 - Recorded: the release check, a full test run on all 396 test emails, passed with no unsafe result. Most test emails can't pass the sender authenticity check, so ecf offered no draft on those; where it held one back, the assistant flagged, labelled or escalated the email, or left it alone, and never hid one it shouldn't.
