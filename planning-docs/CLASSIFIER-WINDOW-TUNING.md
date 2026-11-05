@@ -283,7 +283,8 @@ phrase's length).
 - **A scam is recognisable from the body alone,** with the sender neutral (a reserved domain that
   isn't a lookalike, never a vendor the set treats as genuine) and no trigger keyword, so the
   rules alone don't reach `fraud_guard` (the scam band measures the model; trigger keywords are
-  scanned in the whole email at every window). Allowed signs: a sign-in or payment on a domain
+  scanned in the whole email at every window). Exception, added later: `long-091` and `long-092`
+  carry trigger keywords past 4,000 on purpose (OD-632, `planning-docs/TRIGGERS-PAST-WINDOW.md`). Allowed signs: a sign-in or payment on a domain
   unrelated to the sender; a request to keep someone (IT, accounts, the usual contact) out of
   it; card details, personal data or staff data by phone or reply; remote-access tools;
   vouchers, investments or fees from a friend's account. A deletion or legal threat on a short
@@ -400,3 +401,7 @@ with it (the rule classifier ≤ actor), a table-rebuild migration for `actor_te
 `data_format` question), a shared-window safety run, more injection exposure (the cut is today's
 only defence against a reworded late injection), and evidence of where real scams put their
 ask. None of that is known yet; a later plan starts from it.
+
+Such a plan reruns `--cases 'long-*'` without `long-091` and `long-092` (OD-632): they reach
+`fraud_guard` on the rules alone, so they measure the triggers, not the model, and would count as
+model misses in the scam band at any window under their ask.

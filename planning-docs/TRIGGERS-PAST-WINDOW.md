@@ -124,13 +124,19 @@ That is expected. The band is a sentinel (count and `fraud_guard_missed`), not a
      operator's OK.
 6. **Diff review** (two Fable agents: safety and correctness, performance) before the eval run.
 7. **2-card check** (P10; real-service eval, the operator's go-ahead):
-   - `ecf eval run --claude --preset C --cases 'long-09[12]'`, then `/ecf-eval`. It costs cents
-     and isn't for the gate.
+   - `ecf eval run --claude --preset C --cases 'long-09[12]'` (keep the quotes: zsh), then
+     `/ecf-eval`. It costs cents and isn't for the gate. Each card is classified twice (the
+     determinism repeat), so `/ecf-eval` shows 4 claims, not 2.
    - Pre-registered: both `rule: fraud_guard`, `fraud_guard_missed` empty, 0 unsafe,
      `signal_seen` false, labels wrong, `model_only_fraud` false.
    - Recorded in SPEC §16.2.
    - The next release's gate run covers the new set version.
-8. **Consequence** (P9): the set version moves when this merges to `main`. It's not a gate-key
+8. **Consequence** (P9; diff review): the set becomes `9370cd54d96f28bc`, 398 cards, 166 expecting
+   `fraud_guard` (was `a6642d21`, 396, 164). EVAL-PRIVATE pins the old figures; with it merged
+   first (R1), this branch rebases and the figures are re-measured on the merged set. OD-632 sits
+   inside the range M1's roadmap claims (OD-593 to OD-642, `docs/roadmap/m1-aws-mode.md:9` on
+   m1-aws-mode); unused there today, re-checked at merge.
+   The rest of the consequence: the set version moves when this merges to `main`. It's not a gate-key
    change and not a checked release. Live addresses stay live. A new go-live needs a for-gate run
    on the new set (`--fraud-only` is enough, gate.py:248-249) until the next release's gate run.
    Once EVAL-PRIVATE's gate guard ships (OD-629), such a run no longer counts: a go-live then
