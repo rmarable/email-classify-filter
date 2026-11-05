@@ -1,11 +1,12 @@
 # M1 AWS mode, single user
 
-**Status: draft 4, 2026-11-05. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
+**Status: draft 5, 2026-11-05. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
 Phase R: round 1 (eight Fable reviewers) on draft 1 (df4d331); rounds 2 and 3 (eight Opus
 reviewers each, delta, OD-577) on drafts 2 (272df2a) and 3 (1c2e2f5). After round 3 kept finding
 holes at the seams drafts 2 and 3 had added, the operator chose to simplify before the next round
-(OD-615): four functions instead of six, no grant signatures, no Cancel marker. Every finding and
-decision (OD-593 to OD-622) is folded in and listed under "Plan review findings". Code references
+(OD-615): four functions instead of six, no grant signatures, no Cancel marker. Round 4 (eight Opus
+reviewers, full review of draft 4, 9642729) led to OD-623 to OD-625. Every finding and decision
+(OD-593 to OD-625) is folded in and listed under "Plan review findings". Code references
 are as of `93e0fea`. Ships as one release at the end (OD-600).
 
 This document replaces, for M1, the design plan's M1 parts
@@ -29,7 +30,8 @@ In scope:
 - **Storage behind repositories, local mode first** (OD-601). M1's largest step.
 - **Infrastructure:** CDK `infra/` (Python), two stacks per install, IAM under a permissions
   boundary, CI policy checks (OD-124).
-- **Services (OD-615):** Lambdas `ecf-api` (routes, decisions, the 1-minute tick, Slack posting),
+- **Services (OD-615, OD-625):** Lambdas `ecf-api` (routes) and `ecf-worker` (the 1-minute tick, both
+  Slack queues), one code package and one role,
   `ecf-broker` (the only holder of mailbox credentials), `ecf-jobs` (long and scheduled work),
   `ecf-slack-in` (the public Slack request URL), the Cognito trigger and the auto-delete helper;
   DynamoDB (PITR); S3; SQS FIFO; Secrets Manager; SSM; EventBridge Scheduler; CloudWatch, SNS and
@@ -158,6 +160,28 @@ grant signatures (OD-615), Jev, the Mistral judges and set generation in AWS mod
   bundle gets one synthetic inactive person carrying `source_install`; the operator is filled in only
   on a restore or migrate of the same install. Amends OD-608's "the one person filled in".
 
+### After Phase R round 4 (SPEC OD-623 to OD-625, operator 2026-11-05)
+
+- **OD-623, a click-in-flight guard (K1):** `ecf-slack-in` raises a per-item in-flight flag in its own
+  table for any click naming an item, before it answers Slack; `ecf-worker` clears it when it has
+  processed the click, whatever the outcome; the broker's consume transaction requires the flag down.
+  The flag carries no authority (a non-approver's click delays a send only while it is processed); a
+  flag older than 5 minutes is ignored by the broker and alarmed. Risk-lowering clicks (Cancel, Reject,
+  Pause, Dismiss and the others in SPEC §10.1's table) use their own FIFO group per item, so they never
+  wait behind other clicks. `executing → cancelled` (while no spend record exists) is a new transition,
+  added to SPEC §6.2. Draft 4's "no earlier than 60 s after `due_at`" is dropped.
+- **OD-624, grants in their own table (K2):** grants and spend records live in a grants table.
+  `ecf-api` (and `ecf-worker`, same role) may put and update; the broker may only update the status
+  and consume attributes (`dynamodb:Attributes`), on keys it is given; `ecf-jobs` may only delete
+  (restore voids grants anyway; deleting is the safe direction). The spend record is one item per
+  attempt (`GRANTUSE#<id>#<n>`, n ≤ 3, each created with `attribute_not_exists`), so v1's 3-attempt
+  retry still works; every runtime role is denied `UpdateItem`, `DeleteItem` and `BatchWriteItem` on
+  spend records. The broker has no write on the `ecf-api` table.
+- **OD-625, routes and work split by timeout (K3):** `ecf-api` serves routes only (30 s, the API
+  Gateway limit); `ecf-worker` runs the tick, the sweeps and both Slack queue consumers (60 s). Same code
+  package, same role: no new trust boundary, only separate timeouts and capacity, so a slow Slack post
+  or tick can't take route capacity. Five functions, four roles.
+
 ## Design
 
 ### Architecture
@@ -165,151 +189,155 @@ grant signatures (OD-615), Jev, the Mistral judges and set generation in AWS mod
 ```
 Laptop (operator)                    AWS (base stack + app stack)                       External
 ─────────────────                    ────────────────────────────                       ────────
-ecf CLI ─────────────JWT───────────► API Gateway HTTP API ─► ecf-api ─┬─► DynamoDB / S3 / SSM
-ecf claude (Claude Code, on demand)                                   ├─► jobs.fifo ─► ecf-jobs
-  ├ ecf-mcp ─0600 socket─► relay ─JWT + session token─► same API      ├─► invoke ─► ecf-broker ─► IMAP/SMTP
-  └ OTLP ─loopback─► relay                                            └─► slack-out.fifo ─► ecf-api (sender) ─► Slack
+ecf CLI ─────────────JWT───────────► API Gateway HTTP API ─► ecf-api (routes) ─┬─► DynamoDB / S3 / SSM
+ecf claude (Claude Code, on demand)                                            ├─► jobs.fifo ─► ecf-jobs
+  ├ ecf-mcp ─0600 socket─► relay ─JWT + session token─► same API               └─► invoke ─► ecf-broker ─► IMAP/SMTP
+  └ OTLP ─loopback─► relay
   Claude: Anthropic (plan) or Bedrock us. profile
-                                     Slack ─signed─► API GW ─► ecf-slack-in ─► slack-in.fifo ─► ecf-api
-                                     Scheduler ─► ecf-api (tick and sweep, every minute)
-                                     Scheduler ─► ecf-jobs (retention, digests, summary, model watch, export)
+                                     Slack ─signed─► API GW ─► ecf-slack-in ─► slack-in.fifo ─► ecf-worker
+                                     ecf-api / ecf-worker / broker / ecf-jobs ─► slack-out.fifo ─► ecf-worker ─► Slack
+                                     Scheduler ─► ecf-worker (tick and sweep, every minute) ─► invoke ─► ecf-broker
+                                     Scheduler ─► jobs.fifo (housekeeping) ─► ecf-jobs
                                      CloudWatch alarms, CloudTrail rules ─► SNS ─► admin email
 Cognito (Essentials, TOTP): app clients CLI (PKCE loopback) · step-up (SRP only)
 ```
+
+`ecf-api` and `ecf-worker` are one code package and one IAM role (OD-625); they differ only in
+handler, timeout and capacity. Below, "the API role" means both.
 
 ### Who may call, read and write what
 
 A Lambda learns nothing about who invoked it, and inside one account an identity policy alone is
 enough to use a queue or read a secret. So every boundary is stated on both sides:
 
-- **Invocation:** `ecf-api` only by API Gateway (`SourceArn`), its own event source mappings
-  (`slack-in.fifo`, `slack-out.fifo`) and its tick schedule's role; `ecf-jobs` only by its
-  `jobs.fifo` mapping and its schedules' roles; `ecf-slack-in` only by API Gateway; the broker only
-  by `ecf-api`. Event source mappings poll with the function's own role (no resource permission);
-  each Scheduler role may invoke only its one target, trusts `scheduler.amazonaws.com` with
-  `aws:SourceAccount` and the schedule's `aws:SourceArn`, and the tick handler accepts only the fixed
-  `Input`. The only `lambda:Principal` ever allowed is `apigateway.amazonaws.com`. CI tests all of it.
+- **Invocation:** `ecf-api` only by API Gateway (`SourceArn`); `ecf-worker` only by its two queue
+  mappings and the tick schedule's role; `ecf-jobs` only by its `jobs.fifo` mapping (housekeeping
+  schedules send to `jobs.fifo`, so every job goes through one queue and one lease); `ecf-slack-in`
+  only by API Gateway; the broker only by the API role. Mappings poll with the function's own role;
+  each Scheduler role may invoke or send only to its one target, trusts `scheduler.amazonaws.com` with
+  `aws:SourceAccount` and the schedule's `aws:SourceArn`, and its target accepts only the schedule's
+  `Input` (which carries `<aws.scheduler.scheduled-time>`). Scheduler roles are outside the runtime
+  boundary and have their own CI test. The only `lambda:Principal` allowed is
+  `apigateway.amazonaws.com`.
 - **Queues:** each queue policy denies `SendMessage` unless `aws:PrincipalArn` is a named sender, and
-  `ReceiveMessage`, `DeleteMessage` and `ChangeMessageVisibility` unless it is the consumer (plus
-  admin tooling on DLQs):
+  receive, delete and visibility changes unless it is the consumer (plus admin tooling on DLQs):
 
-  | Queue | Senders | Consumer |
-  |---|---|---|
-  | `slack-in.fifo` (+ DLQ) | `ecf-slack-in` | `ecf-api` |
-  | `slack-out.fifo` (+ DLQ) | `ecf-api`, `ecf-broker`, `ecf-jobs` | `ecf-api` |
-  | `jobs.fifo` (+ DLQ) | `ecf-api` | `ecf-jobs` |
-  | broker on-failure (standard) | `ecf-broker` (Lambda writes it with the function role) | admin |
-  | Scheduler DLQs (standard) | each schedule's role | admin |
+  | Queue | Senders | Consumer | `maxReceiveCount` |
+  |---|---|---|---|
+  | `slack-in.fifo` (+ DLQ) | `ecf-slack-in` | `ecf-worker` | 5 |
+  | `slack-out.fifo` (+ DLQ) | the API role, `ecf-broker`, `ecf-jobs` | `ecf-worker` | 5 |
+  | `jobs.fifo` (+ DLQ) | the API role, housekeeping schedule roles | `ecf-jobs` | 5 |
+  | on-failure queues (standard), one per async-invoked function | that function's role | admin | — |
+  | Scheduler DLQs (standard) | each schedule's role | admin | — |
 
-  Redrive is an admin action. Alarms on `DestinationDeliveryFailures` and `DeadLetterErrors`; Step 8
-  checks each failure path lands a message.
-- **Secrets:** role policies name exact ARNs. Deploy-time secrets (Slack signing secret and bot
-  token, the export seed) carry a resource policy denying `GetSecretValue` unless
-  `aws:PrincipalArn` is an owning role. Mailbox secrets, created at runtime, are protected by an
-  explicit Deny on `ecf/<install>/mailbox/*` in every role except the broker's read and `ecf-api`'s
-  write-only `CreateSecret`/`PutSecretValue`. CI checks only the broker can read a mailbox ARN.
+  Alarms on `DestinationDeliveryFailures` and `DeadLetterErrors`; Step 8 checks each failure path.
+- **Secrets:** exact ARNs in role policies; deploy-time secrets (Slack signing secret and bot token,
+  the export seed and age recipient) carry a resource policy denying `GetSecretValue` (and, for the
+  seed and recipient, `PutSecretValue` after creation) unless `aws:PrincipalArn` is an owning role;
+  mailbox secrets are denied to every role except the broker's read and the API role's write-only
+  `CreateSecret`/`PutSecretValue`. CI checks only the broker can read a mailbox ARN.
 - **Bearer:** `ecf-api` validates the `Authorization` bearer itself and never reads
-  `requestContext.authorizer` (a forged-context test). A request carrying a profile or agent token is
-  treated as that profile, never as the CLI, even if it also carries the CLI JWT.
-- **Writers:** `ecf-api` writes everything except the broker's closed list, made through the same
-  conditional-update helper (the OD-181 rule becomes "only the helper writes `status`", with a
-  test). The broker's list, mapped worker by worker from v1's in-lease work (`checks.IN_LEASE`;
-  a test fails when a worker isn't mapped):
-  - pre-check: `new → awaiting_claude` and the decision, escalation and audit rows; the no-grant
-    label and flag (below);
-  - `close_gone`: open → `resolved_by_mailbox`, voiding non-approved grants;
-  - execution: grant consume (with its spend record), `executing → executed | failed |
-    failed_unknown`; v1's retry (`consumed → approved` below 3 attempts) becomes a new attempt on the
-    spend record;
-  - send settle: `failed_unknown → executed | failed`;
-  - Undo: `executed → undoing → undone | undo_failed`, against an `undo` grant `ecf-api` created;
-  - queued draft delete and flag, against a `draft_delete` or `draft_flag` grant `ecf-api` created.
-- **Approvals (OD-615):** only `ecf-api` creates grants (code-enforced; the broker's helper can't
-  insert one; every grant creation is audited with the approving person). The broker executes a grant
-  only in `approved`, matching the action and content hashes, with no spend record (`GRANTUSE#<id>`,
-  created with `attribute_not_exists` in the consume transaction, carrying attempts and outcome; no
-  runtime role may delete or overwrite it). Holds are as v1: a due time on the item, the grant
-  unchanged.
-- **No-grant pre-check actions:** the broker may label and flag without a grant only for a decision
-  `decide(facts)` recomputed in the same invocation (never from a stored proposal), and only under
-  v1's four gates: nothing in shadow, quarantined mail not re-read, the content hash verified before
-  writing, OD-439's keyword-stored skip. Contract tests per gate.
+  `requestContext.authorizer`; a request carrying a profile or agent token is that profile, never the
+  CLI.
+- **Grants (OD-624):** grants and spend records live in the grants table. Two paths create a grant,
+  both in the API role and both audited: a person's approval (`people.id` set) and v1's policy apply
+  for automatic actions (`decide.apply`, `src/ecf_server/decide.py:293-311`, `principal` `service`,
+  `people.id` null, source `policy`), with the policy's corroboration and batch-risk rules ported
+  unchanged and a contract test that no MCP route creates a grant except through `decide.apply`. The
+  broker may update only status and consume attributes; `ecf-jobs` may only delete. The broker
+  executes a grant only in `approved`, matching hashes, with the in-flight flag down (OD-623) and no
+  spend record for this attempt; each attempt writes `GRANTUSE#<id>#<n>` with `attribute_not_exists`
+  in the consume transaction; v1's retry is attempt n+1 after attempt n's record ended `retryable`
+  (n ≤ 3); a Cancel requires that no attempt record exists. Holds are as v1 (a due time; the grant
+  unchanged).
+- **The broker's writes** (a closed list through the conditional-update helper; the OD-181 rule is
+  "only the helper writes `status`", with a test; mapped from every `checks.IN_LEASE` worker, with a
+  test that fails on an unmapped one): the pre-check (`new → awaiting_claude`, decision, escalation,
+  audit, the no-grant label and flag); `close_gone`; execution and send settle; Undo (against an
+  `undo` grant); queued draft delete and flag (against `draft_delete`/`draft_flag` grants); the `sent`
+  ledger, `probe`, `check_state`, `processing`, DNS cache rows, backfill progress, draft tracking
+  (`draft_versions`) and the second-install auto-pause request, all in the main table as
+  broker-owned records the API role reads and applies. The broker has no write on the `ecf-api`
+  table (settings, people, roles, sender confirmations).
+- **Mailbox work outside the check:** address add and re-probe are broker jobs whose result the API
+  polls (v1 does them inside routes, `addresses.py:172-248`); the broker drains `alert_outbox` (alert
+  email through a watched address's SMTP login, as v1), so Security Notices still reach email.
+- **No-grant pre-check actions:** label and flag only, for `decide(facts)` recomputed in the same
+  invocation (never a stored proposal), under v1's four gates (nothing in shadow, quarantined mail not
+  re-read, content hash verified, OD-439's keyword-stored skip); contract tests per gate.
 - **Stated limits (SPEC §12.2):** a compromised broker has full mailbox authority; a compromised
-  `ecf-slack-in` holds the signing secret and can forge clicks, which `ecf-api` still role-checks,
-  so it can trigger what one click by the operator could (one-click actions, never step-up ones).
+  `ecf-slack-in` holds the signing secret and the bot token (a Slack token can't be scoped per call),
+  so it can forge clicks, which the API role still role-checks, and can post, edit or delete as the bot
+  in any channel the bot is in (misleading cards, never an approval).
 
 | Role | Invoked by | Reads | Writes | Secrets and keys |
 |---|---|---|---|---|
-| `ecf-api` | API Gateway; `slack-in.fifo`, `slack-out.fifo`; tick schedule | all tables; S3 config | main; `ecf-api` table; excerpts `expires_at` only (`dynamodb:Attributes`); Slack table (none); S3 `logs/` (create-only), `jobs/` presigned URLs; sends `slack-out.fifo`, `jobs.fifo`; invokes broker | Slack signing secret, bot token; mailbox secrets write-only; export seed write-only (once); the export verify key (parameter); Cognito `AdminUserGlobalSignOut` |
-| `ecf-broker` | `ecf-api` (async) | main; `ecf-api` table (grants, settings) | main (closed list, `LEASE#`, `CURSOR#`, `GRANTUSE#` create-only); grants (closed list); excerpts; sends `slack-out.fifo` | mailbox secrets (read, `lambda:SourceFunctionArn` condition) |
-| `ecf-jobs` | `jobs.fifo`; housekeeping schedules | all tables (incl. `Scan`); S3 | main and `ecf-api` table (import, restore, migrate, merges); S3 `exports/`, `jobs/`, `backups/`, `eval/`; backup and scratch tables; sends `slack-out.fifo` | export seed and age recipient |
-| `ecf-slack-in` | API Gateway | none | Slack table (dedupe keys); sends `slack-in.fifo` | Slack signing secret; bot token (`views.open` only) |
+| API role (`ecf-api`, `ecf-worker`) | API Gateway; `slack-in.fifo`, `slack-out.fifo`; tick schedule | all tables; S3 `eval/` | main; `ecf-api` table; grants table (put, update); excerpts `expires_at` only; Slack table (clear in-flight flags only); S3 `logs/` (create-only), `jobs/` presigned URLs; sends `slack-out.fifo`, `jobs.fifo`; invokes broker | Slack signing secret, bot token; mailbox secrets write-only; export seed write-only (once); relink and export verify keys (deploy parameters); Cognito `AdminUserGlobalSignOut` |
+| `ecf-broker` | the API role (async) | main; `ecf-api` table (settings, read); grants table; Slack table (in-flight flags, read) | main (closed list); grants (status and consume attributes); spend records (create only); excerpts; sends `slack-out.fifo` | mailbox secrets (read, `lambda:SourceFunctionArn` condition) |
+| `ecf-jobs` | `jobs.fifo` | all tables (incl. `Scan`); S3 | main and `ecf-api` table (import, restore, migrate, merges); excerpts (import, restore); grants (delete only); S3 `exports/`, `jobs/`, `backups/`, `eval/`; backup and scratch tables; sends `slack-out.fifo` | export seed and age recipient (read) |
+| `ecf-slack-in` | API Gateway | none | Slack table (dedupe keys, raise in-flight flags); sends `slack-in.fifo` | Slack signing secret; bot token (`views.open`) |
 
 ### The functions
 
-- **`ecf-api`:**
-  - routes; rules and policy on stored facts; transitions; grant creation; config, stage,
-    sensitivity, pause, outbound; people, identities, sender confirmations; role checks;
-  - consumes `slack-in.fifo` (clicks) and `slack-out.fifo` (paced posts, `chat.update`,
-    `views.update`, ephemerals, the dead-man `chat.scheduleMessage`);
-  - **the tick** (one schedule, every minute): a lease keyed on the scheduled time (`TICK#<time>`;
-    the Scheduler attribute confirmed in Step 8), event age 60 s, each sweep time-boxed; due checks
-    (async invoke of the broker, with a conditional `dispatched_until` so a pending invoke isn't
-    repeated); approval expiry, `delayed → executing` (which makes that address's check due now),
-    stale marking; "Needs you", reminders and refresh warnings, each re-reading status inside the
-    winning conditional write before sending; the audit flush (its own lease); re-queueing jobs with
-    an unfinished progress item;
-  - routes that can't finish inside 30 s and 10 MB are jobs; `/v1/checks` becomes "enqueued; poll
-    `ecf status`".
-- **`ecf-broker`:** invoked per address by `ecf-api`. Each run:
-  - takes the address lease (`LEASE#<address>`) and renews it **before each blocking step** to now +
-    max(180 s, that step's bound + 30 s), where a message's bound is fetch time at the measured rate
-    plus the isolate limit (`isolate.py:50-57`, 30 s + 3 s/MB) and an action's bound is its own
-    deadline; every transaction carries a fencing `ConditionCheck` on the lease;
+- **`ecf-api` (routes, 30 s):** rules and policy on stored facts; transitions; grant creation; config
+  (in the `ecf-api` table's settings: "S3 config" is dropped); stage, sensitivity, pause, outbound;
+  people, identities, sender confirmations; role checks. A route that can't finish in 25 s is a job;
+  `/v1/checks` becomes "enqueued; poll `ecf status`". Every route's writes are idempotent by request
+  ID, so a route the CLI saw time out at 30 s and retries doesn't apply twice.
+- **`ecf-worker` (tick and queues, 60 s):**
+  - consumes `slack-in.fifo` (clicks: verifies the HMAC, role-checks, decides, audits, clears the
+    in-flight flag) and `slack-out.fifo` (paced posts, `chat.update`, `views.update`, ephemerals, the
+    dead-man `chat.scheduleMessage`); `slack-out.fifo` holds per OD-557 by visibility, and a hold never
+    counts as a receive failure (the handler returns the message to the queue with its wait, not an
+    error), so held posts don't reach the DLQ;
+  - **the tick** (every minute): a lease keyed on the schedule's scheduled time (`TICK#<time>`), event
+    age 60 s, each sweep time-boxed within 50 s; due checks (async invoke of the broker, with a
+    `dispatched_until` set at dispatch and cleared by the broker when its run starts, so a run that
+    never started is retried after 5 minutes and a running one isn't duplicated); approval expiry,
+    `delayed → executing` (making that address's check due now), stale marking; "Needs you",
+    reminders and refresh warnings, each re-reading status inside the winning conditional write; the
+    audit flush (its own lease); re-queueing jobs whose progress item shows they stopped (a job
+    heartbeat older than its deadline), never a running one; the tick heartbeat is a custom metric.
+- **`ecf-broker`:** invoked per address by the API role. Each run:
+  - clears `dispatched_until`; takes the address lease (`LEASE#<address>`) and renews it before each
+    blocking step to now + max(180 s, the step's bound + 30 s); every transaction carries a fencing
+    `ConditionCheck`;
   - checks the maintenance flag and the `migrating` hold at start;
   - when started by an approval, runs due actions before the fetch page;
-  - fetches with a deadline of min(start + `max_per_check`, remaining time − a reserve for the worst
-    parsing child, the write-back and one action);
-  - computes facts, triggers and the pre-check decision in memory (the whole message never leaves the
-    broker) and writes them with escalation and audit rows in one transaction;
-  - executes due approved actions with the open mailbox, each under its own wall-clock deadline
-    checked between IMAP and SMTP commands, stopping when less than one action deadline remains;
-  - backfill pages run here (they need IMAP).
+  - fetches with a deadline of min(start + `max_per_check`, remaining time − a reserve);
+  - computes facts, triggers and the pre-check decision in memory and writes them in one
+    transaction;
+  - executes due approved actions with the open mailbox; **each IMAP and SMTP command's socket timeout
+    is set to the action's remaining deadline** (not only checked between commands), so one blocking
+    command can't overrun the lease or the Lambda timeout; the loop stops when less than one action
+    deadline remains;
+  - runs backfill pages, address probes and the alert-outbox drain.
 
-  The isolate child runs with a scrubbed environment (no `AWS_*`, minimal `PATH` and `PYTHONPATH`)
-  and no AWS client, returning new DNS answers to the parent (`isolate.py:96-99` passes no `env`
-  today; a test asserts no `AWS_` key reaches it). Memory at least 2,048 MB, the smallest of 1, 2, 3
-  GB meeting Step 8's line; timeout = `max_per_check` + reserve, at most 900 s, with `max_per_check`
-  capped in AWS mode so it fits. v1's scheduling rules are ported (`next_due_at`, a due time asked
-  during a running check kept, `schedule.py:197-199`; busy-lease retry 60 s). Async:
-  `MaximumRetryAttempts` 0, event age 300 s, on-failure queue alarmed. The broker joins the safety
-  TCB in SPEC §3.2.
-- **`ecf-jobs`:** import, export, restore and backup merges, `rules test`, `ecf eval run` (the `null`
-  arm, OD-617) and `/ecf-eval` preparation, and housekeeping on schedules (retention and its
-  re-stamp, digests, daily summary, weekly model watch, scheduled export). Every job stops at its
-  deadline minus a reserve, saves its progress item and returns success; the tick re-queues
-  unfinished jobs, so no job relies on SQS redelivery. Bundles are read whole in memory (OD-620),
-  older bundles migrated in an in-memory SQLite database with every migration in the zip; presigned
-  URLs are short-lived and size-capped (presigned POST `content-length-range`). `jobs.fifo` group =
-  job kind; import, restore and export are mutually exclusive by a lease; an alarm on the oldest
-  message's age. Part of the trust root with `ecf-api` (SPEC §3.2).
-- **`ecf-slack-in`** (public, import-light, an import-linter contract): signature over the raw
-  body; timestamp within 5 minutes and not in the future; `api_app_id` and `team_id`; dedupe by
-  conditional put; for a form or window button, `views.open` with a fixed "Checking…" view (no inputs,
-  no submit, no data); then the raw click (with the `view_id`, or a note that `views.open` failed)
-  to `slack-in.fifo` (group = Slack user ID; deduplication ID = the dedupe key); 200. It reads no
-  table and never says the action was taken.
+  The isolate child runs with a scrubbed environment and no AWS client (`isolate.py:96-99`; a test).
+  Memory at least 2,048 MB (Step 8 picks the smallest meeting the line); timeout = `max_per_check` +
+  reserve, at most 900 s. v1's scheduling rules ported (`next_due_at`, a due time asked during a run
+  kept, busy-lease retry 60 s). Async: `MaximumRetryAttempts` 0, event age 300 s, on-failure queue.
+  The broker joins the safety TCB in SPEC §3.2.
+- **`ecf-jobs`:** import, export, restore and backup merges, `rules test`, `ecf eval run` (`null`) and
+  `/ecf-eval` preparation, and housekeeping (retention and re-stamp, digests, daily summary, model
+  watch, scheduled export), all through `jobs.fifo`. A job writes a heartbeat to its progress item,
+  stops at its deadline minus a reserve, saves progress and returns success; the tick re-queues a
+  stopped job. Bundles are read whole (OD-620). Presigned URLs are short-lived and size-capped.
+  `jobs.fifo` group = job kind; import, restore and export exclusive by a lease. Part of the trust
+  root (SPEC §3.2).
+- **`ecf-slack-in`** (public, import-light, its own Slack client with a 1 s timeout, not v1's): signature
+  over the raw body; timestamp within 5 minutes and not in the future; `api_app_id` and `team_id`;
+  dedupe by conditional put; **raise the in-flight flag** for the item the button names (the item
+  reference is in the signed payload's action value); for a form or window button, `views.open` with
+  a fixed "Checking…" view; the raw click to `slack-in.fifo` (group = Slack user ID, or `cancel:<item>`
+  for a risk-lowering action; deduplication ID = the dedupe key); 200. It reads no table.
 - **Maintenance and holds:** every writer honours the maintenance flag. `ecf upgrade` disables the
-  `slack-in.fifo` event source mapping for the maintenance window (deployer credentials) and
-  re-enables it after, so clicks wait in the queue without spending receives.
-- **Laptop:** the CLI and Claude Code. `ecf claude` runs a relay: `ecf-mcp` and the status line
-  reach it over a 0600 Unix socket (as v1's socket); only OTLP uses loopback TCP. The relay requires
-  the session's profile or agent token on every request, checks `Host` and refuses any request with
-  an `Origin` header, forwards a fixed allow-list (MCP, telemetry and status routes), and adds the
-  CLI's JWT. The relay and the CLI share one refresher: the refresh token is read from the Keychain
-  under a lock and re-read before refreshing (rotation invalidates the loser's copy). Deployer and
-  admin credentials are short-lived (OD-605); the Bedrock profile is checked to be the Bedrock
-  permission set.
+  `slack-in.fifo` mapping during maintenance and, on exit, re-enables it and drains it before the tick
+  resumes, so a Cancel queued during maintenance is processed before any overdue send.
+- **Laptop:** the CLI and Claude Code; the relay (0600 Unix socket for `ecf-mcp` and the status line,
+  loopback TCP for OTLP only, session token required, `Host` checked, `Origin` refused, fixed route
+  allow-list, the CLI's JWT added; one refresher with the CLI under a Keychain lock). Deployer and
+  admin credentials are short-lived (OD-605).
 
 ### Repositories and the DynamoDB mapping (OD-601)
 
@@ -350,16 +378,20 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   confirmed_at, confirmed_by}`; Cognito issuer `cognito:<pool id>`; Slack issuer with the team (and
   enterprise) ID. A Slack member is `pending` until its DM Confirm click. **Authority:** a confirmed
   identity of an active person holding the role; anything else is refused and audited.
-- **First person:** `ecf init` creates the operator's person (UUID, admin, active); the Cognito
-  identity is confirmed at the first `ecf login` after TOTP enrolment, for the one username init
-  created.
+- **First person:** `ecf init` creates the operator's person (UUID, admin, active) and records the
+  Cognito user's `sub` (not the username) that `AdminCreateUser` returned; that identity is confirmed
+  once, at the first `ecf login` after TOTP enrolment whose `sub` matches, and never again by that path.
+  The temporary password is shown in the terminal, never emailed (`MessageAction: SUPPRESS`).
 - **Re-link (`ecf people relink`):** for a changed Cognito identity (new pool, recreated user) or OS
   identity (new Mac). It is on an allow-list open to an unlinked or pending identity. Authority is the
-  backup key: the laptop derives it from the typed key and signs a relink challenge with the export
-  seed; `ecf-api` verifies against the install's export verify key (a deploy-set parameter no runtime
-  role can change); a Cognito step-up by the new identity, bound to the relink hash, proves it holds
-  the new TOTP. Audited, with a Security Notice. Locally, a same-install restore under the typed key
-  re-binds the OS-user identity to the account the service runs as.
+  backup key itself, not the export seed AWS holds (round 4): the laptop derives a separate **relink
+  key** from the typed root (HKDF with its own info string) and signs a relink challenge; `ecf-api`
+  verifies against the relink verify key, a deploy-set parameter written at `init` from the laptop; no
+  part of AWS ever holds the relink key's private half. A Cognito step-up by the new identity, bound to
+  the relink hash, proves it holds the new TOTP. The old identity is revoked in the same transaction
+  (status `revoked`, its refresh tokens revoked); a later restore of an older bundle doesn't bring a
+  revoked identity back (the restore keeps the live identity table's revocations). Audited, with a
+  Security Notice. Locally, a same-install restore under the typed key re-binds the OS-user identity.
 - **`people.id`** on every grant, approval, answer, audit row and security notice; backfill rules as
   draft 2 (operator for OS-user and `slack:*`, null for `service` and `migration`); rows written
   before a migrate merge carry `people.id` null plus the Cognito `sub`, and
@@ -411,9 +443,10 @@ enough to use a queue or read a secret. So every boundary is stated on both side
 
 ### Data and state
 
-- **DynamoDB, four tables:** main; `ecf-api` table (grants, settings, people, identities, sender
-  confirmations); excerpts; the Slack table (dedupe keys, TTL 1 day, written only by `ecf-slack-in`,
-  no PITR). PITR and deletion protection on the first three.
+- **DynamoDB, five tables:** main; `ecf-api` table (settings, people, identities, sender
+  confirmations); grants (grants and spend records, OD-624); excerpts; the Slack table (dedupe keys and
+  in-flight flags, TTL 1 day, written by `ecf-slack-in`, flags cleared by `ecf-worker`, no PITR). PITR
+  and deletion protection on the first four.
 - **Expiry:** no TTL at creation; the terminal transition sets `expires_at` = terminal time + item
   retention on the item and its excerpts when prunable (never fraud, weak-fraud, regulator,
   quarantined); item retention stays its own step-up setting, re-stamped by an `ecf-jobs` job on
@@ -433,46 +466,55 @@ enough to use a queue or read a secret. So every boundary is stated on both side
 
 - **Expand and contract:** additive attributes, lazy upgrade by `storage_version`, idempotent backfill
   with a progress item; a full rewrite needs a planned outage.
-- **Before the change set:** `ecf upgrade` takes on-demand backups of all three PITR tables under one
-  maintenance hold, waits for leases to drain (OD-379), disables the `slack-in` mapping.
+- **Before the change set:** `ecf upgrade` sets the maintenance flag, disables the `slack-in`
+  mapping, waits for leases to drain (OD-379), then takes on-demand backups of all four PITR tables.
+- **Consistent exports (round 4, S8):** an export (scheduled, migrate or rollback kind) reads from
+  scratch copies restored by PITR at one `RestoreDateTime`, taken after the maintenance flag is set and
+  leases have drained, never from live tables mid-change; so no export shows a send as not yet sent
+  while it is being sent.
 - **`ecf upgrade --to <previous>`:** code only; data forward-compatible.
-- **Restoring:** never by swapping tables. `ecf-jobs` restores all three tables to scratch tables
+- **Restoring:** never by swapping tables. `ecf-jobs` restores all four tables to scratch tables
   (from the upgrade backups, or by PITR with one `RestoreDateTime` so they share a point), then merges
   into the live tables by `downgrade._merge`'s rules (`sent`, `threads`, `senders`, `gate` kept from
-  live; grants voided; executing items to `failed_unknown`; cursors rewound), per-table rules from the
-  mapping; then deletes the scratch tables. Restores are asynchronous; the job resumes by polling
+  live; grants deleted; executing items to `failed_unknown`; cursors rewound), per-table rules from the
+  mapping, including rows written after the backup (kept when the mapping marks them live-wins,
+  dropped otherwise, each listed in the job's report); then deletes the scratch tables. Restores are asynchronous; the job resumes by polling
   `DescribeTable`. Rights: `CreateBackup`, `DescribeBackup`, `ListBackups`, `DeleteBackup`,
   `RestoreTableFromBackup` (from `table/<live>/backup/*`), `RestoreTableToPointInTime`, and full item
   rights on `ecf-<install>-scratch-*` only.
 
 ### Queues, timers and delays
 
-- **SQS FIFO:** `slack-in.fifo` (group = Slack user ID; `maxReceiveCount` 3), `slack-out.fifo`
-  (group = channel ID; `views.update` and ephemerals in group `view:<Slack user ID>`; the dead-man
-  message its own group), `jobs.fifo` (group = job kind). DLQs alarmed; visibility at least 6× the
-  consumer timeout; batch 1-2; `MaximumConcurrency` 2 per mapping. `slack-in.fifo`, `slack-out.fifo`
-  and their DLQs keep messages 1 day, SSE on; DLQ tools never print bodies.
-- **Waits:** every scheduled wait is a `due_at` acted on by the tick. `slack-out.fifo` retries by
-  `ChangeMessageVisibility` only.
-- **Clicks:** `ecf-api` verifies the HMAC and judges the 5-minute window against SQS
-  `SentTimestamp`. A **risk-raising** click (Approve, Resume, a send form) older than 10 minutes by
-  `SentTimestamp` when processed is refused, audited, and the person gets "click again"; risk-lowering
-  clicks (Cancel, Reject, Pause, Dismiss) are processed whenever they arrive, auditing the original
-  time. The dedupe key stops replays; each grant's conditional update stops double clicks.
-- **Forms and windows:** `ecf-api` checks identity and role, audits, then sends `views.update` with the
-  real view, or "not allowed"; every refusal or failure path (stale, error, DLQ handler) sends a final
-  "expired, click again"; a click whose `views.open` failed gets an ephemeral instead; an update after
-  the user closed the view counts as done.
-- **Cancel (OD-615):** a Cancel moves `delayed → cancelled`, or `executing → cancelled` while the
-  grant has no spend record, conditionally; the broker's consume requires the item still `executing`
-  with no spend record. So a Cancel processed before the broker consumes always wins. **Stated
-  limit:** a delayed send is executed no earlier than 60 s after its `due_at`, but a Cancel clicked
-  near the end of the delay can still lose if click processing is held up (a backlog behind a failing
-  click in the same person's queue, at most 3 receives); the person is then told "already sent".
+- **SQS FIFO:** `slack-in.fifo` (group = Slack user ID, or `cancel:<item>` for risk-lowering clicks),
+  `slack-out.fifo` (group = channel ID; `views.update` and ephemerals in `view:<Slack user ID>`; the
+  dead-man message its own group), `jobs.fifo` (group = job kind). `maxReceiveCount` 5 everywhere;
+  visibility 6× the consumer's timeout (6 minutes for `ecf-worker`); batch 1-2; `MaximumConcurrency`
+  2 per mapping. `slack-in.fifo`, `slack-out.fifo` and their DLQs keep messages 1 day, SSE on; DLQ
+  tools never print bodies.
+- **Waits:** every scheduled wait is a `due_at` acted on by the tick. `slack-out.fifo` holds by
+  `ChangeMessageVisibility`, never counted as a failure.
+- **Clicks:** `ecf-worker` verifies the HMAC and judges the 5-minute window against SQS
+  `SentTimestamp`. SPEC §10.1 gets a closed table of every v1 click handler (21 today) marked
+  risk-raising or risk-lowering, risk-raising by default, with a test that every registered handler
+  (and every M11 action) is in it. A risk-raising click older than 10 minutes by `SentTimestamp` is
+  refused, audited, and the person gets "click again"; risk-lowering clicks are processed whenever
+  they arrive, auditing the original time. The dedupe key stops replays; each grant's conditional
+  update stops double clicks.
+- **Forms and windows:** `ecf-worker` checks identity and role, audits, then sends `views.update` with
+  the real view, or "not allowed"; every refusal or failure path sends a final "expired, click
+  again"; a click whose `views.open` failed gets an ephemeral; an update after the user closed the
+  view counts as done.
+- **Cancel (OD-615, OD-623):** a Cancel moves `delayed → cancelled`, or `executing → cancelled` while
+  no spend record exists, conditionally. The broker's consume requires the item `executing`, no spend
+  record for the attempt, and the item's in-flight flag down. Because `ecf-slack-in` raises the flag
+  before Slack shows the click as received, and Cancel clicks have their own group, a Cancel Slack
+  accepted is processed before the send unless click processing stalls for more than 5 minutes (the
+  flag's limit, alarmed). **Stated limit:** in that stall the send can go ahead; the person is then
+  told "already sent". `ecf cancel` (a direct API route) is always available.
 - **Holds:** a paused address or tripped send limit holds an action without counting an attempt.
-- **EventBridge Scheduler:** the tick on `ecf-api`; housekeeping schedules on `ecf-jobs`;
-  `MaximumRetryAttempts` 0 with standard SQS DLQs; a heartbeat alarm when the tick runs fewer than once
-  in 5 minutes.
+- **EventBridge Scheduler:** the tick on `ecf-worker`; housekeeping schedules send to `jobs.fifo`;
+  `MaximumRetryAttempts` 0 with standard SQS DLQs; the tick heartbeat (a custom metric) alarms when the
+  tick runs fewer than once in 5 minutes.
 
 ### Slack over a request URL (OD-609)
 
@@ -628,7 +670,7 @@ SPEC §12.4 AWS mode:
     prefixes; SSM `GetParameter`, `PutParameter` on `/ecf/<install>/runtime/*` only (deploy-set
     parameters, such as the export verify key, are under another path);
   - KMS `GenerateDataKey*`, `Decrypt` on `aws/sns`; SNS `Publish`; CloudWatch Logs writes;
-  - Lambda `InvokeFunction` on the broker (for `ecf-api`); Cognito `AdminUserGlobalSignOut`; Bedrock
+  - Lambda `InvokeFunction` on the broker (for the API role); Cognito `AdminUserGlobalSignOut`; Bedrock
     `GetInferenceProfile`, `GetFoundationModel` and the retention read (for the model-watch job);
   - explicit Deny on control-plane actions (Lambda code, configuration, permissions, mappings,
     function URLs, concurrency; `sqs:SetQueueAttributes`; secret resource policies;
@@ -639,8 +681,12 @@ SPEC §12.4 AWS mode:
   `scheduler.amazonaws.com` for `role/ecf/<install>/*`; trust with `aws:SourceAccount` and `aws:SourceArn`
   `ArnLike stack/ecf-<install>-app/*` (confirmed in Step 8); denied user, key, login-profile and policy
   creation, function URLs with auth `NONE`, and `lambda:AddPermission` unless `lambda:Principal` is
-  `apigateway.amazonaws.com`. CI fails on any Lambda permission without `SourceArn` and any resource
-  policy with `Principal "*"` and no condition.
+  `apigateway.amazonaws.com`. Restored from the plan's §10 (dropped by draft 4 without a note, round 4
+  S4): cfn-exec may create or update a role under `/ecf/<install>/` only with
+  `iam:PermissionsBoundary` equal to the install's boundary, and may never delete or detach it. CI
+  fails on any Lambda permission without `SourceArn`, any resource policy with `Principal "*"` and no
+  condition, and any runtime role without the boundary. Every runtime role is denied `UpdateItem`,
+  `DeleteItem` and `BatchWriteItem` on `GRANTUSE#*` (`dynamodb:LeadingKeys`).
 - **CI:** GitHub OIDC trust on `aud`, `sub = repo:<owner>/<repo>:ref:refs/heads/main` and the
   validator workflow's `job_workflow_ref`; `cfn-policy-validator` on pushes to `main`; static policy
   tests on pull requests; dedicated empty account.
@@ -664,23 +710,24 @@ SPEC §12.4 AWS mode:
 
 ### Cost (one user, us-east-1; prices fetched 2026-11-04 (rv); restores the plan's §15)
 
-Alarms (about 22 metrics, 10 free): `ecf-api`, `ecf-broker`, `ecf-jobs`, `ecf-slack-in` errors
-(metric math, 2 each) and throttles (1 each); 3 FIFO DLQs; the broker on-failure queue; Scheduler
-DLQs; the tick heartbeat; `jobs.fifo` oldest age; the Cognito trigger; Slack signature failures; a
-user without TOTP. Secrets: 3 mailboxes, Slack bot token, Slack signing secret, export seed, and the
-models key if the model watch uses one (6-7).
+Alarms (about 26 metrics, 10 free): `ecf-api`, `ecf-worker`, `ecf-broker`, `ecf-jobs`,
+`ecf-slack-in` errors (metric math, 2 each) and throttles (1 each); 3 FIFO DLQs; the on-failure queue;
+Scheduler DLQs; the tick heartbeat, an in-flight flag older than 5 minutes, and a user without TOTP
+(custom metrics, $0.30 each); `jobs.fifo` oldest age; the Cognito trigger; Slack signature failures.
+Secrets: 3 mailboxes, Slack bot token, Slack signing secret, export seed and recipient, and the models
+key if the model watch uses one (6-7).
 
 | Item | Idle | 300-500 emails a day, 3 addresses |
 |---|---|---|
 | Secrets Manager, 6-7 at $0.40 | $2.40-2.80 | same |
-| CloudWatch alarms, ~22 metrics (10 free, $0.10 each) | ~$1.20 | same |
+| CloudWatch alarms, ~26 metrics (10 free, $0.10 each) and 3 custom metrics ($0.30 each) | ~$2.50 | same |
 | CloudTrail (first management copy free) and its S3 | $0.10-0.20 | same |
 | DynamoDB on-demand, PITR, under 1 GB | ~$0.10 | $0.20-0.40 |
 | SQS: idle long polling by 3 mappings with `MaximumConcurrency` (which disables Lambda's poller reduction), est. 1-2M requests a month, 1M free; FIFO rate not rendered | $0-0.50 (unverified; Step 8 measures) | same |
 | Lambda: tick 43,200 invocations; broker ~8,000 a month at 2-3 GB for 10-20 s = 160,000-480,000 GB-s | $0 in the free tier | $0 to about $0.25 over the free tier at the top; $2.70-8.00 if billed (x86 rate; Arm not rendered) |
 | CloudWatch Logs, Scheduler, SNS, SSM, S3 audit writes, API Gateway, EventBridge rules | ~$0.10 | ~$0.15 |
 | Cognito Essentials | $0 | $0 |
-| **Infrastructure** | **about $3.90-4.90** | **about $4.05-5.50 in the free tier; up to about $13.25 if Lambda is billed** |
+| **Infrastructure** | **about $5.20-6.20** | **about $5.35-6.80 in the free tier; up to about $14.55 if Lambda is billed** |
 | If Step 9 needs it: provisioned concurrency 1 on `ecf-slack-in` at 512 MB | +~$5.40 (no free tier with it) | same |
 | **Bedrock, when chosen** | $0 unused | **about $415-825**; a full gate run about $20 |
 
@@ -694,6 +741,18 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
   confirms the OD-341 fingerprint. The AWS install allows only `migrate`, `login`, `doctor` and the
   migrating-only `set-tokens` (signing secret, configuration token) until the migration finishes; its
   Cognito identity is `pending`. Refused when busy, as `ecf upgrade` (OD-379).
+- **Step-up in the migrating window (round 4, S6):** every secret write before the migration finishes
+  (the signing secret, the configuration token, mailbox passwords, the bot token) needs a `migrate_link`
+  step-up by the pending Cognito identity bound to the write's hash **and** a local step-up on the held
+  service bound to the same hash; without grant signatures the signing secret is approval authority,
+  so it is never written without both.
+- **Audit across migrate and rollback (round 4, S7):** every audit row carries its source
+  (`install.id`, `install.generation`, writer) in its key, so rows from the local install, the AWS
+  install and a rollback never collide; the export merges `logs/` and DynamoDB rows by that key; no row
+  is dropped (OD-217).
+- **The gate's set in AWS (round 4, S9):** migrate never copies the laptop's `eval_root`; the AWS
+  install's set resolves to the packaged public set plus the uploaded private part (OD-618), by the
+  same helper as local mode's merged set.
 - **The local `migrating` hold** (new, built in Step 6c): a persisted service state that survives a
   restart and is cleared only by `migrate abort`, `migrate finalize` or a restore; it refuses mail
   checks and Slack and allows export, step-up, the Keychain read for the transfer, and restore. Its
@@ -706,7 +765,7 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
      `draft_versions`), encrypted to a one-time recipient `ecf-jobs` publishes for this job;
   4. local step-up bound to the bundle's SHA-256; the laptop verifies the bundle under the typed key;
   5. the held local service transfers the mailbox passwords and the Slack bot token to `ecf-api`
-     (write-only), using the CLI's Cognito token;
+     (write-only), each write under the two step-ups above;
   6. `migrate run`: `ecf-jobs` decrypts with the one-time identity (then deleted), checks the bundle
      against the stored verify key and imports it under restore's rules: same `install.id`,
      generation + 1, install name, routes, alerts, identity links, the 7-day restored-keyword guard;
@@ -723,7 +782,8 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
 - **`ecf migrate abort`:** at any point before step 8, clears the AWS install (maintenance, every
   address held, mailbox secrets' access removed), clears the local hold and restarts local checking.
 - **Rollback (7 days from step 6's `restore.at`; refused after):** the AWS install is held first
-  (maintenance, every address held, schedules disabled, mailbox access removed), and an `ecf-jobs`
+  (maintenance, every address held, schedules disabled, mailbox access removed) and its leases have
+  drained, and an `ecf-jobs`
   export of the rollback kind (exempt from the maintenance flag: it reads data and bumps only
   `export.seq`) is pulled to the laptop; the local unit is reinstalled and comes up in the `migrating`
   hold; `ecf restore` of that bundle under the backup key (same `install.id`, generation max + 1, the
@@ -785,7 +845,8 @@ mail only, destroyed after each run with the Budget alarm on.
   (OD-607); `transitions.fifo` (OD-613); the `https://localhost` OAuth install (OD-609);
   `response_url`; `global.` profiles (OD-604); the audit TTL and `logs/` expiry.
 - From drafts 2 and 3: `ecf-slack-out` and `ecf-liveness` as functions, grant signatures (OD-612) and
-  the Cancel marker (OD-615); deriving keys in AWS (OD-616); Jev, Mistral and generation in AWS
+  the Cancel marker (OD-615); from draft 4: "60 s after `due_at`", S3 config, signing relinks with the
+  export seed; deriving keys in AWS (OD-616); Jev, Mistral and generation in AWS
   (OD-617); streaming bundles (OD-620).
 
 ## Steps
@@ -801,7 +862,9 @@ small task with its own review.
    map first (reviewed on Fable before the extraction merges); a DynamoDB Local spike; repositories
    with contract tests; the grant spend record; the people model (UUIDs, status, identities, the admin
    invariant, `people.id` and backfill, roles, approvers, data format 5 with the synthetic person,
-   `people relink` locally). Ships nothing. *Pass:* full suite green with SQLite behind the
+   `people relink` locally); the grants table and per-attempt spend records with v1's retry; the
+   broker-owned records (probe, backfill progress, draft tracking, auto-pause requests). Ships
+   nothing. *Pass:* full suite green with SQLite behind the
    repositories; every repository method and every in-lease transition mapped; a format-4 bundle
    imports with a synthetic inactive person; an import into a fresh install can still approve.
    **0b. Bedrock pre-checks (go-ahead, read-only):** `allowed_modes`, model access, Haiku 5.5 ID form,
@@ -821,9 +884,10 @@ small task with its own review.
 3. **AWS adapters:** DynamoDB repositories (transactions, the helper, fencing, spend records, `Scan`
    only in `ecf-jobs`), S3, SQS, Secrets Manager, the Cognito stepper; contract tests against moto.
    *Pass:* every contract test on both adapters; byte-identical round trip.
-4. **Lambda handlers and build:** `ecf-api` (Mangum, the tick, both queue consumers), the broker
-   (facts, the full in-lease worker list, per-step lease renewal, per-action deadlines, scrubbed
-   child), `ecf-jobs` (deadline-and-save, in-memory bundles, eval chunks, housekeeping),
+4. **Lambda handlers and build:** `ecf-api` (Mangum, routes, idempotent by request ID) and
+   `ecf-worker` (the tick, both queue consumers, the in-flight flag clearing), the broker
+   (facts, the full in-lease worker list, per-step lease renewal, per-command socket deadlines,
+   probes, the alert-outbox drain, scrubbed child), `ecf-jobs` (deadline-and-save, in-memory bundles, eval chunks, housekeeping),
    `ecf-slack-in`; Powertools through the processor; the zip; the Python check; the container
    harness. *Pass:* SAM invokes every handler; no `tempfile`, no thread left, no `log_event`; no `AWS_`
    key in the child; log search clean; a lapsed lease with a second holder doesn't count an attempt.
@@ -870,11 +934,15 @@ small task with its own review.
    URL and back; `reauthorize` keeps the URL; real clicks; 5 forced-cold clicks and form buttons; the
    placeholder and `views.update`; a non-approver's Show excerpt; bad-signature and stale posts;
    replayed body; double click; a click processed after 5 minutes in the queue (accepted); a Cancel
-   at `due_at` − 2 s with a cold consumer, and a Cancel after the tick moved the item to `executing`;
+   forced to arrive after the tick moved the item to `executing` and before the broker's consume
+   (deterministic ordering in the test harness, then once on the real stack), a Cancel during a
+   5-minute stall of click processing (the flag's limit and alarm), a Cancel queued during
+   maintenance;
    a non-approver's Cancel; an update while a post in the same channel is retrying; click to card
    edit; the dead-man message at cutover; teardown. *Pass:* max `$context.responseLatency` under 2.5 s
    cold and 0 `expired_trigger_id`; the real form within 5 s p95 cold; the non-approver sees nothing
-   and can't cancel; replay and double click each one decision; both Cancels win; reserved concurrency
+   and can't cancel; replay and double click each one decision; every Cancel Slack accepted wins
+   except in the stated stall, which alarms; a stale "Approve all" and a stale Undo are refused; reserved concurrency
    sized from the measured p99 (cost recorded if provisioned concurrency is added).
 10. **Parity (go-ahead):** (a) the `null` arm in both modes on the same set version: identical rule
     outcomes, triggers, facts and action plans; (b) a mailbox replay into fresh local and AWS installs
@@ -947,8 +1015,32 @@ contradiction the round found. Full text: `state-archive/m1/review-findings.md`.
 | R22 | public repository | OD-618 |
 | R23 | detective events | Infrastructure |
 
-Rounds 1 and 2's tables are in drafts 2 and 3 and the findings file. Draft 4 gets a full Opus review
-of the whole document (not a delta, since its shape changed).
+**Round 4** (draft 4, 9642729, eight Opus reviewers, full review; launched through the Workflow tool
+without the operator's opt-in, Claude's error): about 75 findings, about 12 high (S1-S10 and mediums in
+the findings file). The operator accepted every recommendation and decided K1-K3 (OD-623 to OD-625) on
+2026-11-05. Where the highs landed:
+
+| # | Round-4 finding | Landed |
+|---|---|---|
+| S1 | Cancel window | OD-623; Queues, Cancel; Step 9 |
+| S2 | grant authority, spend record vs retry | OD-624; Who may call, grants |
+| S3 | `ecf-api` timeout | OD-625; The functions |
+| S4 | cfn-exec boundary rule dropped | Infrastructure, cfn-exec |
+| S5 | blocking command overruns | The broker (per-command socket deadlines) |
+| S6 | secret writes without step-up while migrating | Moving to AWS |
+| S7 | audit rows across migrate and rollback | Moving to AWS |
+| S8 | inconsistent exports, double send | Data migrations (consistent exports); rollback |
+| S9 | eval set join; laptop path copied | Moving to AWS; `planning-docs/EVAL-PRIVATE.md` (overlay) |
+| S10 | stale-click table | Queues, clicks (SPEC §10.1 table) |
+
+Mediums folded in: automatic grants (Who may call), probes and alert email (the broker), the
+`ecf-slack-in` limit, relink key and revocation and first-login by `sub` (People), Scheduler roles and
+`jobs.fifo` for housekeeping, `dispatched_until`, job heartbeats, slack-out holds, the `ecf-slack-in`
+client, idempotent routes, "S3 config" dropped, alarm and cost rows. The rest (measurement pass-line
+refinements, Bedrock retention per Region, Bedrock evidence on migrate, rollback click loss, M11 sync
+route) are listed in the findings file for the draft-5 review to confirm or press.
+
+Draft 5 gets a delta review on Opus (OD-577).
 
 ## Open questions
 
