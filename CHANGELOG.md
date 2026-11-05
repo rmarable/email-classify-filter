@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the GitHub check for prompt-injection test emails also runs once a day from the main branch, so a push that skips its checks is still caught; and a draft eval run lost to a service restart is resumed at the next restart only when the test set is ready, otherwise left untouched with a note to rebuild and restart (OD-638).
 - Decided: the check that keeps prompt-injection test emails out of the public repository also runs on GitHub for every push, including pushes that change only test emails, which the main checks skip (OD-637).
 - Decided: the check that keeps prompt-injection test emails out of the public repository runs ecf's own injection rule on every pushed version of each test email, and the one-off check of the private-set move reads the live install's database only through a backup, never running a service on a copy of it (OD-636).
 - Decided: before a test email can be pushed to the public repository, ecf's own injection rule is run on the email as built, and the one-off check of the private-set move keeps the live install running and its copy away from any mail server (OD-635).
