@@ -8,6 +8,8 @@ Status: draft 3.
 - The operator chose option (a) for long-093 (eval/private, OD-626).
 - An Opus delta check on draft 3 (R1-R5) is folded in. The order against EVAL-PRIVATE (R1) is the
   operator's decision.
+- Amended 2026-11-05 after EVAL-PRIVATE's round 8 (safety high): `long-093`'s `threat:` names its
+  injection, so the private-set markers catch it (OD-633).
 
 ## Why
 
@@ -31,7 +33,9 @@ window) is on the roadmap as Later (OD-631, SPEC §1.2).
 
 **Public set now** (`tests/eval/synthetic/cases/`): `long-091` and `long-092`. **Private set
 later:** `long-093`. It names an injection, so under OD-626 it belongs to the private set
-(`eval/private/`, `planning-docs/EVAL-PRIVATE.md`), and the public build will refuse it. It's
+(`eval/private/`, `planning-docs/EVAL-PRIVATE.md`). Its `threat:` names the injection and its body
+carries a trigger-10 phrase, so EVAL-PRIVATE's marker predicate (draft 9, X1, OD-633) marks it twice
+and the public build will refuse it. It's
 written when the private set exists, as a step of that plan or a follow-up to this one (operator
 option (a), 2026-11-05).
 
@@ -62,7 +66,8 @@ Every card:
   - The padding bank is clean per paragraph (`tests/test_eval_long_cards.py:226-231`) and joined
     (round 1).
 - **No `injection_target` and no `injection_phrase`** (P3). (For long-093, when it's written:
-  either one would count an honest answer as the injection followed, and fail the gate.)
+  either one would count an honest answer as the injection followed, and fail the gate. It is marked
+  instead by its `threat:` and its trigger-10 phrase, EVAL-PRIVATE X1.)
 - **Placement** (P5, P6):
   - `signal:` names the ask (for long-093 the money ask, not the note).
   - `target_chars >= 4,400 + len(text after {{pad}}, signature, footer)`, so the ask starts at
@@ -71,7 +76,10 @@ Every card:
     offset at least 4,100.
   - The cut only shortens an excerpt (message.py:195-204), so nothing past 4,000 can enter it.
 - **Header fields** (P8, R3):
-  - `threat`: names the past-window ask ("... past 4,000"), never "1,500", and never the word "injection" or the hidden-instruction wording, so OD-626's private-set marker can't catch a public card.
+  - `threat`: names the past-window ask ("... past 4,000"), never "1,500". On a public card
+    (long-091, long-092), never the word "injection" or the hidden-instruction wording, so the
+    private-set markers can't catch it. On long-093 (private), it names the injection, so the
+    markers refuse it in the public tree (EVAL-PRIVATE X1, OD-633).
   - `control`: the triggers on the whole email, with the classifier's labels expected wrong.
   - `failure_looks_like`: rule not `fraud_guard`, or not escalated.
   - `review`: the labels are the whole email's truth (D2).
@@ -164,6 +172,7 @@ That is expected. The band is a sentinel (count and `fraud_guard_missed`), not a
   - P12: keep `long-09x` and amend the text.
 - 2026-11-05: P18 goes on the roadmap (OD-631).
 - 2026-11-05: option (a), long-093 waits for the private set (OD-626).
+- 2026-11-05, EVAL-PRIVATE round 8: long-093's `threat:` names its injection (X1, OD-633).
 - 2026-11-05: R1, EVAL-PRIVATE merges first. long-091 and long-092 are written, verified, blind-checked
   and labelled on this branch now; they merge after EVAL-PRIVATE lands, rebased with the counts
   updated, and long-093 goes into the private set then.
