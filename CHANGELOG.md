@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: before a test email can be pushed to the public repository, ecf's own injection rule is run on the email as built, and the one-off check of the private-set move keeps the live install running and its copy away from any mail server (OD-635).
 - Decided: the one-off check that moving the private test emails changed nothing runs on a throwaway copy of the install's data, which installs no new code and can't reach mail or Slack, and the private-set check reads text exactly as ecf's injection rule does (OD-634).
 - Decided: a test email counts as a prompt-injection email, and so belongs in the private test set, also when its text contains one of the phrases ecf's injection rule looks for, not only when its card is labelled as one; no current test email changes sets (OD-633).
 - Two test-set cards check that ecf's fraud triggers catch a scam placed past what the model reads. The test set changed, so a mailbox needs a new eval run before it can go live; mailboxes already live are unaffected (OD-632).
