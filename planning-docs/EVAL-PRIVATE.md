@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 18, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 19, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -43,7 +43,9 @@ nothing skipped would fail the daily run for good); the operator accepted a simp
 below, 2026-11-05), and every fix is folded in with OD-677. Draft 17 (a7ee94d) went through a sixteenth
 Opus check with no
 highs, the second in a row; every medium and low is folded in here with OD-678, and the card scan
-(X5) and the start-up refresh (X9) are restated whole.
+(X5) and the start-up refresh (X9) are restated whole. Draft 18 (0e83cc4) went through a seventeenth
+Opus check, again with no highs; every medium and low is folded in here with OD-679, including a wider
+freeze on main during the build (operator, 2026-11-05).
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -91,7 +93,8 @@ on and keeps future releases clean. Rewriting history is not proposed.
 
 - **X1, one marker predicate, widened:** `ecf.eval.is_injection_card(card)`, with its rules in one
   constant, `INJECTION_MARKERS`, shared by the builder refusal, the
-  sdist test, the move script and the private-card check (X5). A card is marked when it has
+  sdist test, the move script, the private-card check, and the hook and workflow scans (X5). A card is
+  marked when it has
   `injection_target`, `injection_phrase` or `hidden_text` at any level of its front matter
   (`injection_target` also sits under `expected.safety`, e.g. `injection-delimiter-escape`), a
   `threat:` containing `inject` (case-insensitive; `evasion` is not a marker, V4),
@@ -121,8 +124,9 @@ on and keeps future releases clean. Rewriting history is not proposed.
 2026-11-05 (round 11, OD-636; X5 replaces draft 10's and draft 11's X5, X6 replaces X4's copy):
 
 - **X5, content is checked by trigger 10 itself, in one script.** *Invariant:* no public card whose
-  built email trigger 10 flags, or whose card text carries a trigger-10 phrase, leaves this machine
-  through a guarded push, a merge or a release.
+  built email trigger 10 flags, whose card text carries a trigger-10 phrase, or (when new) that X1
+  marks, leaves this machine through a guarded push, a merge or a release, apart from the pinned
+  `starter-injection` and the known public blobs below, which are public already.
   - `scripts/check_card_injection.py` imports `ecf.eval.builder` and `ecf_server` (import-linter
     limits only `ecf`, `pyproject.toml:142-146`). For each card it checks, it builds the message
     (`build_bytes`) and runs `ecf_server.triggers.card_injection(raw)`, which returns
@@ -133,7 +137,8 @@ on and keeps future releases clean. Rewriting history is not proposed.
     so text the email never carries (`notes`, `expected`) is checked too (strict pyright covers
     `scripts/`, `pyproject.toml:108`, so the script imports no private name). `card_injection` and
     `text_injection` are added in Step 3. A public card or `.eml` any of these flags is refused,
-    except the pinned `starter-injection` (V3, its card bytes and its built `.eml`'s sha256 pinned).
+    except the pinned `starter-injection` (V3, its card bytes and its built `.eml`'s sha256 pinned),
+    which is exempt from X1 too.
     - PDF attachments are built as empty placeholders under the same file name (`card.model_copy`
     replacing each `generate: invoice_pdf` attachment, `cards.py:73-83`, so `build_message` is
     unchanged, `builder.py:88-96`): `message.parse`
@@ -146,9 +151,13 @@ on and keeps future releases clean. Rewriting history is not proposed.
     full) and the macOS merge gate (`--tree HEAD --no-skip`, below).
   - **What each run checks.** For each blob it checks, the script runs trigger 10 (above) and, on a
     card, X1's front-matter predicate (so a marked card whose text trigger 10 misses, the most
-    sensitive kind, is refused too). X1 is applied to new blobs only (the range passes) and to main's
-    tip; it is not applied to other tips, since branches cut before the move hold more than 90 marked
-    public cards, all already in main's history.
+    sensitive kind, is refused too). X1 is applied to main's tip and to range blobs that are not in main's
+    history at the move commit's parent (pinned as a constant beside the list), so an old marked card
+    that main edited before the move, or that a long-lived branch carries in when it merges main, isn't
+    refused; it is not applied to other tips, since branches cut before the move hold more than 90
+    marked public cards, all already in main's history. `--tree` applies X1 as main's tip does.
+    Checked 2026-11-05 (round 18): after the move, main's tip holds no card X1 marks or trigger 10 flags
+    but `starter-injection`; `heldout` and `heldout2` hold none.
   - **The card-scan workflow** (X8). The main CI workflow skips a push that changes only `*.md`
     files (`ci.yml:11`, `:14`), and every card is an `.md` file, so the scan runs in its own workflow,
     `.github/workflows/card-scan.yml`, set up as SPEC §17.4 sets CI up (the runner from
@@ -188,23 +197,34 @@ on and keeps future releases clean. Rewriting history is not proposed.
     - Committed in Step 3 (`--list-known` over main's history at the branch base; G3 keeps
       `tests/eval/` unchanged), so neither the hook nor the workflow refuses the branch's own public
       injection cards before the move.
-    - Which copy is read: once main has the list, every run reads main's copy
-      (`origin/main:tests/eval/known-public-injection-blobs.txt`), never the pushed tree's; before
-      the merge, the pushed tree's. The script checks the copy it reads against its own constants
-      (sha256 and count, 45) and refuses on any difference; a test pins the same values, which a
-      depth-1 clone can check. After the merge, the merge gate refuses any change to the list or to
-      those constants, so a card added and removed on a branch together with its ID can't be listed
-      for good.
+        - Which copy is read, and which script runs. Once main has the list, every run on a ref other
+      than main runs main's copy of the script and reads main's copy of the list
+      (`origin/main:scripts/check_card_injection.py`, `origin/main:tests/eval/...`), never the pushed
+      tree's, so a branch can't weaken either. On a push to main, `origin/main` is the pushed commit,
+      so the workflow instead compares the list and the script's constants with `before` (the commit
+      main pointed at) and fails on any difference. Before the merge, the pushed tree's copies. The
+      script checks the list it reads against its constants (sha256 and count, 45) and refuses on any
+      difference; a test pins the same values, which a depth-1 clone can check. After the merge, the
+      merge gate runs `git diff --exit-code <main before the merge> HEAD -- tests/eval/known-public-
+      injection-blobs.txt scripts/check_card_injection.py` and stops on any difference until the
+      operator says so (its line in `testing-and-merge.md` lands in the move commit), so a card added
+      and removed together with its ID can't be listed for good. Tests: a push to main that changes the
+      list fails; a branch whose script skips everything is still scanned by main's.
     - Re-running trigger 10 on the old blobs happens only when Step 5 (at the move commit) and Step 7
       (at the merge) recompute the list. Each recompute must equal the committed list both ways: every
       flagged blob listed, every listed blob flagged. If either differs, stop, show which blobs differ
-      and why (a commit on main adding or changing a flagged card, or a change to `keywords.yaml`,
-      `triggers.py`, `message.py` or `ecf/eval/builder.py` that flags or unflags an old blob), and ask
-      the operator before re-pinning.
-    - **The freeze:** from Step 3 until the merge, no commit on main edits the 13 listed card IDs,
-      adds a card trigger 10 flags, or changes `keywords.yaml`, `triggers.py`, `message.py` or
-      `ecf/eval/builder.py` (13 commits touched these since 2026-10-15); main has no hook or
-      workflow until the merge to catch it. The operator and the M1 session are told at Step 3.
+      and why (a commit on main adding or changing a flagged card, or any change that alters what
+      trigger 10 flags: `keywords.yaml`, `triggers.py`, `message.py`, `htmltext.py`, `skeleton.py`,
+      `ecf/eval/builder.py`, `cards.py`, `padbank.py`, card parsing), and ask the operator before
+      re-pinning.
+        - **The freeze** (operator, 2026-11-05): from Step 3 until the merge, no commit on main edits any
+      of the 107 moving cards (the move list, `long-093` included) or the 13 listed card IDs, or adds a
+      card that X1 marks or trigger 10 flags; main has no hook or workflow until the merge to catch
+      it. Main edits these cards (db83787, cca7f7d, bfa00a0 since 2026-10-15), and an edit after the
+      move would meet a modify/delete conflict at the merge and leave the private copy stale. Changes
+      to the files that decide what trigger 10 flags (above) are advised against, not frozen: Step 7's
+      both-ways recompute catches their effect and stops. The operator and the M1 session are told at
+      Step 3.
   - **Skipping.** Only main's tip tree is scanned with nothing skipped, so a listed blob restored
     onto main is refused by the push run and the daily run. Every other ref, tags included, is
     scanned with the list: all 28 `v*` tags hold listed cards and can't change, and a new release is
@@ -244,7 +264,7 @@ on and keeps future releases clean. Rewriting history is not proposed.
   today. Draft 13's tick retry and drafts 14-16's deferral (X7) are withdrawn (Design, "The merged
   set").
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -347,33 +367,42 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   checks the merged version still equals its `set_version`; a service restart drops the locks
   (accepted). Lost draft runs are recovered inside `_open_state`
   (`service.py:600`), before the socket is bound (`:705`), so no request can take the slot first. X9
-  (drafts 17 and 18, OD-677, OD-678) fixes a stale set at its source, inside `claude_eval.recover`
+  (drafts 17-19, OD-677 to OD-679) fixes a stale set at its source, inside `claude_eval.recover`
   (whose caller already catches every exception, `service.py:599-603`, so the service binds whatever
-  happens), one set at a time, each in its own `except Exception`. For each distinct set that a record
-  recovery would visit names (open, expired, or lost and not yet resumed, `claude_eval.py:2018-2020`)
-  and whose private set exists:
-  1. take the set's shared lock, tried once, and resolve it;
-  2. if it is stale, release the lock, call `refresh_merged` (which takes the exclusive lock itself,
-     tried once; not wrapped in another lock, which the same process would refuse), then take the
-     shared lock again and resolve again;
-  3. if the set is fresh and its shared lock held, its records recover exactly as today: `_restored`
+  happens), one set at a time. For each distinct set that a record recovery would visit names (open,
+  expired, or lost and not yet resumed, `claude_eval.py:2018-2020`) and whose private set exists:
+  1. take the set's shared lock, tried once, and resolve it; a missing lock file (only
+     `refresh_merged` creates it) counts as stale;
+  2. if it is stale, release the lock and call `refresh_merged` (which takes the exclusive lock
+     itself, tried once; not wrapped in another lock, which the same process would refuse);
+  3. whatever step 2 did, take the shared lock again and resolve again, retrying up to five times a
+     second apart if the lock is busy (before the bind, well inside the 60 s start limit,
+     `src/ecf/upgrade_run.py:54`), so another install that refreshed first, or a CLI `ecf eval build`
+     mid-refresh, leaves the set fresh rather than closing this install's runs;
+  4. if the set is fresh and its shared lock held, its records recover exactly as today: `_restored`
      and `_finish` save each open record's result, the limits apply in `_resume_lost`
      (`:2073-2078`), today's handlers (`:2022-2033`, `:2052-2056`, `:2079-2088`) close what can't be
-     read, and the resumed run takes its own shared lock in `start()` before recovery releases its own;
-  4. otherwise (a lock busy, the refresh failed, the set still stale), its records skip `_restored`:
-     each is closed with `_update_record(..., attempt_over=True)` and the end detail "the eval set
-     <root> couldn't be read at service start: run `ecf eval build --root <root>`; this attempt's
-     scored cases weren't saved". This is the one change to today's handlers; an open run's results are
-     lost in this case (stated limit), which a busy lock at the moment the service starts makes rare.
-  Fresh sets are not refreshed, so two installs starting at once (launchd at login), or another
-  install's run holding the shared lock, don't close each other's attempts. The refresh records the
-  private commit and dirty flag by reading `HEAD`, the ref and the index stat from files, as the gate's
-  fingerprint does, never a `git` subprocess, so nothing can hang before the bind. A refresh is
-  crash-safe: each temporary file is unlinked if it exists before it is created, a merged copy is made
-  read-only only after its rename, and folders are made writable before writing, so a refresh killed
-  part way doesn't block the next one. All locks are released in a `finally`. Timing: a full refresh of
-  `synthetic` 0.5-1.0 s, `drafts` about 0.17 s (warm, round 17), well within the start-up limits
-  (`upgrade_run.py:54`, `cli_init.py:37`).
+     read, and the resumed run takes its own shared lock in `start()` before recovery releases its
+     own. A set refreshed in step 2 has a new merged version, so a resume of a run started on the old
+     one is refused (`:736-738`) and its attempt ends with its results saved, as today;
+  5. otherwise (the lock still busy, the refresh failed, the set still stale), or if the set's step
+     raises (its own `except Exception`), its records skip `_restored`: each is closed as today's
+     handler closes one (`_update_record` with `end`, `ended_at`, `complete=False` and
+     `attempt_over=True`, wrapped as at `:2028-2031`) with the end detail "the eval set <root> couldn't
+     be read at service start (<reason or exception type>): run `ecf eval build --root <root>`; this
+     attempt's scored cases weren't saved". This is the one change to today's handlers; an open run's
+     results are lost in this case (stated limit).
+  Fresh sets are not refreshed. The refresh records the private commit only (no dirty flag: the gate's
+  live check, `clean_and_pushed`, is the one that decides cleanliness), read from files, never a `git`
+  subprocess, so nothing can hang before the bind: `HEAD` (a detached sha, or a ref), the loose ref,
+  else `packed-refs` (skipping `^` peeled lines), following a `.git` file's `gitdir:` and `commondir`
+  in a worktree; any failure records "unknown" and never fails the refresh (a test after `git
+  pack-refs --all`). `merge.json` carries a format number; a reader that doesn't know it treats the
+  set as stale. A refresh is crash-safe: each temporary file is unlinked if it exists before it is
+  created, a merged copy is made read-only only after its rename, and folders are made writable
+  before writing, so a refresh killed part way doesn't block the next one. All locks are released in a
+  `finally`. Timing: a full refresh of `synthetic` 0.5-1.0 s, `drafts` about 0.17 s (warm, round 17),
+  well within the start-up limits (`src/ecf/upgrade_run.py:54`, `cli_init.py:37`).
   Nothing waits on this lock: the service, the resolver and the recovery only try it. One function,
   `merge_sources()`
   in `ecf.eval`, computes the merged content by kind (`merge_sources(kinds=…)`): `refresh_merged` asks
@@ -472,7 +501,9 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   `private_cases` and draft 9's `private_injection_cases` is dropped. The run also records the
   merged version; the gate refuses either count being 0. The counts back up the version, which alone
   proves the run read the whole set.
-- **References:** `fraud_guard_cases` and (unless `--fraud-only`) `confirmed` are compared with
+- **References:** `fraud_guard_cases` and (unless `--fraud-only`) `confirmed` are compared with the
+  same counts worked out the way `evalrun.summarize` works them out (`evalrun.py:602-629`: confirmed is
+  the confirmed, scored cases; fraud-guard cases the decided cases expecting `fraud_guard`) over
   `load(merged, fraud_only=...)` on the current verified merged set, never with the run's own numbers.
 - **Runs from before the guard** (such as `ce3be1df`): accepted only when their `set_version` equals
   the current verified merged version; such a run has no `public_cases` or `private_cases` keys, and
@@ -700,7 +731,12 @@ Each write, commit and push needs the operator's OK.
    and passes it on a tag; `git push origin foo:main` is scanned as main; a commit adding a card and
    its ID is refused by the script's own check; after the merge a list read from the pushed tree is
    ignored in favour of main's; `--tree HEAD --no-skip` refuses a listed blob; a new public card X1
-   marks but trigger 10 doesn't flag is refused by the hook and the workflow; the
+   marks but trigger 10 doesn't flag is refused by the hook and the workflow; a marked blob already in
+   main's
+   pre-move history passes X1 (a branch merging main, an edit main made before the move); two services
+   starting on one stale set both recover; a set whose step raises closes its records with X9's detail
+   and the others recover; the commit is read after `git pack-refs --all` and in a worktree; a push to
+   main changing the list fails; a branch whose script is weakened is still scanned by main's; the
    card-scan workflow's
    triggers have no path filter and cover tags, `pull_request` and `schedule`; on a local bare
    remote, the `--revs` entry point catches a card commit, a card added and removed, a card added by
@@ -871,10 +907,14 @@ Each write, commit and push needs the operator's OK.
      python scripts/check_card_injection.py --tree HEAD --no-skip` and `test_sdist_contents` pass on
      the real tree after the move. Then `git worktree add --detach <scratch>/guards <move commit>` (its
      own index and HEAD, and no `eval/private`, so no ID sits in both sets); copy `inj-spanish`'s card
-     and `.eml` back under its public `cases/` and `eml/` (a card trigger 10 flags: only 12 of the 49
+     and `.eml` back under its public `cases/` and `eml/` (from the branch base: `git show
+     <branch base>:tests/eval/synthetic/cases/inj-spanish.md` and its `eml/` file) (a card trigger 10
+     flags: only 12 of the 49
      moving `synthetic` cards are), and commit there. Run each guard from `<scratch>/guards`, with the
-     branch worktree's environment (`uv run --project <worktree> --no-sync --offline`, working folder
-     `<scratch>/guards`): `ecf eval build --root <scratch>/guards/tests/eval/synthetic` must refuse
+     branch worktree's environment (`UV_OFFLINE=1 uv run --project <worktree> --no-sync --offline`,
+     working folder `<scratch>/guards`; `UV_OFFLINE=1` reaches the `uv build` the sdist test starts,
+     `test_sdist_contents.py:21`): `ecf eval build --root <scratch>/guards/tests/eval/synthetic` must
+     refuse
      with "marked card in a public set"; `python scripts/check_card_injection.py --tree HEAD
      --no-skip` (reading `<scratch>/guards`'s committed tree, `ls-tree`, skipping nothing, so the
      listed blobs don't pass) must refuse naming `inj-spanish`; `pytest
@@ -891,7 +931,9 @@ Each write, commit and push needs the operator's OK.
    code" becomes the installed release's code, with Step 5's `src/` precondition), CONTRIBUTING,
    AGENTS.md, CHANGELOG.
 7. **Merge:** a diff review on Fable, the macOS merge gate (twice, as above), the known-blob list
-   recomputed over main's history at the merge (must equal the committed one), push, CI watched.
+   recomputed over main's history at the merge (must equal the committed one), each moved card's last
+   version on main compared with its private copy (equal, or stop and ask: an edit on main the freeze
+   missed), push, CI watched.
 
 ## Measured costs (performance reviewer, 2026-11-05)
 
