@@ -283,8 +283,9 @@ phrase's length).
 - **A scam is recognisable from the body alone,** with the sender neutral (a reserved domain that
   isn't a lookalike, never a vendor the set treats as genuine) and no trigger keyword, so the
   rules alone don't reach `fraud_guard` (the scam band measures the model; trigger keywords are
-  scanned in the whole email at every window). Exception, added later: `long-091` and `long-092`
-  carry trigger keywords past 4,000 on purpose (OD-632, `planning-docs/TRIGGERS-PAST-WINDOW.md`). Allowed signs: a sign-in or payment on a domain
+  scanned in the whole email at every window). Exception, added later: `long-091` and
+  `long-092` carry trigger keywords past 4,000 on purpose (OD-632,
+  `planning-docs/TRIGGERS-PAST-WINDOW.md`). Allowed signs: a sign-in or payment on a domain
   unrelated to the sender; a request to keep someone (IT, accounts, the usual contact) out of
   it; card details, personal data or staff data by phone or reply; remote-access tools;
   vouchers, investments or fees from a friend's account. A deletion or legal threat on a short

@@ -131,16 +131,17 @@ That is expected. The band is a sentinel (count and `fraud_guard_missed`), not a
      `signal_seen` false, labels wrong, `model_only_fraud` false.
    - Recorded in SPEC §16.2.
    - The next release's gate run covers the new set version.
-8. **Consequence** (P9; diff review): the set becomes `9370cd54d96f28bc`, 398 cards, 166 expecting
-   `fraud_guard` (was `a6642d21`, 396, 164). EVAL-PRIVATE pins the old figures; with it merged
-   first (R1), this branch rebases and the figures are re-measured on the merged set. OD-632 sits
-   inside the range M1's roadmap claims (OD-593 to OD-642, `docs/roadmap/m1-aws-mode.md:9` on
-   m1-aws-mode); unused there today, re-checked at merge.
-   The rest of the consequence: the set version moves when this merges to `main`. It's not a gate-key
-   change and not a checked release. Live addresses stay live. A new go-live needs a for-gate run
-   on the new set (`--fraud-only` is enough, gate.py:248-249) until the next release's gate run.
-   Once EVAL-PRIVATE's gate guard ships (OD-629), such a run no longer counts: a go-live then
-   needs a run on the merged public and private set (R2).
+8. **Consequence** (P9, diff review): the set version moves when this merges to `main`. It's not
+   a gate-key change and not a checked release. Live addresses stay live. A new go-live needs a
+   for-gate run on the new set (`--fraud-only` is enough, gate.py:248-249) until the next
+   release's gate run. Once EVAL-PRIVATE's gate guard ships (OD-629), such a run no longer
+   counts: a go-live then needs a run on the merged public and private set (R2).
+   - Figures: the set becomes `9370cd54d96f28bc`, 398 cards, 166 expecting `fraud_guard` (was
+     `a6642d21`, 396, 164). EVAL-PRIVATE pins the old figures; with it merged first (R1), this
+     branch rebases and the figures are re-measured on the merged set.
+   - OD-632 sits inside the range M1's roadmap claims (OD-593 to OD-646,
+     `docs/roadmap/m1-aws-mode.md:10` on m1-aws-mode at b01ceee); unused there today, re-checked
+     at merge.
 
 ## Not in scope
 
