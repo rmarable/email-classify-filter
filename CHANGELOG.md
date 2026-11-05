@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the go-live check accepts a test run only when it used the full test set, public and private parts together, as proved by the set's version; older runs on the full set still count (OD-643).
 - Roadmap (Later): a request for a password, sign-in code, gift-card codes or a crypto payment placed past the part of an email the model reads (the first 4,000 characters) isn't caught by any rule today; deciding whether it should be is on the roadmap (OD-631).
 - Decided: the test emails written to trick the classifier (prompt injections) move out of the public repository into a private one, and future releases stop shipping them; the rest of the test set stays public, and the go-live check refuses a test run that didn't include the private part (OD-626 to OD-630).
 - Roadmap: the AWS milestone (M1) comes next, then Microsoft Teams (M11); direct Gmail support (M6) stays parked (OD-592).
