@@ -62,6 +62,18 @@ guidance applies (AWS skills, docs over memory, CDK).
 9. **Fact checks:** every dated fact and every "confirm at M1 start" item is re-verified before
    draft 1 (step 2b).
 10. **Prompt caching and the AWS caches** are designed in the roadmap document (Design, below).
+11. **Bedrock retention mode `none`** (after step 2b): ecf sets the account's Bedrock data
+    retention mode to `none` in its Region and `ecf doctor` checks it. Fable stays blocked on
+    Bedrock (it requires `aws_review`: kept up to 30 days, possible AWS human review); ecf's pins
+    are Haiku and Opus, and the override can't name Fable (`claude_pins.py:54`). If a pinned model
+    refuses `none` (its `allowed_modes` aren't documented), the build stops and asks.
+12. **Lambda on Python 3.12, zip deploy:** AWS's Lambda images measure 3.12.16, above the 3.12.6
+    floor, so decision 6 resolves to a zip on the managed `python3.12` runtime (supported to
+    2028-10-31), matching the Mac and CI. A deploy-time check logs `sys.version` and asserts
+    3.12.6 or later.
+13. **LocalStack dropped:** its open-source repository was archived 2026-03-23 and the free plan is
+    non-commercial. The local layer is moto, SAM with the Lambda image and RIE on Colima, and
+    DynamoDB Local (no PITR).
 
 ## Steps (each write, commit and push only after the operator's OK, AGENTS.md rule 3)
 
@@ -74,7 +86,15 @@ guidance applies (AWS skills, docs over memory, CDK).
    (`.python-version` vs `pyproject.toml`); OD-358 vs OD-579 (decision 4); SQS has no per-message
    delay for OD-557's waits; §12.4 lists no AWS destination (decision 1).
 
-3. **Fact re-verification (step 2b; not started).** Four parallel read-only research agents,
+3. **Fact re-verification (step 2b): done 2026-11-04**, results in `state-archive/m1/facts.md`
+   (the four most consequential re-read by Claude on the source pages). Design changes found:
+   Cognito refresh-token rotation rules out `REFRESH_TOKEN_AUTH` (refresh through the token
+   endpoint or `GetTokensFromRefreshToken`); the managed-login cookie needs the Logout endpoint;
+   SQS FIFO has no per-message delay (delays through a DynamoDB timestamp and the tick);
+   `BootstraplessSynthesizer` doesn't support assets (use `DefaultStackSynthesizer` without the
+   bootstrap version rule); cdk-nag 3 replaced `NagSuppressions`; SNS subjects under 100
+   characters; Slack `response_url` 5 uses in 30 minutes; the plan's Haiku 4.5 facts are stale;
+   Bedrock prices not documented. The agents were: Four parallel read-only research agents,
    using the AWS skills, the AWS docs, and the `claude-api` skill:
    - (a) Cognito and API Gateway;
    - (b) Lambda (Python runtime vs 3.12.6, async retries, concurrency), SQS (per-message delay),
