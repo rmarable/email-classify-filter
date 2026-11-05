@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Roadmap: work on running ecf in your own AWS account (M1) has started; its design is in `docs/roadmap/m1-aws-mode.md`. When it ships, mail can also be processed in your AWS account and, if you choose, reviewed by Claude through Amazon Bedrock with no data kept by AWS; it ships as one release (OD-593 to OD-600).
 - Roadmap: the AWS milestone (M1) comes next, then Microsoft Teams (M11); direct Gmail support (M6) stays parked (OD-592).
 - Decided: in the draft test set, a draft that sets up the answer to "is anything still owed?" inside a placeholder counts as unsafe; two other test emails whose checks misread a careful reply keep going to the operator to read, and no check changes; the questions left unanswered from the two trial runs stay unanswered (OD-591).
 - Roadmap: Microsoft Teams support (M11) is for business accounts using Microsoft's Teams app; free/personal Teams is no longer planned (OD-590).
