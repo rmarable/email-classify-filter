@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 9, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 10, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -14,9 +14,12 @@ a fifth Opus check (no highs); every fix was accepted (operator, 2026-11-05) and
 is folded in. Draft 8 (a6f83f8) went through a seventh Opus check, run by session fix-fraud-card-wording
 after the M1 session handed this plan over (one high: a card shaped like OD-632's planned `long-093`
 carries none of the markers); every fix was accepted and decisions X1-X3 made (operator 2026-11-05),
-folded in here with OD-633.
+folded in with OD-633. Draft 9 (167a734) went through an eighth Opus check (two highs, both in X2 and
+X3, written without checking the role rule, the shared tool environment or where an upgrade reads the
+version); the operator accepted both recommendations (X4, X5, operator 2026-11-05), X2 and X3 are
+withdrawn, and every other fix is folded in here with OD-634.
 Findings: `state-archive/eval-private/review-findings.md`. Code
-references are as of `1d6558c` (main; `src/` unchanged at `ea74a2f`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
+references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
 ## Why
 
@@ -58,7 +61,7 @@ on and keeps future releases clean. Rewriting history is not proposed.
 - **V5, `heldout3`'s 4 injection cards move** by the same scheme, never deleted (the blind batch's
   make-up stays intact).
 
-2026-11-05 (round 8, OD-633):
+2026-11-05 (round 8, OD-633; its X2 and X3 withdrawn by X4, round 9):
 
 - **X1, one marker predicate, widened:** `ecf.eval.is_injection_card(card)`, with its rules in one
   constant, `INJECTION_MARKERS`, shared by the builder refusal, the pre-push and CI marker scans, the
@@ -66,28 +69,54 @@ on and keeps future releases clean. Rewriting history is not proposed.
   `injection_target`, `injection_phrase` or `hidden_text` at any level of its front matter
   (`injection_target` also sits under `expected.safety`, e.g. `injection-delimiter-escape`), a
   `threat:` containing `inject` (case-insensitive; `evasion` is not a marker, V4),
-  `expected.draft.group: injection`, or, by **content**, any text the email carries (subject, body,
-  html, `hidden_text`, attachment names and text, quoted messages) for which fraud trigger 10 holds:
-  the `injection` phrases in `src/ecf_server/data/keywords.yaml`, read as a data file from the
-  distribution's path (`ecf` can't import `ecf_server`) and matched with trigger 10's folding; a test
-  requires the predicate and `ecf_server.triggers._injected` to agree on every card of every set.
-  Checked 2026-11-05 on `ea74a2f` (scratch script): the non-content markers flag exactly the
-  inventory (50 `synthetic` with `starter-injection`, 4 `heldout3`, 54 `drafts`); content flags 13
-  `synthetic` cards, all already marked, and no other card; `long-091` and `long-092` carry no marker
-  and stay public. Why: a card whose only sign is a trigger-10 phrase in its body (OD-632's planned
-  `long-093`) passed every guard. A private card's `threat:` names its injection
+  `expected.draft.group: injection`, or, by **content**, any string in the card that trigger 10's
+  patterns match (X5). Why: a card whose only sign is a trigger-10 phrase in its body (OD-632's
+  planned `long-093`) passed every guard. A private card's `threat:` names its injection
   (`planning-docs/TRIGGERS-PAST-WINDOW.md` amended), and `long-093` joins CI's moved-ID refusal list
   now, before it exists.
-- **X2, Step 5 on `prod`:** the throwaway install is a copy of prod's data folder, not an export and
-  restore: a restore clears `eval_runs.path` (`importer.py:191`), drops the `eval_root` setting
-  (`import_plan.py:4-7`) and carries no `<data>/evals/` file (`export_bundle.py:60-68`), so R, the
-  stored root and the side files would be gone. P is taken on the copy, before the wheel.
-- **X3, the branch wheel:** built at a local version `3.2.1.devN`, so `ecf upgrade --wheel` accepts it
-  (it refuses a version not newer than the installed one, `upgrade_check.py:229`; `version_key` puts
-  `3.2.1.dev1` above `3.2.0`, checked); set in `src/ecf/__init__.py` on the build machine only, never
-  committed, tagged or pushed; not a release or version bump under the `ecf-release` skill.
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+2026-11-05 (round 9, OD-634):
+
+- **X4, Step 5 runs on a scratch copy and installs nothing.** X2 (a copy of `prod`'s data folder) and
+  X3 (a branch wheel at `3.2.1.devN`) are withdrawn: the copy keeps `install_role` `prod` (fixed at
+  creation, `initsetup.py:39-51`), so `ecf upgrade --wheel` refuses it (`cli_upgrade.py:189-191`);
+  every install runs from the one uv tool environment (`service_unit.py:34-39`), so a branch wheel
+  would have replaced `prod`'s code too; and the upgrade reads the version from the wheel's
+  `ecf_server/data/release.json` (`upgrade_check.py:102-103`, `:112`), not `src/ecf/__init__.py`.
+  Instead P and the after-checks run on a copy of the install's data folder under a scratch
+  `ECF_HOME`, named `evalmove`: P with the installed release's own binaries, the after-checks with
+  `uv run` from the branch; the copy is deleted afterwards (Step 5). No wheel, no version change, no
+  rollback. It stays a copy, not an export and restore: a restore clears `eval_runs.path`
+  (`importer.py:191`), drops the `eval_root` setting (`import_plan.py:4-7`) and carries no
+  `<data>/evals/` file (`export_bundle.py:60-68`), so R, the stored root and the side files would be
+  gone.
+- **X5, one fold for the marker and trigger 10.** `src/ecf_server/skeleton.py` moves to
+  `src/ecf/skeleton.py`, with its `data/unicode/` folder (`confusables.txt`, its licence and README;
+  `scripts/check_licenses.py:54-56` follows), and the keyword compile helpers (`_START`, `_Pattern`,
+  `_compile`, `_alternation`, `triggers.py:134-182`) move to `src/ecf/keywords.py`;
+  `ecf_server.triggers`, `internal`, `draftcheck` and `excerpt` import them from there (import-linter
+  forbids only `ecf` → `ecf_server`, `pyproject.toml:142-146`). It is a pure move: the trigger and
+  skeleton tests pass with only their imports changed. `keywords.yaml` stays where it is
+  (`keywords_digest` unchanged); `ecf` reads it at `Path(ecf.__file__).parent.parent /
+  "ecf_server/data/keywords.yaml"`, which holds for an installed wheel and an editable install
+  (`importlib.metadata` doesn't, and `importlib.resources` would import `ecf_server`); a test checks
+  that file hashes to `keywords_digest()`. The content marker compiles the `injection` group's
+  `acronyms` (case-sensitive) and `phrases` with those helpers and tests every string in the card
+  (each front-matter key and value at any level, the body, and the raw file), each as written and
+  with HTML tags removed and entities decoded (`html.parser`, the text pieces joined both with nothing
+  and with a space), so a phrase split by tags, in the From display name or in an attachment name is
+  caught. It is meant as a superset of what trigger 10 scans (`texts_of`, `triggers.py:465-469`:
+  subject, From display name, attachment names, each part's visible and full text); over-marking
+  only refuses a public card. Tests: for every built `.eml` of every set (`.build/` included), a
+  non-empty `triggers.scan(triggers.texts_of(parsed))["injection"]` implies the card is marked
+  (today the two agree exactly); each `injection` phrase and acronym in `keywords.yaml`, and the
+  confusable, format-character and mark variants in `tests/test_triggers.py`, placed in a public
+  test card's body, subject, From name or HTML, are refused. Checked 2026-11-05 on `bc98a9b`
+  (scratch script, this rule): 50 `synthetic` cards with `starter-injection`, 4 `heldout3` and 54
+  `drafts` are marked, the same as the non-content markers; content marks 13 `synthetic` cards, all
+  already marked; `long-091` and `long-092` stay public.
+
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -148,12 +177,16 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   file, so threads with their own descriptors exclude each other). A run takes a shared lock without
   blocking before the resolver's freshness check and `load`, opening the lock file read-only: `ecf
   eval run` in `evalrun.start()`, before the resolver and `load` (`evalrun.py:708`, on the request
-  thread), the descriptor handed to `work()` and released in its `finally`, and in an `except` in
-  `start()` for the refusals after `load` (no cases, Jev unconfirmed, already running,
-  `evalrun.py:709-717`); a Claude run (`/ecf-eval`) in `start()`, with the descriptor kept on its
-  `Run` and released in a `finally` around `_finish` (which does result I/O,
-  `claude_eval.py:1008-1030`), in the prepare-failed branch (`claude_eval.py:654`) and in an `except`
-  in `start()`. No private set means no lock; with a private set and no lock file, a run refuses
+  thread), inside one `try` that runs from taking the lock to a successful spawn (`:735`), whose
+  `except BaseException` releases it and re-raises, so every refusal or failure in between releases it
+  (the resolver, `load`'s own errors, no cases and Jev unconfirmed at `:709-716`, already running at
+  `:718-719`, a failed thread start); once spawned, `work()` releases it in a `finally` around its body
+  (`:723-733`). A Claude run (`/ecf-eval`) takes it in `start()`, keeps it on its `Run` and releases it
+  in a `finally` around `_finish` (which does result I/O, `claude_eval.py:1008-1030`), in the
+  prepare-failed branch (`claude_eval.py:654`) and in an `except` in `start()`. The lock is held as a
+  file object; a release closes it and sets the field to `None` under `run.lock`, so a second release
+  (a stop while preparing, `claude_eval.py:319-320` and `:1807-1816`, then `:654`) does nothing.
+  No private set means no lock; with a private set and no lock file, a run refuses
   with "run `ecf eval build`". If it can't, it refuses with "a refresh is
   running; try again". A refresh takes the exclusive lock without blocking and, while a run holds the
   shared one, refuses with "a run is reading this set (see `ecf eval status`); run `ecf eval build`
@@ -253,10 +286,16 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   the version alone proves the run read the whole set. A for-gate run refuses up front when the
   private set is absent.
 - **Second guard: counts by membership.** Each run records `public_cases`, `private_cases` and
-  `private_injection_cases` (computed by one function, `ecf.eval.membership(sources)`, from the two
-  sources' card lists with X1's predicate, so `starter-injection` (V3) doesn't count and
-  `private_injection_cases` counts only marked private cards; `merge.json` caches the result; M1's
-  `ecf-jobs` calls the same function) and the merged version; the gate refuses any of them being 0.
+  `private_injection_cases`, counted over the cases the run loaded (a `--fraud-only` run counts its
+  166, not the set's 398) and split by owning set; `private_injection_cases` counts only marked
+  private cards (X1; `starter-injection`, V3, doesn't count). One function,
+  `ecf.eval.membership(sources)`, computes them, and it runs only in `refresh_merged` (the build), CI,
+  the sdist test and M1's `ecf-jobs` at upload: its `load_cards` costs about 740 ms on `synthetic`
+  (round 9), too slow for a run start or the gate. `refresh_merged` stores each card's owning set and
+  marked flag in `merge.json`'s manifest, keyed by the card file's sha256, and a run's start reads
+  the counts from the manifest the resolver has just verified. The run also records the merged
+  version; the gate refuses any of the counts being 0. The counts back up the version, which alone
+  proves the run read the whole set, so a hand edit of the cached flags gains nothing.
 - **References:** `fraud_guard_cases` and (unless `--fraud-only`) `confirmed` are compared with
   `load(merged, fraud_only=...)` on the current verified merged set, never with the run's own numbers.
 - **Runs from before the guard** (such as `ce3be1df`): accepted only when their `set_version` equals
@@ -268,7 +307,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   `evalrun.py:144`) checks, live at its
   start and again whenever the gate's compute reruns, that neither `eval/private` nor `tests/eval/<set>` has uncommitted changes and that
   the private HEAD is on a branch whose upstream (`@{u}`) is a remote-tracking ref (its full name
-  starts with `refs/remotes/`, read with one `git rev-parse --symbolic-full-name @{u}`, about 6-7 ms)
+  starts with `refs/remotes/`, read with one `git rev-parse --symbolic-full-name @{u}`, about 12 ms
+  through the `/usr/bin/git` shim)
   and contains it (`git merge-base --is-ancestor HEAD @{u}`, no network; remote URLs count as trusted
   repository config); one function, `ecf.eval.clean_and_pushed(top, set)`, does this check for the
   service and for M1's upload; a detached HEAD, no upstream, or an upstream
@@ -286,8 +326,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   for them go after it and the status parser also ignores those two names in `??` and `!!` lines; the
   check runs on the gate's set, `synthetic`, only, since `heldout3/eml/` is ignored in both
   repositories), a timeout of
-  a few seconds and an argv test (the `/usr/bin/git` shim adds about 3-4 ms a call over the Command
-  Line Tools binary, measured, and survives Xcode switches); the repository's own config is trusted as
+  a few seconds and an argv test (the `/usr/bin/git` shim adds about 6 ms a call over the Command
+  Line Tools binary, 10.9 against 4.9 ms in round 9, and survives Xcode switches); the repository's own config is trusted as
   the operator's. Any `git` error, timeout or missing binary counts as not clean, with its message, and
   is not cached across passes: the gate leaves its seen fingerprint unset so the next tick retries,
   but within one pass (one tick, one request) the failure is memoized and the check's remaining `git`
@@ -311,7 +351,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   and `address_gate` (`api.py:743`), so it runs once, not once per address; "private HEAD" means reading
   the HEAD and ref files, never `git rev-parse`. Two misses at once may both run `git` (accepted;
   the tick never waits on a lock). `stage set live` and the step-up path bypass the cache and run the
-  live check fresh (about 100 ms with `evalrun.load`, measured in round 8; re-measured at Step 3). A
+  live check fresh (about 125 ms with `evalrun.load`, round 9; re-measured at Step 3). A
   clone behind its origin is an accepted limit (SPEC §16); the code merge gate checks the commit is
   pushed.
 - The gate's fingerprint stats `merge.json` and both sources' label files (hashing only inside the
@@ -331,8 +371,9 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   scan; CONTRIBUTING and AGENTS.md tell every checkout, Codex's included, to run `git config
   core.hooksPath .githooks`, and the private clone to set `core.hooksPath` to the public `.githooks` by
   absolute path; the hook finds the public repository top from its own location, not the current
-  directory, and in `<top>/eval/private` runs only the hygiene scan, since every card there is
-  marked by design), by the macOS merge gate, and by CI on every push. A push from
+  directory, and in `<top>/eval/private` runs the hygiene scan (every card there is marked by
+  design) and refuses a push whose remote URL is the public repository's `origin` URL), by the
+  macOS merge gate, and by CI on every push. A push from
   a checkout without the hook is caught only by CI, after it is published (stated limit); a test
   checks the card equals the template's output with `author` changed to `claude` (the template has
   `author: hand`, `case_templates.py:6`) and `rule: fraud_guard` and `must_escalate: true` added. The
@@ -343,7 +384,9 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   `ecf eval build`, `ecf eval label <id>` (it finds the owning set) and a commit and push of the
   private repository; the merged version changes, so the gate needs a fresh C run (and, on M1, a
   re-upload).
-- An `eml/` or `.build/` file with no card in its set fails the build.
+- An `eml/` or `.build/` file with no card in its set fails the build. The pre-push and CI scans
+  and the sdist test refuse one too (no card for it in the same tree), and refuse a card that doesn't
+  parse (fail closed).
 
 ### Private repository
 
@@ -393,7 +436,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
 Each write, commit and push needs the operator's OK.
 
 1. **Inventory:** done (above).
-2. **Phase R:** done on draft 1 (Fable), drafts 2 to 8 (Opus delta). Draft 9 gets an Opus check
+2. **Phase R:** done on draft 1 (Fable), drafts 2 to 9 (Opus delta). Draft 10 gets an Opus check
    of its changes (OD-577).
 3. **Code** on a branch (Steps 3, 5 and 6 share it; the private repository's commit is pushed before
    Step 7): the atomic-write helper in every writer, `writable_root()`, `refresh_merged` with its lock,
@@ -401,7 +444,8 @@ Each write, commit and push needs the operator's OK.
    registry changes, one-read loading and per-case re-check, missing-file reporting, the gate guard,
    path-only fingerprint with the `git` state stats, the hardened live dirty check, the builder refusal
    with the byte pin and orphan
-   check, ID ordering, `new-case` routing, the sdist test and CI marker scan, the test rewrites, a script
+   check, the move of `skeleton.py` and the keyword helpers into `ecf` (X5), ID ordering,
+   `new-case` routing, the sdist test and CI marker scan, the test rewrites, a script
    listing the exact cards to move, `merge_sources()`, the drafts roots, `routes` and the whole-set
    modes, the per-request gate cache. Tests build public and private sets in temporary folders, so CI
    never needs the private repository. *Pass:* a property test splits a built set at several cut points
@@ -435,46 +479,76 @@ Each write, commit and push needs the operator's OK.
    `merge.json` is refused; a made-up run from before the guard is accepted only when its version
    equals the verified merged version (refused when it differs, when the private set is absent, and
    when the merged set is stale); a rebuild during a held-open merged file leaves its bytes unchanged;
-   a public-only for-gate run is refused; X1's predicate agrees with `ecf_server.triggers._injected`
-   on every card, and a public card whose only sign is a trigger-10 phrase in its body is refused at
-   build, by the pre-push scan and by the sdist test; `ecf.eval.membership` counts only marked private
-   cards; a refresh between `ecf eval run`'s `load` and its thread start is excluded by the lock; a
+   a public-only for-gate run is refused; trigger 10 on every built `.eml` implies X1's predicate,
+   and each `keywords.yaml` injection phrase and its confusable variants in a public card (body,
+   subject, From name, HTML split by tags) is refused at build, by the pre-push scan and by the sdist
+   test (X5); the trigger and skeleton tests pass after the move with only their imports changed;
+   `keywords.yaml` read through `ecf`'s path hashes to `keywords_digest()`; `ecf.eval.membership`
+   counts only marked private cards, and a run's start reads the counts from `merge.json` without
+   calling it; a stale merged set, then a refused `ecf eval run`, then `ecf eval build` succeeds (no
+   lock left behind), and so does a run whose thread start fails; a Claude run stopped while preparing
+   releases its lock once; the private repository's hook refuses a push to the public `origin`; an
+   orphan `eml/` file and an unparsable card blob are refused by the pre-push scan; on a dev install,
+   a copy made as in Step 5 starts without secrets and writes nothing outside its scratch folder; a refresh between `ecf eval run`'s `load` and its thread start is excluded by the lock; a
    `cases/.DS_Store` leaves the clone clean; the pre-push hook in the private repository runs only the
    hygiene scan; a refused refresh in a writer's `finally` doesn't mask the writer's error; full suite
    green.
-4. **Private repository:** the operator creates it (private, GitHub); cloned into `eval/private/`;
-   first commit as above. *Pass:* `git check-ignore eval/private` true; `.gitattributes` present.
-5. **Move:** check with the M1 session before using the `accept` service. Preconditions: `git diff
-   <installed release tag>..<branch base> -- src/` touches nothing the `null` run or `set_version`
-   reads (on 2026-11-05, `v3.2.0..ea74a2f` changes only `src/ecf/eval/draftjudge.py`'s
-   `STATED_FAULT_CARDS`); no card is added, removed or relabelled in any set from P until the
-   after-checks pass (`long-093` comes after this step, and after Step 7 if it needs the branch's
-   code). If the install is `prod`, Step 5 runs on a throwaway test install, `ecf --install evalmove`,
-   made by copying prod's data folder with prod's service stopped (X2; no Keychain items, which the
-   eval checks don't need; the copy's addresses paused before its service first starts, the command
-   verified against the CLI in Step 3); *pass:* the draft registry, the side files and R's result
-   file (if there is an R) exist there. Then, on that install's code (the release installed now,
-   recorded; before the branch is installed and before the first moved file lands), record **P**, per set and read-only: for `synthetic`,
-   `set_version` and a `null` run's case, confirmed and fraud-guard counts; for `drafts`, `set_version`,
-   `evalrun.load`'s case count, every `card_digest` and the draft registry's `set_digest`; for
-   `heldout3` (cards and labels only, no `.eml` or `.build/`), `set_version` and its 30 rows. Not
-   `null-drafts`: its run ID is `sha256("null|" + version)`, so a before and after run would share a
-   file. **R** is `evalrun.latest` for the current digest if it passes the gate on main, else there is
-   no R (read from the gate's synthetic detail, which names its run ID); its gate check, `rescore
-   --synthetic` and `compare` results are taken then too, and the `rescore` output file is copied aside
-   (it is named by run ID and set version, `evalrun.py:1614`, so the after-rescore would overwrite it)
-   (as of 2026-11-05: `synthetic` `9370cd54d96f28bc` with 398 cards, `drafts` `ae1111e7bc117b23`,
-   `heldout3` `07625d6cafa4b278`; `ce3be1df` ran on `a6642d21bfd5eaaf`, so it no longer passes the gate
-   and there is no R unless the operator runs a fresh C `/ecf-eval` before the move, with a go-ahead;
-   the no-R branch below is the expected one). Then `git rm` the listed cards and their `.eml` and `.build/` files, remove
-   their rows and keys from the public label, fixed-label, review and `checks.yaml` files, add them to
-   the private repository, commit both, push the private repository, install the branch on the same
-   install (a wheel built from the branch at a local `3.2.1.devN`, X3, `ecf upgrade --wheel <file>`,
-   which only a test install accepts, OD-374; on `prod` that is the `evalmove` copy above; rollback is
-   `ecf upgrade --to <recorded release>`, which restores the upgrade snapshot and discards the
-   after-run results, so they are copied aside first),
-   and run `ecf eval build`; every after-check runs only then, since the live dirty-and-pushed
-   check would otherwise refuse for a reason the move didn't cause. *Pass:*
+4. **Private repository:** the operator creates it (private, GitHub); cloned into the branch
+   worktree's `eval/private/` for Steps 5-7, and into the main checkout's after the merge; first
+   commit as above. *Pass:* `git check-ignore eval/private` true; `.gitattributes` present.
+5. **Move** (X4). Check with the M1 session before starting. Nothing is installed or upgraded, and
+   the install itself is only read.
+   - **Preconditions:** `git diff <installed release tag>..<branch base> -- src/` touches nothing the
+     `null` run or `set_version` reads (on 2026-11-05, `v3.2.0..bc98a9b` changes only
+     `src/ecf/eval/draftjudge.py`'s `STATED_FAULT_CARDS`); no card is added, removed or relabelled in
+     any set from P until the after-checks pass (`long-093` comes after Step 7).
+   - **The copy:** stop the install's service (`ecf --install <install> service stop`), copy its data
+     folder to `<scratch>/evalmove` (a short path: the socket path limit, `paths.py:89`), leaving out
+     `run/` and `claude-config/` and copying `ecf.db` with its `-wal` and `-shm` files (or through
+     SQLite's backup API), then start the install's service again; `PRAGMA integrity_check` on the
+     copy returns `ok`. The copy keeps the install's role and settings; only its name differs. The
+     secret store is keyed by install name (`ecf/<install>`, `secretstore/__init__.py:21`), so
+     `evalmove` finds no IMAP, Slack, model or export-signing secret and can reach no mailbox, Slack
+     workspace or model API; the eval checks need none. Before its first start, in the copy's
+     database and side files: every `eval_runs.path` under the install's folder is rewritten to the same file under
+     the copy (result paths are absolute, `evalrun.py:1463-1469`, and `rescore` writes next to its
+     input, `:1615`); every stored eval root under the main checkout (`EVAL_ROOT`, the draft
+     registry's roots and the side files' `root`) is rewritten to the same path under the branch
+     worktree, where the private repository is cloned (the resolver reads a root by its shape,
+     `<top>/tests/eval/<set>`, so it takes the same path either way); and a scan finds no other
+     absolute path into the install's folder or the main checkout. Step 3 checks on a dev install
+     that such a copy starts and writes nothing outside its scratch folder (its scheduled export
+     included); if it would, the copy's `export_schedule` is set `off` first. *Pass:* the draft
+     registry, the side files and R's result file (if there is an R) exist in the copy.
+   - **Code:** P runs the installed release's own `ecf` and `ecf-server` (`ECF_HOME=<scratch>`;
+     `ecf-server local --install evalmove --foreground` in one shell, `ecf --install evalmove` in
+     another); the after-checks run the branch's with `uv run` from the branch worktree, with the same
+     `ECF_HOME` and install name. *Pass:* `uv tool list` and the tool environment's `uv-receipt.toml`
+     are unchanged at the end, and the install's service has run since the copy was made.
+   - **P**, on the copy with the release's code, per set and read-only: for `synthetic`,
+     `set_version` and a `null` run's case, confirmed and fraud-guard counts; for `drafts`,
+     `set_version`, `evalrun.load`'s case count, every `card_digest` and the draft registry's
+     `set_digest`; for `heldout3` (cards and labels only, no `.eml` or `.build/`), `set_version` and
+     its 30 rows. Not `null-drafts`: its run ID is `sha256("null|" + version)`, so a before and after
+     run would share a file. **R** is `evalrun.latest` for the current digest if it passes the gate,
+     else there is no R (read from the gate's synthetic detail, which names its run ID); its gate
+     check, `rescore --synthetic` and `compare` results are taken then too, and the `rescore` output
+     file is copied aside (it is named by run ID and set version, `evalrun.py:1614`, so the
+     after-rescore would overwrite it). As of 2026-11-05: `synthetic` `9370cd54d96f28bc` (398 cards),
+     `drafts` `ae1111e7bc117b23`, `heldout3` `07625d6cafa4b278`; `ce3be1df` ran on
+     `a6642d21bfd5eaaf`, so it no longer passes the gate and there is no R unless the operator runs a
+     fresh C `/ecf-eval` on the install before the copy, with a go-ahead; the no-R branch below is the
+     expected one.
+   - **The move:** `git rm` the listed cards and their `.eml` and `.build/` files, remove their rows
+     and keys from the public label, fixed-label, review and `checks.yaml` files, add them to the
+     private repository, commit both, push the private repository. Then stop the copy's release
+     service, start the branch's on the copy, and run `ecf eval build` from the branch; every
+     after-check runs only then, since the live dirty-and-pushed check would otherwise refuse for a
+     reason the move didn't cause.
+   - **After:** the after-run results and the copied-aside `rescore` output stay in the session
+     scratchpad (they name private IDs), the copy is deleted, and the install first runs the change
+     with the next release.
+   *After-check pass:*
    - no moved ID is a path under `cases/`, `eml/` or `.build/`, nor a row or key in the public
      `labels.jsonl`, `fixed_labels.jsonl`, `reviews.jsonl` or `checks.yaml` (a parsed check); `git grep
      -lwF -f <ids>` finds them only in these names-only files (the full list on 2026-11-05, 107 IDs):
@@ -498,8 +572,8 @@ Each write, commit and push needs the operator's OK.
      `fraud_guard_missed` (both compared as sorted lists), and every per-case field keyed by `id` except `classifier_ms`, `wait_ms`
      and `queue_ms` (not `created_at`, `run_id`, `wall_s`, `environment`, `power`, `measurements` or
      the membership keys, which `evalrun.summarize` writes for `null` runs too);
-     `public_cases + private_cases` equals the before-run's cases and `private_cases` equals the move
-     script's count; every existing null-floor (`.null.json`) and calibration side file from before the
+     `public_cases + private_cases` equals the before-run's case count and `private_cases` equals
+     the move script's count (both over the 398 cases a run without `--fraud-only` loads); every existing null-floor (`.null.json`) and calibration side file from before the
      move resolves, through `draftjudging.root_of` and the resolver, to the merged drafts set, and
      the stored `EVAL_ROOT` (written by the last for-gate run; a `null` run never writes it,
      `claude_eval.py:644`) resolves to the merged `synthetic` set;
@@ -521,7 +595,9 @@ Each write, commit and push needs the operator's OK.
 
 ## Measured costs (performance reviewer, 2026-11-05)
 
-`set_version` 0.7 ms today, 1.6-3.2 ms merged; `load_cards` 381 ms; hygiene scan 275 ms; building the
+`set_version` 0.7 ms today, 1.6-3.2 ms merged; `load_cards` 381 ms (round 1; 738 ms on
+`synthetic`, 326 ms `drafts`, 62 ms `heldout3` in round 9); X1's content match about 18 ms on
+`synthetic` (first call about 70 ms, round 9); hygiene scan 275 ms; building the
 394 small cards (then) 164 ms, `scanned-invoice-17mb` 2.8 s; `evalrun.load` 34 ms (about 63 ms in round 8, which also hashes `.build/`,
 `evalrun.py:310`; re-measured at Step 3); sha256 of every file in the
 set about 27 ms warm, stat about 1 ms (round 3). Round 5 (warm, medians): `synthetic` has 795 files,
@@ -529,7 +605,8 @@ set about 27 ms warm, stat about 1 ms (round 3). Round 5 (warm, medians): `synth
 two `.build` files 10.3 ms; a full copy of `cases/` and `eml/` 105 ms; `clonefile` 0.06-0.08 ms per
 file; a per-card refresh estimated at 30-50 ms. Round 4: merging the label files 1.5 ms,
 `checks.yaml` parse 23 ms, `git status` about 10 ms (17 ms in round 8). Round 8: `git rev-parse --symbolic-full-name @{u}`
-about 6-7 ms, `merge-base` about 7 ms, `evalrun.load` unchanged by OD-632's two cards. The merged set
+about 6-7 ms, `merge-base` about 7 ms (about 12 and 14 ms through the `/usr/bin/git` shim, round 9; the
+live check about 125 ms), `evalrun.load` unchanged by OD-632's two cards. The merged set
 costs about 4.4 MB of copies across the three sets (`synthetic` cases 1.5 MB and `eml` 1.7 MB,
 `drafts` 0.57 and 0.54 MB, `heldout3` 0.12 MB) plus linked `.build/`; Step 3 records the measured
 refresh time.
